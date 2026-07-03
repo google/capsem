@@ -19,7 +19,7 @@
             "sha256": "01b9ed9d19c4163cd59a448ed0e609517c4c29a2a63e14e906498372266338fd"
           },
           "status": "supported",
-          "url": "/assets/nightly/manifest.json",
+          "url": "/manifests/nightly/1.5.0-nightly.20260701/manifest.json",
           "version": "1.5.0-nightly.20260701",
           "revision": "1.0.1"
         },
@@ -29,7 +29,7 @@
             "sha256": "2815008c40f54f017e853f8b059b59eca1acdb668b3ff0b1dd925589373d6e56"
           },
           "status": "deprecated",
-          "url": "/assets/nightly/manifest.json",
+          "url": "/manifests/nightly/1.5.0-nightly.20260630/manifest.json",
           "version": "1.5.0-nightly.20260630",
           "revision": "1.0.0"
         },
@@ -39,7 +39,7 @@
             "sha256": "85eed34b27888c89466883fbf752402bf6390928f1067484b5550c58907d3ccb"
           },
           "status": "revoked",
-          "url": "/assets/nightly/manifest.json",
+          "url": "/manifests/nightly/1.5.0-nightly.bad/manifest.json",
           "version": "1.5.0-nightly.bad",
           "revision": "1.0.0-revoked"
         }
@@ -64,7 +64,7 @@
             "sha256": "69601963eb31b37fa9b046eb8c398401b2cc215b566dfd6bfd1b45fe5d90dc71"
           },
           "status": "supported",
-          "url": "/assets/stable/manifest.json",
+          "url": "/manifests/stable/1.3.0/manifest.json",
           "version": "1.3.0",
           "revision": "1.0.1"
         },
@@ -74,7 +74,7 @@
             "sha256": "b112201b459365aa949db0bc4dd397642ea9e9304f7cc31397c9395be4f7b354"
           },
           "status": "deprecated",
-          "url": "/assets/stable/manifest.json",
+          "url": "/manifests/stable/1.2.0/manifest.json",
           "version": "1.2.0",
           "revision": "1.0.0"
         },
@@ -84,7 +84,7 @@
             "sha256": "2f4066251078c0d6f1770013d87b66bc8f2579c3407de6ee5d507352dc185289"
           },
           "status": "revoked",
-          "url": "/assets/stable/manifest.json",
+          "url": "/manifests/stable/1.1.0-bad/manifest.json",
           "version": "1.1.0-bad",
           "revision": "1.0.0-revoked"
         }
@@ -218,124 +218,153 @@
         ],
         "profiles": {
           "co-work": {
-            "config": [
-              {
-                "bytes": 58,
-                "digest": {
-                  "blake3": "9c7238e054c634232021c8687149bdf88ddd903dfd5310b775aecfe0fbd73a20",
-                  "sha256": "ae840e4070e9f1b913d3c9eadd9f8fe733dfa6e1757b8f0015dab93269a0fb16"
-                },
-                "kind": "profile",
-                "path": "profiles/co-work/profile.toml",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/profile.toml"
-              },
-              {
-                "bytes": 54,
-                "digest": {
-                  "blake3": "d942570649cf62be265f9f630235ce107baeba0cfee291d92a70f72f4fdb7fd0",
-                  "sha256": "d50fc69e653a470419ab043f15877078575927706ca56d27eb6fea1c5bcc06da"
-                },
-                "kind": "mcp",
-                "path": "profiles/co-work/mcp.json",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/mcp.json"
-              },
-              {
-                "bytes": 62,
-                "digest": {
-                  "blake3": "70d2f205a894ac43bf78b21b32232bf03384d897027cbd6f6270ea7b30220cc1",
-                  "sha256": "83584a666e8f33fb75974d1b47955d1a18bffcfe415381ed1dc65d8d7df01631"
-                },
-                "kind": "enforcement",
-                "path": "profiles/co-work/enforcement.toml",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/enforcement.toml"
-              },
-              {
-                "bytes": 60,
-                "digest": {
-                  "blake3": "100c8f09f4e1c32623ceca2d5abe1b0e5fffb2a22b1d6866d699d686190c1bb2",
-                  "sha256": "f2d0193ae62d3d3e53b8a64d253082eb1aadf794a2c71196e0010736a1d34c34"
-                },
-                "kind": "detection",
-                "path": "profiles/co-work/detection.yaml",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/detection.yaml"
-              },
-              {
-                "bytes": 62,
-                "digest": {
-                  "blake3": "4e80c5b966157941dd36285b9af0e8bac8c6ad74deeac9c1156d4b3a91c5d24c",
-                  "sha256": "528a5ff25f4ed6ee4315e9459e88ab65ee8f08a21b9381a1c52eec77beaee576"
-                },
-                "kind": "apt",
-                "path": "profiles/co-work/apt-packages.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/apt-packages.txt"
-              },
-              {
-                "bytes": 69,
-                "digest": {
-                  "blake3": "3df1789a7ad1c8fe71bffdd8bf8ee831182fbf7d285a6afa89ad0a14dc1fb96b",
-                  "sha256": "6a636384181ab27a2294c224c972b62d2202447aaef97ebd63071c02af94f06a"
-                },
-                "kind": "python",
-                "path": "profiles/co-work/python-requirements.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/python-requirements.txt"
-              },
-              {
-                "bytes": 62,
-                "digest": {
-                  "blake3": "a2f2bea70f4ac5a58359cee07ed2d14e1f69e83dbb733790f38e853c6830898c",
-                  "sha256": "440810727767880e86e42b169fa21363ada0203d8a1aa91d62fe9a1bee89b0c3"
-                },
-                "kind": "npm",
-                "path": "profiles/co-work/npm-packages.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/npm-packages.txt"
-              },
-              {
-                "bytes": 54,
-                "digest": {
-                  "blake3": "65ef584a1d85aa9f7fdae86fb644011d5da917d1b57a86dbc4a0f47a4cf947c7",
-                  "sha256": "9b81180a07aa7a6df6a1a12e1b3ce319bf022403f2de80bb6f4023e1f278018d"
-                },
-                "kind": "build",
-                "path": "profiles/co-work/build.sh",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/build.sh"
-              },
-              {
-                "bytes": 54,
-                "digest": {
-                  "blake3": "31ad923a713dc5ee48ea35b4a511055e50472b73dc02f9c86e55e5493bd4186f",
-                  "sha256": "3d825ca111fa2679caf7fe929d0eddb9d3ec154eb0b9bbb76a4097b1753655c0"
-                },
-                "kind": "tips",
-                "path": "profiles/co-work/tips.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/tips.txt"
-              },
-              {
-                "bytes": 64,
-                "digest": {
-                  "blake3": "2c29d6c645633a4bd41b6c7e3260f208db6e0bb67836e880158f75325dcdb8f9",
-                  "sha256": "d0a3a3260f0e5799d3671bece722043c70ce820b2a7c9478a2524d0c496b29d0"
-                },
-                "kind": "root_manifest",
-                "path": "profiles/co-work/root.manifest.json",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/root.manifest.json"
-              }
-            ],
             "description": "Release profile co-work",
             "id": "co-work",
-            "images": [
+            "min_capsem_version": "1.4.0",
+            "name": "Co-work",
+            "revision": "2026.07.02.1-nightly",
+            "status": "current",
+            "version": "2026.07.02.1-nightly",
+            "architectures": [
               {
                 "architecture": "arm64",
-                "artifacts": [
+                "software": [
+                  {
+                    "architecture": "arm64",
+                    "digest": {
+                      "blake3": "174b62300ad519f9600a3244a3db7fc4ea0746024c0783089cf69766e86afc8c",
+                      "sha256": "bb9f466883e337c4770f85a7353f6e9949515a79577a9858135133db2452f2e1"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/software-inventory.json",
+                    "name": "python",
+                    "source": "apt",
+                    "version": "3.12.11"
+                  },
+                  {
+                    "architecture": "arm64",
+                    "digest": {
+                      "blake3": "f6ed57221b072499cfac2bd9a23ddf8c9242a567bab5ec0b9fe83db179779d96",
+                      "sha256": "17f07d2944ec63dedd8f81d8b4fff52407ee7c5f23756c1464dcb88b1258279c"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/software-inventory.json",
+                    "name": "node",
+                    "source": "npm",
+                    "version": "24.2.0"
+                  }
+                ],
+                "config": [
+                  {
+                    "bytes": 58,
+                    "digest": {
+                      "blake3": "9c7238e054c634232021c8687149bdf88ddd903dfd5310b775aecfe0fbd73a20",
+                      "sha256": "ae840e4070e9f1b913d3c9eadd9f8fe733dfa6e1757b8f0015dab93269a0fb16"
+                    },
+                    "kind": "profile",
+                    "path": "profiles/co-work/profile.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/profile.toml"
+                  },
+                  {
+                    "bytes": 54,
+                    "digest": {
+                      "blake3": "d942570649cf62be265f9f630235ce107baeba0cfee291d92a70f72f4fdb7fd0",
+                      "sha256": "d50fc69e653a470419ab043f15877078575927706ca56d27eb6fea1c5bcc06da"
+                    },
+                    "kind": "mcp",
+                    "path": "profiles/co-work/mcp.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/mcp.json"
+                  },
+                  {
+                    "bytes": 62,
+                    "digest": {
+                      "blake3": "70d2f205a894ac43bf78b21b32232bf03384d897027cbd6f6270ea7b30220cc1",
+                      "sha256": "83584a666e8f33fb75974d1b47955d1a18bffcfe415381ed1dc65d8d7df01631"
+                    },
+                    "kind": "enforcement",
+                    "path": "profiles/co-work/enforcement.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/enforcement.toml"
+                  },
+                  {
+                    "bytes": 60,
+                    "digest": {
+                      "blake3": "100c8f09f4e1c32623ceca2d5abe1b0e5fffb2a22b1d6866d699d686190c1bb2",
+                      "sha256": "f2d0193ae62d3d3e53b8a64d253082eb1aadf794a2c71196e0010736a1d34c34"
+                    },
+                    "kind": "detection",
+                    "path": "profiles/co-work/detection.yaml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/detection.yaml"
+                  },
+                  {
+                    "bytes": 62,
+                    "digest": {
+                      "blake3": "4e80c5b966157941dd36285b9af0e8bac8c6ad74deeac9c1156d4b3a91c5d24c",
+                      "sha256": "528a5ff25f4ed6ee4315e9459e88ab65ee8f08a21b9381a1c52eec77beaee576"
+                    },
+                    "kind": "apt",
+                    "path": "profiles/co-work/apt-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/apt-packages.txt"
+                  },
+                  {
+                    "bytes": 69,
+                    "digest": {
+                      "blake3": "3df1789a7ad1c8fe71bffdd8bf8ee831182fbf7d285a6afa89ad0a14dc1fb96b",
+                      "sha256": "6a636384181ab27a2294c224c972b62d2202447aaef97ebd63071c02af94f06a"
+                    },
+                    "kind": "python",
+                    "path": "profiles/co-work/python-requirements.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 62,
+                    "digest": {
+                      "blake3": "a2f2bea70f4ac5a58359cee07ed2d14e1f69e83dbb733790f38e853c6830898c",
+                      "sha256": "440810727767880e86e42b169fa21363ada0203d8a1aa91d62fe9a1bee89b0c3"
+                    },
+                    "kind": "npm",
+                    "path": "profiles/co-work/npm-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 54,
+                    "digest": {
+                      "blake3": "65ef584a1d85aa9f7fdae86fb644011d5da917d1b57a86dbc4a0f47a4cf947c7",
+                      "sha256": "9b81180a07aa7a6df6a1a12e1b3ce319bf022403f2de80bb6f4023e1f278018d"
+                    },
+                    "kind": "build",
+                    "path": "profiles/co-work/build.sh",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/build.sh"
+                  },
+                  {
+                    "bytes": 54,
+                    "digest": {
+                      "blake3": "31ad923a713dc5ee48ea35b4a511055e50472b73dc02f9c86e55e5493bd4186f",
+                      "sha256": "3d825ca111fa2679caf7fe929d0eddb9d3ec154eb0b9bbb76a4097b1753655c0"
+                    },
+                    "kind": "tips",
+                    "path": "profiles/co-work/tips.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/tips.txt"
+                  },
+                  {
+                    "bytes": 64,
+                    "digest": {
+                      "blake3": "2c29d6c645633a4bd41b6c7e3260f208db6e0bb67836e880158f75325dcdb8f9",
+                      "sha256": "d0a3a3260f0e5799d3671bece722043c70ce820b2a7c9478a2524d0c496b29d0"
+                    },
+                    "kind": "root_manifest",
+                    "path": "profiles/co-work/root.manifest.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/root.manifest.json"
+                  }
+                ],
+                "images": [
                   {
                     "bytes": 58,
                     "digest": {
@@ -404,7 +433,143 @@
               },
               {
                 "architecture": "x86_64",
-                "artifacts": [
+                "software": [
+                  {
+                    "architecture": "x86_64",
+                    "digest": {
+                      "blake3": "174b62300ad519f9600a3244a3db7fc4ea0746024c0783089cf69766e86afc8c",
+                      "sha256": "bb9f466883e337c4770f85a7353f6e9949515a79577a9858135133db2452f2e1"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/software-inventory.json",
+                    "name": "python",
+                    "source": "apt",
+                    "version": "3.12.11"
+                  },
+                  {
+                    "architecture": "x86_64",
+                    "digest": {
+                      "blake3": "f6ed57221b072499cfac2bd9a23ddf8c9242a567bab5ec0b9fe83db179779d96",
+                      "sha256": "17f07d2944ec63dedd8f81d8b4fff52407ee7c5f23756c1464dcb88b1258279c"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/software-inventory.json",
+                    "name": "node",
+                    "source": "npm",
+                    "version": "24.2.0"
+                  }
+                ],
+                "config": [
+                  {
+                    "bytes": 58,
+                    "digest": {
+                      "blake3": "9c7238e054c634232021c8687149bdf88ddd903dfd5310b775aecfe0fbd73a20",
+                      "sha256": "ae840e4070e9f1b913d3c9eadd9f8fe733dfa6e1757b8f0015dab93269a0fb16"
+                    },
+                    "kind": "profile",
+                    "path": "profiles/co-work/profile.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/profile.toml"
+                  },
+                  {
+                    "bytes": 54,
+                    "digest": {
+                      "blake3": "d942570649cf62be265f9f630235ce107baeba0cfee291d92a70f72f4fdb7fd0",
+                      "sha256": "d50fc69e653a470419ab043f15877078575927706ca56d27eb6fea1c5bcc06da"
+                    },
+                    "kind": "mcp",
+                    "path": "profiles/co-work/mcp.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/mcp.json"
+                  },
+                  {
+                    "bytes": 62,
+                    "digest": {
+                      "blake3": "70d2f205a894ac43bf78b21b32232bf03384d897027cbd6f6270ea7b30220cc1",
+                      "sha256": "83584a666e8f33fb75974d1b47955d1a18bffcfe415381ed1dc65d8d7df01631"
+                    },
+                    "kind": "enforcement",
+                    "path": "profiles/co-work/enforcement.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/enforcement.toml"
+                  },
+                  {
+                    "bytes": 60,
+                    "digest": {
+                      "blake3": "100c8f09f4e1c32623ceca2d5abe1b0e5fffb2a22b1d6866d699d686190c1bb2",
+                      "sha256": "f2d0193ae62d3d3e53b8a64d253082eb1aadf794a2c71196e0010736a1d34c34"
+                    },
+                    "kind": "detection",
+                    "path": "profiles/co-work/detection.yaml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/detection.yaml"
+                  },
+                  {
+                    "bytes": 62,
+                    "digest": {
+                      "blake3": "4e80c5b966157941dd36285b9af0e8bac8c6ad74deeac9c1156d4b3a91c5d24c",
+                      "sha256": "528a5ff25f4ed6ee4315e9459e88ab65ee8f08a21b9381a1c52eec77beaee576"
+                    },
+                    "kind": "apt",
+                    "path": "profiles/co-work/apt-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/apt-packages.txt"
+                  },
+                  {
+                    "bytes": 69,
+                    "digest": {
+                      "blake3": "3df1789a7ad1c8fe71bffdd8bf8ee831182fbf7d285a6afa89ad0a14dc1fb96b",
+                      "sha256": "6a636384181ab27a2294c224c972b62d2202447aaef97ebd63071c02af94f06a"
+                    },
+                    "kind": "python",
+                    "path": "profiles/co-work/python-requirements.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 62,
+                    "digest": {
+                      "blake3": "a2f2bea70f4ac5a58359cee07ed2d14e1f69e83dbb733790f38e853c6830898c",
+                      "sha256": "440810727767880e86e42b169fa21363ada0203d8a1aa91d62fe9a1bee89b0c3"
+                    },
+                    "kind": "npm",
+                    "path": "profiles/co-work/npm-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 54,
+                    "digest": {
+                      "blake3": "65ef584a1d85aa9f7fdae86fb644011d5da917d1b57a86dbc4a0f47a4cf947c7",
+                      "sha256": "9b81180a07aa7a6df6a1a12e1b3ce319bf022403f2de80bb6f4023e1f278018d"
+                    },
+                    "kind": "build",
+                    "path": "profiles/co-work/build.sh",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/build.sh"
+                  },
+                  {
+                    "bytes": 54,
+                    "digest": {
+                      "blake3": "31ad923a713dc5ee48ea35b4a511055e50472b73dc02f9c86e55e5493bd4186f",
+                      "sha256": "3d825ca111fa2679caf7fe929d0eddb9d3ec154eb0b9bbb76a4097b1753655c0"
+                    },
+                    "kind": "tips",
+                    "path": "profiles/co-work/tips.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/tips.txt"
+                  },
+                  {
+                    "bytes": 64,
+                    "digest": {
+                      "blake3": "2c29d6c645633a4bd41b6c7e3260f208db6e0bb67836e880158f75325dcdb8f9",
+                      "sha256": "d0a3a3260f0e5799d3671bece722043c70ce820b2a7c9478a2524d0c496b29d0"
+                    },
+                    "kind": "root_manifest",
+                    "path": "profiles/co-work/root.manifest.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/root.manifest.json"
+                  }
+                ],
+                "images": [
                   {
                     "bytes": 59,
                     "digest": {
@@ -471,156 +636,156 @@
                   }
                 ]
               }
-            ],
-            "min_capsem_version": "1.4.0",
-            "name": "Co-work",
-            "revision": "2026.07.02.1-nightly",
-            "software": [
-              {
-                "architecture": "all",
-                "digest": {
-                  "blake3": "174b62300ad519f9600a3244a3db7fc4ea0746024c0783089cf69766e86afc8c",
-                  "sha256": "bb9f466883e337c4770f85a7353f6e9949515a79577a9858135133db2452f2e1"
-                },
-                "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/software-inventory.json",
-                "name": "python",
-                "source": "apt",
-                "version": "3.12.11"
-              },
-              {
-                "architecture": "all",
-                "digest": {
-                  "blake3": "f6ed57221b072499cfac2bd9a23ddf8c9242a567bab5ec0b9fe83db179779d96",
-                  "sha256": "17f07d2944ec63dedd8f81d8b4fff52407ee7c5f23756c1464dcb88b1258279c"
-                },
-                "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/software-inventory.json",
-                "name": "node",
-                "source": "npm",
-                "version": "24.2.0"
-              }
-            ],
-            "status": "current",
-            "version": "2026.07.02.1-nightly"
+            ]
           },
           "code": {
-            "config": [
-              {
-                "bytes": 55,
-                "digest": {
-                  "blake3": "8212bbfe4b5c9dba71dc51ed466516af199de410a44b8c3e67418846d6fbf49e",
-                  "sha256": "5a30a98c25174849b9c1e29b55caf0d6d61d289481df34bb33d53ba550c014cf"
-                },
-                "kind": "profile",
-                "path": "profiles/code/profile.toml",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/code/profile.toml"
-              },
-              {
-                "bytes": 51,
-                "digest": {
-                  "blake3": "9d3f4989bb4da49a288ef3ef4c4d0f7faffd79328d047f17b24ac5ad4b053949",
-                  "sha256": "46adaf63c8ee2e84120739a44eedb9cabc0d375a79eb0762578739d1ebf743e5"
-                },
-                "kind": "mcp",
-                "path": "profiles/code/mcp.json",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/code/mcp.json"
-              },
-              {
-                "bytes": 59,
-                "digest": {
-                  "blake3": "c15ec49b1ee598a0b203c74c4309b9f0a477a208e688269da35771edfb61243b",
-                  "sha256": "b912c0e513eb0ce427b4afe416f45aa947457987ada54f870e8bf80a7de1fef4"
-                },
-                "kind": "enforcement",
-                "path": "profiles/code/enforcement.toml",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/code/enforcement.toml"
-              },
-              {
-                "bytes": 57,
-                "digest": {
-                  "blake3": "5918921a6734f148183bf58b0f2e21ea73312119cf21deb64391f2193ea5a4db",
-                  "sha256": "2cc12122a3a55db8503eb04d64af933d8e0afb04d5019194c03bd7fd9f12c113"
-                },
-                "kind": "detection",
-                "path": "profiles/code/detection.yaml",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/code/detection.yaml"
-              },
-              {
-                "bytes": 59,
-                "digest": {
-                  "blake3": "75bbc129ff2ce55abe83c14cbbdce670c242acfeb6691c32cd233d1477d3d0cc",
-                  "sha256": "639c4898017a6765969eb899f8bfe1dd038801b5bd0ddfab971bf538b12dea90"
-                },
-                "kind": "apt",
-                "path": "profiles/code/apt-packages.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/code/apt-packages.txt"
-              },
-              {
-                "bytes": 66,
-                "digest": {
-                  "blake3": "1011ca2c038214c6b447759d0053883f3f1ce77d9e1b9174524c1985f1053637",
-                  "sha256": "5a22b7987adebe185056a62c01dcf6a2495b0647ec648968d8a4882f1eaafcb3"
-                },
-                "kind": "python",
-                "path": "profiles/code/python-requirements.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/code/python-requirements.txt"
-              },
-              {
-                "bytes": 59,
-                "digest": {
-                  "blake3": "a70791718dd9fd5a621150714a55ddc55ef6df87d733a153747c88140a6385e9",
-                  "sha256": "253513b2dc4dcf55e074a2f8cf71e669bb4ce9b0374eb96d7bcd0ee1a46ff689"
-                },
-                "kind": "npm",
-                "path": "profiles/code/npm-packages.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/code/npm-packages.txt"
-              },
-              {
-                "bytes": 51,
-                "digest": {
-                  "blake3": "5a8d4dc938f12274bd8a48e1b29501630b40b1cd4f6a4d4b1f754fd49aa098bc",
-                  "sha256": "f6cdd60841e211e022e5dcb23a4aaae7236314110510bb8af61855c561e0679f"
-                },
-                "kind": "build",
-                "path": "profiles/code/build.sh",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/code/build.sh"
-              },
-              {
-                "bytes": 51,
-                "digest": {
-                  "blake3": "1222e64509bffa7d70b4f17bede7f7c149a2d06e95da4c0a8e9a814639af6fa5",
-                  "sha256": "65a45cf4f194237905c6195c140162306ed84f879637bbae6c571cdc78d6d182"
-                },
-                "kind": "tips",
-                "path": "profiles/code/tips.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/code/tips.txt"
-              },
-              {
-                "bytes": 61,
-                "digest": {
-                  "blake3": "fd0a359b7b954421cba3fef17a0d070564db749951dc072fad7156889692eeb7",
-                  "sha256": "d2cb10022ebc2526cf6ce8211263bc9834683c62d563f2da7052acbe91c3fa1d"
-                },
-                "kind": "root_manifest",
-                "path": "profiles/code/root.manifest.json",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-nightly/code/root.manifest.json"
-              }
-            ],
             "description": "Optimized for coding and long-running agents.",
             "id": "code",
-            "images": [
+            "min_capsem_version": "1.4.0",
+            "name": "Code",
+            "revision": "2026.07.02.1-nightly",
+            "status": "current",
+            "version": "2026.07.02.1-nightly",
+            "architectures": [
               {
                 "architecture": "arm64",
-                "artifacts": [
+                "software": [
+                  {
+                    "architecture": "arm64",
+                    "digest": {
+                      "blake3": "d52a0678153df1602276d498999229dd1ac655f7c8c38a260ee4bc2a9503bbba",
+                      "sha256": "d19d6fe1e208360a51dfb0670db5c85f9d0f179f47ab6f02c8fdc7970d5e124f"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-nightly/code/arm64/software-inventory.json",
+                    "name": "python",
+                    "source": "apt",
+                    "version": "3.12.11"
+                  },
+                  {
+                    "architecture": "arm64",
+                    "digest": {
+                      "blake3": "d89a63b0defa4fde466ba64a46b006c13ede1f9cf1698564c59e8be0ee7c2baa",
+                      "sha256": "ea0b0ba271e13d7c979c73b2d8243d1434450b75012c4c7b7f243bed84f6d608"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-nightly/code/arm64/software-inventory.json",
+                    "name": "node",
+                    "source": "npm",
+                    "version": "24.2.0"
+                  }
+                ],
+                "config": [
+                  {
+                    "bytes": 55,
+                    "digest": {
+                      "blake3": "8212bbfe4b5c9dba71dc51ed466516af199de410a44b8c3e67418846d6fbf49e",
+                      "sha256": "5a30a98c25174849b9c1e29b55caf0d6d61d289481df34bb33d53ba550c014cf"
+                    },
+                    "kind": "profile",
+                    "path": "profiles/code/profile.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/profile.toml"
+                  },
+                  {
+                    "bytes": 51,
+                    "digest": {
+                      "blake3": "9d3f4989bb4da49a288ef3ef4c4d0f7faffd79328d047f17b24ac5ad4b053949",
+                      "sha256": "46adaf63c8ee2e84120739a44eedb9cabc0d375a79eb0762578739d1ebf743e5"
+                    },
+                    "kind": "mcp",
+                    "path": "profiles/code/mcp.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/mcp.json"
+                  },
+                  {
+                    "bytes": 59,
+                    "digest": {
+                      "blake3": "c15ec49b1ee598a0b203c74c4309b9f0a477a208e688269da35771edfb61243b",
+                      "sha256": "b912c0e513eb0ce427b4afe416f45aa947457987ada54f870e8bf80a7de1fef4"
+                    },
+                    "kind": "enforcement",
+                    "path": "profiles/code/enforcement.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/enforcement.toml"
+                  },
+                  {
+                    "bytes": 57,
+                    "digest": {
+                      "blake3": "5918921a6734f148183bf58b0f2e21ea73312119cf21deb64391f2193ea5a4db",
+                      "sha256": "2cc12122a3a55db8503eb04d64af933d8e0afb04d5019194c03bd7fd9f12c113"
+                    },
+                    "kind": "detection",
+                    "path": "profiles/code/detection.yaml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/detection.yaml"
+                  },
+                  {
+                    "bytes": 59,
+                    "digest": {
+                      "blake3": "75bbc129ff2ce55abe83c14cbbdce670c242acfeb6691c32cd233d1477d3d0cc",
+                      "sha256": "639c4898017a6765969eb899f8bfe1dd038801b5bd0ddfab971bf538b12dea90"
+                    },
+                    "kind": "apt",
+                    "path": "profiles/code/apt-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/apt-packages.txt"
+                  },
+                  {
+                    "bytes": 66,
+                    "digest": {
+                      "blake3": "1011ca2c038214c6b447759d0053883f3f1ce77d9e1b9174524c1985f1053637",
+                      "sha256": "5a22b7987adebe185056a62c01dcf6a2495b0647ec648968d8a4882f1eaafcb3"
+                    },
+                    "kind": "python",
+                    "path": "profiles/code/python-requirements.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 59,
+                    "digest": {
+                      "blake3": "a70791718dd9fd5a621150714a55ddc55ef6df87d733a153747c88140a6385e9",
+                      "sha256": "253513b2dc4dcf55e074a2f8cf71e669bb4ce9b0374eb96d7bcd0ee1a46ff689"
+                    },
+                    "kind": "npm",
+                    "path": "profiles/code/npm-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 51,
+                    "digest": {
+                      "blake3": "5a8d4dc938f12274bd8a48e1b29501630b40b1cd4f6a4d4b1f754fd49aa098bc",
+                      "sha256": "f6cdd60841e211e022e5dcb23a4aaae7236314110510bb8af61855c561e0679f"
+                    },
+                    "kind": "build",
+                    "path": "profiles/code/build.sh",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/build.sh"
+                  },
+                  {
+                    "bytes": 51,
+                    "digest": {
+                      "blake3": "1222e64509bffa7d70b4f17bede7f7c149a2d06e95da4c0a8e9a814639af6fa5",
+                      "sha256": "65a45cf4f194237905c6195c140162306ed84f879637bbae6c571cdc78d6d182"
+                    },
+                    "kind": "tips",
+                    "path": "profiles/code/tips.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/tips.txt"
+                  },
+                  {
+                    "bytes": 61,
+                    "digest": {
+                      "blake3": "fd0a359b7b954421cba3fef17a0d070564db749951dc072fad7156889692eeb7",
+                      "sha256": "d2cb10022ebc2526cf6ce8211263bc9834683c62d563f2da7052acbe91c3fa1d"
+                    },
+                    "kind": "root_manifest",
+                    "path": "profiles/code/root.manifest.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/root.manifest.json"
+                  }
+                ],
+                "images": [
                   {
                     "bytes": 55,
                     "digest": {
@@ -689,7 +854,143 @@
               },
               {
                 "architecture": "x86_64",
-                "artifacts": [
+                "software": [
+                  {
+                    "architecture": "x86_64",
+                    "digest": {
+                      "blake3": "d52a0678153df1602276d498999229dd1ac655f7c8c38a260ee4bc2a9503bbba",
+                      "sha256": "d19d6fe1e208360a51dfb0670db5c85f9d0f179f47ab6f02c8fdc7970d5e124f"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/software-inventory.json",
+                    "name": "python",
+                    "source": "apt",
+                    "version": "3.12.11"
+                  },
+                  {
+                    "architecture": "x86_64",
+                    "digest": {
+                      "blake3": "d89a63b0defa4fde466ba64a46b006c13ede1f9cf1698564c59e8be0ee7c2baa",
+                      "sha256": "ea0b0ba271e13d7c979c73b2d8243d1434450b75012c4c7b7f243bed84f6d608"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/software-inventory.json",
+                    "name": "node",
+                    "source": "npm",
+                    "version": "24.2.0"
+                  }
+                ],
+                "config": [
+                  {
+                    "bytes": 55,
+                    "digest": {
+                      "blake3": "8212bbfe4b5c9dba71dc51ed466516af199de410a44b8c3e67418846d6fbf49e",
+                      "sha256": "5a30a98c25174849b9c1e29b55caf0d6d61d289481df34bb33d53ba550c014cf"
+                    },
+                    "kind": "profile",
+                    "path": "profiles/code/profile.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/profile.toml"
+                  },
+                  {
+                    "bytes": 51,
+                    "digest": {
+                      "blake3": "9d3f4989bb4da49a288ef3ef4c4d0f7faffd79328d047f17b24ac5ad4b053949",
+                      "sha256": "46adaf63c8ee2e84120739a44eedb9cabc0d375a79eb0762578739d1ebf743e5"
+                    },
+                    "kind": "mcp",
+                    "path": "profiles/code/mcp.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/mcp.json"
+                  },
+                  {
+                    "bytes": 59,
+                    "digest": {
+                      "blake3": "c15ec49b1ee598a0b203c74c4309b9f0a477a208e688269da35771edfb61243b",
+                      "sha256": "b912c0e513eb0ce427b4afe416f45aa947457987ada54f870e8bf80a7de1fef4"
+                    },
+                    "kind": "enforcement",
+                    "path": "profiles/code/enforcement.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/enforcement.toml"
+                  },
+                  {
+                    "bytes": 57,
+                    "digest": {
+                      "blake3": "5918921a6734f148183bf58b0f2e21ea73312119cf21deb64391f2193ea5a4db",
+                      "sha256": "2cc12122a3a55db8503eb04d64af933d8e0afb04d5019194c03bd7fd9f12c113"
+                    },
+                    "kind": "detection",
+                    "path": "profiles/code/detection.yaml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/detection.yaml"
+                  },
+                  {
+                    "bytes": 59,
+                    "digest": {
+                      "blake3": "75bbc129ff2ce55abe83c14cbbdce670c242acfeb6691c32cd233d1477d3d0cc",
+                      "sha256": "639c4898017a6765969eb899f8bfe1dd038801b5bd0ddfab971bf538b12dea90"
+                    },
+                    "kind": "apt",
+                    "path": "profiles/code/apt-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/apt-packages.txt"
+                  },
+                  {
+                    "bytes": 66,
+                    "digest": {
+                      "blake3": "1011ca2c038214c6b447759d0053883f3f1ce77d9e1b9174524c1985f1053637",
+                      "sha256": "5a22b7987adebe185056a62c01dcf6a2495b0647ec648968d8a4882f1eaafcb3"
+                    },
+                    "kind": "python",
+                    "path": "profiles/code/python-requirements.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 59,
+                    "digest": {
+                      "blake3": "a70791718dd9fd5a621150714a55ddc55ef6df87d733a153747c88140a6385e9",
+                      "sha256": "253513b2dc4dcf55e074a2f8cf71e669bb4ce9b0374eb96d7bcd0ee1a46ff689"
+                    },
+                    "kind": "npm",
+                    "path": "profiles/code/npm-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 51,
+                    "digest": {
+                      "blake3": "5a8d4dc938f12274bd8a48e1b29501630b40b1cd4f6a4d4b1f754fd49aa098bc",
+                      "sha256": "f6cdd60841e211e022e5dcb23a4aaae7236314110510bb8af61855c561e0679f"
+                    },
+                    "kind": "build",
+                    "path": "profiles/code/build.sh",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/build.sh"
+                  },
+                  {
+                    "bytes": 51,
+                    "digest": {
+                      "blake3": "1222e64509bffa7d70b4f17bede7f7c149a2d06e95da4c0a8e9a814639af6fa5",
+                      "sha256": "65a45cf4f194237905c6195c140162306ed84f879637bbae6c571cdc78d6d182"
+                    },
+                    "kind": "tips",
+                    "path": "profiles/code/tips.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/tips.txt"
+                  },
+                  {
+                    "bytes": 61,
+                    "digest": {
+                      "blake3": "fd0a359b7b954421cba3fef17a0d070564db749951dc072fad7156889692eeb7",
+                      "sha256": "d2cb10022ebc2526cf6ce8211263bc9834683c62d563f2da7052acbe91c3fa1d"
+                    },
+                    "kind": "root_manifest",
+                    "path": "profiles/code/root.manifest.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/root.manifest.json"
+                  }
+                ],
+                "images": [
                   {
                     "bytes": 56,
                     "digest": {
@@ -756,36 +1057,7 @@
                   }
                 ]
               }
-            ],
-            "min_capsem_version": "1.4.0",
-            "name": "Code",
-            "revision": "2026.07.02.1-nightly",
-            "software": [
-              {
-                "architecture": "all",
-                "digest": {
-                  "blake3": "d52a0678153df1602276d498999229dd1ac655f7c8c38a260ee4bc2a9503bbba",
-                  "sha256": "d19d6fe1e208360a51dfb0670db5c85f9d0f179f47ab6f02c8fdc7970d5e124f"
-                },
-                "evidence": "/profiles/releases/2026.07.02.1-nightly/code/arm64/software-inventory.json",
-                "name": "python",
-                "source": "apt",
-                "version": "3.12.11"
-              },
-              {
-                "architecture": "all",
-                "digest": {
-                  "blake3": "d89a63b0defa4fde466ba64a46b006c13ede1f9cf1698564c59e8be0ee7c2baa",
-                  "sha256": "ea0b0ba271e13d7c979c73b2d8243d1434450b75012c4c7b7f243bed84f6d608"
-                },
-                "evidence": "/profiles/releases/2026.07.02.1-nightly/code/arm64/software-inventory.json",
-                "name": "node",
-                "source": "npm",
-                "version": "24.2.0"
-              }
-            ],
-            "status": "current",
-            "version": "2026.07.02.1-nightly"
+            ]
           }
         },
         "status": "current",
@@ -919,124 +1191,153 @@
         ],
         "profiles": {
           "co-work": {
-            "config": [
-              {
-                "bytes": 40,
-                "digest": {
-                  "blake3": "a34d0c215c6e7d0a888a0cc89c47660bb51757ed3ef329a7094d5f6608d73472",
-                  "sha256": "78c2bbdeaba15a9a0788c2c7247379f5a4f57e722c802917eaec8b6232535f14"
-                },
-                "kind": "profile",
-                "path": "profiles/co-work/profile.toml",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/co-work/profile.toml"
-              },
-              {
-                "bytes": 36,
-                "digest": {
-                  "blake3": "f02d7529f9a08860c623d948e9551099cbf24bd0ac5b80b6325a93f94ce7627f",
-                  "sha256": "14bd328fd3b8178017b1e9c7140aeb1d42d1005fefee17492fb8ce0ead9ca5e9"
-                },
-                "kind": "mcp",
-                "path": "profiles/co-work/mcp.json",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/co-work/mcp.json"
-              },
-              {
-                "bytes": 44,
-                "digest": {
-                  "blake3": "dbb988ec188203f84ff441e107c894522776ed1705d8c22f7dd74767ca730114",
-                  "sha256": "816c8ba7769ee3de7b58b675415cde9473dcbc277bb2c9335a234fcb064865c5"
-                },
-                "kind": "enforcement",
-                "path": "profiles/co-work/enforcement.toml",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/co-work/enforcement.toml"
-              },
-              {
-                "bytes": 42,
-                "digest": {
-                  "blake3": "7ff1d8f9d5a18bbcd7aece4fe182f2c9daef57c472dac77f64c2fb1146f7f2f8",
-                  "sha256": "5fe019336b310df2a2aab660718097584080195d767a0b0e26a57bbe6d96ac68"
-                },
-                "kind": "detection",
-                "path": "profiles/co-work/detection.yaml",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/co-work/detection.yaml"
-              },
-              {
-                "bytes": 44,
-                "digest": {
-                  "blake3": "cfcdb3f875c5416749f4e270ef7e161287fd6aa569e7ac9da461d85c7d3e09f2",
-                  "sha256": "f2712f34a9dc7aff0efe55e95d8f8f4f29387b95b17f0e40317e70214bf62540"
-                },
-                "kind": "apt",
-                "path": "profiles/co-work/apt-packages.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/co-work/apt-packages.txt"
-              },
-              {
-                "bytes": 51,
-                "digest": {
-                  "blake3": "9c86b81dc09c7ce1fee956e2abb945abcd5bcb63a48371c3f14d3db8d8b94b4f",
-                  "sha256": "dc733bb17a54c74211ec521f209f42d2aa3e1c14c195dd9acbd1c97e78963dc5"
-                },
-                "kind": "python",
-                "path": "profiles/co-work/python-requirements.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/co-work/python-requirements.txt"
-              },
-              {
-                "bytes": 44,
-                "digest": {
-                  "blake3": "d93c5e967f72d4a069952f7774530cc9a60d49684f9cdc62f218e9bda12be16e",
-                  "sha256": "94629267c795b60481679ac063789818eaf2cf9333b75b8ee453801dcca3af57"
-                },
-                "kind": "npm",
-                "path": "profiles/co-work/npm-packages.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/co-work/npm-packages.txt"
-              },
-              {
-                "bytes": 36,
-                "digest": {
-                  "blake3": "7c6fcab3de71ec8b6a05f217b7b3f261d550a65ff599adece1f588e481f577f7",
-                  "sha256": "a595b9a1e2a527b361bfe300f1c0ab1ef1779c1952d0b1bd0665fb767d8fee7a"
-                },
-                "kind": "build",
-                "path": "profiles/co-work/build.sh",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/co-work/build.sh"
-              },
-              {
-                "bytes": 36,
-                "digest": {
-                  "blake3": "b7a96c0020210c2777557d5640de075390f35e247ce15bb81b3411b88170acb6",
-                  "sha256": "c50357480b5b329306be4b62b8e0553a70f18f48b1d9528269b31c05d6522d36"
-                },
-                "kind": "tips",
-                "path": "profiles/co-work/tips.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/co-work/tips.txt"
-              },
-              {
-                "bytes": 46,
-                "digest": {
-                  "blake3": "3d481a09a9a047cfd41bfc73ff2222170fbb5725bc1aed74f58ff426cb160987",
-                  "sha256": "34a0a07b630af1ed36c1d68a5f58e58673ff5f5810e226a5e0cf2616b8364c39"
-                },
-                "kind": "root_manifest",
-                "path": "profiles/co-work/root.manifest.json",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/co-work/root.manifest.json"
-              }
-            ],
             "description": "Release profile co-work",
             "id": "co-work",
-            "images": [
+            "min_capsem_version": "1.4.0",
+            "name": "Co-work",
+            "revision": "2026.07.02.1-stable",
+            "status": "current",
+            "version": "2026.07.02.1-stable",
+            "architectures": [
               {
                 "architecture": "arm64",
-                "artifacts": [
+                "software": [
+                  {
+                    "architecture": "arm64",
+                    "digest": {
+                      "blake3": "eb2600045d9b53bc4b5c02732c542661f07532a778cd3094d9305deb3e883971",
+                      "sha256": "42346cb6e9f1147e63c42d8ecebe33eee21b12d4d2c883ac66cb1943a76b39fa"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/software-inventory.json",
+                    "name": "python",
+                    "source": "apt",
+                    "version": "3.12.11"
+                  },
+                  {
+                    "architecture": "arm64",
+                    "digest": {
+                      "blake3": "d54c4c5889bab1bda3bb7e0d57cb05b091e7f565121ee401f3640f2ce815f68c",
+                      "sha256": "76f4214fe07e62f5e043fb3501ab0a6f74757af1d0558f4aafcb55f1782fcd59"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/software-inventory.json",
+                    "name": "node",
+                    "source": "npm",
+                    "version": "24.2.0"
+                  }
+                ],
+                "config": [
+                  {
+                    "bytes": 40,
+                    "digest": {
+                      "blake3": "a34d0c215c6e7d0a888a0cc89c47660bb51757ed3ef329a7094d5f6608d73472",
+                      "sha256": "78c2bbdeaba15a9a0788c2c7247379f5a4f57e722c802917eaec8b6232535f14"
+                    },
+                    "kind": "profile",
+                    "path": "profiles/co-work/profile.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/profile.toml"
+                  },
+                  {
+                    "bytes": 36,
+                    "digest": {
+                      "blake3": "f02d7529f9a08860c623d948e9551099cbf24bd0ac5b80b6325a93f94ce7627f",
+                      "sha256": "14bd328fd3b8178017b1e9c7140aeb1d42d1005fefee17492fb8ce0ead9ca5e9"
+                    },
+                    "kind": "mcp",
+                    "path": "profiles/co-work/mcp.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/mcp.json"
+                  },
+                  {
+                    "bytes": 44,
+                    "digest": {
+                      "blake3": "dbb988ec188203f84ff441e107c894522776ed1705d8c22f7dd74767ca730114",
+                      "sha256": "816c8ba7769ee3de7b58b675415cde9473dcbc277bb2c9335a234fcb064865c5"
+                    },
+                    "kind": "enforcement",
+                    "path": "profiles/co-work/enforcement.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/enforcement.toml"
+                  },
+                  {
+                    "bytes": 42,
+                    "digest": {
+                      "blake3": "7ff1d8f9d5a18bbcd7aece4fe182f2c9daef57c472dac77f64c2fb1146f7f2f8",
+                      "sha256": "5fe019336b310df2a2aab660718097584080195d767a0b0e26a57bbe6d96ac68"
+                    },
+                    "kind": "detection",
+                    "path": "profiles/co-work/detection.yaml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/detection.yaml"
+                  },
+                  {
+                    "bytes": 44,
+                    "digest": {
+                      "blake3": "cfcdb3f875c5416749f4e270ef7e161287fd6aa569e7ac9da461d85c7d3e09f2",
+                      "sha256": "f2712f34a9dc7aff0efe55e95d8f8f4f29387b95b17f0e40317e70214bf62540"
+                    },
+                    "kind": "apt",
+                    "path": "profiles/co-work/apt-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/apt-packages.txt"
+                  },
+                  {
+                    "bytes": 51,
+                    "digest": {
+                      "blake3": "9c86b81dc09c7ce1fee956e2abb945abcd5bcb63a48371c3f14d3db8d8b94b4f",
+                      "sha256": "dc733bb17a54c74211ec521f209f42d2aa3e1c14c195dd9acbd1c97e78963dc5"
+                    },
+                    "kind": "python",
+                    "path": "profiles/co-work/python-requirements.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 44,
+                    "digest": {
+                      "blake3": "d93c5e967f72d4a069952f7774530cc9a60d49684f9cdc62f218e9bda12be16e",
+                      "sha256": "94629267c795b60481679ac063789818eaf2cf9333b75b8ee453801dcca3af57"
+                    },
+                    "kind": "npm",
+                    "path": "profiles/co-work/npm-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 36,
+                    "digest": {
+                      "blake3": "7c6fcab3de71ec8b6a05f217b7b3f261d550a65ff599adece1f588e481f577f7",
+                      "sha256": "a595b9a1e2a527b361bfe300f1c0ab1ef1779c1952d0b1bd0665fb767d8fee7a"
+                    },
+                    "kind": "build",
+                    "path": "profiles/co-work/build.sh",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/build.sh"
+                  },
+                  {
+                    "bytes": 36,
+                    "digest": {
+                      "blake3": "b7a96c0020210c2777557d5640de075390f35e247ce15bb81b3411b88170acb6",
+                      "sha256": "c50357480b5b329306be4b62b8e0553a70f18f48b1d9528269b31c05d6522d36"
+                    },
+                    "kind": "tips",
+                    "path": "profiles/co-work/tips.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/tips.txt"
+                  },
+                  {
+                    "bytes": 46,
+                    "digest": {
+                      "blake3": "3d481a09a9a047cfd41bfc73ff2222170fbb5725bc1aed74f58ff426cb160987",
+                      "sha256": "34a0a07b630af1ed36c1d68a5f58e58673ff5f5810e226a5e0cf2616b8364c39"
+                    },
+                    "kind": "root_manifest",
+                    "path": "profiles/co-work/root.manifest.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/root.manifest.json"
+                  }
+                ],
+                "images": [
                   {
                     "bytes": 40,
                     "digest": {
@@ -1105,7 +1406,143 @@
               },
               {
                 "architecture": "x86_64",
-                "artifacts": [
+                "software": [
+                  {
+                    "architecture": "x86_64",
+                    "digest": {
+                      "blake3": "eb2600045d9b53bc4b5c02732c542661f07532a778cd3094d9305deb3e883971",
+                      "sha256": "42346cb6e9f1147e63c42d8ecebe33eee21b12d4d2c883ac66cb1943a76b39fa"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/software-inventory.json",
+                    "name": "python",
+                    "source": "apt",
+                    "version": "3.12.11"
+                  },
+                  {
+                    "architecture": "x86_64",
+                    "digest": {
+                      "blake3": "d54c4c5889bab1bda3bb7e0d57cb05b091e7f565121ee401f3640f2ce815f68c",
+                      "sha256": "76f4214fe07e62f5e043fb3501ab0a6f74757af1d0558f4aafcb55f1782fcd59"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/software-inventory.json",
+                    "name": "node",
+                    "source": "npm",
+                    "version": "24.2.0"
+                  }
+                ],
+                "config": [
+                  {
+                    "bytes": 40,
+                    "digest": {
+                      "blake3": "a34d0c215c6e7d0a888a0cc89c47660bb51757ed3ef329a7094d5f6608d73472",
+                      "sha256": "78c2bbdeaba15a9a0788c2c7247379f5a4f57e722c802917eaec8b6232535f14"
+                    },
+                    "kind": "profile",
+                    "path": "profiles/co-work/profile.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/profile.toml"
+                  },
+                  {
+                    "bytes": 36,
+                    "digest": {
+                      "blake3": "f02d7529f9a08860c623d948e9551099cbf24bd0ac5b80b6325a93f94ce7627f",
+                      "sha256": "14bd328fd3b8178017b1e9c7140aeb1d42d1005fefee17492fb8ce0ead9ca5e9"
+                    },
+                    "kind": "mcp",
+                    "path": "profiles/co-work/mcp.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/mcp.json"
+                  },
+                  {
+                    "bytes": 44,
+                    "digest": {
+                      "blake3": "dbb988ec188203f84ff441e107c894522776ed1705d8c22f7dd74767ca730114",
+                      "sha256": "816c8ba7769ee3de7b58b675415cde9473dcbc277bb2c9335a234fcb064865c5"
+                    },
+                    "kind": "enforcement",
+                    "path": "profiles/co-work/enforcement.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/enforcement.toml"
+                  },
+                  {
+                    "bytes": 42,
+                    "digest": {
+                      "blake3": "7ff1d8f9d5a18bbcd7aece4fe182f2c9daef57c472dac77f64c2fb1146f7f2f8",
+                      "sha256": "5fe019336b310df2a2aab660718097584080195d767a0b0e26a57bbe6d96ac68"
+                    },
+                    "kind": "detection",
+                    "path": "profiles/co-work/detection.yaml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/detection.yaml"
+                  },
+                  {
+                    "bytes": 44,
+                    "digest": {
+                      "blake3": "cfcdb3f875c5416749f4e270ef7e161287fd6aa569e7ac9da461d85c7d3e09f2",
+                      "sha256": "f2712f34a9dc7aff0efe55e95d8f8f4f29387b95b17f0e40317e70214bf62540"
+                    },
+                    "kind": "apt",
+                    "path": "profiles/co-work/apt-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/apt-packages.txt"
+                  },
+                  {
+                    "bytes": 51,
+                    "digest": {
+                      "blake3": "9c86b81dc09c7ce1fee956e2abb945abcd5bcb63a48371c3f14d3db8d8b94b4f",
+                      "sha256": "dc733bb17a54c74211ec521f209f42d2aa3e1c14c195dd9acbd1c97e78963dc5"
+                    },
+                    "kind": "python",
+                    "path": "profiles/co-work/python-requirements.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 44,
+                    "digest": {
+                      "blake3": "d93c5e967f72d4a069952f7774530cc9a60d49684f9cdc62f218e9bda12be16e",
+                      "sha256": "94629267c795b60481679ac063789818eaf2cf9333b75b8ee453801dcca3af57"
+                    },
+                    "kind": "npm",
+                    "path": "profiles/co-work/npm-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 36,
+                    "digest": {
+                      "blake3": "7c6fcab3de71ec8b6a05f217b7b3f261d550a65ff599adece1f588e481f577f7",
+                      "sha256": "a595b9a1e2a527b361bfe300f1c0ab1ef1779c1952d0b1bd0665fb767d8fee7a"
+                    },
+                    "kind": "build",
+                    "path": "profiles/co-work/build.sh",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/build.sh"
+                  },
+                  {
+                    "bytes": 36,
+                    "digest": {
+                      "blake3": "b7a96c0020210c2777557d5640de075390f35e247ce15bb81b3411b88170acb6",
+                      "sha256": "c50357480b5b329306be4b62b8e0553a70f18f48b1d9528269b31c05d6522d36"
+                    },
+                    "kind": "tips",
+                    "path": "profiles/co-work/tips.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/tips.txt"
+                  },
+                  {
+                    "bytes": 46,
+                    "digest": {
+                      "blake3": "3d481a09a9a047cfd41bfc73ff2222170fbb5725bc1aed74f58ff426cb160987",
+                      "sha256": "34a0a07b630af1ed36c1d68a5f58e58673ff5f5810e226a5e0cf2616b8364c39"
+                    },
+                    "kind": "root_manifest",
+                    "path": "profiles/co-work/root.manifest.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/root.manifest.json"
+                  }
+                ],
+                "images": [
                   {
                     "bytes": 41,
                     "digest": {
@@ -1172,156 +1609,156 @@
                   }
                 ]
               }
-            ],
-            "min_capsem_version": "1.4.0",
-            "name": "Co-work",
-            "revision": "2026.07.02.1-stable",
-            "software": [
-              {
-                "architecture": "all",
-                "digest": {
-                  "blake3": "eb2600045d9b53bc4b5c02732c542661f07532a778cd3094d9305deb3e883971",
-                  "sha256": "42346cb6e9f1147e63c42d8ecebe33eee21b12d4d2c883ac66cb1943a76b39fa"
-                },
-                "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/software-inventory.json",
-                "name": "python",
-                "source": "apt",
-                "version": "3.12.11"
-              },
-              {
-                "architecture": "all",
-                "digest": {
-                  "blake3": "d54c4c5889bab1bda3bb7e0d57cb05b091e7f565121ee401f3640f2ce815f68c",
-                  "sha256": "76f4214fe07e62f5e043fb3501ab0a6f74757af1d0558f4aafcb55f1782fcd59"
-                },
-                "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/software-inventory.json",
-                "name": "node",
-                "source": "npm",
-                "version": "24.2.0"
-              }
-            ],
-            "status": "current",
-            "version": "2026.07.02.1-stable"
+            ]
           },
           "code": {
-            "config": [
-              {
-                "bytes": 37,
-                "digest": {
-                  "blake3": "e510a9dbae2063615f791e24707382c90fb391f321b582c1f662bc8e61f0237d",
-                  "sha256": "579a134af30bafd2b3dccd4fbc8ba73e416cdbdd57a0bce68dba54a548aba4b4"
-                },
-                "kind": "profile",
-                "path": "profiles/code/profile.toml",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/code/profile.toml"
-              },
-              {
-                "bytes": 33,
-                "digest": {
-                  "blake3": "14c8f14517ede388e527517af3896cdc90303ae17560b53d623c74f9147d839f",
-                  "sha256": "9dade83d8c201a110565d7e4a2217d89728880767f52e04a10f5bd99d8eddff1"
-                },
-                "kind": "mcp",
-                "path": "profiles/code/mcp.json",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/code/mcp.json"
-              },
-              {
-                "bytes": 41,
-                "digest": {
-                  "blake3": "9b125c3272920380f54e5e7f5325fbcb84704cae1f2674adb4269ed71108e6e9",
-                  "sha256": "9ddfb78aeb2786907a43fbe2c9a36abc112f67a96ead990ebd5f1319ebf31725"
-                },
-                "kind": "enforcement",
-                "path": "profiles/code/enforcement.toml",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/code/enforcement.toml"
-              },
-              {
-                "bytes": 39,
-                "digest": {
-                  "blake3": "e44f8f6607b6e950de2c359713870db84240b5cb960ea917b5d55c9f9562899f",
-                  "sha256": "a41402ee4fd2c8e7adfc9c0513f4184b2aba524a433e2745d7b5ec38b608a909"
-                },
-                "kind": "detection",
-                "path": "profiles/code/detection.yaml",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/code/detection.yaml"
-              },
-              {
-                "bytes": 41,
-                "digest": {
-                  "blake3": "ce8cc7c9a92f4acd82849d2138fe4cc84af84a128de3aa14260fa3bc30c7500a",
-                  "sha256": "8b62cd9198537a56d55d2655697a35968f1095e3671823be7cf910aeef0266e9"
-                },
-                "kind": "apt",
-                "path": "profiles/code/apt-packages.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/code/apt-packages.txt"
-              },
-              {
-                "bytes": 48,
-                "digest": {
-                  "blake3": "223371148d7be187417cd84f748d05c1ebc02be55c1023b863551baf2d5c5694",
-                  "sha256": "3bd82a15997fe8c376b6c0bde94cb8bae143e2e97f0532fd5a28370094fc5a91"
-                },
-                "kind": "python",
-                "path": "profiles/code/python-requirements.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/code/python-requirements.txt"
-              },
-              {
-                "bytes": 41,
-                "digest": {
-                  "blake3": "8e930968495267fc4079f6bda8b2b06e665392a3e4960138a8108000c792c0f7",
-                  "sha256": "ca4b07e503f308bf73ed473914c953e007bfd00af6c34f0865fdf606ff8394be"
-                },
-                "kind": "npm",
-                "path": "profiles/code/npm-packages.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/code/npm-packages.txt"
-              },
-              {
-                "bytes": 33,
-                "digest": {
-                  "blake3": "f9caf4c883637ef09d9e1dae4d7850d09bfd5d5c9768e967b0aa9ca89872c58b",
-                  "sha256": "6bdc477586852f23a53b4af9551afdd8f9a2cd464b7bc13daab2066e7bc94e74"
-                },
-                "kind": "build",
-                "path": "profiles/code/build.sh",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/code/build.sh"
-              },
-              {
-                "bytes": 33,
-                "digest": {
-                  "blake3": "62159f274dbcaba994c9de3edb55e963608b0d67205769e5fdfb563bc0540cca",
-                  "sha256": "65d2b354289f0aea06a9f50fe6ab0d1209607f0c39acfc6c4c160bfe30d9f094"
-                },
-                "kind": "tips",
-                "path": "profiles/code/tips.txt",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/code/tips.txt"
-              },
-              {
-                "bytes": 43,
-                "digest": {
-                  "blake3": "5ff13783f9fd0e1286710250d31e8bdef9a06f67ec0aa2b493d3ea77c66a94e5",
-                  "sha256": "9ebaf3151b105841095de9851135d53de348a3a5e8bb38ad974c8fb980737193"
-                },
-                "kind": "root_manifest",
-                "path": "profiles/code/root.manifest.json",
-                "status": "current",
-                "url": "/profiles/releases/2026.07.02.1-stable/code/root.manifest.json"
-              }
-            ],
             "description": "Optimized for coding and long-running agents.",
             "id": "code",
-            "images": [
+            "min_capsem_version": "1.4.0",
+            "name": "Code",
+            "revision": "2026.07.02.1-stable",
+            "status": "current",
+            "version": "2026.07.02.1-stable",
+            "architectures": [
               {
                 "architecture": "arm64",
-                "artifacts": [
+                "software": [
+                  {
+                    "architecture": "arm64",
+                    "digest": {
+                      "blake3": "a044118b12ab7ef207e99804bb7b396a7cda8e3019e4f3ae83ffa67c9cdf4d18",
+                      "sha256": "53d3952f98e6bc230e4436e19cf67566aa52be78c7c1f266374722dba835963c"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-stable/code/arm64/software-inventory.json",
+                    "name": "python",
+                    "source": "apt",
+                    "version": "3.12.11"
+                  },
+                  {
+                    "architecture": "arm64",
+                    "digest": {
+                      "blake3": "9a727b024f52d79ec84af9121da4aca7c255790b0cb24a02f806f4bc568c536a",
+                      "sha256": "10df2d2939111bbf50dd6d84fef84e9494bfc75fa45283717a740898834fdeb6"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-stable/code/arm64/software-inventory.json",
+                    "name": "node",
+                    "source": "npm",
+                    "version": "24.2.0"
+                  }
+                ],
+                "config": [
+                  {
+                    "bytes": 37,
+                    "digest": {
+                      "blake3": "e510a9dbae2063615f791e24707382c90fb391f321b582c1f662bc8e61f0237d",
+                      "sha256": "579a134af30bafd2b3dccd4fbc8ba73e416cdbdd57a0bce68dba54a548aba4b4"
+                    },
+                    "kind": "profile",
+                    "path": "profiles/code/profile.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/profile.toml"
+                  },
+                  {
+                    "bytes": 33,
+                    "digest": {
+                      "blake3": "14c8f14517ede388e527517af3896cdc90303ae17560b53d623c74f9147d839f",
+                      "sha256": "9dade83d8c201a110565d7e4a2217d89728880767f52e04a10f5bd99d8eddff1"
+                    },
+                    "kind": "mcp",
+                    "path": "profiles/code/mcp.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/mcp.json"
+                  },
+                  {
+                    "bytes": 41,
+                    "digest": {
+                      "blake3": "9b125c3272920380f54e5e7f5325fbcb84704cae1f2674adb4269ed71108e6e9",
+                      "sha256": "9ddfb78aeb2786907a43fbe2c9a36abc112f67a96ead990ebd5f1319ebf31725"
+                    },
+                    "kind": "enforcement",
+                    "path": "profiles/code/enforcement.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/enforcement.toml"
+                  },
+                  {
+                    "bytes": 39,
+                    "digest": {
+                      "blake3": "e44f8f6607b6e950de2c359713870db84240b5cb960ea917b5d55c9f9562899f",
+                      "sha256": "a41402ee4fd2c8e7adfc9c0513f4184b2aba524a433e2745d7b5ec38b608a909"
+                    },
+                    "kind": "detection",
+                    "path": "profiles/code/detection.yaml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/detection.yaml"
+                  },
+                  {
+                    "bytes": 41,
+                    "digest": {
+                      "blake3": "ce8cc7c9a92f4acd82849d2138fe4cc84af84a128de3aa14260fa3bc30c7500a",
+                      "sha256": "8b62cd9198537a56d55d2655697a35968f1095e3671823be7cf910aeef0266e9"
+                    },
+                    "kind": "apt",
+                    "path": "profiles/code/apt-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/apt-packages.txt"
+                  },
+                  {
+                    "bytes": 48,
+                    "digest": {
+                      "blake3": "223371148d7be187417cd84f748d05c1ebc02be55c1023b863551baf2d5c5694",
+                      "sha256": "3bd82a15997fe8c376b6c0bde94cb8bae143e2e97f0532fd5a28370094fc5a91"
+                    },
+                    "kind": "python",
+                    "path": "profiles/code/python-requirements.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 41,
+                    "digest": {
+                      "blake3": "8e930968495267fc4079f6bda8b2b06e665392a3e4960138a8108000c792c0f7",
+                      "sha256": "ca4b07e503f308bf73ed473914c953e007bfd00af6c34f0865fdf606ff8394be"
+                    },
+                    "kind": "npm",
+                    "path": "profiles/code/npm-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 33,
+                    "digest": {
+                      "blake3": "f9caf4c883637ef09d9e1dae4d7850d09bfd5d5c9768e967b0aa9ca89872c58b",
+                      "sha256": "6bdc477586852f23a53b4af9551afdd8f9a2cd464b7bc13daab2066e7bc94e74"
+                    },
+                    "kind": "build",
+                    "path": "profiles/code/build.sh",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/build.sh"
+                  },
+                  {
+                    "bytes": 33,
+                    "digest": {
+                      "blake3": "62159f274dbcaba994c9de3edb55e963608b0d67205769e5fdfb563bc0540cca",
+                      "sha256": "65d2b354289f0aea06a9f50fe6ab0d1209607f0c39acfc6c4c160bfe30d9f094"
+                    },
+                    "kind": "tips",
+                    "path": "profiles/code/tips.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/tips.txt"
+                  },
+                  {
+                    "bytes": 43,
+                    "digest": {
+                      "blake3": "5ff13783f9fd0e1286710250d31e8bdef9a06f67ec0aa2b493d3ea77c66a94e5",
+                      "sha256": "9ebaf3151b105841095de9851135d53de348a3a5e8bb38ad974c8fb980737193"
+                    },
+                    "kind": "root_manifest",
+                    "path": "profiles/code/root.manifest.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/root.manifest.json"
+                  }
+                ],
+                "images": [
                   {
                     "bytes": 37,
                     "digest": {
@@ -1390,7 +1827,143 @@
               },
               {
                 "architecture": "x86_64",
-                "artifacts": [
+                "software": [
+                  {
+                    "architecture": "x86_64",
+                    "digest": {
+                      "blake3": "a044118b12ab7ef207e99804bb7b396a7cda8e3019e4f3ae83ffa67c9cdf4d18",
+                      "sha256": "53d3952f98e6bc230e4436e19cf67566aa52be78c7c1f266374722dba835963c"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-stable/code/x86_64/software-inventory.json",
+                    "name": "python",
+                    "source": "apt",
+                    "version": "3.12.11"
+                  },
+                  {
+                    "architecture": "x86_64",
+                    "digest": {
+                      "blake3": "9a727b024f52d79ec84af9121da4aca7c255790b0cb24a02f806f4bc568c536a",
+                      "sha256": "10df2d2939111bbf50dd6d84fef84e9494bfc75fa45283717a740898834fdeb6"
+                    },
+                    "evidence": "/profiles/releases/2026.07.02.1-stable/code/x86_64/software-inventory.json",
+                    "name": "node",
+                    "source": "npm",
+                    "version": "24.2.0"
+                  }
+                ],
+                "config": [
+                  {
+                    "bytes": 37,
+                    "digest": {
+                      "blake3": "e510a9dbae2063615f791e24707382c90fb391f321b582c1f662bc8e61f0237d",
+                      "sha256": "579a134af30bafd2b3dccd4fbc8ba73e416cdbdd57a0bce68dba54a548aba4b4"
+                    },
+                    "kind": "profile",
+                    "path": "profiles/code/profile.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/profile.toml"
+                  },
+                  {
+                    "bytes": 33,
+                    "digest": {
+                      "blake3": "14c8f14517ede388e527517af3896cdc90303ae17560b53d623c74f9147d839f",
+                      "sha256": "9dade83d8c201a110565d7e4a2217d89728880767f52e04a10f5bd99d8eddff1"
+                    },
+                    "kind": "mcp",
+                    "path": "profiles/code/mcp.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/mcp.json"
+                  },
+                  {
+                    "bytes": 41,
+                    "digest": {
+                      "blake3": "9b125c3272920380f54e5e7f5325fbcb84704cae1f2674adb4269ed71108e6e9",
+                      "sha256": "9ddfb78aeb2786907a43fbe2c9a36abc112f67a96ead990ebd5f1319ebf31725"
+                    },
+                    "kind": "enforcement",
+                    "path": "profiles/code/enforcement.toml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/enforcement.toml"
+                  },
+                  {
+                    "bytes": 39,
+                    "digest": {
+                      "blake3": "e44f8f6607b6e950de2c359713870db84240b5cb960ea917b5d55c9f9562899f",
+                      "sha256": "a41402ee4fd2c8e7adfc9c0513f4184b2aba524a433e2745d7b5ec38b608a909"
+                    },
+                    "kind": "detection",
+                    "path": "profiles/code/detection.yaml",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/detection.yaml"
+                  },
+                  {
+                    "bytes": 41,
+                    "digest": {
+                      "blake3": "ce8cc7c9a92f4acd82849d2138fe4cc84af84a128de3aa14260fa3bc30c7500a",
+                      "sha256": "8b62cd9198537a56d55d2655697a35968f1095e3671823be7cf910aeef0266e9"
+                    },
+                    "kind": "apt",
+                    "path": "profiles/code/apt-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/apt-packages.txt"
+                  },
+                  {
+                    "bytes": 48,
+                    "digest": {
+                      "blake3": "223371148d7be187417cd84f748d05c1ebc02be55c1023b863551baf2d5c5694",
+                      "sha256": "3bd82a15997fe8c376b6c0bde94cb8bae143e2e97f0532fd5a28370094fc5a91"
+                    },
+                    "kind": "python",
+                    "path": "profiles/code/python-requirements.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/python-requirements.txt"
+                  },
+                  {
+                    "bytes": 41,
+                    "digest": {
+                      "blake3": "8e930968495267fc4079f6bda8b2b06e665392a3e4960138a8108000c792c0f7",
+                      "sha256": "ca4b07e503f308bf73ed473914c953e007bfd00af6c34f0865fdf606ff8394be"
+                    },
+                    "kind": "npm",
+                    "path": "profiles/code/npm-packages.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/npm-packages.txt"
+                  },
+                  {
+                    "bytes": 33,
+                    "digest": {
+                      "blake3": "f9caf4c883637ef09d9e1dae4d7850d09bfd5d5c9768e967b0aa9ca89872c58b",
+                      "sha256": "6bdc477586852f23a53b4af9551afdd8f9a2cd464b7bc13daab2066e7bc94e74"
+                    },
+                    "kind": "build",
+                    "path": "profiles/code/build.sh",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/build.sh"
+                  },
+                  {
+                    "bytes": 33,
+                    "digest": {
+                      "blake3": "62159f274dbcaba994c9de3edb55e963608b0d67205769e5fdfb563bc0540cca",
+                      "sha256": "65d2b354289f0aea06a9f50fe6ab0d1209607f0c39acfc6c4c160bfe30d9f094"
+                    },
+                    "kind": "tips",
+                    "path": "profiles/code/tips.txt",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/tips.txt"
+                  },
+                  {
+                    "bytes": 43,
+                    "digest": {
+                      "blake3": "5ff13783f9fd0e1286710250d31e8bdef9a06f67ec0aa2b493d3ea77c66a94e5",
+                      "sha256": "9ebaf3151b105841095de9851135d53de348a3a5e8bb38ad974c8fb980737193"
+                    },
+                    "kind": "root_manifest",
+                    "path": "profiles/code/root.manifest.json",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/root.manifest.json"
+                  }
+                ],
+                "images": [
                   {
                     "bytes": 38,
                     "digest": {
@@ -1457,36 +2030,7 @@
                   }
                 ]
               }
-            ],
-            "min_capsem_version": "1.4.0",
-            "name": "Code",
-            "revision": "2026.07.02.1-stable",
-            "software": [
-              {
-                "architecture": "all",
-                "digest": {
-                  "blake3": "a044118b12ab7ef207e99804bb7b396a7cda8e3019e4f3ae83ffa67c9cdf4d18",
-                  "sha256": "53d3952f98e6bc230e4436e19cf67566aa52be78c7c1f266374722dba835963c"
-                },
-                "evidence": "/profiles/releases/2026.07.02.1-stable/code/arm64/software-inventory.json",
-                "name": "python",
-                "source": "apt",
-                "version": "3.12.11"
-              },
-              {
-                "architecture": "all",
-                "digest": {
-                  "blake3": "9a727b024f52d79ec84af9121da4aca7c255790b0cb24a02f806f4bc568c536a",
-                  "sha256": "10df2d2939111bbf50dd6d84fef84e9494bfc75fa45283717a740898834fdeb6"
-                },
-                "evidence": "/profiles/releases/2026.07.02.1-stable/code/arm64/software-inventory.json",
-                "name": "node",
-                "source": "npm",
-                "version": "24.2.0"
-              }
-            ],
-            "status": "current",
-            "version": "2026.07.02.1-stable"
+            ]
           }
         },
         "status": "current",

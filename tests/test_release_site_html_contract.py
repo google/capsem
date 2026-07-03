@@ -98,9 +98,9 @@ def test_truncated_hash_display() -> None:
         graph["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0][
             "digest"
         ]["sha256"],
-        graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]["config"][0][
-            "digest"
-        ]["sha256"],
+        graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]["architectures"][
+            0
+        ]["config"][0]["digest"]["sha256"],
     ]
     rendered = "\n".join(
         path.read_text(encoding="utf-8")

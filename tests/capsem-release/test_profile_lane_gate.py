@@ -82,9 +82,9 @@ def test_co_work_nightly_update_does_not_touch_stable_or_binaries(tmp_path: Path
 
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "f" * 64
     profile["revision"] = "2026.07.02.2-nightly"
-    profile["config"][0]["digest"]["sha256"] = "f" * 64
-    profile["images"][0]["artifacts"][0]["digest"]["sha256"] = "e" * 64
-    profile["images"][0]["evidence"][0]["digest"]["blake3"] = "d" * 64
+    profile["architectures"][0]["config"][0]["digest"]["sha256"] = "f" * 64
+    profile["architectures"][0]["images"][0]["digest"]["sha256"] = "e" * 64
+    profile["architectures"][0]["evidence"][0]["digest"]["blake3"] = "d" * 64
 
     summary = tmp_path / "profile-lane-summary.json"
     result = _run_policy(
@@ -116,11 +116,11 @@ def test_co_work_nightly_update_does_not_touch_stable_or_binaries(tmp_path: Path
     assert report["violations"] == []
     assert "channels.nightly.manifests.0.digest.sha256" in report["allowed_paths"]
     assert (
-        "manifests.nightly.1.5.0-nightly.20260702.profiles.co-work.config.0.digest.sha256"
+        "manifests.nightly.1.5.0-nightly.20260702.profiles.co-work.architectures.0.config.0.digest.sha256"
         in report["allowed_paths"]
     )
     assert (
-        "manifests.nightly.1.5.0-nightly.20260702.profiles.co-work.images.0.artifacts.0.digest.sha256"
+        "manifests.nightly.1.5.0-nightly.20260702.profiles.co-work.architectures.0.images.0.digest.sha256"
         in report["allowed_paths"]
     )
 

@@ -78,26 +78,17 @@ def test_switch_stable_to_nightly_and_back() -> None:
     assert nightly_co_work["revision"] == "2026.07.02.1-nightly"
     assert stable_co_work["min_capsem_version"] == "1.4.0"
     assert nightly_co_work["min_capsem_version"] == "1.4.0"
-    assert stable_co_work["config"][0]["digest"]["hmac"] == "stable-co-work-config-hmac"
-    assert nightly_co_work["config"][0]["digest"]["hmac"] == "nightly-co-work-config-hmac"
-    assert stable_co_work["images"][0]["artifacts"][0]["digest"]["hmac"] == (
-        "stable-co-work-rootfs-hmac"
-    )
-    assert nightly_co_work["images"][0]["artifacts"][0]["digest"]["hmac"] == (
-        "nightly-co-work-rootfs-hmac"
-    )
-    assert stable_co_work["images"][0]["evidence"][0]["kind"] == "abom"
-    assert nightly_co_work["images"][0]["evidence"][0]["kind"] == "abom"
-    assert stable_co_work["images"][0]["evidence"][0]["digest"]["hmac"] == (
-        "stable-co-work-abom-hmac"
-    )
-    assert nightly_co_work["images"][0]["evidence"][0]["digest"]["hmac"] == (
-        "nightly-co-work-abom-hmac"
-    )
+    stable_arch = stable_co_work["architectures"][0]
+    nightly_arch = nightly_co_work["architectures"][0]
+    assert stable_arch["config"][0]["digest"]["sha256"] != nightly_arch["config"][0]["digest"]["sha256"]
+    assert stable_arch["images"][0]["digest"]["sha256"] != nightly_arch["images"][0]["digest"]["sha256"]
+    assert stable_arch["evidence"][0]["kind"] == "abom"
+    assert nightly_arch["evidence"][0]["kind"] == "abom"
+    assert stable_arch["evidence"][0]["digest"]["blake3"] != nightly_arch["evidence"][0]["digest"]["blake3"]
     assert stable_before["packages"][0]["name"] == "Capsem-1.4.0.pkg"
     assert nightly["packages"][0]["name"] == "Capsem-1.5.0-nightly.20260702.pkg"
-    assert stable_before["binaries"][0]["version"] == "1.4.0"
-    assert nightly["binaries"][0]["version"] == "1.5.0-nightly.20260702"
+    assert stable_before["packages"][0]["binaries"][0]["version"] == "1.4.0"
+    assert nightly["packages"][0]["binaries"][0]["version"] == "1.5.0-nightly.20260702"
     assert "stable_to_nightly_manifest_switch_resolves_nightly_updates" in source
 
 

@@ -80,7 +80,6 @@ const packageGroups = Array.from(
           <tr class="border-b border-zinc-200 text-left text-zinc-500">
             <th class="py-2 pr-4 font-medium">Version</th>
             <th class="py-2 pr-4 font-medium">Status</th>
-            <th class="py-2 pr-4 font-medium">Manifest URL</th>
             <th class="py-2 pr-4 font-medium">SHA-256</th>
             <th class="py-2 pr-4 font-medium">BLAKE3</th>
           </tr>
@@ -90,7 +89,6 @@ const packageGroups = Array.from(
             <tr class="border-b border-zinc-100 align-top">
               <td class="py-3 pr-4"><code>{manifest.version}</code></td>
               <td class="py-3 pr-4">{manifest.status}</td>
-              <td class="py-3 pr-4"><a class="break-all text-blue-600 underline" href={manifest.url}>{manifest.url}</a></td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(manifest.digest?.sha256)}</code></td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(manifest.digest?.blake3)}</code></td>
             </tr>

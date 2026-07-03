@@ -997,15 +997,15 @@ fn apply_profile_release_status(
     profile.validate_profile_ownership()?;
     profile.status = status;
     let mut changed_config_refs = 0;
-    for config in &mut profile.config {
-        if config.status != status {
-            changed_config_refs += 1;
-        }
-        config.status = status;
-    }
     let mut changed_image_artifacts = 0;
-    for images in &mut profile.images {
-        for artifact in &mut images.artifacts {
+    for architecture in &mut profile.architectures {
+        for config in &mut architecture.config {
+            if config.status != status {
+                changed_config_refs += 1;
+            }
+            config.status = status;
+        }
+        for artifact in &mut architecture.artifacts {
             if artifact.status != status {
                 changed_image_artifacts += 1;
             }
@@ -3179,7 +3179,6 @@ fn graph_profile_document(
     asset_digest_cache: &mut AssetDigestCache,
 ) -> Result<serde_json::Value> {
     let revision = profile.revision.clone();
-    let config = graph_profile_config_refs(profile, config_root, &revision, file_copies)?;
     let images = graph_profile_images(
         profile,
         manifest,
@@ -3196,6 +3195,35 @@ fn graph_profile_document(
         assets_dir,
         asset_digest_cache,
     )?;
+    let image_records = images
+        .as_array()
+        .ok_or_else(|| anyhow!("profile {} image graph is not an array", profile.id))?;
+    let mut architectures = Vec::new();
+    for image in image_records {
+        let arch = image
+            .get("architecture")
+            .and_then(|value| value.as_str())
+            .ok_or_else(|| anyhow!("profile {} image record missing architecture", profile.id))?;
+        let config = graph_profile_config_refs(profile, config_root, &revision, arch, file_copies)?;
+        let arch_software = software.get(arch).cloned().unwrap_or_default();
+        let image_artifacts = image
+            .get("artifacts")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let evidence = image
+            .get("evidence")
+            .and_then(|value| value.as_array())
+            .cloned()
+            .unwrap_or_default();
+        architectures.push(serde_json::json!({
+            "architecture": arch,
+            "software": arch_software,
+            "config": config,
+            "images": image_artifacts,
+            "evidence": evidence,
+        }));
+    }
     Ok(serde_json::json!({
         "id": profile.id,
         "name": profile.name,
@@ -3204,9 +3232,7 @@ fn graph_profile_document(
         "revision": profile.revision,
         "status": "current",
         "min_capsem_version": current_release.min_binary,
-        "software": software,
-        "config": config,
-        "images": images,
+        "architectures": architectures,
     }))
 }
 
@@ -3214,6 +3240,7 @@ fn graph_profile_config_refs(
     profile: &ProfileConfigFile,
     config_root: &Path,
     revision: &str,
+    arch: &str,
     file_copies: &mut Vec<ProfileReleaseFileCopy>,
 ) -> Result<Vec<serde_json::Value>> {
     let mut files = Vec::new();
@@ -3233,7 +3260,7 @@ fn graph_profile_config_refs(
             .file_name()
             .and_then(|name| name.to_str())
             .ok_or_else(|| anyhow!("profile {} config path has no file name: {relative}", profile.id))?;
-        let url = format!("/profiles/releases/{revision}/{}/{file_name}", profile.id);
+        let url = format!("/profiles/releases/{revision}/{}/{arch}/{file_name}", profile.id);
         file_copies.push(ProfileReleaseFileCopy {
             source,
             url: url.clone(),
@@ -3394,8 +3421,8 @@ fn graph_profile_software(
     asset_base: &str,
     assets_dir: &Path,
     asset_digest_cache: &mut AssetDigestCache,
-) -> Result<Vec<serde_json::Value>> {
-    let mut rows = Vec::new();
+) -> Result<BTreeMap<String, Vec<serde_json::Value>>> {
+    let mut rows: BTreeMap<String, Vec<serde_json::Value>> = BTreeMap::new();
     for arch in profile.assets.arch.keys() {
         let manifest_assets = current_release.arches.get(arch).ok_or_else(|| {
             anyhow!(
@@ -3439,34 +3466,31 @@ fn graph_profile_software(
             }
             let source = require_json_string_value(package, "source")
                 .with_context(|| format!("{name} missing source in {}", inventory_path.display()))?;
-            let architecture = package
-                .get("architecture")
-                .and_then(|value| value.as_str())
-                .filter(|value| !value.is_empty())
-                .unwrap_or(arch);
             let row_core = serde_json::json!({
                 "name": name,
                 "version": version,
                 "source": source,
-                "architecture": architecture,
+                "architecture": arch,
                 "evidence": evidence,
             });
             let digest = json_digest(&row_core)?;
-            rows.push(serde_json::json!({
+            rows.entry(arch.clone()).or_default().push(serde_json::json!({
                 "name": name,
                 "version": version,
                 "source": source,
-                "architecture": architecture,
+                "architecture": arch,
                 "digest": digest,
                 "evidence": evidence,
             }));
         }
     }
-    rows.sort_by(|left, right| {
-        left.get("name")
-            .and_then(|value| value.as_str())
-            .cmp(&right.get("name").and_then(|value| value.as_str()))
-    });
+    for arch_rows in rows.values_mut() {
+        arch_rows.sort_by(|left, right| {
+            left.get("name")
+                .and_then(|value| value.as_str())
+                .cmp(&right.get("name").and_then(|value| value.as_str()))
+        });
+    }
     Ok(rows)
 }
 
@@ -7691,12 +7715,12 @@ decision = "block"
             .expect("profiles object")
             .values()
             .flat_map(|profile| {
-                profile["images"]
+                profile["architectures"]
                     .as_array()
                     .into_iter()
                     .flatten()
                     .filter(|image| image["architecture"].as_str() == Some("arm64"))
-                    .flat_map(|image| image["artifacts"].as_array().into_iter().flatten())
+                    .flat_map(|image| image["images"].as_array().into_iter().flatten())
             })
             .find(|artifact| {
                 artifact["kind"].as_str() == Some("kernel")
@@ -8926,11 +8950,11 @@ decision = "block"
             Some("current")
         );
         assert_eq!(
-            nightly["profiles"]["co-work"]["config"][0]["status"].as_str(),
+            nightly["profiles"]["co-work"]["architectures"][0]["config"][0]["status"].as_str(),
             Some("current")
         );
         assert_eq!(
-            nightly["profiles"]["co-work"]["images"][0]["artifacts"][0]["status"].as_str(),
+            nightly["profiles"]["co-work"]["architectures"][0]["images"][0]["status"].as_str(),
             Some("current")
         );
 
@@ -8990,53 +9014,53 @@ decision = "block"
       "revision": "{profile_revision}",
       "status": "{status}",
 	      "min_capsem_version": "1.4.0",
-	      "software": [
+	      "architectures": [
 	        {{
-	          "name": "python",
-	          "version": "3.12.11",
-	          "source": "apt",
 	          "architecture": "arm64",
-	          "evidence": "/profiles/releases/{profile_revision}/co-work/apt-packages.txt",
-	          "digest": {digest}
+	          "software": [
+	            {{
+	              "name": "python",
+	              "version": "3.12.11",
+	              "source": "apt",
+	              "architecture": "arm64",
+	              "evidence": "/profiles/releases/{profile_revision}/co-work/arm64/apt-packages.txt",
+	              "digest": {digest}
+	            }}
+	          ],
+	          "config": [
+	            {{
+	              "kind": "mcp",
+	              "path": "profiles/co-work/mcp.json",
+	              "url": "/profiles/releases/{profile_revision}/co-work/arm64/mcp.json",
+	              "bytes": 12,
+	              "digest": {digest},
+	              "status": "{status}"
+	            }}
+	          ],
+	          "images": [
+	            {{
+	              "kind": "rootfs",
+	              "name": "rootfs.erofs",
+	              "url": "/profiles/releases/{profile_revision}/co-work/arm64/rootfs.erofs",
+	              "bytes": 42,
+	              "digest": {digest},
+	              "status": "{status}"
+	            }}
+	          ],
+	          "evidence": [
+	            {{
+	              "kind": "abom",
+	              "url": "/profiles/releases/{profile_revision}/co-work/arm64/abom.cdx.json",
+	              "digest": {digest}
+	            }},
+	            {{
+	              "kind": "sbom",
+	              "url": "/profiles/releases/{profile_revision}/co-work/arm64/sbom.cdx.json",
+	              "digest": {digest}
+	            }}
+	          ]
 	        }}
-      ],
-      "config": [
-        {{
-          "kind": "mcp",
-          "path": "profiles/co-work/mcp.json",
-          "url": "/profiles/releases/{profile_revision}/co-work/mcp.json",
-          "bytes": 12,
-          "digest": {digest},
-          "status": "{status}"
-        }}
-      ],
-      "images": [
-        {{
-          "architecture": "arm64",
-          "artifacts": [
-            {{
-              "kind": "rootfs",
-              "name": "rootfs.erofs",
-              "url": "/profiles/releases/{profile_revision}/co-work/arm64/rootfs.erofs",
-              "bytes": 42,
-              "digest": {digest},
-              "status": "{status}"
-            }}
-          ],
-          "evidence": [
-            {{
-              "kind": "abom",
-              "url": "/profiles/releases/{profile_revision}/co-work/arm64/abom.cdx.json",
-              "digest": {digest}
-            }},
-            {{
-              "kind": "sbom",
-              "url": "/profiles/releases/{profile_revision}/co-work/arm64/sbom.cdx.json",
-              "digest": {digest}
-            }}
-          ]
-        }}
-      ]
+	      ]
     }}
   }}
 }}"#,

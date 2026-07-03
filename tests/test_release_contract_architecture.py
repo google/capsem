@@ -107,15 +107,36 @@ def test_status_enum() -> None:
                 for item in package.get("evidence", []):
                     collect_status(item)
             for profile in manifest["profiles"].values():
-                for item in profile["config"]:
-                    collect_status(item)
-                images = profile["images"].values() if isinstance(profile["images"], dict) else profile["images"]
-                for image in images:
-                    for item in image["artifacts"]:
+                for architecture in profile["architectures"]:
+                    for item in architecture["config"]:
                         collect_status(item)
-                    for item in image["evidence"]:
+                    for item in architecture["images"]:
+                        collect_status(item)
+                    for item in architecture["evidence"]:
                         collect_status(item)
 
     assert statuses
     assert set(statuses) <= allowed
     assert "removed" not in statuses
+
+
+def test_profile_paths_are_channel_profile_arch_payloads() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            for architecture in profile["architectures"]:
+                arch = architecture["architecture"]
+                expected_profile_prefix = f"/profiles/releases/{profile['revision']}/{profile_id}/{arch}/"
+                for item in architecture["config"]:
+                    assert item["url"].startswith(expected_profile_prefix), item["url"]
+                for item in architecture["images"]:
+                    assert item["url"].startswith(
+                        ("/assets/releases/", expected_profile_prefix)
+                    ), item["url"]
+                for item in architecture["evidence"]:
+                    assert item["url"].startswith(
+                        ("/assets/releases/", expected_profile_prefix)
+                    ), item["url"]

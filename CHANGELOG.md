@@ -59,6 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package SBOM evidence instead of relying on broad test selection.
 - Removed the release profile page fallback to binary compatibility metadata so
   profiles expose only profile-owned minimum Capsem requirements.
+- Moved generated profile release payloads under architecture-owned software,
+  config, image, and evidence blocks, and updated release-site validation so
+  human pages keep one canonical manifest URL while machine catalogs retain
+  immutable audit records.
 
 ## [1.4.1782944059] - 2026-07-01
 

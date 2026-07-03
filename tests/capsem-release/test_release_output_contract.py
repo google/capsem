@@ -272,27 +272,28 @@ def test_profile_software_inventory_is_complete_and_hashed(
     assert profiles
 
     for profile_id, profile in profiles.items():
-        software = profile["software"]
-        assert isinstance(software, list), profile_id
-        assert software, profile_id
         seen_digests: dict[tuple[str, str], str] = {}
-        for index, package in enumerate(software):
-            context = f"profiles.{profile_id}.software[{index}]"
-            assert isinstance(package["name"], str), context
-            assert isinstance(package["version"], str), context
-            assert package["version"] != "unversioned", context
-            assert isinstance(package["source"], str), context
-            assert isinstance(package["architecture"], str), context
-            assert isinstance(package["evidence"], str), context
-            assert package["evidence"].startswith("/assets/releases/"), context
-            assert package["evidence"].endswith("-software-inventory.json"), context
-            assert set(package["digest"]) == {"sha256", "blake3"}, context
-            _assert_no_hmac(package, context)
-            for digest_name, digest_value in package["digest"].items():
-                previous = seen_digests.setdefault((digest_name, digest_value), package["name"])
-                assert previous == package["name"], (
-                    f"{context} shares {digest_name} digest with {previous}"
-                )
+        for arch, architecture in _profile_architectures(profile).items():
+            software = architecture["software"]
+            assert isinstance(software, list), profile_id
+            assert software, f"{profile_id}:{arch}"
+            for index, package in enumerate(software):
+                context = f"profiles.{profile_id}.architectures.{arch}.software[{index}]"
+                assert isinstance(package["name"], str), context
+                assert isinstance(package["version"], str), context
+                assert package["version"] != "unversioned", context
+                assert isinstance(package["source"], str), context
+                assert package["architecture"] == arch, context
+                assert isinstance(package["evidence"], str), context
+                assert package["evidence"].startswith("/assets/releases/"), context
+                assert package["evidence"].endswith("-software-inventory.json"), context
+                assert set(package["digest"]) == {"sha256", "blake3"}, context
+                _assert_no_hmac(package, context)
+                for digest_name, digest_value in package["digest"].items():
+                    previous = seen_digests.setdefault((digest_name, digest_value), package["name"])
+                    assert previous == package["name"], (
+                        f"{context} shares {digest_name} digest with {previous}"
+                    )
 
 
 def test_deterministic_graph_fixture_matches_release_contract() -> None:
@@ -322,17 +323,18 @@ def test_deterministic_graph_profile_software_inventory_is_hashed() -> None:
     for channel, manifests in graph["manifests"].items():
         for version, manifest in manifests.items():
             for profile_id, profile in manifest["profiles"].items():
-                software = profile["software"]
-                assert software, f"{channel}.{version}.{profile_id}"
-                for index, package in enumerate(software):
-                    context = (
-                        f"manifests.{channel}.{version}.profiles.{profile_id}"
-                        f".software[{index}]"
-                    )
-                    assert isinstance(package.get("architecture"), str), context
-                    assert isinstance(package.get("evidence"), str), context
-                    assert set(package["digest"]) == {"sha256", "blake3"}, context
-                    _assert_no_hmac(package, context)
+                for arch, architecture in _profile_architectures(profile).items():
+                    software = architecture["software"]
+                    assert software, f"{channel}.{version}.{profile_id}.{arch}"
+                    for index, package in enumerate(software):
+                        context = (
+                            f"manifests.{channel}.{version}.profiles.{profile_id}"
+                            f".architectures.{arch}.software[{index}]"
+                        )
+                        assert package.get("architecture") == arch, context
+                        assert isinstance(package.get("evidence"), str), context
+                        assert set(package["digest"]) == {"sha256", "blake3"}, context
+                        _assert_no_hmac(package, context)
 
 
 def test_release_site_source_does_not_render_fields_missing_from_contract() -> None:
@@ -448,22 +450,21 @@ def _assert_profile_shape(profile_id: str, profile: dict[str, Any], context: str
     assert FORBIDDEN_PROFILE_FIELDS.isdisjoint(profile), context
     assert isinstance(profile["revision"], str)
     assert isinstance(profile["min_capsem_version"], str)
-    assert isinstance(profile["config"], list)
-    assert isinstance(profile["images"], list)
-    architectures = [image.get("architecture") for image in profile["images"]]
+    assert "config" not in profile
+    assert "images" not in profile
+    assert "software" not in profile
+    architectures = _profile_architectures(profile)
     assert architectures
-    assert all(isinstance(architecture, str) for architecture in architectures)
-    assert len(architectures) == len(set(architectures))
     _assert_no_hmac(profile, context)
 
 
 def _profile_artifact_descriptors(profile: dict[str, Any]) -> Iterator[dict[str, Any]]:
-    for item in profile["config"]:
-        yield item
-    for image in profile["images"]:
-        for item in image["artifacts"]:
+    for architecture in _profile_architectures(profile).values():
+        for item in architecture["config"]:
             yield item
-        for item in image["evidence"]:
+        for item in architecture["images"]:
+            yield item
+        for item in architecture["evidence"]:
             yield item
 
 
@@ -589,14 +590,19 @@ def _check_profiles_do_not_select_binary(dist: Path) -> None:
 def _check_profile_config_complete(dist: Path) -> None:
     for profile_id, profile in _selected_manifest(dist)["profiles"].items():
         expected = _expected_profile_config_files(profile_id)
-        actual = {Path(item["path"]).name for item in profile["config"]}
+        actual = {
+            Path(item["path"]).name
+            for architecture in _profile_architectures(profile).values()
+            for item in architecture["config"]
+        }
         assert expected <= actual, f"{profile_id} missing {sorted(expected - actual)}"
 
 
 def _check_profile_config_digests_real(dist: Path) -> None:
     for profile_id, profile in _selected_manifest(dist)["profiles"].items():
-        for item in profile["config"]:
-            _assert_digest_real(item["digest"], f"{profile_id}:{item['path']}")
+        for arch, architecture in _profile_architectures(profile).items():
+            for item in architecture["config"]:
+                _assert_digest_real(item["digest"], f"{profile_id}:{arch}:{item['path']}")
 
 
 def _check_profile_images_complete(dist: Path) -> None:
@@ -627,20 +633,21 @@ def _check_profile_evidence_digests_real(dist: Path) -> None:
 
 def _check_software_inventory_hashed(dist: Path) -> None:
     for profile_id, profile in _selected_manifest(dist)["profiles"].items():
-        software = profile["software"]
-        assert software, profile_id
         seen_digests: dict[tuple[str, str], str] = {}
-        for item in software:
-            assert isinstance(item.get("architecture"), str), item
-            assert isinstance(item.get("evidence"), str), item
-            assert isinstance(item.get("version"), str), item
-            assert item["version"] != "unversioned", item
-            _assert_digest_real(item["digest"], f"{profile_id}:{item['name']}")
-            for digest_name, digest_value in item["digest"].items():
-                previous = seen_digests.setdefault((digest_name, digest_value), item["name"])
-                assert previous == item["name"], (
-                    f"{profile_id}:{item['name']} shares {digest_name} digest with {previous}"
-                )
+        for arch, architecture in _profile_architectures(profile).items():
+            software = architecture["software"]
+            assert software, f"{profile_id}:{arch}"
+            for item in software:
+                assert item.get("architecture") == arch, item
+                assert isinstance(item.get("evidence"), str), item
+                assert isinstance(item.get("version"), str), item
+                assert item["version"] != "unversioned", item
+                _assert_digest_real(item["digest"], f"{profile_id}:{arch}:{item['name']}")
+                for digest_name, digest_value in item["digest"].items():
+                    previous = seen_digests.setdefault((digest_name, digest_value), item["name"])
+                    assert previous == item["name"], (
+                        f"{profile_id}:{item['name']} shares {digest_name} digest with {previous}"
+                    )
 
 
 def _check_root_page_ownership(dist: Path) -> None:
@@ -656,10 +663,11 @@ def _check_channel_page_ownership(dist: Path) -> None:
 def _check_profile_pages_render_config(dist: Path) -> None:
     for profile_id, profile in _selected_manifest(dist)["profiles"].items():
         page = _channel_profile_page(dist, profile_id)
-        for item in profile["config"]:
-            assert item["url"] in page, f"{profile_id}:{item['url']}"
-            assert _hash_label(item["digest"]["sha256"]) in page, f"{profile_id}:{item['url']}"
-            assert _hash_label(item["digest"]["blake3"]) in page, f"{profile_id}:{item['url']}"
+        for architecture in _profile_architectures(profile).values():
+            for item in architecture["config"]:
+                assert item["url"] in page, f"{profile_id}:{item['url']}"
+                assert _hash_label(item["digest"]["sha256"]) in page, f"{profile_id}:{item['url']}"
+                assert _hash_label(item["digest"]["blake3"]) in page, f"{profile_id}:{item['url']}"
 
 
 def _check_profile_pages_render_images(dist: Path) -> None:
@@ -675,11 +683,12 @@ def _check_profile_pages_render_images(dist: Path) -> None:
 def _check_profile_pages_render_software(dist: Path) -> None:
     for profile_id, profile in _selected_manifest(dist)["profiles"].items():
         page = _channel_profile_page(dist, profile_id)
-        for item in profile["software"]:
-            assert item["name"] in page, f"{profile_id}:{item}"
-            assert item["version"] in page, f"{profile_id}:{item}"
-            assert _hash_label(item["digest"]["sha256"]) in page, f"{profile_id}:{item}"
-            assert _hash_label(item["digest"]["blake3"]) in page, f"{profile_id}:{item}"
+        for architecture in _profile_architectures(profile).values():
+            for item in architecture["software"]:
+                assert item["name"] in page, f"{profile_id}:{item}"
+                assert item["version"] in page, f"{profile_id}:{item}"
+                assert _hash_label(item["digest"]["sha256"]) in page, f"{profile_id}:{item}"
+                assert _hash_label(item["digest"]["blake3"]) in page, f"{profile_id}:{item}"
 
 
 def _assert_digest_real(digest: dict[str, Any], context: str) -> None:
@@ -714,9 +723,28 @@ def _expected_profile_config_files(profile_id: str) -> set[str]:
 
 
 def _profile_images(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    images = profile["images"]
-    assert isinstance(images, list), profile["id"]
-    return {image["architecture"]: image for image in images}
+    return {
+        arch: {
+            "architecture": arch,
+            "artifacts": architecture["images"],
+            "evidence": architecture["evidence"],
+        }
+        for arch, architecture in _profile_architectures(profile).items()
+    }
+
+
+def _profile_architectures(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    architectures = profile["architectures"]
+    assert isinstance(architectures, list), profile["id"]
+    by_arch = {architecture["architecture"]: architecture for architecture in architectures}
+    assert len(by_arch) == len(architectures), profile["id"]
+    for arch, architecture in by_arch.items():
+        assert isinstance(arch, str), profile["id"]
+        assert isinstance(architecture["software"], list), f"{profile['id']}:{arch}"
+        assert isinstance(architecture["config"], list), f"{profile['id']}:{arch}"
+        assert isinstance(architecture["images"], list), f"{profile['id']}:{arch}"
+        assert isinstance(architecture["evidence"], list), f"{profile['id']}:{arch}"
+    return by_arch
 
 
 def _channel_profile_page(dist: Path, profile_id: str) -> str:

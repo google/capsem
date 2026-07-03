@@ -106,7 +106,10 @@ def test_fixture_has_stable_and_nightly() -> None:
     assert nightly["profiles"]["co-work"]["revision"].endswith("-nightly")
     assert stable["profiles"]["co-work"]["revision"].endswith("-stable")
     assert nightly["profiles"]["co-work"]["min_capsem_version"] == "1.4.0"
-    assert nightly["profiles"]["co-work"]["images"][0]["evidence"][0]["kind"] == "abom"
+    assert (
+        nightly["profiles"]["co-work"]["architectures"][0]["evidence"][0]["kind"]
+        == "abom"
+    )
 
 
 def test_ledger_is_derived_not_authoritative() -> None:
@@ -122,7 +125,7 @@ def test_ledger_is_derived_not_authoritative() -> None:
         "package" if stable["packages"] else "",
         "binary" if stable["packages"][0]["binaries"] else "",
         "profile" if stable["profiles"] else "",
-        "profile_image" if stable["profiles"]["co-work"]["images"] else "",
+        "profile_image" if stable["profiles"]["co-work"]["architectures"] else "",
     }
     assert derived_kinds == {"manifest", "package", "binary", "profile", "profile_image"}
 

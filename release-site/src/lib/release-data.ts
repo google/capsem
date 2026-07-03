@@ -211,6 +211,12 @@ export function profileById(data: ReleaseData, id: string): JsonObject | undefin
 }
 
 export function profileArchNames(profile: JsonObject): string[] {
+  if (Array.isArray(profile.architectures)) {
+    return profile.architectures
+      .map((architecture: JsonObject) => String(architecture.architecture ?? ''))
+      .filter(Boolean)
+      .sort();
+  }
   const legacy = Object.keys(profile.assets?.arch ?? {});
   const graph = Array.isArray(profile.images)
     ? profile.images.map((image: JsonObject) => String(image.architecture ?? '')).filter(Boolean)
@@ -218,6 +224,36 @@ export function profileArchNames(profile: JsonObject): string[] {
       ? Object.keys(profile.images)
     : [];
   return Array.from(new Set([...legacy, ...graph])).sort();
+}
+
+export function profileArchitectures(profile: JsonObject): JsonObject[] {
+  if (Array.isArray(profile.architectures)) {
+    return profile.architectures.map((architecture: JsonObject) => ({
+      architecture: architecture.architecture,
+      software: Array.isArray(architecture.software) ? architecture.software : [],
+      config: Array.isArray(architecture.config) ? architecture.config : [],
+      images: Array.isArray(architecture.images) ? architecture.images : [],
+      evidence: Array.isArray(architecture.evidence) ? architecture.evidence : [],
+    }));
+  }
+  const imageRecords = Array.isArray(profile.images)
+    ? profile.images
+    : Object.entries(profile.images ?? {}).map(([architecture, value]) => ({
+        architecture,
+        ...(value as Record<string, unknown>),
+      }));
+  return imageRecords.map((image: JsonObject) => ({
+    architecture: image.architecture,
+    software: Array.isArray(profile.software)
+      ? profile.software.filter((item: JsonObject) => {
+          const itemArch = String(item.architecture ?? '');
+          return itemArch === image.architecture || itemArch === 'all';
+        })
+      : [],
+    config: Array.isArray(profile.config) ? profile.config : profileFileRows(profile),
+    images: Array.isArray(image.artifacts) ? image.artifacts : [],
+    evidence: Array.isArray(image.evidence) ? image.evidence : [],
+  }));
 }
 
 export function profileArtifactRows(profile: JsonObject, arch: string): TableRow[] {

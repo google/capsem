@@ -29,16 +29,11 @@ def test_no_invented_data() -> None:
     stable_manifest = graph["manifests"]["stable"]["1.4.0"]
     stable_package = stable_manifest["packages"][0]
     stable_profile = stable_manifest["profiles"]["co-work"]
-    images = (
-        stable_profile["images"].values()
-        if isinstance(stable_profile["images"], dict)
-        else stable_profile["images"]
-    )
     profile_image_urls = [
         item["url"]
-        for image in images
-        for group in ("artifacts", "evidence")
-        for item in image[group]
+        for architecture in stable_profile["architectures"]
+        for group in ("images", "evidence")
+        for item in architecture[group]
     ]
 
     assert stable_package["name"] not in index

@@ -87,16 +87,20 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
     assert "Co-work" not in index
     assert "Code" not in index
     assert "Capsem-1.4.0.pkg" in stable
-    assert graph["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0]["digest"][
-        "sha256"
-    ] in stable
+    assert _hash_label(
+        graph["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0]["digest"][
+            "sha256"
+        ]
+    ) in stable
     assert "HMAC" not in stable
     assert "hmac" not in stable
     assert "code" in stable
     assert "Capsem-1.5.0-nightly.20260702.pkg" in nightly
-    assert graph["manifests"]["nightly"]["1.5.0-nightly.20260702"]["packages"][0][
-        "binaries"
-    ][0]["digest"]["sha256"] in nightly
+    assert _hash_label(
+        graph["manifests"]["nightly"]["1.5.0-nightly.20260702"]["packages"][0][
+            "binaries"
+        ][0]["digest"]["sha256"]
+    ) in nightly
     assert "HMAC" not in nightly
     assert "hmac" not in nightly
     assert "code" in nightly
@@ -111,9 +115,10 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
         profile = graph["manifests"][channel][versions[channel]]["profiles"][profile_id]
         assert "HMAC" not in page
         assert "hmac" not in page
-        assert profile["config"][0]["digest"]["sha256"] in page
-        assert profile["images"][0]["artifacts"][0]["digest"]["sha256"] in page
-        assert profile["images"][0]["evidence"][0]["digest"]["sha256"] in page
+        architecture = _profile_architectures(profile)[0]
+        assert _hash_label(architecture["config"][0]["digest"]["sha256"]) in page
+        assert _hash_label(architecture["images"][0]["digest"]["sha256"]) in page
+        assert _hash_label(architecture["evidence"][0]["digest"]["sha256"]) in page
 
 
 def test_live_channels_json_and_manifests_verify() -> None:
@@ -149,8 +154,9 @@ def test_live_channels_json_and_manifests_verify() -> None:
             profile_page = _fetch_bytes(profile_url).decode("utf-8")
             profile = manifest["profiles"][profile_id]
             assert profile["revision"] in profile_page
-            assert profile["config"][0]["digest"]["sha256"] in profile_page
-            assert profile["images"][0]["artifacts"][0]["digest"]["sha256"] in profile_page
+            architecture = _profile_architectures(profile)[0]
+            assert _hash_label(architecture["config"][0]["digest"]["sha256"]) in profile_page
+            assert _hash_label(architecture["images"][0]["digest"]["sha256"]) in profile_page
 
     root = _fetch_bytes(f"{base}/").decode("utf-8")
     stable = _fetch_bytes(f"{base}/channels/stable/").decode("utf-8")
@@ -203,23 +209,23 @@ def _materialize_graph_dist(graph: dict[str, Any], dist: Path) -> None:
 
 def _materialize_profile_files(dist: Path, profiles: list[dict[str, Any]]) -> None:
     for profile in profiles:
-        for item in profile.get("config", []):
-            _write_bytes(dist / item["url"].lstrip("/"), _profile_config_bytes(item))
-        for image in profile.get("images", []):
-            for artifact in image.get("artifacts", []):
+        for architecture in _profile_architectures(profile):
+            for item in architecture.get("config", []):
+                _write_bytes(dist / item["url"].lstrip("/"), _profile_config_bytes(item))
+            for artifact in architecture.get("images", []):
                 _write_bytes(dist / artifact["url"].lstrip("/"), _profile_artifact_bytes(artifact))
-            for evidence in image.get("evidence", []):
+            for evidence in architecture.get("evidence", []):
                 _write_bytes(dist / evidence["url"].lstrip("/"), _profile_evidence_bytes(evidence))
 
 
 def _normalize_profile_file_digests(manifest: dict[str, Any]) -> None:
     for profile in manifest["profiles"].values():
-        for item in profile.get("config", []):
-            _set_file_digest(item, _profile_config_bytes(item))
-        for image in profile.get("images", []):
-            for artifact in image.get("artifacts", []):
+        for architecture in _profile_architectures(profile):
+            for item in architecture.get("config", []):
+                _set_file_digest(item, _profile_config_bytes(item))
+            for artifact in architecture.get("images", []):
                 _set_file_digest(artifact, _profile_artifact_bytes(artifact))
-            for evidence in image.get("evidence", []):
+            for evidence in architecture.get("evidence", []):
                 _set_file_digest(evidence, _profile_evidence_bytes(evidence))
 
 
@@ -267,6 +273,24 @@ def _json_sha256(payload: Any) -> str:
 
 def _json_blake3(payload: Any) -> str:
     return blake3.blake3(_json_bytes(payload)).hexdigest()
+
+
+def _hash_label(value: str) -> str:
+    return f"{value[:8]}..." if len(value) > 12 else value
+
+
+def _profile_architectures(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    if "architectures" in profile:
+        return profile["architectures"]
+    return [
+        {
+            "architecture": image["architecture"],
+            "config": profile.get("config", []),
+            "images": image.get("artifacts", []),
+            "evidence": image.get("evidence", []),
+        }
+        for image in profile.get("images", [])
+    ]
 
 
 def _fetch_bytes(url: str) -> bytes:

@@ -82,7 +82,7 @@ def test_human_pages_truncate_hashes_but_machine_graph_keeps_full_hashes() -> No
     ]["blake3"]
     profile_config_digest = graph["manifests"]["stable"]["1.4.0"]["profiles"][
         "co-work"
-    ]["config"][0]["digest"]["sha256"]
+    ]["architectures"][0]["config"][0]["digest"]["sha256"]
     pages = [
         PROJECT_ROOT / "release-site" / "dist" / "index.html",
         PROJECT_ROOT / "release-site" / "dist" / "channels" / "stable" / "index.html",
@@ -346,28 +346,32 @@ def test_profile_page_renders_profile_owned_images_and_configs() -> None:
         assert "HMAC" not in page
         assert "hmac" not in page
         assert profile["revision"] in page
-        for item in profile["config"]:
-            assert item["path"] in page
-            assert item["url"] in page
-            assert _hash_label(item["digest"]["sha256"]) in page
-            assert _hash_label(item["digest"]["blake3"]) in page
-        for image in profile["images"]:
-            assert image["architecture"] in page
-            for artifact in image["artifacts"]:
+        for architecture in profile["architectures"]:
+            assert f"Architecture {architecture['architecture']}" in page
+            for item in architecture["config"]:
+                assert item["path"] in page
+                assert item["url"] in page
+                assert _hash_label(item["digest"]["sha256"]) in page
+                assert _hash_label(item["digest"]["blake3"]) in page
+            for artifact in architecture["images"]:
                 assert artifact["name"] in page
                 assert artifact["url"] in page
                 assert _hash_label(artifact["digest"]["sha256"]) in page
                 assert _hash_label(artifact["digest"]["blake3"]) in page
-            for evidence in image["evidence"]:
+            for evidence in architecture["evidence"]:
                 assert evidence["kind"].upper() in page
                 assert evidence["url"] in page
                 assert _hash_label(evidence["digest"]["sha256"]) in page
                 assert _hash_label(evidence["digest"]["blake3"]) in page
-        for software in profile["software"]:
-            assert software["name"] in page
-            assert software["version"] in page
-            assert _hash_label(software["digest"]["sha256"]) in page
-            assert _hash_label(software["digest"]["blake3"]) in page
+            for software in architecture["software"]:
+                assert software["name"] in page
+                assert software["version"] in page
+                assert _hash_label(software["digest"]["sha256"]) in page
+                assert _hash_label(software["digest"]["blake3"]) in page
+
+
+def test_profile_architecture_blocks() -> None:
+    test_profile_page_renders_profile_owned_images_and_configs()
 
 
 def test_profile_page_forbids_current_binary_and_current_assets() -> None:

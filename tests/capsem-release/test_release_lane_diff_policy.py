@@ -40,9 +40,9 @@ def test_profile_allowed_diff(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "c" * 64
-    new["manifests"]["nightly"]["1.5.0-nightly.1"]["profiles"]["co-work"]["images"][0][
-        "artifacts"
-    ][0]["digest"]["blake3"] = "d" * 64
+    new["manifests"]["nightly"]["1.5.0-nightly.1"]["profiles"]["co-work"][
+        "architectures"
+    ][0]["images"][0]["digest"]["blake3"] = "d" * 64
 
     result = _run_policy(
         tmp_path,
@@ -119,8 +119,8 @@ def test_fixture_can_mutate_nightly_co_work_only(tmp_path: Path) -> None:
     new = deepcopy(old)
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "f" * 64
     new["manifests"]["nightly"]["1.5.0-nightly.20260702"]["profiles"]["co-work"][
-        "images"
-    ][0]["artifacts"][0]["digest"]["sha256"] = "e" * 64
+        "architectures"
+    ][0]["images"][0]["digest"]["sha256"] = "e" * 64
 
     result = _run_policy(
         tmp_path,
@@ -212,10 +212,12 @@ def _profile(channel: str) -> dict:
         "id": "co-work",
         "revision": f"2026.07.02.1-{channel}",
         "min_capsem_version": "1.4.0",
-        "images": [
+        "architectures": [
             {
                 "architecture": "arm64",
-                "artifacts": [{"kind": "rootfs", "digest": _digest("a")}],
+                "software": [],
+                "config": [],
+                "images": [{"kind": "rootfs", "digest": _digest("a")}],
                 "evidence": [{"kind": "abom", "digest": _digest("b")}],
             }
         ],

@@ -136,12 +136,7 @@ pub struct ProfileDocument {
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_capsem_version: Option<String>,
-    #[serde(default)]
-    pub software: Vec<SoftwareInventoryRow>,
-    #[serde(default)]
-    pub config: Vec<ProfileConfigRef>,
-    #[serde(default)]
-    pub images: Vec<ProfileArchitectureImages>,
+    pub architectures: Vec<ProfileArchitectureImages>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -170,6 +165,11 @@ pub struct ProfileConfigRef {
 #[serde(deny_unknown_fields)]
 pub struct ProfileArchitectureImages {
     pub architecture: Architecture,
+    #[serde(default)]
+    pub software: Vec<SoftwareInventoryRow>,
+    #[serde(default)]
+    pub config: Vec<ProfileConfigRef>,
+    #[serde(rename = "images")]
     pub artifacts: Vec<ProfileImageArtifactRef>,
     #[serde(default)]
     pub evidence: Vec<EvidenceRef>,
@@ -636,8 +636,8 @@ impl ReleaseManifest {
                 profile: Some(profile_id.clone()),
                 architecture: None,
             });
-            for images in &profile.images {
-                for artifact in &images.artifacts {
+            for architecture in &profile.architectures {
+                for artifact in &architecture.artifacts {
                     entries.push(ReleaseLedgerEntry {
                         channel: channel.to_string(),
                         kind: ReleaseLedgerKind::ProfileImage,
@@ -645,7 +645,7 @@ impl ReleaseManifest {
                         version: profile.revision.clone(),
                         status: artifact.status,
                         profile: Some(profile_id.clone()),
-                        architecture: Some(images.architecture),
+                        architecture: Some(architecture.architecture),
                     });
                 }
             }
@@ -668,14 +668,11 @@ impl ProfileDocument {
         if self.revision.trim().is_empty() {
             bail!("profile {} revision must not be empty", self.id);
         }
-        for software in &self.software {
-            software.validate(&self.id)?;
+        if self.architectures.is_empty() {
+            bail!("profile {} must list architecture records", self.id);
         }
-        for config in &self.config {
-            config.validate(&self.id)?;
-        }
-        for images in &self.images {
-            images.validate(&self.id)?;
+        for architecture in &self.architectures {
+            architecture.validate(&self.id)?;
         }
         Ok(())
     }
@@ -744,10 +741,10 @@ fn profile_image_artifact_keys(
     profile: &ProfileDocument,
 ) -> std::collections::BTreeSet<ProfileImageArtifactKey> {
     let mut keys = std::collections::BTreeSet::new();
-    for images in &profile.images {
-        for artifact in &images.artifacts {
+    for architecture in &profile.architectures {
+        for artifact in &architecture.artifacts {
             keys.insert(ProfileImageArtifactKey {
-                architecture: images.architecture,
+                architecture: architecture.architecture,
                 kind: artifact.kind,
                 name: artifact.name.clone(),
             });
@@ -814,6 +811,18 @@ impl ProfileConfigRef {
 
 impl ProfileArchitectureImages {
     fn validate(&self, profile: &str) -> Result<()> {
+        if self.software.is_empty() {
+            bail!("profile {profile} architecture {:?} must list software", self.architecture);
+        }
+        if self.config.is_empty() {
+            bail!("profile {profile} architecture {:?} must list config", self.architecture);
+        }
+        for software in &self.software {
+            software.validate(profile)?;
+        }
+        for config in &self.config {
+            config.validate(profile)?;
+        }
         if self.artifacts.is_empty() {
             bail!("profile {profile} image set must list artifacts");
         }
@@ -1586,23 +1595,30 @@ mod tests {
             revision: revision.to_string(),
             status: Status::Current,
             min_capsem_version: Some("1.4.0".to_string()),
+            architectures: vec![profile_architecture(revision, artifacts)],
+        }
+    }
+
+    fn profile_architecture(
+        revision: &str,
+        artifacts: Vec<ProfileImageArtifactRef>,
+    ) -> ProfileArchitectureImages {
+        ProfileArchitectureImages {
+            architecture: Architecture::Arm64,
             software: vec![software_row()],
             config: vec![ProfileConfigRef {
                 kind: "mcp".to_string(),
                 path: "profiles/co-work/mcp.json".to_string(),
-                url: format!("/profiles/releases/{revision}/co-work/mcp.json"),
+                url: format!("/profiles/releases/{revision}/co-work/arm64/mcp.json"),
                 bytes: 12,
                 digest: digest_set(),
                 status: Status::Current,
             }],
-            images: vec![ProfileArchitectureImages {
-                architecture: Architecture::Arm64,
-                artifacts,
-                evidence: vec![EvidenceRef {
-                    kind: "abom".to_string(),
-                    url: format!("/profiles/releases/{revision}/co-work/arm64/abom.cdx.json"),
-                    digest: digest_set(),
-                }],
+            artifacts,
+            evidence: vec![EvidenceRef {
+                kind: "abom".to_string(),
+                url: format!("/profiles/releases/{revision}/co-work/arm64/abom.cdx.json"),
+                digest: digest_set(),
             }],
         }
     }
@@ -1650,7 +1666,7 @@ mod tests {
         assert_eq!(history.versions.len(), 2);
         assert_eq!(history.versions[0].revision, "2026.07.02.1");
         assert_eq!(
-            history.versions[0].images[0].artifacts[0].status,
+            history.versions[0].architectures[0].artifacts[0].status,
             Status::Current
         );
         assert_eq!(history.versions[1].revision, "2026.07.02.2");
@@ -1692,9 +1708,9 @@ mod tests {
                 name: "initrd.img".to_string(),
             }]
         );
-        assert_eq!(next.images[0].artifacts.len(), 1);
+        assert_eq!(next.architectures[0].artifacts.len(), 1);
         assert!(next
-            .images
+            .architectures
             .iter()
             .flat_map(|images| images.artifacts.iter())
             .all(|artifact| artifact.status != Status::Deprecated));
@@ -1720,17 +1736,17 @@ mod tests {
             revision: "2026.07.02.1".to_string(),
             status: Status::Current,
             min_capsem_version: Some("1.4.0".to_string()),
-            software: vec![software_row()],
-            config: vec![ProfileConfigRef {
-                kind: "mcp".to_string(),
-                path: "profiles/co-work/mcp.json".to_string(),
-                url: "/profiles/releases/2026.07.02.1/co-work/mcp.json".to_string(),
-                bytes: 12,
-                digest: digest_set(),
-                status: Status::Current,
-            }],
-            images: vec![ProfileArchitectureImages {
+            architectures: vec![ProfileArchitectureImages {
                 architecture: Architecture::Arm64,
+                software: vec![software_row()],
+                config: vec![ProfileConfigRef {
+                    kind: "mcp".to_string(),
+                    path: "profiles/co-work/mcp.json".to_string(),
+                    url: "/profiles/releases/2026.07.02.1/co-work/arm64/mcp.json".to_string(),
+                    bytes: 12,
+                    digest: digest_set(),
+                    status: Status::Current,
+                }],
                 artifacts: vec![
                     ProfileImageArtifactRef {
                         kind: ProfileImageArtifactKind::Kernel,
@@ -1779,7 +1795,7 @@ mod tests {
             .validate_profile_ownership()
             .expect("profile-owned graph validates");
         assert_eq!(profile.min_capsem_version.as_deref(), Some("1.4.0"));
-        assert_eq!(profile.images[0].evidence.len(), 2);
+        assert_eq!(profile.architectures[0].evidence.len(), 2);
     }
 
     #[test]
@@ -1846,10 +1862,17 @@ mod tests {
                 revision: "2026.07.02.1".to_string(),
                 status: Status::Current,
                 min_capsem_version: Some("1.4.0".to_string()),
-                software: Vec::new(),
-                config: Vec::new(),
-                images: vec![ProfileArchitectureImages {
+                architectures: vec![ProfileArchitectureImages {
                     architecture: Architecture::Arm64,
+                    software: vec![software_row()],
+                    config: vec![ProfileConfigRef {
+                        kind: "mcp".to_string(),
+                        path: "profiles/co-work/mcp.json".to_string(),
+                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/mcp.json".to_string(),
+                        bytes: 12,
+                        digest: digest_set(),
+                        status: Status::Current,
+                    }],
                     artifacts: vec![ProfileImageArtifactRef {
                         kind: ProfileImageArtifactKind::Rootfs,
                         name: "rootfs.erofs".to_string(),

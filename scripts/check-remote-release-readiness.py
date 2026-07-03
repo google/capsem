@@ -531,10 +531,8 @@ def check_release_graph_runtime_asset_pointer(
     for profile_id, profile in profiles.items():
         if not isinstance(profile, dict):
             continue
-        for image in profile.get("images", []):
-            if not isinstance(image, dict):
-                continue
-            for item in image.get("artifacts", []) + image.get("evidence", []):
+        for architecture in profile_architectures(profile):
+            for item in architecture.get("images", []) + architecture.get("evidence", []):
                 if not isinstance(item, dict):
                     continue
                 url = item.get("url")
@@ -589,44 +587,51 @@ def check_release_graph_profile(
     if profile.get("id") != profile_id:
         failures.append(f"profile {profile_id} id mismatch")
 
-    config_entries = require_list(profile, "config", failures)
-    images = require_list(profile, "images", failures)
-    if not config_entries:
-        failures.append(f"profile {profile_id} config empty")
-    if not images:
-        failures.append(f"profile {profile_id} images empty")
+    architectures = profile_architectures(profile)
+    if not architectures:
+        failures.append(f"profile {profile_id} architectures empty")
 
     for value in (profile.get("revision"), profile.get("name"), profile.get("id")):
         if isinstance(value, str) and page_text and value not in page_text:
             failures.append(f"profile page {profile_id} missing {value}")
 
-    for item in config_entries:
-        failures.extend(
-            check_release_graph_artifact(
-                site,
-                item,
-                f"profile {profile_id} config",
-                page_text,
-                allowed_prefixes=("/profiles/releases/",),
-            )
-        )
-    for image in images:
-        if not isinstance(image, dict):
-            failures.append(f"profile {profile_id} image entry is not an object")
+    for architecture in architectures:
+        if not isinstance(architecture, dict):
+            failures.append(f"profile {profile_id} architecture entry is not an object")
             continue
-        if not isinstance(image.get("architecture"), str):
-            failures.append(f"profile {profile_id} image architecture missing")
-        for artifact in require_list(image, "artifacts", failures):
+        arch = architecture.get("architecture")
+        if not isinstance(arch, str):
+            failures.append(f"profile {profile_id} architecture missing")
+            arch = "<unknown>"
+        config_entries = require_list(architecture, "config", failures)
+        images = require_list(architecture, "images", failures)
+        evidence_entries = require_list(architecture, "evidence", failures)
+        if not config_entries:
+            failures.append(f"profile {profile_id} architecture {arch} config empty")
+        if not images:
+            failures.append(f"profile {profile_id} architecture {arch} images empty")
+
+        for item in config_entries:
+            failures.extend(
+                check_release_graph_artifact(
+                    site,
+                    item,
+                    f"profile {profile_id} architecture {arch} config",
+                    page_text,
+                    allowed_prefixes=("/profiles/releases/",),
+                )
+            )
+        for artifact in images:
             failures.extend(
                 check_release_graph_artifact(
                     site,
                     artifact,
-                    f"profile {profile_id} image artifact",
+                    f"profile {profile_id} architecture {arch} image",
                     page_text,
                     allowed_prefixes=("/assets/releases/", "/profiles/releases/"),
                 )
             )
-        for evidence in require_list(image, "evidence", failures):
+        for evidence in evidence_entries:
             evidence_kind = str(evidence.get("kind", "")).lower() if isinstance(evidence, dict) else ""
             expected_document = (
                 "software_inventory"
@@ -639,12 +644,12 @@ def check_release_graph_profile(
                 check_release_graph_artifact(
                     site,
                     evidence,
-                    f"profile {profile_id} evidence",
+                    f"profile {profile_id} architecture {arch} evidence",
                     page_text,
-                        allowed_prefixes=("/assets/releases/", "/profiles/releases/"),
-                        expected_document=expected_document,
-                    )
+                    allowed_prefixes=("/assets/releases/", "/profiles/releases/"),
+                    expected_document=expected_document,
                 )
+            )
     return failures
 
 
@@ -678,7 +683,7 @@ def check_release_graph_artifact(
         value = digest.get(key)
         if not isinstance(value, str):
             failures.append(f"{label} {url} {key} missing")
-        elif page_text and value not in page_text:
+        elif page_text and hash_label(value) not in page_text:
             failures.append(f"profile page missing {label} {key} for {url}")
     if "hmac" in digest:
         failures.append(f"{label} {url} digest must not contain hmac")
@@ -730,14 +735,14 @@ def check_release_graph_cache_headers(
     for profile in profiles.values():
         if not isinstance(profile, dict):
             continue
-        for item in profile.get("config", []):
-            add_release_artifact_cache_check(site, checks, item)
-        for image in profile.get("images", []):
-            if not isinstance(image, dict):
+        for architecture in profile_architectures(profile):
+            if not isinstance(architecture, dict):
                 continue
-            for artifact in image.get("artifacts", []):
+            for item in architecture.get("config", []):
+                add_release_artifact_cache_check(site, checks, item)
+            for artifact in architecture.get("images", []):
                 add_release_artifact_cache_check(site, checks, artifact)
-            for evidence in image.get("evidence", []):
+            for evidence in architecture.get("evidence", []):
                 add_release_artifact_cache_check(site, checks, evidence)
 
     failures: list[str] = []
@@ -991,6 +996,10 @@ def require_object(
     return value
 
 
+def hash_label(value: str) -> str:
+    return f"{value[:8]}..." if len(value) > 11 else value
+
+
 def require_list(root: Any, key: str, failures: list[str]) -> list[Any]:
     if not isinstance(root, dict):
         failures.append(f"health evidence {key} parent is not an object")
@@ -1000,6 +1009,13 @@ def require_list(root: Any, key: str, failures: list[str]) -> list[Any]:
         failures.append(f"health evidence {key} missing or not a list")
         return []
     return value
+
+
+def profile_architectures(profile: dict[str, Any]) -> list[dict[str, Any]]:
+    architectures = profile.get("architectures")
+    if not isinstance(architectures, list):
+        return []
+    return [architecture for architecture in architectures if isinstance(architecture, dict)]
 
 
 def current_asset_file_refs(

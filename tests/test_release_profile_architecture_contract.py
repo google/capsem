@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from test_release_site_html_contract import (
+    FIXTURE_GRAPH,
     PROJECT_ROOT,
     RELEASE_SITE_DIST,
     build_release_site_from_fixture,
 )
+
+import json
 
 
 PROFILE_PAGE = (
@@ -35,3 +38,164 @@ def test_profile_no_current_binary() -> None:
     assert "Current assets" not in stable
     assert "current_assets" not in stable
     assert "Minimum Capsem" in stable
+
+
+def test_manifest_profile_architecture_shape() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile in manifest["profiles"].values():
+            assert "software" not in profile, profile["id"]
+            assert "config" not in profile, profile["id"]
+            assert "images" not in profile, profile["id"]
+            architectures = profile["architectures"]
+            assert architectures, profile["id"]
+            for architecture in architectures:
+                assert architecture["architecture"], profile["id"]
+                assert architecture["software"], architecture
+                assert architecture["config"], architecture
+                assert architecture["images"], architecture
+                evidence_kinds = {item["kind"] for item in architecture["evidence"]}
+                assert {"abom", "software_inventory"}.issubset(evidence_kinds)
+
+
+def test_profile_architecture_sections() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    profile = graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]
+    page = (
+        RELEASE_SITE_DIST
+        / "channels"
+        / "stable"
+        / "profiles"
+        / "co-work"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+
+    for architecture in profile["architectures"]:
+        heading = f"Architecture {architecture['architecture']}"
+        assert heading in page
+        section = page.split(heading, maxsplit=1)[1].split("</section>", maxsplit=1)[0]
+        assert "Software Inventory" in section
+        assert "Config Files" in section
+        assert "Profile Images" in section
+        assert "Profile Evidence" in section
+        for software in architecture["software"]:
+            assert software["name"] in section
+            assert software["evidence"] in section
+        for config in architecture["config"]:
+            assert config["path"] in section
+            assert config["url"] in section
+        for image in architecture["images"]:
+            assert image["name"] in section
+            assert image["url"] in section
+        for evidence in architecture["evidence"]:
+            assert evidence["url"] in section
+
+
+def test_all_profiles() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id in manifest["profiles"]:
+            assert (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).is_file()
+
+
+def test_config_and_images_are_separate() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    manifest = graph["manifests"]["stable"]["1.4.0"]
+    page = (
+        RELEASE_SITE_DIST
+        / "channels"
+        / "stable"
+        / "profiles"
+        / "co-work"
+        / "index.html"
+    ).read_text(encoding="utf-8")
+
+    for architecture in manifest["profiles"]["co-work"]["architectures"]:
+        section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[1].split(
+            "</section>", maxsplit=1
+        )[0]
+        config_section = section.split("Config Files", maxsplit=1)[1].split(
+            "Profile Images", maxsplit=1
+        )[0]
+        image_section = section.split("Profile Images", maxsplit=1)[1]
+        for config in architecture["config"]:
+            assert config["url"] in config_section
+            assert config["url"] not in image_section
+        for image in architecture["images"]:
+            assert image["url"] in image_section
+            assert image["url"] not in config_section
+
+
+def test_all_profile_config_files() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                assert len(architecture["config"]) >= 8, f"{channel}:{profile_id}"
+                for config in architecture["config"]:
+                    assert config["url"] in page
+
+
+def test_all_profile_image_artifacts() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                kinds = {image["kind"] for image in architecture["images"]}
+                assert {"kernel", "initrd", "rootfs"}.issubset(kinds), f"{channel}:{profile_id}"
+                for image in architecture["images"]:
+                    assert image["url"] in page
+
+
+def test_software_inventory_not_all_arch() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile in manifest["profiles"].values():
+            for architecture in profile["architectures"]:
+                arch = architecture["architecture"]
+                for software in architecture["software"]:
+                    assert software["architecture"] == arch
+                    assert software["architecture"] != "all"
