@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Hardened the release-site readiness checker so stale generated HTML is
+  rejected when channel pages stop matching the source channel, manifest,
+  package, profile, and package-owned binary JSON values.
 - Added a release-site graph mutation gate proving Astro pages render channel,
   package, binary, profile, software, and image fields from the JSON graph, and
   made the local `build:channel` gate build against the checked-in fixture when

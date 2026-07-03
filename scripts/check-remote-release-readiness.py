@@ -499,17 +499,40 @@ def check_release_graph_manifest_contract(
                 failures.append(f"binary {binary.get('name', '<unknown>')} installed_path missing")
             if not isinstance(binary.get("sbom_component_ref"), str):
                 failures.append(f"binary {binary.get('name', '<unknown>')} SBOM component missing")
+        if isinstance(package, dict):
+            failures.extend(check_release_graph_package_page(site, channel, package))
 
     channel_page = fetch_text(f"{site}/channels/{channel}/")
     if channel_page.error:
         failures.append(channel_page.error)
+        channel_page_text = ""
+    else:
+        channel_page_text = channel_page.text
+    failures.extend(
+        check_release_graph_index_page(
+            index_text,
+            channel,
+            channel_data,
+            manifest_record,
+        )
+    )
+    failures.extend(
+        check_release_graph_channel_page(
+            channel_page_text,
+            channel,
+            channel_data,
+            manifest_record,
+            packages,
+            profiles,
+        )
+    )
     for label, value in (
         ("manifest version", manifest_record.get("version")),
         ("channel manifest", manifest_path),
     ):
         if not isinstance(value, str):
             failures.append(f"release channel {label} missing")
-        elif value not in index_text and (channel_page.error or value not in channel_page.text):
+        elif value not in index_text and (channel_page.error or value not in channel_page_text):
             failures.append(f"release pages missing {label} {value}")
 
     for profile_id, profile in profiles.items():
@@ -528,6 +551,155 @@ def check_release_graph_manifest_contract(
         )
     )
     return failures
+
+
+def check_release_graph_index_page(
+    index_text: str,
+    channel: str,
+    channel_data: dict[str, Any],
+    manifest_record: dict[str, Any],
+) -> list[str]:
+    failures: list[str] = []
+    for label, value in (
+        ("channel label", channel_data.get("label")),
+        ("channel description", channel_data.get("description")),
+        ("manifest version", manifest_record.get("version")),
+        ("manifest URL", manifest_record.get("url")),
+    ):
+        require_rendered_value(
+            index_text, f"release index {channel}", label, value, failures
+        )
+    return failures
+
+
+def check_release_graph_channel_page(
+    page_text: str,
+    channel: str,
+    channel_data: dict[str, Any],
+    manifest_record: dict[str, Any],
+    packages: list[Any],
+    profiles: dict[str, Any],
+) -> list[str]:
+    failures: list[str] = []
+    for label, value in (
+        ("channel label", channel_data.get("label")),
+        ("manifest version", manifest_record.get("version")),
+        ("manifest URL", manifest_record.get("url")),
+    ):
+        require_rendered_value(
+            page_text, f"channel page {channel}", label, value, failures
+        )
+    for package in packages:
+        if not isinstance(package, dict):
+            continue
+        require_rendered_value(
+            page_text,
+            f"channel page {channel}",
+            "package name",
+            package.get("name"),
+            failures,
+        )
+        require_rendered_value(
+            page_text,
+            f"channel page {channel}",
+            "package version",
+            package.get("version"),
+            failures,
+        )
+    for profile_id, profile in profiles.items():
+        if not isinstance(profile_id, str) or not isinstance(profile, dict):
+            continue
+        for label, value in (
+            ("profile id", profile_id),
+            ("profile name", profile.get("name")),
+            ("profile revision", profile.get("revision")),
+            ("profile minimum Capsem", profile.get("min_capsem_version")),
+        ):
+            require_rendered_value(
+                page_text, f"channel page {channel}", label, value, failures
+            )
+    return failures
+
+
+def check_release_graph_package_page(
+    site: str,
+    channel: str,
+    package: dict[str, Any],
+) -> list[str]:
+    package_id = package.get("id")
+    if not isinstance(package_id, str):
+        return ["package id missing"]
+    page = fetch_text(f"{site}/channels/{channel}/packages/{package_id}/")
+    if page.error:
+        return [page.error]
+    failures: list[str] = []
+    for label, value in (
+        ("package name", package.get("name")),
+        ("package version", package.get("version")),
+        ("package kind", package.get("kind")),
+        (
+            "package SHA-256",
+            hash_label(package.get("digest", {}).get("sha256", ""))
+            if isinstance(package.get("digest"), dict)
+            else None,
+        ),
+        (
+            "package BLAKE3",
+            hash_label(package.get("digest", {}).get("blake3", ""))
+            if isinstance(package.get("digest"), dict)
+            else None,
+        ),
+    ):
+        require_rendered_value(
+            page.text,
+            f"package page {channel}/{package_id}",
+            label,
+            value,
+            failures,
+        )
+    for binary in package.get("binaries", []):
+        if not isinstance(binary, dict):
+            continue
+        for label, value in (
+            ("binary name", binary.get("name")),
+            ("binary version", binary.get("version")),
+            ("binary description", binary.get("description")),
+            ("binary installed path", binary.get("installed_path")),
+            ("binary SBOM component", binary.get("sbom_component_ref")),
+            (
+                "binary SHA-256",
+                hash_label(binary.get("digest", {}).get("sha256", ""))
+                if isinstance(binary.get("digest"), dict)
+                else None,
+            ),
+            (
+                "binary BLAKE3",
+                hash_label(binary.get("digest", {}).get("blake3", ""))
+                if isinstance(binary.get("digest"), dict)
+                else None,
+            ),
+        ):
+            require_rendered_value(
+                page.text,
+                f"package page {channel}/{package_id}",
+                label,
+                value,
+                failures,
+            )
+    return failures
+
+
+def require_rendered_value(
+    page_text: str,
+    page_label: str,
+    value_label: str,
+    value: Any,
+    failures: list[str],
+) -> None:
+    if not isinstance(value, str) or not value:
+        return
+    if value not in page_text:
+        failures.append(f"{page_label} missing {value_label} {value}")
 
 
 def check_release_graph_runtime_asset_pointer(
