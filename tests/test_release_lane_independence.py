@@ -50,6 +50,57 @@ def test_binary_update_does_not_touch_profiles(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_profile_update_does_not_touch_packages(tmp_path: Path) -> None:
+    old = _fixture_graph()
+    new = deepcopy(old)
+    channel = "stable"
+    profile_id = "co-work"
+    version = _current_manifest_version(new, channel)
+    old_packages = _stable_package_payloads(old, channel, version)
+    old_other_profile = json.dumps(
+        old["manifests"][channel][version]["profiles"]["code"],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+    profile = new["manifests"][channel][version]["profiles"][profile_id]
+    profile["revision"] = "2026.07.02.2-stable"
+    profile["version"] = "2026.07.02.2-stable"
+    architecture = profile["architectures"][0]
+    architecture["images"][0]["digest"] = _digest("stable-co-work-arm64-rootfs-2026.07.02.2")
+    architecture["config"][0]["digest"] = _digest("stable-co-work-arm64-profile-2026.07.02.2")
+    architecture["evidence"][0]["digest"] = _digest("stable-co-work-arm64-abom-2026.07.02.2")
+    new["channels"][channel]["manifests"][0]["digest"] = _digest(
+        "stable-manifest-after-co-work-profile-2026.07.02.2"
+    )
+
+    assert _stable_package_payloads(new, channel, version) == old_packages
+    assert (
+        json.dumps(
+            new["manifests"][channel][version]["profiles"]["code"],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        == old_other_profile
+    )
+    assert new["manifests"]["nightly"] == old["manifests"]["nightly"]
+    assert new["channels"]["nightly"] == old["channels"]["nightly"]
+
+    result = _run_policy(
+        tmp_path,
+        old,
+        new,
+        "--lane",
+        "profile",
+        "--channel",
+        channel,
+        "--profile",
+        profile_id,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def _fixture_graph() -> dict[str, Any]:
     return json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
@@ -72,6 +123,18 @@ def _stable_profile_payloads(
         profile_id: json.dumps(profile, sort_keys=True, separators=(",", ":"))
         for profile_id, profile in profiles.items()
     }
+
+
+def _stable_package_payloads(
+    graph: dict[str, Any],
+    channel: str,
+    version: str,
+) -> str:
+    return json.dumps(
+        graph["manifests"][channel][version]["packages"],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
 
 
 def _run_policy(
