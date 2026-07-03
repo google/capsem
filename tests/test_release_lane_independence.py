@@ -155,6 +155,25 @@ def test_cowork_nightly_isolated_update(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_stable_nightly_switch_keeps_channel_state_independent() -> None:
+    graph = _fixture_graph()
+    stable_version = _current_manifest_version(graph, "stable")
+    nightly_version = _current_manifest_version(graph, "nightly")
+    stable = graph["manifests"]["stable"][stable_version]
+    nightly = graph["manifests"]["nightly"][nightly_version]
+
+    assert graph["channels"]["stable"]["manifests"][0]["url"] == "/assets/stable/manifest.json"
+    assert graph["channels"]["nightly"]["manifests"][0]["url"] == "/assets/nightly/manifest.json"
+    assert stable_version == "1.4.0"
+    assert nightly_version == "1.5.0-nightly.20260702"
+    assert stable["packages"][0]["version"] == "1.4.0"
+    assert nightly["packages"][0]["version"] == "1.5.0-nightly.20260702"
+    assert stable["profiles"]["co-work"]["revision"] == "2026.07.02.1-stable"
+    assert nightly["profiles"]["co-work"]["revision"] == "2026.07.02.1-nightly"
+    assert stable["packages"] != nightly["packages"]
+    assert stable["profiles"]["co-work"] != nightly["profiles"]["co-work"]
+
+
 def _fixture_graph() -> dict[str, Any]:
     return json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 

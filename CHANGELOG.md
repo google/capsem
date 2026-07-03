@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a stable/nightly switch gate proving canonical channel manifest URLs
+  resolve distinct package and profile state without cross-channel contamination.
 - Added a nightly co-work profile isolation gate proving a profile architecture
   update does not mutate stable, code, sibling architectures, packages, or binaries.
 - Added a release-lane independence gate proving profile updates mutate only
