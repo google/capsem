@@ -452,11 +452,9 @@ def test_software_inventory_not_all_arch() -> None:
                     assert software["architecture"] != "all"
 
 
-def test_real_software_versions(monkeypatch) -> None:
+def test_software_versions_are_real(monkeypatch) -> None:
     checker = _readiness_checker_module()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]))
-    profile["architectures"][0]["software"][0]["version"] = "unversioned"
 
     monkeypatch.setattr(
         checker,
@@ -471,14 +469,24 @@ def test_real_software_versions(monkeypatch) -> None:
         lambda *_args, **_kwargs: [],
     )
 
-    failures = checker.check_release_graph_profile(
-        "https://release.capsem.test",
-        "stable",
-        "co-work",
-        profile,
-    )
+    forbidden = {
+        "": "version missing",
+        "unversioned": "version is unversioned",
+        "unknown": "version is unknown",
+        "latest": "version is latest",
+    }
+    for version, expected in forbidden.items():
+        profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]))
+        profile["architectures"][0]["software"][0]["version"] = version
 
-    assert "profile co-work architecture arm64 software python version is unversioned" in failures
+        failures = checker.check_release_graph_profile(
+            "https://release.capsem.test",
+            "stable",
+            "co-work",
+            profile,
+        )
+
+        assert f"profile co-work architecture arm64 software python {expected}" in failures
 
 
 def test_software_versions_and_hashes() -> None:

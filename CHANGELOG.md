@@ -86,6 +86,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Required profile software inventory rows to carry real package versions,
   rejecting placeholder values in generated graph validation and remote
   release-site readiness checks.
+- Added the named Sprinty gate for real profile software versions so empty,
+  `unversioned`, `unknown`, and `latest` rows fail release readiness checks.
 - Added named release-contract gates proving profile lists come from channel
   manifests without a detached profile catalog side channel.
 - Moved profile ABOM, OBOM, and software-inventory evidence links to the top of
