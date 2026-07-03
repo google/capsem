@@ -35,6 +35,30 @@ def test_channel_name_not_repeated() -> None:
     assert "Faster-moving release channel" in index
 
 
+def test_channel_descriptions() -> None:
+    build_release_site_from_fixture()
+
+    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+
+    assert "Recommended release channel for everyday Capsem installs." in index
+    assert "Faster-moving release channel for daily fixes and early validation." in index
+
+
+def test_one_manifest_url() -> None:
+    build_release_site_from_fixture()
+
+    for channel in ("stable", "nightly"):
+        page = (
+            RELEASE_SITE_DIST / "channels" / channel / "index.html"
+        ).read_text(encoding="utf-8")
+
+        assert f"/assets/{channel}/manifest.json" in page
+        assert f"/manifests/{channel}/" not in page
+        assert "/profiles/releases/" not in page
+        assert "catalog.json" not in page
+        assert "profile_catalog" not in page
+
+
 def test_truncated_hash_display() -> None:
     build_release_site_from_fixture()
 
