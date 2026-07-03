@@ -53,6 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   required the release site to render those descriptions from machine JSON.
 - Rendered package-owned binary targets from the owning package architecture and
   platform instead of hiding target information from human release pages.
+- Added a named package-detail rendering gate proving package SBOM evidence is
+  shown once at the package level and not repeated on binary rows.
 
 ## [1.4.1782944059] - 2026-07-01
 

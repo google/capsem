@@ -239,6 +239,37 @@ def test_package_detail_page() -> None:
     test_package_pages_show_package_owned_binaries()
 
 
+def test_package_sbom_link_not_repeated_on_binaries() -> None:
+    build_release_site_from_fixture()
+
+    graph = _fixture()
+    package = graph["manifests"]["stable"]["1.4.0"]["packages"][0]
+    page = (
+        PROJECT_ROOT
+        / "release-site"
+        / "dist"
+        / "channels"
+        / "stable"
+        / "packages"
+        / package["id"]
+        / "index.html"
+    ).read_text(encoding="utf-8")
+    package_evidence_section = page.split("Package Evidence", maxsplit=1)[1]
+    binary_section = page.split("Contained Binaries", maxsplit=1)[1].split(
+        "Package Evidence",
+        maxsplit=1,
+    )[0]
+
+    for evidence in package["evidence"]:
+        assert evidence["url"] in package_evidence_section
+        assert _hash_label(evidence["digest"]["sha256"]) in package_evidence_section
+        assert evidence["url"] not in binary_section
+        assert evidence["digest"]["sha256"] not in binary_section
+        assert evidence["digest"]["blake3"] not in binary_section
+    for binary in package["binaries"]:
+        assert binary["sbom_component_ref"] in binary_section
+
+
 def test_channel_page_has_no_detached_profile_image_evidence() -> None:
     build_release_site_from_fixture()
 
