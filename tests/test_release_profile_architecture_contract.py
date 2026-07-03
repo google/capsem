@@ -154,6 +154,49 @@ def test_profile_image_evidence() -> None:
                     assert evidence["url"] in image_block, f"{label}:{kind}"
 
 
+def test_image_entries_own_abom_obom() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        channel_page = (RELEASE_SITE_DIST / "channels" / channel / "index.html").read_text(
+            encoding="utf-8"
+        )
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            profile_page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                label = f"{channel}:{profile_id}:{architecture['architecture']}"
+                section = profile_page.split(
+                    f"Architecture {architecture['architecture']}",
+                    maxsplit=1,
+                )[1].split("</section>", maxsplit=1)[0]
+                profile_evidence_block = section.split("Profile Evidence", maxsplit=1)[1].split(
+                    "Installed Software",
+                    maxsplit=1,
+                )[0]
+                image_block = section.split("Profile Images", maxsplit=1)[1]
+                image_evidence = [
+                    item
+                    for item in architecture["evidence"]
+                    if item["kind"] in {"abom", "obom"}
+                ]
+
+                assert {item["kind"] for item in image_evidence} == {"abom", "obom"}, label
+                for item in image_evidence:
+                    assert item["url"] in image_block, label
+                    assert item["url"] not in profile_evidence_block, label
+                    assert item["url"] not in channel_page, label
+
+
 def test_installed_inventory_not_channel_packages() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))

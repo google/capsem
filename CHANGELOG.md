@@ -106,6 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Attached profile ABOM and OBOM links to the profile image block for each
   architecture while keeping software inventory evidence at the architecture
   evidence header.
+- Added a named profile image evidence gate proving ABOM and OBOM links stay
+  in the owning architecture image block and do not leak onto channel pages.
 - Renamed profile architecture software tables to installed software and added
   a gate proving channel package names and URLs do not leak into profile
   installed-inventory blocks.
