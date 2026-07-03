@@ -462,7 +462,7 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     # The floor exists to catch a "we deleted half the test suite" regression, not to
     # gate every honest defensive-code addition.
     echo "=== Rust: test suite with coverage ==="
-    cargo llvm-cov --workspace --no-cfg-coverage --fail-under-lines 65
+    cargo llvm-cov --workspace --bins --no-cfg-coverage --fail-under-lines 65
 
     # ---- Stage 4: sign host binaries for VM tests ---------------------------
     echo "=== Sign binaries for integration tests ==="
@@ -847,7 +847,7 @@ test-gateway-e2e: _check-assets _pack-initrd _materialize-config _sign
 coverage:
     #!/bin/bash
     set -euo pipefail
-    cargo llvm-cov --workspace --no-cfg-coverage --html
+    cargo llvm-cov --workspace --bins --no-cfg-coverage --html
     echo "Coverage report: target/llvm-cov/html/index.html"
     open target/llvm-cov/html/index.html 2>/dev/null || true
 

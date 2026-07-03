@@ -148,6 +148,31 @@ def test_low_coverage_components_visible() -> None:
     )
 
 
+def test_rust_coverage_includes_bins() -> None:
+    commands = rust_coverage_commands(
+        [
+            PROJECT_ROOT / ".github" / "workflows" / "ci.yaml",
+            PROJECT_ROOT / ".github" / "workflows" / "release.yaml",
+            PROJECT_ROOT / "justfile",
+        ]
+    )
+    unit_or_workspace_commands = {
+        source: command
+        for source, command in commands.items()
+        if "--test" not in command
+    }
+
+    missing_bins = {
+        source: command
+        for source, command in unit_or_workspace_commands.items()
+        if "--bins" not in command
+    }
+    assert not missing_bins, (
+        "Rust unit/workspace coverage commands must include binary targets "
+        f"with --bins; missing {missing_bins}"
+    )
+
+
 def workspace_packages() -> dict[str, WorkspacePackage]:
     metadata = json.loads(
         subprocess.check_output(
@@ -216,6 +241,17 @@ def codecov_components(codecov: str) -> dict[str, CodecovComponent]:
 
     flush()
     return components
+
+
+def rust_coverage_commands(paths: list[Path]) -> dict[str, str]:
+    commands: dict[str, str] = {}
+    for path in paths:
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            command = line.strip()
+            if not command.startswith("cargo llvm-cov "):
+                continue
+            commands[f"{path.relative_to(PROJECT_ROOT)}:{line_number}"] = command
+    return commands
 
 
 def ci_coverage_packages(ci: str, *, job_name: str) -> set[str]:
