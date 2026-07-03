@@ -84,6 +84,25 @@ def test_package_architecture_groups() -> None:
         assert arch_position < package_position
 
 
+def test_package_architecture_sections_are_explicit() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    stable = (
+        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
+    ).read_text(encoding="utf-8")
+    packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
+        "Capsem Binaries",
+        maxsplit=1,
+    )[0]
+    stable_packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
+
+    for package in stable_packages:
+        heading = f"Architecture {package['architecture']} / {package['platform']}"
+        assert heading in packages_section
+        assert packages_section.index(heading) < packages_section.index(package["name"])
+
+
 def test_macos_package_present() -> None:
     build_release_site_from_fixture()
 

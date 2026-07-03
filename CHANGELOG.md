@@ -42,6 +42,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   independent manifest revisions from `channels.json`.
 - Replaced root release-channel history/record noise with generated update and
   package/profile/architecture coverage metadata.
+- Split generated release-channel package tables by explicit architecture and
+  platform target so host packages are not grouped into ambiguous architecture
+  buckets.
 
 ## [1.4.1782944059] - 2026-07-01
 
