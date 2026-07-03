@@ -307,6 +307,42 @@ def test_release_binaries_and_package_rails_covered() -> None:
         )
 
 
+def test_binary_targets_in_coverage_workflow() -> None:
+    packages = workspace_packages()
+    ci = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    macos_coverage_packages = ci_coverage_packages(ci, job_name="test")
+
+    binary_owning_packages = {
+        package.name: package.binary_targets
+        for package in packages.values()
+        if package.binary_targets
+    }
+    missing_binary_packages = sorted(
+        set(binary_owning_packages) - macos_coverage_packages
+    )
+    assert not missing_binary_packages, (
+        "binary-owning workspace crates must be included in macOS coverage; "
+        f"missing {missing_binary_packages}"
+    )
+
+    commands = rust_coverage_commands(
+        [
+            PROJECT_ROOT / ".github" / "workflows" / "ci.yaml",
+            PROJECT_ROOT / ".github" / "workflows" / "release.yaml",
+            PROJECT_ROOT / "justfile",
+        ]
+    )
+    missing_bins_flag = {
+        source: command
+        for source, command in commands.items()
+        if "--test" not in command and "--bins" not in command
+    }
+    assert not missing_bins_flag, (
+        "unit/workspace Rust coverage commands must measure executable "
+        f"targets, not just libraries; missing --bins in {missing_bins_flag}"
+    )
+
+
 def workspace_packages() -> dict[str, WorkspacePackage]:
     metadata = json.loads(
         subprocess.check_output(
