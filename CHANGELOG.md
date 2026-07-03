@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package, binary, profile, image, and evidence ownership; added multichannel
   stable/nightly generation and live `release.capsem.org` verification gates
   with real SHA-256 and BLAKE3 artifact checks.
+- Hardened the generated release-site display contract so root/channel pages use
+  current manifest language, hide legacy profile-catalog side links, truncate
+  human-facing hashes, keep SBOM evidence on package rows, and require packages
+  to own executable binary inventory in release-channel tests.
 
 ## [1.4.1782944059] - 2026-07-01
 

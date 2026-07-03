@@ -27,6 +27,7 @@ export interface TableRow {
 export interface ChannelRow {
   id: string;
   label: string;
+  description: string;
   manifestCount: number;
   currentVersion: string;
   currentStatus: string;
@@ -115,6 +116,7 @@ export function channelRows(data: ReleaseData): ChannelRow[] {
       return {
         id,
         label: String(channel.label ?? id),
+        description: String(channel.description ?? channelDescription(id)),
         manifestCount: manifests.length,
         currentVersion: String(selected.version ?? 'not published'),
         currentStatus: String(selected.status ?? 'not published'),
@@ -439,7 +441,7 @@ export function manifestUrl(data: ReleaseData): string {
 }
 
 export function manifestBlake3(data: ReleaseData): string {
-  return String(data.manifestRecord.digest?.blake3 ?? '');
+  return hashLabel(data.manifestRecord.digest?.blake3);
 }
 
 export function byteLabel(value: unknown): string {
@@ -447,7 +449,10 @@ export function byteLabel(value: unknown): string {
 }
 
 export function hashLabel(value: unknown): string {
-  return typeof value === 'string' && value.length > 0 ? value : 'not published';
+  if (typeof value !== 'string' || value.length === 0) {
+    return 'not published';
+  }
+  return value.length > 12 ? `${value.slice(0, 8)}...` : value;
 }
 
 export function binaryDescription(name: string): string {
@@ -508,6 +513,17 @@ function normalizeProfile(profile: JsonObject): JsonObject {
     name,
     description: profile.description ?? `Release profile ${id}`,
   };
+}
+
+function channelDescription(id: string): string {
+  switch (id) {
+    case 'stable':
+      return 'Recommended release channel for everyday Capsem installs.';
+    case 'nightly':
+      return 'Faster-moving release channel for daily fixes and early validation.';
+    default:
+      return 'Capsem release channel.';
+  }
 }
 
 function artifactLabel(kind: unknown): string {

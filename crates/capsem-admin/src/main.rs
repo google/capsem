@@ -2105,8 +2105,8 @@ fn root_health_belongs_to_other_channel(root_health_path: &Path, channel: &str) 
 fn validate_assets_channel_index_html(index_html: &str, channel: &str) -> Result<()> {
     let expected = [
         "Channels",
-        "Selected manifest",
-        "Records",
+        "Current manifest",
+        "History",
         "/channels.json",
         "Manifest URL",
     ];
@@ -2119,6 +2119,11 @@ fn validate_assets_channel_index_html(index_html: &str, channel: &str) -> Result
     if !index_html.contains(&channel_manifest) {
         return Err(anyhow!("asset channel index missing {channel_manifest}"));
     }
+    for forbidden in ["Selected manifest", ">Status<", ">Records<"] {
+        if index_html.contains(forbidden) {
+            return Err(anyhow!("asset channel index still contains {forbidden}"));
+        }
+    }
     if index_html.contains(&format!("/manifests/{channel}/")) {
         return Err(anyhow!("asset channel index must not publish legacy graph manifest URLs"));
     }
@@ -2127,7 +2132,7 @@ fn validate_assets_channel_index_html(index_html: &str, channel: &str) -> Result
 
 fn validate_assets_channel_page_html(channel_html: &str, channel: &str) -> Result<()> {
     let expected = [
-        "Selected Manifest",
+        "Current Manifest",
         "Manifest History",
         "Capsem Packages",
         "Capsem Binaries",
@@ -2167,7 +2172,7 @@ fn write_test_assets_channel_index_fixture(dist: &Path, channel: &str) -> Result
     let channel_manifest = format!("/assets/{channel}/manifest.json");
     let html = format!(
         "<!doctype html><html><body><main><h1>Capsem Release Channels</h1>\
-        <h2>Channels</h2><h2>Selected manifest</h2><h2>Records</h2>\
+        <h2>Channels</h2><h2>Current manifest</h2><h2>History</h2>\
         <a href=\"/channels.json\">/channels.json</a>\
         <p>Manifest URL <a href=\"{channel_manifest}\">{channel_manifest}</a></p>\
         <p>{binary} {assets} {generated_at} {date}</p>\
@@ -2188,7 +2193,7 @@ fn write_test_assets_channel_index_fixture(dist: &Path, channel: &str) -> Result
         .with_context(|| format!("create test channel page {}", channel_dir.display()))?;
     let channel_html = format!(
         "<!doctype html><html><body><main><h1>{channel}</h1>\
-        <h2>Selected Manifest</h2><h2>Manifest History</h2><h2>Capsem Packages</h2>\
+        <h2>Current Manifest</h2><h2>Manifest History</h2><h2>Capsem Packages</h2>\
         <h2>Capsem Binaries</h2><h2>Profile References</h2><p>SBOM</p>\
         <p>{generated_at}</p><p>{binary}</p><p>{assets}</p>\
         <a href=\"{channel_manifest}\">{channel_manifest}</a>\

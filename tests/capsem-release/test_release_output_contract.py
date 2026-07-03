@@ -259,8 +259,8 @@ def test_pages_only_render_owned_release_facts(generated_release_dist: Path) -> 
             assert field not in profile_page
         for item in _profile_artifact_descriptors(profile):
             assert item["url"] in profile_page
-            assert item["digest"]["sha256"] in profile_page
-            assert item["digest"]["blake3"] in profile_page
+            assert _hash_label(item["digest"]["sha256"]) in profile_page
+            assert _hash_label(item["digest"]["blake3"]) in profile_page
 
 
 def test_profile_software_inventory_is_complete_and_hashed(
@@ -658,8 +658,8 @@ def _check_profile_pages_render_config(dist: Path) -> None:
         page = _channel_profile_page(dist, profile_id)
         for item in profile["config"]:
             assert item["url"] in page, f"{profile_id}:{item['url']}"
-            assert item["digest"]["sha256"] in page, f"{profile_id}:{item['url']}"
-            assert item["digest"]["blake3"] in page, f"{profile_id}:{item['url']}"
+            assert _hash_label(item["digest"]["sha256"]) in page, f"{profile_id}:{item['url']}"
+            assert _hash_label(item["digest"]["blake3"]) in page, f"{profile_id}:{item['url']}"
 
 
 def _check_profile_pages_render_images(dist: Path) -> None:
@@ -668,8 +668,8 @@ def _check_profile_pages_render_images(dist: Path) -> None:
         for image in _profile_images(profile).values():
             for artifact in image["artifacts"]:
                 assert artifact["url"] in page, f"{profile_id}:{artifact['url']}"
-                assert artifact["digest"]["sha256"] in page, f"{profile_id}:{artifact['url']}"
-                assert artifact["digest"]["blake3"] in page, f"{profile_id}:{artifact['url']}"
+                assert _hash_label(artifact["digest"]["sha256"]) in page, f"{profile_id}:{artifact['url']}"
+                assert _hash_label(artifact["digest"]["blake3"]) in page, f"{profile_id}:{artifact['url']}"
 
 
 def _check_profile_pages_render_software(dist: Path) -> None:
@@ -678,8 +678,8 @@ def _check_profile_pages_render_software(dist: Path) -> None:
         for item in profile["software"]:
             assert item["name"] in page, f"{profile_id}:{item}"
             assert item["version"] in page, f"{profile_id}:{item}"
-            assert item["digest"]["sha256"] in page, f"{profile_id}:{item}"
-            assert item["digest"]["blake3"] in page, f"{profile_id}:{item}"
+            assert _hash_label(item["digest"]["sha256"]) in page, f"{profile_id}:{item}"
+            assert _hash_label(item["digest"]["blake3"]) in page, f"{profile_id}:{item}"
 
 
 def _assert_digest_real(digest: dict[str, Any], context: str) -> None:
@@ -690,6 +690,10 @@ def _assert_digest_real(digest: dict[str, Any], context: str) -> None:
         assert len(value) == 64, context
         int(value, 16)
         assert len(set(value)) > 1, f"{context} {name} is a placeholder"
+
+
+def _hash_label(value: str) -> str:
+    return f"{value[:8]}..." if len(value) > 12 else value
 
 
 def _expected_profile_config_files(profile_id: str) -> set[str]:

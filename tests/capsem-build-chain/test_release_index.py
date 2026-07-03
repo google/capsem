@@ -134,6 +134,23 @@ def _write_release_manifest(
             arm64 / "obom.cdx.json",
             b'{"bomFormat":"CycloneDX","metadata":{"tools":[{"name":"cdxgen"}]}}',
         ),
+        "software-inventory.json": _write_asset(
+            arm64 / "software-inventory.json",
+            json.dumps(
+                {
+                    "schema": "capsem.profile_software_inventory.v1",
+                    "architecture": "arm64",
+                    "packages": [
+                        {
+                            "name": "zstd",
+                            "version": "1.5.6",
+                            "source": "apt",
+                            "architecture": "arm64",
+                        }
+                    ],
+                }
+            ).encode("utf-8"),
+        ),
     }
     arches = {"arm64": arm64_files}
     if include_x86_64:
@@ -146,9 +163,28 @@ def _write_release_manifest(
                 x86_64 / "obom.cdx.json",
                 b'{"bomFormat":"CycloneDX","metadata":{"tools":[{"name":"cdxgen"}]}}',
             ),
+            "software-inventory.json": _write_asset(
+                x86_64 / "software-inventory.json",
+                json.dumps(
+                    {
+                        "schema": "capsem.profile_software_inventory.v1",
+                        "architecture": "x86_64",
+                        "packages": [
+                            {
+                                "name": "zstd",
+                                "version": "1.5.6",
+                                "source": "apt",
+                                "architecture": "x86_64",
+                            }
+                        ],
+                    }
+                ).encode("utf-8"),
+            ),
         }
     pkg = b"pkg bytes"
     sbom = b'{"spdxVersion":"SPDX-2.3"}'
+    capsem_app = b"capsem app executable"
+    capsem_tray = b"capsem tray executable"
     binary_release = {
         "date": date,
         "deprecated": False,
@@ -161,6 +197,24 @@ def _write_release_manifest(
                 "size": len(pkg),
                 "sha256": hashlib.sha256(pkg).hexdigest(),
                 "blake3": blake3(pkg).hexdigest(),
+                "binaries": [
+                    {
+                        "name": "capsem-app",
+                        "installed_path": "/Applications/Capsem.app/Contents/MacOS/capsem-app",
+                        "size": len(capsem_app),
+                        "sha256": hashlib.sha256(capsem_app).hexdigest(),
+                        "blake3": blake3(capsem_app).hexdigest(),
+                        "sbom_component_ref": "SPDXRef-File-capsem-app",
+                    },
+                    {
+                        "name": "capsem-tray",
+                        "installed_path": "/Applications/Capsem.app/Contents/MacOS/capsem-tray",
+                        "size": len(capsem_tray),
+                        "sha256": hashlib.sha256(capsem_tray).hexdigest(),
+                        "blake3": blake3(capsem_tray).hexdigest(),
+                        "sbom_component_ref": "SPDXRef-File-capsem-tray",
+                    },
+                ],
             },
             {
                 "name": "capsem-sbom.spdx.json",
@@ -300,7 +354,7 @@ def test_release_index_generator_writes_split_cache_headers(tmp_path: Path) -> N
     assert "/index.html\n  Cache-Control: no-cache, must-revalidate" in headers
     assert "/health.json\n  Cache-Control: no-cache, must-revalidate" in headers
     assert "/assets/stable/*\n  Cache-Control: no-cache, must-revalidate" in headers
-    assert "/profiles/stable/*\n  Cache-Control: no-cache, must-revalidate" in headers
+    assert "/profiles/stable/*\n  Cache-Control: no-cache" not in headers
     assert "/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
     assert "/profiles/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
     assert "/assets/*\n  Cache-Control: no-cache" not in headers
@@ -337,24 +391,24 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert report["human_site_source"] == "release-site"
     assert "index_html" not in report
     assert report["manifest"] == str(dist / "assets" / "stable" / "manifest.json")
-    assert report["copied_assets"] == 8
+    assert report["copied_assets"] == 10
 
     index_html = (dist / "index.html").read_text(encoding="utf-8")
     assert "Capsem Release Channels" in index_html
     assert "Stable" in index_html
-    assert "Selected manifest" in index_html
+    assert "Current manifest" in index_html
     channel_html = (dist / "channels" / "stable" / "index.html").read_text(encoding="utf-8")
-    assert "Selected Manifest" in channel_html
+    assert "Current Manifest" in channel_html
     assert "Manifest URL" in channel_html
     assert "Capsem Packages" in channel_html
-    assert "Profile Catalog" in channel_html
+    assert "Profile Catalog" not in channel_html
     assert "profiles-2030.0101.1" in channel_html
     assert "SBOM" in channel_html
     assert "Realm Discipline" not in index_html
     assert 'href="/channels.json"' in index_html
     assert 'href="/assets/stable/manifest.json"' in channel_html
     assert "/assets/stable/manifest.json" in channel_html
-    assert 'href="/profiles/releases/profiles-2030.0101.1/catalog.json"' in channel_html
+    assert "/profiles/releases/profiles-2030.0101.1/catalog.json" not in channel_html
     assert "Capsem-1.4.1234567890.pkg" in channel_html
     assert "capsem-sbom.spdx.json" in channel_html
     assert "The fastest way to ship with AI securely." not in index_html
@@ -377,7 +431,7 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "/\n  Cache-Control: no-cache, must-revalidate" in headers
     assert "/health.json\n  Cache-Control: no-cache, must-revalidate" in headers
     assert "/assets/stable/*\n  Cache-Control: no-cache, must-revalidate" in headers
-    assert "/profiles/stable/*\n  Cache-Control: no-cache, must-revalidate" in headers
+    assert "/profiles/stable/*\n  Cache-Control: no-cache" not in headers
     assert "/assets/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
     assert "/profiles/releases/*\n  Cache-Control: public, max-age=31536000, immutable" in headers
     assert "/assets/*\n  Cache-Control: no-cache" not in headers
@@ -396,11 +450,10 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     }
     assert health["updates"]["binary"]["latest"] == "1.4.1234567890"
     assert health["updates"]["assets"]["manifest"] == "/assets/stable/manifest.json"
-    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
     assert health["profiles"]["revision"] == "profiles-2030.0101.1"
-    assert health["profiles"]["source"] == catalog_url
-    assert health["urls"]["profile_catalog"] == catalog_url
-    assert len(health["profiles"]["hash"]) == 64
+    assert health["profiles"]["source"] == "manifest.profiles"
+    assert "profile_catalog" not in health["urls"]
+    assert "hash" not in health["profiles"]
     assert "compatibility" not in health["profiles"]
     assert "requires_newer" not in health["profiles"]
     assert health["profiles"]["min_binary"] == "1.4.0"
@@ -408,17 +461,10 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert health["updates"]["profiles"]["latest"] == "profiles-2030.0101.1"
     assert health["updates"]["profiles"]["current"] == "profiles-2030.0101.1"
     assert health["updates"]["profiles"]["state"] == "current"
-    assert health["updates"]["profiles"]["source"] == catalog_url
-    assert health["updates"]["profiles"]["hash"] == health["profiles"]["hash"]
+    assert health["updates"]["profiles"]["source"] == "manifest.profiles"
+    assert "hash" not in health["updates"]["profiles"]
     assert "compatibility" not in health["updates"]["profiles"]
     assert "requires_newer" not in health["updates"]["profiles"]
-    catalog_path = dist / catalog_url.removeprefix("/")
-    catalog_bytes = catalog_path.read_bytes()
-    catalog_text = catalog_bytes.decode()
-    assert health["profiles"]["hash"] == blake3(catalog_bytes).hexdigest()
-    assert "file://" not in catalog_text
-    assert str(tmp_path) not in catalog_text
-    assert "/assets/releases/2030.0101.1/arm64-rootfs.erofs" in catalog_text
     assert health["updates"]["images"]["latest"] is None
     assert health["evidence"]["vm_oboms"][0]["url"] == (
         "/assets/releases/2030.0101.1/arm64-obom.cdx.json"

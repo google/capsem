@@ -62,8 +62,63 @@ def test_root_lists_stable_nightly_and_manifest_statuses() -> None:
     assert "Nightly" in index
     assert "1.4.0" in index
     assert "1.5.0-nightly.20260702" in index
-    for status in ("current", "supported", "deprecated", "revoked"):
-        assert status in index
+    assert "Recommended release channel" in index
+    assert "Faster-moving release channel" in index
+
+
+def test_root_channel_table_uses_descriptions_not_theater_labels() -> None:
+    build_release_site_from_fixture()
+
+    index = (PROJECT_ROOT / "release-site" / "dist" / "index.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Selected manifest" not in index
+    assert ">Status<" not in index
+    assert ">Records<" not in index
+    assert "<code>stable</code>" not in index
+    assert "<code>nightly</code>" not in index
+    assert "recommended" in index.lower()
+    assert "faster-moving" in index.lower()
+
+
+def test_human_pages_truncate_hashes_but_machine_graph_keeps_full_hashes() -> None:
+    build_release_site_from_fixture()
+
+    graph = _fixture()
+    stable_manifest_digest = graph["channels"]["stable"]["manifests"][0]["digest"][
+        "sha256"
+    ]
+    stable_package_digest = graph["manifests"]["stable"]["1.4.0"]["packages"][0][
+        "digest"
+    ]["blake3"]
+    profile_config_digest = graph["manifests"]["stable"]["1.4.0"]["profiles"][
+        "co-work"
+    ]["config"][0]["digest"]["sha256"]
+    pages = [
+        PROJECT_ROOT / "release-site" / "dist" / "index.html",
+        PROJECT_ROOT / "release-site" / "dist" / "channels" / "stable" / "index.html",
+        PROJECT_ROOT
+        / "release-site"
+        / "dist"
+        / "channels"
+        / "stable"
+        / "profiles"
+        / "co-work"
+        / "index.html",
+    ]
+
+    for full_hash in (
+        stable_manifest_digest,
+        stable_package_digest,
+        profile_config_digest,
+    ):
+        assert len(full_hash) == 64
+        assert full_hash in FIXTURE_GRAPH.read_text(encoding="utf-8")
+        short_hash = f"{full_hash[:8]}..."
+        rendered = "\n".join(path.read_text(encoding="utf-8") for path in pages)
+        assert short_hash in rendered
+        assert full_hash not in rendered
 
 
 def test_channel_page_lists_packages_and_binaries() -> None:
@@ -76,7 +131,7 @@ def test_channel_page_lists_packages_and_binaries() -> None:
         PROJECT_ROOT / "release-site" / "dist" / "channels" / "nightly" / "index.html"
     ).read_text(encoding="utf-8")
 
-    assert "Selected Manifest" in stable
+    assert "Current Manifest" in stable
     assert "Manifest History" in stable
     assert "Packages" in stable
     assert "Capsem Binaries" in stable
@@ -103,14 +158,17 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     stable_sbom = _fixture()["manifests"]["stable"]["1.4.0"]["packages"][0][
         "evidence"
     ][0]
-    assert stable_sbom["url"] not in stable_package_section
+    assert stable_sbom["url"] in stable_package_section
+    assert _hash_label(stable_sbom["digest"]["sha256"]) in stable_package_section
     assert stable_sbom["digest"]["sha256"] not in stable_package_section
-    assert stable_sbom["url"] in stable_binary_section
-    assert stable_sbom["digest"]["sha256"] in stable_binary_section
-    assert stable_sbom["digest"]["blake3"] in stable_binary_section
-    assert _fixture()["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0][
-        "digest"
-    ]["sha256"] in stable
+    assert stable_sbom["url"] not in stable_binary_section
+    assert stable_sbom["digest"]["sha256"] not in stable_binary_section
+    assert stable_sbom["digest"]["blake3"] not in stable_binary_section
+    assert _hash_label(
+        _fixture()["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0][
+            "digest"
+        ]["sha256"]
+    ) in stable
     assert "HMAC" not in stable
     assert "hmac" not in stable
     assert "co-work" in stable
@@ -121,9 +179,11 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     assert "Capsem_1.5.0-nightly.20260702_arm64.deb" in nightly
     assert "/assets/nightly/manifest.json" in nightly
     assert "/manifests/nightly/" not in nightly
-    assert _fixture()["manifests"]["nightly"]["1.5.0-nightly.20260702"]["packages"][0][
-        "binaries"
-    ][0]["digest"]["sha256"] in nightly
+    assert _hash_label(
+        _fixture()["manifests"]["nightly"]["1.5.0-nightly.20260702"]["packages"][0][
+            "binaries"
+        ][0]["digest"]["sha256"]
+    ) in nightly
     assert "HMAC" not in nightly
     assert "hmac" not in nightly
     assert "co-work" in nightly
@@ -167,8 +227,8 @@ def test_package_pages_show_package_owned_binaries() -> None:
     assert "Capsem Package" in page
     assert package["name"] in page
     assert package["kind"] in page
-    assert package["digest"]["sha256"] in page
-    assert package["digest"]["blake3"] in page
+    assert _hash_label(package["digest"]["sha256"]) in page
+    assert _hash_label(package["digest"]["blake3"]) in page
     assert "Contained Binaries" in page
     assert "HMAC" not in page
     assert "hmac" not in page
@@ -176,8 +236,8 @@ def test_package_pages_show_package_owned_binaries() -> None:
         assert binary["name"] in page
         assert binary["version"] in page
         assert binary["installed_path"] in page
-        assert binary["digest"]["sha256"] in page
-        assert binary["digest"]["blake3"] in page
+        assert _hash_label(binary["digest"]["sha256"]) in page
+        assert _hash_label(binary["digest"]["blake3"]) in page
         assert binary["sbom_component_ref"] in page
 
 
@@ -260,25 +320,25 @@ def test_profile_page_renders_profile_owned_images_and_configs() -> None:
         for item in profile["config"]:
             assert item["path"] in page
             assert item["url"] in page
-            assert item["digest"]["sha256"] in page
-            assert item["digest"]["blake3"] in page
+            assert _hash_label(item["digest"]["sha256"]) in page
+            assert _hash_label(item["digest"]["blake3"]) in page
         for image in profile["images"]:
             assert image["architecture"] in page
             for artifact in image["artifacts"]:
                 assert artifact["name"] in page
                 assert artifact["url"] in page
-                assert artifact["digest"]["sha256"] in page
-                assert artifact["digest"]["blake3"] in page
+                assert _hash_label(artifact["digest"]["sha256"]) in page
+                assert _hash_label(artifact["digest"]["blake3"]) in page
             for evidence in image["evidence"]:
                 assert evidence["kind"].upper() in page
                 assert evidence["url"] in page
-                assert evidence["digest"]["sha256"] in page
-                assert evidence["digest"]["blake3"] in page
+                assert _hash_label(evidence["digest"]["sha256"]) in page
+                assert _hash_label(evidence["digest"]["blake3"]) in page
         for software in profile["software"]:
             assert software["name"] in page
             assert software["version"] in page
-            assert software["digest"]["sha256"] in page
-            assert software["digest"]["blake3"] in page
+            assert _hash_label(software["digest"]["sha256"]) in page
+            assert _hash_label(software["digest"]["blake3"]) in page
 
 
 def test_profile_page_forbids_current_binary_and_current_assets() -> None:
@@ -324,3 +384,7 @@ def build_release_site_from_fixture() -> None:
 
 def _fixture() -> dict:
     return json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+
+def _hash_label(value: str) -> str:
+    return f"{value[:8]}..." if len(value) > 12 else value
