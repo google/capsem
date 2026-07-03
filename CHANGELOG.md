@@ -123,6 +123,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a named profile config-class gate proving generated profile pages
   render profile, MCP, enforcement, detection, package-manager, build, tips,
   and root-manifest config entries.
+- Added a named config inventory gate proving release profile config artifacts
+  match canonical profile TOML file definitions, including enforcement and
+  detection rule files.
 - Updated asset-channel validation to require OS/architecture package target
   sections and package detail links instead of the removed flattened channel
   binary table, unblocking generated release-output contract checks.

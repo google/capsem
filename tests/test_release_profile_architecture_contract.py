@@ -13,6 +13,7 @@ import hashlib
 import importlib.util
 import json
 import sys
+import tomllib
 
 from blake3 import blake3
 
@@ -549,6 +550,55 @@ def test_all_config_classes_render() -> None:
                     assert config["kind"] in config_block, label
                     assert config["path"] in config_block, label
                     assert config["url"] in config_block, label
+
+
+def test_profile_config_inventory_includes_security_and_detection() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    file_kind_map = {
+        "apt_packages": "apt",
+        "python_requirements": "python",
+        "npm_packages": "npm",
+    }
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            profile_config = tomllib.loads(
+                (PROJECT_ROOT / "config" / "profiles" / profile_id / "profile.toml").read_text(
+                    encoding="utf-8"
+                )
+            )
+            expected_paths = {
+                file_kind_map.get(kind, kind): file_record["path"]
+                for kind, file_record in profile_config["files"].items()
+            }
+            assert {"enforcement", "detection", "mcp"}.issubset(expected_paths), profile_id
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                label = f"{channel}:{profile_id}:{architecture['architecture']}"
+                config_by_kind = {config["kind"]: config for config in architecture["config"]}
+                assert expected_paths.keys() <= config_by_kind.keys(), label
+                section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[
+                    1
+                ].split("</section>", maxsplit=1)[0]
+                config_block = section.split("Config Files", maxsplit=1)[1].split(
+                    "Profile Images",
+                    maxsplit=1,
+                )[0]
+
+                for kind, path in expected_paths.items():
+                    assert config_by_kind[kind]["path"] == path, label
+                    assert path in config_block, label
+                    assert config_by_kind[kind]["url"] in config_block, label
 
 
 def test_config_kind_enum_contract(monkeypatch) -> None:
