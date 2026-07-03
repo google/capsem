@@ -201,6 +201,7 @@ def _write_release_manifest(
                 "binaries": [
                     {
                         "name": "capsem-app",
+                        "description": "Capsem desktop application executable",
                         "installed_path": "/Applications/Capsem.app/Contents/MacOS/capsem-app",
                         "size": len(capsem_app),
                         "sha256": hashlib.sha256(capsem_app).hexdigest(),
@@ -209,6 +210,7 @@ def _write_release_manifest(
                     },
                     {
                         "name": "capsem-tray",
+                        "description": "Capsem tray companion executable",
                         "installed_path": "/Applications/Capsem.app/Contents/MacOS/capsem-tray",
                         "size": len(capsem_tray),
                         "sha256": hashlib.sha256(capsem_tray).hexdigest(),

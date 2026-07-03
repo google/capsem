@@ -136,6 +136,8 @@ pub struct BinaryFile {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BinaryExecutable {
     pub name: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
     pub installed_path: String,
     pub size: u64,
     pub sha256: String,

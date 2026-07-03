@@ -96,6 +96,7 @@ pub struct PackageInventoryRow {
 pub struct BinaryInventoryRow {
     pub name: String,
     pub version: String,
+    pub description: String,
     pub installed_path: String,
     pub platform: String,
     pub architecture: Architecture,
@@ -108,6 +109,7 @@ pub struct BinaryInventoryRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackagedExecutableFile {
     pub name: String,
+    pub description: String,
     pub installed_path: String,
     pub bytes: Vec<u8>,
 }
@@ -376,6 +378,9 @@ impl BinaryInventoryRow {
         if self.version.trim().is_empty() {
             bail!("binary {} version must not be empty", self.name);
         }
+        if self.description.trim().is_empty() {
+            bail!("binary {} description must not be empty", self.name);
+        }
         if self.installed_path.trim().is_empty() {
             bail!("binary {} installed_path must not be empty", self.name);
         }
@@ -435,6 +440,7 @@ pub fn executable_inventory_from_package_files(
         let row = BinaryInventoryRow {
             name: file.name.clone(),
             version: package.version.clone(),
+            description: file.description.clone(),
             installed_path: file.installed_path.clone(),
             platform: package.platform.clone(),
             architecture: package.architecture,
@@ -1229,6 +1235,7 @@ mod tests {
         let binary = BinaryInventoryRow {
             name: "capsem".to_string(),
             version: "1.4.0".to_string(),
+            description: "Capsem executable fixture".to_string(),
             installed_path: "/usr/local/bin/capsem".to_string(),
             platform: "macos".to_string(),
             architecture: Architecture::Arm64,
@@ -1288,6 +1295,7 @@ mod tests {
                 binaries: vec![BinaryInventoryRow {
                     name: "capsem".to_string(),
                     version: "1.4.0".to_string(),
+                    description: "Capsem executable fixture".to_string(),
                     installed_path: "/usr/local/bin/capsem".to_string(),
                     platform: "macos".to_string(),
                     architecture: Architecture::Arm64,
@@ -1331,6 +1339,7 @@ mod tests {
                 binaries: vec![BinaryInventoryRow {
                     name: "capsem".to_string(),
                     version: "1.4.0".to_string(),
+                    description: "Capsem executable fixture".to_string(),
                     installed_path: "/usr/bin/capsem".to_string(),
                     platform: "linux".to_string(),
                     architecture: Architecture::Arm64,
@@ -1368,11 +1377,13 @@ mod tests {
         let files = vec![
             PackagedExecutableFile {
                 name: "capsem-service".to_string(),
+                description: "Capsem executable fixture".to_string(),
                 installed_path: "/usr/local/share/capsem/bin/capsem-service".to_string(),
                 bytes: b"service-bin".to_vec(),
             },
             PackagedExecutableFile {
                 name: "capsem".to_string(),
+                description: "Capsem executable fixture".to_string(),
                 installed_path: "/usr/local/bin/capsem".to_string(),
                 bytes: b"capsem-bin".to_vec(),
             },
@@ -1423,6 +1434,7 @@ mod tests {
         };
         let files = vec![PackagedExecutableFile {
             name: "capsem".to_string(),
+            description: "Capsem executable fixture".to_string(),
             installed_path: "/usr/bin/capsem".to_string(),
             bytes: b"capsem-bin".to_vec(),
         }];
@@ -1454,11 +1466,13 @@ mod tests {
         let macos_files = vec![
             PackagedExecutableFile {
                 name: "capsem".to_string(),
+                description: "Capsem executable fixture".to_string(),
                 installed_path: "/usr/local/share/capsem/bin/capsem".to_string(),
                 bytes: b"macos-capsem".to_vec(),
             },
             PackagedExecutableFile {
                 name: "capsem-service".to_string(),
+                description: "Capsem executable fixture".to_string(),
                 installed_path: "/usr/local/share/capsem/bin/capsem-service".to_string(),
                 bytes: b"macos-service".to_vec(),
             },
@@ -1495,11 +1509,13 @@ mod tests {
         let deb_files = vec![
             PackagedExecutableFile {
                 name: "capsem".to_string(),
+                description: "Capsem executable fixture".to_string(),
                 installed_path: "/usr/bin/capsem".to_string(),
                 bytes: b"deb-capsem".to_vec(),
             },
             PackagedExecutableFile {
                 name: "capsem-service".to_string(),
+                description: "Capsem executable fixture".to_string(),
                 installed_path: "/usr/bin/capsem-service".to_string(),
                 bytes: b"deb-service".to_vec(),
             },
@@ -1538,6 +1554,7 @@ mod tests {
         };
         let files = vec![PackagedExecutableFile {
             name: "capsem".to_string(),
+            description: "Capsem executable fixture".to_string(),
             installed_path: "/usr/bin/capsem".to_string(),
             bytes: b"deb-capsem".to_vec(),
         }];
@@ -1873,6 +1890,7 @@ mod tests {
                         binaries: vec![BinaryInventoryRow {
                             name: "capsem".to_string(),
                             version: "1.4.0".to_string(),
+                            description: "Capsem executable fixture".to_string(),
                             installed_path: "/usr/local/bin/capsem".to_string(),
                             platform: "macos".to_string(),
                             architecture: Architecture::Arm64,

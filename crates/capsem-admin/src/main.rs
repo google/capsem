@@ -1554,6 +1554,7 @@ fn collect_pkg_payload_executables_from(
         let contents = fs::read(&path).with_context(|| format!("read {}", path.display()))?;
         binaries.push(BinaryExecutable {
             sbom_component_ref: format!("SPDXRef-File-{}", spdx_ref_fragment(&name)),
+            description: binary_description_for_name(&name).to_string(),
             installed_path: format!("/{installed_path}"),
             name,
             size: contents.len() as u64,
@@ -1595,6 +1596,7 @@ fn deb_executable_inventory(bytes: &[u8]) -> Result<Vec<BinaryExecutable>> {
             .with_context(|| format!("read deb executable {normalized}"))?;
         binaries.push(BinaryExecutable {
             sbom_component_ref: format!("SPDXRef-File-{}", spdx_ref_fragment(&name)),
+            description: binary_description_for_name(&name).to_string(),
             installed_path: format!("/{normalized}"),
             name,
             size: contents.len() as u64,
@@ -3104,6 +3106,7 @@ fn graph_package_rows(manifest: &ManifestV2) -> Result<Vec<serde_json::Value>> {
                 .map(|binary| {
                     serde_json::json!({
                         "name": binary.name,
+                        "description": binary.description,
                         "version": manifest.binaries.current,
                         "installed_path": binary.installed_path,
                         "platform": platform,
@@ -3582,6 +3585,19 @@ fn package_architecture_for_name(name: &str) -> String {
         "arm64".to_string()
     } else {
         "arm64".to_string()
+    }
+}
+
+fn binary_description_for_name(name: &str) -> &'static str {
+    match name {
+        "capsem-app" => "Capsem desktop application executable",
+        "capsem-tray" => "Capsem tray companion executable",
+        "capsem-service" => "Capsem host service executable",
+        "capsem-gateway" => "Capsem local gateway executable",
+        "capsem-mcp" => "Capsem MCP server executable",
+        "capsem-process" => "Capsem guest process bridge executable",
+        "capsem" => "Capsem command-line executable",
+        _ => "Capsem packaged executable",
     }
 }
 

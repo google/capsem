@@ -66,6 +66,7 @@ const evidence = Array.isArray(selectedPackage.evidence) ? selectedPackage.evide
           <tr class="border-b border-zinc-200 text-left text-zinc-500">
             <th class="py-2 pr-4 font-medium">Binary</th>
             <th class="py-2 pr-4 font-medium">Version</th>
+            <th class="py-2 pr-4 font-medium">Description</th>
             <th class="py-2 pr-4 font-medium">Installed path</th>
             <th class="py-2 pr-4 font-medium">Bytes</th>
             <th class="py-2 pr-4 font-medium">SHA-256</th>
@@ -78,6 +79,7 @@ const evidence = Array.isArray(selectedPackage.evidence) ? selectedPackage.evide
             <tr class="border-b border-zinc-100 align-top">
               <td class="py-3 pr-4">{binary.name}</td>
               <td class="py-3 pr-4"><code>{binary.version}</code></td>
+              <td class="py-3 pr-4 text-zinc-600">{binary.description}</td>
               <td class="py-3 pr-4"><code>{binary.installed_path}</code></td>
               <td class="py-3 pr-4">{byteLabel(binary.bytes)}</td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(binary.digest?.sha256)}</code></td>
@@ -86,7 +88,7 @@ const evidence = Array.isArray(selectedPackage.evidence) ? selectedPackage.evide
             </tr>
           )) : (
             <tr>
-              <td class="py-4 pr-4 text-zinc-600" colspan="7">No binary inventory is published for this package.</td>
+              <td class="py-4 pr-4 text-zinc-600" colspan="8">No binary inventory is published for this package.</td>
             </tr>
           )}
         </tbody>

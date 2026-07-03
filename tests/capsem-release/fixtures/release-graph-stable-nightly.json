@@ -110,7 +110,8 @@
                 "platform": "macos",
                 "sbom_component_ref": "SPDXRef-File-capsem-app",
                 "status": "current",
-                "version": "1.5.0-nightly.20260702"
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem desktop application executable"
               },
               {
                 "architecture": "arm64",
@@ -124,7 +125,8 @@
                 "platform": "macos",
                 "sbom_component_ref": "SPDXRef-File-capsem-tray",
                 "status": "current",
-                "version": "1.5.0-nightly.20260702"
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem tray companion executable"
               }
             ],
             "bytes": 73,
@@ -168,7 +170,8 @@
                 "platform": "linux",
                 "sbom_component_ref": "SPDXRef-File-capsem-app",
                 "status": "current",
-                "version": "1.5.0-nightly.20260702"
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem desktop application executable"
               },
               {
                 "architecture": "arm64",
@@ -182,7 +185,8 @@
                 "platform": "linux",
                 "sbom_component_ref": "SPDXRef-File-capsem-tray",
                 "status": "current",
-                "version": "1.5.0-nightly.20260702"
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem tray companion executable"
               }
             ],
             "bytes": 79,
@@ -807,7 +811,8 @@
                 "platform": "macos",
                 "sbom_component_ref": "SPDXRef-File-capsem-app",
                 "status": "current",
-                "version": "1.4.0"
+                "version": "1.4.0",
+                "description": "Capsem desktop application executable"
               },
               {
                 "architecture": "arm64",
@@ -821,7 +826,8 @@
                 "platform": "macos",
                 "sbom_component_ref": "SPDXRef-File-capsem-tray",
                 "status": "current",
-                "version": "1.4.0"
+                "version": "1.4.0",
+                "description": "Capsem tray companion executable"
               }
             ],
             "bytes": 38,
@@ -865,7 +871,8 @@
                 "platform": "linux",
                 "sbom_component_ref": "SPDXRef-File-capsem-app",
                 "status": "current",
-                "version": "1.4.0"
+                "version": "1.4.0",
+                "description": "Capsem desktop application executable"
               },
               {
                 "architecture": "arm64",
@@ -879,7 +886,8 @@
                 "platform": "linux",
                 "sbom_component_ref": "SPDXRef-File-capsem-tray",
                 "status": "current",
-                "version": "1.4.0"
+                "version": "1.4.0",
+                "description": "Capsem tray companion executable"
               }
             ],
             "bytes": 44,

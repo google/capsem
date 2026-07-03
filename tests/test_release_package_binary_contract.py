@@ -161,6 +161,32 @@ def test_package_detail_lists_owned_binaries_only() -> None:
         assert evidence["url"] not in package_page
 
 
+def test_binary_descriptions_from_metadata() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    stable = (
+        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
+    ).read_text(encoding="utf-8")
+
+    for package in graph["manifests"]["stable"]["1.4.0"]["packages"]:
+        package_page = (
+            RELEASE_SITE_DIST
+            / "channels"
+            / "stable"
+            / "packages"
+            / package["id"]
+            / "index.html"
+        ).read_text(encoding="utf-8")
+        for binary in package["binaries"]:
+            assert binary["description"], binary
+            assert binary["description"] in stable
+            assert binary["description"] in package_page
+
+    assert "Capsem binary package" not in stable
+    assert "Capsem binary package" not in package_page
+
+
 def test_macos_package_present() -> None:
     build_release_site_from_fixture()
 

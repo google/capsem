@@ -1,7 +1,6 @@
 ---
 import ReleaseLayout from '../../layouts/ReleaseLayout.astro';
 import {
-  binaryDescription,
   binaryRows,
   byteLabel,
   channelPackagePagePath,
@@ -170,7 +169,7 @@ const packageGroups = Array.from(
             <tr class="border-b border-zinc-100 align-top">
               <td class="py-3 pr-4"><code>{binary.version}</code></td>
               <td class="py-3 pr-4">{binary.name}</td>
-              <td class="py-3 pr-4 text-zinc-600">{binaryDescription(binary.name)}</td>
+              <td class="py-3 pr-4 text-zinc-600">{binary.description}</td>
               <td class="py-3 pr-4"><code>{binary.installed_path}</code></td>
               <td class="py-3 pr-4">{byteLabel(binary.bytes)}</td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(binary.digest?.sha256)}</code></td>

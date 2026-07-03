@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of cloning the global host SBOM into every package row.
 - Made generated package detail pages identify the selected package and guard
   against leaking sibling package binaries or evidence.
+- Moved release-channel binary descriptions into generated package metadata and
+  required the release site to render those descriptions from machine JSON.
 
 ## [1.4.1782944059] - 2026-07-01
 

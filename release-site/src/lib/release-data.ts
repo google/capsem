@@ -487,12 +487,6 @@ export function hashLabel(value: unknown): string {
   return value.length > 12 ? `${value.slice(0, 8)}...` : value;
 }
 
-export function binaryDescription(name: string): string {
-  if (name.endsWith('.pkg')) return 'macOS installer package';
-  if (name.endsWith('.deb')) return 'Linux Debian package';
-  return 'Capsem binary package';
-}
-
 function descriptorRow(label: string, descriptor: JsonObject): TableRow {
   return {
     label,
