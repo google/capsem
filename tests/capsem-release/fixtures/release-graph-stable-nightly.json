@@ -134,14 +134,15 @@
             },
             "evidence": [
               {
-                "bytes": 70,
-                "digest": {
-                  "blake3": "ac0480b6e893ffad8ae3536702f469f445bdee7fc6076bec61f6d89af8ff6a74",
-                  "sha256": "7a4ba4b567815afb2f8472b089c581fa28e34140a26dce7ad1ba273076477d10"
-                },
                 "kind": "sbom",
-                "status": "current",
-                "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-sbom.spdx.json"
+                "name": "capsem-1-5-0-nightly-20260702-pkg-sbom.spdx.json",
+                "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-1-5-0-nightly-20260702-pkg-sbom.spdx.json",
+                "bytes": 120,
+                "digest": {
+                  "sha256": "a1b6f161d4f46487cf3ef220446dca4b14cdc7b03ede43778514a85dcca978ce",
+                  "blake3": "59b32e2b059d7f02fbbaa7b4dfa969413b696b2b96bb0ddd3c247c3aba921613"
+                },
+                "status": "current"
               }
             ],
             "id": "capsem-1-5-0-nightly-20260702-pkg",
@@ -191,14 +192,15 @@
             },
             "evidence": [
               {
-                "bytes": 76,
-                "digest": {
-                  "blake3": "a7b4fa77e599c08314f53ab104ca411bdbae9eb826f25b33280bfd2d0a997e77",
-                  "sha256": "38ea3f4360d8e9aabf49dd3e1c5970da68656cb52d94aa5c0b98d52eef2c0101"
-                },
                 "kind": "sbom",
-                "status": "current",
-                "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-sbom.spdx.json"
+                "name": "capsem-1-5-0-nightly-20260702-arm64-deb-sbom.spdx.json",
+                "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-1-5-0-nightly-20260702-arm64-deb-sbom.spdx.json",
+                "bytes": 132,
+                "digest": {
+                  "sha256": "82e64566222ea4a3d5574c5020deb779d8f30230fd5154aa8c5d4f85067d1a74",
+                  "blake3": "0b44d2443810b8fb14043c2abd667d396441cb9158433363f74795a08886f3bd"
+                },
+                "status": "current"
               }
             ],
             "id": "capsem-1-5-0-nightly-20260702-arm64-deb",
@@ -829,14 +831,15 @@
             },
             "evidence": [
               {
-                "bytes": 35,
-                "digest": {
-                  "blake3": "848c077e26b51d54fd37551cd0b87c0a37c81d4c9c051dfbe1a9363a55bdf89c",
-                  "sha256": "8964ed16432e77c680f98c8ead18b0986efd625cb58a75111ae1870a7513fd53"
-                },
                 "kind": "sbom",
-                "status": "current",
-                "url": "/packages/stable/1.4.0/capsem-sbom.spdx.json"
+                "name": "capsem-1-4-0-pkg-sbom.spdx.json",
+                "url": "/packages/stable/1.4.0/capsem-1-4-0-pkg-sbom.spdx.json",
+                "bytes": 86,
+                "digest": {
+                  "sha256": "77179a0e1f1d5cf3d48f4b75f4d26003922c7902ab5f78a83f68d0c31c9e05d0",
+                  "blake3": "f4ad2d8bfbe8b5cd3d0a721ccd208a1359416e01d9061aa732aa9784e4037df5"
+                },
+                "status": "current"
               }
             ],
             "id": "capsem-1-4-0-pkg",
@@ -886,14 +889,15 @@
             },
             "evidence": [
               {
-                "bytes": 41,
-                "digest": {
-                  "blake3": "4c1604ea0b02d1bb295e636fa536dc09b21c54ba32b058a03d2484d4898e3078",
-                  "sha256": "b96c3d9a280880c8a064d168e2f3e373bb63367fbf9f9f1abb4c12d717bb7d4c"
-                },
                 "kind": "sbom",
-                "status": "current",
-                "url": "/packages/stable/1.4.0/capsem-sbom.spdx.json"
+                "name": "capsem-1-4-0-arm64-deb-sbom.spdx.json",
+                "url": "/packages/stable/1.4.0/capsem-1-4-0-arm64-deb-sbom.spdx.json",
+                "bytes": 98,
+                "digest": {
+                  "sha256": "3db03b40ad3ebfc9f266ee668d71b3f6c4a0127a87048231d3102db0379a9432",
+                  "blake3": "ed0bae66864d30773e903f03dcabac3a6f7fbfe6d9cdd1f18f2774e794f44d3f"
+                },
+                "status": "current"
               }
             ],
             "id": "capsem-1-4-0-arm64-deb",

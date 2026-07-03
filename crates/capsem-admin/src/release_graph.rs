@@ -361,6 +361,9 @@ impl PackageInventoryRow {
         for evidence in &self.evidence {
             evidence.validate(&format!("package {} {}", self.name, self.version))?;
         }
+        if !self.evidence.iter().any(|item| item.kind == "sbom") {
+            bail!("package {} must include package SBOM evidence", self.name);
+        }
         Ok(())
     }
 }
@@ -1249,8 +1252,8 @@ mod tests {
                 status: Status::Current,
                 binaries: vec![binary],
                 evidence: vec![EvidenceRef {
-                    kind: "notarization".to_string(),
-                    url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg.notary.json".to_string(),
+                    kind: "sbom".to_string(),
+                    url: "/packages/stable/1.4.0/capsem-1-4-0-pkg-sbom.spdx.json".to_string(),
                     digest: digest_set(),
                 }],
             }],
@@ -1264,6 +1267,46 @@ mod tests {
         assert_eq!(
             manifest.packages[0].binaries[0].installed_path,
             "/usr/local/bin/capsem"
+        );
+    }
+
+    #[test]
+    fn package_inventory_requires_package_sbom() {
+        let manifest = ReleaseManifest {
+            version: "1.4.0".to_string(),
+            status: Status::Current,
+            packages: vec![PackageInventoryRow {
+                name: "Capsem-1.4.0.pkg".to_string(),
+                version: "1.4.0".to_string(),
+                kind: PackageKind::MacosPkg,
+                platform: "macos".to_string(),
+                architecture: Architecture::Arm64,
+                url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
+                bytes: 42,
+                digest: digest_set(),
+                status: Status::Current,
+                binaries: vec![BinaryInventoryRow {
+                    name: "capsem".to_string(),
+                    version: "1.4.0".to_string(),
+                    installed_path: "/usr/local/bin/capsem".to_string(),
+                    platform: "macos".to_string(),
+                    architecture: Architecture::Arm64,
+                    bytes: 7,
+                    digest: digest_set(),
+                    status: Status::Current,
+                    sbom_component_ref: "SPDXRef-File-capsem".to_string(),
+                }],
+                evidence: Vec::new(),
+            }],
+            profiles: BTreeMap::new(),
+        };
+
+        let error = manifest
+            .validate_inventory_shape()
+            .expect_err("missing package SBOM evidence is rejected");
+        assert!(
+            format!("{error:#}").contains("must include package SBOM evidence"),
+            "{error:#}"
         );
     }
 

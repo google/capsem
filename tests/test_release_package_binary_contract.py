@@ -103,6 +103,30 @@ def test_package_architecture_sections_are_explicit() -> None:
         assert packages_section.index(heading) < packages_section.index(package["name"])
 
 
+def test_every_package_has_sbom() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        sbom_urls = []
+
+        for package in manifest["packages"]:
+            sboms = [
+                item
+                for item in package.get("evidence", [])
+                if item.get("kind") == "sbom"
+            ]
+            assert len(sboms) == 1, package["name"]
+            sbom = sboms[0]
+            assert package["id"] in sbom["url"], package["name"]
+            assert len(sbom["digest"]["sha256"]) == 64, package["name"]
+            assert len(sbom["digest"]["blake3"]) == 64, package["name"]
+            sbom_urls.append(sbom["url"])
+
+        assert len(sbom_urls) == len(set(sbom_urls)), f"{channel} repeats package SBOM URLs"
+
+
 def test_macos_package_present() -> None:
     build_release_site_from_fixture()
 

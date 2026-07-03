@@ -1447,7 +1447,7 @@ fn binary_files_from_artifacts(artifacts: &[PathBuf]) -> Result<Vec<BinaryFile>>
         }
         let bytes = fs::read(path)
             .with_context(|| format!("read binary release artifact {}", path.display()))?;
-        if is_host_sbom_file(&name) {
+        if is_host_sbom_file(&name) || is_package_sbom_file(&name) {
             validate_host_spdx_sbom_bytes(&bytes, path)
                 .with_context(|| format!("validate host SBOM artifact {}", path.display()))?;
         }
@@ -3088,30 +3088,16 @@ fn graph_package_rows(manifest: &ManifestV2) -> Result<Vec<serde_json::Value>> {
     let Some(release) = manifest.binaries.releases.get(&manifest.binaries.current) else {
         return Ok(Vec::new());
     };
-    let host_sboms = binary_package_file_refs(&manifest.binaries.current, release)
-        .into_iter()
-        .filter(|file| is_host_sbom_file(&file.name))
-        .map(|file| {
-            serde_json::json!({
-                "kind": "host_sbom",
-                "name": file.name,
-                "url": file.url,
-                "bytes": file.size,
-                "digest": {
-                    "sha256": file.sha256,
-                    "blake3": file.blake3,
-                },
-                "status": release_state(release),
-            })
-        })
-        .collect::<Vec<_>>();
-    let rows = binary_package_file_refs(&manifest.binaries.current, release)
-        .into_iter()
-        .filter(|file| !is_host_sbom_file(&file.name))
+    let binary_files = binary_package_file_refs(&manifest.binaries.current, release);
+    let rows = binary_files
+        .iter()
+        .filter(|file| !is_host_sbom_file(&file.name) && !is_package_sbom_file(&file.name))
         .map(|file| {
             let package_kind = package_kind_for_name(&file.name);
             let platform = package_platform_for_kind(package_kind);
             let architecture = package_architecture_for_name(&file.name);
+            let package_id = release_graph_id(&file.name);
+            let package_sboms = package_sbom_refs(&package_id, &binary_files, release);
             let binaries = file
                 .binaries
                 .iter()
@@ -3133,7 +3119,7 @@ fn graph_package_rows(manifest: &ManifestV2) -> Result<Vec<serde_json::Value>> {
                 })
                 .collect::<Vec<_>>();
             serde_json::json!({
-                "id": release_graph_id(&file.name),
+                "id": package_id,
                 "kind": package_kind,
                 "name": file.name,
                 "version": manifest.binaries.current,
@@ -3146,12 +3132,37 @@ fn graph_package_rows(manifest: &ManifestV2) -> Result<Vec<serde_json::Value>> {
                     "blake3": file.blake3,
                 },
                 "binaries": binaries,
-                "evidence": host_sboms.clone(),
+                "evidence": package_sboms,
                 "status": release_state(release),
             })
         })
         .collect();
     Ok(rows)
+}
+
+fn package_sbom_refs(
+    package_id: &str,
+    binary_files: &[AssetsChannelBinaryFile],
+    release: &capsem_core::asset_manager::BinaryRelease,
+) -> Vec<serde_json::Value> {
+    let expected = package_sbom_file_name(package_id);
+    binary_files
+        .iter()
+        .filter(|file| file.name == expected)
+        .map(|file| {
+            serde_json::json!({
+                "kind": "sbom",
+                "name": file.name,
+                "url": file.url,
+                "bytes": file.size,
+                "digest": {
+                    "sha256": file.sha256,
+                    "blake3": file.blake3,
+                },
+                "status": release_state(release),
+            })
+        })
+        .collect()
 }
 
 fn graph_profile_document(
@@ -3828,7 +3839,7 @@ fn binary_package_attestations(files: &[AssetsChannelBinaryFile]) -> Vec<AssetsC
     }
     let host_subjects = files
         .iter()
-        .filter(|file| !is_host_sbom_file(&file.name))
+        .filter(|file| !is_host_sbom_file(&file.name) && !is_package_sbom_file(&file.name))
         .map(|file| file.url.clone())
         .collect::<Vec<_>>();
     let sbom_subjects = files
@@ -4120,6 +4131,14 @@ fn current_utc_date() -> Result<String> {
 
 fn is_host_sbom_file(name: &str) -> bool {
     name == "capsem-sbom.spdx.json"
+}
+
+fn is_package_sbom_file(name: &str) -> bool {
+    name.ends_with("-sbom.spdx.json") && !is_host_sbom_file(name)
+}
+
+fn package_sbom_file_name(package_id: &str) -> String {
+    format!("{package_id}-sbom.spdx.json")
 }
 
 fn validate_host_spdx_sbom_bytes(bytes: &[u8], path: &Path) -> Result<()> {

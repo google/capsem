@@ -183,6 +183,7 @@ def _write_release_manifest(
         }
     pkg = b"pkg bytes"
     sbom = b'{"spdxVersion":"SPDX-2.3"}'
+    package_sbom = b'{"spdxVersion":"SPDX-2.3","package":"capsem-1-4-1234567890-pkg"}'
     capsem_app = b"capsem app executable"
     capsem_tray = b"capsem tray executable"
     binary_release = {
@@ -221,6 +222,12 @@ def _write_release_manifest(
                 "size": len(sbom),
                 "sha256": hashlib.sha256(sbom).hexdigest(),
                 "blake3": blake3(sbom).hexdigest(),
+            },
+            {
+                "name": "capsem-1-4-1234567890-pkg-sbom.spdx.json",
+                "size": len(package_sbom),
+                "sha256": hashlib.sha256(package_sbom).hexdigest(),
+                "blake3": blake3(package_sbom).hexdigest(),
             },
         ]
 
@@ -410,7 +417,7 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "/assets/stable/manifest.json" in channel_html
     assert "/profiles/releases/profiles-2030.0101.1/catalog.json" not in channel_html
     assert "Capsem-1.4.1234567890.pkg" in channel_html
-    assert "capsem-sbom.spdx.json" in channel_html
+    assert "capsem-1-4-1234567890-pkg-sbom.spdx.json" in channel_html
     assert "The fastest way to ship with AI securely." not in index_html
     profile_html = (
         dist / "channels" / "stable" / "profiles" / "code" / "index.html"
