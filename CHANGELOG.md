@@ -66,6 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rendered release-channel package groups as explicit OS/architecture package
   targets and added Linux amd64 fixture coverage alongside macOS arm64 and
   Linux arm64 packages.
+- Required every release package to generate a detail page with the package
+  target, hashes, SBOM evidence, and owned binary inventory rendered from the
+  machine graph.
 
 ## [1.4.1782944059] - 2026-07-01
 

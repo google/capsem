@@ -348,6 +348,15 @@ export function packageRows(data: ReleaseData): JsonObject[] {
   return Array.isArray(data.manifest.packages) ? data.manifest.packages : [];
 }
 
+export function packageTargetLabel(pkg: JsonObject): string {
+  const architecture = String(pkg.architecture ?? 'unknown');
+  const platform = String(pkg.platform ?? 'unknown');
+  const platformLabel = platform === 'macos'
+    ? 'macOS'
+    : platform.charAt(0).toUpperCase() + platform.slice(1);
+  return `${platformLabel} ${architecture}`;
+}
+
 export function packageById(data: ReleaseData, id: string): JsonObject | undefined {
   return packageRows(data).find((pkg) => String(pkg.id) === id);
 }

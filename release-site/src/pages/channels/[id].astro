@@ -14,6 +14,7 @@ import {
   manifestRecords,
   manifestUrl,
   packageRows,
+  packageTargetLabel,
   profileArchNames,
   profileList,
 } from '../../lib/release-data';
@@ -46,15 +47,6 @@ const packageGroups = Array.from(
     return groups;
   }, new Map()),
 ).sort(([left], [right]) => String(left).localeCompare(String(right)));
-
-function packageTargetLabel(pkg) {
-  const architecture = String(pkg.architecture ?? 'unknown');
-  const platform = String(pkg.platform ?? 'unknown');
-  const platformLabel = platform === 'macos'
-    ? 'macOS'
-    : platform.charAt(0).toUpperCase() + platform.slice(1);
-  return `${platformLabel} ${architecture}`;
-}
 ---
 <ReleaseLayout title={`${channel.label} - Capsem Release Channel`}>
   <header class="border-b border-zinc-200 pb-6">

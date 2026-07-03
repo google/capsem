@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from test_release_site_html_contract import RELEASE_SITE_DIST, build_release_site_from_fixture
@@ -143,6 +144,55 @@ def test_package_sbom() -> None:
     test_every_package_has_sbom()
 
 
+def test_every_package_has_detail_page() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    target_labels = {
+        ("macos", "arm64"): "macOS arm64",
+        ("linux", "amd64"): "Linux amd64",
+        ("linux", "arm64"): "Linux arm64",
+    }
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for package in manifest["packages"]:
+            package_page_path = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "packages"
+                / package["id"]
+                / "index.html"
+            )
+            assert package_page_path.exists(), f"{channel}:{package['id']}"
+
+            package_page = package_page_path.read_text(encoding="utf-8")
+            package_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", package_page))
+            target = (package["platform"], package["architecture"])
+            assert f"Package target {target_labels[target]}" in package_text
+            assert package["name"] in package_page
+            assert package["url"] in package_page
+            assert package["digest"]["sha256"][:8] + "..." in package_page
+            assert package["digest"]["blake3"][:8] + "..." in package_page
+
+            for evidence in package["evidence"]:
+                assert evidence["url"] in package_page
+                assert evidence["digest"]["sha256"][:8] + "..." in package_page
+                assert evidence["digest"]["blake3"][:8] + "..." in package_page
+
+            for binary in package["binaries"]:
+                assert binary["name"] in package_page
+                assert binary["installed_path"] in package_page
+                assert binary["digest"]["sha256"][:8] + "..." in package_page
+                assert binary["digest"]["blake3"][:8] + "..." in package_page
+                assert binary["sbom_component_ref"] in package_page
+
+            assert "No binary inventory is published for this package." not in package_page
+            assert "No package evidence is published for this package." not in package_page
+
+
 def test_package_detail_lists_owned_binaries_only() -> None:
     build_release_site_from_fixture()
 
@@ -231,7 +281,9 @@ def test_binaries_inherit_package_target_not_all() -> None:
             / package["id"]
             / "index.html"
         ).read_text(encoding="utf-8")
-        assert target in package_page
+        package_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", package_page))
+        platform = "macOS" if package["platform"] == "macos" else package["platform"].title()
+        assert f"Package target {platform} {package['architecture']}" in package_text
         assert ">all<" not in package_page
 
 
