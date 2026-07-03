@@ -2105,7 +2105,7 @@ fn root_health_belongs_to_other_channel(root_health_path: &Path, channel: &str) 
 fn validate_assets_channel_index_html(index_html: &str, channel: &str) -> Result<()> {
     let expected = [
         "Channels",
-        "Current manifest",
+        "Manifest revision",
         "History",
         "/channels.json",
         "Manifest URL",
@@ -2172,7 +2172,7 @@ fn write_test_assets_channel_index_fixture(dist: &Path, channel: &str) -> Result
     let channel_manifest = format!("/assets/{channel}/manifest.json");
     let html = format!(
         "<!doctype html><html><body><main><h1>Capsem Release Channels</h1>\
-        <h2>Channels</h2><h2>Current manifest</h2><h2>History</h2>\
+        <h2>Channels</h2><h2>Manifest revision</h2><h2>History</h2>\
         <a href=\"/channels.json\">/channels.json</a>\
         <p>Manifest URL <a href=\"{channel_manifest}\">{channel_manifest}</a></p>\
         <p>{binary} {assets} {generated_at} {date}</p>\

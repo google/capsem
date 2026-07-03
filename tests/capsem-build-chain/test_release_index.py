@@ -396,7 +396,7 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     index_html = (dist / "index.html").read_text(encoding="utf-8")
     assert "Capsem Release Channels" in index_html
     assert "Stable" in index_html
-    assert "Current manifest" in index_html
+    assert "Manifest revision" in index_html
     channel_html = (dist / "channels" / "stable" / "index.html").read_text(encoding="utf-8")
     assert "Current Manifest" in channel_html
     assert "Manifest URL" in channel_html

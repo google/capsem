@@ -10,7 +10,8 @@
           },
           "status": "current",
           "url": "/assets/nightly/manifest.json",
-          "version": "1.5.0-nightly.20260702"
+          "version": "1.5.0-nightly.20260702",
+          "revision": "1.0.2"
         },
         {
           "digest": {
@@ -19,7 +20,8 @@
           },
           "status": "supported",
           "url": "/assets/nightly/manifest.json",
-          "version": "1.5.0-nightly.20260701"
+          "version": "1.5.0-nightly.20260701",
+          "revision": "1.0.1"
         },
         {
           "digest": {
@@ -28,7 +30,8 @@
           },
           "status": "deprecated",
           "url": "/assets/nightly/manifest.json",
-          "version": "1.5.0-nightly.20260630"
+          "version": "1.5.0-nightly.20260630",
+          "revision": "1.0.0"
         },
         {
           "digest": {
@@ -37,7 +40,8 @@
           },
           "status": "revoked",
           "url": "/assets/nightly/manifest.json",
-          "version": "1.5.0-nightly.bad"
+          "version": "1.5.0-nightly.bad",
+          "revision": "1.0.0-revoked"
         }
       ]
     },
@@ -51,7 +55,8 @@
           },
           "status": "current",
           "url": "/assets/stable/manifest.json",
-          "version": "1.4.0"
+          "version": "1.4.0",
+          "revision": "1.0.2"
         },
         {
           "digest": {
@@ -60,7 +65,8 @@
           },
           "status": "supported",
           "url": "/assets/stable/manifest.json",
-          "version": "1.3.0"
+          "version": "1.3.0",
+          "revision": "1.0.1"
         },
         {
           "digest": {
@@ -69,7 +75,8 @@
           },
           "status": "deprecated",
           "url": "/assets/stable/manifest.json",
-          "version": "1.2.0"
+          "version": "1.2.0",
+          "revision": "1.0.0"
         },
         {
           "digest": {
@@ -78,7 +85,8 @@
           },
           "status": "revoked",
           "url": "/assets/stable/manifest.json",
-          "version": "1.1.0-bad"
+          "version": "1.1.0-bad",
+          "revision": "1.0.0-revoked"
         }
       ]
     }
@@ -775,7 +783,8 @@
           }
         },
         "status": "current",
-        "version": "1.5.0-nightly.20260702"
+        "version": "1.5.0-nightly.20260702",
+        "revision": "1.0.2"
       }
     },
     "stable": {
@@ -1469,7 +1478,8 @@
           }
         },
         "status": "current",
-        "version": "1.4.0"
+        "version": "1.4.0",
+        "revision": "1.0.2"
       }
     }
   },

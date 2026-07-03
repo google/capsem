@@ -44,6 +44,18 @@ def test_channel_descriptions() -> None:
     assert "Faster-moving release channel for daily fixes and early validation." in index
 
 
+def test_channel_manifest_revision_not_selected_manifest() -> None:
+    build_release_site_from_fixture()
+
+    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+
+    assert "Manifest revision" in index
+    assert "Current manifest" not in index
+    assert "Selected manifest" not in index
+    assert "<code>1.0.2</code>" in index
+    assert "1.5.0-nightly.20260702" not in index
+
+
 def test_one_manifest_url() -> None:
     build_release_site_from_fixture()
 

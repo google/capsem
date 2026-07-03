@@ -71,6 +71,16 @@ def test_independent_versions() -> None:
         assert phrase in doc
 
 
+def test_manifest_has_independent_revision() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel_id, channel in graph["channels"].items():
+        current = next(item for item in channel["manifests"] if item["status"] == "current")
+        assert current["revision"].startswith("1.0.")
+        assert current["revision"] != current["version"]
+        assert graph["manifests"][channel_id][current["version"]]["revision"] == current["revision"]
+
+
 def test_status_enum() -> None:
     doc = RELEASE_OUTPUT_DOC.read_text(encoding="utf-8")
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))

@@ -29,7 +29,7 @@ export interface ChannelRow {
   label: string;
   description: string;
   manifestCount: number;
-  currentVersion: string;
+  manifestRevision: string;
   currentStatus: string;
   statuses: string[];
   manifestUrl: string;
@@ -118,7 +118,7 @@ export function channelRows(data: ReleaseData): ChannelRow[] {
         label: String(channel.label ?? id),
         description: String(channel.description ?? channelDescription(id)),
         manifestCount: manifests.length,
-        currentVersion: String(selected.version ?? 'not published'),
+        manifestRevision: String(selected.revision ?? selected.version ?? 'not published'),
         currentStatus: String(selected.status ?? 'not published'),
         statuses: Array.from(new Set(manifests.map((manifest: JsonObject) => String(manifest.status ?? 'unknown')))),
         manifestUrl: String(selected.url ?? ''),

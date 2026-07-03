@@ -47,8 +47,9 @@ def test_root_lists_stable_nightly_and_manifest_statuses() -> None:
     assert "Channels" in index
     assert "Stable" in index
     assert "Nightly" in index
-    assert "1.4.0" in index
-    assert "1.5.0-nightly.20260702" in index
+    assert "Manifest revision" in index
+    assert "1.0.2" in index
+    assert "1.5.0-nightly.20260702" not in index
     assert "Recommended release channel" in index
     assert "Faster-moving release channel" in index
 
