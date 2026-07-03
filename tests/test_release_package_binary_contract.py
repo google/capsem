@@ -164,13 +164,13 @@ def test_packages_group_by_os_architecture() -> None:
         RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
     ).read_text(encoding="utf-8")
     packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
-        "Capsem Binaries",
+        "Profile References",
         maxsplit=1,
     )[0]
     stable_packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
     target_labels = {
         ("macos", "arm64"): "macOS arm64",
-        ("linux", "amd64"): "Linux amd64",
+        ("linux", "x86_64"): "Linux x86_64",
         ("linux", "arm64"): "Linux arm64",
     }
 
@@ -276,7 +276,7 @@ def test_every_package_has_detail_page() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     target_labels = {
         ("macos", "arm64"): "macOS arm64",
-        ("linux", "amd64"): "Linux amd64",
+        ("linux", "x86_64"): "Linux x86_64",
         ("linux", "arm64"): "Linux arm64",
     }
 

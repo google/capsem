@@ -91,6 +91,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Moved profile ABOM, OBOM, and software-inventory evidence links to the top of
   each profile architecture block and stopped repeating evidence URLs on
   software rows.
+- Normalized release package architecture metadata to the profile graph's
+  canonical `x86_64` spelling so package availability joins by channel
+  architecture instead of profile-owned package theater.
 
 ## [1.4.1782944059] - 2026-07-01
 

@@ -176,3 +176,28 @@ def test_profile_has_min_capsem_version_not_current_binary() -> None:
             assert "current_binary" not in profile, profile_id
             assert "current_assets" not in profile, profile_id
             assert profile["min_capsem_version"] == "1.4.0"
+
+
+def test_profile_package_inventory_per_architecture() -> None:
+    graph = _graph()
+
+    for channel in graph["channels"]:
+        manifest = _current_manifest(graph, channel)
+        packages_by_architecture = {
+            package["architecture"]: []
+            for package in manifest["packages"]
+        }
+        for package in manifest["packages"]:
+            packages_by_architecture[package["architecture"]].append(package)
+
+        assert packages_by_architecture, channel
+        for profile_id, profile in manifest["profiles"].items():
+            assert "packages" not in profile, profile_id
+            for architecture in profile["architectures"]:
+                arch = architecture["architecture"]
+                assert "packages" not in architecture, f"{channel}:{profile_id}:{arch}"
+                assert packages_by_architecture[arch], f"{channel}:{profile_id}:{arch}"
+                for package in packages_by_architecture[arch]:
+                    assert package["name"]
+                    assert package["url"]
+                    assert package["architecture"] == arch
