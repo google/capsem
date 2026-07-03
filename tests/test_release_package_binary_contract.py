@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from test_release_site_html_contract import RELEASE_SITE_DIST, build_release_site_from_fixture
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_GRAPH = (
@@ -58,3 +60,25 @@ def test_sbom_not_repeated_per_binary() -> None:
                 assert "package_evidence" not in binary, binary
                 assert "sbom" not in binary, binary
                 assert "sbom_component_ref" in binary, binary
+
+
+def test_package_architecture_groups() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    stable = (
+        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
+    ).read_text(encoding="utf-8")
+    packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
+        "Capsem Binaries",
+        maxsplit=1,
+    )[0]
+    stable_packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
+    architectures = {package["architecture"] for package in stable_packages}
+
+    for architecture in architectures:
+        assert f"Architecture {architecture}" in packages_section
+    for package in stable_packages:
+        arch_position = packages_section.index(f"Architecture {package['architecture']}")
+        package_position = packages_section.index(package["name"])
+        assert arch_position < package_position

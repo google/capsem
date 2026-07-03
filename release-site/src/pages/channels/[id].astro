@@ -36,6 +36,15 @@ const packages = packageRows(data);
 const binaries = binaryRows(data);
 const profiles = profileList(data);
 const profileCount = profiles.length;
+const packageGroups = Array.from(
+  packages.reduce((groups, pkg) => {
+    const architecture = String(pkg.architecture ?? 'unknown');
+    const rows = groups.get(architecture) ?? [];
+    rows.push(pkg);
+    groups.set(architecture, rows);
+    return groups;
+  }, new Map()),
+).sort(([left], [right]) => String(left).localeCompare(String(right)));
 ---
 <ReleaseLayout title={`${channel.label} - Capsem Release Channel`}>
   <header class="border-b border-zinc-200 pb-6">
@@ -92,49 +101,50 @@ const profileCount = profiles.length;
 
   <section class="mt-6 border border-zinc-200 p-5">
     <h2 class="text-xl font-semibold text-black">Capsem Packages</h2>
-    <div class="mt-4 overflow-x-auto">
-      <table class="w-full min-w-[940px] border-collapse text-sm">
-        <thead>
-          <tr class="border-b border-zinc-200 text-left text-zinc-500">
-            <th class="py-2 pr-4 font-medium">Kind</th>
-            <th class="py-2 pr-4 font-medium">Name</th>
-            <th class="py-2 pr-4 font-medium">Version</th>
-            <th class="py-2 pr-4 font-medium">Download</th>
-            <th class="py-2 pr-4 font-medium">Bytes</th>
-            <th class="py-2 pr-4 font-medium">SHA-256</th>
-            <th class="py-2 pr-4 font-medium">BLAKE3</th>
-            <th class="py-2 pr-4 font-medium">SBOM</th>
-          </tr>
-        </thead>
-        <tbody>
-          {packages.length > 0 ? packages.map((pkg) => (
-            <tr class="border-b border-zinc-100 align-top">
-              <td class="py-3 pr-4">{pkg.kind}</td>
-              <td class="py-3 pr-4">
-                <a class="text-blue-600 underline" href={channelPackagePagePath(data.channel, pkg.id)}>{pkg.name}</a>
-              </td>
-              <td class="py-3 pr-4"><code>{pkg.version}</code></td>
-              <td class="py-3 pr-4">{pkg.url ? <a class="break-all text-blue-600 underline" href={pkg.url}>{pkg.url}</a> : <span class="text-zinc-500">not published</span>}</td>
-              <td class="py-3 pr-4">{byteLabel(pkg.bytes ?? pkg.size)}</td>
-              <td class="py-3 pr-4"><code class="break-all">{hashLabel(pkg.digest?.sha256)}</code></td>
-              <td class="py-3 pr-4"><code class="break-all">{hashLabel(pkg.digest?.blake3)}</code></td>
-              <td class="py-3 pr-4">
-                {Array.isArray(pkg.evidence) && pkg.evidence.length > 0 ? pkg.evidence.map((item) => (
-                  <div>
-                    <a class="break-all text-blue-600 underline" href={item.url}>{item.url?.split('/').pop()}</a>
-                    <div class="text-zinc-500"><code>{hashLabel(item.digest?.sha256)}</code></div>
-                  </div>
-                )) : <span class="text-zinc-500">not published</span>}
-              </td>
-            </tr>
-          )) : (
-            <tr>
-              <td class="py-4 pr-4 text-zinc-600" colspan="8">No package metadata is published in this manifest.</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
+    {packageGroups.length > 0 ? packageGroups.map(([architecture, rows]) => (
+      <div class="mt-5">
+        <h3 class="text-base font-semibold text-black">Architecture {architecture}</h3>
+        <div class="mt-3 overflow-x-auto">
+          <table class="w-full min-w-[940px] border-collapse text-sm">
+            <thead>
+              <tr class="border-b border-zinc-200 text-left text-zinc-500">
+                <th class="py-2 pr-4 font-medium">Kind</th>
+                <th class="py-2 pr-4 font-medium">Name</th>
+                <th class="py-2 pr-4 font-medium">Version</th>
+                <th class="py-2 pr-4 font-medium">Download</th>
+                <th class="py-2 pr-4 font-medium">Bytes</th>
+                <th class="py-2 pr-4 font-medium">SHA-256</th>
+                <th class="py-2 pr-4 font-medium">BLAKE3</th>
+                <th class="py-2 pr-4 font-medium">SBOM</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((pkg) => (
+                <tr class="border-b border-zinc-100 align-top">
+                  <td class="py-3 pr-4">{pkg.kind}</td>
+                  <td class="py-3 pr-4">
+                    <a class="text-blue-600 underline" href={channelPackagePagePath(data.channel, pkg.id)}>{pkg.name}</a>
+                  </td>
+                  <td class="py-3 pr-4"><code>{pkg.version}</code></td>
+                  <td class="py-3 pr-4">{pkg.url ? <a class="break-all text-blue-600 underline" href={pkg.url}>{pkg.url}</a> : <span class="text-zinc-500">not published</span>}</td>
+                  <td class="py-3 pr-4">{byteLabel(pkg.bytes ?? pkg.size)}</td>
+                  <td class="py-3 pr-4"><code class="break-all">{hashLabel(pkg.digest?.sha256)}</code></td>
+                  <td class="py-3 pr-4"><code class="break-all">{hashLabel(pkg.digest?.blake3)}</code></td>
+                  <td class="py-3 pr-4">
+                    {Array.isArray(pkg.evidence) && pkg.evidence.length > 0 ? pkg.evidence.map((item) => (
+                      <div>
+                        <a class="break-all text-blue-600 underline" href={item.url}>{item.url?.split('/').pop()}</a>
+                        <div class="text-zinc-500"><code>{hashLabel(item.digest?.sha256)}</code></div>
+                      </div>
+                    )) : <span class="text-zinc-500">not published</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )) : <p class="mt-4 text-sm text-zinc-600">No package metadata is published in this manifest.</p>}
   </section>
 
   <section class="mt-6 border border-zinc-200 p-5">

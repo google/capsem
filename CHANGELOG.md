@@ -32,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release graph.
 - Added a generated release-site ownership gate so root, channel, and profile
   pages cannot display facts owned by a different JSON object.
+- Grouped release-channel package tables by package architecture on the
+  generated channel pages.
 
 ## [1.4.1782944059] - 2026-07-01
 
