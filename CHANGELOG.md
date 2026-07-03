@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Rejected placeholder release digests in readiness validation so repeated
+  one-character SHA-256/BLAKE3 values cannot pass as release evidence.
 - Rebuilt the release-channel contract around generated channel, manifest,
   package, binary, profile, image, and evidence ownership; added multichannel
   stable/nightly generation and live `release.capsem.org` verification gates

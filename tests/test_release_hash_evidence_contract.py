@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +101,19 @@ def test_full_machine_digests() -> None:
     } <= categories
 
 
+def test_reject_placeholder_hashes() -> None:
+    checker = _readiness_checker_module()
+
+    for char in "0123f":
+        failures = checker.check_release_graph_digest(
+            {"sha256": char * 64, "blake3": char * 64},
+            f"fixture {char}",
+        )
+
+        assert f"fixture {char} digest sha256 uses placeholder pattern" in failures
+        assert f"fixture {char} digest blake3 uses placeholder pattern" in failures
+
+
 def test_software_inventory_row_digests_are_row_owned() -> None:
     _assert_software_rows_do_not_reuse_inventory_digest()
 
@@ -147,6 +162,17 @@ def _assert_full_digest(digest: dict, label: str) -> None:
         assert isinstance(value, str), label
         assert re.fullmatch(r"[0-9a-f]{64}", value), f"{label}:{name}:{value}"
         assert "..." not in value, label
+
+
+def _readiness_checker_module():
+    module_path = PROJECT_ROOT / "scripts" / "check-remote-release-readiness.py"
+    spec = importlib.util.spec_from_file_location("check_remote_release_readiness", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def _hmac_paths(value: Any, path: str = "$") -> list[str]:

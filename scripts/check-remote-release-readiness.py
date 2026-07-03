@@ -449,6 +449,7 @@ def check_release_graph_manifest_contract(
         failures.append("channel selected manifest status is not selectable")
 
     digest = require_object(manifest_record, "digest", "channel manifest digest", failures)
+    failures.extend(check_release_graph_digest(digest, "channel manifest"))
     expected_sha256 = digest.get("sha256")
     if not isinstance(expected_sha256, str):
         failures.append("channel manifest SHA-256 missing")
@@ -571,11 +572,7 @@ def check_release_graph_file_descriptor(item: Any, label: str) -> list[str]:
     if not isinstance(digest, dict):
         failures.append(f"{label} digest missing")
         return failures
-    for key in ("sha256", "blake3"):
-        if not isinstance(digest.get(key), str):
-            failures.append(f"{label} {name or '<unknown>'} digest {key} missing")
-    if "hmac" in digest:
-        failures.append(f"{label} {name or '<unknown>'} digest must not contain hmac")
+    failures.extend(check_release_graph_digest(digest, f"{label} {name or '<unknown>'}"))
     return failures
 
 
@@ -719,12 +716,7 @@ def check_release_graph_software_row(item: Any, label: str, architecture: str) -
     if not isinstance(digest, dict):
         failures.append(f"{label} {name} digest missing")
         return failures
-    for key in ("sha256", "blake3"):
-        value = digest.get(key)
-        if not isinstance(value, str):
-            failures.append(f"{label} {name} digest {key} missing")
-    if "hmac" in digest:
-        failures.append(f"{label} {name} digest must not contain hmac")
+    failures.extend(check_release_graph_digest(digest, f"{label} {name}"))
     return failures
 
 
@@ -754,14 +746,11 @@ def check_release_graph_artifact(
     digest = item.get("digest")
     if not isinstance(digest, dict):
         return failures + [f"{label} {url} digest missing"]
+    failures.extend(check_release_graph_digest(digest, f"{label} {url}"))
     for key in ("sha256", "blake3"):
         value = digest.get(key)
-        if not isinstance(value, str):
-            failures.append(f"{label} {url} {key} missing")
-        elif page_text and hash_label(value) not in page_text:
+        if isinstance(value, str) and page_text and hash_label(value) not in page_text:
             failures.append(f"profile page missing {label} {key} for {url}")
-    if "hmac" in digest:
-        failures.append(f"{label} {url} digest must not contain hmac")
     expected_bytes = item.get("bytes")
     if not isinstance(expected_bytes, int):
         failures.append(f"{label} {url} bytes missing")
@@ -1069,6 +1058,22 @@ def require_object(
         failures.append(f"{label} missing or not an object")
         return {}
     return value
+
+
+def check_release_graph_digest(digest: dict[str, Any], label: str) -> list[str]:
+    failures: list[str] = []
+    for key in ("sha256", "blake3"):
+        value = digest.get(key)
+        if not isinstance(value, str):
+            failures.append(f"{label} digest {key} missing")
+            continue
+        if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+            failures.append(f"{label} digest {key} is not full lowercase hex")
+        elif len(set(value)) == 1:
+            failures.append(f"{label} digest {key} uses placeholder pattern")
+    if "hmac" in digest:
+        failures.append(f"{label} digest must not contain hmac")
+    return failures
 
 
 def hash_label(value: str) -> str:
