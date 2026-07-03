@@ -1,6 +1,7 @@
 {
   "channels": {
     "nightly": {
+      "description": "Faster-moving release channel for daily fixes and early validation.",
       "label": "Nightly",
       "manifests": [
         {
@@ -46,6 +47,7 @@
       ]
     },
     "stable": {
+      "description": "Recommended release channel for everyday Capsem installs.",
       "label": "Stable",
       "manifests": [
         {

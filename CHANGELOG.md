@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added named root channel metadata gates for generated and HTML release-site
+  output, and moved stable/nightly descriptions into the release graph fixture
+  so the root page text is JSON-owned.
 - Added a named root release-channel metadata gate proving the index renders
   manifest revision, update time, package/profile coverage, architectures, and
   canonical manifest URLs without Selected/Status/Records noise.

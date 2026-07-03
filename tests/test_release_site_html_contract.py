@@ -94,6 +94,25 @@ def test_root_channel_manifest_metadata() -> None:
     assert "arm64, x86_64" in index
 
 
+def test_root_channel_metadata() -> None:
+    build_release_site_from_fixture()
+
+    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+
+    assert "Recommended release channel for everyday Capsem installs." in index
+    assert "Faster-moving release channel for daily fixes and early validation." in index
+    assert "<code>stable</code>" not in index
+    assert "<code>nightly</code>" not in index
+    assert "Selected manifest" not in index
+    assert ">Status<" not in index
+    assert ">Records<" not in index
+    assert "Manifest revision" in index
+    assert "Updated" in index
+    assert "Coverage" in index
+    assert "/assets/stable/manifest.json" in index
+    assert "/assets/nightly/manifest.json" in index
+
+
 def test_one_manifest_url() -> None:
     build_release_site_from_fixture()
 

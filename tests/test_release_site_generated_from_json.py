@@ -114,6 +114,27 @@ def test_no_profile_catalog_side_channel() -> None:
             assert token not in text, f"{path}: {token}"
 
 
+def test_root_channel_metadata() -> None:
+    build_release_site_from_fixture()
+    graph = fixture_graph()
+
+    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+    stable = graph["channels"]["stable"]
+    nightly = graph["channels"]["nightly"]
+
+    assert stable["description"] in index
+    assert nightly["description"] in index
+    assert stable["manifests"][0]["version"] in index
+    assert nightly["manifests"][0]["version"] in index
+    assert stable["manifests"][0]["url"] in index
+    assert nightly["manifests"][0]["url"] in index
+    assert "Selected manifest" not in index
+    assert ">Status<" not in index
+    assert ">Records<" not in index
+    assert "<code>stable</code>" not in index
+    assert "<code>nightly</code>" not in index
+
+
 def test_astro_renders_json_graph(tmp_path: Path) -> None:
     graph = fixture_graph()
     stable_manifest = graph["manifests"]["stable"]["1.0.2"]
