@@ -26,6 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   packages/binaries and profiles/architecture-scoped payloads.
 - Documented and gated independent release version surfaces so package,
   profile, and profile-image updates can move without mutating each other.
+- Documented and gated the single release status enum across graph status
+  fields, with no `removed` status.
 
 ## [1.4.1782944059] - 2026-07-01
 

@@ -74,6 +74,12 @@ Profiles only state the minimum Capsem version they require.
 `/channels.json` lists all public channels and the manifest history for each
 channel. Examples are `stable` and `nightly`.
 
+All release status fields use the same enum:
+
+```text
+current | supported | deprecated | revoked
+```
+
 Each manifest record has exactly one status:
 
 ```text
