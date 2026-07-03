@@ -38,6 +38,8 @@ flags:
     paths:
       - crates/**
       - frontend/src/**
+      - release-site/scripts/**
+      - release-site/src/**
       - src/capsem/**
     carryforward: true
   integration:
@@ -226,6 +228,13 @@ component_management:
       name: UI
       paths:
         - frontend/src/**
+
+    # Release site: Astro pages and release graph rendering helpers.
+    - component_id: release-site
+      name: Release Site
+      paths:
+        - release-site/scripts/**
+        - release-site/src/**
 
     # Builder: Pydantic schema, config models, image builder.
     - component_id: builder

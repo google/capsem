@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added release-site coverage generation and Codecov upload wiring so the
+  Astro release channel surface is visible in PR coverage reports.
 - Required Rust coverage workflows and local coverage recipes to include
   binary targets with `--bins`.
 - Split low-coverage MCP aggregator, MCP builtin, process, and mock-server

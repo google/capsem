@@ -395,6 +395,18 @@ jobs:
       - name: Install release site dependencies
         run: cd release-site && pnpm install --frozen-lockfile
 
+      - name: Release site type-check and coverage
+        run: cd release-site && pnpm run check && pnpm run test:coverage
+
+      - name: Upload release site coverage
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: release-site/coverage/lcov.info
+          flags: unit
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
       - name: Write release channel fixture
         run: python3 scripts/write-release-site-ci-fixture.py target/release-site-fixture
 

@@ -173,6 +173,59 @@ def test_rust_coverage_includes_bins() -> None:
     )
 
 
+def test_release_critical_crates_are_reported() -> None:
+    codecov = (PROJECT_ROOT / "codecov.yml").read_text()
+    ci = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    release_site_package = json.loads((PROJECT_ROOT / "release-site" / "package.json").read_text())
+
+    required_component_paths = {
+        "crates/capsem-admin/src/**",
+        "crates/capsem-app/src/**",
+        "crates/capsem/src/**",
+        "crates/capsem-gateway/src/**",
+        "crates/capsem-mcp/src/**",
+        "crates/capsem-mcp-aggregator/src/**",
+        "crates/capsem-mcp-builtin/src/**",
+        "crates/capsem-mock-server/src/**",
+        "crates/capsem-process/src/**",
+        "crates/capsem-service/src/**",
+        "crates/capsem-tray/src/**",
+        "crates/capsem-tui/src/**",
+        "release-site/scripts/**",
+        "release-site/src/**",
+        "src/capsem/**",
+    }
+    missing_components = sorted(
+        path for path in required_component_paths if path not in codecov
+    )
+    assert not missing_components, (
+        "release-critical code paths must be visible in Codecov components; "
+        f"missing {missing_components}"
+    )
+
+    required_uploads = {
+        "codecov-linux.json",
+        "codecov-unit.json",
+        "codecov-integration.json",
+        "codecov-python.xml",
+        "frontend/coverage/coverage-final.json",
+        "release-site/coverage/lcov.info",
+    }
+    uploaded_files = codecov_upload_files(ci)
+    missing_uploads = sorted(required_uploads - uploaded_files)
+    assert not missing_uploads, (
+        "CI must upload coverage reports for release-critical Rust, Python, "
+        f"frontend, and release-site code; missing {missing_uploads}"
+    )
+
+    scripts = release_site_package.get("scripts", {})
+    assert "test:coverage" in scripts, "release-site must generate coverage metadata"
+    assert "pnpm run test:coverage" in ci, (
+        "release-site-build must run the release-site coverage script before "
+        "the PR gate can pass"
+    )
+
+
 def workspace_packages() -> dict[str, WorkspacePackage]:
     metadata = json.loads(
         subprocess.check_output(
@@ -252,6 +305,16 @@ def rust_coverage_commands(paths: list[Path]) -> dict[str, str]:
                 continue
             commands[f"{path.relative_to(PROJECT_ROOT)}:{line_number}"] = command
     return commands
+
+
+def codecov_upload_files(workflow: str) -> set[str]:
+    return {
+        file.strip()
+        for line in workflow.splitlines()
+        if line.strip().startswith("files:")
+        for file in line.strip().split(":", 1)[1].split(",")
+        if file.strip()
+    }
 
 
 def ci_coverage_packages(ci: str, *, job_name: str) -> set[str]:
