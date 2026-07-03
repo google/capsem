@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pages cannot display facts owned by a different JSON object.
 - Grouped release-channel package tables by package architecture on the
   generated channel pages.
+- Added a release package gate that requires the macOS `.pkg` package to appear
+  in the package inventory and generated channel page.
 
 ## [1.4.1782944059] - 2026-07-01
 

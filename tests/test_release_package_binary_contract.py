@@ -82,3 +82,23 @@ def test_package_architecture_groups() -> None:
         arch_position = packages_section.index(f"Architecture {package['architecture']}")
         package_position = packages_section.index(package["name"])
         assert arch_position < package_position
+
+
+def test_macos_package_present() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    stable = (
+        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
+    ).read_text(encoding="utf-8")
+    stable_packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
+    macos_packages = [
+        package for package in stable_packages if package["kind"] == "macos_pkg"
+    ]
+
+    assert macos_packages
+    for package in macos_packages:
+        assert package["platform"] == "macos"
+        assert package["name"].endswith(".pkg")
+        assert package["name"] in stable
+        assert package["url"] in stable
