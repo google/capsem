@@ -79,6 +79,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SHA-256 checksums matching the binary inventory.
 - Required channel package target rows to show each target package SBOM link,
   byte count, SHA-256, and BLAKE3 evidence instead of a partial shared digest.
+- Removed the flattened channel-level binary table so executable inventory is
+  rendered only on the owning package detail pages.
 
 ## [1.4.1782944059] - 2026-07-01
 

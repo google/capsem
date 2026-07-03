@@ -110,6 +110,12 @@ def test_truncated_hash_display() -> None:
             RELEASE_SITE_DIST
             / "channels"
             / "stable"
+            / "packages"
+            / graph["manifests"]["stable"]["1.4.0"]["packages"][0]["id"]
+            / "index.html",
+            RELEASE_SITE_DIST
+            / "channels"
+            / "stable"
             / "profiles"
             / "co-work"
             / "index.html",
@@ -149,6 +155,35 @@ def test_package_target_sbom() -> None:
         assert f"{sbom['bytes']:,}" in target_section
         assert sbom["digest"]["sha256"][:8] + "..." in target_section
         assert sbom["digest"]["blake3"][:8] + "..." in target_section
+
+
+def test_package_detail_navigation() -> None:
+    build_release_site_from_fixture()
+
+    graph = fixture_graph()
+    stable = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Capsem Packages" in stable
+    assert "Capsem Binaries" not in stable
+    for package in graph["manifests"]["stable"]["1.4.0"]["packages"]:
+        detail_href = f"/channels/stable/packages/{package['id']}/"
+        assert detail_href in stable
+
+        detail = (
+            RELEASE_SITE_DIST
+            / "channels"
+            / "stable"
+            / "packages"
+            / package["id"]
+            / "index.html"
+        ).read_text(encoding="utf-8")
+        assert "Contained Binaries" in detail
+        assert "Package Evidence" in detail
+        for binary in package["binaries"]:
+            assert binary["installed_path"] in detail
+            assert binary["installed_path"] not in stable
 
 
 @cache

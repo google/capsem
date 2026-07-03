@@ -353,13 +353,45 @@ def test_package_detail_lists_owned_binaries_only() -> None:
         assert evidence["url"] not in package_page
 
 
-def test_binary_descriptions_from_metadata() -> None:
+def test_package_detail_is_binary_owner_view() -> None:
     build_release_site_from_fixture()
 
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     stable = (
         RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
     ).read_text(encoding="utf-8")
+    packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
+
+    assert "Capsem Packages" in stable
+    assert "Capsem Binaries" not in stable
+
+    for package in packages:
+        assert package["name"] in stable
+        assert f"/channels/stable/packages/{package['id']}/" in stable
+        for binary in package["binaries"]:
+            assert binary["installed_path"] not in stable
+            assert binary["sbom_component_ref"] not in stable
+
+        package_page = (
+            RELEASE_SITE_DIST
+            / "channels"
+            / "stable"
+            / "packages"
+            / package["id"]
+            / "index.html"
+        ).read_text(encoding="utf-8")
+        assert "Contained Binaries" in package_page
+        assert "Package Evidence" in package_page
+        for binary in package["binaries"]:
+            assert binary["name"] in package_page
+            assert binary["installed_path"] in package_page
+            assert binary["sbom_component_ref"] in package_page
+
+
+def test_binary_descriptions_from_metadata() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
     for package in graph["manifests"]["stable"]["1.4.0"]["packages"]:
         package_page = (
@@ -372,10 +404,8 @@ def test_binary_descriptions_from_metadata() -> None:
         ).read_text(encoding="utf-8")
         for binary in package["binaries"]:
             assert binary["description"], binary
-            assert binary["description"] in stable
             assert binary["description"] in package_page
 
-    assert "Capsem binary package" not in stable
     assert "Capsem binary package" not in package_page
 
 
@@ -383,21 +413,11 @@ def test_binaries_inherit_package_target_not_all() -> None:
     build_release_site_from_fixture()
 
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    stable = (
-        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
-    ).read_text(encoding="utf-8")
-    binaries_section = stable.split("Capsem Binaries", maxsplit=1)[1].split(
-        "Profile References",
-        maxsplit=1,
-    )[0]
 
-    assert ">all<" not in binaries_section
     for package in graph["manifests"]["stable"]["1.4.0"]["packages"]:
-        target = f"{package['architecture']} / {package['platform']}"
         for binary in package["binaries"]:
             assert binary["architecture"] == package["architecture"], binary
             assert binary["platform"] == package["platform"], binary
-            assert target in binaries_section
 
         package_page = (
             RELEASE_SITE_DIST

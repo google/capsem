@@ -181,12 +181,17 @@ executables inside a package. The package owns its binaries:
 Do not repeat the package name on every binary. If a flat binary index is ever
 needed for search, it is a derived index, not the canonical manifest shape.
 
-The channel page may render package and binary tables only from the selected
-manifest. Package rows must have a download URL, byte count, SHA-256, and
-BLAKE3. Binary rows must be nested under packages in JSON and must include an
-installed path, byte count, SHA-256, BLAKE3, and SBOM component reference.
-`not published` and `unknown` are not valid values for a package or binary row
-that is present in the manifest.
+The channel page renders package target rows from the selected manifest and
+links to package detail pages. It must not flatten `packages[].binaries[]` into
+a global channel binary table. Package detail pages are the owner view for
+contained binaries, installed paths, binary hashes, SBOM component references,
+and package evidence.
+
+Package rows must have a download URL, byte count, SHA-256, BLAKE3, and package
+SBOM evidence. Binary rows must be nested under packages in JSON and must
+include an installed path, byte count, SHA-256, BLAKE3, and SBOM component
+reference. `not published` and `unknown` are not valid values for a package or
+binary row that is present in the manifest.
 
 ## Profiles
 

@@ -1,7 +1,6 @@
 ---
 import ReleaseLayout from '../../layouts/ReleaseLayout.astro';
 import {
-  binaryRows,
   byteLabel,
   channelPackagePagePath,
   channelProfilePagePath,
@@ -33,7 +32,6 @@ export function getStaticPaths() {
 const { channel, data } = Astro.props;
 const manifests = manifestRecords(data);
 const packages = packageRows(data);
-const binaries = binaryRows(data);
 const profiles = profileList(data);
 const profileCount = profiles.length;
 const packageGroups = Array.from(
@@ -68,7 +66,6 @@ const packageGroups = Array.from(
       <dt class="text-zinc-500">Manifest SHA-256</dt><dd><code class="break-all">{hashLabel(data.manifestRecord.digest?.sha256)}</code></dd>
       <dt class="text-zinc-500">Manifest BLAKE3</dt><dd><code class="break-all">{manifestBlake3(data)}</code></dd>
       <dt class="text-zinc-500">Packages</dt><dd>{packages.length}</dd>
-      <dt class="text-zinc-500">Binaries</dt><dd>{binaries.length}</dd>
       <dt class="text-zinc-500">Profiles</dt><dd>{profileCount}</dd>
     </dl>
   </section>
@@ -147,46 +144,6 @@ const packageGroups = Array.from(
         </div>
       </div>
     )) : <p class="mt-4 text-sm text-zinc-600">No package metadata is published in this manifest.</p>}
-  </section>
-
-  <section class="mt-6 border border-zinc-200 p-5">
-    <h2 class="text-xl font-semibold text-black">Capsem Binaries</h2>
-    <div class="mt-4 overflow-x-auto">
-      <table class="w-full min-w-[980px] border-collapse text-sm">
-        <thead>
-          <tr class="border-b border-zinc-200 text-left text-zinc-500">
-            <th class="py-2 pr-4 font-medium">Version</th>
-            <th class="py-2 pr-4 font-medium">Binary</th>
-            <th class="py-2 pr-4 font-medium">Package target</th>
-            <th class="py-2 pr-4 font-medium">Description</th>
-            <th class="py-2 pr-4 font-medium">Installed path</th>
-            <th class="py-2 pr-4 font-medium">Bytes</th>
-            <th class="py-2 pr-4 font-medium">SHA-256</th>
-            <th class="py-2 pr-4 font-medium">BLAKE3</th>
-            <th class="py-2 pr-4 font-medium">SBOM component</th>
-          </tr>
-        </thead>
-        <tbody>
-          {binaries.length > 0 ? binaries.map((binary) => (
-            <tr class="border-b border-zinc-100 align-top">
-              <td class="py-3 pr-4"><code>{binary.version}</code></td>
-              <td class="py-3 pr-4">{binary.name}</td>
-              <td class="py-3 pr-4"><code>{binary.architecture} / {binary.platform}</code></td>
-              <td class="py-3 pr-4 text-zinc-600">{binary.description}</td>
-              <td class="py-3 pr-4"><code>{binary.installed_path}</code></td>
-              <td class="py-3 pr-4">{byteLabel(binary.bytes)}</td>
-              <td class="py-3 pr-4"><code class="break-all">{hashLabel(binary.digest?.sha256)}</code></td>
-              <td class="py-3 pr-4"><code class="break-all">{hashLabel(binary.digest?.blake3)}</code></td>
-              <td class="py-3 pr-4"><code>{binary.sbom_component_ref}</code></td>
-            </tr>
-          )) : (
-            <tr>
-              <td class="py-4 pr-4 text-zinc-600" colspan="9">No executable binary inventory is published in this manifest.</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
   </section>
 
   <section class="mt-6 border border-zinc-200 p-5">
