@@ -1255,15 +1255,12 @@ fn build_assets_channel(
     } else {
         Some(asset_base.to_string())
     };
-    let channel_manifest_bytes = if asset_base_override.is_none()
-        && channel_manifest_doc.asset_base == manifest.asset_base
-    {
+    hydrate_asset_entry_sha256(&mut channel_manifest_doc, assets_dir)?;
+    let channel_manifest_bytes = if asset_base_override.is_none() && channel_manifest_doc == manifest {
         manifest_bytes.clone()
     } else {
-        let mut bytes = serde_json::to_vec_pretty(&channel_manifest_doc)
-            .context("serialize channel manifest")?;
-        bytes.push(b'\n');
-        bytes
+        to_canonical_pretty_json_bytes(&channel_manifest_doc)
+            .context("serialize channel manifest")?
     };
     let legacy_manifest_blake3 = blake3::hash(&channel_manifest_bytes).to_hex().to_string();
     let current_release = channel_manifest_doc
@@ -1653,9 +1650,45 @@ fn copy_assets_channel_release_assets(
     Ok(copied)
 }
 
+fn hydrate_asset_entry_sha256(manifest: &mut ManifestV2, assets_dir: &Path) -> Result<()> {
+    for (asset_version, release) in &mut manifest.assets.releases {
+        for (arch, assets) in &mut release.arches {
+            for (logical_name, entry) in assets {
+                let source = assets_dir.join(arch).join(logical_name);
+                if !source.exists() {
+                    continue;
+                }
+                let bytes = fs::read(&source)
+                    .with_context(|| format!("read {}", source.display()))?;
+                let blake3 = blake3::hash(&bytes).to_hex().to_string();
+                if blake3 != entry.hash {
+                    return Err(anyhow!(
+                        "asset {asset_version} {arch}/{logical_name} blake3 mismatch"
+                    ));
+                }
+                if bytes.len() as u64 != entry.size {
+                    return Err(anyhow!(
+                        "asset {asset_version} {arch}/{logical_name} byte count mismatch"
+                    ));
+                }
+                entry.sha256 = format!("{:x}", Sha256::digest(&bytes));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn to_canonical_pretty_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>> {
+    let json = serde_json::to_value(value).context("convert to canonical JSON value")?;
+    let mut bytes = serde_json::to_vec_pretty(&json).context("serialize canonical JSON value")?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
 fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheckReport> {
     validate_channel_name(channel)?;
     let index_path = dist.join("index.html");
+    let channel_index_path = dist.join("channels").join(channel).join("index.html");
     let manifest_path = dist.join("assets").join(channel).join("manifest.json");
     let channel_health_path = dist.join("assets").join(channel).join("health.json");
     let root_health_path = dist.join("health.json");
@@ -1677,6 +1710,8 @@ fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheck
 
     let index_html = fs::read_to_string(&index_path)
         .with_context(|| format!("read {}", index_path.display()))?;
+    let channel_index_html = fs::read_to_string(&channel_index_path)
+        .with_context(|| format!("read {}", channel_index_path.display()))?;
     if !index_html.contains("Capsem Release Channels") {
         return Err(anyhow!(
             "{} is not a Capsem release channel page",
@@ -1684,6 +1719,7 @@ fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheck
         ));
     }
     validate_assets_channel_index_html(&index_html, channel)?;
+    validate_assets_channel_page_html(&channel_index_html, channel)?;
     let manifest = load_manifest(&manifest_path)?;
     let health_content = fs::read_to_string(&health_path)
         .with_context(|| format!("read {}", health_path.display()))?;
@@ -1691,6 +1727,7 @@ fn check_assets_channel(dist: &Path, channel: &str) -> Result<AssetsChannelCheck
         serde_json::from_str(&health_content).context("parse asset channel health.json")?;
     validate_assets_channel_health(dist, channel, &manifest, &health)?;
     validate_assets_channel_index_state(&index_html, channel, &manifest, &health)?;
+    validate_assets_channel_page_state(&channel_index_html, channel, &manifest, &health)?;
     let headers = fs::read_to_string(&headers_path)
         .with_context(|| format!("read {}", headers_path.display()))?;
     let channel_manifest_header =
@@ -1758,6 +1795,27 @@ fn validate_assets_channel_index_html(index_html: &str, channel: &str) -> Result
     Ok(())
 }
 
+fn validate_assets_channel_page_html(channel_html: &str, channel: &str) -> Result<()> {
+    let expected = [
+        "Selected Manifest",
+        "Manifest History",
+        "Capsem Packages",
+        "Capsem Binaries",
+        "Profile References",
+        "SBOM",
+    ];
+    for needle in expected {
+        if !channel_html.contains(needle) {
+            return Err(anyhow!("asset channel page missing {needle}"));
+        }
+    }
+    let channel_manifest = format!("/assets/{channel}/manifest.json");
+    if !channel_html.contains(&channel_manifest) {
+        return Err(anyhow!("asset channel page missing {channel_manifest}"));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn write_test_assets_channel_index_fixture(dist: &Path, channel: &str) -> Result<()> {
     let manifest = load_manifest(&dist.join("assets").join(channel).join("manifest.json"))?;
@@ -1796,24 +1854,73 @@ fn write_test_assets_channel_index_fixture(dist: &Path, channel: &str) -> Result
         profile_source = escape_html(&profile_source),
         profile_revision = escape_html(&profile_revision),
     );
-    fs::write(dist.join("index.html"), html).context("write test release index fixture")
+    fs::write(dist.join("index.html"), html).context("write test release index fixture")?;
+    let channel_dir = dist.join("channels").join(channel);
+    fs::create_dir_all(&channel_dir)
+        .with_context(|| format!("create test channel page {}", channel_dir.display()))?;
+    let channel_html = format!(
+        "<!doctype html><html><body><main><h1>{channel}</h1>\
+        <h2>Selected Manifest</h2><h2>Manifest History</h2><h2>Capsem Packages</h2>\
+        <h2>Capsem Binaries</h2><h2>Profile References</h2><p>SBOM</p>\
+        <p>{generated_at}</p><p>{binary}</p><p>{assets}</p>\
+        <a href=\"{channel_manifest}\">{channel_manifest}</a>\
+        <p>{profile_revision}</p><a href=\"{profile_source}\">{profile_source}</a>\
+        </main></body></html>",
+        channel = escape_html(channel),
+        generated_at = escape_html(&generated_at),
+        binary = escape_html(&manifest.binaries.current),
+        assets = escape_html(&manifest.assets.current),
+        channel_manifest = escape_html(&channel_manifest),
+        profile_revision = escape_html(&profile_revision),
+        profile_source = escape_html(&profile_source),
+    );
+    fs::write(channel_dir.join("index.html"), channel_html)
+        .context("write test release channel page fixture")
 }
 
 fn validate_assets_channel_index_state(
     index_html: &str,
     channel: &str,
-    _manifest: &ManifestV2,
+    manifest: &ManifestV2,
     health: &serde_json::Value,
 ) -> Result<()> {
     let generated_at = require_json_string(health, &["generated_at"])?;
     let graph_manifest_prefix = format!("/manifests/{channel}/");
     let expected = [
         ("generated timestamp", generated_at.as_str()),
+        ("current binary", manifest.binaries.current.as_str()),
+        ("current assets", manifest.assets.current.as_str()),
         ("graph manifest", graph_manifest_prefix.as_str()),
     ];
     for (label, value) in expected {
         if !index_html.contains(&escape_html(value)) {
             return Err(anyhow!("asset channel index missing {label} {value}"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_assets_channel_page_state(
+    channel_html: &str,
+    channel: &str,
+    manifest: &ManifestV2,
+    health: &serde_json::Value,
+) -> Result<()> {
+    let generated_at = require_json_string(health, &["generated_at"])?;
+    let profile_revision = require_json_string(health, &["profiles", "revision"])?;
+    let profile_source = require_json_string(health, &["profiles", "source"])?;
+    let channel_manifest = format!("/assets/{channel}/manifest.json");
+    let expected = [
+        ("generated timestamp", generated_at.as_str()),
+        ("current binary", manifest.binaries.current.as_str()),
+        ("current assets", manifest.assets.current.as_str()),
+        ("channel manifest", channel_manifest.as_str()),
+        ("profile revision", profile_revision.as_str()),
+        ("profile catalog", profile_source.as_str()),
+    ];
+    for (label, value) in expected {
+        if !channel_html.contains(&escape_html(value)) {
+            return Err(anyhow!("asset channel page missing {label} {value}"));
         }
     }
     Ok(())
@@ -2660,20 +2767,20 @@ fn publishable_profile_catalog(
     let refresh_policy = profile_catalog_refresh_policy(&profiles);
     let min_binary = current_release.min_binary.clone();
     let mut file_copies = Vec::new();
-    let graph_profiles = profiles
-        .iter()
-        .map(|profile| {
-            graph_profile_document(
-                profile,
-                config_root,
-                manifest,
-                current_release,
-                asset_base,
-                assets_dir,
-                &mut file_copies,
-            )
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let mut asset_digest_cache = AssetDigestCache::new();
+    let mut graph_profiles = Vec::new();
+    for profile in &profiles {
+        graph_profiles.push(graph_profile_document(
+            profile,
+            config_root,
+            manifest,
+            current_release,
+            asset_base,
+            assets_dir,
+            &mut file_copies,
+            &mut asset_digest_cache,
+        )?);
+    }
     let document = PublishableProfileCatalogDocument {
         schema: "capsem.profile_catalog.v1",
         revision: revision.clone(),
@@ -2740,6 +2847,23 @@ fn graph_package_rows(manifest: &ManifestV2) -> Result<Vec<serde_json::Value>> {
     let Some(release) = manifest.binaries.releases.get(&manifest.binaries.current) else {
         return Ok(Vec::new());
     };
+    let host_sboms = binary_package_file_refs(&manifest.binaries.current, release)
+        .into_iter()
+        .filter(|file| is_host_sbom_file(&file.name))
+        .map(|file| {
+            serde_json::json!({
+                "kind": "host_sbom",
+                "name": file.name,
+                "url": file.url,
+                "bytes": file.size,
+                "digest": {
+                    "sha256": file.sha256,
+                    "blake3": file.blake3,
+                },
+                "status": release_state(release),
+            })
+        })
+        .collect::<Vec<_>>();
     let rows = binary_package_file_refs(&manifest.binaries.current, release)
         .into_iter()
         .filter(|file| !is_host_sbom_file(&file.name))
@@ -2781,6 +2905,7 @@ fn graph_package_rows(manifest: &ManifestV2) -> Result<Vec<serde_json::Value>> {
                     "blake3": file.blake3,
                 },
                 "binaries": binaries,
+                "evidence": host_sboms.clone(),
                 "status": release_state(release),
             })
         })
@@ -2796,10 +2921,18 @@ fn graph_profile_document(
     asset_base: &str,
     assets_dir: &Path,
     file_copies: &mut Vec<ProfileReleaseFileCopy>,
+    asset_digest_cache: &mut AssetDigestCache,
 ) -> Result<serde_json::Value> {
     let revision = profile.revision.clone();
     let config = graph_profile_config_refs(profile, config_root, &revision, file_copies)?;
-    let images = graph_profile_images(profile, manifest, current_release, asset_base, assets_dir)?;
+    let images = graph_profile_images(
+        profile,
+        manifest,
+        current_release,
+        asset_base,
+        assets_dir,
+        asset_digest_cache,
+    )?;
     let software = graph_profile_software(profile, config_root, &config)?;
     Ok(serde_json::json!({
         "id": profile.id,
@@ -2861,6 +2994,7 @@ fn graph_profile_images(
     current_release: &capsem_core::asset_manager::AssetRelease,
     asset_base: &str,
     assets_dir: &Path,
+    asset_digest_cache: &mut AssetDigestCache,
 ) -> Result<serde_json::Value> {
     let mut images = Vec::new();
     for (arch, arch_assets) in &profile.assets.arch {
@@ -2883,15 +3017,8 @@ fn graph_profile_images(
                     descriptor.name
                 )
             })?;
-            let source = assets_dir.join(arch).join(&descriptor.name);
-            let (bytes, digest) = file_digest(&source)?;
-            if bytes != entry.size {
-                return Err(anyhow!(
-                    "profile {} {arch} {} byte count mismatch",
-                    profile.id,
-                    descriptor.name
-                ));
-            }
+            let (bytes, digest) =
+                asset_entry_digest(assets_dir, arch, &descriptor.name, entry, asset_digest_cache)?;
             Ok(serde_json::json!({
                 "kind": kind,
                 "name": descriptor.name,
@@ -2909,8 +3036,11 @@ fn graph_profile_images(
         .collect::<Result<Vec<_>>>()?;
 
         let evidence = if manifest_assets.contains_key("obom.cdx.json") {
-            let source = assets_dir.join(arch).join("obom.cdx.json");
-            let (bytes, digest) = file_digest(&source)?;
+            let entry = manifest_assets
+                .get("obom.cdx.json")
+                .ok_or_else(|| anyhow!("manifest current release arch {arch} missing obom.cdx.json"))?;
+            let (bytes, digest) =
+                asset_entry_digest(assets_dir, arch, "obom.cdx.json", entry, asset_digest_cache)?;
             vec![serde_json::json!({
                 "kind": "abom",
                 "url": channel_asset_url(
@@ -2938,6 +3068,60 @@ fn graph_profile_images(
             .cmp(&right.get("architecture").and_then(|value| value.as_str()))
     });
     Ok(serde_json::Value::Array(images))
+}
+
+type AssetDigestCache = BTreeMap<(String, String), (u64, serde_json::Value)>;
+
+fn asset_entry_digest(
+    assets_dir: &Path,
+    arch: &str,
+    logical_name: &str,
+    entry: &capsem_core::asset_manager::AssetEntry,
+    cache: &mut AssetDigestCache,
+) -> Result<(u64, serde_json::Value)> {
+    let cache_key = (arch.to_string(), logical_name.to_string());
+    if let Some((bytes, digest)) = cache.get(&cache_key) {
+        return Ok((*bytes, digest.clone()));
+    }
+    let source = assets_dir.join(arch).join(logical_name);
+    let result = if source.exists() {
+        let (bytes, digest) = file_digest(&source)?;
+        if bytes != entry.size {
+            return Err(anyhow!("{arch} {logical_name} byte count mismatch"));
+        }
+        let actual_blake3 = digest
+            .get("blake3")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if actual_blake3 != entry.hash {
+            return Err(anyhow!("{arch} {logical_name} blake3 mismatch"));
+        }
+        if !entry.sha256.is_empty() {
+            let actual_sha256 = digest
+                .get("sha256")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            if actual_sha256 != entry.sha256 {
+                return Err(anyhow!("{arch} {logical_name} sha256 mismatch"));
+            }
+        }
+        (bytes, digest)
+    } else {
+        if entry.sha256.is_empty() {
+            return Err(anyhow!(
+                "asset {arch}/{logical_name} is missing locally and manifest does not carry sha256"
+            ));
+        }
+        (
+            entry.size,
+            serde_json::json!({
+                "sha256": entry.sha256.clone(),
+                "blake3": entry.hash.clone(),
+            }),
+        )
+    };
+    cache.insert(cache_key, result.clone());
+    Ok(result)
 }
 
 fn graph_profile_software(
@@ -7175,9 +7359,24 @@ decision = "block"
         assert!(release_dir.join("arm64-initrd.img").is_file());
         assert!(release_dir.join("arm64-rootfs.erofs").is_file());
         assert!(release_dir.join("arm64-obom.cdx.json").is_file());
+        let channel_manifest_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&channel_manifest).expect("channel manifest"))
+                .expect("channel manifest json");
+        let source_manifest_json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).expect("source manifest"))
+                .expect("source manifest json");
         assert_eq!(
-            fs::read_to_string(&channel_manifest).expect("channel manifest"),
-            fs::read_to_string(&manifest_path).expect("source manifest")
+            channel_manifest_json["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"]
+                ["vmlinuz"]["hash"],
+            source_manifest_json["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"]
+                ["vmlinuz"]["hash"]
+        );
+        assert!(
+            channel_manifest_json["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"]
+                ["vmlinuz"]["sha256"]
+                .as_str()
+                .is_some_and(|hash| hash.len() == 64),
+            "channel manifest must hydrate VM asset SHA-256"
         );
         let health: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(out_dir.join("health.json")).unwrap())

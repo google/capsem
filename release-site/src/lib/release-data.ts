@@ -276,7 +276,7 @@ export function manifestRecords(data: ReleaseData): JsonObject[] {
   return Array.isArray(data.channelRecord.manifests) ? data.channelRecord.manifests : [];
 }
 
-function hostSbomRows(data: ReleaseData): JsonObject[] {
+export function hostSbomRows(data: ReleaseData): JsonObject[] {
   if (Array.isArray(data.manifest.packages)) {
     return data.manifest.packages.flatMap((pkg: JsonObject) => {
       const evidence = Array.isArray(pkg.evidence) ? pkg.evidence : [];

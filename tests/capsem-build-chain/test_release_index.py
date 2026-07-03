@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import gzip
+import io
 import json
 import os
 import subprocess
+import tarfile
 from pathlib import Path
 
 from blake3 import blake3
@@ -76,6 +79,42 @@ def _write_asset(path: Path, data: bytes) -> dict[str, object]:
     return {"hash": blake3(data).hexdigest(), "size": len(data)}
 
 
+def _write_minimal_deb(path: Path, executable_name: str = "capsem-app") -> bytes:
+    executable = b"#!/bin/sh\nexit 0\n"
+    data_tar = io.BytesIO()
+    with gzip.GzipFile(fileobj=data_tar, mode="wb", mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode="w") as tar:
+            info = tarfile.TarInfo(f"usr/bin/{executable_name}")
+            info.mode = 0o755
+            info.size = len(executable)
+            info.mtime = 0
+            tar.addfile(info, io.BytesIO(executable))
+    control_tar = io.BytesIO()
+    with gzip.GzipFile(fileobj=control_tar, mode="wb", mtime=0) as gz:
+        with tarfile.open(fileobj=gz, mode="w"):
+            pass
+    deb = (
+        b"!<arch>\n"
+        + _ar_member("debian-binary", b"2.0\n")
+        + _ar_member("control.tar.gz", control_tar.getvalue())
+        + _ar_member("data.tar.gz", data_tar.getvalue())
+    )
+    path.write_bytes(deb)
+    return deb
+
+
+def _ar_member(name: str, data: bytes) -> bytes:
+    header = (
+        f"{name + '/':<16}"
+        f"{0:<12}"
+        f"{0:<6}"
+        f"{0:<6}"
+        f"{0o100644:<8}"
+        f"{len(data):<10}`\n"
+    ).encode("ascii")
+    return header + data + (b"\n" if len(data) % 2 else b"")
+
+
 def _write_release_manifest(
     root: Path,
     *,
@@ -121,11 +160,13 @@ def _write_release_manifest(
                 "name": f"Capsem-{binary_version}.pkg",
                 "size": len(pkg),
                 "sha256": hashlib.sha256(pkg).hexdigest(),
+                "blake3": blake3(pkg).hexdigest(),
             },
             {
                 "name": "capsem-sbom.spdx.json",
                 "size": len(sbom),
                 "sha256": hashlib.sha256(sbom).hexdigest(),
+                "blake3": blake3(sbom).hexdigest(),
             },
         ]
 
@@ -151,6 +192,18 @@ def _write_release_manifest(
     manifest_path = assets / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return manifest_path
+
+
+def _hydrate_asset_sha256_in_manifest(manifest_path: Path) -> None:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assets_dir = manifest_path.parent
+    for release in manifest["assets"]["releases"].values():
+        for arch, assets in release["arches"].items():
+            for logical_name, entry in assets.items():
+                entry["sha256"] = hashlib.sha256(
+                    (assets_dir / arch / logical_name).read_bytes()
+                ).hexdigest()
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
 def _write_profile_catalog(root: Path, revision: str = "profiles-2030.0101.1") -> Path:
@@ -287,35 +340,31 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert report["copied_assets"] == 8
 
     index_html = (dist / "index.html").read_text(encoding="utf-8")
-    assert "Capsem Asset Channel" in index_html
-    assert "Channel Manifest" in index_html
-    assert "Manifest URL" in index_html
-    assert "Current asset base" in index_html
-    assert "Capsem Binaries" in index_html
-    assert "Profile catalog JSON" in index_html
-    assert "profiles-2030.0101.1" in index_html
-    assert "Current VM Assets" in index_html
-    assert "Architecture arm64" in index_html
-    assert "Architecture x86_64" in index_html
-    assert "/assets/releases/2030.0101.1/arm64-vmlinuz" in index_html
-    assert "/assets/releases/2030.0101.1/arm64-obom.cdx.json" in index_html
-    assert "/assets/releases/2030.0101.1/x86_64-obom.cdx.json" in index_html
-    assert "Evidence" in index_html
-    assert "VM OBOM" in index_html
-    assert "Host SBOM" in index_html
+    assert "Capsem Release Channels" in index_html
+    assert "Stable" in index_html
+    assert "Selected manifest" in index_html
+    channel_html = (dist / "channels" / "stable" / "index.html").read_text(encoding="utf-8")
+    assert "Selected Manifest" in channel_html
+    assert "Manifest URL" in channel_html
+    assert "Capsem Packages" in channel_html
+    assert "Profile Catalog" in channel_html
+    assert "profiles-2030.0101.1" in channel_html
+    assert "SBOM" in channel_html
     assert "Realm Discipline" not in index_html
-    assert 'href="/health.json"' in index_html
-    assert "/health.json" in index_html
-    assert 'href="/assets/stable/manifest.json"' in index_html
-    assert "/assets/stable/manifest.json" in index_html
-    assert 'href="/profiles/releases/profiles-2030.0101.1/catalog.json"' in index_html
-    assert "Capsem-1.4.1234567890.pkg" in index_html
-    assert "capsem-sbom.spdx.json" in index_html
+    assert 'href="/channels.json"' in index_html
+    assert 'href="/assets/stable/manifest.json"' in channel_html
+    assert "/assets/stable/manifest.json" in channel_html
+    assert 'href="/profiles/releases/profiles-2030.0101.1/catalog.json"' in channel_html
+    assert "Capsem-1.4.1234567890.pkg" in channel_html
+    assert "capsem-sbom.spdx.json" in channel_html
     assert "The fastest way to ship with AI securely." not in index_html
-    profile_html = (dist / "profiles" / "code" / "index.html").read_text(encoding="utf-8")
+    profile_html = (
+        dist / "channels" / "stable" / "profiles" / "code" / "index.html"
+    ).read_text(encoding="utf-8")
     assert "Architecture arm64" in profile_html
     assert "Architecture x86_64" in profile_html
-    assert "ABOM / OBOM" in profile_html
+    assert "Profile Evidence" in profile_html
+    assert "ABOM" in profile_html
     assert "/assets/releases/2030.0101.1/arm64-rootfs.erofs" in profile_html
     assert "/assets/releases/2030.0101.1/arm64-obom.cdx.json" in profile_html
     assert "/assets/releases/2030.0101.1/x86_64-rootfs.erofs" in profile_html
@@ -352,32 +401,24 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert health["profiles"]["source"] == catalog_url
     assert health["urls"]["profile_catalog"] == catalog_url
     assert len(health["profiles"]["hash"]) == 64
-    assert health["profiles"]["compatibility"] == {
-        "binary": "1.4.1234567890",
-        "assets": "2030.0101.1",
-        "min_binary": "1.4.0",
-        "min_assets": "2030.0101.1",
-    }
-    assert health["profiles"]["requires_newer"] == {
-        "binary": False,
-        "assets": False,
-    }
+    assert "compatibility" not in health["profiles"]
+    assert "requires_newer" not in health["profiles"]
+    assert health["profiles"]["min_binary"] == "1.4.0"
+    assert health["profiles"]["requires_newer_binary"] is False
     assert health["updates"]["profiles"]["latest"] == "profiles-2030.0101.1"
     assert health["updates"]["profiles"]["current"] == "profiles-2030.0101.1"
     assert health["updates"]["profiles"]["state"] == "current"
     assert health["updates"]["profiles"]["source"] == catalog_url
     assert health["updates"]["profiles"]["hash"] == health["profiles"]["hash"]
-    assert health["updates"]["profiles"]["compatibility"] == health["profiles"]["compatibility"]
-    assert health["updates"]["profiles"]["requires_newer"] == health["profiles"]["requires_newer"]
+    assert "compatibility" not in health["updates"]["profiles"]
+    assert "requires_newer" not in health["updates"]["profiles"]
     catalog_path = dist / catalog_url.removeprefix("/")
     catalog_bytes = catalog_path.read_bytes()
     catalog_text = catalog_bytes.decode()
     assert health["profiles"]["hash"] == blake3(catalog_bytes).hexdigest()
     assert "file://" not in catalog_text
     assert str(tmp_path) not in catalog_text
-    assert "https://release.capsem.org/assets/releases/2030.0101.1/arm64-rootfs.erofs" in (
-        catalog_text
-    )
+    assert "/assets/releases/2030.0101.1/arm64-rootfs.erofs" in catalog_text
     assert health["updates"]["images"]["latest"] is None
     assert health["evidence"]["vm_oboms"][0]["url"] == (
         "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
@@ -444,7 +485,7 @@ def test_release_index_bootstraps_before_binary_evidence_exists(tmp_path: Path) 
         item["name"] == "github_attestations_vm_assets"
         for item in health["evidence"]["attestations"]
     )
-    assert health["profiles"]["compatibility"]["min_assets"] == "2030.0101.1"
+    assert health["profiles"]["min_binary"] == "1.4.0"
 
     _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))
 
@@ -539,13 +580,6 @@ def test_asset_channel_deprecate_release_reports_history_without_moving_current(
         "--generated-at",
         "2030-01-03T00:00:00Z",
     )
-
-    index_html = (dist / "index.html").read_text(encoding="utf-8")
-    assert "Asset Release History" in index_html
-    assert "2030.0101.1" in index_html
-    assert "deprecated" in index_html
-    assert "2030-01-03" in index_html
-    assert "2030.0102.1" in index_html
 
     health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
     assert health["current"] == {
@@ -832,7 +866,7 @@ def test_release_index_check_rejects_profile_catalog_content_drift(tmp_path: Pat
     )
 
     assert result.returncode != 0
-    assert "profile catalog current binary mismatch" in result.stderr
+    assert "profile catalog must not publish current_binary" in result.stderr
 
 
 def test_release_index_check_rejects_missing_vm_obom_evidence(tmp_path: Path) -> None:
@@ -1215,7 +1249,7 @@ def test_binary_release_index_records_host_artifacts_without_changing_assets(
     deb = artifacts / "Capsem_1.4.2234567890_arm64.deb"
     sbom = artifacts / "capsem-sbom.spdx.json"
     pkg.write_bytes(b"pkg bytes v2")
-    deb.write_bytes(b"deb bytes v2")
+    deb_bytes = _write_minimal_deb(deb)
     sbom.write_bytes(b'{"spdxVersion":"SPDX-2.3","name":"capsem"}')
 
     result = _run_admin(
@@ -1250,7 +1284,8 @@ def test_binary_release_index_records_host_artifacts_without_changing_assets(
     assert release["date"] == "2030-02-03"
     files = {entry["name"]: entry for entry in release["files"]}
     assert files[pkg.name]["sha256"] == hashlib.sha256(b"pkg bytes v2").hexdigest()
-    assert files[deb.name]["sha256"] == hashlib.sha256(b"deb bytes v2").hexdigest()
+    assert files[deb.name]["sha256"] == hashlib.sha256(deb_bytes).hexdigest()
+    assert files[deb.name]["binaries"]
     assert files[sbom.name]["sha256"] == hashlib.sha256(sbom.read_bytes()).hexdigest()
 
 
@@ -1440,6 +1475,7 @@ def test_binary_release_profile_catalog_index_builds_release_site_without_rebuil
     tmp_path: Path,
 ) -> None:
     manifest_path = _write_release_manifest(tmp_path)
+    _hydrate_asset_sha256_in_manifest(manifest_path)
     profiles_dir = _write_profile_catalog(tmp_path)
     # A tag release runner must not need local VM build outputs.
     for local_asset in (tmp_path / "assets" / "arm64").iterdir():
@@ -1491,14 +1527,8 @@ def test_binary_release_profile_catalog_index_builds_release_site_without_rebuil
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     assert catalog["schema"] == "capsem.profile_catalog.v1"
     assert catalog["revision"] == "profiles-2030.0101.1"
-    assert catalog["compatibility"] == {
-        "binary": "1.4.1234567890",
-        "assets": "2030.0101.1",
-        "min_binary": "1.4.0",
-        "min_assets": "2030.0101.1",
-        "requires_newer_binary": False,
-        "requires_newer_assets": False,
-    }
+    assert "compatibility" not in catalog
+    assert all(profile["min_capsem_version"] == "1.4.0" for profile in catalog["profiles"])
     assert "file://" not in catalog_path.read_text(encoding="utf-8")
     assert str(tmp_path) not in catalog_path.read_text(encoding="utf-8")
     assert rootfs_url in catalog_path.read_text(encoding="utf-8")

@@ -56,6 +56,13 @@ fn validate_hash(hash: &str) -> Result<()> {
     Ok(())
 }
 
+fn validate_sha256(hash: &str) -> Result<()> {
+    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        bail!("invalid sha256 hash (expected 64 hex chars): {hash}");
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // Manifest types
 // ---------------------------------------------------------------------------
@@ -64,6 +71,8 @@ fn validate_hash(hash: &str) -> Result<()> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetEntry {
     pub hash: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sha256: String,
     pub size: u64,
 }
 
@@ -278,6 +287,9 @@ impl ManifestV2 {
                 for (name, entry) in assets {
                     validate_filename(name)?;
                     validate_hash(&entry.hash)?;
+                    if !entry.sha256.is_empty() {
+                        validate_sha256(&entry.sha256)?;
+                    }
                 }
             }
         }
