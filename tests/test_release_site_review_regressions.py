@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+from pathlib import Path
 
 from test_release_site_html_contract import (
     FIXTURE_GRAPH,
+    PROJECT_ROOT,
     RELEASE_SITE_DIST,
     build_release_site_from_fixture,
 )
@@ -36,3 +40,46 @@ def test_packages_grouped_by_os_architecture() -> None:
             assert detail_href in package_block
             assert package["name"] in package_block
             assert package["url"] in package_block
+
+
+def test_channel_descriptions() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+
+    for channel in graph["channels"].values():
+        assert channel["description"] in index
+    assert "<code>stable</code>" not in index
+    assert "<code>nightly</code>" not in index
+
+    stripped_graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    for channel in stripped_graph["channels"].values():
+        channel.pop("description", None)
+    graph_path = PROJECT_ROOT / "target" / "release-site-no-channel-descriptions.json"
+    graph_path.parent.mkdir(parents=True, exist_ok=True)
+    graph_path.write_text(json.dumps(stripped_graph), encoding="utf-8")
+
+    build_release_site_from_graph(graph_path)
+    stripped_index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+
+    assert "Recommended release channel for everyday Capsem installs." not in stripped_index
+    assert "Faster-moving release channel for daily fixes and early validation." not in stripped_index
+
+
+def build_release_site_from_graph(graph_path: Path) -> None:
+    env = {
+        **os.environ,
+        "ASTRO_TELEMETRY_DISABLED": "1",
+        "CAPSEM_RELEASE_CHANNEL_DIST": str(graph_path),
+    }
+    result = subprocess.run(
+        ["pnpm", "--dir", "release-site", "run", "build"],
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr

@@ -117,7 +117,7 @@ export function channelRows(data: ReleaseData): ChannelRow[] {
       return {
         id,
         label: String(channel.label ?? id),
-        description: String(channel.description ?? channelDescription(id)),
+        description: String(channel.description ?? ''),
         manifestCount: manifests.length,
         manifestRevision: String(selected.revision ?? selected.version ?? 'not published'),
         currentStatus: String(selected.status ?? 'not published'),
@@ -582,17 +582,6 @@ function normalizeProfile(profile: JsonObject): JsonObject {
     name,
     description: profile.description ?? `Release profile ${id}`,
   };
-}
-
-function channelDescription(id: string): string {
-  switch (id) {
-    case 'stable':
-      return 'Recommended release channel for everyday Capsem installs.';
-    case 'nightly':
-      return 'Faster-moving release channel for daily fixes and early validation.';
-    default:
-      return 'Capsem release channel.';
-  }
 }
 
 function artifactLabel(kind: unknown): string {
