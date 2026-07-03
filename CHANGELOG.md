@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Rejected repeated release-graph digests across distinct software rows and
+  profile artifact entries so copied hash evidence cannot pass validation.
 - Rejected placeholder release digests in readiness validation so repeated
   one-character SHA-256/BLAKE3 values cannot pass as release evidence.
 - Rebuilt the release-channel contract around generated channel, manifest,

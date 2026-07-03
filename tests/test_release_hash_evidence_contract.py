@@ -114,6 +114,50 @@ def test_reject_placeholder_hashes() -> None:
         assert f"fixture {char} digest blake3 uses placeholder pattern" in failures
 
 
+def test_repeated_row_digest_theater(monkeypatch) -> None:
+    checker = _readiness_checker_module()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]))
+    architecture = profile["architectures"][0]
+    assert len(architecture["software"]) >= 2
+
+    first = architecture["software"][0]
+    second = architecture["software"][1]
+    second["digest"] = first["digest"]
+    first_image = architecture["images"][0]
+    second_image = architecture["images"][1]
+    second_image["digest"] = first_image["digest"]
+
+    monkeypatch.setattr(
+        checker,
+        "fetch_text",
+        lambda _url: checker.FetchText(
+            text="co-work Co-work 2026.07.02.1-stable arm64"
+        ),
+    )
+    monkeypatch.setattr(
+        checker,
+        "check_release_graph_artifact",
+        lambda *_args, **_kwargs: [],
+    )
+
+    failures = checker.check_release_graph_profile(
+        "https://release.capsem.test",
+        "stable",
+        "co-work",
+        profile,
+    )
+
+    assert (
+        f"profile co-work architecture arm64 software digest {first['digest']['sha256']} "
+        f"is reused by {first['name']} and {second['name']}"
+    ) in failures
+    assert (
+        f"profile co-work architecture arm64 image digest {first_image['digest']['sha256']} "
+        f"is reused by {first_image['url']} and {second_image['url']}"
+    ) in failures
+
+
 def test_software_inventory_row_digests_are_row_owned() -> None:
     _assert_software_rows_do_not_reuse_inventory_digest()
 

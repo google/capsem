@@ -644,6 +644,34 @@ def check_release_graph_profile(
                     f"profile {profile_id} architecture {arch} software {name} "
                     "digest reuses software_inventory evidence digest"
                 )
+        failures.extend(
+            check_release_graph_unique_digests(
+                software_entries,
+                f"profile {profile_id} architecture {arch} software",
+                identity_key="name",
+            )
+        )
+        failures.extend(
+            check_release_graph_unique_digests(
+                config_entries,
+                f"profile {profile_id} architecture {arch} config",
+                identity_key="url",
+            )
+        )
+        failures.extend(
+            check_release_graph_unique_digests(
+                images,
+                f"profile {profile_id} architecture {arch} image",
+                identity_key="url",
+            )
+        )
+        failures.extend(
+            check_release_graph_unique_digests(
+                evidence_entries,
+                f"profile {profile_id} architecture {arch} evidence",
+                identity_key="url",
+            )
+        )
         for item in config_entries:
             kind = item.get("kind") if isinstance(item, dict) else None
             if kind not in ALLOWED_PROFILE_CONFIG_KINDS:
@@ -688,6 +716,36 @@ def check_release_graph_profile(
                     expected_document=expected_document,
                 )
             )
+    return failures
+
+
+def check_release_graph_unique_digests(
+    entries: list[Any],
+    label: str,
+    *,
+    identity_key: str,
+) -> list[str]:
+    failures: list[str] = []
+    seen: dict[tuple[str, str], str] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        identity = entry.get(identity_key)
+        if not isinstance(identity, str) or not identity:
+            identity = "<unknown>"
+        digest = entry.get("digest")
+        if not isinstance(digest, dict):
+            continue
+        sha256 = digest.get("sha256")
+        blake3_value = digest.get("blake3")
+        if not isinstance(sha256, str) or not isinstance(blake3_value, str):
+            continue
+        digest_key = (sha256, blake3_value)
+        existing = seen.get(digest_key)
+        if existing is not None and existing != identity:
+            failures.append(f"{label} digest {sha256} is reused by {existing} and {identity}")
+        else:
+            seen[digest_key] = identity
     return failures
 
 
