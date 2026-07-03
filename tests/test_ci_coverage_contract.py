@@ -226,6 +226,61 @@ def test_release_critical_crates_are_reported() -> None:
     )
 
 
+def test_release_binaries_and_package_rails_covered() -> None:
+    ci = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    macos_coverage_packages = ci_coverage_packages(ci, job_name="test")
+
+    release_binary_packages = {
+        "capsem",
+        "capsem-admin",
+        "capsem-app",
+        "capsem-bench",
+        "capsem-gateway",
+        "capsem-mcp",
+        "capsem-mcp-aggregator",
+        "capsem-mcp-builtin",
+        "capsem-mock-server",
+        "capsem-process",
+        "capsem-service",
+        "capsem-tray",
+        "capsem-tui",
+    }
+    missing_binary_packages = sorted(release_binary_packages - macos_coverage_packages)
+    assert not missing_binary_packages, (
+        "macOS Rust coverage must include release binary-owning crates; "
+        f"missing {missing_binary_packages}"
+    )
+
+    test_job = workflow_job_block(ci, "test")
+    package_rail_tests = {
+        "tests/test_build_pkg.py",
+        "tests/test_repack_deb.py",
+        "tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py",
+        "tests/capsem-release/",
+    }
+    missing_package_rails = sorted(
+        test_path for test_path in package_rail_tests if test_path not in test_job
+    )
+    assert not missing_package_rails, (
+        "CI must execute release/package rail tests; "
+        f"missing {missing_package_rails}"
+    )
+
+    release_integration_command = python_pytest_command_containing(
+        test_job,
+        "tests/capsem-release/",
+    )
+    for coverage_arg in (
+        "--cov=src/capsem",
+        "--cov-append",
+        "--cov-report=xml:codecov-python.xml",
+    ):
+        assert coverage_arg in release_integration_command, (
+            "release/package integration tests must append to the uploaded "
+            f"Python coverage report; missing {coverage_arg}"
+        )
+
+
 def workspace_packages() -> dict[str, WorkspacePackage]:
     metadata = json.loads(
         subprocess.check_output(
@@ -315,6 +370,30 @@ def codecov_upload_files(workflow: str) -> set[str]:
         for file in line.strip().split(":", 1)[1].split(",")
         if file.strip()
     }
+
+
+def python_pytest_command_containing(shell: str, needle: str) -> str:
+    lines = shell.splitlines()
+    for index, line in enumerate(lines):
+        if "uv run python -m pytest" not in line:
+            continue
+        command_lines = [line.strip()]
+        if not line.strip().endswith("\\"):
+            command = line.strip()
+            if needle in command:
+                return command
+            continue
+        for continuation in lines[index + 1:]:
+            stripped = continuation.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            command_lines.append(stripped)
+            if not stripped.endswith("\\"):
+                break
+        command = " ".join(part.rstrip("\\").strip() for part in command_lines)
+        if needle in command:
+            return command
+    raise AssertionError(f"pytest command containing {needle!r} not found")
 
 
 def ci_coverage_packages(ci: str, *, job_name: str) -> set[str]:

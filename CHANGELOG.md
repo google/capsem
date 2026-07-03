@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Appended Python release/package integration tests to the uploaded coverage
+  report so package rail coverage is visible in Codecov.
 - Added release-site coverage generation and Codecov upload wiring so the
   Astro release channel surface is visible in PR coverage reports.
 - Required Rust coverage workflows and local coverage recipes to include

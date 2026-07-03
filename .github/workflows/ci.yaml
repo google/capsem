@@ -212,7 +212,15 @@ jobs:
           for bin in target/debug/capsem-process target/debug/capsem-service target/debug/capsem target/debug/capsem-mcp target/debug/capsem-mock-server target/debug/capsem-bench-rs; do
             codesign --sign - --entitlements entitlements.plist --force "$bin"
           done
-          uv run python -m pytest tests/capsem-bootstrap/ tests/capsem-codesign/ tests/capsem-rootfs-artifacts/ tests/capsem-release/ -v --tb=short
+          uv run python -m pytest \
+            tests/capsem-bootstrap/ \
+            tests/capsem-codesign/ \
+            tests/capsem-rootfs-artifacts/ \
+            tests/capsem-release/ \
+            -v --tb=short \
+            --cov=src/capsem \
+            --cov-append \
+            --cov-report=xml:codecov-python.xml
 
       # Verify all integration test suites import cleanly (catches broken imports/syntax)
       - name: Verify all integration test imports
