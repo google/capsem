@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
+
 from test_release_site_html_contract import (
+    PROJECT_ROOT,
     RELEASE_SITE_DIST,
     build_release_site_from_fixture,
     fixture_graph,
@@ -48,3 +51,32 @@ def test_no_invented_data() -> None:
     assert "Manifest History" not in profile
     assert stable_package["name"] not in profile
     assert stable_package["evidence"][0]["url"] not in profile
+
+
+def test_no_profile_catalog_side_channel() -> None:
+    build_release_site_from_fixture()
+    graph = fixture_graph()
+    forbidden = ("profile_catalog", "catalog.json", "capsem.profile_catalog")
+
+    serialized_graph = json.dumps(graph, sort_keys=True)
+    for token in forbidden:
+        assert token not in serialized_graph
+
+    generated_pages = [
+        RELEASE_SITE_DIST / "index.html",
+        RELEASE_SITE_DIST / "channels" / "stable" / "index.html",
+        RELEASE_SITE_DIST / "channels" / "nightly" / "index.html",
+        RELEASE_SITE_DIST / "channels" / "stable" / "profiles" / "co-work" / "index.html",
+        RELEASE_SITE_DIST / "channels" / "nightly" / "profiles" / "co-work" / "index.html",
+    ]
+    source_files = [
+        PROJECT_ROOT / "release-site" / "src" / "lib" / "release-data.ts",
+        PROJECT_ROOT / "release-site" / "src" / "pages" / "index.astro",
+        PROJECT_ROOT / "release-site" / "src" / "pages" / "channels" / "[id].astro",
+        PROJECT_ROOT / "release-site" / "src" / "pages" / "profiles" / "[id].astro",
+    ]
+
+    for path in generated_pages + source_files:
+        text = path.read_text(encoding="utf-8")
+        for token in forbidden:
+            assert token not in text, f"{path}: {token}"

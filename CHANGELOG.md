@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named release-site gate proving generated pages and release-site
+  loaders do not reintroduce a profile catalog side channel.
 - Added an explicit release manifest-version rail so channel manifests publish
   `version` values independently from Capsem package versions, VM asset
   versions, profile revisions, and profile image revisions.
