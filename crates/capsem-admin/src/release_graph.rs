@@ -881,8 +881,24 @@ impl ProfileArchitectureImages {
                 self.architecture
             );
         }
+        let software_inventory_digests = self
+            .evidence
+            .iter()
+            .filter(|evidence| evidence.kind == "software_inventory")
+            .map(|evidence| &evidence.digest)
+            .collect::<Vec<_>>();
         for software in &self.software {
             software.validate(profile)?;
+            if software_inventory_digests
+                .iter()
+                .any(|digest| **digest == software.digest)
+            {
+                bail!(
+                    "profile {profile} architecture {:?} software {} digest reuses software_inventory evidence digest",
+                    self.architecture,
+                    software.name
+                );
+            }
         }
         for config in &self.config {
             config.validate(profile)?;
@@ -1030,9 +1046,13 @@ mod tests {
     }
 
     fn digest_set() -> DigestSet {
+        digest_set_with('a', 'b')
+    }
+
+    fn digest_set_with(sha256: char, blake3: char) -> DigestSet {
         DigestSet {
-            sha256: "a".repeat(64),
-            blake3: "b".repeat(64),
+            sha256: sha256.to_string().repeat(64),
+            blake3: blake3.to_string().repeat(64),
         }
     }
 
@@ -1698,7 +1718,7 @@ mod tests {
                     url: format!(
                         "/profiles/releases/{revision}/co-work/arm64/software-inventory.json"
                     ),
-                    digest: digest_set(),
+                    digest: digest_set_with('c', 'd'),
                 },
             ],
         }
@@ -1888,7 +1908,7 @@ mod tests {
                         url:
                             "/profiles/releases/2026.07.02.1/co-work/arm64/software-inventory.json"
                                 .to_string(),
-                        digest: digest_set(),
+                        digest: digest_set_with('c', 'd'),
                     },
                 ],
             }],
@@ -1918,6 +1938,37 @@ mod tests {
             .expect_err("profile software rows must use real versions");
 
         assert!(error.to_string().contains("unversioned"), "{error}");
+    }
+
+    #[test]
+    fn profile_json_ownership_rejects_reused_software_inventory_digest() {
+        let mut profile = profile_with_image_artifacts(
+            "2026.07.02.1",
+            vec![profile_image_artifact(
+                ProfileImageArtifactKind::Rootfs,
+                "rootfs.erofs",
+                "2026.07.02.1",
+            )],
+        );
+        let inventory_digest = profile.architectures[0]
+            .evidence
+            .iter()
+            .find(|evidence| evidence.kind == "software_inventory")
+            .expect("software inventory evidence")
+            .digest
+            .clone();
+        profile.architectures[0].software[0].digest = inventory_digest;
+
+        let error = profile
+            .validate_profile_ownership()
+            .expect_err("software rows must not reuse inventory file digests");
+
+        assert!(
+            error
+                .to_string()
+                .contains("reuses software_inventory evidence digest"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -2021,7 +2072,7 @@ mod tests {
                             kind: "software_inventory".to_string(),
                             url: "/profiles/releases/2026.07.02.1/co-work/arm64/software-inventory.json"
                                 .to_string(),
-                            digest: digest_set(),
+                            digest: digest_set_with('c', 'd'),
                         },
                     ],
                 }],

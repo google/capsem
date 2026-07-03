@@ -625,6 +625,13 @@ def check_release_graph_profile(
             failures.append(f"profile {profile_id} architecture {arch} config empty")
         if not images:
             failures.append(f"profile {profile_id} architecture {arch} images empty")
+        software_inventory_digests = [
+            evidence.get("digest")
+            for evidence in evidence_entries
+            if isinstance(evidence, dict)
+            and str(evidence.get("kind", "")).lower() == "software_inventory"
+            and isinstance(evidence.get("digest"), dict)
+        ]
 
         for software in software_entries:
             failures.extend(
@@ -634,6 +641,12 @@ def check_release_graph_profile(
                     arch,
                 )
             )
+            if isinstance(software, dict) and software.get("digest") in software_inventory_digests:
+                name = software.get("name") if isinstance(software.get("name"), str) else "<unknown>"
+                failures.append(
+                    f"profile {profile_id} architecture {arch} software {name} "
+                    "digest reuses software_inventory evidence digest"
+                )
         for item in config_entries:
             kind = item.get("kind") if isinstance(item, dict) else None
             if kind not in ALLOWED_PROFILE_CONFIG_KINDS:

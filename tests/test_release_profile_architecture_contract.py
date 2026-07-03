@@ -510,6 +510,44 @@ def test_software_versions_and_hashes() -> None:
                     assert software["digest"]["sha256"] not in evidence_digests, label
 
 
+def test_software_rows_do_not_reuse_inventory_digest(monkeypatch) -> None:
+    checker = _readiness_checker_module()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]))
+    architecture = profile["architectures"][0]
+    inventory_digest = next(
+        item["digest"]
+        for item in architecture["evidence"]
+        if item["kind"] == "software_inventory"
+    )
+    architecture["software"][0]["digest"] = inventory_digest
+
+    monkeypatch.setattr(
+        checker,
+        "fetch_text",
+        lambda _url: checker.FetchText(
+            text="co-work Co-work 2026.07.02.1-stable arm64"
+        ),
+    )
+    monkeypatch.setattr(
+        checker,
+        "check_release_graph_artifact",
+        lambda *_args, **_kwargs: [],
+    )
+
+    failures = checker.check_release_graph_profile(
+        "https://release.capsem.test",
+        "stable",
+        "co-work",
+        profile,
+    )
+
+    assert (
+        "profile co-work architecture arm64 software python digest reuses software_inventory evidence digest"
+        in failures
+    )
+
+
 def _software_row_digest(software: dict) -> dict[str, str]:
     row_core = {
         "name": software["name"],
