@@ -209,6 +209,39 @@ def test_package_architecture_sections_are_explicit() -> None:
         assert packages_section.index(heading) < packages_section.index(package["name"])
 
 
+def test_package_target_rows_include_own_sbom() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    stable = (
+        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
+    ).read_text(encoding="utf-8")
+    packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
+        "Capsem Binaries",
+        maxsplit=1,
+    )[0]
+    stable_packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
+
+    for package in stable_packages:
+        platform = "macOS" if package["platform"] == "macos" else package["platform"].title()
+        heading = f"Package target {platform} {package['architecture']}"
+        target_section = packages_section.split(heading, maxsplit=1)[1]
+        next_target = target_section.find("Package target ")
+        if next_target >= 0:
+            target_section = target_section[:next_target]
+
+        sboms = [item for item in package["evidence"] if item["kind"] == "sbom"]
+        assert len(sboms) == 1, package["name"]
+        sbom = sboms[0]
+        sbom_name = sbom["url"].split("/")[-1]
+
+        assert package["name"] in target_section
+        assert sbom_name in target_section
+        assert f"{sbom['bytes']:,}" in target_section
+        assert sbom["digest"]["sha256"][:8] + "..." in target_section
+        assert sbom["digest"]["blake3"][:8] + "..." in target_section
+
+
 def test_every_package_has_sbom() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 

@@ -77,6 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added package SBOM fixture files and gates that prove every package-owned
   binary SBOM component reference resolves inside the owning package SBOM with
   SHA-256 checksums matching the binary inventory.
+- Required channel package target rows to show each target package SBOM link,
+  byte count, SHA-256, and BLAKE3 evidence instead of a partial shared digest.
 
 ## [1.4.1782944059] - 2026-07-01
 

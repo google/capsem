@@ -123,6 +123,34 @@ def test_truncated_hash_display() -> None:
         assert digest not in rendered
 
 
+def test_package_target_sbom() -> None:
+    build_release_site_from_fixture()
+
+    graph = fixture_graph()
+    stable = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
+        "Capsem Binaries",
+        maxsplit=1,
+    )[0]
+
+    for package in graph["manifests"]["stable"]["1.4.0"]["packages"]:
+        platform = "macOS" if package["platform"] == "macos" else package["platform"].title()
+        heading = f"Package target {platform} {package['architecture']}"
+        target_section = packages_section.split(heading, maxsplit=1)[1]
+        next_target = target_section.find("Package target ")
+        if next_target >= 0:
+            target_section = target_section[:next_target]
+        sbom = next(item for item in package["evidence"] if item["kind"] == "sbom")
+
+        assert package["name"] in target_section
+        assert sbom["url"].split("/")[-1] in target_section
+        assert f"{sbom['bytes']:,}" in target_section
+        assert sbom["digest"]["sha256"][:8] + "..." in target_section
+        assert sbom["digest"]["blake3"][:8] + "..." in target_section
+
+
 @cache
 def build_release_site_from_fixture() -> None:
     lock_path = Path(os.environ.get("TMPDIR", "/tmp")) / "capsem-release-site-build.lock"

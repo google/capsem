@@ -134,7 +134,9 @@ const packageGroups = Array.from(
                     {Array.isArray(pkg.evidence) && pkg.evidence.length > 0 ? pkg.evidence.map((item) => (
                       <div>
                         <a class="break-all text-blue-600 underline" href={item.url}>{item.url?.split('/').pop()}</a>
-                        <div class="text-zinc-500"><code>{hashLabel(item.digest?.sha256)}</code></div>
+                        <div class="text-zinc-500">{byteLabel(item.bytes)}</div>
+                        <div class="text-zinc-500">SHA-256 <code>{hashLabel(item.digest?.sha256)}</code></div>
+                        <div class="text-zinc-500">BLAKE3 <code>{hashLabel(item.digest?.blake3)}</code></div>
                       </div>
                     )) : <span class="text-zinc-500">not published</span>}
                   </td>
