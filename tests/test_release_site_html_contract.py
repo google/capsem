@@ -68,7 +68,7 @@ def test_channel_list_has_no_status_or_records_theater() -> None:
     assert "Updated" in index
     assert "Coverage" in index
     assert "2026-07-03T05:45:26Z" in index
-    assert "2 packages" in index
+    assert "3 packages" in index
     assert "2 profiles" in index
     assert "arm64, x86_64" in index
 

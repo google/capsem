@@ -62,7 +62,7 @@ def test_sbom_not_repeated_per_binary() -> None:
                 assert "sbom_component_ref" in binary, binary
 
 
-def test_package_architecture_groups() -> None:
+def test_packages_group_by_os_architecture() -> None:
     build_release_site_from_fixture()
 
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
@@ -74,14 +74,25 @@ def test_package_architecture_groups() -> None:
         maxsplit=1,
     )[0]
     stable_packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
-    architectures = {package["architecture"] for package in stable_packages}
+    target_labels = {
+        ("macos", "arm64"): "macOS arm64",
+        ("linux", "amd64"): "Linux amd64",
+        ("linux", "arm64"): "Linux arm64",
+    }
 
-    for architecture in architectures:
-        assert f"Architecture {architecture}" in packages_section
+    assert {
+        (package["platform"], package["architecture"]) for package in stable_packages
+    } == set(target_labels)
+    for label in target_labels.values():
+        assert f"Package target {label}" in packages_section
     for package in stable_packages:
-        arch_position = packages_section.index(f"Architecture {package['architecture']}")
+        target = (package["platform"], package["architecture"])
+        arch_position = packages_section.index(f"Package target {target_labels[target]}")
         package_position = packages_section.index(package["name"])
         assert arch_position < package_position
+
+    assert "Architecture arm64 / macos" not in packages_section
+    assert "Architecture arm64 / linux" not in packages_section
 
 
 def test_package_architecture_sections_are_explicit() -> None:
@@ -98,7 +109,8 @@ def test_package_architecture_sections_are_explicit() -> None:
     stable_packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
 
     for package in stable_packages:
-        heading = f"Architecture {package['architecture']} / {package['platform']}"
+        platform = "macOS" if package["platform"] == "macos" else package["platform"].title()
+        heading = f"Package target {platform} {package['architecture']}"
         assert heading in packages_section
         assert packages_section.index(heading) < packages_section.index(package["name"])
 

@@ -214,6 +214,66 @@
             "status": "current",
             "url": "/packages/nightly/1.5.0-nightly.20260702/Capsem_1.5.0-nightly.20260702_arm64.deb",
             "version": "1.5.0-nightly.20260702"
+          },
+          {
+            "architecture": "amd64",
+            "binaries": [
+              {
+                "architecture": "amd64",
+                "bytes": 84,
+                "digest": {
+                  "blake3": "e1314850479440ac17435c1001065e42257b92da3d61e1ee4e6909952ceb85bf",
+                  "sha256": "8ddfeff2b71a26a295fc3a907d687ad9b9c5af952cba3f5abb6d6a5e73863395"
+                },
+                "installed_path": "/usr/bin/capsem-app",
+                "name": "capsem-app",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-app",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem desktop application executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 85,
+                "digest": {
+                  "blake3": "544b2e6a8f56bbf8c43141fa384326215a81c2078cdd7754e9c11110541d5eb2",
+                  "sha256": "aab1d12d36e2f5ca7c80d40e491a4e266c2cd1e06e0ce0d26ec3a226b41a3cbb"
+                },
+                "installed_path": "/usr/bin/capsem-tray",
+                "name": "capsem-tray",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-tray",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem tray companion executable"
+              }
+            ],
+            "bytes": 81,
+            "digest": {
+              "blake3": "f4ee876213eb1d2633726fe27484ce824cb63d02652ef72f1c048e5e92b08124",
+              "sha256": "053710f1562a79b04e504d50e0cb0b83d07cd98e4dc784677cd3cb14aaae9eb3"
+            },
+            "evidence": [
+              {
+                "kind": "sbom",
+                "name": "capsem-1-5-0-nightly-20260702-amd64-deb-sbom.spdx.json",
+                "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-1-5-0-nightly-20260702-amd64-deb-sbom.spdx.json",
+                "bytes": 134,
+                "digest": {
+                  "sha256": "c0bb6cd5a4f300014fd0f07c0b121923a21a62112c198b5b9d868eba888f598f",
+                  "blake3": "ce47368edfa2073af91701497ba603a45d7e4b65db4260f683e3bf5d932017f1"
+                },
+                "status": "current"
+              }
+            ],
+            "id": "capsem-1-5-0-nightly-20260702-amd64-deb",
+            "kind": "debian_package",
+            "name": "Capsem_1.5.0-nightly.20260702_amd64.deb",
+            "platform": "linux",
+            "status": "current",
+            "url": "/packages/nightly/1.5.0-nightly.20260702/Capsem_1.5.0-nightly.20260702_amd64.deb",
+            "version": "1.5.0-nightly.20260702"
           }
         ],
         "profiles": {
@@ -1186,6 +1246,66 @@
             "platform": "linux",
             "status": "current",
             "url": "/packages/stable/1.4.0/Capsem_1.4.0_arm64.deb",
+            "version": "1.4.0"
+          },
+          {
+            "architecture": "amd64",
+            "binaries": [
+              {
+                "architecture": "amd64",
+                "bytes": 49,
+                "digest": {
+                  "blake3": "86326e2e05c1fc9e3bfb4b2bc4581bade8fb919e068533ef052f0fc5ed015c5e",
+                  "sha256": "fbf79708dbb7ef31eb9e12d254aa79715ca5a599e07bf24313a174f7d84ec018"
+                },
+                "installed_path": "/usr/bin/capsem-app",
+                "name": "capsem-app",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-app",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem desktop application executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 50,
+                "digest": {
+                  "blake3": "2e24cc71f883996b58ede2390728ddd795bf1cc718525a03a54ba6d95aa3b7a8",
+                  "sha256": "14ba95dc4d7c12e717a8da4115f8159ec1e40aed60eec880dc94169f95a55072"
+                },
+                "installed_path": "/usr/bin/capsem-tray",
+                "name": "capsem-tray",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-tray",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem tray companion executable"
+              }
+            ],
+            "bytes": 46,
+            "digest": {
+              "blake3": "98b13bf4f022fdd8d7e240e2f58d4e9f91728a431b6c5cc2ea6a7eb8501fd9f0",
+              "sha256": "a4587b6169db02e24c4ba7bf15e72d3190499ef46b6204eb346ba8a0df5b0516"
+            },
+            "evidence": [
+              {
+                "kind": "sbom",
+                "name": "capsem-1-4-0-amd64-deb-sbom.spdx.json",
+                "url": "/packages/stable/1.4.0/capsem-1-4-0-amd64-deb-sbom.spdx.json",
+                "bytes": 100,
+                "digest": {
+                  "sha256": "ac6fa6fb78f9419db388158d9d3fb7736c49fa0235b531f4c26852dd3b3b580e",
+                  "blake3": "bbe92afd7e2174c0ed2eab5f46be9ba8d9849d5ea93ec4cb90e6c4623040920d"
+                },
+                "status": "current"
+              }
+            ],
+            "id": "capsem-1-4-0-amd64-deb",
+            "kind": "debian_package",
+            "name": "Capsem_1.4.0_amd64.deb",
+            "platform": "linux",
+            "status": "current",
+            "url": "/packages/stable/1.4.0/Capsem_1.4.0_amd64.deb",
             "version": "1.4.0"
           }
         ],

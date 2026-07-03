@@ -63,6 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   config, image, and evidence blocks, and updated release-site validation so
   human pages keep one canonical manifest URL while machine catalogs retain
   immutable audit records.
+- Rendered release-channel package groups as explicit OS/architecture package
+  targets and added Linux amd64 fixture coverage alongside macOS arm64 and
+  Linux arm64 packages.
 
 ## [1.4.1782944059] - 2026-07-01
 

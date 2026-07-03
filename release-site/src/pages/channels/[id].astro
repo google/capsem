@@ -39,13 +39,22 @@ const packageGroups = Array.from(
   packages.reduce((groups, pkg) => {
     const architecture = String(pkg.architecture ?? 'unknown');
     const platform = String(pkg.platform ?? 'unknown');
-    const target = `${architecture} / ${platform}`;
+    const target = `${platform}:${architecture}`;
     const rows = groups.get(target) ?? [];
     rows.push(pkg);
     groups.set(target, rows);
     return groups;
   }, new Map()),
 ).sort(([left], [right]) => String(left).localeCompare(String(right)));
+
+function packageTargetLabel(pkg) {
+  const architecture = String(pkg.architecture ?? 'unknown');
+  const platform = String(pkg.platform ?? 'unknown');
+  const platformLabel = platform === 'macos'
+    ? 'macOS'
+    : platform.charAt(0).toUpperCase() + platform.slice(1);
+  return `${platformLabel} ${architecture}`;
+}
 ---
 <ReleaseLayout title={`${channel.label} - Capsem Release Channel`}>
   <header class="border-b border-zinc-200 pb-6">
@@ -102,7 +111,7 @@ const packageGroups = Array.from(
     <h2 class="text-xl font-semibold text-black">Capsem Packages</h2>
     {packageGroups.length > 0 ? packageGroups.map(([target, rows]) => (
       <div class="mt-5">
-        <h3 class="text-base font-semibold text-black">Architecture {target}</h3>
+        <h3 class="text-base font-semibold text-black">Package target {packageTargetLabel(rows[0])}</h3>
         <div class="mt-3 overflow-x-auto">
           <table class="w-full min-w-[940px] border-collapse text-sm">
             <thead>
