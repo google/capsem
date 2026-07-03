@@ -76,6 +76,42 @@ def test_sbom_not_repeated_per_binary() -> None:
                 assert "sbom_component_ref" in binary, binary
 
 
+def test_package_sbom_not_repeated_per_binary() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for package in manifest["packages"]:
+            package_page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "packages"
+                / package["id"]
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            evidence_urls = [item["url"] for item in package["evidence"]]
+            binary_refs = [binary["sbom_component_ref"] for binary in package["binaries"]]
+
+            for url in evidence_urls:
+                assert package_page.count(url) == 1, f"{channel}:{package['name']}:{url}"
+            for ref in binary_refs:
+                assert ref in package_page, f"{channel}:{package['name']}:{ref}"
+
+            binary_section = package_page.split("Contained Binaries", maxsplit=1)[1].split(
+                "Package Evidence",
+                maxsplit=1,
+            )[0]
+            for url in evidence_urls:
+                assert url not in binary_section, f"{channel}:{package['name']}:{url}"
+            for binary in package["binaries"]:
+                assert "evidence" not in binary
+                assert "sbom" not in binary
+
+
 def test_packages_group_by_os_architecture() -> None:
     build_release_site_from_fixture()
 

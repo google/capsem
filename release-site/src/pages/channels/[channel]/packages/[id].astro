@@ -115,7 +115,7 @@ const evidence = Array.isArray(selectedPackage.evidence) ? selectedPackage.evide
           {evidence.length > 0 ? evidence.map((item) => (
             <tr class="border-b border-zinc-100 align-top">
               <td class="py-3 pr-4">{String(item.kind ?? 'evidence').toUpperCase()}</td>
-              <td class="py-3 pr-4">{item.url ? <a class="break-all text-blue-600 underline" href={item.url}>{item.url}</a> : <span class="text-zinc-500">not published</span>}</td>
+              <td class="py-3 pr-4">{item.url ? <a class="break-all text-blue-600 underline" href={item.url}>{item.url?.split('/').pop()}</a> : <span class="text-zinc-500">not published</span>}</td>
               <td class="py-3 pr-4">{byteLabel(item.bytes)}</td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(item.digest?.sha256)}</code></td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(item.digest?.blake3)}</code></td>

@@ -72,6 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Expanded release-package binary inventory fixtures and gates so every package
   lists the full Capsem executable cohort, including app, tray, CLI, service,
   process, TUI, MCP, gateway, and admin binaries.
+- Kept package SBOM evidence on the package detail evidence block, with binary
+  rows limited to SBOM component references instead of repeating evidence URLs.
 
 ## [1.4.1782944059] - 2026-07-01
 
