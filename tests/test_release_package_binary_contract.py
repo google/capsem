@@ -127,6 +127,10 @@ def test_every_package_has_sbom() -> None:
         assert len(sbom_urls) == len(set(sbom_urls)), f"{channel} repeats package SBOM URLs"
 
 
+def test_package_sbom() -> None:
+    test_every_package_has_sbom()
+
+
 def test_package_detail_lists_owned_binaries_only() -> None:
     build_release_site_from_fixture()
 

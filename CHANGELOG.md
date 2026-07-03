@@ -55,6 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   platform instead of hiding target information from human release pages.
 - Added a named package-detail rendering gate proving package SBOM evidence is
   shown once at the package level and not repeated on binary rows.
+- Added a named package SBOM contract gate so Sprinty verifies per-target
+  package SBOM evidence instead of relying on broad test selection.
 
 ## [1.4.1782944059] - 2026-07-01
 
