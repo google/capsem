@@ -1615,11 +1615,25 @@ mod tests {
                 status: Status::Current,
             }],
             artifacts,
-            evidence: vec![EvidenceRef {
-                kind: "abom".to_string(),
-                url: format!("/profiles/releases/{revision}/co-work/arm64/abom.cdx.json"),
-                digest: digest_set(),
-            }],
+            evidence: vec![
+                EvidenceRef {
+                    kind: "abom".to_string(),
+                    url: format!("/profiles/releases/{revision}/co-work/arm64/abom.cdx.json"),
+                    digest: digest_set(),
+                },
+                EvidenceRef {
+                    kind: "obom".to_string(),
+                    url: format!("/profiles/releases/{revision}/co-work/arm64/obom.cdx.json"),
+                    digest: digest_set(),
+                },
+                EvidenceRef {
+                    kind: "software_inventory".to_string(),
+                    url: format!(
+                        "/profiles/releases/{revision}/co-work/arm64/software-inventory.json"
+                    ),
+                    digest: digest_set(),
+                },
+            ],
         }
     }
 
@@ -1782,8 +1796,14 @@ mod tests {
                         digest: digest_set(),
                     },
                     EvidenceRef {
-                        kind: "sbom".to_string(),
-                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/sbom.cdx.json"
+                        kind: "obom".to_string(),
+                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/obom.cdx.json"
+                            .to_string(),
+                        digest: digest_set(),
+                    },
+                    EvidenceRef {
+                        kind: "software_inventory".to_string(),
+                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/software-inventory.json"
                             .to_string(),
                         digest: digest_set(),
                     },
@@ -1795,7 +1815,7 @@ mod tests {
             .validate_profile_ownership()
             .expect("profile-owned graph validates");
         assert_eq!(profile.min_capsem_version.as_deref(), Some("1.4.0"));
-        assert_eq!(profile.architectures[0].evidence.len(), 2);
+        assert_eq!(profile.architectures[0].evidence.len(), 3);
     }
 
     #[test]
@@ -1882,12 +1902,26 @@ mod tests {
                         digest: digest_set(),
                         status: Status::Current,
                     }],
-                    evidence: vec![EvidenceRef {
-                        kind: "abom".to_string(),
-                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/abom.cdx.json"
-                            .to_string(),
-                        digest: digest_set(),
-                    }],
+                    evidence: vec![
+                        EvidenceRef {
+                            kind: "abom".to_string(),
+                            url: "/profiles/releases/2026.07.02.1/co-work/arm64/abom.cdx.json"
+                                .to_string(),
+                            digest: digest_set(),
+                        },
+                        EvidenceRef {
+                            kind: "obom".to_string(),
+                            url: "/profiles/releases/2026.07.02.1/co-work/arm64/obom.cdx.json"
+                                .to_string(),
+                            digest: digest_set(),
+                        },
+                        EvidenceRef {
+                            kind: "software_inventory".to_string(),
+                            url: "/profiles/releases/2026.07.02.1/co-work/arm64/software-inventory.json"
+                                .to_string(),
+                            digest: digest_set(),
+                        },
+                    ],
                 }],
             },
         );

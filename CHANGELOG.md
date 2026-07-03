@@ -81,6 +81,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte count, SHA-256, and BLAKE3 evidence instead of a partial shared digest.
 - Removed the flattened channel-level binary table so executable inventory is
   rendered only on the owning package detail pages.
+- Corrected profile architecture evidence so ABOM, OBOM, and software
+  inventory are scoped to the profile architecture that owns them.
 
 ## [1.4.1782944059] - 2026-07-01
 

@@ -58,7 +58,51 @@ def test_manifest_profile_architecture_shape() -> None:
                 assert architecture["config"], architecture
                 assert architecture["images"], architecture
                 evidence_kinds = {item["kind"] for item in architecture["evidence"]}
-                assert {"abom", "software_inventory"}.issubset(evidence_kinds)
+                assert {"abom", "obom", "software_inventory"}.issubset(evidence_kinds)
+
+
+def test_abom_obom_architecture_scoped() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                arch = architecture["architecture"]
+                section = page.split(f"Architecture {arch}", maxsplit=1)[1].split(
+                    "</section>", maxsplit=1
+                )[0]
+                evidence = {
+                    item["kind"]: item
+                    for item in architecture["evidence"]
+                    if item["kind"] in {"abom", "obom", "software_inventory"}
+                }
+                assert set(evidence) == {"abom", "obom", "software_inventory"}, (
+                    f"{channel}:{profile_id}:{arch}"
+                )
+                for kind, item in evidence.items():
+                    assert f"/{arch}/" in item["url"], f"{channel}:{profile_id}:{arch}:{kind}"
+                    assert item["url"] in section, f"{channel}:{profile_id}:{arch}:{kind}"
+
+            for other_profile_id, other_profile in manifest["profiles"].items():
+                if other_profile_id == profile_id:
+                    continue
+                for architecture in other_profile["architectures"]:
+                    for item in architecture["evidence"]:
+                        if item["kind"] in {"abom", "obom"}:
+                            assert item["url"] not in page, (
+                                f"{channel}:{profile_id} leaked {other_profile_id}:{item['url']}"
+                            )
 
 
 def test_profile_architecture_sections() -> None:

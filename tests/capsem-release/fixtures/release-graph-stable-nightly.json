@@ -881,9 +881,9 @@
                       "blake3": "a9091d6735dc0a9a0c7b19061db90dd1ac7511069b6014668224a9f6cc1ab273",
                       "sha256": "c4a53f7b0e68e8cb90c34817b20c6bdbfaeaf793386589d4bf4a6e5f5804c97c"
                     },
-                    "kind": "sbom",
+                    "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/sbom.cdx.json"
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/obom.cdx.json"
                   },
                   {
                     "bytes": 331,
@@ -1086,9 +1086,9 @@
                       "blake3": "15380d8ffeec8e88bd848527f1ede57a2f07e91656edf83b5d2e3ada0e81cb0b",
                       "sha256": "23a0a321f91a4bf9b6eeae90302170c8513c59095bec12e879b2e838a8bd889f"
                     },
-                    "kind": "sbom",
+                    "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/sbom.cdx.json"
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/obom.cdx.json"
                   },
                   {
                     "bytes": 332,
@@ -1302,9 +1302,9 @@
                       "blake3": "2deaa552d20f2d83d503f97faff93797aefbb4f7901c82ce59584d8ed146e38c",
                       "sha256": "3c2b576c396f8319ca8a0024b7bb3d3a0190ee95cbfe8fd58165a78138fe5d69"
                     },
-                    "kind": "sbom",
+                    "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/sbom.cdx.json"
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/obom.cdx.json"
                   },
                   {
                     "bytes": 331,
@@ -1507,9 +1507,9 @@
                       "blake3": "40bbb4e83d057e989563fbacb333cfe6ba56898834040dea45245617b584ad5b",
                       "sha256": "c13e287724437f159d7838057c3fdd8136eea23443b756cdf6053d459389308b"
                     },
-                    "kind": "sbom",
+                    "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/sbom.cdx.json"
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/obom.cdx.json"
                   },
                   {
                     "bytes": 332,
@@ -2319,9 +2319,9 @@
                       "blake3": "6c494bcb627ce7ab2c370796ecf772771568c71ce8935f9227570ea729c818ce",
                       "sha256": "96fdf0d1ca8e07a51464f42691c2689451f1e6ee76d648cf0ec70c09d39a349f"
                     },
-                    "kind": "sbom",
+                    "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/sbom.cdx.json"
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/obom.cdx.json"
                   },
                   {
                     "bytes": 331,
@@ -2524,9 +2524,9 @@
                       "blake3": "1407a132ef7a4cf3e53c33a2336ad5d2b572d55d22e08a67770d700287752ee6",
                       "sha256": "48916a033257796f62ad81c233e420bb02d370f7392d229b77046962bf95110b"
                     },
-                    "kind": "sbom",
+                    "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/sbom.cdx.json"
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/obom.cdx.json"
                   },
                   {
                     "bytes": 332,
@@ -2740,9 +2740,9 @@
                       "blake3": "20e65657a96479e6ecf67f51867d9a4b8aa8f1fc36cf5e9199ccb9214ce2ca70",
                       "sha256": "f1e4b806311fe1fd9ff1e8e2234502ff3ef697dc5e26eab44dd72d41f31719e3"
                     },
-                    "kind": "sbom",
+                    "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/sbom.cdx.json"
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/obom.cdx.json"
                   },
                   {
                     "bytes": 331,
@@ -2945,9 +2945,9 @@
                       "blake3": "9b915ff69c1f2654745017c32f8dce9214c6698399fdd926c8ba1c39226aea90",
                       "sha256": "018f16a9724058ec55d1cf786ccab41828254e9df04c292cf05834c9a93406b2"
                     },
-                    "kind": "sbom",
+                    "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/sbom.cdx.json"
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/obom.cdx.json"
                   },
                   {
                     "bytes": 332,

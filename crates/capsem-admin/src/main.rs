@@ -3326,7 +3326,8 @@ fn graph_profile_images(
 
         let mut evidence = Vec::new();
         for (kind, logical_name) in [
-            ("abom", "obom.cdx.json"),
+            ("abom", "abom.cdx.json"),
+            ("obom", "obom.cdx.json"),
             ("software_inventory", "software-inventory.json"),
         ] {
             if let Some(entry) = manifest_assets.get(logical_name) {
