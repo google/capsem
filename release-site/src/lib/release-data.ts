@@ -32,6 +32,8 @@ export interface ChannelRow {
   manifestRevision: string;
   currentStatus: string;
   statuses: string[];
+  updatedAt: string;
+  coverageLabel: string;
   manifestUrl: string;
   pageUrl: string;
 }
@@ -113,6 +115,7 @@ export function channelRows(data: ReleaseData): ChannelRow[] {
       const channel = record as JsonObject;
       const manifests = Array.isArray(channel.manifests) ? channel.manifests : [];
       const selected = selectManifestRecord(channel);
+      const summary = selectedManifestSummary(data, id, selected);
       return {
         id,
         label: String(channel.label ?? id),
@@ -121,11 +124,40 @@ export function channelRows(data: ReleaseData): ChannelRow[] {
         manifestRevision: String(selected.revision ?? selected.version ?? 'not published'),
         currentStatus: String(selected.status ?? 'not published'),
         statuses: Array.from(new Set(manifests.map((manifest: JsonObject) => String(manifest.status ?? 'unknown')))),
+        updatedAt: String(selected.updated_at ?? channel.updated_at ?? data.channels.generated_at ?? ''),
+        coverageLabel: summary.coverageLabel,
         manifestUrl: String(selected.url ?? ''),
         pageUrl: channelPagePath(id),
       };
     })
     .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function selectedManifestSummary(
+  data: ReleaseData,
+  channelId: string,
+  manifestRecord: JsonObject,
+): { coverageLabel: string } {
+  const manifest =
+    data.sourceMode === 'graph'
+      ? data.graph?.manifests?.[channelId]?.[manifestRecord.version]
+      : channelId === data.channel
+        ? data.manifest
+        : undefined;
+  if (!manifest) {
+    return { coverageLabel: 'not published' };
+  }
+  const packages = Array.isArray(manifest.packages) ? manifest.packages : [];
+  const profiles = Object.values(manifest.profiles ?? {}) as JsonObject[];
+  const architectures = Array.from(
+    new Set(
+      profiles.flatMap((profile) => profileArchNames(profile)),
+    ),
+  ).sort();
+  const archLabel = architectures.length > 0 ? architectures.join(', ') : 'no architectures';
+  return {
+    coverageLabel: `${packages.length} packages / ${profiles.length} profiles / ${archLabel}`,
+  };
 }
 
 export function dataForChannel(data: ReleaseData, channel: string): ReleaseData {

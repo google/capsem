@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list the expected Capsem executables.
 - Split the root release channel page from host package versions by rendering
   independent manifest revisions from `channels.json`.
+- Replaced root release-channel history/record noise with generated update and
+  package/profile/architecture coverage metadata.
 
 ## [1.4.1782944059] - 2026-07-01
 

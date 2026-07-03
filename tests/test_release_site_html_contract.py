@@ -56,6 +56,23 @@ def test_channel_manifest_revision_not_selected_manifest() -> None:
     assert "1.5.0-nightly.20260702" not in index
 
 
+def test_channel_list_has_no_status_or_records_theater() -> None:
+    build_release_site_from_fixture()
+
+    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+
+    assert ">Status<" not in index
+    assert ">Records<" not in index
+    assert "manifest records" not in index
+    assert ">History<" not in index
+    assert "Updated" in index
+    assert "Coverage" in index
+    assert "2026-07-03T05:45:26Z" in index
+    assert "2 packages" in index
+    assert "2 profiles" in index
+    assert "arm64, x86_64" in index
+
+
 def test_one_manifest_url() -> None:
     build_release_site_from_fixture()
 

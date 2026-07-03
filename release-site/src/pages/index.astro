@@ -28,7 +28,8 @@ const channels = channelRows(data);
           <tr class="border-b border-zinc-200 text-left text-zinc-500">
             <th class="py-2 pr-4 font-medium">Channel</th>
             <th class="py-2 pr-4 font-medium">Manifest revision</th>
-            <th class="py-2 pr-4 font-medium">History</th>
+            <th class="py-2 pr-4 font-medium">Updated</th>
+            <th class="py-2 pr-4 font-medium">Coverage</th>
             <th class="py-2 pr-4 font-medium">Manifest URL</th>
           </tr>
         </thead>
@@ -42,10 +43,8 @@ const channels = channelRows(data);
                 <p class="mt-1 max-w-xs text-zinc-600">{channel.description}</p>
               </td>
               <td class="py-3 pr-4"><code>{channel.manifestRevision}</code></td>
-              <td class="py-3 pr-4">
-                {channel.manifestCount}
-                <span class="ml-2 text-zinc-500">manifest records</span>
-              </td>
+              <td class="py-3 pr-4"><code>{channel.updatedAt}</code></td>
+              <td class="py-3 pr-4">{channel.coverageLabel}</td>
               <td class="py-3 pr-4">
                 <a class="break-all text-blue-600 underline" href={channel.manifestUrl}>{channel.manifestUrl}</a>
               </td>
