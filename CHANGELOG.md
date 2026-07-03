@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a release-lane independence gate proving binary/package updates mutate
+  package-owned data without changing profile payloads or other channels.
 - Added a named copied-inventory digest gate proving software rows do not reuse
   software-inventory evidence hashes.
 - Added a named release-site digest display gate proving human pages truncate
