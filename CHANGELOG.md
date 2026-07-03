@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added an independent release-version matrix gate and explicit profile
+  architecture package-inventory and image revision fields so manifest,
+  package, profile, software-inventory, and image versions can move separately.
 - Fixed the release-channel deploy validation rail so Cloudflare checks stable
   and nightly content through the public domain, preserves package metadata
   from graph manifests, accepts generated profile config enums, and validates

@@ -3225,6 +3225,8 @@ fn graph_profile_document(
             .unwrap_or_default();
         architectures.push(serde_json::json!({
             "architecture": arch,
+            "package_inventory_revision": manifest.assets.current,
+            "image_revision": manifest.assets.current,
             "software": arch_software,
             "config": config,
             "images": image_artifacts,

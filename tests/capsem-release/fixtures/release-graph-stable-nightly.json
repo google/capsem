@@ -894,7 +894,9 @@
                     "kind": "software_inventory",
                     "url": "/assets/releases/2026.07.02.1/arm64-software-inventory.json"
                   }
-                ]
+                ],
+                "package_inventory_revision": "2026.07.02.1",
+                "image_revision": "2026.07.02.1-nightly"
               },
               {
                 "architecture": "x86_64",
@@ -1099,7 +1101,9 @@
                     "kind": "software_inventory",
                     "url": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json"
                   }
-                ]
+                ],
+                "package_inventory_revision": "2026.07.02.1",
+                "image_revision": "2026.07.02.1-nightly"
               }
             ]
           },
@@ -1315,7 +1319,9 @@
                     "kind": "software_inventory",
                     "url": "/assets/releases/2026.07.02.1/arm64-software-inventory.json"
                   }
-                ]
+                ],
+                "package_inventory_revision": "2026.07.02.1",
+                "image_revision": "2026.07.02.1-nightly"
               },
               {
                 "architecture": "x86_64",
@@ -1520,7 +1526,9 @@
                     "kind": "software_inventory",
                     "url": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json"
                   }
-                ]
+                ],
+                "package_inventory_revision": "2026.07.02.1",
+                "image_revision": "2026.07.02.1-nightly"
               }
             ]
           }
@@ -2332,7 +2340,9 @@
                     "kind": "software_inventory",
                     "url": "/assets/releases/2026.07.02.1/arm64-software-inventory.json"
                   }
-                ]
+                ],
+                "package_inventory_revision": "2026.07.02.1",
+                "image_revision": "2026.07.02.1-stable"
               },
               {
                 "architecture": "x86_64",
@@ -2537,7 +2547,9 @@
                     "kind": "software_inventory",
                     "url": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json"
                   }
-                ]
+                ],
+                "package_inventory_revision": "2026.07.02.1",
+                "image_revision": "2026.07.02.1-stable"
               }
             ]
           },
@@ -2753,7 +2765,9 @@
                     "kind": "software_inventory",
                     "url": "/assets/releases/2026.07.02.1/arm64-software-inventory.json"
                   }
-                ]
+                ],
+                "package_inventory_revision": "2026.07.02.1",
+                "image_revision": "2026.07.02.1-stable"
               },
               {
                 "architecture": "x86_64",
@@ -2958,7 +2972,9 @@
                     "kind": "software_inventory",
                     "url": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json"
                   }
-                ]
+                ],
+                "package_inventory_revision": "2026.07.02.1",
+                "image_revision": "2026.07.02.1-stable"
               }
             ]
           }

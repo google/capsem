@@ -100,8 +100,17 @@ def test_fixture_has_stable_and_nightly() -> None:
         for binary in stable["packages"][0]["binaries"]
     }
     assert stable_binary_refs == {
+        "capsem": "SPDXRef-File-capsem",
+        "capsem-admin": "SPDXRef-File-capsem-admin",
         "capsem-app": "SPDXRef-File-capsem-app",
+        "capsem-gateway": "SPDXRef-File-capsem-gateway",
+        "capsem-mcp": "SPDXRef-File-capsem-mcp",
+        "capsem-mcp-aggregator": "SPDXRef-File-capsem-mcp-aggregator",
+        "capsem-mcp-builtin": "SPDXRef-File-capsem-mcp-builtin",
+        "capsem-process": "SPDXRef-File-capsem-process",
+        "capsem-service": "SPDXRef-File-capsem-service",
         "capsem-tray": "SPDXRef-File-capsem-tray",
+        "capsem-tui": "SPDXRef-File-capsem-tui",
     }
     assert nightly["profiles"]["co-work"]["revision"].endswith("-nightly")
     assert stable["profiles"]["co-work"]["revision"].endswith("-stable")
