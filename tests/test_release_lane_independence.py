@@ -101,6 +101,60 @@ def test_profile_update_does_not_touch_packages(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_cowork_nightly_isolated_update(tmp_path: Path) -> None:
+    old = _fixture_graph()
+    new = deepcopy(old)
+    channel = "nightly"
+    profile_id = "co-work"
+    version = _current_manifest_version(new, channel)
+    old_stable = json.dumps(old["manifests"]["stable"], sort_keys=True, separators=(",", ":"))
+    old_packages = _stable_package_payloads(old, channel, version)
+    old_code_profile = _profile_payload(old, channel, version, "code")
+    old_cowork_x86_64 = _profile_architecture_payload(
+        old,
+        channel,
+        version,
+        profile_id,
+        "x86_64",
+    )
+
+    profile = new["manifests"][channel][version]["profiles"][profile_id]
+    profile["revision"] = "2026.07.03.1-nightly"
+    profile["version"] = "2026.07.03.1-nightly"
+    architecture = _profile_architecture(profile, "arm64")
+    architecture["images"][0]["digest"] = _digest("nightly-co-work-arm64-rootfs-2026.07.03.1")
+    architecture["config"][0]["digest"] = _digest("nightly-co-work-arm64-profile-2026.07.03.1")
+    architecture["software"][0]["version"] = "3.12.12"
+    architecture["software"][0]["digest"] = _digest("nightly-co-work-arm64-python-3.12.12")
+    architecture["evidence"][0]["digest"] = _digest("nightly-co-work-arm64-abom-2026.07.03.1")
+    new["channels"][channel]["manifests"][0]["digest"] = _digest(
+        "nightly-manifest-after-co-work-arm64-2026.07.03.1"
+    )
+
+    assert json.dumps(new["manifests"]["stable"], sort_keys=True, separators=(",", ":")) == old_stable
+    assert _stable_package_payloads(new, channel, version) == old_packages
+    assert _profile_payload(new, channel, version, "code") == old_code_profile
+    assert (
+        _profile_architecture_payload(new, channel, version, profile_id, "x86_64")
+        == old_cowork_x86_64
+    )
+    assert new["channels"]["stable"] == old["channels"]["stable"]
+
+    result = _run_policy(
+        tmp_path,
+        old,
+        new,
+        "--lane",
+        "profile",
+        "--channel",
+        channel,
+        "--profile",
+        profile_id,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
 def _fixture_graph() -> dict[str, Any]:
     return json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
@@ -135,6 +189,38 @@ def _stable_package_payloads(
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+def _profile_payload(
+    graph: dict[str, Any],
+    channel: str,
+    version: str,
+    profile_id: str,
+) -> str:
+    return json.dumps(
+        graph["manifests"][channel][version]["profiles"][profile_id],
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _profile_architecture_payload(
+    graph: dict[str, Any],
+    channel: str,
+    version: str,
+    profile_id: str,
+    architecture: str,
+) -> str:
+    profile = graph["manifests"][channel][version]["profiles"][profile_id]
+    return json.dumps(
+        _profile_architecture(profile, architecture),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _profile_architecture(profile: dict[str, Any], architecture: str) -> dict[str, Any]:
+    return next(item for item in profile["architectures"] if item["architecture"] == architecture)
 
 
 def _run_policy(
