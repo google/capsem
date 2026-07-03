@@ -61,7 +61,7 @@ const availability = Object.entries(profile.availability ?? {})
       <dt class="text-zinc-500">Version</dt><dd><code>{profile.version ?? profile.revision}</code></dd>
       <dt class="text-zinc-500">Revision</dt><dd><code>{profile.revision}</code></dd>
       <dt class="text-zinc-500">Status</dt><dd>{profile.status ?? data.manifest.status ?? 'current'}</dd>
-      <dt class="text-zinc-500">Minimum Capsem</dt><dd><code>{profile.min_capsem_version ?? profile.compatibility?.min_binary ?? 'not specified'}</code></dd>
+      <dt class="text-zinc-500">Minimum Capsem</dt><dd><code>{profile.min_capsem_version ?? 'not specified'}</code></dd>
       <dt class="text-zinc-500">Refresh policy</dt><dd>{profile.refresh_policy ?? 'not specified'}</dd>
       <dt class="text-zinc-500">Availability</dt><dd>{availability || 'none'}</dd>
     </dl>

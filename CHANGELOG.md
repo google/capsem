@@ -57,6 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shown once at the package level and not repeated on binary rows.
 - Added a named package SBOM contract gate so Sprinty verifies per-target
   package SBOM evidence instead of relying on broad test selection.
+- Removed the release profile page fallback to binary compatibility metadata so
+  profiles expose only profile-owned minimum Capsem requirements.
 
 ## [1.4.1782944059] - 2026-07-01
 
