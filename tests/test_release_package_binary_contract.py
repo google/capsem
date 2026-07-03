@@ -197,7 +197,7 @@ def test_package_architecture_sections_are_explicit() -> None:
         RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
     ).read_text(encoding="utf-8")
     packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
-        "Capsem Binaries",
+        "Profile References",
         maxsplit=1,
     )[0]
     stable_packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
@@ -217,7 +217,7 @@ def test_package_target_rows_include_own_sbom() -> None:
         RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
     ).read_text(encoding="utf-8")
     packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
-        "Capsem Binaries",
+        "Profile References",
         maxsplit=1,
     )[0]
     stable_packages = graph["manifests"]["stable"]["1.4.0"]["packages"]

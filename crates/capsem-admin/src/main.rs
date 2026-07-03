@@ -2138,7 +2138,7 @@ fn validate_assets_channel_page_html(channel_html: &str, channel: &str) -> Resul
         "Current Manifest",
         "Manifest History",
         "Capsem Packages",
-        "Capsem Binaries",
+        "Package target ",
         "Profile References",
         "SBOM",
     ];
@@ -2150,6 +2150,14 @@ fn validate_assets_channel_page_html(channel_html: &str, channel: &str) -> Resul
     let channel_manifest = format!("/assets/{channel}/manifest.json");
     if !channel_html.contains(&channel_manifest) {
         return Err(anyhow!("asset channel page missing {channel_manifest}"));
+    }
+    if !channel_html.contains(&format!("/channels/{channel}/packages/")) {
+        return Err(anyhow!("asset channel page missing package detail links"));
+    }
+    if channel_html.contains("Capsem Binaries") {
+        return Err(anyhow!(
+            "asset channel page must not flatten package-owned binaries"
+        ));
     }
     Ok(())
 }
@@ -2197,7 +2205,9 @@ fn write_test_assets_channel_index_fixture(dist: &Path, channel: &str) -> Result
     let channel_html = format!(
         "<!doctype html><html><body><main><h1>{channel}</h1>\
         <h2>Current Manifest</h2><h2>Manifest History</h2><h2>Capsem Packages</h2>\
-        <h2>Capsem Binaries</h2><h2>Profile References</h2><p>SBOM</p>\
+        <h3>Package target Linux arm64</h3>\
+        <a href=\"/channels/{channel}/packages/capsem-test-arm64-deb/\">Package detail</a>\
+        <h2>Profile References</h2><p>SBOM</p>\
         <p>{generated_at}</p><p>{binary}</p><p>{assets}</p>\
         <a href=\"{channel_manifest}\">{channel_manifest}</a>\
         <p>{profile_revision}</p>\

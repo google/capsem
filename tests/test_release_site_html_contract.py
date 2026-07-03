@@ -152,7 +152,7 @@ def test_package_target_sbom() -> None:
         encoding="utf-8"
     )
     packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
-        "Capsem Binaries",
+        "Profile References",
         maxsplit=1,
     )[0]
 
