@@ -77,6 +77,38 @@ def test_manifest_profile_architecture_shape() -> None:
                 assert {"abom", "obom", "software_inventory"}.issubset(evidence_kinds)
 
 
+def test_profile_architecture_packages_and_images_are_separate() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            assert "packages" not in profile, f"{channel}:{profile_id}"
+            for architecture in profile["architectures"]:
+                label = f"{channel}:{profile_id}:{architecture['architecture']}"
+                assert set(architecture) == {
+                    "architecture",
+                    "software",
+                    "config",
+                    "images",
+                    "evidence",
+                }, label
+                assert "packages" not in architecture, label
+                assert architecture["software"], label
+                assert architecture["images"], label
+                for software in architecture["software"]:
+                    assert {"name", "version", "source", "architecture", "evidence", "digest"} <= set(
+                        software
+                    ), label
+                    assert "url" not in software, label
+                    assert software["evidence"].endswith("software-inventory.json"), label
+                for image in architecture["images"]:
+                    assert {"kind", "name", "url", "bytes", "digest", "status"} <= set(image), label
+                    assert "source" not in image, label
+                    assert "version" not in image, label
+
+
 def test_abom_obom_architecture_scoped() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))

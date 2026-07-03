@@ -114,6 +114,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a named profile page section-boundary gate proving installed software,
   config files, image artifacts, and image evidence render in separate
   architecture-owned blocks.
+- Added a named profile manifest-shape gate proving architecture software,
+  config, image, and evidence lists stay distinct without an ambiguous
+  profile-owned package bucket.
 - Added a named profile config-class gate proving generated profile pages
   render profile, MCP, enforcement, detection, package-manager, build, tips,
   and root-manifest config entries.
