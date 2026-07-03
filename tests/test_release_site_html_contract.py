@@ -103,7 +103,7 @@ def test_no_catalog_url_on_channel_page() -> None:
         assert "capsem.profile_catalog" not in page
 
 
-def test_truncated_hash_display() -> None:
+def test_digest_display_truncates_human_hashes_and_preserves_machine_json() -> None:
     build_release_site_from_fixture()
 
     graph = fixture_graph()
