@@ -42,6 +42,22 @@ def test_canonical_manifest_url() -> None:
         assert "catalog" not in manifest
 
 
+def test_no_profile_catalog_side_channel() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    serialized = json.dumps(graph, sort_keys=True)
+
+    assert "profile_catalog" not in serialized
+    assert "capsem.profile_catalog" not in serialized
+    assert "catalog.json" not in serialized
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        assert current["url"] == f"/assets/{channel}/manifest.json"
+        manifest = graph["manifests"][channel][current["version"]]
+        assert isinstance(manifest["profiles"], dict)
+        assert manifest["profiles"], channel
+
+
 def test_graph_invariants() -> None:
     doc = RELEASE_OUTPUT_DOC.read_text(encoding="utf-8")
 

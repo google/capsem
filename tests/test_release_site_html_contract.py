@@ -88,6 +88,21 @@ def test_one_manifest_url() -> None:
         assert "profile_catalog" not in page
 
 
+def test_no_catalog_url_on_channel_page() -> None:
+    build_release_site_from_fixture()
+
+    for channel in ("stable", "nightly"):
+        page = (
+            RELEASE_SITE_DIST / "channels" / channel / "index.html"
+        ).read_text(encoding="utf-8")
+
+        assert f"/assets/{channel}/manifest.json" in page
+        assert "Profile Catalog" not in page
+        assert "catalog.json" not in page
+        assert "profile_catalog" not in page
+        assert "capsem.profile_catalog" not in page
+
+
 def test_truncated_hash_display() -> None:
     build_release_site_from_fixture()
 

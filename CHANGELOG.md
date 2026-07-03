@@ -86,6 +86,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Required profile software inventory rows to carry real package versions,
   rejecting placeholder values in generated graph validation and remote
   release-site readiness checks.
+- Added named release-contract gates proving profile lists come from channel
+  manifests without a detached profile catalog side channel.
 
 ## [1.4.1782944059] - 2026-07-01
 
