@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added an explicit release manifest-version rail so channel manifests publish
+  `version` values independently from Capsem package versions, VM asset
+  versions, profile revisions, and profile image revisions.
 - Added an independent release-version matrix gate and explicit profile
   architecture package-inventory and image revision fields so manifest,
   package, profile, software-inventory, and image versions can move separately.

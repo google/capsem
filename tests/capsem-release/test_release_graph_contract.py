@@ -84,14 +84,11 @@ def test_fixture_has_stable_and_nightly() -> None:
         for channel in graph["channels"].values()
         for manifest in channel["manifests"]
     } == {"current", "supported", "deprecated", "revoked"}
-    assert graph["channels"]["stable"]["manifests"][0]["version"] == "1.4.0"
-    assert (
-        graph["channels"]["nightly"]["manifests"][0]["version"]
-        == "1.5.0-nightly.20260702"
-    )
+    assert graph["channels"]["stable"]["manifests"][0]["version"] == "1.0.2"
+    assert graph["channels"]["nightly"]["manifests"][0]["version"] == "1.0.2"
 
-    stable = graph["manifests"]["stable"]["1.4.0"]
-    nightly = graph["manifests"]["nightly"]["1.5.0-nightly.20260702"]
+    stable = graph["manifests"]["stable"]["1.0.2"]
+    nightly = graph["manifests"]["nightly"]["1.0.2"]
     assert stable["packages"][0]["name"] == "Capsem-1.4.0.pkg"
     assert nightly["packages"][0]["name"] == "Capsem-1.5.0-nightly.20260702.pkg"
     assert "binaries" not in stable
@@ -128,7 +125,7 @@ def test_ledger_is_derived_not_authoritative() -> None:
     assert "ledger" not in graph
     assert "pub struct ReleaseLedger" in source
     assert "pub fn derive(" in source
-    stable = graph["manifests"]["stable"]["1.4.0"]
+    stable = graph["manifests"]["stable"]["1.0.2"]
     derived_kinds = {
         "manifest" if graph["channels"]["stable"]["manifests"] else "",
         "package" if stable["packages"] else "",

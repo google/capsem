@@ -77,7 +77,7 @@ def test_admin_profile_publish_report_is_lane_scoped() -> None:
 def test_co_work_nightly_update_does_not_touch_stable_or_binaries(tmp_path: Path) -> None:
     old = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     new = deepcopy(old)
-    nightly = new["manifests"]["nightly"]["1.5.0-nightly.20260702"]
+    nightly = new["manifests"]["nightly"]["1.0.2"]
     profile = nightly["profiles"]["co-work"]
 
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "f" * 64
@@ -104,7 +104,7 @@ def test_co_work_nightly_update_does_not_touch_stable_or_binaries(tmp_path: Path
     assert result.returncode == 0, result.stderr
     assert new["channels"]["stable"] == old["channels"]["stable"]
     assert new["manifests"]["stable"] == old["manifests"]["stable"]
-    assert nightly["packages"] == old["manifests"]["nightly"]["1.5.0-nightly.20260702"][
+    assert nightly["packages"] == old["manifests"]["nightly"]["1.0.2"][
         "packages"
     ]
 
@@ -116,28 +116,28 @@ def test_co_work_nightly_update_does_not_touch_stable_or_binaries(tmp_path: Path
     assert report["violations"] == []
     assert "channels.nightly.manifests.0.digest.sha256" in report["allowed_paths"]
     assert (
-        "manifests.nightly.1.5.0-nightly.20260702.profiles.co-work.architectures.0.config.0.digest.sha256"
+        "manifests.nightly.1.0.2.profiles.co-work.architectures.0.config.0.digest.sha256"
         in report["allowed_paths"]
     )
     assert (
-        "manifests.nightly.1.5.0-nightly.20260702.profiles.co-work.architectures.0.images.0.digest.sha256"
+        "manifests.nightly.1.0.2.profiles.co-work.architectures.0.images.0.digest.sha256"
         in report["allowed_paths"]
     )
 
 
 def test_profile_lane_rejects_other_profile_change(tmp_path: Path) -> None:
     old = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    old_profile = old["manifests"]["nightly"]["1.5.0-nightly.20260702"]["profiles"][
+    old_profile = old["manifests"]["nightly"]["1.0.2"]["profiles"][
         "co-work"
     ]
-    old["manifests"]["nightly"]["1.5.0-nightly.20260702"]["profiles"]["code"] = deepcopy(
+    old["manifests"]["nightly"]["1.0.2"]["profiles"]["code"] = deepcopy(
         old_profile
     )
-    old["manifests"]["nightly"]["1.5.0-nightly.20260702"]["profiles"]["code"][
+    old["manifests"]["nightly"]["1.0.2"]["profiles"]["code"][
         "id"
     ] = "code"
     new = deepcopy(old)
-    new["manifests"]["nightly"]["1.5.0-nightly.20260702"]["profiles"]["code"][
+    new["manifests"]["nightly"]["1.0.2"]["profiles"]["code"][
         "revision"
     ] = "2026.07.02.2-nightly"
 
@@ -158,14 +158,14 @@ def test_profile_lane_rejects_other_profile_change(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert (
-        "manifests.nightly.1.5.0-nightly.20260702.profiles.code.revision"
+        "manifests.nightly.1.0.2.profiles.code.revision"
         in result.stderr
     )
     report = json.loads(summary.read_text(encoding="utf-8"))
     assert report["accepted"] is False
     assert report["allowed_paths"] == []
     assert report["violations"] == [
-        "manifests.nightly.1.5.0-nightly.20260702.profiles.code.revision"
+        "manifests.nightly.1.0.2.profiles.code.revision"
     ]
 
 

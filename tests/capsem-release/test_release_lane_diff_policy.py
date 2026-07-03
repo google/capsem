@@ -26,8 +26,8 @@ def test_binary_allowed_diff(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
     new["channels"]["stable"]["manifests"][0]["digest"]["sha256"] = "c" * 64
-    new["manifests"]["stable"]["1.4.0"]["packages"][0]["digest"]["sha256"] = "d" * 64
-    new["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0]["digest"][
+    new["manifests"]["stable"]["1.0.2"]["packages"][0]["digest"]["sha256"] = "d" * 64
+    new["manifests"]["stable"]["1.0.2"]["packages"][0]["binaries"][0]["digest"][
         "blake3"
     ] = "e" * 64
 
@@ -40,7 +40,7 @@ def test_profile_allowed_diff(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "c" * 64
-    new["manifests"]["nightly"]["1.5.0-nightly.1"]["profiles"]["co-work"][
+    new["manifests"]["nightly"]["1.0.2"]["profiles"]["co-work"][
         "architectures"
     ][0]["images"][0]["digest"]["blake3"] = "d" * 64
 
@@ -63,8 +63,8 @@ def test_cross_channel_change_rejected_without_allowance(tmp_path: Path) -> None
     old = _graph()
     new = deepcopy(old)
     new["channels"]["stable"]["manifests"][0]["digest"]["sha256"] = "c" * 64
-    new["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]["revision"] = "2026.07.02.2"
-    new["manifests"]["nightly"]["1.5.0-nightly.1"]["profiles"]["co-work"]["revision"] = (
+    new["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]["revision"] = "2026.07.02.2"
+    new["manifests"]["nightly"]["1.0.2"]["profiles"]["co-work"]["revision"] = (
         "2026.07.02.2"
     )
 
@@ -82,43 +82,43 @@ def test_cross_channel_change_rejected_without_allowance(tmp_path: Path) -> None
 
     assert result.returncode == 1
     assert "channels.stable.manifests.0.digest.sha256" in result.stderr
-    assert "manifests.stable.1.4.0.profiles.co-work.revision" in result.stderr
-    assert "manifests.nightly.1.5.0-nightly.1.profiles.co-work.revision" not in result.stderr
+    assert "manifests.stable.1.0.2.profiles.co-work.revision" in result.stderr
+    assert "manifests.nightly.1.0.2.profiles.co-work.revision" not in result.stderr
 
 
 def test_binary_lane_rejects_profile_changes(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
-    new["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]["revision"] = "2026.07.02.2"
+    new["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]["revision"] = "2026.07.02.2"
 
     result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "stable")
 
     assert result.returncode == 1
-    assert "manifests.stable.1.4.0.profiles.co-work.revision" in result.stderr
+    assert "manifests.stable.1.0.2.profiles.co-work.revision" in result.stderr
 
 
 def test_binary_lane_rejects_other_channel_binary_changes(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
-    new["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0]["digest"][
+    new["manifests"]["stable"]["1.0.2"]["packages"][0]["binaries"][0]["digest"][
         "sha256"
     ] = "c" * 64
-    new["manifests"]["nightly"]["1.5.0-nightly.1"]["packages"][0]["digest"][
+    new["manifests"]["nightly"]["1.0.2"]["packages"][0]["digest"][
         "sha256"
     ] = "d" * 64
 
     result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "stable")
 
     assert result.returncode == 1
-    assert "manifests.nightly.1.5.0-nightly.1.packages.0.digest.sha256" in result.stderr
-    assert "manifests.stable.1.4.0.packages.0.binaries.0.digest.sha256" not in result.stderr
+    assert "manifests.nightly.1.0.2.packages.0.digest.sha256" in result.stderr
+    assert "manifests.stable.1.0.2.packages.0.binaries.0.digest.sha256" not in result.stderr
 
 
 def test_fixture_can_mutate_nightly_co_work_only(tmp_path: Path) -> None:
     old = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     new = deepcopy(old)
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "f" * 64
-    new["manifests"]["nightly"]["1.5.0-nightly.20260702"]["profiles"]["co-work"][
+    new["manifests"]["nightly"]["1.0.2"]["profiles"]["co-work"][
         "architectures"
     ][0]["images"][0]["digest"]["sha256"] = "e" * 64
 
@@ -161,7 +161,7 @@ def _graph() -> dict:
             "stable": {
                 "manifests": [
                     {
-                        "version": "1.4.0",
+                        "version": "1.0.2",
                         "status": "current",
                         "url": "/assets/stable/manifest.json",
                         "digest": _digest("a"),
@@ -171,7 +171,7 @@ def _graph() -> dict:
             "nightly": {
                 "manifests": [
                     {
-                        "version": "1.5.0-nightly.1",
+                        "version": "1.0.2",
                         "status": "current",
                         "url": "/assets/nightly/manifest.json",
                         "digest": _digest("b"),
@@ -180,8 +180,8 @@ def _graph() -> dict:
             },
         },
         "manifests": {
-            "stable": {"1.4.0": _manifest("stable", "1.4.0")},
-            "nightly": {"1.5.0-nightly.1": _manifest("nightly", "1.5.0-nightly.1")},
+            "stable": {"1.0.2": _manifest("stable", "1.0.2")},
+            "nightly": {"1.0.2": _manifest("nightly", "1.0.2")},
         },
     }
 

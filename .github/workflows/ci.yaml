@@ -405,6 +405,7 @@ jobs:
             --assets-dir target/release-site-fixture/assets \
             --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
             --channel stable \
+            --manifest-version 1.0.2 \
             --out-dir target/release-channel
 
       - name: Build release site

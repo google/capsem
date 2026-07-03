@@ -26,7 +26,7 @@ def test_no_invented_data() -> None:
         / "index.html"
     ).read_text(encoding="utf-8")
 
-    stable_manifest = graph["manifests"]["stable"]["1.4.0"]
+    stable_manifest = graph["manifests"]["stable"]["1.0.2"]
     stable_package = stable_manifest["packages"][0]
     stable_profile = stable_manifest["profiles"]["co-work"]
     profile_image_urls = [

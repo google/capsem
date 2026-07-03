@@ -728,6 +728,7 @@ jobs:
             --manifest "file://$PWD/target/binary-channel/manifest.json" \
             --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
             --channel stable \
+            --manifest-version "1.0.${{ github.run_number }}" \
             --out-dir target/release-channel
 
       - name: Build release site pages

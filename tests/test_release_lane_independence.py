@@ -164,14 +164,53 @@ def test_stable_nightly_switch_keeps_channel_state_independent() -> None:
 
     assert graph["channels"]["stable"]["manifests"][0]["url"] == "/assets/stable/manifest.json"
     assert graph["channels"]["nightly"]["manifests"][0]["url"] == "/assets/nightly/manifest.json"
-    assert stable_version == "1.4.0"
-    assert nightly_version == "1.5.0-nightly.20260702"
+    assert stable_version == "1.0.2"
+    assert nightly_version == "1.0.2"
     assert stable["packages"][0]["version"] == "1.4.0"
     assert nightly["packages"][0]["version"] == "1.5.0-nightly.20260702"
     assert stable["profiles"]["co-work"]["revision"] == "2026.07.02.1-stable"
     assert nightly["profiles"]["co-work"]["revision"] == "2026.07.02.1-nightly"
     assert stable["packages"] != nightly["packages"]
     assert stable["profiles"]["co-work"] != nightly["profiles"]["co-work"]
+
+
+def test_manifest_version_independence() -> None:
+    graph = _fixture_graph()
+    stable_version = _current_manifest_version(graph, "stable")
+    nightly_version = _current_manifest_version(graph, "nightly")
+    stable = graph["manifests"]["stable"][stable_version]
+    nightly = graph["manifests"]["nightly"][nightly_version]
+
+    assert stable_version == "1.0.2"
+    assert nightly_version == "1.0.2"
+    assert stable["version"] == stable_version
+    assert nightly["version"] == nightly_version
+
+    package_versions = {
+        stable["packages"][0]["version"],
+        nightly["packages"][0]["version"],
+        stable["packages"][0]["binaries"][0]["version"],
+        nightly["packages"][0]["binaries"][0]["version"],
+    }
+    profile_versions = {
+        stable["profiles"]["co-work"]["revision"],
+        nightly["profiles"]["co-work"]["revision"],
+        stable["profiles"]["co-work"]["architectures"][0]["image_revision"],
+        nightly["profiles"]["co-work"]["architectures"][0]["image_revision"],
+        stable["profiles"]["co-work"]["architectures"][0]["package_inventory_revision"],
+        nightly["profiles"]["co-work"]["architectures"][0]["package_inventory_revision"],
+    }
+
+    assert package_versions == {"1.4.0", "1.5.0-nightly.20260702"}
+    assert profile_versions == {
+        "2026.07.02.1-stable",
+        "2026.07.02.1-nightly",
+        "2026.07.02.1",
+    }
+    assert stable_version not in package_versions
+    assert nightly_version not in package_versions
+    assert stable_version not in profile_versions
+    assert nightly_version not in profile_versions
 
 
 def _fixture_graph() -> dict[str, Any]:

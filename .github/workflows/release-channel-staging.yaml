@@ -15,6 +15,10 @@ on:
         description: Cloudflare Pages preview URL for the deploy branch.
         required: true
         default: https://staging.release-eq7.pages.dev
+      manifest_version:
+        description: Staged manifest contract version.
+        required: true
+        default: 1.0.2
 
 permissions:
   contents: read
@@ -56,6 +60,7 @@ jobs:
             --manifest "file://$PWD/target/release-channel-staging-fixture/assets/manifest.json" \
             --assets-dir target/release-channel-staging-fixture/assets \
             --channel "${{ inputs.channel }}" \
+            --manifest-version "${{ inputs.manifest_version }}" \
             --out-dir target/release-channel
 
       - name: Build release site pages

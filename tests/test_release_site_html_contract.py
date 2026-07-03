@@ -109,11 +109,11 @@ def test_digest_display_truncates_human_hashes_and_preserves_machine_json() -> N
     graph = fixture_graph()
     full_hashes = [
         graph["channels"]["stable"]["manifests"][0]["digest"]["sha256"],
-        graph["manifests"]["stable"]["1.4.0"]["packages"][0]["digest"]["sha256"],
-        graph["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0][
+        graph["manifests"]["stable"]["1.0.2"]["packages"][0]["digest"]["sha256"],
+        graph["manifests"]["stable"]["1.0.2"]["packages"][0]["binaries"][0][
             "digest"
         ]["sha256"],
-        graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]["architectures"][
+        graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]["architectures"][
             0
         ]["config"][0]["digest"]["sha256"],
     ]
@@ -126,7 +126,7 @@ def test_digest_display_truncates_human_hashes_and_preserves_machine_json() -> N
             / "channels"
             / "stable"
             / "packages"
-            / graph["manifests"]["stable"]["1.4.0"]["packages"][0]["id"]
+            / graph["manifests"]["stable"]["1.0.2"]["packages"][0]["id"]
             / "index.html",
             RELEASE_SITE_DIST
             / "channels"
@@ -156,7 +156,7 @@ def test_package_target_sbom() -> None:
         maxsplit=1,
     )[0]
 
-    for package in graph["manifests"]["stable"]["1.4.0"]["packages"]:
+    for package in graph["manifests"]["stable"]["1.0.2"]["packages"]:
         platform = "macOS" if package["platform"] == "macos" else package["platform"].title()
         heading = f"Package target {platform} {package['architecture']}"
         target_section = packages_section.split(heading, maxsplit=1)[1]
@@ -182,7 +182,7 @@ def test_package_detail_navigation() -> None:
 
     assert "Capsem Packages" in stable
     assert "Capsem Binaries" not in stable
-    for package in graph["manifests"]["stable"]["1.4.0"]["packages"]:
+    for package in graph["manifests"]["stable"]["1.0.2"]["packages"]:
         detail_href = f"/channels/stable/packages/{package['id']}/"
         assert detail_href in stable
 

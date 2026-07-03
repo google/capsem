@@ -77,10 +77,10 @@ def test_human_pages_truncate_hashes_but_machine_graph_keeps_full_hashes() -> No
     stable_manifest_digest = graph["channels"]["stable"]["manifests"][0]["digest"][
         "sha256"
     ]
-    stable_package_digest = graph["manifests"]["stable"]["1.4.0"]["packages"][0][
+    stable_package_digest = graph["manifests"]["stable"]["1.0.2"]["packages"][0][
         "digest"
     ]["blake3"]
-    profile_config_digest = graph["manifests"]["stable"]["1.4.0"]["profiles"][
+    profile_config_digest = graph["manifests"]["stable"]["1.0.2"]["profiles"][
         "co-work"
     ]["architectures"][0]["config"][0]["digest"]["sha256"]
     pages = [
@@ -136,13 +136,13 @@ def test_channel_page_lists_packages_and_binaries() -> None:
         "Profile References",
         maxsplit=1,
     )[0]
-    stable_sbom = _fixture()["manifests"]["stable"]["1.4.0"]["packages"][0][
+    stable_sbom = _fixture()["manifests"]["stable"]["1.0.2"]["packages"][0][
         "evidence"
     ][0]
     assert stable_sbom["url"] in stable_package_section
     assert _hash_label(stable_sbom["digest"]["sha256"]) in stable_package_section
     assert stable_sbom["digest"]["sha256"] not in stable_package_section
-    for package in _fixture()["manifests"]["stable"]["1.4.0"]["packages"]:
+    for package in _fixture()["manifests"]["stable"]["1.0.2"]["packages"]:
         for binary in package["binaries"]:
             assert binary["installed_path"] not in stable
             assert binary["sbom_component_ref"] not in stable
@@ -156,7 +156,7 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     assert "Capsem_1.5.0-nightly.20260702_arm64.deb" in nightly
     assert "/assets/nightly/manifest.json" in nightly
     assert "/manifests/nightly/" not in nightly
-    for package in _fixture()["manifests"]["nightly"]["1.5.0-nightly.20260702"][
+    for package in _fixture()["manifests"]["nightly"]["1.0.2"][
         "packages"
     ]:
         for binary in package["binaries"]:
@@ -188,7 +188,7 @@ def test_package_pages_show_package_owned_binaries() -> None:
     build_release_site_from_fixture()
 
     graph = _fixture()
-    package = graph["manifests"]["stable"]["1.4.0"]["packages"][0]
+    package = graph["manifests"]["stable"]["1.0.2"]["packages"][0]
     package_page_path = (
         PROJECT_ROOT
         / "release-site"
@@ -218,7 +218,7 @@ def test_package_pages_show_package_owned_binaries() -> None:
         assert _hash_label(binary["digest"]["sha256"]) in page
         assert _hash_label(binary["digest"]["blake3"]) in page
         assert binary["sbom_component_ref"] in page
-    sibling = graph["manifests"]["stable"]["1.4.0"]["packages"][1]
+    sibling = graph["manifests"]["stable"]["1.0.2"]["packages"][1]
     assert sibling["name"] not in page
     assert sibling["url"] not in page
     for binary in sibling["binaries"]:
@@ -233,7 +233,7 @@ def test_package_sbom_link_not_repeated_on_binaries() -> None:
     build_release_site_from_fixture()
 
     graph = _fixture()
-    package = graph["manifests"]["stable"]["1.4.0"]["packages"][0]
+    package = graph["manifests"]["stable"]["1.0.2"]["packages"][0]
     page = (
         PROJECT_ROOT
         / "release-site"
@@ -324,8 +324,8 @@ def test_profile_page_renders_profile_owned_images_and_configs() -> None:
         ("nightly", "code"): nightly_code,
     }
     versions = {
-        "stable": "1.4.0",
-        "nightly": "1.5.0-nightly.20260702",
+        "stable": "1.0.2",
+        "nightly": "1.0.2",
     }
     for (channel, profile_id), page in pages.items():
         profile = graph["manifests"][channel][versions[channel]]["profiles"][profile_id]
@@ -377,7 +377,7 @@ def test_profile_evidence_not_repeated_per_row() -> None:
         / "co-work"
         / "index.html"
     ).read_text(encoding="utf-8")
-    profile = graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]
+    profile = graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]
 
     for architecture in profile["architectures"]:
         section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[

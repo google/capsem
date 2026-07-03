@@ -88,7 +88,7 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
     assert "Code" not in index
     assert "Capsem-1.4.0.pkg" in stable
     assert _hash_label(
-        graph["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0]["digest"][
+        graph["manifests"]["stable"]["1.0.2"]["packages"][0]["binaries"][0]["digest"][
             "sha256"
         ]
     ) in stable
@@ -97,7 +97,7 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
     assert "code" in stable
     assert "Capsem-1.5.0-nightly.20260702.pkg" in nightly
     assert _hash_label(
-        graph["manifests"]["nightly"]["1.5.0-nightly.20260702"]["packages"][0][
+        graph["manifests"]["nightly"]["1.0.2"]["packages"][0][
             "binaries"
         ][0]["digest"]["sha256"]
     ) in nightly

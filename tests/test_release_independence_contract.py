@@ -27,23 +27,24 @@ def test_independent_version_matrix() -> None:
     profile = manifest["profiles"]["co-work"]
     architecture = _architecture(profile, "arm64")
 
-    assert manifest_record["revision"] == manifest["revision"]
-    assert manifest_record["revision"] != manifest["packages"][0]["version"]
+    assert manifest_record["version"] == manifest["version"]
+    assert manifest_record["version"] != manifest["packages"][0]["version"]
     assert profile["revision"] != manifest["packages"][0]["version"]
     assert architecture["package_inventory_revision"]
     assert architecture["image_revision"]
 
     mutations = {
-        "manifest_revision": (
-            lambda candidate: _set_manifest_revision(candidate, channel, manifest_version, "1.0.3"),
+        "manifest_version": (
+            lambda candidate: _set_manifest_version(candidate, channel, manifest_version, "1.0.3"),
             (
                 "channels",
                 channel,
                 "manifests",
                 "0",
-                "revision",
+                "version",
             ),
-            ("manifests", channel, manifest_version, "revision"),
+            ("manifests", channel, manifest_version),
+            ("manifests", channel, "1.0.3"),
         ),
         "package_version": (
             lambda candidate: _set_package_version(candidate, channel, manifest_version, "1.5.1-nightly"),
@@ -127,14 +128,16 @@ def _architecture(profile: dict[str, Any], architecture: str) -> dict[str, Any]:
     return next(item for item in profile["architectures"] if item["architecture"] == architecture)
 
 
-def _set_manifest_revision(
+def _set_manifest_version(
     graph: dict[str, Any],
     channel: str,
     manifest_version: str,
     value: str,
 ) -> None:
-    _current_manifest_record(graph, channel)["revision"] = value
-    graph["manifests"][channel][manifest_version]["revision"] = value
+    _current_manifest_record(graph, channel)["version"] = value
+    manifest = graph["manifests"][channel].pop(manifest_version)
+    manifest["version"] = value
+    graph["manifests"][channel][value] = manifest
 
 
 def _set_package_version(

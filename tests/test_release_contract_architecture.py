@@ -87,14 +87,25 @@ def test_independent_versions() -> None:
         assert phrase in doc
 
 
-def test_manifest_has_independent_revision() -> None:
+def test_manifest_has_independent_version() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
     for channel_id, channel in graph["channels"].items():
         current = next(item for item in channel["manifests"] if item["status"] == "current")
-        assert current["revision"].startswith("1.0.")
-        assert current["revision"] != current["version"]
-        assert graph["manifests"][channel_id][current["version"]]["revision"] == current["revision"]
+        assert current["version"].startswith("1.0.")
+        assert graph["manifests"][channel_id][current["version"]]["version"] == current["version"]
+        package_versions = {
+            package["version"]
+            for package in graph["manifests"][channel_id][current["version"]]["packages"]
+        }
+        profile_revisions = {
+            profile["revision"]
+            for profile in graph["manifests"][channel_id][current["version"]][
+                "profiles"
+            ].values()
+        }
+        assert current["version"] not in package_versions
+        assert current["version"] not in profile_revisions
 
 
 def test_status_enum() -> None:

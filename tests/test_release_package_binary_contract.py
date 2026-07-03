@@ -167,7 +167,7 @@ def test_packages_group_by_os_architecture() -> None:
         "Profile References",
         maxsplit=1,
     )[0]
-    stable_packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
+    stable_packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
     target_labels = {
         ("macos", "arm64"): "macOS arm64",
         ("linux", "x86_64"): "Linux x86_64",
@@ -200,7 +200,7 @@ def test_package_architecture_sections_are_explicit() -> None:
         "Profile References",
         maxsplit=1,
     )[0]
-    stable_packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
+    stable_packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
 
     for package in stable_packages:
         platform = "macOS" if package["platform"] == "macos" else package["platform"].title()
@@ -220,7 +220,7 @@ def test_package_target_rows_include_own_sbom() -> None:
         "Profile References",
         maxsplit=1,
     )[0]
-    stable_packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
+    stable_packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
 
     for package in stable_packages:
         platform = "macOS" if package["platform"] == "macos" else package["platform"].title()
@@ -323,7 +323,7 @@ def test_package_detail_lists_owned_binaries_only() -> None:
     build_release_site_from_fixture()
 
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
+    packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
     selected = packages[0]
     sibling = packages[1]
     package_page = (
@@ -360,7 +360,7 @@ def test_package_detail_is_binary_owner_view() -> None:
     stable = (
         RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
     ).read_text(encoding="utf-8")
-    packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
+    packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
 
     assert "Capsem Packages" in stable
     assert "Capsem Binaries" not in stable
@@ -393,7 +393,7 @@ def test_binary_descriptions_from_metadata() -> None:
 
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
-    for package in graph["manifests"]["stable"]["1.4.0"]["packages"]:
+    for package in graph["manifests"]["stable"]["1.0.2"]["packages"]:
         package_page = (
             RELEASE_SITE_DIST
             / "channels"
@@ -414,7 +414,7 @@ def test_binaries_inherit_package_target_not_all() -> None:
 
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
-    for package in graph["manifests"]["stable"]["1.4.0"]["packages"]:
+    for package in graph["manifests"]["stable"]["1.0.2"]["packages"]:
         for binary in package["binaries"]:
             assert binary["architecture"] == package["architecture"], binary
             assert binary["platform"] == package["platform"], binary
@@ -440,7 +440,7 @@ def test_macos_package_present() -> None:
     stable = (
         RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
     ).read_text(encoding="utf-8")
-    stable_packages = graph["manifests"]["stable"]["1.4.0"]["packages"]
+    stable_packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
     macos_packages = [
         package for package in stable_packages if package["kind"] == "macos_pkg"
     ]

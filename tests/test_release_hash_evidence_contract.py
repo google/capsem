@@ -117,7 +117,7 @@ def test_reject_placeholder_hashes() -> None:
 def test_repeated_row_digest_theater(monkeypatch) -> None:
     checker = _readiness_checker_module()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]))
+    profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]))
     architecture = profile["architectures"][0]
     assert len(architecture["software"]) >= 2
 

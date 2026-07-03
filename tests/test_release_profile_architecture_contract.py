@@ -90,6 +90,8 @@ def test_profile_architecture_packages_and_images_are_separate() -> None:
                 label = f"{channel}:{profile_id}:{architecture['architecture']}"
                 assert set(architecture) == {
                     "architecture",
+                    "package_inventory_revision",
+                    "image_revision",
                     "software",
                     "config",
                     "images",
@@ -359,7 +361,7 @@ def test_software_inventory_evidence_once_per_architecture() -> None:
 def test_profile_architecture_sections() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    profile = graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]
+    profile = graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]
     page = (
         RELEASE_SITE_DIST
         / "channels"
@@ -411,7 +413,7 @@ def test_all_profiles() -> None:
 def test_config_and_images_are_separate() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    manifest = graph["manifests"]["stable"]["1.4.0"]
+    manifest = graph["manifests"]["stable"]["1.0.2"]
     page = (
         RELEASE_SITE_DIST
         / "channels"
@@ -609,7 +611,7 @@ def test_profile_config_inventory_includes_security_and_detection() -> None:
 def test_config_kind_enum_contract(monkeypatch) -> None:
     checker = _readiness_checker_module()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]))
+    profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]))
     generated_kind_profile = json.loads(json.dumps(profile))
     for architecture in generated_kind_profile["architectures"]:
         for config in architecture["config"]:
@@ -719,7 +721,7 @@ def test_software_versions_are_real(monkeypatch) -> None:
         "latest": "version is latest",
     }
     for version, expected in forbidden.items():
-        profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]))
+        profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]))
         profile["architectures"][0]["software"][0]["version"] = version
 
         failures = checker.check_release_graph_profile(
@@ -756,7 +758,7 @@ def test_software_versions_and_hashes() -> None:
 def test_software_rows_do_not_reuse_inventory_digest(monkeypatch) -> None:
     checker = _readiness_checker_module()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]))
+    profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]))
     architecture = profile["architectures"][0]
     inventory_digest = next(
         item["digest"]

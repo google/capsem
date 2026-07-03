@@ -77,22 +77,22 @@ def test_binary_lane_allowed_diff_gate_is_channel_scoped() -> None:
 def test_binary_lane_rejects_profile_ref_change(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
-    new["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]["revision"] = "bad-profile-drift"
+    new["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]["revision"] = "bad-profile-drift"
 
     result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "stable")
 
     assert result.returncode == 1
-    assert "manifests.stable.1.4.0.profiles.co-work.revision" in result.stderr
+    assert "manifests.stable.1.0.2.profiles.co-work.revision" in result.stderr
 
 
 def test_nightly_binary_update_does_not_change_stable(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "c" * 64
-    new["manifests"]["nightly"]["1.5.0-nightly.1"]["packages"][0]["digest"][
+    new["manifests"]["nightly"]["1.0.2"]["packages"][0]["digest"][
         "sha256"
     ] = "d" * 64
-    new["manifests"]["nightly"]["1.5.0-nightly.1"]["packages"][0]["binaries"][0][
+    new["manifests"]["nightly"]["1.0.2"]["packages"][0]["binaries"][0][
         "digest"
     ]["blake3"] = "e" * 64
 
@@ -125,7 +125,7 @@ def _graph() -> dict:
             "stable": {
                 "manifests": [
                     {
-                        "version": "1.4.0",
+                        "version": "1.0.2",
                         "status": "current",
                         "url": "/assets/stable/manifest.json",
                         "digest": _digest("a"),
@@ -135,7 +135,7 @@ def _graph() -> dict:
             "nightly": {
                 "manifests": [
                     {
-                        "version": "1.5.0-nightly.1",
+                        "version": "1.0.2",
                         "status": "current",
                         "url": "/assets/nightly/manifest.json",
                         "digest": _digest("b"),
@@ -144,8 +144,8 @@ def _graph() -> dict:
             },
         },
         "manifests": {
-            "stable": {"1.4.0": _manifest("stable", "1.4.0")},
-            "nightly": {"1.5.0-nightly.1": _manifest("nightly", "1.5.0-nightly.1")},
+            "stable": {"1.0.2": _manifest("stable", "1.0.2")},
+            "nightly": {"1.0.2": _manifest("nightly", "1.0.2")},
         },
     }
 

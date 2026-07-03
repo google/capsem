@@ -93,8 +93,7 @@ Each manifest record must include:
 
 ```json
 {
-  "version": "1.4.0",
-  "revision": "1.0.2",
+  "version": "1.0.2",
   "status": "current",
   "url": "/assets/stable/manifest.json",
   "digest": {
@@ -109,10 +108,10 @@ is only one public manifest URL per channel. Historical manifest records remain
 in `channels.json` for auditability, but they must not create alternate public
 manifest URLs that compete with `/assets/<channel>/manifest.json`.
 
-The manifest record `revision` is the manifest contract revision. It is
+The manifest record `version` is the manifest contract version. It is
 independent from Capsem package versions, profile revisions, and profile image
-revisions. Human channel lists display this revision, not the host package
-version or profile revision selected by that manifest.
+revisions. Human channel lists display this manifest version, not the host
+package version or profile revision selected by that manifest.
 
 Do not publish HMAC fields in the graph. SHA-256 is the compliance digest.
 BLAKE3 is the fast content digest. Digests must be computed over bytes.
@@ -126,8 +125,7 @@ profile asset references:
 
 ```json
 {
-  "version": "1.4.0",
-  "revision": "1.0.2",
+  "version": "1.0.2",
   "status": "current",
   "packages": [],
   "profiles": {}

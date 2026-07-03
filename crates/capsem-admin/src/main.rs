@@ -286,6 +286,9 @@ struct AssetsChannelBuildArgs {
     /// Channel name to publish under assets/<channel>/manifest.json.
     #[arg(long, default_value = "stable")]
     channel: String,
+    /// Release graph manifest version for this channel pointer.
+    #[arg(long, default_value = "1.0.0")]
+    manifest_version: String,
     /// Static output directory for Cloudflare Pages.
     #[arg(long, default_value = "target/release-channel")]
     out_dir: PathBuf,
@@ -1171,6 +1174,7 @@ fn assets_channel_build_command(args: AssetsChannelBuildArgs) -> Result<()> {
         &args.assets_dir,
         &args.profiles_dir,
         &args.channel,
+        &args.manifest_version,
         &args.out_dir,
         &generated_at,
         args.asset_source_base.as_deref(),
@@ -1222,6 +1226,7 @@ fn build_assets_channel(
     assets_dir: &Path,
     profiles_dir: &Path,
     channel: &str,
+    manifest_version: &str,
     out_dir: &Path,
     generated_at: &str,
     asset_source_base: Option<&str>,
@@ -1284,14 +1289,11 @@ fn build_assets_channel(
     } else {
         0
     };
-    let publishable_profiles = publishable_profiles(
-        &channel_manifest_doc,
-        profiles_dir,
-        asset_base,
-        assets_dir,
-    )?;
+    let publishable_profiles =
+        publishable_profiles(&channel_manifest_doc, profiles_dir, asset_base, assets_dir)?;
     copy_profile_release_files(out_dir, &publishable_profiles.file_copies)?;
-    let graph_manifest_version = graph_manifest_version(&channel_manifest_doc);
+    validate_graph_manifest_version(manifest_version)?;
+    let graph_manifest_version = manifest_version.to_string();
     let graph_manifest_url = format!("/assets/{channel}/manifest.json");
     let graph_manifest = render_graph_release_manifest(
         &channel_manifest_doc,
@@ -1633,7 +1635,9 @@ fn deb_member<'a>(bytes: &'a [u8], member_name: &str) -> Result<&'a [u8]> {
             .checked_add(size)
             .ok_or_else(|| anyhow!("deb archive member {name} size overflows"))?;
         if end > bytes.len() {
-            return Err(anyhow!("deb archive member {name} extends past end of file"));
+            return Err(anyhow!(
+                "deb archive member {name} extends past end of file"
+            ));
         }
         if name == member_name {
             return Ok(&bytes[offset..end]);
@@ -1713,8 +1717,8 @@ fn hydrate_asset_entry_sha256(manifest: &mut ManifestV2, assets_dir: &Path) -> R
                 if !source.exists() {
                     continue;
                 }
-                let bytes = fs::read(&source)
-                    .with_context(|| format!("read {}", source.display()))?;
+                let bytes =
+                    fs::read(&source).with_context(|| format!("read {}", source.display()))?;
                 let blake3 = blake3::hash(&bytes).to_hex().to_string();
                 if blake3 != entry.hash {
                     return Err(anyhow!(
@@ -1970,9 +1974,7 @@ fn validate_assets_channel_graph_health(
         }
     }
     if asset_files.iter().any(|item| {
-        item.get("logical_name")
-            .and_then(|value| value.as_str())
-            == Some("obom.cdx.json")
+        item.get("logical_name").and_then(|value| value.as_str()) == Some("obom.cdx.json")
     }) && vm_oboms.is_empty()
     {
         return Err(anyhow!("health.json missing VM OBOM evidence"));
@@ -2029,10 +2031,13 @@ fn validate_assets_channel_graph_health(
             let predicate_url = attestation
                 .get("predicate_url")
                 .and_then(|value| value.as_str())
-                .ok_or_else(|| anyhow!("health.json host SBOM attestation predicate_url missing"))?;
-            if !host_sboms.iter().any(|item| {
-                item.get("url").and_then(|value| value.as_str()) == Some(predicate_url)
-            }) {
+                .ok_or_else(|| {
+                    anyhow!("health.json host SBOM attestation predicate_url missing")
+                })?;
+            if !host_sboms
+                .iter()
+                .any(|item| item.get("url").and_then(|value| value.as_str()) == Some(predicate_url))
+            {
                 return Err(anyhow!(
                     "health.json host SBOM attestation predicate {predicate_url} missing from host SBOM evidence"
                 ));
@@ -2043,9 +2048,10 @@ fn validate_assets_channel_graph_health(
                 .get("predicate_url")
                 .and_then(|value| value.as_str())
                 .ok_or_else(|| anyhow!("health.json VM asset attestation predicate_url missing"))?;
-            if !vm_oboms.iter().any(|item| {
-                item.get("url").and_then(|value| value.as_str()) == Some(predicate_url)
-            }) {
+            if !vm_oboms
+                .iter()
+                .any(|item| item.get("url").and_then(|value| value.as_str()) == Some(predicate_url))
+            {
                 return Err(anyhow!(
                     "health.json VM asset attestation predicate {predicate_url} missing from VM OBOM evidence"
                 ));
@@ -2125,7 +2131,9 @@ fn validate_assets_channel_index_html(index_html: &str, channel: &str) -> Result
         }
     }
     if index_html.contains(&format!("/manifests/{channel}/")) {
-        return Err(anyhow!("asset channel index must not publish legacy graph manifest URLs"));
+        return Err(anyhow!(
+            "asset channel index must not publish legacy graph manifest URLs"
+        ));
     }
     Ok(())
 }
@@ -3060,8 +3068,16 @@ fn publishable_profiles(
     })
 }
 
-fn graph_manifest_version(manifest: &ManifestV2) -> String {
-    format!("{}+assets.{}", manifest.binaries.current, manifest.assets.current)
+fn validate_graph_manifest_version(version: &str) -> Result<()> {
+    if version.trim().is_empty() {
+        return Err(anyhow!("manifest version must not be empty"));
+    }
+    if version.contains("+assets.") {
+        return Err(anyhow!(
+            "manifest version must be independent from asset and binary versions"
+        ));
+    }
+    Ok(())
 }
 
 fn render_graph_release_manifest(
@@ -3268,8 +3284,16 @@ fn graph_profile_config_refs(
         let file_name = Path::new(&relative)
             .file_name()
             .and_then(|name| name.to_str())
-            .ok_or_else(|| anyhow!("profile {} config path has no file name: {relative}", profile.id))?;
-        let url = format!("/profiles/releases/{revision}/{}/{arch}/{file_name}", profile.id);
+            .ok_or_else(|| {
+                anyhow!(
+                    "profile {} config path has no file name: {relative}",
+                    profile.id
+                )
+            })?;
+        let url = format!(
+            "/profiles/releases/{revision}/{}/{arch}/{file_name}",
+            profile.id
+        );
         file_copies.push(ProfileReleaseFileCopy {
             source,
             url: url.clone(),
@@ -3315,8 +3339,13 @@ fn graph_profile_images(
                     descriptor.name
                 )
             })?;
-            let (bytes, digest) =
-                asset_entry_digest(assets_dir, arch, &descriptor.name, entry, asset_digest_cache)?;
+            let (bytes, digest) = asset_entry_digest(
+                assets_dir,
+                arch,
+                &descriptor.name,
+                entry,
+                asset_digest_cache,
+            )?;
             Ok(serde_json::json!({
                 "kind": kind,
                 "name": descriptor.name,
@@ -3469,13 +3498,18 @@ fn graph_profile_software(
         for package in packages {
             let name = require_json_string_value(package, "name")
                 .with_context(|| format!("{} package missing name", inventory_path.display()))?;
-            let version = require_json_string_value(package, "version")
-                .with_context(|| format!("{name} missing version in {}", inventory_path.display()))?;
+            let version = require_json_string_value(package, "version").with_context(|| {
+                format!("{name} missing version in {}", inventory_path.display())
+            })?;
             if version == "unversioned" {
-                return Err(anyhow!("{name} in {} has unversioned version", inventory_path.display()));
+                return Err(anyhow!(
+                    "{name} in {} has unversioned version",
+                    inventory_path.display()
+                ));
             }
-            let source = require_json_string_value(package, "source")
-                .with_context(|| format!("{name} missing source in {}", inventory_path.display()))?;
+            let source = require_json_string_value(package, "source").with_context(|| {
+                format!("{name} missing source in {}", inventory_path.display())
+            })?;
             let row_core = serde_json::json!({
                 "name": name,
                 "version": version,
@@ -3484,14 +3518,16 @@ fn graph_profile_software(
                 "evidence": evidence,
             });
             let digest = json_digest(&row_core)?;
-            rows.entry(arch.clone()).or_default().push(serde_json::json!({
-                "name": name,
-                "version": version,
-                "source": source,
-                "architecture": arch,
-                "digest": digest,
-                "evidence": evidence,
-            }));
+            rows.entry(arch.clone())
+                .or_default()
+                .push(serde_json::json!({
+                    "name": name,
+                    "version": version,
+                    "source": source,
+                    "architecture": arch,
+                    "digest": digest,
+                    "evidence": evidence,
+                }));
         }
     }
     for arch_rows in rows.values_mut() {
@@ -3522,7 +3558,10 @@ fn json_digest(value: &serde_json::Value) -> Result<serde_json::Value> {
 
 fn profile_file_descriptors(
     profile: &ProfileConfigFile,
-) -> Vec<(&'static str, &capsem_core::net::policy_config::ProfileFileDescriptor)> {
+) -> Vec<(
+    &'static str,
+    &capsem_core::net::policy_config::ProfileFileDescriptor,
+)> {
     let mut descriptors = Vec::new();
     if let Some(value) = profile.files.enforcement.as_ref() {
         descriptors.push(("enforcement", value));
@@ -4102,7 +4141,10 @@ fn render_assets_channel_headers(channel: &str) -> String {
     render_assets_channel_headers_for_channels(&[channel.to_string()])
 }
 
-fn render_assets_channel_headers_for_dist(out_dir: &Path, fallback_channel: &str) -> Result<String> {
+fn render_assets_channel_headers_for_dist(
+    out_dir: &Path,
+    fallback_channel: &str,
+) -> Result<String> {
     let channels_path = out_dir.join("channels.json");
     let channels = if channels_path.exists() {
         let catalog: AssetsChannelsCatalog = serde_json::from_str(
@@ -7690,6 +7732,7 @@ decision = "block"
             &assets_dir,
             &profiles_dir,
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -7732,14 +7775,12 @@ decision = "block"
                     .filter(|image| image["architecture"].as_str() == Some("arm64"))
                     .flat_map(|image| image["images"].as_array().into_iter().flatten())
             })
-            .find(|artifact| {
-                artifact["kind"].as_str() == Some("kernel")
-            })
+            .find(|artifact| artifact["kind"].as_str() == Some("kernel"))
             .expect("arm64 kernel artifact");
         assert_eq!(
             kernel_artifact["digest"]["blake3"],
-            source_manifest_json["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"]
-                ["vmlinuz"]["hash"]
+            source_manifest_json["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"]["vmlinuz"]
+                ["hash"]
         );
         assert!(
             kernel_artifact["digest"]["sha256"]
@@ -7918,6 +7959,44 @@ decision = "block"
     }
 
     #[test]
+    fn release_graph_manifest_version_is_independent_from_package_and_assets() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
+        let out_dir = temp.path().join("target/release-channel");
+
+        build_assets_channel(
+            &file_url(&manifest_path),
+            &temp.path().join("assets"),
+            &repo_config_profiles_dir(),
+            "stable",
+            "1.0.2",
+            &out_dir,
+            "2030-01-01T00:00:00Z",
+            None,
+        )
+        .expect("asset channel builds");
+
+        let channels: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(out_dir.join("channels.json")).unwrap())
+                .expect("channels json");
+        let manifest: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(out_dir.join("assets/stable/manifest.json")).unwrap(),
+        )
+        .expect("graph manifest json");
+
+        assert_eq!(
+            channels["channels"]["stable"]["manifests"][0]["version"].as_str(),
+            Some("1.0.2")
+        );
+        assert_eq!(manifest["version"].as_str(), Some("1.0.2"));
+        assert_eq!(manifest["packages"][0]["version"].as_str(), Some("1.0.0"));
+        assert_eq!(
+            manifest["profiles"]["code"]["architectures"][0]["image_revision"].as_str(),
+            Some("2030.0101.1")
+        );
+    }
+
+    #[test]
     fn asset_attestation_predicate_uses_published_obom_url_shape() {
         let files = vec![
             AssetsChannelAssetFile {
@@ -7959,6 +8038,7 @@ decision = "block"
             &assets_dir,
             &profiles_dir,
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -7977,6 +8057,7 @@ decision = "block"
             &assets_dir,
             &profiles_dir,
             "nightly",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -7992,18 +8073,25 @@ decision = "block"
             .keys()
             .cloned()
             .collect::<Vec<_>>();
-        assert_eq!(channel_ids, vec!["nightly".to_string(), "stable".to_string()]);
+        assert_eq!(
+            channel_ids,
+            vec!["nightly".to_string(), "stable".to_string()]
+        );
         assert_eq!(
             channels["channels"]["stable"]["manifests"][0]["url"].as_str(),
             Some(stable_manifest_url.as_str())
         );
-        assert!(out_dir.join(stable_manifest_url.trim_start_matches('/')).is_file());
+        assert!(out_dir
+            .join(stable_manifest_url.trim_start_matches('/'))
+            .is_file());
         assert!(out_dir.join("assets/stable/manifest.json").is_file());
         assert!(out_dir.join("assets/nightly/manifest.json").is_file());
         let nightly_manifest_url = channels["channels"]["nightly"]["manifests"][0]["url"]
             .as_str()
             .expect("nightly manifest url");
-        assert!(out_dir.join(nightly_manifest_url.trim_start_matches('/')).is_file());
+        assert!(out_dir
+            .join(nightly_manifest_url.trim_start_matches('/'))
+            .is_file());
 
         check_assets_channel(&out_dir, "stable").expect("merged stable channel checks");
         fs::remove_file(out_dir.join("index.html")).expect("remove stable test index fixture");
@@ -8033,6 +8121,7 @@ decision = "block"
             &temp.path().join("assets"),
             &repo_config_profiles_dir(),
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -8198,7 +8287,10 @@ decision = "block"
         assert_eq!(release["files"][0]["name"], "Capsem-1.4.1234567890.pkg");
         assert_eq!(
             release["files"][0]["sha256"],
-            format!("{:x}", Sha256::digest(fs::read(&pkg_path).expect("pkg bytes")))
+            format!(
+                "{:x}",
+                Sha256::digest(fs::read(&pkg_path).expect("pkg bytes"))
+            )
         );
         assert_eq!(
             release["files"][1]["binaries"][0]["installed_path"].as_str(),
@@ -8434,6 +8526,7 @@ decision = "block"
             &temp.path().join("assets"),
             &repo_config_profiles_dir(),
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-02-03T00:00:00Z",
             Some(asset_base),
@@ -8476,6 +8569,7 @@ decision = "block"
             &assets_dir,
             &profiles_dir,
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -8509,6 +8603,7 @@ decision = "block"
             &temp.path().join("assets"),
             &repo_config_profiles_dir(),
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -8543,6 +8638,7 @@ decision = "block"
             &temp.path().join("assets"),
             &repo_config_profiles_dir(),
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -8579,6 +8675,7 @@ decision = "block"
             &temp.path().join("assets"),
             &repo_config_profiles_dir(),
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -8611,6 +8708,7 @@ decision = "block"
             &temp.path().join("assets"),
             &repo_config_profiles_dir(),
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -8654,6 +8752,7 @@ decision = "block"
             &temp.path().join("assets"),
             &repo_config_profiles_dir(),
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -8700,6 +8799,7 @@ decision = "block"
             &temp.path().join("assets"),
             &repo_config_profiles_dir(),
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -8770,6 +8870,7 @@ decision = "block"
             &temp.path().join("assets"),
             &repo_config_profiles_dir(),
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -8817,6 +8918,7 @@ decision = "block"
             &temp.path().join("assets"),
             &repo_config_profiles_dir(),
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -8855,6 +8957,7 @@ decision = "block"
             &assets_dir,
             &profiles_dir,
             "stable",
+            "1.0.2",
             &out_dir,
             "2030-01-01T00:00:00Z",
             None,
@@ -8885,6 +8988,7 @@ decision = "block"
                 &assets_dir,
                 &profiles_dir,
                 channel,
+                "1.0.2",
                 &temp.path().join("target/release-channel"),
                 "2030-01-01T00:00:00Z",
                 None,
@@ -8904,6 +9008,7 @@ decision = "block"
             &temp.path().join("assets"),
             &repo_config_profiles_dir(),
             "stable",
+            "1.0.2",
             &temp.path().join("target/release-channel"),
             "2030-01-01T00:00:00Z",
             None,
@@ -9075,10 +9180,10 @@ decision = "block"
                 manifest_version = manifest_version,
                 profile_revision = profile_revision,
                 status = status,
-	                digest = serde_json::json!({
-	                    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-	                    "blake3": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-	                }),
+                digest = serde_json::json!({
+                    "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                    "blake3": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                }),
             ),
         )
         .expect("profile release manifest");

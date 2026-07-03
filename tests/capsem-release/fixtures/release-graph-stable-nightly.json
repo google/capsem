@@ -10,7 +10,7 @@
           },
           "status": "current",
           "url": "/assets/nightly/manifest.json",
-          "version": "1.5.0-nightly.20260702",
+          "version": "1.0.2",
           "revision": "1.0.2"
         },
         {
@@ -19,8 +19,8 @@
             "sha256": "01b9ed9d19c4163cd59a448ed0e609517c4c29a2a63e14e906498372266338fd"
           },
           "status": "supported",
-          "url": "/manifests/nightly/1.5.0-nightly.20260701/manifest.json",
-          "version": "1.5.0-nightly.20260701",
+          "url": "/manifests/nightly/1.0.1/manifest.json",
+          "version": "1.0.1",
           "revision": "1.0.1"
         },
         {
@@ -29,8 +29,8 @@
             "sha256": "2815008c40f54f017e853f8b059b59eca1acdb668b3ff0b1dd925589373d6e56"
           },
           "status": "deprecated",
-          "url": "/manifests/nightly/1.5.0-nightly.20260630/manifest.json",
-          "version": "1.5.0-nightly.20260630",
+          "url": "/manifests/nightly/1.0.0/manifest.json",
+          "version": "1.0.0",
           "revision": "1.0.0"
         },
         {
@@ -39,8 +39,8 @@
             "sha256": "85eed34b27888c89466883fbf752402bf6390928f1067484b5550c58907d3ccb"
           },
           "status": "revoked",
-          "url": "/manifests/nightly/1.5.0-nightly.bad/manifest.json",
-          "version": "1.5.0-nightly.bad",
+          "url": "/manifests/nightly/1.0.0-revoked/manifest.json",
+          "version": "1.0.0-revoked",
           "revision": "1.0.0-revoked"
         }
       ]
@@ -55,7 +55,7 @@
           },
           "status": "current",
           "url": "/assets/stable/manifest.json",
-          "version": "1.4.0",
+          "version": "1.0.2",
           "revision": "1.0.2"
         },
         {
@@ -64,8 +64,8 @@
             "sha256": "69601963eb31b37fa9b046eb8c398401b2cc215b566dfd6bfd1b45fe5d90dc71"
           },
           "status": "supported",
-          "url": "/manifests/stable/1.3.0/manifest.json",
-          "version": "1.3.0",
+          "url": "/manifests/stable/1.0.1/manifest.json",
+          "version": "1.0.1",
           "revision": "1.0.1"
         },
         {
@@ -74,8 +74,8 @@
             "sha256": "b112201b459365aa949db0bc4dd397642ea9e9304f7cc31397c9395be4f7b354"
           },
           "status": "deprecated",
-          "url": "/manifests/stable/1.2.0/manifest.json",
-          "version": "1.2.0",
+          "url": "/manifests/stable/1.0.0/manifest.json",
+          "version": "1.0.0",
           "revision": "1.0.0"
         },
         {
@@ -84,8 +84,8 @@
             "sha256": "2f4066251078c0d6f1770013d87b66bc8f2579c3407de6ee5d507352dc185289"
           },
           "status": "revoked",
-          "url": "/manifests/stable/1.1.0-bad/manifest.json",
-          "version": "1.1.0-bad",
+          "url": "/manifests/stable/1.0.0-revoked/manifest.json",
+          "version": "1.0.0-revoked",
           "revision": "1.0.0-revoked"
         }
       ]
@@ -93,7 +93,7 @@
   },
   "manifests": {
     "nightly": {
-      "1.5.0-nightly.20260702": {
+      "1.0.2": {
         "packages": [
           {
             "architecture": "arm64",
@@ -1534,12 +1534,12 @@
           }
         },
         "status": "current",
-        "version": "1.5.0-nightly.20260702",
+        "version": "1.0.2",
         "revision": "1.0.2"
       }
     },
     "stable": {
-      "1.4.0": {
+      "1.0.2": {
         "packages": [
           {
             "architecture": "arm64",
@@ -2980,7 +2980,7 @@
           }
         },
         "status": "current",
-        "version": "1.4.0",
+        "version": "1.0.2",
         "revision": "1.0.2"
       }
     }
