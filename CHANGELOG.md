@@ -99,6 +99,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Required profile software row digests to be derived from the row's
   name/version/source/architecture/evidence tuple instead of copied inventory
   or placeholder hashes.
+- Attached profile ABOM and OBOM links to the profile image block for each
+  architecture while keeping software inventory evidence at the architecture
+  evidence header.
 
 ## [1.4.1782944059] - 2026-07-01
 

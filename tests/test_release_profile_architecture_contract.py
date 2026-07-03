@@ -121,6 +121,39 @@ def test_abom_obom_architecture_scoped() -> None:
                             )
 
 
+def test_profile_image_evidence() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                label = f"{channel}:{profile_id}:{architecture['architecture']}"
+                section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[
+                    1
+                ].split("</section>", maxsplit=1)[0]
+                image_block = section.split("Profile Images", maxsplit=1)[1]
+                evidence_by_kind = {
+                    item["kind"]: item
+                    for item in architecture["evidence"]
+                    if item["kind"] in {"abom", "obom"}
+                }
+                assert set(evidence_by_kind) == {"abom", "obom"}, label
+                for kind, evidence in evidence_by_kind.items():
+                    assert f"/{architecture['architecture']}/" in evidence["url"], label
+                    assert evidence["url"] in image_block, f"{label}:{kind}"
+
+
 def test_software_evidence_scope() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))

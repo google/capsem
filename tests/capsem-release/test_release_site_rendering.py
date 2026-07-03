@@ -391,9 +391,13 @@ def test_profile_evidence_not_repeated_per_row() -> None:
             "Config Files",
             maxsplit=1,
         )[0]
+        image_block = section.split("Profile Images", maxsplit=1)[1]
 
         for evidence in architecture["evidence"]:
-            assert evidence["url"] in evidence_block
+            if evidence["kind"] == "software_inventory":
+                assert evidence["url"] in evidence_block
+            elif evidence["kind"] in {"abom", "obom"}:
+                assert evidence["url"] in image_block
             assert evidence["url"] not in software_block
 
 
