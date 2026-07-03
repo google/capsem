@@ -69,6 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Required every release package to generate a detail page with the package
   target, hashes, SBOM evidence, and owned binary inventory rendered from the
   machine graph.
+- Expanded release-package binary inventory fixtures and gates so every package
+  lists the full Capsem executable cohort, including app, tray, CLI, service,
+  process, TUI, MCP, gateway, and admin binaries.
 
 ## [1.4.1782944059] - 2026-07-01
 

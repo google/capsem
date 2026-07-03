@@ -100,12 +100,12 @@
             "binaries": [
               {
                 "architecture": "arm64",
-                "bytes": 76,
+                "bytes": 127,
                 "digest": {
-                  "blake3": "fa001cb4f021da5517871c1b807ef8f2ca074235133cfa9d14e9db49753f1731",
-                  "sha256": "bfa1cebfd15edfd44daaa4171dca9db235431ed3d4ecefca0b235fd963b94ea5"
+                  "blake3": "1ead7196d0aa64a1eeada52dca1bdc51bf370b7a8e66849566f0f66cb6bee04c",
+                  "sha256": "28db927120546a55d750f324b1275730c8afc527aaed01beafde3150d7f21374"
                 },
-                "installed_path": "/usr/local/bin/capsem-app",
+                "installed_path": "/Applications/Capsem.app/Contents/MacOS/capsem-app",
                 "name": "capsem-app",
                 "platform": "macos",
                 "sbom_component_ref": "SPDXRef-File-capsem-app",
@@ -115,18 +115,153 @@
               },
               {
                 "architecture": "arm64",
-                "bytes": 77,
+                "bytes": 107,
                 "digest": {
-                  "blake3": "3338948cda07301c6601756a5f1ebadf9cbf8e36befa413af32db2071745d0f8",
-                  "sha256": "6763c1ddc563b1ac28fddeb816f7e3c621ff8f97b37953d64a013ff9c7791c60"
+                  "blake3": "51de25cecf1b240c5f546ff7cd60ed936de5bf93bc31e1fd228a58d15ad73cf6",
+                  "sha256": "bae7c1f763fc838879afa704f8e33d616864c9e936e2f931091c167d9530614e"
                 },
-                "installed_path": "/usr/local/bin/capsem-tray",
+                "installed_path": "/usr/local/share/capsem/bin/capsem",
+                "name": "capsem",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem command-line executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 119,
+                "digest": {
+                  "blake3": "0ad6f51b21eba4c3f7797211fef574c34b0ba65a5ab82221ef5391c87a45e7c0",
+                  "sha256": "354c43f6f0b7eafc8ee7c331aa83a9384de3068943e62753611f85f778e320e8"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-admin",
+                "name": "capsem-admin",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-admin",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem release administration executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 123,
+                "digest": {
+                  "blake3": "09ee1fe31e7e87680f1c24a640adcbd4891a544f3c6565a128612733cecb79c0",
+                  "sha256": "bdff10bd7e63ed42ee5b4a38b90743de50bae5280e227fb716d0d2370d853489"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-gateway",
+                "name": "capsem-gateway",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-gateway",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem local gateway executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 115,
+                "digest": {
+                  "blake3": "c3b6ce56dc6b5269a1522a725530b66950ec78dade40745127b04cd1528aef90",
+                  "sha256": "6d6ef84a1daa7d8ec498234aec884858626d197a9029a6e56d8f2345d990da8d"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-mcp",
+                "name": "capsem-mcp",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem MCP server executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 137,
+                "digest": {
+                  "blake3": "4dd9f988fb42a5a3015db8f20ced3577471a4bc462c1b13dd5c67f6f9b02616a",
+                  "sha256": "81dbe6661e7e5d517b3c4030a1bb5f62c8a7f256916f45b7eb1b04ca73b274cb"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-mcp-aggregator",
+                "name": "capsem-mcp-aggregator",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp-aggregator",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem MCP aggregator executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 131,
+                "digest": {
+                  "blake3": "2fa259677cff8af737cb996c3ae274d497f1110cae982b72c420dfa3492ba1aa",
+                  "sha256": "86f70fdaaed1bf96784243677ee8193116b9f91f513bd910fd75dd94557b617f"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-mcp-builtin",
+                "name": "capsem-mcp-builtin",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp-builtin",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem builtin MCP tools executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 123,
+                "digest": {
+                  "blake3": "517420986edfb9e43481d36f3ff522ab6b305327cd85cdedf4cd5243354b8db2",
+                  "sha256": "0502def002f20e9873b22a60d9c581a70409126ea11f5178ea49b1978030fedd"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-process",
+                "name": "capsem-process",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-process",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem guest process bridge executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 123,
+                "digest": {
+                  "blake3": "da3f614d39f6a4b752bc75029c34051323f62ea15126b7803b3d01553d645a2b",
+                  "sha256": "dc1c23839c0d068a7496f4abf4a1d16bfe7442d84e79c4d0fbe237eadd1dbbea"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-service",
+                "name": "capsem-service",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-service",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem host service executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 117,
+                "digest": {
+                  "blake3": "bb97b4ca1cecff2db64ce0dd988a07078304b281dd453188a9d329a984875871",
+                  "sha256": "a66852736c143030f8a78557882cac2077153a7db6b27e83fc96751979536cf5"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-tray",
                 "name": "capsem-tray",
                 "platform": "macos",
                 "sbom_component_ref": "SPDXRef-File-capsem-tray",
                 "status": "current",
                 "version": "1.5.0-nightly.20260702",
                 "description": "Capsem tray companion executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 115,
+                "digest": {
+                  "blake3": "82bc56ea55e9c86626bfb91fb733c43a55947b75925f8e9bba898e787982a12b",
+                  "sha256": "aa1cf677478057eec0127b5cc1c3015e9118741cee67756a49dafc9aae7eff14"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-tui",
+                "name": "capsem-tui",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-tui",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem terminal UI executable"
               }
             ],
             "bytes": 73,
@@ -160,10 +295,40 @@
             "binaries": [
               {
                 "architecture": "arm64",
-                "bytes": 82,
+                "bytes": 94,
                 "digest": {
-                  "blake3": "4b7a1b2558cc0392b08eaa9af9c090c5a30e4bf0ee68c140e1b22f3ea3652914",
-                  "sha256": "b83aeef68e948209eb9106987ad6c01b426e30655a160ac5ac17cfac25be7ea4"
+                  "blake3": "32e4277762b36753c2b0202bbd80f72e6f7366a1ca458e4759b5f2c5e7f5120c",
+                  "sha256": "14f108750aec7514e9eaf76d7d4dab55995364d2324fa9ff52f4198b02611eef"
+                },
+                "installed_path": "/usr/bin/capsem",
+                "name": "capsem",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem command-line executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 106,
+                "digest": {
+                  "blake3": "629511308d2829ecf3772f3271f936972c56517c10bdb3d181b0c28121cd53ea",
+                  "sha256": "1bd8d32c134423a3b9a9d0b2c78f460a4cb0adcf1d10efa5621facc6f1624315"
+                },
+                "installed_path": "/usr/bin/capsem-admin",
+                "name": "capsem-admin",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-admin",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem release administration executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 102,
+                "digest": {
+                  "blake3": "93b07a8053ffee4975789e62229d7ca0022654c11b76634689edbf7795db9247",
+                  "sha256": "f1422456a4b9552747c9a0dabfaa82c943d7b778664da33942bd47bcb0a5e67a"
                 },
                 "installed_path": "/usr/bin/capsem-app",
                 "name": "capsem-app",
@@ -175,10 +340,100 @@
               },
               {
                 "architecture": "arm64",
-                "bytes": 83,
+                "bytes": 110,
                 "digest": {
-                  "blake3": "1b82e88bb95359658b10ce8189fa5ddcdcf6ba5b9cd904172ddf7dd83c3830c9",
-                  "sha256": "b9e6b6c64f45479633f63f6719d111856580cd9f993f5b66e59a285c33c100e4"
+                  "blake3": "c483793698664c463d6ef44dcdf058ac67b49e5632e87fe0e80742b854571470",
+                  "sha256": "382feeded0f78935c0379478c59398891858337546a789fab49a142a61cb36af"
+                },
+                "installed_path": "/usr/bin/capsem-gateway",
+                "name": "capsem-gateway",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-gateway",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem local gateway executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 102,
+                "digest": {
+                  "blake3": "274698b15648a5da768bbb6e25580689e114402b1c1c2b5e378444996d634cfb",
+                  "sha256": "4a28cf8600a519d43aa47027ef15680f2ffb5ceb274f34872060c0eb3fc84658"
+                },
+                "installed_path": "/usr/bin/capsem-mcp",
+                "name": "capsem-mcp",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem MCP server executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 124,
+                "digest": {
+                  "blake3": "56dafd875689d83c0f1e3738df4d2eea77373ac425fd0b96cae195054d35f16b",
+                  "sha256": "415349b6ebf45254bcfa6a44babc2737c0178fc074fa10d11024db81e6879439"
+                },
+                "installed_path": "/usr/bin/capsem-mcp-aggregator",
+                "name": "capsem-mcp-aggregator",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp-aggregator",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem MCP aggregator executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 118,
+                "digest": {
+                  "blake3": "203377e226e684e22629051f80cf8e2e2b3eb863c52df9e676fa5cb40e76e105",
+                  "sha256": "c93c335497c37f73f3d46c1f066c37f1250eb5802ce893971629d3093a95a938"
+                },
+                "installed_path": "/usr/bin/capsem-mcp-builtin",
+                "name": "capsem-mcp-builtin",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp-builtin",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem builtin MCP tools executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 110,
+                "digest": {
+                  "blake3": "e2f62fc4fc762c98637c1972ddb007badf5e6835e52ea95624e3f49fcd8034d1",
+                  "sha256": "a0ea8cc501747be624d872e0fdf0f049004370b96149f162fb4b29e06f12f543"
+                },
+                "installed_path": "/usr/bin/capsem-process",
+                "name": "capsem-process",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-process",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem guest process bridge executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 110,
+                "digest": {
+                  "blake3": "7ce94a4284b555d28fa978f41790c0f15d95a20a556821ed311a289d0cf77d43",
+                  "sha256": "ada181628362347f805078b5b0d484facb54e2081b689e0563aeae4a9afcf780"
+                },
+                "installed_path": "/usr/bin/capsem-service",
+                "name": "capsem-service",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-service",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem host service executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 104,
+                "digest": {
+                  "blake3": "47a9b0c6f80c8b47316e5a035fb4b4861f1b5f05dbab77aec5d1155566559436",
+                  "sha256": "d90678eb792bbf8438801a87fff6050c5d5462e6b3123d801b3e85cf1f47d406"
                 },
                 "installed_path": "/usr/bin/capsem-tray",
                 "name": "capsem-tray",
@@ -187,6 +442,21 @@
                 "status": "current",
                 "version": "1.5.0-nightly.20260702",
                 "description": "Capsem tray companion executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 102,
+                "digest": {
+                  "blake3": "bcb5eca8cf49023e4e37c4db463e872d9b30d8e841dcd609a1d51d0eb3fa477a",
+                  "sha256": "388320818098b05b653b0d929712ef0435906f8e3b93daadef074535b1b23f8f"
+                },
+                "installed_path": "/usr/bin/capsem-tui",
+                "name": "capsem-tui",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-tui",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem terminal UI executable"
               }
             ],
             "bytes": 79,
@@ -220,10 +490,40 @@
             "binaries": [
               {
                 "architecture": "amd64",
-                "bytes": 84,
+                "bytes": 94,
                 "digest": {
-                  "blake3": "e1314850479440ac17435c1001065e42257b92da3d61e1ee4e6909952ceb85bf",
-                  "sha256": "8ddfeff2b71a26a295fc3a907d687ad9b9c5af952cba3f5abb6d6a5e73863395"
+                  "blake3": "8e1f1711c5c0a05bf9702c97491bc220f7b76675180f9bf399962ac5acdf8b8c",
+                  "sha256": "9a42d8313742782ba18772853eee52ca76fffd512eb61739aee71b1de7d761f4"
+                },
+                "installed_path": "/usr/bin/capsem",
+                "name": "capsem",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem command-line executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 106,
+                "digest": {
+                  "blake3": "67c61c6d6a4c4797f190082bbf397287c8dca007ec17c04abf6e89db012623e6",
+                  "sha256": "324e15fac2b1ebe5676384cbbe24360d3a3a4073757dc0d040925cf4bf681a9f"
+                },
+                "installed_path": "/usr/bin/capsem-admin",
+                "name": "capsem-admin",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-admin",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem release administration executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 102,
+                "digest": {
+                  "blake3": "fed012b21bd43f44e14b66ff12be3313ecc0d4af7a88eb8e713ce7cb5ae5647e",
+                  "sha256": "a86e3739d0987c59764deeae1d1febe56832890ad18b57197bcf0ab38bfd0216"
                 },
                 "installed_path": "/usr/bin/capsem-app",
                 "name": "capsem-app",
@@ -235,10 +535,100 @@
               },
               {
                 "architecture": "amd64",
-                "bytes": 85,
+                "bytes": 110,
                 "digest": {
-                  "blake3": "544b2e6a8f56bbf8c43141fa384326215a81c2078cdd7754e9c11110541d5eb2",
-                  "sha256": "aab1d12d36e2f5ca7c80d40e491a4e266c2cd1e06e0ce0d26ec3a226b41a3cbb"
+                  "blake3": "5ee281e99db414d20fff17ed5ee66e7bebd17d012e4ad756aa7002c3edc376df",
+                  "sha256": "1c93c2d1257347b98ab266c174a91ae32ebbdc3ca06b6de9407b67ce345b4b83"
+                },
+                "installed_path": "/usr/bin/capsem-gateway",
+                "name": "capsem-gateway",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-gateway",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem local gateway executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 102,
+                "digest": {
+                  "blake3": "16be850c17f9a2056eb06f1daf8c8af62cb8f507806c446c325443d5d0804ee6",
+                  "sha256": "63a03f880bb3f9bdf8f6febde77757d658c8f60a34ae34566bb662bbf453b4fd"
+                },
+                "installed_path": "/usr/bin/capsem-mcp",
+                "name": "capsem-mcp",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem MCP server executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 124,
+                "digest": {
+                  "blake3": "328ef97807b4e3b61894215f4c9072f917793ba4a878a31d542531a0f870d71e",
+                  "sha256": "ab0e54b7d4addfff1d8d46d2059464f224f1f95da3f08e8a0e0529da9fe7b72f"
+                },
+                "installed_path": "/usr/bin/capsem-mcp-aggregator",
+                "name": "capsem-mcp-aggregator",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp-aggregator",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem MCP aggregator executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 118,
+                "digest": {
+                  "blake3": "f1d6e53bcf99b3cc794c07302854e4572191e7ffa85acb7d8f76911fca17dff0",
+                  "sha256": "04bfe1bde1f171ab5ffd1fade2fbad471bebe5b7bfb5397f56b29b9d3be900ce"
+                },
+                "installed_path": "/usr/bin/capsem-mcp-builtin",
+                "name": "capsem-mcp-builtin",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp-builtin",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem builtin MCP tools executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 110,
+                "digest": {
+                  "blake3": "9b9eb145779412e7c505ef1d23019f7c6de9ad1f6a90cf2658578e2a98599b3a",
+                  "sha256": "d8a85e91f9fe829c1bfe03f922439641e4ead1ecacbf97134233a7144e42db1b"
+                },
+                "installed_path": "/usr/bin/capsem-process",
+                "name": "capsem-process",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-process",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem guest process bridge executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 110,
+                "digest": {
+                  "blake3": "564e43a58e0105162d5d8586202a018e39898fd180c582d18d0704b6cf8e63e7",
+                  "sha256": "12f4ce8b4c5ab96189ed967f873ad9b7a08ca11d9438f2920c7be9bbddf8605b"
+                },
+                "installed_path": "/usr/bin/capsem-service",
+                "name": "capsem-service",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-service",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem host service executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 104,
+                "digest": {
+                  "blake3": "39e66d3ac08e3402885c348d2c130ae7a6590850d92acec06bb88e69ca0620d8",
+                  "sha256": "4176686c638df48c325b700f978d7a79487651a76a70b01c9757b63390ff4751"
                 },
                 "installed_path": "/usr/bin/capsem-tray",
                 "name": "capsem-tray",
@@ -247,6 +637,21 @@
                 "status": "current",
                 "version": "1.5.0-nightly.20260702",
                 "description": "Capsem tray companion executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 102,
+                "digest": {
+                  "blake3": "5cc13dfcfa10ce6368c73f020033a8228ce5d1fb1df4a5a716adf418e6be4f7a",
+                  "sha256": "1f1cc7c48c377d12ac3438265a9d4a6b59ce961530d30bfefb5ed5385a964da5"
+                },
+                "installed_path": "/usr/bin/capsem-tui",
+                "name": "capsem-tui",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-tui",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem terminal UI executable"
               }
             ],
             "bytes": 81,
@@ -1133,12 +1538,12 @@
             "binaries": [
               {
                 "architecture": "arm64",
-                "bytes": 41,
+                "bytes": 92,
                 "digest": {
-                  "blake3": "9a4df96ae5151f7f32e3fb1fe96dc4edb7ac42330033ad2abcab4214655b69fc",
-                  "sha256": "ac6c2173d15408410bd308b4c086913477426a7c08611e23f90312fccbe389be"
+                  "blake3": "3118301fb5aa0fecf802f807cf1c62b21558530f3015a5ce1f4bc99ed8d81d57",
+                  "sha256": "5419bee0dfc3f7893701941e64d191da7fc14ed2f730288138ec2a0b591184d7"
                 },
-                "installed_path": "/usr/local/bin/capsem-app",
+                "installed_path": "/Applications/Capsem.app/Contents/MacOS/capsem-app",
                 "name": "capsem-app",
                 "platform": "macos",
                 "sbom_component_ref": "SPDXRef-File-capsem-app",
@@ -1148,18 +1553,153 @@
               },
               {
                 "architecture": "arm64",
-                "bytes": 42,
+                "bytes": 72,
                 "digest": {
-                  "blake3": "c6e27f7caa17d3e97fd78eb2803c6ff347af29426ea8f68442522e671f5fbeca",
-                  "sha256": "333f1ddcb5176a7356bab0e4806dd33edf231aa27d57a803fef85d2847b49a03"
+                  "blake3": "e59d096d580f66bca03448d81060f3f2f4e55416212bb0c74322083d5f53b438",
+                  "sha256": "63d930e5c0b54c08144806bd845d3d6a74f7c15ceaf3a818e771ae0bbce27c15"
                 },
-                "installed_path": "/usr/local/bin/capsem-tray",
+                "installed_path": "/usr/local/share/capsem/bin/capsem",
+                "name": "capsem",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem command-line executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 84,
+                "digest": {
+                  "blake3": "6034e126e341903c7760245813f90f53d06f7fdef3c9ad3c84fc976174090466",
+                  "sha256": "68abdd89662fb7a5cf099fbf305cf03aae1b6962af1025422bfe8bc163f3aea1"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-admin",
+                "name": "capsem-admin",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-admin",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem release administration executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 88,
+                "digest": {
+                  "blake3": "fb495a61307eb1668d45217dba10f4e76172eb2c897d276ae8412eeef41fdeb1",
+                  "sha256": "9b04898ec9000d298e6e4e91c4e5bd5f0cc00461aa195748b09d59cb32c7379c"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-gateway",
+                "name": "capsem-gateway",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-gateway",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem local gateway executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 80,
+                "digest": {
+                  "blake3": "de22f56b6acebc71028ba26888c9536f5900095ac37927fb01b0d13be4262894",
+                  "sha256": "08042b1f3e0eae64404bc4c6bcec47a41075dcbfab93b1edc027812e539074c7"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-mcp",
+                "name": "capsem-mcp",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem MCP server executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 102,
+                "digest": {
+                  "blake3": "3368ed03beb40dfa764cbb7a758f5400cdf7939d5a07fffb101e2b764951dfee",
+                  "sha256": "dfe5f307d64e43c4bfb6308e7793c6273dcce9653677b804c17aa84aa5e94372"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-mcp-aggregator",
+                "name": "capsem-mcp-aggregator",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp-aggregator",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem MCP aggregator executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 96,
+                "digest": {
+                  "blake3": "1afe5ad0c3b37f6b899da8ea97bf4e0238498dcfd7d6fb097e66aa97878c8214",
+                  "sha256": "a5831f1cc42c47e47842a2025172c5dfaf7987a065cf7ae6cd33705bfb355ec8"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-mcp-builtin",
+                "name": "capsem-mcp-builtin",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp-builtin",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem builtin MCP tools executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 88,
+                "digest": {
+                  "blake3": "2513dd812e019e00077d376f7281f2385c81172dc26d5ba91e72a2d22c575f4a",
+                  "sha256": "9c40b20c56ceaf9f432d80e975b99d536ae3f2a100873d8f7f9348132ad34119"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-process",
+                "name": "capsem-process",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-process",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem guest process bridge executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 88,
+                "digest": {
+                  "blake3": "84b049d863ca209c5368003b672c19ad13d99c812adf6e4e995f3fe7ee8f23cb",
+                  "sha256": "0d7a5d6db806e73305c405fa7d559c71afd56e3109cab41e1b17ebbb0cb3ca00"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-service",
+                "name": "capsem-service",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-service",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem host service executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 82,
+                "digest": {
+                  "blake3": "e3f8cd3296c317d1606b9f1db97000160b768bb5b6344682b0c4996b97bb0e6c",
+                  "sha256": "387f815428d2c758c373ec901140c82520cedf448e3bb4bf50c2922763cbd828"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-tray",
                 "name": "capsem-tray",
                 "platform": "macos",
                 "sbom_component_ref": "SPDXRef-File-capsem-tray",
                 "status": "current",
                 "version": "1.4.0",
                 "description": "Capsem tray companion executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 80,
+                "digest": {
+                  "blake3": "6932fe41dc522c3e4aea28a49e7328e237bf02a1df8cefefa18b2bed1b81460f",
+                  "sha256": "3e0aeb37765bbbc570e0ac3d804afc5e6c7165983ff71c054fcb5784fd028dda"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-tui",
+                "name": "capsem-tui",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-tui",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem terminal UI executable"
               }
             ],
             "bytes": 38,
@@ -1193,10 +1733,40 @@
             "binaries": [
               {
                 "architecture": "arm64",
-                "bytes": 47,
+                "bytes": 59,
                 "digest": {
-                  "blake3": "01257ba39816235d180921fddca3ff17e750e9ffa7ddc5cdffcce1c5b2b5d070",
-                  "sha256": "46b940d212757ef98878e0f2f64c823dcebb366c879d07d53b0155f06b2e1d49"
+                  "blake3": "ae29c159b4618121052f068040dbbdf2eb03b04565ef7e60694e494401ae286b",
+                  "sha256": "45cf282c4da029def67f4314038427ab84cdbf7979710585782eaca3f7678e82"
+                },
+                "installed_path": "/usr/bin/capsem",
+                "name": "capsem",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem command-line executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 71,
+                "digest": {
+                  "blake3": "b9ee4642f9d0d798c662c2c9a6fd6f0a493db641cddd112e1be32217988e2ffc",
+                  "sha256": "e0315a4854838d90af7660b920e64260fde99e47d1a83040ccffe4ae9f947f16"
+                },
+                "installed_path": "/usr/bin/capsem-admin",
+                "name": "capsem-admin",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-admin",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem release administration executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 67,
+                "digest": {
+                  "blake3": "e4dbed5b7414c39e0419d632c8026252e383d262c5d22ff1f33f7100a1a2287e",
+                  "sha256": "5c459945ee4213532071465c282a88ff5a2ff6a5c27f2a2e8373448da05ad6fb"
                 },
                 "installed_path": "/usr/bin/capsem-app",
                 "name": "capsem-app",
@@ -1208,10 +1778,100 @@
               },
               {
                 "architecture": "arm64",
-                "bytes": 48,
+                "bytes": 75,
                 "digest": {
-                  "blake3": "146541b6c2ace3fccf705d205c79806ae9c573b521f05c5187ae3caaa7329479",
-                  "sha256": "1e5b7939995096244c102530e52ae32acb60f64eedb5db21843676a12abcff30"
+                  "blake3": "6f572ca3af9a761a2fb9af8347de2f4b6b5e7a6ee6da5b0388da45c34bfbc6f9",
+                  "sha256": "5535ef081a45c3a30f523abe90a85c1926939bcb9332753f6ae0725246e6e286"
+                },
+                "installed_path": "/usr/bin/capsem-gateway",
+                "name": "capsem-gateway",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-gateway",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem local gateway executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 67,
+                "digest": {
+                  "blake3": "48c90c0200fca93e8a7c7627f9bb9c97aaca7f09f5ea64e528a47b3b4d99de6c",
+                  "sha256": "e022ceba26b7bad5741610ca7df0ddbeb1b30a7455b6e299780c3084aa675002"
+                },
+                "installed_path": "/usr/bin/capsem-mcp",
+                "name": "capsem-mcp",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem MCP server executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 89,
+                "digest": {
+                  "blake3": "bef7399488e489042df992c35cfa4e157a92515d0fd76c1be7928ba4a23adb0b",
+                  "sha256": "36e3881dda63ffd75e811a65a66e633c53ff521d44703e7333647bfc13e4128e"
+                },
+                "installed_path": "/usr/bin/capsem-mcp-aggregator",
+                "name": "capsem-mcp-aggregator",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp-aggregator",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem MCP aggregator executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 83,
+                "digest": {
+                  "blake3": "1a60c7ce070623c338974807554a09a8d2d8422bfae5250f9b89b86aece71734",
+                  "sha256": "acdbdb64c8e9b1ecff8b1a8bd324acf374aca9e6c72ae4d80c84b8623f9300ea"
+                },
+                "installed_path": "/usr/bin/capsem-mcp-builtin",
+                "name": "capsem-mcp-builtin",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp-builtin",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem builtin MCP tools executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 75,
+                "digest": {
+                  "blake3": "3186226586ff4514944a667c93842486d71a9ac397545a00aa355918c9c5bb45",
+                  "sha256": "eb2b41c71354fb32b7d889a6a93c33fc58c8d452d3f3441e2b14f84fd47c8cd2"
+                },
+                "installed_path": "/usr/bin/capsem-process",
+                "name": "capsem-process",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-process",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem guest process bridge executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 75,
+                "digest": {
+                  "blake3": "14e16016062f104aaece8550999015f53b4dd023fd2fc997f8877b9a2db9a1b0",
+                  "sha256": "f41fa90aa2e1318b4ef8357153d689592795cd3b8c474e475b17305a40eaf9f2"
+                },
+                "installed_path": "/usr/bin/capsem-service",
+                "name": "capsem-service",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-service",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem host service executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 69,
+                "digest": {
+                  "blake3": "d26a22496ef5caeaf53c3d2b38ba7667aacbaee44185c5068f7ba58d18fadf40",
+                  "sha256": "0b2b094a9c206264570388fad9062b15a039e41019cedccd243ec65908293b6d"
                 },
                 "installed_path": "/usr/bin/capsem-tray",
                 "name": "capsem-tray",
@@ -1220,6 +1880,21 @@
                 "status": "current",
                 "version": "1.4.0",
                 "description": "Capsem tray companion executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 67,
+                "digest": {
+                  "blake3": "9f77c13a14467a3f4ebb582d4f23ad9c7cb6eacaeaac091e662ee71f93d50a73",
+                  "sha256": "3c83e38c5525a17f3cfef650e617092a8e6fb4c9603930c83a7df1be88fa256e"
+                },
+                "installed_path": "/usr/bin/capsem-tui",
+                "name": "capsem-tui",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-tui",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem terminal UI executable"
               }
             ],
             "bytes": 44,
@@ -1253,10 +1928,40 @@
             "binaries": [
               {
                 "architecture": "amd64",
-                "bytes": 49,
+                "bytes": 59,
                 "digest": {
-                  "blake3": "86326e2e05c1fc9e3bfb4b2bc4581bade8fb919e068533ef052f0fc5ed015c5e",
-                  "sha256": "fbf79708dbb7ef31eb9e12d254aa79715ca5a599e07bf24313a174f7d84ec018"
+                  "blake3": "830a71720e6b02bed1c91f9123356d47aedea6fa67b26c689d7b4c4568cb3ee4",
+                  "sha256": "fbdbee60ffa1fd969fcad084e94798a83866d4db93b68baef8aed6f49eb6fb94"
+                },
+                "installed_path": "/usr/bin/capsem",
+                "name": "capsem",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem command-line executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 71,
+                "digest": {
+                  "blake3": "d8a13312c199fca97624f5112e8744c8d8b8d7259814075898cfd6702d96a5e1",
+                  "sha256": "04d1a37e37f06be6368c3d86dfe586ed3541656eedd88e41860b32df4a024976"
+                },
+                "installed_path": "/usr/bin/capsem-admin",
+                "name": "capsem-admin",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-admin",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem release administration executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 67,
+                "digest": {
+                  "blake3": "8cab52dd5417a5e0893392c9a72bccc513e5ffc277cd793461daf3eee69e490b",
+                  "sha256": "c22511e51df22bcd3d8a2bfcc2008a4901cbe794d3bc4ce46fc82c4763628049"
                 },
                 "installed_path": "/usr/bin/capsem-app",
                 "name": "capsem-app",
@@ -1268,10 +1973,100 @@
               },
               {
                 "architecture": "amd64",
-                "bytes": 50,
+                "bytes": 75,
                 "digest": {
-                  "blake3": "2e24cc71f883996b58ede2390728ddd795bf1cc718525a03a54ba6d95aa3b7a8",
-                  "sha256": "14ba95dc4d7c12e717a8da4115f8159ec1e40aed60eec880dc94169f95a55072"
+                  "blake3": "32fa921d7057a9b54756b5f828bd606c663e6949b3eb494f69cab716313954b5",
+                  "sha256": "cc1f00b2ad9c245be6b968155dbd359e0bbca7711de852db5cc5f67b13e33b89"
+                },
+                "installed_path": "/usr/bin/capsem-gateway",
+                "name": "capsem-gateway",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-gateway",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem local gateway executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 67,
+                "digest": {
+                  "blake3": "c3a1ee0ac87ecff1f91bc8f8bab959b59e139a2c42d8cb50629024c120025a04",
+                  "sha256": "001e3edfca368e3fa0151785b4b0326ff052ded6d832109150f49d71e5a989ab"
+                },
+                "installed_path": "/usr/bin/capsem-mcp",
+                "name": "capsem-mcp",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem MCP server executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 89,
+                "digest": {
+                  "blake3": "efa30170219629756ac6a198a3f2492d2cbd58ce8c7cf9c3579bd2208d8e9065",
+                  "sha256": "95288e6ff0e87346da0694748d550704c48c69553d18111258ae393b59ce5958"
+                },
+                "installed_path": "/usr/bin/capsem-mcp-aggregator",
+                "name": "capsem-mcp-aggregator",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp-aggregator",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem MCP aggregator executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 83,
+                "digest": {
+                  "blake3": "f78f5f51535d523446f767ae9c503f93d8b456ae6f85d0a622e3599a7260de40",
+                  "sha256": "702fd83b50026acefa3d3d6bf491b27d4b722b307fa621544828f43d5830f85a"
+                },
+                "installed_path": "/usr/bin/capsem-mcp-builtin",
+                "name": "capsem-mcp-builtin",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mcp-builtin",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem builtin MCP tools executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 75,
+                "digest": {
+                  "blake3": "d611da07e4d13c996fe8b5c3f2fe1ea3e9619c17e3385dfb0734d54b84078b09",
+                  "sha256": "c569aed4bf665b8ad52c3a3f376e9c831ceb02b78e7255c4d576bcbd8e989cee"
+                },
+                "installed_path": "/usr/bin/capsem-process",
+                "name": "capsem-process",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-process",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem guest process bridge executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 75,
+                "digest": {
+                  "blake3": "d21af4d85e0a3dacc0ccdf2b8354ceb863a5ecbcaffbfc54b6b5c838783d47c5",
+                  "sha256": "372c2a69026029d1c71d82fb7f92eeab1e9d84a538c6a6a7c568778dc622ca95"
+                },
+                "installed_path": "/usr/bin/capsem-service",
+                "name": "capsem-service",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-service",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem host service executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 69,
+                "digest": {
+                  "blake3": "da84ceb23d8dfc954d28bdc3dd3a92f8acde1fb61cb746c64bec09bbc122c2cf",
+                  "sha256": "06f6509ce7dcbe94e6a18fbda81b5cfc0e98de242dac3f55d229c19dfefc52a7"
                 },
                 "installed_path": "/usr/bin/capsem-tray",
                 "name": "capsem-tray",
@@ -1280,6 +2075,21 @@
                 "status": "current",
                 "version": "1.4.0",
                 "description": "Capsem tray companion executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 67,
+                "digest": {
+                  "blake3": "ba0bc4ba019dd90606255c4dffb7d6aca5c2600aa1b487a53077b3607ed1fc00",
+                  "sha256": "6aec52462b9ae58010b768920579a95455838d27d8bfc3ace8767589b26ade6f"
+                },
+                "installed_path": "/usr/bin/capsem-tui",
+                "name": "capsem-tui",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-tui",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem terminal UI executable"
               }
             ],
             "bytes": 46,

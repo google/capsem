@@ -17,6 +17,19 @@ FIXTURE_GRAPH = (
     / "fixtures"
     / "release-graph-stable-nightly.json"
 )
+EXPECTED_BINARY_COHORT = {
+    "capsem",
+    "capsem-admin",
+    "capsem-app",
+    "capsem-gateway",
+    "capsem-mcp",
+    "capsem-mcp-aggregator",
+    "capsem-mcp-builtin",
+    "capsem-process",
+    "capsem-service",
+    "capsem-tray",
+    "capsem-tui",
+}
 
 
 def test_package_owns_binaries() -> None:
@@ -309,11 +322,40 @@ def test_macos_package_present() -> None:
 
 def test_full_binary_cohort() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    expected = {"capsem-app", "capsem-tray"}
 
     for channel, record in graph["channels"].items():
         current = next(item for item in record["manifests"] if item["status"] == "current")
         manifest = graph["manifests"][channel][current["version"]]
         for package in manifest["packages"]:
             binary_names = {binary["name"] for binary in package["binaries"]}
-            assert binary_names == expected, f"{channel}:{package['name']}"
+            assert binary_names == EXPECTED_BINARY_COHORT, f"{channel}:{package['name']}"
+
+
+def test_package_detail_binary_cohort() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for package in manifest["packages"]:
+            package_page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "packages"
+                / package["id"]
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            binary_names = {binary["name"] for binary in package["binaries"]}
+
+            assert binary_names == EXPECTED_BINARY_COHORT, f"{channel}:{package['name']}"
+            for binary in package["binaries"]:
+                assert binary["name"] in package_page
+                assert binary["installed_path"] in package_page
+                assert binary["version"] in package_page
+                assert binary["bytes"] > 0, binary
+                assert binary["digest"]["sha256"][:8] + "..." in package_page
+                assert binary["digest"]["blake3"][:8] + "..." in package_page
+                assert binary["sbom_component_ref"] in package_page
