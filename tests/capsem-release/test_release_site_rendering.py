@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import subprocess
 import json
+import fcntl
 from pathlib import Path
 
 
@@ -37,21 +38,7 @@ def test_site_loader_reads_channels_not_health() -> None:
 
 
 def test_root_lists_stable_nightly_and_manifest_statuses() -> None:
-    env = {
-        **os.environ,
-        "ASTRO_TELEMETRY_DISABLED": "1",
-        "CAPSEM_RELEASE_CHANNEL_DIST": str(FIXTURE_GRAPH),
-    }
-    result = subprocess.run(
-        ["pnpm", "--dir", "release-site", "run", "build"],
-        cwd=PROJECT_ROOT,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    build_release_site_from_fixture()
 
     index = (PROJECT_ROOT / "release-site" / "dist" / "index.html").read_text(
         encoding="utf-8"
@@ -365,20 +352,23 @@ def test_profile_page_forbids_current_binary_and_current_assets() -> None:
 
 
 def build_release_site_from_fixture() -> None:
-    env = {
-        **os.environ,
-        "ASTRO_TELEMETRY_DISABLED": "1",
-        "CAPSEM_RELEASE_CHANNEL_DIST": str(FIXTURE_GRAPH),
-    }
-    result = subprocess.run(
-        ["pnpm", "--dir", "release-site", "run", "build"],
-        cwd=PROJECT_ROOT,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    lock_path = Path(os.environ.get("TMPDIR", "/tmp")) / "capsem-release-site-build.lock"
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        env = {
+            **os.environ,
+            "ASTRO_TELEMETRY_DISABLED": "1",
+            "CAPSEM_RELEASE_CHANNEL_DIST": str(FIXTURE_GRAPH),
+        }
+        result = subprocess.run(
+            ["pnpm", "--dir", "release-site", "run", "build"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
     assert result.returncode == 0, result.stdout + result.stderr
 
 

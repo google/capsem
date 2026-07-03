@@ -1,0 +1,97 @@
+"""Top-level release-site HTML gates used by Sprinty release hardening."""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import fcntl
+from functools import cache
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_GRAPH = (
+    PROJECT_ROOT
+    / "tests"
+    / "capsem-release"
+    / "fixtures"
+    / "release-graph-stable-nightly.json"
+)
+RELEASE_SITE_DIST = PROJECT_ROOT / "release-site" / "dist"
+
+
+def test_channel_name_not_repeated() -> None:
+    build_release_site_from_fixture()
+
+    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+
+    assert "Channels" in index
+    assert "Stable" in index
+    assert "Nightly" in index
+    assert "<code>stable</code>" not in index
+    assert "<code>nightly</code>" not in index
+    assert "Recommended release channel" in index
+    assert "Faster-moving release channel" in index
+
+
+def test_truncated_hash_display() -> None:
+    build_release_site_from_fixture()
+
+    graph = fixture_graph()
+    full_hashes = [
+        graph["channels"]["stable"]["manifests"][0]["digest"]["sha256"],
+        graph["manifests"]["stable"]["1.4.0"]["packages"][0]["digest"]["sha256"],
+        graph["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0][
+            "digest"
+        ]["sha256"],
+        graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]["config"][0][
+            "digest"
+        ]["sha256"],
+    ]
+    rendered = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in [
+            RELEASE_SITE_DIST / "index.html",
+            RELEASE_SITE_DIST / "channels" / "stable" / "index.html",
+            RELEASE_SITE_DIST
+            / "channels"
+            / "stable"
+            / "profiles"
+            / "co-work"
+            / "index.html",
+        ]
+    )
+
+    for digest in full_hashes:
+        assert len(digest) == 64
+        assert digest in FIXTURE_GRAPH.read_text(encoding="utf-8")
+        assert f"{digest[:8]}..." in rendered
+        assert digest not in rendered
+
+
+@cache
+def build_release_site_from_fixture() -> None:
+    lock_path = Path(os.environ.get("TMPDIR", "/tmp")) / "capsem-release-site-build.lock"
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        env = {
+            **os.environ,
+            "ASTRO_TELEMETRY_DISABLED": "1",
+            "CAPSEM_RELEASE_CHANNEL_DIST": str(FIXTURE_GRAPH),
+        }
+        result = subprocess.run(
+            ["pnpm", "--dir", "release-site", "run", "build"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@cache
+def fixture_graph() -> dict:
+    return json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))

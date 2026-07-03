@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   current manifest language, hide legacy profile-catalog side links, truncate
   human-facing hashes, keep SBOM evidence on package rows, and require packages
   to own executable binary inventory in release-channel tests.
+- Added named release-site HTML gate tests for Sprinty closure and serialized
+  Astro fixture builds so concurrent release-site contract checks cannot corrupt
+  `release-site/dist`.
 
 ## [1.4.1782944059] - 2026-07-01
 
