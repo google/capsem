@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named copied-inventory digest gate proving software rows do not reuse
+  software-inventory evidence hashes.
 - Added a named release-site digest display gate proving human pages truncate
   hashes while machine JSON keeps full SHA-256/BLAKE3 values.
 - Repaired the stable/nightly release graph fixture so shared software

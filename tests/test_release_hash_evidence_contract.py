@@ -181,7 +181,7 @@ def test_software_inventory_row_digests_are_row_owned() -> None:
     _assert_software_rows_do_not_reuse_inventory_digest()
 
 
-def test_software_rows_do_not_reuse_inventory_digest() -> None:
+def test_copied_inventory_digests_rejected() -> None:
     _assert_software_rows_do_not_reuse_inventory_digest()
 
 
