@@ -94,6 +94,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Normalized release package architecture metadata to the profile graph's
   canonical `x86_64` spelling so package availability joins by channel
   architecture instead of profile-owned package theater.
+- Added a named software-evidence scope gate proving profile software rows do
+  not repeat architecture-level evidence URLs.
 
 ## [1.4.1782944059] - 2026-07-01
 
