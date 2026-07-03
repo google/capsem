@@ -36,6 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generated channel pages.
 - Added a release package gate that requires the macOS `.pkg` package to appear
   in the package inventory and generated channel page.
+- Added a package-owned binary cohort gate requiring each release package to
+  list the expected Capsem executables.
 
 ## [1.4.1782944059] - 2026-07-01
 

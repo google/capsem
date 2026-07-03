@@ -102,3 +102,15 @@ def test_macos_package_present() -> None:
         assert package["name"].endswith(".pkg")
         assert package["name"] in stable
         assert package["url"] in stable
+
+
+def test_full_binary_cohort() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    expected = {"capsem-app", "capsem-tray"}
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for package in manifest["packages"]:
+            binary_names = {binary["name"] for binary in package["binaries"]}
+            assert binary_names == expected, f"{channel}:{package['name']}"
