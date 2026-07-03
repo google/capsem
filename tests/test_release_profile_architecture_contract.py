@@ -358,6 +358,58 @@ def test_config_and_images_are_separate() -> None:
             assert image["url"] not in config_section
 
 
+def test_profile_arch_packages_and_images_blocks() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                label = f"{channel}:{profile_id}:{architecture['architecture']}"
+                section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[
+                    1
+                ].split("</section>", maxsplit=1)[0]
+                evidence_block = section.split("Profile Evidence", maxsplit=1)[1].split(
+                    "Installed Software",
+                    maxsplit=1,
+                )[0]
+                software_block = section.split("Installed Software", maxsplit=1)[1].split(
+                    "Config Files",
+                    maxsplit=1,
+                )[0]
+                config_block = section.split("Config Files", maxsplit=1)[1].split(
+                    "Profile Images",
+                    maxsplit=1,
+                )[0]
+                image_block = section.split("Profile Images", maxsplit=1)[1]
+
+                for software in architecture["software"]:
+                    assert software["name"] in software_block, label
+                    assert software["version"] in software_block, label
+                    assert software["name"] not in image_block, label
+                for config in architecture["config"]:
+                    assert config["url"] in config_block, label
+                    assert config["url"] not in software_block, label
+                    assert config["url"] not in image_block, label
+                for image in architecture["images"]:
+                    assert image["url"] in image_block, label
+                    assert image["url"] not in software_block, label
+                    assert image["url"] not in config_block, label
+                for evidence in architecture["evidence"]:
+                    owner_block = image_block if evidence["kind"] in {"abom", "obom"} else evidence_block
+                    assert evidence["url"] in owner_block, label
+
+
 def test_all_profile_config_files() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
