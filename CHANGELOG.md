@@ -131,6 +131,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   binary table, unblocking generated release-output contract checks.
 - Replaced profile config kind strings with a release graph enum and updated
   remote readiness validation to reject unknown config categories.
+- Added a full-machine-digest gate proving release graph JSON keeps complete
+  SHA-256 and BLAKE3 digests for manifests, packages, binaries, profile
+  config, images, software rows, ABOM, OBOM, and software inventory evidence.
 
 ## [1.4.1782944059] - 2026-07-01
 
