@@ -67,6 +67,29 @@ def test_channel_descriptions() -> None:
     assert "Faster-moving release channel for daily fixes and early validation." not in stripped_index
 
 
+def test_root_channel_table_semantics() -> None:
+    build_release_site_from_fixture()
+
+    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+
+    assert "Selected manifest" not in index
+    assert ">Status<" not in index
+    assert ">Records<" not in index
+    assert "manifest records" not in index
+    assert ">History<" not in index
+    assert "Manifest revision" in index
+    assert "Updated" in index
+    assert "Coverage" in index
+    assert "Manifest URL" in index
+    assert "<code>1.0.2</code>" in index
+    assert "2026-07-03T05:45:26Z" in index
+    assert "3 packages" in index
+    assert "2 profiles" in index
+    assert "arm64, x86_64" in index
+    assert "/assets/stable/manifest.json" in index
+    assert "/assets/nightly/manifest.json" in index
+
+
 def build_release_site_from_graph(graph_path: Path) -> None:
     env = {
         **os.environ,
