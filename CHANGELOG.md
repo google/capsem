@@ -105,6 +105,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Renamed profile architecture software tables to installed software and added
   a gate proving channel package names and URLs do not leak into profile
   installed-inventory blocks.
+- Added a named profile config-class gate proving generated profile pages
+  render profile, MCP, enforcement, detection, package-manager, build, tips,
+  and root-manifest config entries.
 
 ## [1.4.1782944059] - 2026-07-01
 

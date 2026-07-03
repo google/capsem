@@ -337,6 +337,52 @@ def test_all_profile_config_files() -> None:
                     assert config["url"] in page
 
 
+def test_all_config_classes_render() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    required_kinds = {
+        "profile",
+        "mcp",
+        "enforcement",
+        "detection",
+        "apt",
+        "python",
+        "npm",
+        "build",
+        "tips",
+        "root_manifest",
+    }
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                label = f"{channel}:{profile_id}:{architecture['architecture']}"
+                kinds = {config["kind"] for config in architecture["config"]}
+                assert required_kinds.issubset(kinds), label
+
+                section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[
+                    1
+                ].split("</section>", maxsplit=1)[0]
+                config_block = section.split("Config Files", maxsplit=1)[1].split(
+                    "Profile Images",
+                    maxsplit=1,
+                )[0]
+                for config in architecture["config"]:
+                    assert config["kind"] in config_block, label
+                    assert config["path"] in config_block, label
+                    assert config["url"] in config_block, label
+
+
 def test_all_profile_image_artifacts() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
