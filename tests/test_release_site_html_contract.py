@@ -73,6 +73,27 @@ def test_channel_list_has_no_status_or_records_theater() -> None:
     assert "arm64, x86_64" in index
 
 
+def test_root_channel_manifest_metadata() -> None:
+    build_release_site_from_fixture()
+
+    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+
+    assert "Manifest revision" in index
+    assert "Updated" in index
+    assert "Coverage" in index
+    assert "Manifest URL" in index
+    assert "Selected manifest" not in index
+    assert ">Status<" not in index
+    assert ">Records<" not in index
+    assert "/assets/stable/manifest.json" in index
+    assert "/assets/nightly/manifest.json" in index
+    assert "<code>1.0.2</code>" in index
+    assert "2026-07-03T05:45:26Z" in index
+    assert "3 packages" in index
+    assert "2 profiles" in index
+    assert "arm64, x86_64" in index
+
+
 def test_one_manifest_url() -> None:
     build_release_site_from_fixture()
 

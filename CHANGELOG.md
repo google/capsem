@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named root release-channel metadata gate proving the index renders
+  manifest revision, update time, package/profile coverage, architectures, and
+  canonical manifest URLs without Selected/Status/Records noise.
 - Hardened the release-site readiness checker so stale generated HTML is
   rejected when channel pages stop matching the source channel, manifest,
   package, profile, and package-owned binary JSON values.
