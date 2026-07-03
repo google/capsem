@@ -49,6 +49,7 @@ const evidence = Array.isArray(selectedPackage.evidence) ? selectedPackage.evide
       <dt class="text-zinc-500">Channel</dt><dd><code>{data.channel}</code></dd>
       <dt class="text-zinc-500">ID</dt><dd><code>{selectedPackage.id}</code></dd>
       <dt class="text-zinc-500">Kind</dt><dd>{selectedPackage.kind}</dd>
+      <dt class="text-zinc-500">Target</dt><dd><code>{selectedPackage.architecture} / {selectedPackage.platform}</code></dd>
       <dt class="text-zinc-500">Name</dt><dd>{selectedPackage.name}</dd>
       <dt class="text-zinc-500">Version</dt><dd><code>{selectedPackage.version}</code></dd>
       <dt class="text-zinc-500">Download</dt><dd>{selectedPackage.url ? <a class="break-all text-blue-600 underline" href={selectedPackage.url}>{selectedPackage.url}</a> : <span class="text-zinc-500">not published</span>}</dd>

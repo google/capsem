@@ -187,6 +187,38 @@ def test_binary_descriptions_from_metadata() -> None:
     assert "Capsem binary package" not in package_page
 
 
+def test_binaries_inherit_package_target_not_all() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    stable = (
+        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
+    ).read_text(encoding="utf-8")
+    binaries_section = stable.split("Capsem Binaries", maxsplit=1)[1].split(
+        "Profile References",
+        maxsplit=1,
+    )[0]
+
+    assert ">all<" not in binaries_section
+    for package in graph["manifests"]["stable"]["1.4.0"]["packages"]:
+        target = f"{package['architecture']} / {package['platform']}"
+        for binary in package["binaries"]:
+            assert binary["architecture"] == package["architecture"], binary
+            assert binary["platform"] == package["platform"], binary
+            assert target in binaries_section
+
+        package_page = (
+            RELEASE_SITE_DIST
+            / "channels"
+            / "stable"
+            / "packages"
+            / package["id"]
+            / "index.html"
+        ).read_text(encoding="utf-8")
+        assert target in package_page
+        assert ">all<" not in package_page
+
+
 def test_macos_package_present() -> None:
     build_release_site_from_fixture()
 

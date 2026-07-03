@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against leaking sibling package binaries or evidence.
 - Moved release-channel binary descriptions into generated package metadata and
   required the release site to render those descriptions from machine JSON.
+- Rendered package-owned binary targets from the owning package architecture and
+  platform instead of hiding target information from human release pages.
 
 ## [1.4.1782944059] - 2026-07-01
 

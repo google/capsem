@@ -156,6 +156,7 @@ const packageGroups = Array.from(
           <tr class="border-b border-zinc-200 text-left text-zinc-500">
             <th class="py-2 pr-4 font-medium">Version</th>
             <th class="py-2 pr-4 font-medium">Binary</th>
+            <th class="py-2 pr-4 font-medium">Package target</th>
             <th class="py-2 pr-4 font-medium">Description</th>
             <th class="py-2 pr-4 font-medium">Installed path</th>
             <th class="py-2 pr-4 font-medium">Bytes</th>
@@ -169,6 +170,7 @@ const packageGroups = Array.from(
             <tr class="border-b border-zinc-100 align-top">
               <td class="py-3 pr-4"><code>{binary.version}</code></td>
               <td class="py-3 pr-4">{binary.name}</td>
+              <td class="py-3 pr-4"><code>{binary.architecture} / {binary.platform}</code></td>
               <td class="py-3 pr-4 text-zinc-600">{binary.description}</td>
               <td class="py-3 pr-4"><code>{binary.installed_path}</code></td>
               <td class="py-3 pr-4">{byteLabel(binary.bytes)}</td>
@@ -178,7 +180,7 @@ const packageGroups = Array.from(
             </tr>
           )) : (
             <tr>
-              <td class="py-4 pr-4 text-zinc-600" colspan="8">No executable binary inventory is published in this manifest.</td>
+              <td class="py-4 pr-4 text-zinc-600" colspan="9">No executable binary inventory is published in this manifest.</td>
             </tr>
           )}
         </tbody>
