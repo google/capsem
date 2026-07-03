@@ -104,7 +104,8 @@ jobs:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
         run: |
           uv run python scripts/check-release-site-contract.py \
-            --release-site "$RELEASE_SITE_URL" \
-            --channel "$CHANNEL" \
+            --base-url "$RELEASE_SITE_URL" \
+            --channel stable \
+            --channel nightly \
             --attempts 6 \
             --delay-seconds 10

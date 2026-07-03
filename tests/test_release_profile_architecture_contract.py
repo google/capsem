@@ -610,6 +610,14 @@ def test_config_kind_enum_contract(monkeypatch) -> None:
     checker = _readiness_checker_module()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     profile = json.loads(json.dumps(graph["manifests"]["stable"]["1.4.0"]["profiles"]["co-work"]))
+    generated_kind_profile = json.loads(json.dumps(profile))
+    for architecture in generated_kind_profile["architectures"]:
+        for config in architecture["config"]:
+            config["kind"] = {
+                "apt": "apt_packages",
+                "python": "python_requirements",
+                "npm": "npm_packages",
+            }.get(config["kind"], config["kind"])
     profile["architectures"][0]["config"][0]["kind"] = "misc"
 
     monkeypatch.setattr(
@@ -624,6 +632,18 @@ def test_config_kind_enum_contract(monkeypatch) -> None:
         "check_release_graph_artifact",
         lambda *_args, **_kwargs: [],
     )
+
+    generated_kind_failures = checker.check_release_graph_profile(
+        "https://release.capsem.test",
+        "stable",
+        "co-work",
+        generated_kind_profile,
+    )
+    assert not [
+        failure
+        for failure in generated_kind_failures
+        if "config kind" in failure and "is not allowed" in failure
+    ]
 
     failures = checker.check_release_graph_profile(
         "https://release.capsem.test",

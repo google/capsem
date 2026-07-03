@@ -262,6 +262,93 @@ def test_asset_release_preserves_live_binary_metadata_before_channel_build(
     assert merged["binaries"] == previous_data["binaries"]
 
 
+def test_asset_release_preserves_binary_metadata_from_previous_graph_manifest(
+    tmp_path: Path,
+) -> None:
+    previous = tmp_path / "previous" / "manifest.json"
+    previous.parent.mkdir(parents=True, exist_ok=True)
+    previous.write_text(
+        json.dumps(
+            {
+                "version": "1.4.0+assets.2030.0101.1",
+                "status": "current",
+                "packages": [
+                    {
+                        "id": "capsem-1-4-0-pkg",
+                        "name": "Capsem-1.4.0.pkg",
+                        "version": "1.4.0",
+                        "bytes": 42,
+                        "digest": {
+                            "sha256": "1" * 64,
+                            "blake3": "2" * 64,
+                        },
+                        "binaries": [
+                            {
+                                "name": "capsem-app",
+                                "description": "Capsem app",
+                                "installed_path": "/Applications/Capsem.app/Contents/MacOS/capsem-app",
+                                "bytes": 11,
+                                "digest": {
+                                    "sha256": "3" * 64,
+                                    "blake3": "4" * 64,
+                                },
+                                "sbom_component_ref": "SPDXRef-File-capsem-app",
+                            }
+                        ],
+                        "evidence": [
+                            {
+                                "kind": "sbom",
+                                "name": "capsem-1-4-0-pkg-sbom.spdx.json",
+                                "bytes": 43,
+                                "digest": {
+                                    "sha256": "5" * 64,
+                                    "blake3": "6" * 64,
+                                },
+                            }
+                        ],
+                    }
+                ],
+                "profiles": {},
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    new = _manifest(tmp_path / "new" / "manifest.json", version="2030.0103.1")
+
+    subprocess.run(
+        [
+            str(PRESERVE_BINARY_SCRIPT),
+            "--manifest-path",
+            str(new),
+            "--previous-manifest-url",
+            f"file://{previous}",
+        ],
+        cwd=PROJECT_ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=True,
+    )
+
+    merged = json.loads(new.read_text(encoding="utf-8"))
+    assert merged["binaries"]["current"] == "1.4.0"
+    release = merged["binaries"]["releases"]["1.4.0"]
+    assert release["version"] == "1.4.0"
+    assert release["min_assets"] == "2030.0103.1"
+    package, sbom = release["files"]
+    assert package["name"] == "Capsem-1.4.0.pkg"
+    assert package["sha256"] == "1" * 64
+    assert package["blake3"] == "2" * 64
+    assert package["binaries"][0]["name"] == "capsem-app"
+    assert package["binaries"][0]["sha256"] == "3" * 64
+    assert package["binaries"][0]["blake3"] == "4" * 64
+    assert sbom["name"] == "capsem-1-4-0-pkg-sbom.spdx.json"
+    assert sbom["sha256"] == "5" * 64
+    assert sbom["blake3"] == "6" * 64
+
+
 def test_asset_release_binary_metadata_preserver_bootstraps_when_previous_missing(
     tmp_path: Path,
 ) -> None:

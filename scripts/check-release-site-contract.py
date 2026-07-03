@@ -17,10 +17,17 @@ def main() -> int:
     )
     parser.add_argument(
         "--release-site",
+        "--base-url",
+        dest="release_site",
         default="https://release.capsem.org",
         help="Public release-channel site root.",
     )
-    parser.add_argument("--channel", default="stable", help="Asset channel to validate.")
+    parser.add_argument(
+        "--channel",
+        action="append",
+        dest="channels",
+        help="Asset channel to validate. Repeat to validate multiple channels.",
+    )
     parser.add_argument(
         "--attempts",
         type=int,
@@ -34,12 +41,17 @@ def main() -> int:
         help="Delay between failed validation attempts.",
     )
     args = parser.parse_args()
-    return validate_release_site(
-        release_site=args.release_site,
-        channel=args.channel,
-        attempts=args.attempts,
-        delay_seconds=args.delay_seconds,
-    )
+    exit_code = 0
+    for channel in args.channels or ["stable"]:
+        channel_exit_code = validate_release_site(
+            release_site=args.release_site,
+            channel=channel,
+            attempts=args.attempts,
+            delay_seconds=args.delay_seconds,
+        )
+        if channel_exit_code != 0:
+            exit_code = channel_exit_code
+    return exit_code
 
 
 def validate_release_site(

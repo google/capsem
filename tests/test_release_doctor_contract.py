@@ -550,18 +550,20 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
 
 def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_deploy() -> None:
     workflow = _workflow_text("release-channel.yaml")
+    validator_step = workflow.split("- name: Validate deployed asset channel content", maxsplit=1)[
+        1
+    ].split("\n      - name:", maxsplit=1)[0]
 
     assert "Validate deployed asset channel content" in workflow
-    assert "uv run python scripts/check-release-site-contract.py" in workflow
-    assert "--release-site \"$RELEASE_SITE_URL\"" in workflow
-    assert "--channel \"$CHANNEL\"" in workflow
-    assert "--attempts 6" in workflow
-    assert "--delay-seconds 10" in workflow
+    assert "uv run python scripts/check-release-site-contract.py" in validator_step
+    assert "--base-url \"$RELEASE_SITE_URL\"" in validator_step
+    assert "--channel stable" in validator_step
+    assert "--channel nightly" in validator_step
+    assert "--channel \"$CHANNEL\"" not in validator_step
+    assert "--attempts 6" in validator_step
+    assert "--delay-seconds 10" in validator_step
     assert workflow.index("cloudflare/wrangler-action@v3") < workflow.index(
         "Validate deployed asset channel content"
-    )
-    assert workflow.index("Validate deployed asset channel content") < workflow.index(
-        "Smoke public asset channel"
     )
 
 
@@ -637,6 +639,58 @@ def test_release_site_contract_script_fails_on_content_drift(capsys) -> None:
     assert exit_code == 1
     assert "health asset hash mismatch" in captured.err
     assert "arm64-vmlinuz" in captured.err
+
+
+def test_release_site_contract_cli_validates_each_requested_channel(
+    monkeypatch, capsys
+) -> None:
+    validator = _release_site_contract_module()
+    checked_channels: list[str] = []
+
+    class FakeChecker:
+        BLAKE3_IMPORT_ERROR = None
+
+        @staticmethod
+        def check_release_site_dns(release_site: str):
+            assert release_site == "https://release.capsem.org"
+            return SimpleNamespace(ok=True, name="release.capsem.org DNS", detail="ok")
+
+        @staticmethod
+        def check_release_site_contract(release_site: str, channel: str):
+            assert release_site == "https://release.capsem.org"
+            checked_channels.append(channel)
+            return SimpleNamespace(
+                ok=True,
+                name="release.capsem.org contract",
+                detail=f"{channel} ok",
+            )
+
+    monkeypatch.setattr(validator, "load_readiness_checker", lambda: FakeChecker)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "check-release-site-contract.py",
+            "--base-url",
+            "https://release.capsem.org",
+            "--channel",
+            "stable",
+            "--channel",
+            "nightly",
+            "--attempts",
+            "1",
+            "--delay-seconds",
+            "0",
+        ],
+    )
+
+    exit_code = validator.main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert checked_channels == ["stable", "nightly"]
+    assert "stable release-channel contract passed" in captured.out
+    assert "nightly release-channel contract passed" in captured.out
 
 
 def test_release_channel_cloudflare_prerequisites_are_documented() -> None:

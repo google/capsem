@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed the release-channel deploy validation rail so Cloudflare checks stable
+  and nightly content through the public domain, preserves package metadata
+  from graph manifests, accepts generated profile config enums, and validates
+  package-owned SBOM evidence.
 - Added a stable/nightly switch gate proving canonical channel manifest URLs
   resolve distinct package and profile state without cross-channel contamination.
 - Added a nightly co-work profile isolation gate proving a profile architecture
