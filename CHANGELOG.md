@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added an adversarial Codecov component contract that fails when a workspace
+  crate path disappears from coverage reporting.
 - Appended Python release/package integration tests to the uploaded coverage
   report so package rail coverage is visible in Codecov.
 - Added release-site coverage generation and Codecov upload wiring so the

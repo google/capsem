@@ -94,6 +94,32 @@ def test_every_crate_in_codecov() -> None:
     )
 
 
+def test_all_workspace_crates_reported() -> None:
+    packages = workspace_packages()
+    components = codecov_components((PROJECT_ROOT / "codecov.yml").read_text())
+
+    missing = missing_workspace_crates_in_codecov(packages, components)
+    assert not missing, (
+        "codecov.yml components must report every Cargo workspace crate; "
+        f"missing {missing}"
+    )
+
+    mcp_builtin_path = "crates/capsem-mcp-builtin/src/**"
+    mutated = {
+        component_id: CodecovComponent(
+            component_id=component.component_id,
+            paths=tuple(path for path in component.paths if path != mcp_builtin_path),
+            targets=component.targets,
+        )
+        for component_id, component in components.items()
+    }
+    mutated_missing = missing_workspace_crates_in_codecov(packages, mutated)
+    assert "capsem-mcp-builtin" in mutated_missing, (
+        "the workspace coverage contract must fail if a release-critical "
+        "crate disappears from Codecov components"
+    )
+
+
 def test_low_coverage_components_visible() -> None:
     components = codecov_components((PROJECT_ROOT / "codecov.yml").read_text())
 
@@ -349,6 +375,24 @@ def codecov_components(codecov: str) -> dict[str, CodecovComponent]:
 
     flush()
     return components
+
+
+def missing_workspace_crates_in_codecov(
+    packages: dict[str, WorkspacePackage],
+    components: dict[str, CodecovComponent],
+) -> list[str]:
+    component_paths = {
+        path
+        for component in components.values()
+        for path in component.paths
+    }
+    return [
+        package.name
+        for package in sorted(packages.values(), key=lambda item: item.name)
+        if not any(
+            path.startswith(f"{package.path}/") for path in component_paths
+        )
+    ]
 
 
 def rust_coverage_commands(paths: list[Path]) -> dict[str, str]:
