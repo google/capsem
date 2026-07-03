@@ -1,9 +1,10 @@
-import { cpSync, existsSync } from 'node:fs';
+import { cpSync, existsSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 
 const channelDist = process.env.CAPSEM_RELEASE_CHANNEL_DIST;
 if (!channelDist) {
-  throw new Error('CAPSEM_RELEASE_CHANNEL_DIST must point at the generated release-channel dist');
+  console.log('CAPSEM_RELEASE_CHANNEL_DIST is unset; skipping release-channel overlay.');
+  process.exit(0);
 }
 
 const source = resolve('dist');
@@ -14,6 +15,10 @@ if (!existsSync(source)) {
 }
 if (!existsSync(target)) {
   throw new Error(`Release-channel dist does not exist: ${target}`);
+}
+if (statSync(target).isFile()) {
+  console.log(`CAPSEM_RELEASE_CHANNEL_DIST points at a graph fixture file (${target}); skipping release-channel overlay.`);
+  process.exit(0);
 }
 
 cpSync(source, target, { recursive: true });

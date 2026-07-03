@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a release-site graph mutation gate proving Astro pages render channel,
+  package, binary, profile, software, and image fields from the JSON graph, and
+  made the local `build:channel` gate build against the checked-in fixture when
+  no release-channel output path is provided.
 - Added a named release-site gate proving generated pages and release-site
   loaders do not reintroduce a profile catalog side channel.
 - Added an explicit release manifest-version rail so channel manifests publish

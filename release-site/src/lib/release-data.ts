@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 
 type JsonObject = Record<string, any>;
+const DEFAULT_RELEASE_GRAPH = '../tests/capsem-release/fixtures/release-graph-stable-nightly.json';
 
 export interface ReleaseData {
   dist: string;
@@ -39,10 +40,7 @@ export interface ChannelRow {
 }
 
 export function loadReleaseData(): ReleaseData {
-  const distEnv = process.env.CAPSEM_RELEASE_CHANNEL_DIST;
-  if (!distEnv) {
-    throw new Error('CAPSEM_RELEASE_CHANNEL_DIST must point at target/release-channel or a release graph JSON file');
-  }
+  const distEnv = process.env.CAPSEM_RELEASE_CHANNEL_DIST ?? DEFAULT_RELEASE_GRAPH;
   const dist = resolveReleaseInput(distEnv);
   if (isJsonFile(dist)) {
     return loadGraphData(dist);
