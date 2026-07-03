@@ -60,7 +60,7 @@ def test_profile_architecture_blocks() -> None:
                 heading = f"Architecture {architecture['architecture']}"
                 assert heading in page
                 section = page.split(heading, maxsplit=1)[1].split("</section>", maxsplit=1)[0]
-                assert "Software Inventory" in section
+                assert "Installed Software" in section
                 assert "Config Files" in section
                 assert "Profile Images" in section
                 assert "Profile Evidence" in section
@@ -88,10 +88,10 @@ def test_profile_evidence_at_architecture_top() -> None:
                 )[1].split("</section>", maxsplit=1)[0]
 
                 assert section.index("Profile Evidence") < section.index(
-                    "Software Inventory"
+                    "Installed Software"
                 )
                 evidence_block = section.split("Profile Evidence", maxsplit=1)[1].split(
-                    "Software Inventory",
+                    "Installed Software",
                     maxsplit=1,
                 )[0]
                 image_block = section.split("Profile Images", maxsplit=1)[1]

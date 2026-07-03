@@ -154,6 +154,46 @@ def test_profile_image_evidence() -> None:
                     assert evidence["url"] in image_block, f"{label}:{kind}"
 
 
+def test_installed_inventory_not_channel_packages() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        channel_package_names = {package["name"] for package in manifest["packages"]}
+        channel_package_urls = {package["url"] for package in manifest["packages"]}
+
+        for profile_id, profile in manifest["profiles"].items():
+            assert "packages" not in profile
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                assert "packages" not in architecture
+                label = f"{channel}:{profile_id}:{architecture['architecture']}"
+                section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[
+                    1
+                ].split("</section>", maxsplit=1)[0]
+                installed_block = section.split("Installed Software", maxsplit=1)[1].split(
+                    "Config Files",
+                    maxsplit=1,
+                )[0]
+
+                for software in architecture["software"]:
+                    assert software["name"] in installed_block, label
+                    assert software["version"] in installed_block, label
+                for package_name in channel_package_names:
+                    assert package_name not in installed_block, label
+                for package_url in channel_package_urls:
+                    assert package_url not in installed_block, label
+
+
 def test_software_evidence_scope() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
@@ -175,10 +215,10 @@ def test_software_evidence_scope() -> None:
                     1
                 ].split("</section>", maxsplit=1)[0]
                 evidence_block = section.split("Profile Evidence", maxsplit=1)[1].split(
-                    "Software Inventory",
+                    "Installed Software",
                     maxsplit=1,
                 )[0]
-                software_block = section.split("Software Inventory", maxsplit=1)[1].split(
+                software_block = section.split("Installed Software", maxsplit=1)[1].split(
                     "Config Files",
                     maxsplit=1,
                 )[0]
@@ -211,7 +251,7 @@ def test_profile_architecture_sections() -> None:
         heading = f"Architecture {architecture['architecture']}"
         assert heading in page
         section = page.split(heading, maxsplit=1)[1].split("</section>", maxsplit=1)[0]
-        assert "Software Inventory" in section
+        assert "Installed Software" in section
         assert "Config Files" in section
         assert "Profile Images" in section
         assert "Profile Evidence" in section

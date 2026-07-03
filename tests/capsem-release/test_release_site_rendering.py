@@ -329,7 +329,7 @@ def test_profile_page_renders_profile_owned_images_and_configs() -> None:
     }
     for (channel, profile_id), page in pages.items():
         profile = graph["manifests"][channel][versions[channel]]["profiles"][profile_id]
-        assert "Software Inventory" in page
+        assert "Installed Software" in page
         assert "Config Files" in page
         assert "Profile Images" in page
         assert "Profile Evidence" in page
@@ -384,10 +384,10 @@ def test_profile_evidence_not_repeated_per_row() -> None:
             1
         ].split("</section>", maxsplit=1)[0]
         evidence_block = section.split("Profile Evidence", maxsplit=1)[1].split(
-            "Software Inventory",
+            "Installed Software",
             maxsplit=1,
         )[0]
-        software_block = section.split("Software Inventory", maxsplit=1)[1].split(
+        software_block = section.split("Installed Software", maxsplit=1)[1].split(
             "Config Files",
             maxsplit=1,
         )[0]

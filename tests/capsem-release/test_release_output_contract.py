@@ -760,7 +760,7 @@ def _channel_profile_page(dist: Path, profile_id: str) -> str:
 
 def _profile_owned_page_tokens() -> set[str]:
     return {
-        "Software Inventory",
+        "Installed Software",
         "Config Files",
         "Profile Images",
         "Profile Evidence",
