@@ -9,14 +9,17 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import hashlib
 import http.server
 import importlib.util
+import io
 import json
 import os
 import shutil
 import socketserver
 import subprocess
 import sys
+import tarfile
 import threading
 from collections.abc import Iterator
 from pathlib import Path
@@ -110,6 +113,84 @@ def _build_release_channel(
         env={"CAPSEM_RELEASE_CHANNEL_DIST": str(dist)},
     )
     _run_admin("assets", "channel", "check", "--channel", CHANNEL, "--dist", str(dist))
+
+
+def _record_test_binary_metadata(manifest_path: Path, artifacts_dir: Path) -> None:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    version = manifest["binaries"]["current"]
+    executable = b"capsem install-test executable\n"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    deb_path = artifacts_dir / f"Capsem_{version}_arm64.deb"
+    sbom_path = artifacts_dir / "capsem-sbom.spdx.json"
+    _write_minimal_deb(deb_path, "usr/bin/capsem-app", executable)
+    sbom_path.write_text(
+        json.dumps(
+            {
+                "spdxVersion": "SPDX-2.3",
+                "files": [
+                    {
+                        "SPDXID": "SPDXRef-File-capsem-app",
+                        "fileName": "/usr/bin/capsem-app",
+                        "checksums": [
+                            {
+                                "algorithm": "SHA256",
+                                "checksumValue": hashlib.sha256(executable).hexdigest(),
+                            }
+                        ],
+                    }
+                ],
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    _run_admin(
+        "assets",
+        "channel",
+        "record-binary",
+        "--manifest-path",
+        str(manifest_path),
+        "--version",
+        version,
+        "--artifact",
+        str(deb_path),
+        "--artifact",
+        str(sbom_path),
+        "--date",
+        "2026-07-02",
+    )
+
+
+def _write_minimal_deb(path: Path, member_path: str, contents: bytes) -> None:
+    data_tar_gz = io.BytesIO()
+    with tarfile.open(fileobj=data_tar_gz, mode="w:gz") as tar:
+        info = tarfile.TarInfo(member_path)
+        info.mode = 0o755
+        info.size = len(contents)
+        tar.addfile(info, io.BytesIO(contents))
+    deb = bytearray(b"!<arch>\n")
+    _append_ar_member(deb, "debian-binary", b"2.0\n")
+    _append_ar_member(deb, "control.tar.gz", b"")
+    _append_ar_member(deb, "data.tar.gz", data_tar_gz.getvalue())
+    path.write_bytes(bytes(deb))
+
+
+def _append_ar_member(out: bytearray, name: str, contents: bytes) -> None:
+    header = (
+        f"{name + '/':<16}"
+        f"{0:<12}"
+        f"{0:<6}"
+        f"{0:<6}"
+        f"{0o100644:<8}"
+        f"{len(contents):<10}"
+        "`\n"
+    ).encode("ascii")
+    assert len(header) == 60
+    out.extend(header)
+    out.extend(contents)
+    if len(contents) % 2:
+        out.extend(b"\n")
 
 
 @pytest.fixture(scope="module")
@@ -240,9 +321,12 @@ def test_generated_release_channel_passes_public_contract(
     assert (release_channel_dist / "assets" / "releases").is_dir()
     assert (release_channel_dist / "profiles" / "releases").is_dir()
     channels = json.loads((release_channel_dist / "channels.json").read_text())
-    assert channels["channels"][CHANNEL]["manifests"][0]["url"] == (
-        f"/assets/{CHANNEL}/manifest.json"
-    )
+    selected_manifest_url = channels["channels"][CHANNEL]["manifests"][0]["url"]
+    assert selected_manifest_url.startswith(f"/manifests/{CHANNEL}/")
+    assert selected_manifest_url.endswith("/manifest.json")
+    assert selected_manifest_url != f"/assets/{CHANNEL}/manifest.json"
+    assert (release_channel_dist / selected_manifest_url.lstrip("/")).is_file()
+    assert (release_channel_dist / "assets" / CHANNEL / "manifest.json").is_file()
     assert channels["channels"][CHANNEL]["profile_catalog"]["source"].startswith(
         "/profiles/releases/"
     )
@@ -268,6 +352,10 @@ def test_fresh_install_assets_generate_release_channel_evidence(
     _run(
         ["bash", "scripts/prepare-install-test-assets.sh"],
         env={"CAPSEM_ASSETS_DIR": str(assets_dir)},
+    )
+    _record_test_binary_metadata(
+        assets_dir / "manifest.json",
+        tmp_path / "binary-artifacts",
     )
 
     _build_release_channel(
@@ -306,8 +394,8 @@ def test_release_channel_contract_rejects_swapped_manifest(
         exit_code, _stdout, stderr = _validator_exit_code(url, capsys=capsys)
 
     assert exit_code == 1
-    assert "channel manifest BLAKE3 mismatch" in stderr
-    assert "channel asset version mismatch with manifest" in stderr
+    assert "/assets/stable/manifest.json assets.current 2030.0101.1" in stderr
+    assert "does not match profile" in stderr
 
 
 def test_release_channel_contract_ignores_stale_health_summary(

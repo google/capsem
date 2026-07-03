@@ -84,26 +84,36 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
 
     assert "Stable" in index
     assert "Nightly" in index
-    assert "Co-work" in index
-    assert "Code" in index
+    assert "Co-work" not in index
+    assert "Code" not in index
     assert "Capsem-1.4.0.pkg" in stable
-    assert "stable-capsem-bin-hmac" in stable
+    assert graph["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0]["digest"][
+        "sha256"
+    ] in stable
+    assert "HMAC" not in stable
+    assert "hmac" not in stable
     assert "code" in stable
     assert "Capsem-1.5.0-nightly.20260702.pkg" in nightly
-    assert "nightly-capsem-bin-hmac" in nightly
+    assert graph["manifests"]["nightly"]["1.5.0-nightly.20260702"]["packages"][0][
+        "binaries"
+    ][0]["digest"]["sha256"] in nightly
+    assert "HMAC" not in nightly
+    assert "hmac" not in nightly
     assert "code" in nightly
-    assert "stable-co-work-config-hmac" in stable_co_work
-    assert "stable-co-work-rootfs-hmac" in stable_co_work
-    assert "stable-co-work-abom-hmac" in stable_co_work
-    assert "nightly-co-work-config-hmac" in nightly_co_work
-    assert "nightly-co-work-rootfs-hmac" in nightly_co_work
-    assert "nightly-co-work-abom-hmac" in nightly_co_work
-    assert "stable-code-config-hmac" in stable_code
-    assert "stable-code-rootfs-hmac" in stable_code
-    assert "stable-code-abom-hmac" in stable_code
-    assert "nightly-code-config-hmac" in nightly_code
-    assert "nightly-code-rootfs-hmac" in nightly_code
-    assert "nightly-code-abom-hmac" in nightly_code
+    pages = {
+        ("stable", "co-work"): stable_co_work,
+        ("stable", "code"): stable_code,
+        ("nightly", "co-work"): nightly_co_work,
+        ("nightly", "code"): nightly_code,
+    }
+    versions = {"stable": "1.4.0", "nightly": "1.5.0-nightly.20260702"}
+    for (channel, profile_id), page in pages.items():
+        profile = graph["manifests"][channel][versions[channel]]["profiles"][profile_id]
+        assert "HMAC" not in page
+        assert "hmac" not in page
+        assert profile["config"][0]["digest"]["sha256"] in page
+        assert profile["images"][0]["artifacts"][0]["digest"]["sha256"] in page
+        assert profile["images"][0]["evidence"][0]["digest"]["sha256"] in page
 
 
 def test_live_channels_json_and_manifests_verify() -> None:
@@ -112,40 +122,45 @@ def test_live_channels_json_and_manifests_verify() -> None:
     channels = json.loads(channels_body)
 
     assert sorted(channels["channels"]) == ["nightly", "stable"]
+    expected_package_names: dict[str, list[str]] = {}
+    allowed_statuses = {"current", "supported", "deprecated", "revoked"}
     for channel in ("stable", "nightly"):
         records = channels["channels"][channel]["manifests"]
-        assert [record["status"] for record in records] == [
-            "current",
-            "supported",
-            "deprecated",
-            "revoked",
-        ]
-        current = records[0]
+        assert records
+        statuses = [record["status"] for record in records]
+        assert statuses.count("current") == 1
+        assert set(statuses) <= allowed_statuses
+        assert "removed" not in statuses
+        current = next(record for record in records if record["status"] == "current")
         manifest_body = _fetch_bytes(f"{base}{current['url']}")
         assert hashlib.sha256(manifest_body).hexdigest() == current["digest"]["sha256"]
         manifest = json.loads(manifest_body)
         assert manifest["version"] == current["version"]
         assert manifest["packages"]
-        assert manifest["binaries"]
+        assert "binaries" not in manifest
+        assert manifest["packages"][0]["binaries"]
         assert sorted(manifest["profiles"]) == sorted(PROFILE_IDS)
+        expected_package_names[channel] = [package["name"] for package in manifest["packages"]]
 
         for profile_id in PROFILE_IDS:
             profile_url = f"{base}/channels/{channel}/profiles/{profile_id}/"
             profile_page = _fetch_bytes(profile_url).decode("utf-8")
             profile = manifest["profiles"][profile_id]
             assert profile["revision"] in profile_page
-            assert profile["config"][0]["digest"]["hmac"] in profile_page
-            assert profile["images"][0]["artifacts"][0]["digest"]["hmac"] in profile_page
+            assert profile["config"][0]["digest"]["sha256"] in profile_page
+            assert profile["images"][0]["artifacts"][0]["digest"]["sha256"] in profile_page
 
     root = _fetch_bytes(f"{base}/").decode("utf-8")
     stable = _fetch_bytes(f"{base}/channels/stable/").decode("utf-8")
     nightly = _fetch_bytes(f"{base}/channels/nightly/").decode("utf-8")
     assert "Stable" in root
     assert "Nightly" in root
-    assert "Co-work" in root
-    assert "Code" in root
-    assert "Capsem-1.4.0.pkg" in stable
-    assert "Capsem-1.5.0-nightly.20260702.pkg" in nightly
+    assert "Co-work" not in root
+    assert "Code" not in root
+    for package_name in expected_package_names["stable"]:
+        assert package_name in stable
+    for package_name in expected_package_names["nightly"]:
+        assert package_name in nightly
 
 
 def _materialize_graph_dist(graph: dict[str, Any], dist: Path) -> None:

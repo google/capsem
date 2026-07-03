@@ -44,8 +44,9 @@ profiles/releases/<catalog-version>/catalog.json
 ```
 
 The path tells readers who owns a fact. Package facts do not repeat in binary
-records. Profile image facts do not appear in channel summaries unless the
-profile JSON also contains them.
+records. Profile image facts do not appear in channel summaries. If the owning
+JSON object for a path does not contain a fact, the HTML page for that path
+must not display that fact.
 
 ## Channels
 
@@ -77,6 +78,8 @@ Each manifest record must include:
 
 The digest is over the referenced manifest bytes. Do not publish HMAC fields in
 the graph. SHA-256 is the compliance digest. BLAKE3 is the fast content digest.
+Digests must be computed over bytes. Repeated-character placeholders such as
+`1111...`, `aaaa...`, or `0000...` are invalid release facts.
 
 ## Manifests
 
@@ -139,6 +142,13 @@ executables inside a package. The package owns its binaries:
 Do not repeat the package name on every binary. If a flat binary index is ever
 needed for search, it is a derived index, not the canonical manifest shape.
 
+The channel page may render package and binary tables only from the selected
+manifest. Package rows must have a download URL, byte count, SHA-256, and
+BLAKE3. Binary rows must be nested under packages in JSON and must include an
+installed path, byte count, SHA-256, BLAKE3, and SBOM component reference.
+`not published` and `unknown` are not valid values for a package or binary row
+that is present in the manifest.
+
 ## Profiles
 
 Profiles own config files, profile images, evidence, software inventory, and
@@ -168,6 +178,57 @@ asset_version
 binary_version
 ```
 
+## Software Inventory
+
+Software inventory is profile-owned image content. It must be complete for the
+profile image it describes and must be generated from the same profile/image
+build evidence as the image artifacts.
+
+Every software entry must include:
+
+```json
+{
+  "name": "python",
+  "version": "3.12.11",
+  "source": "apt",
+  "architecture": "arm64",
+  "digest": {
+    "sha256": "...",
+    "blake3": "..."
+  },
+  "evidence": "/profiles/releases/2026.07.02.1-stable/code/arm64/abom.cdx.json"
+}
+```
+
+The profile page may render software inventory only from the profile JSON. It
+must not display sample rows, inferred package names, or a partial hand-written
+summary. If the profile JSON does not contain a complete hashed inventory, the
+page must say the inventory is not published rather than inventing it.
+
+## Config Files
+
+Config files are profile-owned and must be generated from the profile source
+directory, not hand-written into the release page. For the built-in profiles,
+the profile release must publish every file that defines the profile contract:
+
+```text
+profile.toml
+mcp.json
+enforcement.toml
+detection.yaml
+apt-packages.txt
+python-requirements.txt
+npm-packages.txt
+build.sh
+tips.txt
+root.manifest.json
+```
+
+The config list may include additional files declared by `profile.toml`, but it
+must not silently omit one of the files above when that file exists in
+`config/profiles/<profile>/`. Every config entry must include `kind`, `path`,
+`url`, `bytes`, and a `digest` object with `sha256` and `blake3`.
+
 ## Profile Images
 
 Images are profile-owned and architecture-scoped. Evidence attaches to the
@@ -178,6 +239,28 @@ image set it describes:
   "images": {
     "arm64": {
       "artifacts": [
+        {
+          "kind": "kernel",
+          "name": "vmlinuz",
+          "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/vmlinuz",
+          "bytes": 123,
+          "digest": {
+            "sha256": "...",
+            "blake3": "..."
+          },
+          "status": "current"
+        },
+        {
+          "kind": "initrd",
+          "name": "initrd.img",
+          "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/initrd.img",
+          "bytes": 123,
+          "digest": {
+            "sha256": "...",
+            "blake3": "..."
+          },
+          "status": "current"
+        },
         {
           "kind": "rootfs",
           "name": "rootfs.erofs",
@@ -207,7 +290,10 @@ image set it describes:
 }
 ```
 
-ABOM and OBOM entries are not global evidence. They are profile image evidence.
+Every architecture image set must include kernel, initrd, and rootfs artifacts
+unless the profile schema grows an explicit enum for a different boot mode. A
+rootfs-only image set is incomplete and must fail the release gate. ABOM and
+OBOM entries are not global evidence. They are profile image evidence.
 
 ## Profile Catalog
 
@@ -239,8 +325,10 @@ Examples:
 
 - A profile page may show `min_capsem_version`; it must not show current
   binary state.
-- A channel page may show package rows and package-owned binaries; it must not
-  show detached profile image evidence.
+- A channel page may show manifest records, package rows, package-owned
+  binaries, and profile references. It must not show `Evidence`, `Host SBOM`,
+  `VM OBOM`, profile image artifacts, software inventory, or asset release
+  history sections.
 - No page should show HMAC columns because the graph does not publish HMAC.
 
 ## Release Gates
@@ -254,9 +342,14 @@ Release output tests must verify:
 4. Every package has bytes, SHA-256, BLAKE3, and package-owned binaries.
 5. Every binary has installed path, bytes, SHA-256, BLAKE3, and SBOM component.
 6. No digest object contains HMAC.
-7. Every profile config/image/evidence URL resolves and its bytes, SHA-256,
+7. No digest is a repeated-character placeholder.
+8. Every profile config file required by the profile source is published.
+9. Every profile image architecture includes kernel, initrd, and rootfs.
+10. Every profile config/image/evidence URL resolves and its bytes, SHA-256,
    and BLAKE3 match.
-8. Profile pages contain only profile-owned facts.
-9. Channel pages contain only channel and manifest facts.
-10. Stable and nightly may select different manifests and profile revisions
+11. Every profile software inventory entry is complete and hashed, or the
+   profile page explicitly reports that no software inventory is published.
+12. Profile pages contain only profile-owned facts.
+13. Channel pages contain only channel and manifest facts.
+14. Stable and nightly may select different manifests and profile revisions
     without mutating each other.

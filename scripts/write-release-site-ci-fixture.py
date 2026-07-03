@@ -5,12 +5,15 @@ from __future__ import annotations
 
 import json
 import argparse
+import hashlib
 from pathlib import Path
-
 
 ASSET_VERSION = "2030.0101.1"
 BINARY_VERSION = "1.4.0"
 DATE = "2030-01-01"
+PACKAGE_FIXTURE_BLAKE3 = "448ff45531b52064b3bf401509c08ca3567bfbcde16aa54c6657a3cbb52d2766"
+BINARY_FIXTURE_BLAKE3 = "a2667ec38811444a55359d41a8c7d79e2ca9a03b941571e5c24afa49b0f7b08b"
+SBOM_FIXTURE_BLAKE3 = "df2133a32b67cf97c9046915933d1449d886c245fedc97a6bf45078c25a19a2d"
 
 OBOM = (
     b'{"bomFormat":"CycloneDX","specVersion":"1.6","metadata":{"tools":'
@@ -76,16 +79,49 @@ def write_fixture(root: Path, *, include_binary_files: bool = True) -> None:
         "min_assets": ASSET_VERSION,
     }
     if include_binary_files:
+        package_payload = f"dry-run pkg for {BINARY_VERSION}\n".encode("utf-8")
+        binary_payload = f"dry-run capsem-app for {BINARY_VERSION}\n".encode("utf-8")
+        sbom_payload = json.dumps(
+            {
+                "spdxVersion": "SPDX-2.3",
+                "name": "capsem-release-site-ci-fixture",
+                "files": [
+                    {
+                        "SPDXID": "SPDXRef-File-capsem-app",
+                        "fileName": "/usr/bin/capsem-app",
+                        "checksums": [
+                            {
+                                "algorithm": "SHA256",
+                                "checksumValue": hashlib.sha256(binary_payload).hexdigest(),
+                            }
+                        ],
+                    }
+                ],
+            },
+            sort_keys=True,
+        ).encode("utf-8")
         binary_release["files"] = [
             {
                 "name": f"Capsem-{BINARY_VERSION}-macos-arm64.pkg",
-                "size": 123,
-                "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "size": len(package_payload),
+                "sha256": hashlib.sha256(package_payload).hexdigest(),
+                "blake3": PACKAGE_FIXTURE_BLAKE3,
+                "binaries": [
+                    {
+                        "name": "capsem-app",
+                        "installed_path": "/usr/bin/capsem-app",
+                        "size": len(binary_payload),
+                        "sha256": hashlib.sha256(binary_payload).hexdigest(),
+                        "blake3": BINARY_FIXTURE_BLAKE3,
+                        "sbom_component_ref": "SPDXRef-File-capsem-app",
+                    }
+                ],
             },
             {
                 "name": "capsem-sbom.spdx.json",
-                "size": 456,
-                "sha256": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+                "size": len(sbom_payload),
+                "sha256": hashlib.sha256(sbom_payload).hexdigest(),
+                "blake3": SBOM_FIXTURE_BLAKE3,
             },
         ]
 

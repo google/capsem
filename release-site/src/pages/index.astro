@@ -1,58 +1,27 @@
 ---
 import ReleaseLayout from '../layouts/ReleaseLayout.astro';
-import {
-  assetReleaseRows,
-  binaryDescription,
-  binaryRows,
-  byteLabel,
-  channelProfilePagePath,
-  channelRows,
-  currentAssetFilesByArch,
-  currentAssetBaseUrl,
-  currentArchitectures,
-  generatedAt,
-  hashLabel,
-  hostSbomRows,
-  loadReleaseData,
-  manifestBlake3,
-  manifestUrl,
-  profileArchNames,
-  profileFileRows,
-  profileList,
-  profileCatalogUrl,
-  profileRevision,
-  vmObomRows,
-} from '../lib/release-data';
+import { channelRows, generatedAt, loadReleaseData } from '../lib/release-data';
 
 const data = loadReleaseData();
 const channels = channelRows(data);
-const profiles = profileList(data);
-const binaries = binaryRows(data);
-const hostSboms = hostSbomRows(data);
-const vmOboms = vmObomRows(data);
-const assetReleases = assetReleaseRows(data);
-const architectures = currentArchitectures(data);
-const hostSbom = hostSboms[0];
-const assetBase = currentAssetBaseUrl(data);
-const assetFilesByArch = currentAssetFilesByArch(data);
-const binaryVersions = Array.from(new Set(binaries.map((binary) => binary.version).filter(Boolean)));
-const currentBinary = data.manifest.binaries?.current ?? (binaryVersions.join(', ') || 'not published');
-const currentAssets = data.manifest.assets?.current ?? data.manifest.version ?? data.manifestRecord.version ?? 'not published';
-const binaryState = data.manifest.binaries?.releases?.[currentBinary]?.deprecated ? 'deprecated' : data.manifest.status ?? 'current';
-const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ? 'deprecated' : data.manifest.status ?? data.manifestRecord.status ?? 'current';
 ---
-<ReleaseLayout title="Capsem Asset Channel">
+<ReleaseLayout title="Capsem Release Channels">
   <header class="border-b border-zinc-200 pb-6">
     <p class="text-sm font-medium text-blue-600">release.capsem.org</p>
-    <h1 class="mt-2 text-4xl font-semibold tracking-normal text-black">Capsem Asset Channel</h1>
+    <h1 class="mt-2 text-4xl font-semibold tracking-normal text-black">Capsem Release Channels</h1>
     <p class="mt-3 max-w-3xl text-base text-zinc-600">
-      Current binary, VM asset, profile, and evidence inventory for the public Capsem release channel.
+      Public channel catalog generated from <code>channels.json</code>.
     </p>
   </header>
 
   <section class="mt-8 border border-zinc-200 p-5">
-    <h2 class="text-xl font-semibold text-black">Channels</h2>
-    <p class="mt-1 text-sm text-zinc-600">Release channels are listed from the published channel catalog.</p>
+    <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <h2 class="text-xl font-semibold text-black">Channels</h2>
+        <p class="mt-1 text-sm text-zinc-600">Generated {generatedAt(data)}</p>
+      </div>
+      <a class="text-sm font-medium text-blue-600 underline" href="/channels.json">channels.json</a>
+    </div>
     <div class="mt-4 overflow-x-auto">
       <table class="w-full min-w-[760px] border-collapse text-sm">
         <thead>
@@ -60,7 +29,7 @@ const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ?
             <th class="py-2 pr-4 font-medium">Channel</th>
             <th class="py-2 pr-4 font-medium">Selected manifest</th>
             <th class="py-2 pr-4 font-medium">Status</th>
-            <th class="py-2 pr-4 font-medium">Manifests</th>
+            <th class="py-2 pr-4 font-medium">Records</th>
             <th class="py-2 pr-4 font-medium">Manifest URL</th>
           </tr>
         </thead>
@@ -80,7 +49,7 @@ const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ?
                 <span class="ml-2 text-zinc-500">{channel.statuses.join(', ')}</span>
               </td>
               <td class="py-3 pr-4">
-                {channel.manifestUrl ? <a class="break-all text-blue-600 underline" href={channel.manifestUrl}>{channel.manifestUrl}</a> : 'not published'}
+                <a class="break-all text-blue-600 underline" href={channel.manifestUrl}>{channel.manifestUrl}</a>
               </td>
             </tr>
           ))}
@@ -88,188 +57,4 @@ const assetState = data.manifest.assets?.releases?.[currentAssets]?.deprecated ?
       </table>
     </div>
   </section>
-
-  <section class="mt-8 border border-zinc-200 p-5">
-    <h2 class="text-xl font-semibold text-black">Channel Manifest</h2>
-    <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-[14rem_1fr]">
-      <dt class="text-zinc-500">Channel</dt><dd>{data.channel}</dd>
-      <dt class="text-zinc-500">Generated</dt><dd>{generatedAt(data)}</dd>
-      <dt class="text-zinc-500">Manifest URL</dt><dd><a class="break-all text-blue-600 underline" href={manifestUrl(data)}>{manifestUrl(data)}</a></dd>
-      <dt class="text-zinc-500">Binary revision</dt><dd><code>{currentBinary}</code> ({binaryState})</dd>
-      <dt class="text-zinc-500">VM asset revision</dt><dd><code>{currentAssets}</code> ({assetState})</dd>
-      <dt class="text-zinc-500">Profile revision</dt><dd><code>{profileRevision(data)}</code></dd>
-      <dt class="text-zinc-500">Architectures</dt><dd>{architectures.join(', ')}</dd>
-      <dt class="text-zinc-500">Current asset base</dt><dd><a class="break-all text-blue-600 underline" href={assetBase}>{assetBase}</a></dd>
-      <dt class="text-zinc-500">Channels JSON</dt><dd><a class="text-blue-600 underline" href="/channels.json">/channels.json</a></dd>
-      <dt class="text-zinc-500">Profile catalog JSON</dt><dd><a class="break-all text-blue-600 underline" href={profileCatalogUrl(data)}>{profileCatalogUrl(data)}</a></dd>
-      <dt class="text-zinc-500">Manifest BLAKE3</dt><dd><code class="break-all">{manifestBlake3(data)}</code></dd>
-    </dl>
-  </section>
-
-  <section class="mt-6 border border-zinc-200 p-5">
-    <h2 class="text-xl font-semibold text-black">Capsem Binaries</h2>
-    <div class="mt-4 overflow-x-auto">
-      <table class="w-full min-w-[900px] border-collapse text-sm">
-        <thead>
-          <tr class="border-b border-zinc-200 text-left text-zinc-500">
-            <th class="py-2 pr-4 font-medium">Version</th>
-            <th class="py-2 pr-4 font-medium">Capsem binary</th>
-            <th class="py-2 pr-4 font-medium">Description</th>
-            <th class="py-2 pr-4 font-medium">Download</th>
-            <th class="py-2 pr-4 font-medium">Bytes</th>
-            <th class="py-2 pr-4 font-medium">SHA-256</th>
-            <th class="py-2 pr-4 font-medium">Binary SBOM</th>
-          </tr>
-        </thead>
-        <tbody>
-          {binaries.length > 0 ? binaries.map((file) => (
-            <tr class="border-b border-zinc-100 align-top">
-              <td class="py-3 pr-4"><code>{currentBinary}</code></td>
-              <td class="py-3 pr-4">{file.name}</td>
-              <td class="py-3 pr-4 text-zinc-600">{binaryDescription(file.name)}</td>
-              <td class="py-3 pr-4">{file.url ? <a class="break-all text-blue-600 underline" href={file.url}>{file.url}</a> : <span class="break-all">{file.package ?? 'not published'}</span>}</td>
-              <td class="py-3 pr-4">{byteLabel(file.bytes ?? file.size)}</td>
-              <td class="py-3 pr-4"><code class="break-all">{hashLabel(file.digest?.sha256 ?? file.sha256)}</code></td>
-              <td class="py-3 pr-4">
-                {hostSbom?.url ? <a class="break-all text-blue-600 underline" href={hostSbom.url}>{hostSbom.name ?? hostSbom.kind}</a> : (file.sbom_component_ref ?? 'Not published')}
-              </td>
-            </tr>
-          )) : (
-            <tr>
-              <td class="py-4 pr-4 text-zinc-600" colspan="7">
-                No Capsem binary metadata is published in this channel manifest.
-              </td>
-            </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="mt-6 border border-zinc-200 p-5">
-    <h2 class="text-xl font-semibold text-black">Current VM Assets</h2>
-    <p class="mt-1 text-sm text-zinc-600">
-      Files published by the current VM asset revision, grouped by architecture.
-    </p>
-    <div class="mt-4 grid gap-5">
-      {assetFilesByArch.map(([arch, files]) => (
-        <section>
-          <h3 class="text-base font-semibold text-black">Architecture {arch}</h3>
-          <div class="mt-3 overflow-x-auto">
-            <table class="w-full min-w-[760px] border-collapse text-sm">
-              <thead>
-                <tr class="border-b border-zinc-200 text-left text-zinc-500">
-                  <th class="py-2 pr-4 font-medium">File</th>
-                  <th class="py-2 pr-4 font-medium">Download</th>
-                  <th class="py-2 pr-4 font-medium">Bytes</th>
-                  <th class="py-2 pr-4 font-medium">BLAKE3</th>
-                </tr>
-              </thead>
-              <tbody>
-                {files.map((file) => (
-                  <tr class="border-b border-zinc-100 align-top">
-                    <td class="py-3 pr-4"><code>{file.logical_name}</code></td>
-                    <td class="py-3 pr-4">{file.url ? <a class="break-all text-blue-600 underline" href={file.url}>{file.url}</a> : <span class="text-zinc-500">not published</span>}</td>
-                    <td class="py-3 pr-4">{byteLabel(file.bytes ?? file.size)}</td>
-                    <td class="py-3 pr-4"><code class="break-all">{hashLabel(file.digest?.blake3 ?? file.hash)}</code></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      ))}
-    </div>
-  </section>
-
-  <section class="mt-6 border border-zinc-200 p-5">
-    <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <h2 class="text-xl font-semibold text-black">Profiles</h2>
-        <p class="mt-1 text-sm text-zinc-600">Profile pages are generated from the published profile catalog JSON.</p>
-      </div>
-      <a class="text-sm font-medium text-blue-600 underline" href={profileCatalogUrl(data)}>Catalog JSON</a>
-    </div>
-    <div class="mt-4 grid gap-4 md:grid-cols-2">
-      {profiles.map((profile) => (
-        <article class="border border-zinc-200 p-4">
-          <h3 class="text-lg font-semibold text-black">
-            <a class="text-blue-600 underline" href={channelProfilePagePath(data.channel, profile.id)}>{profile.name}</a>
-          </h3>
-          <p class="mt-1 text-sm text-zinc-600">{profile.description}</p>
-          <dl class="mt-4 grid gap-2 text-sm sm:grid-cols-[9rem_1fr]">
-            <dt class="text-zinc-500">ID</dt><dd><code>{profile.id}</code></dd>
-            <dt class="text-zinc-500">Revision</dt><dd><code>{profile.revision}</code></dd>
-            <dt class="text-zinc-500">Architectures</dt><dd>{profileArchNames(profile).join(', ')}</dd>
-            <dt class="text-zinc-500">Files</dt><dd>{profileFileRows(profile).length}</dd>
-          </dl>
-        </article>
-      ))}
-    </div>
-  </section>
-
-  <section class="mt-6 border border-zinc-200 p-5">
-    <h2 class="text-xl font-semibold text-black">Evidence</h2>
-    <div class="mt-4 grid gap-5 lg:grid-cols-2">
-      <section>
-        <h3 class="text-base font-semibold text-black">Host SBOM</h3>
-        <ul class="mt-3 space-y-2 text-sm">
-          {hostSboms.length > 0 ? hostSboms.map((sbom) => (
-            <li>
-              {sbom.url ? <a class="break-all text-blue-600 underline" href={sbom.url}>{sbom.name ?? sbom.kind ?? sbom.url}</a> : <span>{sbom.name ?? sbom.kind ?? 'SBOM'}</span>}
-              <div class="mt-1 text-zinc-600">
-                {byteLabel(sbom.bytes ?? sbom.size)} bytes · SHA-256 <code class="break-all">{hashLabel(sbom.digest?.sha256 ?? sbom.sha256 ?? sbom.hash)}</code>
-              </div>
-            </li>
-          )) : <li class="text-zinc-600">No host SBOM evidence is published for this channel.</li>}
-        </ul>
-      </section>
-      <section>
-        <h3 class="text-base font-semibold text-black">VM OBOM</h3>
-        <ul class="mt-3 space-y-2 text-sm">
-          {vmOboms.length > 0 ? vmOboms.map((obom) => (
-            <li>
-              <span class="font-medium text-black">{obom.arch}</span>:
-              {' '}
-              {obom.url ? <a class="break-all text-blue-600 underline" href={obom.url}>{obom.logical_name ?? obom.url}</a> : <span>{obom.logical_name ?? obom.kind ?? 'evidence'}</span>}
-              <div class="mt-1 text-zinc-600">
-                {byteLabel(obom.bytes ?? obom.size)} bytes · BLAKE3 <code class="break-all">{hashLabel(obom.digest?.blake3 ?? obom.hash)}</code>
-              </div>
-            </li>
-          )) : <li class="text-zinc-600">No VM OBOM evidence is published for this channel.</li>}
-        </ul>
-      </section>
-    </div>
-  </section>
-
-  <section class="mt-6 border border-zinc-200 p-5">
-    <h2 class="text-xl font-semibold text-black">Asset Release History</h2>
-    <div class="mt-4 overflow-x-auto">
-      <table class="w-full min-w-[760px] border-collapse text-sm">
-        <thead>
-          <tr class="border-b border-zinc-200 text-left text-zinc-500">
-            <th class="py-2 pr-4 font-medium">Version</th>
-            <th class="py-2 pr-4 font-medium">Date</th>
-            <th class="py-2 pr-4 font-medium">State</th>
-            <th class="py-2 pr-4 font-medium">Deprecated</th>
-            <th class="py-2 pr-4 font-medium">Min binary</th>
-            <th class="py-2 pr-4 font-medium">Architectures</th>
-          </tr>
-        </thead>
-        <tbody>
-          {assetReleases.map((release) => (
-            <tr class="border-b border-zinc-100">
-              <td class="py-3 pr-4"><code>{release.version}</code></td>
-              <td class="py-3 pr-4">{release.date}</td>
-              <td class="py-3 pr-4">{release.state}</td>
-              <td class="py-3 pr-4">{String(release.deprecated)}</td>
-              <td class="py-3 pr-4"><code>{release.min_binary}</code></td>
-              <td class="py-3 pr-4">{(release.arches ?? []).join(', ')}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  </section>
-
 </ReleaseLayout>

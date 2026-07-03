@@ -5,9 +5,8 @@
       "manifests": [
         {
           "digest": {
-            "blake3": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-            "hmac": "nightly-current-hmac",
-            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            "blake3": "768d994d541f83a708f071bb18676799af0fda32299e07d281e9bd4501fb5cf8",
+            "sha256": "989d8dca04cdefeaef28c1e50d505a4b688517472e18f6ea2feb0e485444d3e8"
           },
           "status": "current",
           "url": "/manifests/nightly/1.5.0-nightly.20260702/manifest.json",
@@ -15,9 +14,8 @@
         },
         {
           "digest": {
-            "blake3": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-            "hmac": "nightly-supported-hmac",
-            "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            "blake3": "d7545b836a961b66dcedfce1620a990383d248417e25a8d8e8a830501986ba24",
+            "sha256": "01b9ed9d19c4163cd59a448ed0e609517c4c29a2a63e14e906498372266338fd"
           },
           "status": "supported",
           "url": "/manifests/nightly/1.5.0-nightly.20260701/manifest.json",
@@ -25,9 +23,8 @@
         },
         {
           "digest": {
-            "blake3": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-            "hmac": "nightly-deprecated-hmac",
-            "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+            "blake3": "56b1ea1e7c18671808728cbec9ec10ad5161b648d4f3b1934f2dbc8500b3e002",
+            "sha256": "2815008c40f54f017e853f8b059b59eca1acdb668b3ff0b1dd925589373d6e56"
           },
           "status": "deprecated",
           "url": "/manifests/nightly/1.5.0-nightly.20260630/manifest.json",
@@ -35,9 +32,8 @@
         },
         {
           "digest": {
-            "blake3": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-            "hmac": "nightly-revoked-hmac",
-            "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+            "blake3": "087cce9d8bf08b48bfee0ae0922cb5eb9a48076a3f0373b7e08d9424c731a0cf",
+            "sha256": "85eed34b27888c89466883fbf752402bf6390928f1067484b5550c58907d3ccb"
           },
           "status": "revoked",
           "url": "/manifests/nightly/1.5.0-nightly.bad/manifest.json",
@@ -50,9 +46,8 @@
       "manifests": [
         {
           "digest": {
-            "blake3": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "hmac": "stable-current-hmac",
-            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            "blake3": "928efcf327e4eeae9320bc07cf5cfc4b0415b98d17b4a321346cf3bb454fe2a3",
+            "sha256": "847650f3a905645c4e2be84eb2a9da3b9d51778597f44e4f1bc42a1f609f3b4b"
           },
           "status": "current",
           "url": "/manifests/stable/1.4.0/manifest.json",
@@ -60,9 +55,8 @@
         },
         {
           "digest": {
-            "blake3": "1111111111111111111111111111111111111111111111111111111111111111",
-            "hmac": "stable-supported-hmac",
-            "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+            "blake3": "2e57d578fd7c9053a050ffed427af8c205103889c9fe71cb06c64e5b3b59396b",
+            "sha256": "69601963eb31b37fa9b046eb8c398401b2cc215b566dfd6bfd1b45fe5d90dc71"
           },
           "status": "supported",
           "url": "/manifests/stable/1.3.0/manifest.json",
@@ -70,9 +64,8 @@
         },
         {
           "digest": {
-            "blake3": "2222222222222222222222222222222222222222222222222222222222222222",
-            "hmac": "stable-deprecated-hmac",
-            "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+            "blake3": "d9c91eba3934dd6c0343378fb1d6cc387806d29b586d62da150d4831d1083fb2",
+            "sha256": "b112201b459365aa949db0bc4dd397642ea9e9304f7cc31397c9395be4f7b354"
           },
           "status": "deprecated",
           "url": "/manifests/stable/1.2.0/manifest.json",
@@ -80,9 +73,8 @@
         },
         {
           "digest": {
-            "blake3": "3333333333333333333333333333333333333333333333333333333333333333",
-            "hmac": "stable-revoked-hmac",
-            "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
+            "blake3": "96a6fcbade9928cf26ab0bfa3aef2d385874b2201d763a451b33c74912f80a8f",
+            "sha256": "2f4066251078c0d6f1770013d87b66bc8f2579c3407de6ee5d507352dc185289"
           },
           "status": "revoked",
           "url": "/manifests/stable/1.1.0-bad/manifest.json",
@@ -94,164 +86,585 @@
   "manifests": {
     "nightly": {
       "1.5.0-nightly.20260702": {
-        "binaries": [
-          {
-            "digest": {
-              "blake3": "6666666666666666666666666666666666666666666666666666666666666666",
-              "hmac": "nightly-capsem-bin-hmac",
-              "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
-            },
-            "name": "capsem",
-            "package": "Capsem-1.5.0-nightly.20260702.pkg",
-            "sbom_component_ref": "SPDXRef-File-capsem",
-            "version": "1.5.0-nightly.20260702"
-          }
-        ],
         "packages": [
           {
+            "architecture": "arm64",
+            "binaries": [
+              {
+                "architecture": "arm64",
+                "bytes": 59,
+                "digest": {
+                  "blake3": "5b0e82ede33c0ee6f272446c2fc197282a2d7dde0bd627e1337fbdb03ca0da59",
+                  "sha256": "353c1a39dadbbabd400472b81cb44dec17bd1a999eabdddf370fab54874f045e"
+                },
+                "installed_path": "/usr/local/bin/capsem",
+                "name": "capsem",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702"
+              }
+            ],
+            "bytes": 72,
             "digest": {
-              "blake3": "5555555555555555555555555555555555555555555555555555555555555555",
-              "hmac": "nightly-package-hmac",
-              "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+              "blake3": "c18400c20bc84c6a99d83fb2fe685f86edfd27add53e72be96138c72625e4fc4",
+              "sha256": "61cafa169c617c72cab3c93365ab9c3cc732e8bb8d8597690f0309dd16472df2"
             },
+            "evidence": [
+              {
+                "bytes": 86,
+                "digest": {
+                  "blake3": "2d2020f21b2851f3960e8c91a8a8da6bc71bf888a340ac5f53ec7c3cae0dab7d",
+                  "sha256": "409ed630bc80d8de7aaed6b1ca019bb8914a03cc2180315964ed987b664b7823"
+                },
+                "kind": "sbom",
+                "status": "current",
+                "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-sbom.spdx.json"
+              }
+            ],
+            "id": "nightly-1.5.0-nightly.20260702-0",
             "kind": "macos_pkg",
             "name": "Capsem-1.5.0-nightly.20260702.pkg",
+            "platform": "macos",
+            "status": "current",
+            "url": "/packages/nightly/1.5.0-nightly.20260702/Capsem-1.5.0-nightly.20260702.pkg",
             "version": "1.5.0-nightly.20260702"
           }
         ],
         "profiles": {
           "co-work": {
-            "id": "co-work",
-            "version": "2026.07.02.1-nightly",
-            "name": "Co-work",
-            "status": "current",
-            "software": [
-              {
-                "name": "python",
-                "version": "3.12.11",
-                "source": "apt"
-              },
-              {
-                "name": "node",
-                "version": "24.2.0",
-                "source": "npm"
-              }
-            ],
             "config": [
               {
+                "bytes": 58,
+                "digest": {
+                  "blake3": "9c7238e054c634232021c8687149bdf88ddd903dfd5310b775aecfe0fbd73a20",
+                  "sha256": "ae840e4070e9f1b913d3c9eadd9f8fe733dfa6e1757b8f0015dab93269a0fb16"
+                },
+                "kind": "profile",
+                "path": "profiles/co-work/profile.toml",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/profile.toml"
+              },
+              {
+                "bytes": 54,
+                "digest": {
+                  "blake3": "d942570649cf62be265f9f630235ce107baeba0cfee291d92a70f72f4fdb7fd0",
+                  "sha256": "d50fc69e653a470419ab043f15877078575927706ca56d27eb6fea1c5bcc06da"
+                },
                 "kind": "mcp",
                 "path": "profiles/co-work/mcp.json",
-                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/mcp.json",
-                "bytes": 12,
-                "digest": {
-                  "blake3": "5555555555555555555555555555555555555555555555555555555555555555",
-                  "hmac": "nightly-co-work-config-hmac",
-                  "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
-                },
-                "status": "current"
-              }
-            ],
-            "images": [
-              {
-                "architecture": "arm64",
-                "artifacts": [
-                  {
-                    "digest": {
-                      "blake3": "7777777777777777777777777777777777777777777777777777777777777777",
-                      "hmac": "nightly-co-work-rootfs-hmac",
-                      "sha256": "7777777777777777777777777777777777777777777777777777777777777777"
-                    },
-                    "kind": "rootfs",
-                    "name": "rootfs.erofs",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/rootfs.erofs",
-                    "bytes": 42,
-                    "status": "current"
-                  }
-                ],
-                "evidence": [
-                  {
-                    "digest": {
-                      "blake3": "8888888888888888888888888888888888888888888888888888888888888888",
-                      "hmac": "nightly-co-work-abom-hmac",
-                      "sha256": "8888888888888888888888888888888888888888888888888888888888888888"
-                    },
-                    "kind": "abom",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/abom.cdx.json",
-                    "bytes": 24,
-                    "status": "current"
-                  }
-                ]
-              }
-            ],
-            "min_capsem_version": "1.4.0",
-            "revision": "2026.07.02.1-nightly"
-          },
-          "code": {
-            "id": "code",
-            "version": "2026.07.02.1-nightly",
-            "name": "Code",
-            "description": "Optimized for coding and long-running agents.",
-            "status": "current",
-            "software": [
-              {
-                "name": "python",
-                "version": "3.12.11",
-                "source": "apt"
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/mcp.json"
               },
               {
-                "name": "node",
-                "version": "24.2.0",
-                "source": "npm"
-              }
-            ],
-            "config": [
-              {
-                "kind": "mcp",
-                "path": "profiles/code/mcp.json",
-                "url": "/profiles/releases/2026.07.02.1-nightly/code/mcp.json",
-                "bytes": 12,
+                "bytes": 62,
                 "digest": {
-                  "blake3": "1212121212121212121212121212121212121212121212121212121212121212",
-                  "hmac": "nightly-code-config-hmac",
-                  "sha256": "1212121212121212121212121212121212121212121212121212121212121212"
+                  "blake3": "70d2f205a894ac43bf78b21b32232bf03384d897027cbd6f6270ea7b30220cc1",
+                  "sha256": "83584a666e8f33fb75974d1b47955d1a18bffcfe415381ed1dc65d8d7df01631"
                 },
-                "status": "current"
+                "kind": "enforcement",
+                "path": "profiles/co-work/enforcement.toml",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/enforcement.toml"
+              },
+              {
+                "bytes": 60,
+                "digest": {
+                  "blake3": "100c8f09f4e1c32623ceca2d5abe1b0e5fffb2a22b1d6866d699d686190c1bb2",
+                  "sha256": "f2d0193ae62d3d3e53b8a64d253082eb1aadf794a2c71196e0010736a1d34c34"
+                },
+                "kind": "detection",
+                "path": "profiles/co-work/detection.yaml",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/detection.yaml"
+              },
+              {
+                "bytes": 62,
+                "digest": {
+                  "blake3": "4e80c5b966157941dd36285b9af0e8bac8c6ad74deeac9c1156d4b3a91c5d24c",
+                  "sha256": "528a5ff25f4ed6ee4315e9459e88ab65ee8f08a21b9381a1c52eec77beaee576"
+                },
+                "kind": "apt",
+                "path": "profiles/co-work/apt-packages.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/apt-packages.txt"
+              },
+              {
+                "bytes": 69,
+                "digest": {
+                  "blake3": "3df1789a7ad1c8fe71bffdd8bf8ee831182fbf7d285a6afa89ad0a14dc1fb96b",
+                  "sha256": "6a636384181ab27a2294c224c972b62d2202447aaef97ebd63071c02af94f06a"
+                },
+                "kind": "python",
+                "path": "profiles/co-work/python-requirements.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/python-requirements.txt"
+              },
+              {
+                "bytes": 62,
+                "digest": {
+                  "blake3": "a2f2bea70f4ac5a58359cee07ed2d14e1f69e83dbb733790f38e853c6830898c",
+                  "sha256": "440810727767880e86e42b169fa21363ada0203d8a1aa91d62fe9a1bee89b0c3"
+                },
+                "kind": "npm",
+                "path": "profiles/co-work/npm-packages.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/npm-packages.txt"
+              },
+              {
+                "bytes": 54,
+                "digest": {
+                  "blake3": "65ef584a1d85aa9f7fdae86fb644011d5da917d1b57a86dbc4a0f47a4cf947c7",
+                  "sha256": "9b81180a07aa7a6df6a1a12e1b3ce319bf022403f2de80bb6f4023e1f278018d"
+                },
+                "kind": "build",
+                "path": "profiles/co-work/build.sh",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/build.sh"
+              },
+              {
+                "bytes": 54,
+                "digest": {
+                  "blake3": "31ad923a713dc5ee48ea35b4a511055e50472b73dc02f9c86e55e5493bd4186f",
+                  "sha256": "3d825ca111fa2679caf7fe929d0eddb9d3ec154eb0b9bbb76a4097b1753655c0"
+                },
+                "kind": "tips",
+                "path": "profiles/co-work/tips.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/tips.txt"
+              },
+              {
+                "bytes": 64,
+                "digest": {
+                  "blake3": "2c29d6c645633a4bd41b6c7e3260f208db6e0bb67836e880158f75325dcdb8f9",
+                  "sha256": "d0a3a3260f0e5799d3671bece722043c70ce820b2a7c9478a2524d0c496b29d0"
+                },
+                "kind": "root_manifest",
+                "path": "profiles/co-work/root.manifest.json",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/co-work/root.manifest.json"
               }
             ],
+            "description": "Release profile co-work",
+            "id": "co-work",
             "images": [
               {
                 "architecture": "arm64",
                 "artifacts": [
                   {
+                    "bytes": 58,
                     "digest": {
-                      "blake3": "1313131313131313131313131313131313131313131313131313131313131313",
-                      "hmac": "nightly-code-rootfs-hmac",
-                      "sha256": "1313131313131313131313131313131313131313131313131313131313131313"
+                      "blake3": "7ceeeddecf4518c6b6d1df316d9bc85131a9f043b986735f600d8364c5696988",
+                      "sha256": "e4bf3503c0693cd4d933f648a1f358aaa2be145a9519629e35a88d531d126cb8"
+                    },
+                    "kind": "kernel",
+                    "name": "vmlinuz",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/vmlinuz"
+                  },
+                  {
+                    "bytes": 61,
+                    "digest": {
+                      "blake3": "46289b2cbd94c9e358c5ed1a078b473368c9761e2974b1e99ed2284e04d830d4",
+                      "sha256": "a26dfeedfb6d38f0c6f200b9fad9e68c3c77ec784655409c6452815dac136825"
+                    },
+                    "kind": "initrd",
+                    "name": "initrd.img",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/initrd.img"
+                  },
+                  {
+                    "bytes": 63,
+                    "digest": {
+                      "blake3": "d7cdc57cab771e328b803f713ccf34b44f78439fe5461d279b958e075602bbb3",
+                      "sha256": "d9f9206584cc4c6437d3de7e43758cb84f60a87eb80a53cc4b06aefed9d63ea2"
                     },
                     "kind": "rootfs",
                     "name": "rootfs.erofs",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/rootfs.erofs",
-                    "bytes": 42,
-                    "status": "current"
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/rootfs.erofs"
                   }
                 ],
                 "evidence": [
                   {
+                    "bytes": 67,
                     "digest": {
-                      "blake3": "1414141414141414141414141414141414141414141414141414141414141414",
-                      "hmac": "nightly-code-abom-hmac",
-                      "sha256": "1414141414141414141414141414141414141414141414141414141414141414"
+                      "blake3": "5864ec80d7ea29905d84605e97bb7e5998bb8ba8802ba40a5256c6a5a49afa41",
+                      "sha256": "20b8d1327c1fc467fef3e68c516ff39952c7d23f79f58f3f9f59037788fc9b67"
                     },
                     "kind": "abom",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/abom.cdx.json",
-                    "bytes": 24,
-                    "status": "current"
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/abom.cdx.json"
+                  },
+                  {
+                    "bytes": 67,
+                    "digest": {
+                      "blake3": "a9091d6735dc0a9a0c7b19061db90dd1ac7511069b6014668224a9f6cc1ab273",
+                      "sha256": "c4a53f7b0e68e8cb90c34817b20c6bdbfaeaf793386589d4bf4a6e5f5804c97c"
+                    },
+                    "kind": "sbom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/sbom.cdx.json"
+                  }
+                ]
+              },
+              {
+                "architecture": "x86_64",
+                "artifacts": [
+                  {
+                    "bytes": 59,
+                    "digest": {
+                      "blake3": "afdb1c2d17d0dcd41bb94c85000e8bb5c8ac870cf0ef0e37fae892affb819f91",
+                      "sha256": "86d77d0786dcc0f98e0ce3c64df1fdda797427445081f795d2db37f0d7df38c2"
+                    },
+                    "kind": "kernel",
+                    "name": "vmlinuz",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/vmlinuz"
+                  },
+                  {
+                    "bytes": 62,
+                    "digest": {
+                      "blake3": "cb7adc24f029334557d4fcfc462384c00a57b1b3bccc04a3abba3e0f0668af1a",
+                      "sha256": "02fb2dd0f9daec8264ccbaa1424bae984900d784e26d366e7cf1df49a6d05b86"
+                    },
+                    "kind": "initrd",
+                    "name": "initrd.img",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/initrd.img"
+                  },
+                  {
+                    "bytes": 64,
+                    "digest": {
+                      "blake3": "4ebf270018d481ee9c9f696cbab84a93c795d8c74243af242b8b9ba8889d1935",
+                      "sha256": "54bb0e1a85f3b937a9660ef851f6e2c6dc978464c76ec6cf670f747b622f9191"
+                    },
+                    "kind": "rootfs",
+                    "name": "rootfs.erofs",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/rootfs.erofs"
+                  }
+                ],
+                "evidence": [
+                  {
+                    "bytes": 68,
+                    "digest": {
+                      "blake3": "9eeb141fd5afc6eacafe236c61278548dc1eed2dbd34e7fe2b4a06861e5eb7d4",
+                      "sha256": "283f54f547a546837fc1815b2954e6de898c9902b4ee7b63a53ee429f121504e"
+                    },
+                    "kind": "abom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/abom.cdx.json"
+                  },
+                  {
+                    "bytes": 68,
+                    "digest": {
+                      "blake3": "15380d8ffeec8e88bd848527f1ede57a2f07e91656edf83b5d2e3ada0e81cb0b",
+                      "sha256": "23a0a321f91a4bf9b6eeae90302170c8513c59095bec12e879b2e838a8bd889f"
+                    },
+                    "kind": "sbom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/sbom.cdx.json"
                   }
                 ]
               }
             ],
             "min_capsem_version": "1.4.0",
-            "revision": "2026.07.02.1-nightly"
+            "name": "Co-work",
+            "revision": "2026.07.02.1-nightly",
+            "software": [
+              {
+                "architecture": "all",
+                "digest": {
+                  "blake3": "8f6cbd9470f0fbbf098c0ac98ef06a8402ddc273f0b8734a26e24764c979ddd4",
+                  "sha256": "391c5e8b7e70629454e38ea592bd5915cc14a58a96e9996122e95e2adc40311d"
+                },
+                "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/apt-packages.txt",
+                "name": "python",
+                "source": "apt",
+                "version": "3.12.11"
+              },
+              {
+                "architecture": "all",
+                "digest": {
+                  "blake3": "88fafc7e38dbcf7a8ae7ed63be5f9a7f4db8376b9be4d89cabcae8d46a76004e",
+                  "sha256": "486391537942d775bf956d83ede1294c7a0bfabd34772850faa2ba9169702e12"
+                },
+                "evidence": "/profiles/releases/2026.07.02.1-nightly/co-work/npm-packages.txt",
+                "name": "node",
+                "source": "npm",
+                "version": "24.2.0"
+              }
+            ],
+            "status": "current",
+            "version": "2026.07.02.1-nightly"
+          },
+          "code": {
+            "config": [
+              {
+                "bytes": 55,
+                "digest": {
+                  "blake3": "8212bbfe4b5c9dba71dc51ed466516af199de410a44b8c3e67418846d6fbf49e",
+                  "sha256": "5a30a98c25174849b9c1e29b55caf0d6d61d289481df34bb33d53ba550c014cf"
+                },
+                "kind": "profile",
+                "path": "profiles/code/profile.toml",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/code/profile.toml"
+              },
+              {
+                "bytes": 51,
+                "digest": {
+                  "blake3": "9d3f4989bb4da49a288ef3ef4c4d0f7faffd79328d047f17b24ac5ad4b053949",
+                  "sha256": "46adaf63c8ee2e84120739a44eedb9cabc0d375a79eb0762578739d1ebf743e5"
+                },
+                "kind": "mcp",
+                "path": "profiles/code/mcp.json",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/code/mcp.json"
+              },
+              {
+                "bytes": 59,
+                "digest": {
+                  "blake3": "c15ec49b1ee598a0b203c74c4309b9f0a477a208e688269da35771edfb61243b",
+                  "sha256": "b912c0e513eb0ce427b4afe416f45aa947457987ada54f870e8bf80a7de1fef4"
+                },
+                "kind": "enforcement",
+                "path": "profiles/code/enforcement.toml",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/code/enforcement.toml"
+              },
+              {
+                "bytes": 57,
+                "digest": {
+                  "blake3": "5918921a6734f148183bf58b0f2e21ea73312119cf21deb64391f2193ea5a4db",
+                  "sha256": "2cc12122a3a55db8503eb04d64af933d8e0afb04d5019194c03bd7fd9f12c113"
+                },
+                "kind": "detection",
+                "path": "profiles/code/detection.yaml",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/code/detection.yaml"
+              },
+              {
+                "bytes": 59,
+                "digest": {
+                  "blake3": "75bbc129ff2ce55abe83c14cbbdce670c242acfeb6691c32cd233d1477d3d0cc",
+                  "sha256": "639c4898017a6765969eb899f8bfe1dd038801b5bd0ddfab971bf538b12dea90"
+                },
+                "kind": "apt",
+                "path": "profiles/code/apt-packages.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/code/apt-packages.txt"
+              },
+              {
+                "bytes": 66,
+                "digest": {
+                  "blake3": "1011ca2c038214c6b447759d0053883f3f1ce77d9e1b9174524c1985f1053637",
+                  "sha256": "5a22b7987adebe185056a62c01dcf6a2495b0647ec648968d8a4882f1eaafcb3"
+                },
+                "kind": "python",
+                "path": "profiles/code/python-requirements.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/code/python-requirements.txt"
+              },
+              {
+                "bytes": 59,
+                "digest": {
+                  "blake3": "a70791718dd9fd5a621150714a55ddc55ef6df87d733a153747c88140a6385e9",
+                  "sha256": "253513b2dc4dcf55e074a2f8cf71e669bb4ce9b0374eb96d7bcd0ee1a46ff689"
+                },
+                "kind": "npm",
+                "path": "profiles/code/npm-packages.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/code/npm-packages.txt"
+              },
+              {
+                "bytes": 51,
+                "digest": {
+                  "blake3": "5a8d4dc938f12274bd8a48e1b29501630b40b1cd4f6a4d4b1f754fd49aa098bc",
+                  "sha256": "f6cdd60841e211e022e5dcb23a4aaae7236314110510bb8af61855c561e0679f"
+                },
+                "kind": "build",
+                "path": "profiles/code/build.sh",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/code/build.sh"
+              },
+              {
+                "bytes": 51,
+                "digest": {
+                  "blake3": "1222e64509bffa7d70b4f17bede7f7c149a2d06e95da4c0a8e9a814639af6fa5",
+                  "sha256": "65a45cf4f194237905c6195c140162306ed84f879637bbae6c571cdc78d6d182"
+                },
+                "kind": "tips",
+                "path": "profiles/code/tips.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/code/tips.txt"
+              },
+              {
+                "bytes": 61,
+                "digest": {
+                  "blake3": "fd0a359b7b954421cba3fef17a0d070564db749951dc072fad7156889692eeb7",
+                  "sha256": "d2cb10022ebc2526cf6ce8211263bc9834683c62d563f2da7052acbe91c3fa1d"
+                },
+                "kind": "root_manifest",
+                "path": "profiles/code/root.manifest.json",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-nightly/code/root.manifest.json"
+              }
+            ],
+            "description": "Optimized for coding and long-running agents.",
+            "id": "code",
+            "images": [
+              {
+                "architecture": "arm64",
+                "artifacts": [
+                  {
+                    "bytes": 55,
+                    "digest": {
+                      "blake3": "3b74c852821c8001d41d3ce4f8b6dd0416d4915d2191641ae94557dab3ea90fc",
+                      "sha256": "f5873ec05ab29cd4a345dce2be2fe7e5e94ec3494f45b71f1bf36c40eed41e32"
+                    },
+                    "kind": "kernel",
+                    "name": "vmlinuz",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/vmlinuz"
+                  },
+                  {
+                    "bytes": 58,
+                    "digest": {
+                      "blake3": "fe0c1eeaf3d950f694fdd13dc3144c86aff2894a58594d8a4004ecf79291c375",
+                      "sha256": "261a48ffe51ad048ce2fb79a405f72e05a0c14b2b881083500cef7c33fa7e50c"
+                    },
+                    "kind": "initrd",
+                    "name": "initrd.img",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/initrd.img"
+                  },
+                  {
+                    "bytes": 60,
+                    "digest": {
+                      "blake3": "a068afaca9169fdfdd3998d91a1034f7049b08b47e509e76ec3ae7fbdbfd09af",
+                      "sha256": "eea0dc6cc9b8ac626b8cc128f50c71b0e708cb11f3abf31f8b020b743bda54c9"
+                    },
+                    "kind": "rootfs",
+                    "name": "rootfs.erofs",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/rootfs.erofs"
+                  }
+                ],
+                "evidence": [
+                  {
+                    "bytes": 64,
+                    "digest": {
+                      "blake3": "a0b42b94c75ea03cead1e23720b71109e2445f83d3160077e48b81a6d1cbcc5f",
+                      "sha256": "3d6b9608c7bc3485fb4cdd49cb214de20482354e01a52adc592e6111aa097ff8"
+                    },
+                    "kind": "abom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/abom.cdx.json"
+                  },
+                  {
+                    "bytes": 64,
+                    "digest": {
+                      "blake3": "2deaa552d20f2d83d503f97faff93797aefbb4f7901c82ce59584d8ed146e38c",
+                      "sha256": "3c2b576c396f8319ca8a0024b7bb3d3a0190ee95cbfe8fd58165a78138fe5d69"
+                    },
+                    "kind": "sbom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/sbom.cdx.json"
+                  }
+                ]
+              },
+              {
+                "architecture": "x86_64",
+                "artifacts": [
+                  {
+                    "bytes": 56,
+                    "digest": {
+                      "blake3": "32a5d279bdf507d8735bf562e2646f2d167e0a7a1ccd63401674d83eab99f9a7",
+                      "sha256": "bc546a41000acfa9566518640673506904cea71085af224bf971068f812938b9"
+                    },
+                    "kind": "kernel",
+                    "name": "vmlinuz",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/vmlinuz"
+                  },
+                  {
+                    "bytes": 59,
+                    "digest": {
+                      "blake3": "64f3a741bbb0e7bed1513e7967694ff0ddbc34f8e06bfa5c76ddd8b174c5823f",
+                      "sha256": "140f5fa043eb3364d761635d810849f863d20ec1390a0d9be709423b55a83eb7"
+                    },
+                    "kind": "initrd",
+                    "name": "initrd.img",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/initrd.img"
+                  },
+                  {
+                    "bytes": 61,
+                    "digest": {
+                      "blake3": "5c8d7c040b981fdc2a61e1ce4fb9bd23b376ef02e3f04943e6cd4a70e05625cd",
+                      "sha256": "94508805faaee4a7f3519241da66e1f932a6031cf274aec6645ffa7b0cfa4467"
+                    },
+                    "kind": "rootfs",
+                    "name": "rootfs.erofs",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/rootfs.erofs"
+                  }
+                ],
+                "evidence": [
+                  {
+                    "bytes": 65,
+                    "digest": {
+                      "blake3": "22d83debb01816634cb82a5988d2029a0f97f7f1bbd7a01e230a75fbf476467d",
+                      "sha256": "07b72cc65a74a7ebe858058b824adad625c0108207454fb25918f5578727ea68"
+                    },
+                    "kind": "abom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/abom.cdx.json"
+                  },
+                  {
+                    "bytes": 65,
+                    "digest": {
+                      "blake3": "40bbb4e83d057e989563fbacb333cfe6ba56898834040dea45245617b584ad5b",
+                      "sha256": "c13e287724437f159d7838057c3fdd8136eea23443b756cdf6053d459389308b"
+                    },
+                    "kind": "sbom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/sbom.cdx.json"
+                  }
+                ]
+              }
+            ],
+            "min_capsem_version": "1.4.0",
+            "name": "Code",
+            "revision": "2026.07.02.1-nightly",
+            "software": [
+              {
+                "architecture": "all",
+                "digest": {
+                  "blake3": "754682eb1ce6590e682a9c6979545df69f1e32a8a2287dafb90035603f1acdc5",
+                  "sha256": "3b433b68f09ce1f95a0d6084c42c096a11f4eec5730fe645b12f74dbc4e9f948"
+                },
+                "evidence": "/profiles/releases/2026.07.02.1-nightly/code/apt-packages.txt",
+                "name": "python",
+                "source": "apt",
+                "version": "3.12.11"
+              },
+              {
+                "architecture": "all",
+                "digest": {
+                  "blake3": "2b30ecb87e42b0860db580864818e0aa963fb1bc850820f8e779d62c40d41393",
+                  "sha256": "4f51d2ccbef9576fa88adbe94f6183690671e841bf530a02510ea21e360c6466"
+                },
+                "evidence": "/profiles/releases/2026.07.02.1-nightly/code/npm-packages.txt",
+                "name": "node",
+                "source": "npm",
+                "version": "24.2.0"
+              }
+            ],
+            "status": "current",
+            "version": "2026.07.02.1-nightly"
           }
         },
         "status": "current",
@@ -260,164 +673,585 @@
     },
     "stable": {
       "1.4.0": {
-        "binaries": [
-          {
-            "digest": {
-              "blake3": "6666666666666666666666666666666666666666666666666666666666666666",
-              "hmac": "stable-capsem-bin-hmac",
-              "sha256": "6666666666666666666666666666666666666666666666666666666666666666"
-            },
-            "name": "capsem",
-            "package": "Capsem-1.4.0.pkg",
-            "sbom_component_ref": "SPDXRef-File-capsem",
-            "version": "1.4.0"
-          }
-        ],
         "packages": [
           {
+            "architecture": "arm64",
+            "binaries": [
+              {
+                "architecture": "arm64",
+                "bytes": 41,
+                "digest": {
+                  "blake3": "cd4c92fcbc18010962a9e10a6a2712d34111f5cc78c09bc809258d8f00b302e9",
+                  "sha256": "b94d39f9c2f59d02ec0c82583170346a7d7f5e5c8d4186036047b83438974d72"
+                },
+                "installed_path": "/usr/local/bin/capsem",
+                "name": "capsem",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem",
+                "status": "current",
+                "version": "1.4.0"
+              }
+            ],
+            "bytes": 37,
             "digest": {
-              "blake3": "5555555555555555555555555555555555555555555555555555555555555555",
-              "hmac": "stable-package-hmac",
-              "sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+              "blake3": "cd5845a646e9cee690731bb657b2f75b4436607632779b1443464954c3798efa",
+              "sha256": "762db9baa59f9af137a67d8c309375ab3e33a7accd5e3db39f6670f1abdd97c3"
             },
+            "evidence": [
+              {
+                "bytes": 51,
+                "digest": {
+                  "blake3": "fe14c522ea34eb18ed8b5a6da531e13f8165cfae89e1578816e27fa5282ad36f",
+                  "sha256": "e19eff9dd9d7d631d6f18034078a5ddf39c555933d5fe2eb05e4543099cc11e3"
+                },
+                "kind": "sbom",
+                "status": "current",
+                "url": "/packages/stable/1.4.0/capsem-sbom.spdx.json"
+              }
+            ],
+            "id": "stable-1.4.0-0",
             "kind": "macos_pkg",
             "name": "Capsem-1.4.0.pkg",
+            "platform": "macos",
+            "status": "current",
+            "url": "/packages/stable/1.4.0/Capsem-1.4.0.pkg",
             "version": "1.4.0"
           }
         ],
         "profiles": {
           "co-work": {
-            "id": "co-work",
-            "version": "2026.07.02.1-stable",
-            "name": "Co-work",
-            "status": "current",
-            "software": [
-              {
-                "name": "python",
-                "version": "3.12.11",
-                "source": "apt"
-              },
-              {
-                "name": "node",
-                "version": "24.2.0",
-                "source": "npm"
-              }
-            ],
             "config": [
               {
+                "bytes": 40,
+                "digest": {
+                  "blake3": "a34d0c215c6e7d0a888a0cc89c47660bb51757ed3ef329a7094d5f6608d73472",
+                  "sha256": "78c2bbdeaba15a9a0788c2c7247379f5a4f57e722c802917eaec8b6232535f14"
+                },
+                "kind": "profile",
+                "path": "profiles/co-work/profile.toml",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/co-work/profile.toml"
+              },
+              {
+                "bytes": 36,
+                "digest": {
+                  "blake3": "f02d7529f9a08860c623d948e9551099cbf24bd0ac5b80b6325a93f94ce7627f",
+                  "sha256": "14bd328fd3b8178017b1e9c7140aeb1d42d1005fefee17492fb8ce0ead9ca5e9"
+                },
                 "kind": "mcp",
                 "path": "profiles/co-work/mcp.json",
-                "url": "/profiles/releases/2026.07.02.1-stable/co-work/mcp.json",
-                "bytes": 12,
-                "digest": {
-                  "blake3": "4444444444444444444444444444444444444444444444444444444444444444",
-                  "hmac": "stable-co-work-config-hmac",
-                  "sha256": "4444444444444444444444444444444444444444444444444444444444444444"
-                },
-                "status": "current"
-              }
-            ],
-            "images": [
-              {
-                "architecture": "arm64",
-                "artifacts": [
-                  {
-                    "digest": {
-                      "blake3": "9999999999999999999999999999999999999999999999999999999999999999",
-                      "hmac": "stable-co-work-rootfs-hmac",
-                      "sha256": "9999999999999999999999999999999999999999999999999999999999999999"
-                    },
-                    "kind": "rootfs",
-                    "name": "rootfs.erofs",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/rootfs.erofs",
-                    "bytes": 42,
-                    "status": "current"
-                  }
-                ],
-                "evidence": [
-                  {
-                    "digest": {
-                      "blake3": "0000000000000000000000000000000000000000000000000000000000000000",
-                      "hmac": "stable-co-work-abom-hmac",
-                      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-                    },
-                    "kind": "abom",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/abom.cdx.json",
-                    "bytes": 24,
-                    "status": "current"
-                  }
-                ]
-              }
-            ],
-            "min_capsem_version": "1.4.0",
-            "revision": "2026.07.02.1-stable"
-          },
-          "code": {
-            "id": "code",
-            "version": "2026.07.02.1-stable",
-            "name": "Code",
-            "description": "Optimized for coding and long-running agents.",
-            "status": "current",
-            "software": [
-              {
-                "name": "python",
-                "version": "3.12.11",
-                "source": "apt"
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/co-work/mcp.json"
               },
               {
-                "name": "node",
-                "version": "24.2.0",
-                "source": "npm"
-              }
-            ],
-            "config": [
-              {
-                "kind": "mcp",
-                "path": "profiles/code/mcp.json",
-                "url": "/profiles/releases/2026.07.02.1-stable/code/mcp.json",
-                "bytes": 12,
+                "bytes": 44,
                 "digest": {
-                  "blake3": "1515151515151515151515151515151515151515151515151515151515151515",
-                  "hmac": "stable-code-config-hmac",
-                  "sha256": "1515151515151515151515151515151515151515151515151515151515151515"
+                  "blake3": "dbb988ec188203f84ff441e107c894522776ed1705d8c22f7dd74767ca730114",
+                  "sha256": "816c8ba7769ee3de7b58b675415cde9473dcbc277bb2c9335a234fcb064865c5"
                 },
-                "status": "current"
+                "kind": "enforcement",
+                "path": "profiles/co-work/enforcement.toml",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/co-work/enforcement.toml"
+              },
+              {
+                "bytes": 42,
+                "digest": {
+                  "blake3": "7ff1d8f9d5a18bbcd7aece4fe182f2c9daef57c472dac77f64c2fb1146f7f2f8",
+                  "sha256": "5fe019336b310df2a2aab660718097584080195d767a0b0e26a57bbe6d96ac68"
+                },
+                "kind": "detection",
+                "path": "profiles/co-work/detection.yaml",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/co-work/detection.yaml"
+              },
+              {
+                "bytes": 44,
+                "digest": {
+                  "blake3": "cfcdb3f875c5416749f4e270ef7e161287fd6aa569e7ac9da461d85c7d3e09f2",
+                  "sha256": "f2712f34a9dc7aff0efe55e95d8f8f4f29387b95b17f0e40317e70214bf62540"
+                },
+                "kind": "apt",
+                "path": "profiles/co-work/apt-packages.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/co-work/apt-packages.txt"
+              },
+              {
+                "bytes": 51,
+                "digest": {
+                  "blake3": "9c86b81dc09c7ce1fee956e2abb945abcd5bcb63a48371c3f14d3db8d8b94b4f",
+                  "sha256": "dc733bb17a54c74211ec521f209f42d2aa3e1c14c195dd9acbd1c97e78963dc5"
+                },
+                "kind": "python",
+                "path": "profiles/co-work/python-requirements.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/co-work/python-requirements.txt"
+              },
+              {
+                "bytes": 44,
+                "digest": {
+                  "blake3": "d93c5e967f72d4a069952f7774530cc9a60d49684f9cdc62f218e9bda12be16e",
+                  "sha256": "94629267c795b60481679ac063789818eaf2cf9333b75b8ee453801dcca3af57"
+                },
+                "kind": "npm",
+                "path": "profiles/co-work/npm-packages.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/co-work/npm-packages.txt"
+              },
+              {
+                "bytes": 36,
+                "digest": {
+                  "blake3": "7c6fcab3de71ec8b6a05f217b7b3f261d550a65ff599adece1f588e481f577f7",
+                  "sha256": "a595b9a1e2a527b361bfe300f1c0ab1ef1779c1952d0b1bd0665fb767d8fee7a"
+                },
+                "kind": "build",
+                "path": "profiles/co-work/build.sh",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/co-work/build.sh"
+              },
+              {
+                "bytes": 36,
+                "digest": {
+                  "blake3": "b7a96c0020210c2777557d5640de075390f35e247ce15bb81b3411b88170acb6",
+                  "sha256": "c50357480b5b329306be4b62b8e0553a70f18f48b1d9528269b31c05d6522d36"
+                },
+                "kind": "tips",
+                "path": "profiles/co-work/tips.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/co-work/tips.txt"
+              },
+              {
+                "bytes": 46,
+                "digest": {
+                  "blake3": "3d481a09a9a047cfd41bfc73ff2222170fbb5725bc1aed74f58ff426cb160987",
+                  "sha256": "34a0a07b630af1ed36c1d68a5f58e58673ff5f5810e226a5e0cf2616b8364c39"
+                },
+                "kind": "root_manifest",
+                "path": "profiles/co-work/root.manifest.json",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/co-work/root.manifest.json"
               }
             ],
+            "description": "Release profile co-work",
+            "id": "co-work",
             "images": [
               {
                 "architecture": "arm64",
                 "artifacts": [
                   {
+                    "bytes": 40,
                     "digest": {
-                      "blake3": "1616161616161616161616161616161616161616161616161616161616161616",
-                      "hmac": "stable-code-rootfs-hmac",
-                      "sha256": "1616161616161616161616161616161616161616161616161616161616161616"
+                      "blake3": "655a7795efdc4f057a1817eee1afcfdb13c0eecdc24b60dae5f158d753aa3040",
+                      "sha256": "55c843b874fcaca4d7615e2dce7c33cf50e9fdc0ef63f8b86d2d31bca6a869c1"
+                    },
+                    "kind": "kernel",
+                    "name": "vmlinuz",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/vmlinuz"
+                  },
+                  {
+                    "bytes": 43,
+                    "digest": {
+                      "blake3": "bd7176e3c79778bc7d9691a6f50152dc79ab68671eb1fee99bc2508dfbd91de7",
+                      "sha256": "e8d125ea991110c7be6ab1ca523544f15ac60192126dd66b51e0417504aee420"
+                    },
+                    "kind": "initrd",
+                    "name": "initrd.img",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/initrd.img"
+                  },
+                  {
+                    "bytes": 45,
+                    "digest": {
+                      "blake3": "1e632d18806a0f2c636199eeb5ee916c885cb1aa674a8c47b580b2dcc8215f85",
+                      "sha256": "2cbd538aaabf2e99013f4545e705d8af0aa714c2576a6109ccc38961daef43f1"
                     },
                     "kind": "rootfs",
                     "name": "rootfs.erofs",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/rootfs.erofs",
-                    "bytes": 42,
-                    "status": "current"
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/rootfs.erofs"
                   }
                 ],
                 "evidence": [
                   {
+                    "bytes": 49,
                     "digest": {
-                      "blake3": "1717171717171717171717171717171717171717171717171717171717171717",
-                      "hmac": "stable-code-abom-hmac",
-                      "sha256": "1717171717171717171717171717171717171717171717171717171717171717"
+                      "blake3": "722ed3d9a66742c9b88ac0b78f0252e762a0ccea1d656849e9de1bfd84037f69",
+                      "sha256": "2250962942ee4aa7b294e563fdc735ce259c0829095747ac7985a06ef77218af"
                     },
                     "kind": "abom",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/abom.cdx.json",
-                    "bytes": 24,
-                    "status": "current"
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/abom.cdx.json"
+                  },
+                  {
+                    "bytes": 49,
+                    "digest": {
+                      "blake3": "6c494bcb627ce7ab2c370796ecf772771568c71ce8935f9227570ea729c818ce",
+                      "sha256": "96fdf0d1ca8e07a51464f42691c2689451f1e6ee76d648cf0ec70c09d39a349f"
+                    },
+                    "kind": "sbom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/sbom.cdx.json"
+                  }
+                ]
+              },
+              {
+                "architecture": "x86_64",
+                "artifacts": [
+                  {
+                    "bytes": 41,
+                    "digest": {
+                      "blake3": "bf068bdefa3bde47af21ac6c96503e6fefc73ebded563e216c3daa3779950930",
+                      "sha256": "192ad21e2c5941063080e135b8973e98db80b52d06089702061489e269d7ce9c"
+                    },
+                    "kind": "kernel",
+                    "name": "vmlinuz",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/vmlinuz"
+                  },
+                  {
+                    "bytes": 44,
+                    "digest": {
+                      "blake3": "970ac905c346ce55763f4fb79a5f08f07f6c6aeaf6a5880db9f33167880ae19c",
+                      "sha256": "74fce3a6ea7703160f752fe221677a9d9da7fcb00492abc04e889176ef7d6a88"
+                    },
+                    "kind": "initrd",
+                    "name": "initrd.img",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/initrd.img"
+                  },
+                  {
+                    "bytes": 46,
+                    "digest": {
+                      "blake3": "4f291958f5f63fec8d2641fecdff66eb3c87c6dbf548458544d8bdf067c9ad93",
+                      "sha256": "65df2ff474a80f37657452200b44fdbf12f10a9685429617726d25923c4ec7d4"
+                    },
+                    "kind": "rootfs",
+                    "name": "rootfs.erofs",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/rootfs.erofs"
+                  }
+                ],
+                "evidence": [
+                  {
+                    "bytes": 50,
+                    "digest": {
+                      "blake3": "b2c623821e5099edbab216f2211a258b784b688bb6057aa318e552b6db770d87",
+                      "sha256": "4f00073116517198fa9f37d52ce48d81f20a51869157625bae95690d804fb31e"
+                    },
+                    "kind": "abom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/abom.cdx.json"
+                  },
+                  {
+                    "bytes": 50,
+                    "digest": {
+                      "blake3": "1407a132ef7a4cf3e53c33a2336ad5d2b572d55d22e08a67770d700287752ee6",
+                      "sha256": "48916a033257796f62ad81c233e420bb02d370f7392d229b77046962bf95110b"
+                    },
+                    "kind": "sbom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/sbom.cdx.json"
                   }
                 ]
               }
             ],
             "min_capsem_version": "1.4.0",
-            "revision": "2026.07.02.1-stable"
+            "name": "Co-work",
+            "revision": "2026.07.02.1-stable",
+            "software": [
+              {
+                "architecture": "all",
+                "digest": {
+                  "blake3": "8dc1da925d440aad0c44cf85f58b6ed263566b48096df61dc37f4cb20585f2f5",
+                  "sha256": "e3115c6b7623078995a68dbedf947f1ccaa05cd7f3e7c8cc0d21abb07c1b6b6e"
+                },
+                "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/apt-packages.txt",
+                "name": "python",
+                "source": "apt",
+                "version": "3.12.11"
+              },
+              {
+                "architecture": "all",
+                "digest": {
+                  "blake3": "a563f187f9df148ab0920a5f1afc8e55301371fe230620f52cee07924cf04358",
+                  "sha256": "0682f4af000ddf18eeada4aa54a6fb99bb14feae0ceb03ec10e60ac03bd123e8"
+                },
+                "evidence": "/profiles/releases/2026.07.02.1-stable/co-work/npm-packages.txt",
+                "name": "node",
+                "source": "npm",
+                "version": "24.2.0"
+              }
+            ],
+            "status": "current",
+            "version": "2026.07.02.1-stable"
+          },
+          "code": {
+            "config": [
+              {
+                "bytes": 37,
+                "digest": {
+                  "blake3": "e510a9dbae2063615f791e24707382c90fb391f321b582c1f662bc8e61f0237d",
+                  "sha256": "579a134af30bafd2b3dccd4fbc8ba73e416cdbdd57a0bce68dba54a548aba4b4"
+                },
+                "kind": "profile",
+                "path": "profiles/code/profile.toml",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/code/profile.toml"
+              },
+              {
+                "bytes": 33,
+                "digest": {
+                  "blake3": "14c8f14517ede388e527517af3896cdc90303ae17560b53d623c74f9147d839f",
+                  "sha256": "9dade83d8c201a110565d7e4a2217d89728880767f52e04a10f5bd99d8eddff1"
+                },
+                "kind": "mcp",
+                "path": "profiles/code/mcp.json",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/code/mcp.json"
+              },
+              {
+                "bytes": 41,
+                "digest": {
+                  "blake3": "9b125c3272920380f54e5e7f5325fbcb84704cae1f2674adb4269ed71108e6e9",
+                  "sha256": "9ddfb78aeb2786907a43fbe2c9a36abc112f67a96ead990ebd5f1319ebf31725"
+                },
+                "kind": "enforcement",
+                "path": "profiles/code/enforcement.toml",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/code/enforcement.toml"
+              },
+              {
+                "bytes": 39,
+                "digest": {
+                  "blake3": "e44f8f6607b6e950de2c359713870db84240b5cb960ea917b5d55c9f9562899f",
+                  "sha256": "a41402ee4fd2c8e7adfc9c0513f4184b2aba524a433e2745d7b5ec38b608a909"
+                },
+                "kind": "detection",
+                "path": "profiles/code/detection.yaml",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/code/detection.yaml"
+              },
+              {
+                "bytes": 41,
+                "digest": {
+                  "blake3": "ce8cc7c9a92f4acd82849d2138fe4cc84af84a128de3aa14260fa3bc30c7500a",
+                  "sha256": "8b62cd9198537a56d55d2655697a35968f1095e3671823be7cf910aeef0266e9"
+                },
+                "kind": "apt",
+                "path": "profiles/code/apt-packages.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/code/apt-packages.txt"
+              },
+              {
+                "bytes": 48,
+                "digest": {
+                  "blake3": "223371148d7be187417cd84f748d05c1ebc02be55c1023b863551baf2d5c5694",
+                  "sha256": "3bd82a15997fe8c376b6c0bde94cb8bae143e2e97f0532fd5a28370094fc5a91"
+                },
+                "kind": "python",
+                "path": "profiles/code/python-requirements.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/code/python-requirements.txt"
+              },
+              {
+                "bytes": 41,
+                "digest": {
+                  "blake3": "8e930968495267fc4079f6bda8b2b06e665392a3e4960138a8108000c792c0f7",
+                  "sha256": "ca4b07e503f308bf73ed473914c953e007bfd00af6c34f0865fdf606ff8394be"
+                },
+                "kind": "npm",
+                "path": "profiles/code/npm-packages.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/code/npm-packages.txt"
+              },
+              {
+                "bytes": 33,
+                "digest": {
+                  "blake3": "f9caf4c883637ef09d9e1dae4d7850d09bfd5d5c9768e967b0aa9ca89872c58b",
+                  "sha256": "6bdc477586852f23a53b4af9551afdd8f9a2cd464b7bc13daab2066e7bc94e74"
+                },
+                "kind": "build",
+                "path": "profiles/code/build.sh",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/code/build.sh"
+              },
+              {
+                "bytes": 33,
+                "digest": {
+                  "blake3": "62159f274dbcaba994c9de3edb55e963608b0d67205769e5fdfb563bc0540cca",
+                  "sha256": "65d2b354289f0aea06a9f50fe6ab0d1209607f0c39acfc6c4c160bfe30d9f094"
+                },
+                "kind": "tips",
+                "path": "profiles/code/tips.txt",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/code/tips.txt"
+              },
+              {
+                "bytes": 43,
+                "digest": {
+                  "blake3": "5ff13783f9fd0e1286710250d31e8bdef9a06f67ec0aa2b493d3ea77c66a94e5",
+                  "sha256": "9ebaf3151b105841095de9851135d53de348a3a5e8bb38ad974c8fb980737193"
+                },
+                "kind": "root_manifest",
+                "path": "profiles/code/root.manifest.json",
+                "status": "current",
+                "url": "/profiles/releases/2026.07.02.1-stable/code/root.manifest.json"
+              }
+            ],
+            "description": "Optimized for coding and long-running agents.",
+            "id": "code",
+            "images": [
+              {
+                "architecture": "arm64",
+                "artifacts": [
+                  {
+                    "bytes": 37,
+                    "digest": {
+                      "blake3": "e6f46dca240fb5cd51aa00fc66e8c889dee300767d9d71d122a9f071b3cb0df7",
+                      "sha256": "88096b82d82a5eb29744cd9f4bbd0ae3fa0232a71ba48ca94e20ef47872df365"
+                    },
+                    "kind": "kernel",
+                    "name": "vmlinuz",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/vmlinuz"
+                  },
+                  {
+                    "bytes": 40,
+                    "digest": {
+                      "blake3": "6006f382631bf0e878b658ed655c17aa8e4d7a16144816880829da9676f15289",
+                      "sha256": "f68e9636316edb1528d62a5eba7958b4851f6ae092c92fc658e4b9e66b32b300"
+                    },
+                    "kind": "initrd",
+                    "name": "initrd.img",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/initrd.img"
+                  },
+                  {
+                    "bytes": 42,
+                    "digest": {
+                      "blake3": "47b9e676231ad0f48b3209034ddc0b034a0d0df06dadeae51c8de9af92fc00ff",
+                      "sha256": "0e5d9f48d00866b256b96dd3011ff262af32b08b28b9b4affb45ad9336fe0f35"
+                    },
+                    "kind": "rootfs",
+                    "name": "rootfs.erofs",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/rootfs.erofs"
+                  }
+                ],
+                "evidence": [
+                  {
+                    "bytes": 46,
+                    "digest": {
+                      "blake3": "deebcce35c750b9175c671e490dc0f2f0a3b61740eae9081ad21c2a7de63e26c",
+                      "sha256": "51639f5ed65fbe32acfe5e02a89addea3b40bbded48bf1ab53f11eac6ae7b245"
+                    },
+                    "kind": "abom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/abom.cdx.json"
+                  },
+                  {
+                    "bytes": 46,
+                    "digest": {
+                      "blake3": "20e65657a96479e6ecf67f51867d9a4b8aa8f1fc36cf5e9199ccb9214ce2ca70",
+                      "sha256": "f1e4b806311fe1fd9ff1e8e2234502ff3ef697dc5e26eab44dd72d41f31719e3"
+                    },
+                    "kind": "sbom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/sbom.cdx.json"
+                  }
+                ]
+              },
+              {
+                "architecture": "x86_64",
+                "artifacts": [
+                  {
+                    "bytes": 38,
+                    "digest": {
+                      "blake3": "493dc02c0d91caf3041e5c88dd699fff6df8a9d53233c874f428e5e51fc07f1c",
+                      "sha256": "25006aa71a24cd546ca00b6758cb725d2fa7e6b2331ccbfbad253ab275d67f0f"
+                    },
+                    "kind": "kernel",
+                    "name": "vmlinuz",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/vmlinuz"
+                  },
+                  {
+                    "bytes": 41,
+                    "digest": {
+                      "blake3": "f32b87f0cc6427af43763ee85b5f09cf62ea512c88b538fbfc590557c4f1d860",
+                      "sha256": "ce3588e53c4419f5744f612a32e9a5c4f0ad81f7e5d0a7393b2fdb844cdc99b8"
+                    },
+                    "kind": "initrd",
+                    "name": "initrd.img",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/initrd.img"
+                  },
+                  {
+                    "bytes": 43,
+                    "digest": {
+                      "blake3": "7b83dd9830e868c9f000823115021f5df6f29dace7681f4edd54016aea83b1c4",
+                      "sha256": "ec7880abc5acafe0517d1e1c6a03f81940d89ddb2195c3e782116a4f2ddf8a4a"
+                    },
+                    "kind": "rootfs",
+                    "name": "rootfs.erofs",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/rootfs.erofs"
+                  }
+                ],
+                "evidence": [
+                  {
+                    "bytes": 47,
+                    "digest": {
+                      "blake3": "99755a9a59bded578b1913035fc70cbd893d3257cf6c1f38948a9a48f3e0d71d",
+                      "sha256": "c4dd56228e603bebb4c9f6447a6822b1db24e5ec4c31d15da3cb70ef3dfaf250"
+                    },
+                    "kind": "abom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/abom.cdx.json"
+                  },
+                  {
+                    "bytes": 47,
+                    "digest": {
+                      "blake3": "9b915ff69c1f2654745017c32f8dce9214c6698399fdd926c8ba1c39226aea90",
+                      "sha256": "018f16a9724058ec55d1cf786ccab41828254e9df04c292cf05834c9a93406b2"
+                    },
+                    "kind": "sbom",
+                    "status": "current",
+                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/sbom.cdx.json"
+                  }
+                ]
+              }
+            ],
+            "min_capsem_version": "1.4.0",
+            "name": "Code",
+            "revision": "2026.07.02.1-stable",
+            "software": [
+              {
+                "architecture": "all",
+                "digest": {
+                  "blake3": "c2693e3f2ae301385bfa57589ade44a274986f33d36160b732d3234e90e62c6f",
+                  "sha256": "af9302acefe73decf15b438a27256f2fc0868f0b12d93603e98be51cb8faddec"
+                },
+                "evidence": "/profiles/releases/2026.07.02.1-stable/code/apt-packages.txt",
+                "name": "python",
+                "source": "apt",
+                "version": "3.12.11"
+              },
+              {
+                "architecture": "all",
+                "digest": {
+                  "blake3": "af85c8e8a18b46051f32a209111fb889621813fc204e0d420399f6d304a9beeb",
+                  "sha256": "6fa70729072cee18dabff56c2de46c5602a2e9dce17c16675376e039fcf88ebd"
+                },
+                "evidence": "/profiles/releases/2026.07.02.1-stable/code/npm-packages.txt",
+                "name": "node",
+                "source": "npm",
+                "version": "24.2.0"
+              }
+            ],
+            "status": "current",
+            "version": "2026.07.02.1-stable"
           }
         },
         "status": "current",

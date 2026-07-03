@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
 
+import blake3
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
@@ -23,8 +25,8 @@ def test_package_rows_are_not_binary_rows() -> None:
     assert "pub struct BinaryInventoryRow" in source
     assert "pub packages: Vec<PackageInventoryRow>" in source
     assert "pub binaries: Vec<BinaryInventoryRow>" in source
-    assert "pub package: String" in source
-    assert "pub install_path: String" in source
+    assert "pub package: String" not in source
+    assert "pub installed_path: String" in source
     assert "pub sbom_component_ref: String" in source
     assert "package_inventory_rows_are_separate_from_binary_rows" in source
 
@@ -90,9 +92,9 @@ def test_nightly_binary_update_does_not_change_stable(tmp_path: Path) -> None:
     new["manifests"]["nightly"]["1.5.0-nightly.1"]["packages"][0]["digest"][
         "sha256"
     ] = "d" * 64
-    new["manifests"]["nightly"]["1.5.0-nightly.1"]["binaries"][0]["digest"][
-        "blake3"
-    ] = "e" * 64
+    new["manifests"]["nightly"]["1.5.0-nightly.1"]["packages"][0]["binaries"][0][
+        "digest"
+    ]["blake3"] = "e" * 64
 
     result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "nightly")
 
@@ -152,8 +154,19 @@ def _manifest(channel: str, version: str) -> dict:
     return {
         "version": version,
         "status": "current",
-        "packages": [{"name": f"capsem-{channel}.pkg", "digest": _digest("a")}],
-        "binaries": [{"name": "capsem", "digest": _digest("b")}],
+        "packages": [
+            {
+                "name": f"capsem-{channel}.pkg",
+                "digest": _digest(f"{channel}-package"),
+                "binaries": [
+                    {
+                        "name": "capsem",
+                        "installed_path": "/usr/local/bin/capsem",
+                        "digest": _digest(f"{channel}-binary"),
+                    }
+                ],
+            }
+        ],
         "profiles": {
             "co-work": {
                 "id": "co-work",
@@ -170,4 +183,8 @@ def _manifest(channel: str, version: str) -> dict:
 
 
 def _digest(seed: str) -> dict:
-    return {"sha256": seed * 64, "blake3": seed * 64, "hmac": f"hmac-{seed}"}
+    payload = seed.encode("utf-8")
+    return {
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "blake3": blake3.blake3(payload).hexdigest(),
+    }

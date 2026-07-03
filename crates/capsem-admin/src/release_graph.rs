@@ -18,7 +18,6 @@ pub enum Status {
 pub struct DigestSet {
     pub sha256: String,
     pub blake3: String,
-    pub hmac: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +86,8 @@ pub struct PackageInventoryRow {
     pub digest: DigestSet,
     pub status: Status,
     #[serde(default)]
+    pub binaries: Vec<BinaryInventoryRow>,
+    #[serde(default)]
     pub evidence: Vec<EvidenceRef>,
 }
 
@@ -95,8 +96,7 @@ pub struct PackageInventoryRow {
 pub struct BinaryInventoryRow {
     pub name: String,
     pub version: String,
-    pub package: String,
-    pub install_path: String,
+    pub installed_path: String,
     pub platform: String,
     pub architecture: Architecture,
     pub bytes: u64,
@@ -108,9 +108,8 @@ pub struct BinaryInventoryRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackagedExecutableFile {
     pub name: String,
-    pub install_path: String,
+    pub installed_path: String,
     pub bytes: Vec<u8>,
-    pub hmac: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,8 +120,6 @@ pub struct ReleaseManifest {
     pub status: Status,
     #[serde(default)]
     pub packages: Vec<PackageInventoryRow>,
-    #[serde(default)]
-    pub binaries: Vec<BinaryInventoryRow>,
     #[serde(default)]
     pub profiles: BTreeMap<String, ProfileDocument>,
 }
@@ -151,6 +148,9 @@ pub struct SoftwareInventoryRow {
     pub name: String,
     pub version: String,
     pub source: String,
+    pub architecture: String,
+    pub evidence: String,
+    pub digest: DigestSet,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,9 +246,6 @@ impl DigestSet {
             .with_context(|| format!("{context} sha256 digest is invalid"))?;
         validate_hex_digest(&self.blake3, 64)
             .with_context(|| format!("{context} blake3 digest is invalid"))?;
-        if self.hmac.trim().is_empty() {
-            bail!("{context} hmac must not be empty");
-        }
         Ok(())
     }
 
@@ -334,6 +331,33 @@ impl PackageInventoryRow {
         }
         self.digest
             .validate(&format!("package {} {}", self.name, self.version))?;
+        if self.binaries.is_empty() {
+            bail!("package {} must list packaged binaries", self.name);
+        }
+        for binary in &self.binaries {
+            binary.validate()?;
+            if binary.version != self.version {
+                bail!(
+                    "package {} binary {} version mismatch: expected {}, got {}",
+                    self.name,
+                    binary.name,
+                    self.version,
+                    binary.version
+                );
+            }
+            if binary.platform != self.platform {
+                bail!(
+                    "package {} binary {} platform mismatch: expected {}, got {}",
+                    self.name,
+                    binary.name,
+                    self.platform,
+                    binary.platform
+                );
+            }
+            if binary.architecture != self.architecture {
+                bail!("package {} binary {} architecture mismatch", self.name, binary.name);
+            }
+        }
         for evidence in &self.evidence {
             evidence.validate(&format!("package {} {}", self.name, self.version))?;
         }
@@ -349,11 +373,8 @@ impl BinaryInventoryRow {
         if self.version.trim().is_empty() {
             bail!("binary {} version must not be empty", self.name);
         }
-        if self.package.trim().is_empty() {
-            bail!("binary {} package must not be empty", self.name);
-        }
-        if self.install_path.trim().is_empty() {
-            bail!("binary {} install_path must not be empty", self.name);
+        if self.installed_path.trim().is_empty() {
+            bail!("binary {} installed_path must not be empty", self.name);
         }
         if self.platform.trim().is_empty() {
             bail!("binary {} platform must not be empty", self.name);
@@ -376,50 +397,48 @@ pub fn executable_inventory_from_package_files(
     sbom_component_refs: &BTreeMap<String, String>,
 ) -> Result<Vec<BinaryInventoryRow>> {
     let mut rows = Vec::new();
-    let mut install_paths = std::collections::BTreeSet::new();
+    let mut installed_paths = std::collections::BTreeSet::new();
     for file in files {
         if file.name.trim().is_empty() {
             bail!("packaged executable name must not be empty");
         }
-        if file.install_path.trim().is_empty() {
+        if file.installed_path.trim().is_empty() {
             bail!(
-                "packaged executable {} install_path must not be empty",
+                "packaged executable {} installed_path must not be empty",
                 file.name
             );
         }
-        if !install_paths.insert(file.install_path.as_str()) {
+        if !installed_paths.insert(file.installed_path.as_str()) {
             bail!(
-                "duplicate packaged executable install_path {}",
-                file.install_path
+                "duplicate packaged executable installed_path {}",
+                file.installed_path
             );
         }
         if file.bytes.is_empty() {
             bail!(
                 "packaged executable {} must not be empty",
-                file.install_path
+                file.installed_path
             );
         }
         let sbom_component_ref = sbom_component_refs
-            .get(&file.install_path)
+            .get(&file.installed_path)
             .ok_or_else(|| {
                 anyhow!(
                     "packaged executable {} missing SBOM component reference",
-                    file.install_path
+                    file.installed_path
                 )
             })?
             .clone();
         let row = BinaryInventoryRow {
             name: file.name.clone(),
             version: package.version.clone(),
-            package: package.name.clone(),
-            install_path: file.install_path.clone(),
+            installed_path: file.installed_path.clone(),
             platform: package.platform.clone(),
             architecture: package.architecture,
             bytes: file.bytes.len() as u64,
             digest: DigestSet {
                 sha256: format!("{:x}", Sha256::digest(&file.bytes)),
                 blake3: blake3::hash(&file.bytes).to_hex().to_string(),
-                hmac: file.hmac.clone(),
             },
             status: package.status,
             sbom_component_ref,
@@ -427,7 +446,7 @@ pub fn executable_inventory_from_package_files(
         row.validate()?;
         rows.push(row);
     }
-    rows.sort_by(|left, right| left.install_path.cmp(&right.install_path));
+    rows.sort_by(|left, right| left.installed_path.cmp(&right.installed_path));
     Ok(rows)
 }
 
@@ -437,14 +456,14 @@ pub fn verify_package_contents_match_binary_inventory(
     binaries: &[BinaryInventoryRow],
 ) -> Result<()> {
     let mut rows_by_path = BTreeMap::new();
-    for row in binaries.iter().filter(|row| row.package == package.name) {
+    for row in binaries {
         if rows_by_path
-            .insert(row.install_path.as_str(), row)
+            .insert(row.installed_path.as_str(), row)
             .is_some()
         {
             bail!(
-                "binary inventory has duplicate install_path {} for package {}",
-                row.install_path,
+                "binary inventory has duplicate installed_path {} for package {}",
+                row.installed_path,
                 package.name
             );
         }
@@ -453,18 +472,18 @@ pub fn verify_package_contents_match_binary_inventory(
     let mut seen_paths = std::collections::BTreeSet::new();
     for file in files {
         let row = rows_by_path
-            .get(file.install_path.as_str())
+            .get(file.installed_path.as_str())
             .ok_or_else(|| {
                 anyhow!(
                     "package {} executable {} missing from binary inventory",
                     package.name,
-                    file.install_path
+                    file.installed_path
                 )
             })?;
         if row.name != file.name {
             bail!(
                 "binary inventory name mismatch for {}: expected {}, got {}",
-                file.install_path,
+                file.installed_path,
                 file.name,
                 row.name
             );
@@ -472,7 +491,7 @@ pub fn verify_package_contents_match_binary_inventory(
         if row.version != package.version {
             bail!(
                 "binary inventory version mismatch for {}: expected {}, got {}",
-                file.install_path,
+                file.installed_path,
                 package.version,
                 row.version
             );
@@ -480,7 +499,7 @@ pub fn verify_package_contents_match_binary_inventory(
         if row.platform != package.platform {
             bail!(
                 "binary inventory platform mismatch for {}: expected {}, got {}",
-                file.install_path,
+                file.installed_path,
                 package.platform,
                 row.platform
             );
@@ -488,40 +507,37 @@ pub fn verify_package_contents_match_binary_inventory(
         if row.architecture != package.architecture {
             bail!(
                 "binary inventory architecture mismatch for {}",
-                file.install_path
+                file.installed_path
             );
         }
         if row.bytes != file.bytes.len() as u64 {
             bail!(
                 "binary inventory byte count mismatch for {}",
-                file.install_path
+                file.installed_path
             );
         }
         let sha256 = format!("{:x}", Sha256::digest(&file.bytes));
         if row.digest.sha256 != sha256 {
-            bail!("binary inventory sha256 mismatch for {}", file.install_path);
+            bail!("binary inventory sha256 mismatch for {}", file.installed_path);
         }
         let blake3 = blake3::hash(&file.bytes).to_hex().to_string();
         if row.digest.blake3 != blake3 {
-            bail!("binary inventory blake3 mismatch for {}", file.install_path);
-        }
-        if row.digest.hmac != file.hmac {
-            bail!("binary inventory hmac mismatch for {}", file.install_path);
+            bail!("binary inventory blake3 mismatch for {}", file.installed_path);
         }
         if row.sbom_component_ref.trim().is_empty() {
             bail!(
                 "binary inventory missing SBOM component reference for {}",
-                file.install_path
+                file.installed_path
             );
         }
-        seen_paths.insert(file.install_path.as_str());
+        seen_paths.insert(file.installed_path.as_str());
     }
 
-    for install_path in rows_by_path.keys() {
-        if !seen_paths.contains(install_path) {
+    for installed_path in rows_by_path.keys() {
+        if !seen_paths.contains(installed_path) {
             bail!(
                 "binary inventory lists {} for package {} but package contents do not contain it",
-                install_path,
+                installed_path,
                 package.name
             );
         }
@@ -538,23 +554,8 @@ impl ReleaseManifest {
         if self.packages.is_empty() {
             bail!("release manifest {} must list packages", self.version);
         }
-        let packages: std::collections::BTreeSet<&str> = self
-            .packages
-            .iter()
-            .map(|package| package.name.as_str())
-            .collect();
         for package in &self.packages {
             package.validate()?;
-        }
-        for binary in &self.binaries {
-            binary.validate()?;
-            if !packages.contains(binary.package.as_str()) {
-                bail!(
-                    "binary {} references unknown package {}",
-                    binary.name,
-                    binary.package
-                );
-            }
         }
         Ok(())
     }
@@ -603,16 +604,18 @@ impl ReleaseManifest {
                 architecture: Some(package.architecture),
             });
         }
-        for binary in &self.binaries {
-            entries.push(ReleaseLedgerEntry {
-                channel: channel.to_string(),
-                kind: ReleaseLedgerKind::Binary,
-                name: binary.name.clone(),
-                version: binary.version.clone(),
-                status: binary.status,
-                profile: None,
-                architecture: Some(binary.architecture),
-            });
+        for package in &self.packages {
+            for binary in &package.binaries {
+                entries.push(ReleaseLedgerEntry {
+                    channel: channel.to_string(),
+                    kind: ReleaseLedgerKind::Binary,
+                    name: binary.name.clone(),
+                    version: binary.version.clone(),
+                    status: binary.status,
+                    profile: None,
+                    architecture: Some(binary.architecture),
+                });
+            }
         }
         for (profile_id, profile) in &self.profiles {
             entries.push(ReleaseLedgerEntry {
@@ -761,6 +764,16 @@ impl SoftwareInventoryRow {
                 self.name
             );
         }
+        if self.architecture.trim().is_empty() {
+            bail!(
+                "profile {profile} software {} architecture must not be empty",
+                self.name
+            );
+        }
+        validate_url_like(&self.evidence)
+            .with_context(|| format!("profile {profile} software {} evidence is invalid", self.name))?;
+        self.digest
+            .validate(&format!("profile {profile} software {}", self.name))?;
         Ok(())
     }
 }
@@ -930,8 +943,7 @@ mod tests {
     fn digest_json() -> serde_json::Value {
         serde_json::json!({
             "sha256": "a".repeat(64),
-            "blake3": "b".repeat(64),
-            "hmac": "release-test-hmac"
+            "blake3": "b".repeat(64)
         })
     }
 
@@ -939,7 +951,17 @@ mod tests {
         DigestSet {
             sha256: "a".repeat(64),
             blake3: "b".repeat(64),
-            hmac: "release-test-hmac".to_string(),
+        }
+    }
+
+    fn software_row() -> SoftwareInventoryRow {
+        SoftwareInventoryRow {
+            name: "python".to_string(),
+            version: "3.12.11".to_string(),
+            source: "apt".to_string(),
+            architecture: "all".to_string(),
+            evidence: "/profiles/releases/2026.07.02.1/co-work/apt-packages.txt".to_string(),
+            digest: digest_set(),
         }
     }
 
@@ -1090,8 +1112,7 @@ mod tests {
                             "url": "/manifests/nightly/1.5.0-nightly.20300101/manifest.json",
                             "digest": {
                                 "sha256": "a".repeat(40),
-                                "blake3": "b".repeat(64),
-                                "hmac": "release-test-hmac"
+                                "blake3": "b".repeat(64)
                             }
                         }
                     ]
@@ -1110,7 +1131,6 @@ mod tests {
         let digest = DigestSet {
             sha256: format!("{:x}", Sha256::digest(bytes)),
             blake3: blake3::hash(bytes).to_hex().to_string(),
-            hmac: "release-test-hmac".to_string(),
         };
 
         digest
@@ -1203,6 +1223,17 @@ mod tests {
 
     #[test]
     fn package_inventory_rows_are_separate_from_binary_rows() {
+        let binary = BinaryInventoryRow {
+            name: "capsem".to_string(),
+            version: "1.4.0".to_string(),
+            installed_path: "/usr/local/bin/capsem".to_string(),
+            platform: "macos".to_string(),
+            architecture: Architecture::Arm64,
+            bytes: 7,
+            digest: digest_set(),
+            status: Status::Current,
+            sbom_component_ref: "SPDXRef-File-capsem".to_string(),
+        };
         let manifest = ReleaseManifest {
             version: "1.4.0".to_string(),
             status: Status::Current,
@@ -1216,23 +1247,12 @@ mod tests {
                 bytes: 42,
                 digest: digest_set(),
                 status: Status::Current,
+                binaries: vec![binary],
                 evidence: vec![EvidenceRef {
                     kind: "notarization".to_string(),
                     url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg.notary.json".to_string(),
                     digest: digest_set(),
                 }],
-            }],
-            binaries: vec![BinaryInventoryRow {
-                name: "capsem".to_string(),
-                version: "1.4.0".to_string(),
-                package: "Capsem-1.4.0.pkg".to_string(),
-                install_path: "/usr/local/bin/capsem".to_string(),
-                platform: "macos".to_string(),
-                architecture: Architecture::Arm64,
-                bytes: 7,
-                digest: digest_set(),
-                status: Status::Current,
-                sbom_component_ref: "SPDXRef-File-capsem".to_string(),
             }],
             profiles: BTreeMap::new(),
         };
@@ -1240,12 +1260,15 @@ mod tests {
         manifest
             .validate_inventory_shape()
             .expect("package and binary inventory is valid");
-        assert_ne!(manifest.packages[0].name, manifest.binaries[0].name);
-        assert_eq!(manifest.binaries[0].package, manifest.packages[0].name);
+        assert_ne!(manifest.packages[0].name, manifest.packages[0].binaries[0].name);
+        assert_eq!(
+            manifest.packages[0].binaries[0].installed_path,
+            "/usr/local/bin/capsem"
+        );
     }
 
     #[test]
-    fn package_inventory_requires_sha256_blake3_and_hmac() {
+    fn package_inventory_requires_sha256_and_blake3() {
         let manifest = ReleaseManifest {
             version: "1.4.0".to_string(),
             status: Status::Current,
@@ -1260,12 +1283,21 @@ mod tests {
                 digest: DigestSet {
                     sha256: "a".repeat(64),
                     blake3: "not-a-blake3-digest".to_string(),
-                    hmac: "release-test-hmac".to_string(),
                 },
                 status: Status::Current,
+                binaries: vec![BinaryInventoryRow {
+                    name: "capsem".to_string(),
+                    version: "1.4.0".to_string(),
+                    installed_path: "/usr/bin/capsem".to_string(),
+                    platform: "linux".to_string(),
+                    architecture: Architecture::Arm64,
+                    bytes: 7,
+                    digest: digest_set(),
+                    status: Status::Current,
+                    sbom_component_ref: "SPDXRef-File-capsem".to_string(),
+                }],
                 evidence: Vec::new(),
             }],
-            binaries: Vec::new(),
             profiles: BTreeMap::new(),
         };
 
@@ -1287,20 +1319,19 @@ mod tests {
             bytes: 42,
             digest: digest_set(),
             status: Status::Current,
+            binaries: Vec::new(),
             evidence: Vec::new(),
         };
         let files = vec![
             PackagedExecutableFile {
                 name: "capsem-service".to_string(),
-                install_path: "/usr/local/share/capsem/bin/capsem-service".to_string(),
+                installed_path: "/usr/local/share/capsem/bin/capsem-service".to_string(),
                 bytes: b"service-bin".to_vec(),
-                hmac: "service-hmac".to_string(),
             },
             PackagedExecutableFile {
                 name: "capsem".to_string(),
-                install_path: "/usr/local/bin/capsem".to_string(),
+                installed_path: "/usr/local/bin/capsem".to_string(),
                 bytes: b"capsem-bin".to_vec(),
-                hmac: "capsem-hmac".to_string(),
             },
         ];
         let sbom_refs = BTreeMap::from([
@@ -1319,7 +1350,7 @@ mod tests {
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].name, "capsem");
-        assert_eq!(rows[0].package, "Capsem-1.4.0.pkg");
+        assert_eq!(rows[0].installed_path, "/usr/local/bin/capsem");
         assert_eq!(
             rows[0].digest.sha256,
             format!("{:x}", Sha256::digest(b"capsem-bin"))
@@ -1344,13 +1375,13 @@ mod tests {
             bytes: 42,
             digest: digest_set(),
             status: Status::Current,
+            binaries: Vec::new(),
             evidence: Vec::new(),
         };
         let files = vec![PackagedExecutableFile {
             name: "capsem".to_string(),
-            install_path: "/usr/bin/capsem".to_string(),
+            installed_path: "/usr/bin/capsem".to_string(),
             bytes: b"capsem-bin".to_vec(),
-            hmac: "capsem-hmac".to_string(),
         }];
 
         let error = executable_inventory_from_package_files(&package, &files, &BTreeMap::new())
@@ -1374,20 +1405,19 @@ mod tests {
             bytes: 99,
             digest: digest_set(),
             status: Status::Current,
+            binaries: Vec::new(),
             evidence: Vec::new(),
         };
         let macos_files = vec![
             PackagedExecutableFile {
                 name: "capsem".to_string(),
-                install_path: "/usr/local/share/capsem/bin/capsem".to_string(),
+                installed_path: "/usr/local/share/capsem/bin/capsem".to_string(),
                 bytes: b"macos-capsem".to_vec(),
-                hmac: "macos-capsem-hmac".to_string(),
             },
             PackagedExecutableFile {
                 name: "capsem-service".to_string(),
-                install_path: "/usr/local/share/capsem/bin/capsem-service".to_string(),
+                installed_path: "/usr/local/share/capsem/bin/capsem-service".to_string(),
                 bytes: b"macos-service".to_vec(),
-                hmac: "macos-service-hmac".to_string(),
             },
         ];
         let macos_sbom_refs = BTreeMap::from([
@@ -1416,20 +1446,19 @@ mod tests {
             bytes: 101,
             digest: digest_set(),
             status: Status::Current,
+            binaries: Vec::new(),
             evidence: Vec::new(),
         };
         let deb_files = vec![
             PackagedExecutableFile {
                 name: "capsem".to_string(),
-                install_path: "/usr/bin/capsem".to_string(),
+                installed_path: "/usr/bin/capsem".to_string(),
                 bytes: b"deb-capsem".to_vec(),
-                hmac: "deb-capsem-hmac".to_string(),
             },
             PackagedExecutableFile {
                 name: "capsem-service".to_string(),
-                install_path: "/usr/bin/capsem-service".to_string(),
+                installed_path: "/usr/bin/capsem-service".to_string(),
                 bytes: b"deb-service".to_vec(),
-                hmac: "deb-service-hmac".to_string(),
             },
         ];
         let deb_sbom_refs = BTreeMap::from([
@@ -1461,13 +1490,13 @@ mod tests {
             bytes: 101,
             digest: digest_set(),
             status: Status::Current,
+            binaries: Vec::new(),
             evidence: Vec::new(),
         };
         let files = vec![PackagedExecutableFile {
             name: "capsem".to_string(),
-            install_path: "/usr/bin/capsem".to_string(),
+            installed_path: "/usr/bin/capsem".to_string(),
             bytes: b"deb-capsem".to_vec(),
-            hmac: "deb-capsem-hmac".to_string(),
         }];
         let sbom_refs = BTreeMap::from([(
             "/usr/bin/capsem".to_string(),
@@ -1497,11 +1526,7 @@ mod tests {
             revision: revision.to_string(),
             status: Status::Current,
             min_capsem_version: Some("1.4.0".to_string()),
-            software: vec![SoftwareInventoryRow {
-                name: "python".to_string(),
-                version: "3.12.11".to_string(),
-                source: "apt".to_string(),
-            }],
+            software: vec![software_row()],
             config: vec![ProfileConfigRef {
                 kind: "mcp".to_string(),
                 path: "profiles/co-work/mcp.json".to_string(),
@@ -1635,11 +1660,7 @@ mod tests {
             revision: "2026.07.02.1".to_string(),
             status: Status::Current,
             min_capsem_version: Some("1.4.0".to_string()),
-            software: vec![SoftwareInventoryRow {
-                name: "python".to_string(),
-                version: "3.12.11".to_string(),
-                source: "apt".to_string(),
-            }],
+            software: vec![software_row()],
             config: vec![ProfileConfigRef {
                 kind: "mcp".to_string(),
                 path: "profiles/co-work/mcp.json".to_string(),
@@ -1806,19 +1827,18 @@ mod tests {
                         bytes: 42,
                         digest: digest_set(),
                         status: Status::Current,
+                        binaries: vec![BinaryInventoryRow {
+                            name: "capsem".to_string(),
+                            version: "1.4.0".to_string(),
+                            installed_path: "/usr/local/bin/capsem".to_string(),
+                            platform: "macos".to_string(),
+                            architecture: Architecture::Arm64,
+                            bytes: 7,
+                            digest: digest_set(),
+                            status: Status::Current,
+                            sbom_component_ref: "SPDXRef-File-capsem".to_string(),
+                        }],
                         evidence: Vec::new(),
-                    }],
-                    binaries: vec![BinaryInventoryRow {
-                        name: "capsem".to_string(),
-                        version: "1.4.0".to_string(),
-                        package: "Capsem-1.4.0.pkg".to_string(),
-                        install_path: "/usr/local/bin/capsem".to_string(),
-                        platform: "macos".to_string(),
-                        architecture: Architecture::Arm64,
-                        bytes: 7,
-                        digest: digest_set(),
-                        status: Status::Current,
-                        sbom_component_ref: "SPDXRef-File-capsem".to_string(),
                     }],
                     profiles,
                 },

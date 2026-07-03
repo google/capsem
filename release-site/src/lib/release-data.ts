@@ -182,11 +182,22 @@ export function profileArchNames(profile: JsonObject): string[] {
   const legacy = Object.keys(profile.assets?.arch ?? {});
   const graph = Array.isArray(profile.images)
     ? profile.images.map((image: JsonObject) => String(image.architecture ?? '')).filter(Boolean)
+    : profile.images && typeof profile.images === 'object'
+      ? Object.keys(profile.images)
     : [];
   return Array.from(new Set([...legacy, ...graph])).sort();
 }
 
 export function profileArtifactRows(profile: JsonObject, arch: string): TableRow[] {
+  if (profile.images && typeof profile.images === 'object' && !Array.isArray(profile.images)) {
+    const imageSet = profile.images[arch] ?? {};
+    const artifacts = Array.isArray(imageSet.artifacts) ? imageSet.artifacts : [];
+    const evidence = Array.isArray(imageSet.evidence) ? imageSet.evidence : [];
+    return [
+      ...artifacts.map((artifact: JsonObject) => descriptorRow(artifactLabel(artifact.kind), artifact)),
+      ...evidence.map((item: JsonObject) => descriptorRow(evidenceLabel(item.kind), item)),
+    ];
+  }
   if (Array.isArray(profile.images)) {
     const imageSet = profile.images.find((image: JsonObject) => image.architecture === arch) ?? {};
     const artifacts = Array.isArray(imageSet.artifacts) ? imageSet.artifacts : [];
@@ -249,12 +260,12 @@ export function profileFileRows(profile: JsonObject): TableRow[] {
 }
 
 export function binaryRows(data: ReleaseData): JsonObject[] {
-  if (Array.isArray(data.manifest.binaries)) {
-    return data.manifest.binaries;
+  if (Array.isArray(data.manifest.packages)) {
+    return data.manifest.packages.flatMap((pkg: JsonObject) => (
+      Array.isArray(pkg.binaries) ? pkg.binaries : []
+    ));
   }
-  const current = String(data.manifest.binaries?.current ?? '');
-  const files = data.manifest.binaries?.releases?.[current]?.files;
-  return Array.isArray(files) ? files.filter((file: JsonObject) => !isHostSbom(file.name)) : [];
+  return [];
 }
 
 export function packageRows(data: ReleaseData): JsonObject[] {
@@ -265,21 +276,31 @@ export function manifestRecords(data: ReleaseData): JsonObject[] {
   return Array.isArray(data.channelRecord.manifests) ? data.channelRecord.manifests : [];
 }
 
-export function hostSbomRows(data: ReleaseData): JsonObject[] {
+function hostSbomRows(data: ReleaseData): JsonObject[] {
   if (Array.isArray(data.manifest.packages)) {
     return data.manifest.packages.flatMap((pkg: JsonObject) => {
       const evidence = Array.isArray(pkg.evidence) ? pkg.evidence : [];
       return evidence.filter((item: JsonObject) => String(item.kind ?? '').toLowerCase().includes('sbom'));
     });
   }
-  const current = String(data.manifest.binaries?.current ?? '');
-  const files = data.manifest.binaries?.releases?.[current]?.files;
-  return Array.isArray(files) ? files.filter((file: JsonObject) => isHostSbom(file.name)) : [];
+  return [];
 }
 
-export function vmObomRows(data: ReleaseData): JsonObject[] {
+function profileEvidenceRows(data: ReleaseData): JsonObject[] {
   return profileList(data)
     .flatMap((profile): JsonObject[] => {
+      if (profile.images && typeof profile.images === 'object' && !Array.isArray(profile.images)) {
+        return Object.entries(profile.images).flatMap(([arch, imageSet]) => {
+          const image = imageSet as JsonObject;
+          const evidence: JsonObject[] = Array.isArray(image.evidence) ? image.evidence : [];
+          return evidence.map((item: JsonObject) => ({
+            profile: profile.id,
+            arch,
+            logical_name: item.kind,
+            ...item,
+          }));
+        });
+      }
       if (Array.isArray(profile.images)) {
         return (profile.images as JsonObject[]).flatMap((image: JsonObject): JsonObject[] => {
           const evidence: JsonObject[] = Array.isArray(image.evidence) ? image.evidence : [];
@@ -302,8 +323,19 @@ export function vmObomRows(data: ReleaseData): JsonObject[] {
     .sort((left, right) => String(left.arch).localeCompare(String(right.arch)));
 }
 
-export function currentAssetFilesByArch(data: ReleaseData): [string, JsonObject[]][] {
+function currentProfileFilesByArch(data: ReleaseData): [string, JsonObject[]][] {
   const graphFiles = profileList(data).flatMap((profile) => {
+    if (profile.images && typeof profile.images === 'object' && !Array.isArray(profile.images)) {
+      return Object.entries(profile.images).flatMap(([arch, imageSet]) => {
+        const image = imageSet as JsonObject;
+        const artifacts = Array.isArray(image.artifacts) ? image.artifacts : [];
+        return artifacts.map((artifact: JsonObject) => ({
+          arch,
+          logical_name: `${profile.id}/${artifact.name ?? artifact.kind}`,
+          ...artifact,
+        }));
+      });
+    }
     if (!Array.isArray(profile.images)) return [];
     return profile.images.flatMap((image: JsonObject) => {
       const artifacts = Array.isArray(image.artifacts) ? image.artifacts : [];
@@ -321,19 +353,19 @@ export function currentAssetFilesByArch(data: ReleaseData): [string, JsonObject[
   const current = String(data.manifest.assets?.current ?? '');
   const release = data.manifest.assets?.releases?.[current] ?? {};
   const arches = release.arches ?? {};
-  const assetBase = currentAssetBaseUrl(data);
+  const base = currentProfileBaseUrl(data);
   const files = Object.entries(arches).flatMap(([arch, entries]) => {
     return Object.entries(entries as JsonObject).map(([logicalName, entry]) => ({
       arch,
       logical_name: logicalName,
-      url: assetFileUrl(assetBase, arch, logicalName),
+      url: assetFileUrl(base, arch, logicalName),
       ...(entry as JsonObject),
     }));
   });
   return groupFilesByArch(files);
 }
 
-export function assetReleaseRows(data: ReleaseData): JsonObject[] {
+function releaseHistoryRows(data: ReleaseData): JsonObject[] {
   if (Array.isArray(data.channelRecord.manifests) && !data.manifest.assets?.releases) {
     return data.channelRecord.manifests.map((manifest: JsonObject) => ({
       version: manifest.version,
@@ -372,7 +404,7 @@ export function currentArchitectures(data: ReleaseData): string[] {
   ).sort();
 }
 
-export function currentAssetBaseUrl(data: ReleaseData): string {
+function currentProfileBaseUrl(data: ReleaseData): string {
   const template = String(data.manifestRecord.asset_base ?? data.manifest.asset_base ?? '/assets/releases');
   const assetVersion = String(data.manifest.assets?.current ?? '');
   if (template.includes('{asset_version}')) {
@@ -505,8 +537,8 @@ function selectManifestRecord(channelRecord: JsonObject): JsonObject {
   return selected;
 }
 
-function assetFileUrl(assetBase: string, arch: string, logicalName: string): string {
-  const normalizedBase = assetBase.replace(/\/+$/, '');
+function assetFileUrl(baseUrl: string, arch: string, logicalName: string): string {
+  const normalizedBase = baseUrl.replace(/\/+$/, '');
   return `${normalizedBase}/${arch}-${logicalName}`;
 }
 

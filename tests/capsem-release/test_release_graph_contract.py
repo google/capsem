@@ -94,7 +94,8 @@ def test_fixture_has_stable_and_nightly() -> None:
     nightly = graph["manifests"]["nightly"]["1.5.0-nightly.20260702"]
     assert stable["packages"][0]["name"] == "Capsem-1.4.0.pkg"
     assert nightly["packages"][0]["name"] == "Capsem-1.5.0-nightly.20260702.pkg"
-    assert stable["binaries"][0]["sbom_component_ref"] == "SPDXRef-File-capsem"
+    assert "binaries" not in stable
+    assert stable["packages"][0]["binaries"][0]["sbom_component_ref"] == "SPDXRef-File-capsem"
     assert nightly["profiles"]["co-work"]["revision"].endswith("-nightly")
     assert stable["profiles"]["co-work"]["revision"].endswith("-stable")
     assert nightly["profiles"]["co-work"]["min_capsem_version"] == "1.4.0"
@@ -112,7 +113,7 @@ def test_ledger_is_derived_not_authoritative() -> None:
     derived_kinds = {
         "manifest" if graph["channels"]["stable"]["manifests"] else "",
         "package" if stable["packages"] else "",
-        "binary" if stable["binaries"] else "",
+        "binary" if stable["packages"][0]["binaries"] else "",
         "profile" if stable["profiles"] else "",
         "profile_image" if stable["profiles"]["co-work"]["images"] else "",
     }

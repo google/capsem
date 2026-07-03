@@ -81,9 +81,8 @@ def test_co_work_nightly_update_does_not_touch_stable_or_binaries(tmp_path: Path
     profile = nightly["profiles"]["co-work"]
 
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "f" * 64
-    new["channels"]["nightly"]["manifests"][0]["digest"]["hmac"] = "nightly-updated-hmac"
     profile["revision"] = "2026.07.02.2-nightly"
-    profile["config"][0]["digest"]["hmac"] = "nightly-co-work-config-hmac-updated"
+    profile["config"][0]["digest"]["sha256"] = "f" * 64
     profile["images"][0]["artifacts"][0]["digest"]["sha256"] = "e" * 64
     profile["images"][0]["evidence"][0]["digest"]["blake3"] = "d" * 64
 
@@ -108,9 +107,6 @@ def test_co_work_nightly_update_does_not_touch_stable_or_binaries(tmp_path: Path
     assert nightly["packages"] == old["manifests"]["nightly"]["1.5.0-nightly.20260702"][
         "packages"
     ]
-    assert nightly["binaries"] == old["manifests"]["nightly"]["1.5.0-nightly.20260702"][
-        "binaries"
-    ]
 
     report = json.loads(summary.read_text(encoding="utf-8"))
     assert report["accepted"] is True
@@ -120,7 +116,7 @@ def test_co_work_nightly_update_does_not_touch_stable_or_binaries(tmp_path: Path
     assert report["violations"] == []
     assert "channels.nightly.manifests.0.digest.sha256" in report["allowed_paths"]
     assert (
-        "manifests.nightly.1.5.0-nightly.20260702.profiles.co-work.config.0.digest.hmac"
+        "manifests.nightly.1.5.0-nightly.20260702.profiles.co-work.config.0.digest.sha256"
         in report["allowed_paths"]
     )
     assert (

@@ -32,7 +32,12 @@ const profileName = profile.name ?? profile.id;
 const profileDescription = profile.description ?? `Release profile ${profile.id}`;
 const software = Array.isArray(profile.software) ? profile.software : [];
 const configFiles = Array.isArray(profile.config) ? profile.config : profileFileRows(profile);
-const images = Array.isArray(profile.images) ? profile.images : [];
+const images = Array.isArray(profile.images)
+  ? profile.images
+  : Object.entries(profile.images ?? {}).map(([architecture, value]) => ({
+      architecture,
+      ...(value as Record<string, unknown>),
+    }));
 const availability = Object.entries(profile.availability ?? {})
   .filter(([, enabled]) => enabled)
   .map(([name]) => name)
@@ -65,12 +70,16 @@ const availability = Object.entries(profile.availability ?? {})
   <section class="mt-6 border border-zinc-200 p-5">
     <h2 class="text-xl font-semibold text-black">Software Inventory</h2>
     <div class="mt-4 overflow-x-auto">
-      <table class="w-full min-w-[640px] border-collapse text-sm">
+      <table class="w-full min-w-[960px] border-collapse text-sm">
         <thead>
           <tr class="border-b border-zinc-200 text-left text-zinc-500">
             <th class="py-2 pr-4 font-medium">Name</th>
             <th class="py-2 pr-4 font-medium">Version</th>
             <th class="py-2 pr-4 font-medium">Source</th>
+            <th class="py-2 pr-4 font-medium">Architecture</th>
+            <th class="py-2 pr-4 font-medium">Evidence</th>
+            <th class="py-2 pr-4 font-medium">SHA-256</th>
+            <th class="py-2 pr-4 font-medium">BLAKE3</th>
           </tr>
         </thead>
         <tbody>
@@ -79,10 +88,14 @@ const availability = Object.entries(profile.availability ?? {})
               <td class="py-3 pr-4">{item.name}</td>
               <td class="py-3 pr-4"><code>{item.version}</code></td>
               <td class="py-3 pr-4">{item.source}</td>
+              <td class="py-3 pr-4">{item.architecture}</td>
+              <td class="py-3 pr-4"><a class="break-all text-blue-600 underline" href={item.evidence}>{item.evidence}</a></td>
+              <td class="py-3 pr-4"><code class="break-all">{hashLabel(item.digest?.sha256)}</code></td>
+              <td class="py-3 pr-4"><code class="break-all">{hashLabel(item.digest?.blake3)}</code></td>
             </tr>
           )) : (
             <tr>
-              <td class="py-4 pr-4 text-zinc-600" colspan="3">No software inventory is published for this profile.</td>
+              <td class="py-4 pr-4 text-zinc-600" colspan="7">No software inventory is published for this profile.</td>
             </tr>
           )}
         </tbody>
@@ -102,7 +115,6 @@ const availability = Object.entries(profile.availability ?? {})
             <th class="py-2 pr-4 font-medium">Bytes</th>
             <th class="py-2 pr-4 font-medium">SHA-256</th>
             <th class="py-2 pr-4 font-medium">BLAKE3</th>
-            <th class="py-2 pr-4 font-medium">HMAC</th>
             <th class="py-2 pr-4 font-medium">Status</th>
           </tr>
         </thead>
@@ -115,12 +127,11 @@ const availability = Object.entries(profile.availability ?? {})
               <td class="py-3 pr-4">{byteLabel(file.bytes ?? file.size)}</td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(file.digest?.sha256)}</code></td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(file.digest?.blake3 ?? file.hash)}</code></td>
-              <td class="py-3 pr-4"><code class="break-all">{hashLabel(file.digest?.hmac)}</code></td>
               <td class="py-3 pr-4">{file.status ?? 'current'}</td>
             </tr>
           )) : (
             <tr>
-              <td class="py-4 pr-4 text-zinc-600" colspan="8">No config files are published for this profile.</td>
+              <td class="py-4 pr-4 text-zinc-600" colspan="7">No config files are published for this profile.</td>
             </tr>
           )}
         </tbody>
@@ -144,7 +155,6 @@ const availability = Object.entries(profile.availability ?? {})
                   <th class="py-2 pr-4 font-medium">Bytes</th>
                   <th class="py-2 pr-4 font-medium">SHA-256</th>
                   <th class="py-2 pr-4 font-medium">BLAKE3</th>
-                  <th class="py-2 pr-4 font-medium">HMAC</th>
                   <th class="py-2 pr-4 font-medium">Status</th>
                 </tr>
               </thead>
@@ -157,7 +167,6 @@ const availability = Object.entries(profile.availability ?? {})
                     <td class="py-3 pr-4">{byteLabel(artifact.bytes)}</td>
                     <td class="py-3 pr-4"><code class="break-all">{hashLabel(artifact.digest?.sha256)}</code></td>
                     <td class="py-3 pr-4"><code class="break-all">{hashLabel(artifact.digest?.blake3)}</code></td>
-                    <td class="py-3 pr-4"><code class="break-all">{hashLabel(artifact.digest?.hmac)}</code></td>
                     <td class="py-3 pr-4">{artifact.status ?? 'current'}</td>
                   </tr>
                 ))}
@@ -175,7 +184,6 @@ const availability = Object.entries(profile.availability ?? {})
                   <th class="py-2 pr-4 font-medium">Bytes</th>
                   <th class="py-2 pr-4 font-medium">SHA-256</th>
                   <th class="py-2 pr-4 font-medium">BLAKE3</th>
-                  <th class="py-2 pr-4 font-medium">HMAC</th>
                 </tr>
               </thead>
               <tbody>
@@ -186,7 +194,6 @@ const availability = Object.entries(profile.availability ?? {})
                     <td class="py-3 pr-4">{byteLabel(evidence.bytes)}</td>
                     <td class="py-3 pr-4"><code class="break-all">{hashLabel(evidence.digest?.sha256)}</code></td>
                     <td class="py-3 pr-4"><code class="break-all">{hashLabel(evidence.digest?.blake3)}</code></td>
-                    <td class="py-3 pr-4"><code class="break-all">{hashLabel(evidence.digest?.hmac)}</code></td>
                   </tr>
                 ))}
               </tbody>

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
 
+import blake3
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "check-release-graph-diff.py"
@@ -25,7 +27,9 @@ def test_binary_allowed_diff(tmp_path: Path) -> None:
     new = deepcopy(old)
     new["channels"]["stable"]["manifests"][0]["digest"]["sha256"] = "c" * 64
     new["manifests"]["stable"]["1.4.0"]["packages"][0]["digest"]["sha256"] = "d" * 64
-    new["manifests"]["stable"]["1.4.0"]["binaries"][0]["digest"]["blake3"] = "e" * 64
+    new["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0]["digest"][
+        "blake3"
+    ] = "e" * 64
 
     result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "stable")
 
@@ -96,7 +100,9 @@ def test_binary_lane_rejects_profile_changes(tmp_path: Path) -> None:
 def test_binary_lane_rejects_other_channel_binary_changes(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
-    new["manifests"]["stable"]["1.4.0"]["binaries"][0]["digest"]["sha256"] = "c" * 64
+    new["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0]["digest"][
+        "sha256"
+    ] = "c" * 64
     new["manifests"]["nightly"]["1.5.0-nightly.1"]["packages"][0]["digest"][
         "sha256"
     ] = "d" * 64
@@ -105,7 +111,7 @@ def test_binary_lane_rejects_other_channel_binary_changes(tmp_path: Path) -> Non
 
     assert result.returncode == 1
     assert "manifests.nightly.1.5.0-nightly.1.packages.0.digest.sha256" in result.stderr
-    assert "manifests.stable.1.4.0.binaries.0.digest.sha256" not in result.stderr
+    assert "manifests.stable.1.4.0.packages.0.binaries.0.digest.sha256" not in result.stderr
 
 
 def test_fixture_can_mutate_nightly_co_work_only(tmp_path: Path) -> None:
@@ -184,8 +190,19 @@ def _manifest(channel: str, version: str) -> dict:
     return {
         "version": version,
         "status": "current",
-        "packages": [{"name": f"capsem-{channel}.pkg", "digest": _digest("a")}],
-        "binaries": [{"name": "capsem", "digest": _digest("b")}],
+        "packages": [
+            {
+                "name": f"capsem-{channel}.pkg",
+                "digest": _digest(f"{channel}-package"),
+                "binaries": [
+                    {
+                        "name": "capsem",
+                        "installed_path": "/usr/local/bin/capsem",
+                        "digest": _digest(f"{channel}-binary"),
+                    }
+                ],
+            }
+        ],
         "profiles": {"co-work": _profile(channel)},
     }
 
@@ -206,4 +223,8 @@ def _profile(channel: str) -> dict:
 
 
 def _digest(seed: str) -> dict:
-    return {"sha256": seed * 64, "blake3": seed * 64, "hmac": f"hmac-{seed}"}
+    payload = seed.encode("utf-8")
+    return {
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "blake3": blake3.blake3(payload).hexdigest(),
+    }

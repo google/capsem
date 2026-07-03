@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Rebuilt the release-channel contract around generated channel, manifest,
+  package, binary, profile, image, and evidence ownership; added multichannel
+  stable/nightly generation and live `release.capsem.org` verification gates
+  with real SHA-256 and BLAKE3 artifact checks.
+
 ## [1.4.1782944059] - 2026-07-01
 
 ### Fixed

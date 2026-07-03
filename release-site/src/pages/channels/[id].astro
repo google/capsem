@@ -53,7 +53,6 @@ const profileCount = profiles.length;
       <dt class="text-zinc-500">Manifest URL</dt><dd><a class="break-all text-blue-600 underline" href={manifestUrl(data)}>{manifestUrl(data)}</a></dd>
       <dt class="text-zinc-500">Manifest SHA-256</dt><dd><code class="break-all">{hashLabel(data.manifestRecord.digest?.sha256)}</code></dd>
       <dt class="text-zinc-500">Manifest BLAKE3</dt><dd><code class="break-all">{manifestBlake3(data)}</code></dd>
-      <dt class="text-zinc-500">Manifest HMAC</dt><dd><code class="break-all">{hashLabel(data.manifestRecord.digest?.hmac)}</code></dd>
       <dt class="text-zinc-500">Packages</dt><dd>{packages.length}</dd>
       <dt class="text-zinc-500">Binaries</dt><dd>{binaries.length}</dd>
       <dt class="text-zinc-500">Profiles</dt><dd>{profileCount}</dd>
@@ -71,7 +70,6 @@ const profileCount = profiles.length;
             <th class="py-2 pr-4 font-medium">Manifest URL</th>
             <th class="py-2 pr-4 font-medium">SHA-256</th>
             <th class="py-2 pr-4 font-medium">BLAKE3</th>
-            <th class="py-2 pr-4 font-medium">HMAC</th>
           </tr>
         </thead>
         <tbody>
@@ -82,7 +80,6 @@ const profileCount = profiles.length;
               <td class="py-3 pr-4"><a class="break-all text-blue-600 underline" href={manifest.url}>{manifest.url}</a></td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(manifest.digest?.sha256)}</code></td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(manifest.digest?.blake3)}</code></td>
-              <td class="py-3 pr-4"><code class="break-all">{hashLabel(manifest.digest?.hmac)}</code></td>
             </tr>
           ))}
         </tbody>
@@ -103,7 +100,6 @@ const profileCount = profiles.length;
             <th class="py-2 pr-4 font-medium">Bytes</th>
             <th class="py-2 pr-4 font-medium">SHA-256</th>
             <th class="py-2 pr-4 font-medium">BLAKE3</th>
-            <th class="py-2 pr-4 font-medium">HMAC</th>
           </tr>
         </thead>
         <tbody>
@@ -116,11 +112,10 @@ const profileCount = profiles.length;
               <td class="py-3 pr-4">{byteLabel(pkg.bytes ?? pkg.size)}</td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(pkg.digest?.sha256)}</code></td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(pkg.digest?.blake3)}</code></td>
-              <td class="py-3 pr-4"><code class="break-all">{hashLabel(pkg.digest?.hmac)}</code></td>
             </tr>
           )) : (
             <tr>
-              <td class="py-4 pr-4 text-zinc-600" colspan="8">No package metadata is published in this manifest.</td>
+              <td class="py-4 pr-4 text-zinc-600" colspan="7">No package metadata is published in this manifest.</td>
             </tr>
           )}
         </tbody>
@@ -137,10 +132,10 @@ const profileCount = profiles.length;
             <th class="py-2 pr-4 font-medium">Version</th>
             <th class="py-2 pr-4 font-medium">Binary</th>
             <th class="py-2 pr-4 font-medium">Description</th>
-            <th class="py-2 pr-4 font-medium">Package</th>
+            <th class="py-2 pr-4 font-medium">Installed path</th>
+            <th class="py-2 pr-4 font-medium">Bytes</th>
             <th class="py-2 pr-4 font-medium">SHA-256</th>
             <th class="py-2 pr-4 font-medium">BLAKE3</th>
-            <th class="py-2 pr-4 font-medium">HMAC</th>
             <th class="py-2 pr-4 font-medium">SBOM component</th>
           </tr>
         </thead>
@@ -150,11 +145,11 @@ const profileCount = profiles.length;
               <td class="py-3 pr-4"><code>{binary.version}</code></td>
               <td class="py-3 pr-4">{binary.name}</td>
               <td class="py-3 pr-4 text-zinc-600">{binaryDescription(binary.name)}</td>
-              <td class="py-3 pr-4">{binary.package ?? 'not published'}</td>
+              <td class="py-3 pr-4"><code>{binary.installed_path}</code></td>
+              <td class="py-3 pr-4">{byteLabel(binary.bytes)}</td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(binary.digest?.sha256)}</code></td>
               <td class="py-3 pr-4"><code class="break-all">{hashLabel(binary.digest?.blake3)}</code></td>
-              <td class="py-3 pr-4"><code class="break-all">{hashLabel(binary.digest?.hmac)}</code></td>
-              <td class="py-3 pr-4"><code>{binary.sbom_component_ref ?? 'not published'}</code></td>
+              <td class="py-3 pr-4"><code>{binary.sbom_component_ref}</code></td>
             </tr>
           )) : (
             <tr>

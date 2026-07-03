@@ -43,6 +43,7 @@ REQUIRED_PR_GATE_RESULT_CHECKS = (
     ("release-site-build", "RELEASE_SITE_BUILD_RESULT"),
 )
 RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"
+_FETCH_BYTES_CACHE: dict[str, "FetchBytes"] = {}
 
 
 @dataclass
@@ -429,7 +430,6 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
 def is_release_graph_manifest(manifest_data: dict[str, Any]) -> bool:
     return (
         isinstance(manifest_data.get("packages"), list)
-        and isinstance(manifest_data.get("binaries"), list)
         and isinstance(manifest_data.get("profiles"), dict)
     )
 
@@ -470,22 +470,39 @@ def check_release_graph_manifest_contract(
     if manifest_data.get("version") != manifest_record.get("version"):
         failures.append("manifest version mismatch with channel record")
 
+    if "binaries" in manifest_data:
+        failures.append("manifest must not publish top-level binaries")
     packages = require_list(manifest_data, "packages", failures)
-    binaries = require_list(manifest_data, "binaries", failures)
     profiles = require_object(manifest_data, "profiles", "manifest profiles", failures)
     if not packages:
         failures.append("manifest packages empty")
-    if not binaries:
-        failures.append("manifest binaries empty")
     if not profiles:
         failures.append("manifest profiles empty")
+    failures.extend(
+        check_release_graph_runtime_asset_pointer(
+            site=site,
+            channel=channel,
+            profiles=profiles,
+        )
+    )
 
     for package in packages:
         failures.extend(check_release_graph_file_descriptor(package, "package"))
-    for binary in binaries:
-        failures.extend(check_release_graph_file_descriptor(binary, "binary"))
-        if not isinstance(binary.get("sbom_component_ref"), str):
-            failures.append(f"binary {binary.get('name', '<unknown>')} SBOM component missing")
+        package_name = package.get("name") if isinstance(package, dict) else "<unknown>"
+        package_binaries = package.get("binaries") if isinstance(package, dict) else None
+        if not isinstance(package_binaries, list):
+            failures.append(f"package {package_name} binaries missing or not a list")
+            continue
+        if not package_binaries:
+            failures.append(f"package {package_name} binaries empty")
+        for binary in package_binaries:
+            failures.extend(check_release_graph_file_descriptor(binary, "binary"))
+            if not isinstance(binary, dict):
+                continue
+            if not isinstance(binary.get("installed_path"), str):
+                failures.append(f"binary {binary.get('name', '<unknown>')} installed_path missing")
+            if not isinstance(binary.get("sbom_component_ref"), str):
+                failures.append(f"binary {binary.get('name', '<unknown>')} SBOM component missing")
 
     profile_catalog = require_object(
         channel_data, "profile_catalog", f"channels.{channel}.profile_catalog", failures
@@ -539,6 +556,45 @@ def check_release_graph_manifest_contract(
     return failures
 
 
+def check_release_graph_runtime_asset_pointer(
+    *,
+    site: str,
+    channel: str,
+    profiles: dict[str, Any],
+) -> list[str]:
+    pointer_path = f"/assets/{channel}/manifest.json"
+    pointer = fetch_json(resolve_release_url(site, pointer_path))
+    if pointer.error:
+        return [pointer.error]
+    if not isinstance(pointer.data, dict):
+        return [f"{pointer_path} document is not an object"]
+    assets = pointer.data.get("assets")
+    if not isinstance(assets, dict):
+        return [f"{pointer_path} assets missing or not an object"]
+    current_asset_version = assets.get("current")
+    if not isinstance(current_asset_version, str):
+        return [f"{pointer_path} assets.current missing"]
+    expected_prefix = f"/assets/releases/{current_asset_version}/"
+    failures: list[str] = []
+    for profile_id, profile in profiles.items():
+        if not isinstance(profile, dict):
+            continue
+        for image in profile.get("images", []):
+            if not isinstance(image, dict):
+                continue
+            for item in image.get("artifacts", []) + image.get("evidence", []):
+                if not isinstance(item, dict):
+                    continue
+                url = item.get("url")
+                if isinstance(url, str) and url.startswith("/assets/releases/"):
+                    if not url.startswith(expected_prefix):
+                        failures.append(
+                            f"{pointer_path} assets.current {current_asset_version} "
+                            f"does not match profile {profile_id} artifact {url}"
+                        )
+    return failures
+
+
 def check_release_graph_file_descriptor(item: Any, label: str) -> list[str]:
     if not isinstance(item, dict):
         return [f"{label} entry is not an object"]
@@ -553,9 +609,11 @@ def check_release_graph_file_descriptor(item: Any, label: str) -> list[str]:
     if not isinstance(digest, dict):
         failures.append(f"{label} digest missing")
         return failures
-    for key in ("sha256", "blake3", "hmac"):
+    for key in ("sha256", "blake3"):
         if not isinstance(digest.get(key), str):
             failures.append(f"{label} {name or '<unknown>'} digest {key} missing")
+    if "hmac" in digest:
+        failures.append(f"{label} {name or '<unknown>'} digest must not contain hmac")
     return failures
 
 
@@ -615,7 +673,13 @@ def check_release_graph_profile(
 
     for item in config_entries:
         failures.extend(
-            check_release_graph_artifact(site, item, f"profile {profile_id} config", page_text)
+            check_release_graph_artifact(
+                site,
+                item,
+                f"profile {profile_id} config",
+                page_text,
+                allowed_prefixes=("/profiles/releases/",),
+            )
         )
     for image in images:
         if not isinstance(image, dict):
@@ -626,7 +690,11 @@ def check_release_graph_profile(
         for artifact in require_list(image, "artifacts", failures):
             failures.extend(
                 check_release_graph_artifact(
-                    site, artifact, f"profile {profile_id} image artifact", page_text
+                    site,
+                    artifact,
+                    f"profile {profile_id} image artifact",
+                    page_text,
+                    allowed_prefixes=("/assets/releases/", "/profiles/releases/"),
                 )
             )
         for evidence in require_list(image, "evidence", failures):
@@ -636,9 +704,10 @@ def check_release_graph_profile(
                     evidence,
                     f"profile {profile_id} evidence",
                     page_text,
-                    expected_document="cyclonedx",
+                        allowed_prefixes=("/assets/releases/", "/profiles/releases/"),
+                        expected_document="cyclonedx",
+                    )
                 )
-            )
     return failures
 
 
@@ -648,6 +717,7 @@ def check_release_graph_artifact(
     label: str,
     page_text: str,
     *,
+    allowed_prefixes: tuple[str, ...],
     expected_document: str | None = None,
 ) -> list[str]:
     if not isinstance(item, dict):
@@ -658,17 +728,23 @@ def check_release_graph_artifact(
         return [f"{label} URL missing"]
     if "file://" in url:
         failures.append(f"{label} {url} must not use file://")
-    if url.startswith("/profiles/releases/") is False:
-        failures.append(f"{label} {url} must be a profile release artifact")
+    if url.startswith(("http://", "https://")):
+        pass
+    elif not url.startswith(allowed_prefixes):
+        failures.append(
+            f"{label} {url} must be under one of {', '.join(allowed_prefixes)}"
+        )
     digest = item.get("digest")
     if not isinstance(digest, dict):
         return failures + [f"{label} {url} digest missing"]
-    for key in ("sha256", "blake3", "hmac"):
+    for key in ("sha256", "blake3"):
         value = digest.get(key)
         if not isinstance(value, str):
             failures.append(f"{label} {url} {key} missing")
         elif page_text and value not in page_text:
             failures.append(f"profile page missing {label} {key} for {url}")
+    if "hmac" in digest:
+        failures.append(f"{label} {url} digest must not contain hmac")
     expected_bytes = item.get("bytes")
     if not isinstance(expected_bytes, int):
         failures.append(f"{label} {url} bytes missing")
@@ -757,7 +833,9 @@ def add_release_artifact_cache_check(
     if not isinstance(item, dict):
         return
     url = item.get("url")
-    if isinstance(url, str) and url.startswith("/profiles/releases/"):
+    if isinstance(url, str) and (
+        url.startswith("/profiles/releases/") or url.startswith("/assets/releases/")
+    ):
         checks.append(
             (
                 "immutable profile artifact",
@@ -1595,14 +1673,19 @@ def fetch_text(url: str) -> FetchText:
 
 
 def fetch_bytes(url: str) -> FetchBytes:
+    cached = _FETCH_BYTES_CACHE.get(url)
+    if cached is not None:
+        return cached
     try:
         with urllib.request.urlopen(release_site_request(url), timeout=20) as response:
-            return FetchBytes(response.read())
+            result = FetchBytes(response.read())
     except urllib.error.HTTPError as error:
         error.close()
-        return FetchBytes(b"", f"fetch {url}: {error}")
+        result = FetchBytes(b"", f"fetch {url}: {error}")
     except (OSError, urllib.error.URLError) as error:
-        return FetchBytes(b"", f"fetch {url}: {error}")
+        result = FetchBytes(b"", f"fetch {url}: {error}")
+    _FETCH_BYTES_CACHE[url] = result
+    return result
 
 
 def fetch_headers(url: str) -> FetchHeaders:

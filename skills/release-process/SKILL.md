@@ -36,15 +36,16 @@ The public graph is hierarchical and signed by reference:
 1. `channels.json` lists every channel, such as `stable` and `nightly`.
 2. Each channel lists versioned manifest records with exactly one `status`
    enum value: `current`, `supported`, `deprecated`, or `revoked`.
-3. Each manifest record carries `version`, `url`, SHA-256, BLAKE3, and HMAC
+3. Each manifest record carries `version`, `url`, SHA-256, and BLAKE3
    digests. Manifest records are retained for auditability; removal means the
    record is absent from the channel list, not marked with a second status.
 4. Each manifest lists package artifacts separately from the per-binary
    inventory. Packages are delivery containers such as `.pkg` and `.deb`.
    Binaries are executable files inside those packages, and every binary entry
-   must include SHA-256, BLAKE3, HMAC, version, package provenance, and SBOM
-   component reference so enterprise allowlists can reason about executables
-   directly.
+   lives under its owning package with SHA-256, BLAKE3, version,
+   `installed_path`, and SBOM component reference so enterprise allowlists can
+   reason about executables directly. Do not publish manifest-level
+   `binaries`; package ownership is the provenance.
 5. Each manifest points to profiles. Profiles own their config files, profile
    images, ABOM/OBOM evidence, software inventory, and `min_capsem_version`.
    Profiles do not point at the selected Capsem binary; they only declare a
@@ -129,7 +130,7 @@ as the fetched JSON graph. It must also verify every manifest record status and
 digest in `channels.json`, including deprecated and revoked records, so
 metadata-only changes cannot leave the public release history stale. It must
 fetch immutable profile catalogs and profile-owned artifacts and verify BLAKE3,
-SHA-256, HMAC, byte size, software inventory, config entries, image artifacts,
+SHA-256, byte size, software inventory, config entries, image artifacts,
 ABOM/OBOM evidence, and absence of accidental bare paths. The smoke must
 validate attestation subjects and predicate URLs after the evidence document
 shape passes.
@@ -165,7 +166,7 @@ Keep the lanes disjoint:
   catalog metadata, and matching manifest digests. It must not mutate packages,
   per-binary inventory, other profiles, or other channels.
 - The channel discovery lane owns `channels.json`, manifest selection, status
-  enum validation, digest/HMAC validation, and cache headers. Revoked manifest
+  enum validation, SHA-256/BLAKE3 validation, and cache headers. Revoked manifest
   records stay in the audit graph but are never selected.
 - The deploy lane is reusable `release-channel.yaml`; binary and profile lanes
   hand it a generated release-site artifact instead of deploying directly.

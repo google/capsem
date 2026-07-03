@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import json
 from pathlib import Path
 
 
@@ -83,14 +84,21 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     assert "Capsem-1.4.0.pkg" in stable
     assert "macos_pkg" in stable
     assert "SPDXRef-File-capsem" in stable
-    assert "6666666666666666666666666666666666666666666666666666666666666666" in stable
-    assert "stable-capsem-bin-hmac" in stable
+    assert _fixture()["manifests"]["stable"]["1.4.0"]["packages"][0]["binaries"][0][
+        "digest"
+    ]["sha256"] in stable
+    assert "HMAC" not in stable
+    assert "hmac" not in stable
     assert "co-work" in stable
     assert "code" in stable
 
     assert "1.5.0-nightly.20260702" in nightly
     assert "Capsem-1.5.0-nightly.20260702.pkg" in nightly
-    assert "nightly-capsem-bin-hmac" in nightly
+    assert _fixture()["manifests"]["nightly"]["1.5.0-nightly.20260702"]["packages"][0][
+        "binaries"
+    ][0]["digest"]["sha256"] in nightly
+    assert "HMAC" not in nightly
+    assert "hmac" not in nightly
     assert "co-work" in nightly
     assert "code" in nightly
 
@@ -105,8 +113,6 @@ def test_channel_page_has_no_detached_profile_image_evidence() -> None:
     assert "Current VM Assets" not in stable
     assert "VM OBOM" not in stable
     assert "rootfs.erofs" not in stable
-    assert "stable-co-work-rootfs-hmac" not in stable
-    assert "stable-co-work-abom-hmac" not in stable
 
 
 def test_profile_page_renders_profile_owned_images_and_configs() -> None:
@@ -153,32 +159,48 @@ def test_profile_page_renders_profile_owned_images_and_configs() -> None:
         / "index.html"
     ).read_text(encoding="utf-8")
 
-    assert "Software Inventory" in stable_co_work
-    assert "python" in stable_co_work
-    assert "3.12.11" in stable_co_work
-    assert "Config Files" in stable_co_work
-    assert "profiles/co-work/mcp.json" in stable_co_work
-    assert "stable-co-work-config-hmac" in stable_co_work
-    assert "Profile Images" in stable_co_work
-    assert "rootfs.erofs" in stable_co_work
-    assert "stable-co-work-rootfs-hmac" in stable_co_work
-    assert "Profile Evidence" in stable_co_work
-    assert "ABOM" in stable_co_work
-    assert "stable-co-work-abom-hmac" in stable_co_work
-
-    assert "Optimized for coding and long-running agents." in stable_code
-    assert "profiles/code/mcp.json" in stable_code
-    assert "stable-code-config-hmac" in stable_code
-    assert "stable-code-rootfs-hmac" in stable_code
-    assert "stable-code-abom-hmac" in stable_code
-
-    assert "2026.07.02.1-nightly" in nightly_co_work
-    assert "nightly-co-work-config-hmac" in nightly_co_work
-    assert "nightly-co-work-rootfs-hmac" in nightly_co_work
-    assert "nightly-co-work-abom-hmac" in nightly_co_work
-    assert "nightly-code-config-hmac" in nightly_code
-    assert "nightly-code-rootfs-hmac" in nightly_code
-    assert "nightly-code-abom-hmac" in nightly_code
+    graph = _fixture()
+    pages = {
+        ("stable", "co-work"): stable_co_work,
+        ("stable", "code"): stable_code,
+        ("nightly", "co-work"): nightly_co_work,
+        ("nightly", "code"): nightly_code,
+    }
+    versions = {
+        "stable": "1.4.0",
+        "nightly": "1.5.0-nightly.20260702",
+    }
+    for (channel, profile_id), page in pages.items():
+        profile = graph["manifests"][channel][versions[channel]]["profiles"][profile_id]
+        assert "Software Inventory" in page
+        assert "Config Files" in page
+        assert "Profile Images" in page
+        assert "Profile Evidence" in page
+        assert "HMAC" not in page
+        assert "hmac" not in page
+        assert profile["revision"] in page
+        for item in profile["config"]:
+            assert item["path"] in page
+            assert item["url"] in page
+            assert item["digest"]["sha256"] in page
+            assert item["digest"]["blake3"] in page
+        for image in profile["images"]:
+            assert image["architecture"] in page
+            for artifact in image["artifacts"]:
+                assert artifact["name"] in page
+                assert artifact["url"] in page
+                assert artifact["digest"]["sha256"] in page
+                assert artifact["digest"]["blake3"] in page
+            for evidence in image["evidence"]:
+                assert evidence["kind"].upper() in page
+                assert evidence["url"] in page
+                assert evidence["digest"]["sha256"] in page
+                assert evidence["digest"]["blake3"] in page
+        for software in profile["software"]:
+            assert software["name"] in page
+            assert software["version"] in page
+            assert software["digest"]["sha256"] in page
+            assert software["digest"]["blake3"] in page
 
 
 def test_profile_page_forbids_current_binary_and_current_assets() -> None:
@@ -220,3 +242,7 @@ def build_release_site_from_fixture() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _fixture() -> dict:
+    return json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))

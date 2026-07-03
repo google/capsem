@@ -119,6 +119,21 @@ pub struct BinaryFile {
     pub sha256: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub blake3: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub binaries: Vec<BinaryExecutable>,
+}
+
+/// One executable file contained inside a host package.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BinaryExecutable {
+    pub name: String,
+    pub installed_path: String,
+    pub size: u64,
+    pub sha256: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub blake3: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sbom_component_ref: String,
 }
 
 /// The assets section.
