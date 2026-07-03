@@ -53,6 +53,22 @@ records. Profile image facts do not appear in channel summaries. If the owning
 JSON object for a path does not contain a fact, the HTML page for that path
 must not display that fact.
 
+## Independent Version Surfaces
+
+Manifest versions, package versions, profile revisions, and profile image revisions are independent.
+
+A package release may change without changing profile revisions or profile images.
+That is the fast binary-update rail.
+
+A profile revision may change without changing package versions or other profiles.
+That is the profile/config/software rail.
+
+A profile image revision may change for one profile and architecture without changing other profiles, other architectures, or packages.
+
+A profile may declare `min_capsem_version`; it must not select the current Capsem binary.
+The channel selects the manifest. The manifest lists packages and profiles.
+Profiles only state the minimum Capsem version they require.
+
 ## Channels
 
 `/channels.json` lists all public channels and the manifest history for each

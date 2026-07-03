@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package-level SBOM evidence.
 - Documented and gated the release graph invariant hierarchy from channels to
   packages/binaries and profiles/architecture-scoped payloads.
+- Documented and gated independent release version surfaces so package,
+  profile, and profile-image updates can move without mutating each other.
 
 ## [1.4.1782944059] - 2026-07-01
 

@@ -55,3 +55,17 @@ def test_graph_invariants() -> None:
     ]
     for phrase in required:
         assert phrase in doc
+
+
+def test_independent_versions() -> None:
+    doc = RELEASE_OUTPUT_DOC.read_text(encoding="utf-8")
+
+    required = [
+        "Manifest versions, package versions, profile revisions, and profile image revisions are independent.",
+        "A package release may change without changing profile revisions or profile images.",
+        "A profile revision may change without changing package versions or other profiles.",
+        "A profile image revision may change for one profile and architecture without changing other profiles, other architectures, or packages.",
+        "A profile may declare `min_capsem_version`; it must not select the current Capsem binary.",
+    ]
+    for phrase in required:
+        assert phrase in doc
