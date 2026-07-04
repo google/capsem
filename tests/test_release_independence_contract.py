@@ -52,7 +52,7 @@ def test_independent_version_matrix() -> None:
         ),
         "profile_revision": (
             lambda candidate: _set_profile_revision(
-                candidate, channel, manifest_version, "co-work", "2026.07.04.1-nightly"
+                candidate, channel, manifest_version, "co-work", "1.0.2-nightly.20260704"
             ),
             ("manifests", channel, manifest_version, "profiles", "co-work", "revision"),
             ("manifests", channel, manifest_version, "profiles", "co-work", "version"),
@@ -122,8 +122,8 @@ def test_switch_stable_to_nightly_via_manifest_url() -> None:
     assert stable["version"] == nightly["version"]
     assert stable["packages"][0]["version"] == "1.4.0"
     assert nightly["packages"][0]["version"] == "1.5.0-nightly.20260702"
-    assert stable["profiles"]["co-work"]["revision"].endswith("-stable")
-    assert nightly["profiles"]["co-work"]["revision"].endswith("-nightly")
+    assert "-stable." in stable["profiles"]["co-work"]["revision"]
+    assert "-nightly." in nightly["profiles"]["co-work"]["revision"]
     assert stable["packages"] != nightly["packages"]
     assert stable["profiles"]["co-work"] != nightly["profiles"]["co-work"]
     assert "profile_catalog" not in json.dumps(nightly, sort_keys=True)
@@ -142,8 +142,8 @@ def test_cowork_nightly_profile_update_is_isolated() -> None:
     profile = manifest["profiles"][profile_id]
     architecture = _architecture(profile, "arm64")
 
-    profile["revision"] = "2026.07.04.1-nightly"
-    profile["version"] = "2026.07.04.1-nightly"
+    profile["revision"] = "1.0.2-nightly.20260704"
+    profile["version"] = "1.0.2-nightly.20260704"
     architecture["image_revision"] = "2026.0704.1"
     architecture["package_inventory_revision"] = "2026.0704.1"
     architecture["software"][0]["version"] = "3.12.12"

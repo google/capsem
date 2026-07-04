@@ -9029,7 +9029,7 @@ decision = "block"
         let temp = tempfile::tempdir().expect("tempdir");
         let stable_manifest = temp.path().join("stable-manifest.json");
         let nightly_manifest = temp.path().join("nightly-manifest.json");
-        write_profile_release_manifest(&stable_manifest, "1.4.0", "2026.07.02.1", "deprecated");
+        write_profile_release_manifest(&stable_manifest, "1.4.0", "1.0.0", "deprecated");
         write_profile_release_manifest(
             &nightly_manifest,
             "1.5.0-nightly.20300101",

@@ -13,6 +13,7 @@ from copy import deepcopy
 import hashlib
 import importlib.util
 import json
+import re
 import sys
 import tomllib
 
@@ -21,6 +22,13 @@ from blake3 import blake3
 
 PROFILE_PAGE = (
     PROJECT_ROOT / "release-site" / "src" / "pages" / "channels" / "[channel]" / "profiles" / "[id].astro"
+)
+SEMVER_RE = re.compile(
+    r"^(0|[1-9]\d*)\."
+    r"(0|[1-9]\d*)\."
+    r"(0|[1-9]\d*)"
+    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
 
 
@@ -111,6 +119,36 @@ def test_profile_architecture_packages_and_images_are_separate() -> None:
                     assert {"kind", "name", "url", "bytes", "digest", "status"} <= set(image), label
                     assert "source" not in image, label
                     assert "version" not in image, label
+
+
+def test_profile_image_versions_are_semver_compatible() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    seen_profile_versions: dict[tuple[str, str], str] = {}
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        package_versions = {package["version"] for package in manifest["packages"]}
+        for profile_id, profile in manifest["profiles"].items():
+            label = f"{channel}:{profile_id}"
+            assert _is_semver(profile["version"]), label
+            assert _is_semver(profile["revision"]), label
+            assert profile["version"] == profile["revision"], label
+            assert profile["revision"] != manifest["version"], label
+            assert profile["revision"] not in package_versions, label
+            seen_profile_versions[(channel, profile_id)] = profile["revision"]
+            for architecture in profile["architectures"]:
+                arch_label = f"{label}:{architecture['architecture']}"
+                assert _is_semver(architecture["image_revision"]), arch_label
+                assert architecture["image_revision"] == profile["revision"], arch_label
+                assert architecture["image_revision"] not in package_versions, arch_label
+
+    assert seen_profile_versions[("stable", "co-work")] != seen_profile_versions[
+        ("nightly", "co-work")
+    ]
+    assert seen_profile_versions[("stable", "code")] != seen_profile_versions[
+        ("nightly", "code")
+    ]
 
 
 def test_abom_obom_architecture_scoped() -> None:
@@ -600,6 +638,10 @@ def _walk_values(value: object, needle: str) -> list[str]:
     return matches
 
 
+def _is_semver(value: str) -> bool:
+    return bool(SEMVER_RE.fullmatch(value))
+
+
 def test_all_profile_config_files() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
@@ -740,7 +782,7 @@ def test_config_kind_enum_contract(monkeypatch) -> None:
         checker,
         "fetch_text",
         lambda _url: checker.FetchText(
-            text="co-work Co-work 2026.07.02.1-stable arm64"
+            text="co-work Co-work 1.0.0-stable.20260702 arm64"
         ),
     )
     monkeypatch.setattr(
@@ -848,7 +890,7 @@ def test_software_versions_are_real(monkeypatch) -> None:
         checker,
         "fetch_text",
         lambda _url: checker.FetchText(
-            text="co-work Co-work 2026.07.02.1-stable arm64"
+            text="co-work Co-work 1.0.0-stable.20260702 arm64"
         ),
     )
     monkeypatch.setattr(
@@ -914,7 +956,7 @@ def test_software_rows_do_not_reuse_inventory_digest(monkeypatch) -> None:
         checker,
         "fetch_text",
         lambda _url: checker.FetchText(
-            text="co-work Co-work 2026.07.02.1-stable arm64"
+            text="co-work Co-work 1.0.0-stable.20260702 arm64"
         ),
     )
     monkeypatch.setattr(

@@ -74,6 +74,6 @@ def test_release_site_builds_from_release_graph_fixture() -> None:
     assert "SPDXRef-File-capsem" not in stable
     assert "SPDXRef-File-capsem" in package_detail
     assert "rootfs.erofs" not in stable
-    assert "2026.07.02.1-stable" in profile
+    assert "1.0.0-stable.20260702" in profile
     assert "Minimum Capsem" in profile
     assert "ABOM" in profile

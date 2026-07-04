@@ -200,7 +200,7 @@ minimum Capsem compatibility:
 {
   "id": "code",
   "name": "Code",
-  "revision": "2026.07.02.1-stable",
+  "revision": "1.0.0-stable.20260702",
   "min_capsem_version": "1.4.0",
   "software": [],
   "config": [],
@@ -238,7 +238,7 @@ Every software entry must include:
     "sha256": "...",
     "blake3": "..."
   },
-  "evidence": "/assets/releases/2026.07.02.1-stable/arm64-software-inventory.json"
+  "evidence": "/assets/releases/1.0.0-stable.20260702/arm64-software-inventory.json"
 }
 ```
 
@@ -285,7 +285,7 @@ image set it describes:
         {
           "kind": "kernel",
           "name": "vmlinuz",
-          "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/vmlinuz",
+          "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/vmlinuz",
           "bytes": 123,
           "digest": {
             "sha256": "...",
@@ -296,7 +296,7 @@ image set it describes:
         {
           "kind": "initrd",
           "name": "initrd.img",
-          "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/initrd.img",
+          "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/initrd.img",
           "bytes": 123,
           "digest": {
             "sha256": "...",
@@ -307,7 +307,7 @@ image set it describes:
         {
           "kind": "rootfs",
           "name": "rootfs.erofs",
-          "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/rootfs.erofs",
+          "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/rootfs.erofs",
           "bytes": 123,
           "digest": {
             "sha256": "...",
@@ -319,7 +319,7 @@ image set it describes:
       "evidence": [
         {
           "kind": "abom",
-          "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/abom.cdx.json",
+          "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/abom.cdx.json",
           "bytes": 123,
           "digest": {
             "sha256": "...",

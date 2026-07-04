@@ -132,7 +132,7 @@ def test_repeated_row_digest_theater(monkeypatch) -> None:
         checker,
         "fetch_text",
         lambda _url: checker.FetchText(
-            text="co-work Co-work 2026.07.02.1-stable arm64"
+            text="co-work Co-work 1.0.0-stable.20260702 arm64"
         ),
     )
     monkeypatch.setattr(

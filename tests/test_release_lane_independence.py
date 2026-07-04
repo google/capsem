@@ -119,8 +119,8 @@ def test_cowork_nightly_isolated_update(tmp_path: Path) -> None:
     )
 
     profile = new["manifests"][channel][version]["profiles"][profile_id]
-    profile["revision"] = "2026.07.03.1-nightly"
-    profile["version"] = "2026.07.03.1-nightly"
+    profile["revision"] = "1.0.1-nightly.20260703"
+    profile["version"] = "1.0.1-nightly.20260703"
     architecture = _profile_architecture(profile, "arm64")
     architecture["images"][0]["digest"] = _digest("nightly-co-work-arm64-rootfs-2026.07.03.1")
     architecture["config"][0]["digest"] = _digest("nightly-co-work-arm64-profile-2026.07.03.1")
@@ -168,8 +168,8 @@ def test_stable_nightly_switch_keeps_channel_state_independent() -> None:
     assert nightly_version == "1.0.2"
     assert stable["packages"][0]["version"] == "1.4.0"
     assert nightly["packages"][0]["version"] == "1.5.0-nightly.20260702"
-    assert stable["profiles"]["co-work"]["revision"] == "2026.07.02.1-stable"
-    assert nightly["profiles"]["co-work"]["revision"] == "2026.07.02.1-nightly"
+    assert stable["profiles"]["co-work"]["revision"] == "1.0.0-stable.20260702"
+    assert nightly["profiles"]["co-work"]["revision"] == "1.0.0-nightly.20260702"
     assert stable["packages"] != nightly["packages"]
     assert stable["profiles"]["co-work"] != nightly["profiles"]["co-work"]
 
@@ -203,8 +203,8 @@ def test_manifest_version_independence() -> None:
 
     assert package_versions == {"1.4.0", "1.5.0-nightly.20260702"}
     assert profile_versions == {
-        "2026.07.02.1-stable",
-        "2026.07.02.1-nightly",
+        "1.0.0-stable.20260702",
+        "1.0.0-nightly.20260702",
         "2026.07.02.1",
     }
     assert stable_version not in package_versions

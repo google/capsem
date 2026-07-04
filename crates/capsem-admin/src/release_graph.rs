@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, bail, Context, Result};
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as ShaDigest, Sha256};
 
@@ -693,6 +694,10 @@ impl ProfileDocument {
         if self.revision.trim().is_empty() {
             bail!("profile {} revision must not be empty", self.id);
         }
+        validate_profile_semver(&self.version)
+            .with_context(|| format!("profile {} version is invalid", self.id))?;
+        validate_profile_semver(&self.revision)
+            .with_context(|| format!("profile {} revision is invalid", self.id))?;
         if self.architectures.is_empty() {
             bail!("profile {} must list architecture records", self.id);
         }
@@ -701,6 +706,12 @@ impl ProfileDocument {
         }
         Ok(())
     }
+}
+
+fn validate_profile_semver(value: &str) -> Result<()> {
+    Version::parse(value.trim()).map(|_| ()).with_context(|| {
+        format!("profile release version {value:?} must be SemVer-compatible")
+    })
 }
 
 impl ProfileVersionHistory {
@@ -1062,7 +1073,7 @@ mod tests {
             version: "3.12.11".to_string(),
             source: "apt".to_string(),
             architecture: "all".to_string(),
-            evidence: "/profiles/releases/2026.07.02.1/co-work/apt-packages.txt".to_string(),
+            evidence: "/profiles/releases/1.0.0/co-work/apt-packages.txt".to_string(),
             digest: digest_set(),
         }
     }
@@ -1742,19 +1753,19 @@ mod tests {
     #[test]
     fn profile_image_versions_append_without_deprecating_previous() {
         let first = profile_with_image_artifacts(
-            "2026.07.02.1",
+            "1.0.0",
             vec![profile_image_artifact(
                 ProfileImageArtifactKind::Rootfs,
                 "rootfs.erofs",
-                "2026.07.02.1",
+                "1.0.0",
             )],
         );
         let second = profile_with_image_artifacts(
-            "2026.07.02.2",
+            "1.0.1",
             vec![profile_image_artifact(
                 ProfileImageArtifactKind::Rootfs,
                 "rootfs.erofs",
-                "2026.07.02.2",
+                "1.0.1",
             )],
         );
         let mut history =
@@ -1765,37 +1776,37 @@ mod tests {
             .expect("new profile image version appends");
 
         assert_eq!(history.versions.len(), 2);
-        assert_eq!(history.versions[0].revision, "2026.07.02.1");
+        assert_eq!(history.versions[0].revision, "1.0.0");
         assert_eq!(
             history.versions[0].architectures[0].artifacts[0].status,
             Status::Current
         );
-        assert_eq!(history.versions[1].revision, "2026.07.02.2");
+        assert_eq!(history.versions[1].revision, "1.0.1");
     }
 
     #[test]
     fn profile_image_versions_removed_image_is_absent_not_status_removed() {
         let previous = profile_with_image_artifacts(
-            "2026.07.02.1",
+            "1.0.0",
             vec![
                 profile_image_artifact(
                     ProfileImageArtifactKind::Initrd,
                     "initrd.img",
-                    "2026.07.02.1",
+                    "1.0.0",
                 ),
                 profile_image_artifact(
                     ProfileImageArtifactKind::Rootfs,
                     "rootfs.erofs",
-                    "2026.07.02.1",
+                    "1.0.0",
                 ),
             ],
         );
         let next = profile_with_image_artifacts(
-            "2026.07.02.2",
+            "1.0.1",
             vec![profile_image_artifact(
                 ProfileImageArtifactKind::Rootfs,
                 "rootfs.erofs",
-                "2026.07.02.2",
+                "1.0.1",
             )],
         );
 
@@ -1819,7 +1830,7 @@ mod tests {
         let invalid_removed_status = serde_json::json!({
             "kind": "initrd",
             "name": "initrd.img",
-            "url": "/profiles/releases/2026.07.02.2/co-work/arm64/initrd.img",
+            "url": "/profiles/releases/1.0.1/co-work/arm64/initrd.img",
             "bytes": 42,
             "digest": digest_json(),
             "status": "removed"
@@ -1833,7 +1844,7 @@ mod tests {
         let invalid_kind = serde_json::json!({
             "kind": "misc",
             "path": "profiles/co-work/misc.json",
-            "url": "/profiles/releases/2026.07.02.1/co-work/arm64/misc.json",
+            "url": "/profiles/releases/1.0.0/co-work/arm64/misc.json",
             "bytes": 42,
             "digest": digest_json(),
             "status": "current"
@@ -1846,10 +1857,10 @@ mod tests {
     #[test]
     fn profile_json_ownership_has_min_capsem_not_current_binary() {
         let profile = ProfileDocument {
-            version: "2026.07.02.1".to_string(),
+            version: "1.0.0".to_string(),
             id: "co-work".to_string(),
             name: "Co-work".to_string(),
-            revision: "2026.07.02.1".to_string(),
+            revision: "1.0.0".to_string(),
             status: Status::Current,
             min_capsem_version: Some("1.4.0".to_string()),
             architectures: vec![ProfileArchitectureImages {
@@ -1858,7 +1869,7 @@ mod tests {
                 config: vec![ProfileConfigRef {
                     kind: ProfileConfigKind::Mcp,
                     path: "profiles/co-work/mcp.json".to_string(),
-                    url: "/profiles/releases/2026.07.02.1/co-work/arm64/mcp.json".to_string(),
+                    url: "/profiles/releases/1.0.0/co-work/arm64/mcp.json".to_string(),
                     bytes: 12,
                     digest: digest_set(),
                     status: Status::Current,
@@ -1867,7 +1878,7 @@ mod tests {
                     ProfileImageArtifactRef {
                         kind: ProfileImageArtifactKind::Kernel,
                         name: "vmlinuz".to_string(),
-                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/vmlinuz".to_string(),
+                        url: "/profiles/releases/1.0.0/co-work/arm64/vmlinuz".to_string(),
                         bytes: 42,
                         digest: digest_set(),
                         status: Status::Current,
@@ -1875,7 +1886,7 @@ mod tests {
                     ProfileImageArtifactRef {
                         kind: ProfileImageArtifactKind::Initrd,
                         name: "initrd.img".to_string(),
-                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/initrd.img".to_string(),
+                        url: "/profiles/releases/1.0.0/co-work/arm64/initrd.img".to_string(),
                         bytes: 42,
                         digest: digest_set(),
                         status: Status::Current,
@@ -1883,7 +1894,7 @@ mod tests {
                     ProfileImageArtifactRef {
                         kind: ProfileImageArtifactKind::Rootfs,
                         name: "rootfs.erofs".to_string(),
-                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/rootfs.erofs"
+                        url: "/profiles/releases/1.0.0/co-work/arm64/rootfs.erofs"
                             .to_string(),
                         bytes: 42,
                         digest: digest_set(),
@@ -1893,20 +1904,20 @@ mod tests {
                 evidence: vec![
                     EvidenceRef {
                         kind: "abom".to_string(),
-                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/abom.cdx.json"
+                        url: "/profiles/releases/1.0.0/co-work/arm64/abom.cdx.json"
                             .to_string(),
                         digest: digest_set(),
                     },
                     EvidenceRef {
                         kind: "obom".to_string(),
-                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/obom.cdx.json"
+                        url: "/profiles/releases/1.0.0/co-work/arm64/obom.cdx.json"
                             .to_string(),
                         digest: digest_set(),
                     },
                     EvidenceRef {
                         kind: "software_inventory".to_string(),
                         url:
-                            "/profiles/releases/2026.07.02.1/co-work/arm64/software-inventory.json"
+                            "/profiles/releases/1.0.0/co-work/arm64/software-inventory.json"
                                 .to_string(),
                         digest: digest_set_with('c', 'd'),
                     },
@@ -1924,11 +1935,11 @@ mod tests {
     #[test]
     fn profile_json_ownership_rejects_unversioned_software_rows() {
         let mut profile = profile_with_image_artifacts(
-            "2026.07.02.1",
+            "1.0.0",
             vec![profile_image_artifact(
                 ProfileImageArtifactKind::Rootfs,
                 "rootfs.erofs",
-                "2026.07.02.1",
+                "1.0.0",
             )],
         );
         profile.architectures[0].software[0].version = "unversioned".to_string();
@@ -1943,11 +1954,11 @@ mod tests {
     #[test]
     fn profile_json_ownership_rejects_reused_software_inventory_digest() {
         let mut profile = profile_with_image_artifacts(
-            "2026.07.02.1",
+            "1.0.0",
             vec![profile_image_artifact(
                 ProfileImageArtifactKind::Rootfs,
                 "rootfs.erofs",
-                "2026.07.02.1",
+                "1.0.0",
             )],
         );
         let inventory_digest = profile.architectures[0]
@@ -1974,10 +1985,10 @@ mod tests {
     #[test]
     fn profile_json_ownership_rejects_current_binary_and_assets() {
         let invalid = serde_json::json!({
-            "version": "2026.07.02.1",
+            "version": "1.0.0",
             "id": "co-work",
             "name": "Co-work",
-            "revision": "2026.07.02.1",
+            "revision": "1.0.0",
             "status": "current",
             "min_capsem_version": "1.4.0",
             "current_binary": "1.4.0",
@@ -2029,10 +2040,10 @@ mod tests {
         profiles.insert(
             "co-work".to_string(),
             ProfileDocument {
-                version: "2026.07.02.1".to_string(),
+                version: "1.0.0".to_string(),
                 id: "co-work".to_string(),
                 name: "Co-work".to_string(),
-                revision: "2026.07.02.1".to_string(),
+                revision: "1.0.0".to_string(),
                 status: Status::Current,
                 min_capsem_version: Some("1.4.0".to_string()),
                 architectures: vec![ProfileArchitectureImages {
@@ -2041,7 +2052,7 @@ mod tests {
                     config: vec![ProfileConfigRef {
                         kind: ProfileConfigKind::Mcp,
                         path: "profiles/co-work/mcp.json".to_string(),
-                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/mcp.json".to_string(),
+                        url: "/profiles/releases/1.0.0/co-work/arm64/mcp.json".to_string(),
                         bytes: 12,
                         digest: digest_set(),
                         status: Status::Current,
@@ -2049,7 +2060,7 @@ mod tests {
                     artifacts: vec![ProfileImageArtifactRef {
                         kind: ProfileImageArtifactKind::Rootfs,
                         name: "rootfs.erofs".to_string(),
-                        url: "/profiles/releases/2026.07.02.1/co-work/arm64/rootfs.erofs"
+                        url: "/profiles/releases/1.0.0/co-work/arm64/rootfs.erofs"
                             .to_string(),
                         bytes: 42,
                         digest: digest_set(),
@@ -2058,19 +2069,19 @@ mod tests {
                     evidence: vec![
                         EvidenceRef {
                             kind: "abom".to_string(),
-                            url: "/profiles/releases/2026.07.02.1/co-work/arm64/abom.cdx.json"
+                            url: "/profiles/releases/1.0.0/co-work/arm64/abom.cdx.json"
                                 .to_string(),
                             digest: digest_set(),
                         },
                         EvidenceRef {
                             kind: "obom".to_string(),
-                            url: "/profiles/releases/2026.07.02.1/co-work/arm64/obom.cdx.json"
+                            url: "/profiles/releases/1.0.0/co-work/arm64/obom.cdx.json"
                                 .to_string(),
                             digest: digest_set(),
                         },
                         EvidenceRef {
                             kind: "software_inventory".to_string(),
-                            url: "/profiles/releases/2026.07.02.1/co-work/arm64/software-inventory.json"
+                            url: "/profiles/releases/1.0.0/co-work/arm64/software-inventory.json"
                                 .to_string(),
                             digest: digest_set_with('c', 'd'),
                         },

@@ -689,9 +689,9 @@
             "id": "co-work",
             "min_capsem_version": "1.4.0",
             "name": "Co-work",
-            "revision": "2026.07.02.1-nightly",
+            "revision": "1.0.0-nightly.20260702",
             "status": "current",
-            "version": "2026.07.02.1-nightly",
+            "version": "1.0.0-nightly.20260702",
             "architectures": [
               {
                 "architecture": "arm64",
@@ -729,7 +729,7 @@
                     "kind": "profile",
                     "path": "profiles/co-work/profile.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/profile.toml"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/profile.toml"
                   },
                   {
                     "bytes": 54,
@@ -740,7 +740,7 @@
                     "kind": "mcp",
                     "path": "profiles/co-work/mcp.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/mcp.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/mcp.json"
                   },
                   {
                     "bytes": 62,
@@ -751,7 +751,7 @@
                     "kind": "enforcement",
                     "path": "profiles/co-work/enforcement.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/enforcement.toml"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/enforcement.toml"
                   },
                   {
                     "bytes": 60,
@@ -762,7 +762,7 @@
                     "kind": "detection",
                     "path": "profiles/co-work/detection.yaml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/detection.yaml"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/detection.yaml"
                   },
                   {
                     "bytes": 62,
@@ -773,7 +773,7 @@
                     "kind": "apt",
                     "path": "profiles/co-work/apt-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/apt-packages.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/apt-packages.txt"
                   },
                   {
                     "bytes": 69,
@@ -784,7 +784,7 @@
                     "kind": "python",
                     "path": "profiles/co-work/python-requirements.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/python-requirements.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/python-requirements.txt"
                   },
                   {
                     "bytes": 62,
@@ -795,7 +795,7 @@
                     "kind": "npm",
                     "path": "profiles/co-work/npm-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/npm-packages.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/npm-packages.txt"
                   },
                   {
                     "bytes": 54,
@@ -806,7 +806,7 @@
                     "kind": "build",
                     "path": "profiles/co-work/build.sh",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/build.sh"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/build.sh"
                   },
                   {
                     "bytes": 54,
@@ -817,7 +817,7 @@
                     "kind": "tips",
                     "path": "profiles/co-work/tips.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/tips.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/tips.txt"
                   },
                   {
                     "bytes": 64,
@@ -828,7 +828,7 @@
                     "kind": "root_manifest",
                     "path": "profiles/co-work/root.manifest.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/root.manifest.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/root.manifest.json"
                   }
                 ],
                 "images": [
@@ -841,7 +841,7 @@
                     "kind": "kernel",
                     "name": "vmlinuz",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/vmlinuz"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/vmlinuz"
                   },
                   {
                     "bytes": 61,
@@ -852,7 +852,7 @@
                     "kind": "initrd",
                     "name": "initrd.img",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/initrd.img"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/initrd.img"
                   },
                   {
                     "bytes": 63,
@@ -863,7 +863,7 @@
                     "kind": "rootfs",
                     "name": "rootfs.erofs",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/rootfs.erofs"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/rootfs.erofs"
                   }
                 ],
                 "evidence": [
@@ -875,7 +875,7 @@
                     },
                     "kind": "abom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/abom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/abom.cdx.json"
                   },
                   {
                     "bytes": 67,
@@ -885,7 +885,7 @@
                     },
                     "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/arm64/obom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/arm64/obom.cdx.json"
                   },
                   {
                     "bytes": 331,
@@ -898,7 +898,7 @@
                   }
                 ],
                 "package_inventory_revision": "2026.07.02.1",
-                "image_revision": "2026.07.02.1-nightly"
+                "image_revision": "1.0.0-nightly.20260702"
               },
               {
                 "architecture": "x86_64",
@@ -936,7 +936,7 @@
                     "kind": "profile",
                     "path": "profiles/co-work/profile.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/profile.toml"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/profile.toml"
                   },
                   {
                     "bytes": 54,
@@ -947,7 +947,7 @@
                     "kind": "mcp",
                     "path": "profiles/co-work/mcp.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/mcp.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/mcp.json"
                   },
                   {
                     "bytes": 62,
@@ -958,7 +958,7 @@
                     "kind": "enforcement",
                     "path": "profiles/co-work/enforcement.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/enforcement.toml"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/enforcement.toml"
                   },
                   {
                     "bytes": 60,
@@ -969,7 +969,7 @@
                     "kind": "detection",
                     "path": "profiles/co-work/detection.yaml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/detection.yaml"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/detection.yaml"
                   },
                   {
                     "bytes": 62,
@@ -980,7 +980,7 @@
                     "kind": "apt",
                     "path": "profiles/co-work/apt-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/apt-packages.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/apt-packages.txt"
                   },
                   {
                     "bytes": 69,
@@ -991,7 +991,7 @@
                     "kind": "python",
                     "path": "profiles/co-work/python-requirements.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/python-requirements.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/python-requirements.txt"
                   },
                   {
                     "bytes": 62,
@@ -1002,7 +1002,7 @@
                     "kind": "npm",
                     "path": "profiles/co-work/npm-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/npm-packages.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/npm-packages.txt"
                   },
                   {
                     "bytes": 54,
@@ -1013,7 +1013,7 @@
                     "kind": "build",
                     "path": "profiles/co-work/build.sh",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/build.sh"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/build.sh"
                   },
                   {
                     "bytes": 54,
@@ -1024,7 +1024,7 @@
                     "kind": "tips",
                     "path": "profiles/co-work/tips.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/tips.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/tips.txt"
                   },
                   {
                     "bytes": 64,
@@ -1035,7 +1035,7 @@
                     "kind": "root_manifest",
                     "path": "profiles/co-work/root.manifest.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/root.manifest.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/root.manifest.json"
                   }
                 ],
                 "images": [
@@ -1048,7 +1048,7 @@
                     "kind": "kernel",
                     "name": "vmlinuz",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/vmlinuz"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/vmlinuz"
                   },
                   {
                     "bytes": 62,
@@ -1059,7 +1059,7 @@
                     "kind": "initrd",
                     "name": "initrd.img",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/initrd.img"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/initrd.img"
                   },
                   {
                     "bytes": 64,
@@ -1070,7 +1070,7 @@
                     "kind": "rootfs",
                     "name": "rootfs.erofs",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/rootfs.erofs"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/rootfs.erofs"
                   }
                 ],
                 "evidence": [
@@ -1082,7 +1082,7 @@
                     },
                     "kind": "abom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/abom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/abom.cdx.json"
                   },
                   {
                     "bytes": 68,
@@ -1092,7 +1092,7 @@
                     },
                     "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/co-work/x86_64/obom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/co-work/x86_64/obom.cdx.json"
                   },
                   {
                     "bytes": 332,
@@ -1105,7 +1105,7 @@
                   }
                 ],
                 "package_inventory_revision": "2026.07.02.1",
-                "image_revision": "2026.07.02.1-nightly"
+                "image_revision": "1.0.0-nightly.20260702"
               }
             ]
           },
@@ -1114,9 +1114,9 @@
             "id": "code",
             "min_capsem_version": "1.4.0",
             "name": "Code",
-            "revision": "2026.07.02.1-nightly",
+            "revision": "1.0.0-nightly.20260702",
             "status": "current",
-            "version": "2026.07.02.1-nightly",
+            "version": "1.0.0-nightly.20260702",
             "architectures": [
               {
                 "architecture": "arm64",
@@ -1154,7 +1154,7 @@
                     "kind": "profile",
                     "path": "profiles/code/profile.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/profile.toml"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/profile.toml"
                   },
                   {
                     "bytes": 51,
@@ -1165,7 +1165,7 @@
                     "kind": "mcp",
                     "path": "profiles/code/mcp.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/mcp.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/mcp.json"
                   },
                   {
                     "bytes": 59,
@@ -1176,7 +1176,7 @@
                     "kind": "enforcement",
                     "path": "profiles/code/enforcement.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/enforcement.toml"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/enforcement.toml"
                   },
                   {
                     "bytes": 57,
@@ -1187,7 +1187,7 @@
                     "kind": "detection",
                     "path": "profiles/code/detection.yaml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/detection.yaml"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/detection.yaml"
                   },
                   {
                     "bytes": 59,
@@ -1198,7 +1198,7 @@
                     "kind": "apt",
                     "path": "profiles/code/apt-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/apt-packages.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/apt-packages.txt"
                   },
                   {
                     "bytes": 66,
@@ -1209,7 +1209,7 @@
                     "kind": "python",
                     "path": "profiles/code/python-requirements.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/python-requirements.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/python-requirements.txt"
                   },
                   {
                     "bytes": 59,
@@ -1220,7 +1220,7 @@
                     "kind": "npm",
                     "path": "profiles/code/npm-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/npm-packages.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/npm-packages.txt"
                   },
                   {
                     "bytes": 51,
@@ -1231,7 +1231,7 @@
                     "kind": "build",
                     "path": "profiles/code/build.sh",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/build.sh"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/build.sh"
                   },
                   {
                     "bytes": 51,
@@ -1242,7 +1242,7 @@
                     "kind": "tips",
                     "path": "profiles/code/tips.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/tips.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/tips.txt"
                   },
                   {
                     "bytes": 61,
@@ -1253,7 +1253,7 @@
                     "kind": "root_manifest",
                     "path": "profiles/code/root.manifest.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/root.manifest.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/root.manifest.json"
                   }
                 ],
                 "images": [
@@ -1266,7 +1266,7 @@
                     "kind": "kernel",
                     "name": "vmlinuz",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/vmlinuz"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/vmlinuz"
                   },
                   {
                     "bytes": 58,
@@ -1277,7 +1277,7 @@
                     "kind": "initrd",
                     "name": "initrd.img",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/initrd.img"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/initrd.img"
                   },
                   {
                     "bytes": 60,
@@ -1288,7 +1288,7 @@
                     "kind": "rootfs",
                     "name": "rootfs.erofs",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/rootfs.erofs"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/rootfs.erofs"
                   }
                 ],
                 "evidence": [
@@ -1300,7 +1300,7 @@
                     },
                     "kind": "abom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/abom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/abom.cdx.json"
                   },
                   {
                     "bytes": 64,
@@ -1310,7 +1310,7 @@
                     },
                     "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/arm64/obom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/arm64/obom.cdx.json"
                   },
                   {
                     "bytes": 331,
@@ -1323,7 +1323,7 @@
                   }
                 ],
                 "package_inventory_revision": "2026.07.02.1",
-                "image_revision": "2026.07.02.1-nightly"
+                "image_revision": "1.0.0-nightly.20260702"
               },
               {
                 "architecture": "x86_64",
@@ -1361,7 +1361,7 @@
                     "kind": "profile",
                     "path": "profiles/code/profile.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/profile.toml"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/profile.toml"
                   },
                   {
                     "bytes": 51,
@@ -1372,7 +1372,7 @@
                     "kind": "mcp",
                     "path": "profiles/code/mcp.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/mcp.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/mcp.json"
                   },
                   {
                     "bytes": 59,
@@ -1383,7 +1383,7 @@
                     "kind": "enforcement",
                     "path": "profiles/code/enforcement.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/enforcement.toml"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/enforcement.toml"
                   },
                   {
                     "bytes": 57,
@@ -1394,7 +1394,7 @@
                     "kind": "detection",
                     "path": "profiles/code/detection.yaml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/detection.yaml"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/detection.yaml"
                   },
                   {
                     "bytes": 59,
@@ -1405,7 +1405,7 @@
                     "kind": "apt",
                     "path": "profiles/code/apt-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/apt-packages.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/apt-packages.txt"
                   },
                   {
                     "bytes": 66,
@@ -1416,7 +1416,7 @@
                     "kind": "python",
                     "path": "profiles/code/python-requirements.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/python-requirements.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/python-requirements.txt"
                   },
                   {
                     "bytes": 59,
@@ -1427,7 +1427,7 @@
                     "kind": "npm",
                     "path": "profiles/code/npm-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/npm-packages.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/npm-packages.txt"
                   },
                   {
                     "bytes": 51,
@@ -1438,7 +1438,7 @@
                     "kind": "build",
                     "path": "profiles/code/build.sh",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/build.sh"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/build.sh"
                   },
                   {
                     "bytes": 51,
@@ -1449,7 +1449,7 @@
                     "kind": "tips",
                     "path": "profiles/code/tips.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/tips.txt"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/tips.txt"
                   },
                   {
                     "bytes": 61,
@@ -1460,7 +1460,7 @@
                     "kind": "root_manifest",
                     "path": "profiles/code/root.manifest.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/root.manifest.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/root.manifest.json"
                   }
                 ],
                 "images": [
@@ -1473,7 +1473,7 @@
                     "kind": "kernel",
                     "name": "vmlinuz",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/vmlinuz"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/vmlinuz"
                   },
                   {
                     "bytes": 59,
@@ -1484,7 +1484,7 @@
                     "kind": "initrd",
                     "name": "initrd.img",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/initrd.img"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/initrd.img"
                   },
                   {
                     "bytes": 61,
@@ -1495,7 +1495,7 @@
                     "kind": "rootfs",
                     "name": "rootfs.erofs",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/rootfs.erofs"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/rootfs.erofs"
                   }
                 ],
                 "evidence": [
@@ -1507,7 +1507,7 @@
                     },
                     "kind": "abom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/abom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/abom.cdx.json"
                   },
                   {
                     "bytes": 65,
@@ -1517,7 +1517,7 @@
                     },
                     "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-nightly/code/x86_64/obom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-nightly.20260702/code/x86_64/obom.cdx.json"
                   },
                   {
                     "bytes": 332,
@@ -1530,7 +1530,7 @@
                   }
                 ],
                 "package_inventory_revision": "2026.07.02.1",
-                "image_revision": "2026.07.02.1-nightly"
+                "image_revision": "1.0.0-nightly.20260702"
               }
             ]
           }
@@ -2136,9 +2136,9 @@
             "id": "co-work",
             "min_capsem_version": "1.4.0",
             "name": "Co-work",
-            "revision": "2026.07.02.1-stable",
+            "revision": "1.0.0-stable.20260702",
             "status": "current",
-            "version": "2026.07.02.1-stable",
+            "version": "1.0.0-stable.20260702",
             "architectures": [
               {
                 "architecture": "arm64",
@@ -2176,7 +2176,7 @@
                     "kind": "profile",
                     "path": "profiles/co-work/profile.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/profile.toml"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/profile.toml"
                   },
                   {
                     "bytes": 36,
@@ -2187,7 +2187,7 @@
                     "kind": "mcp",
                     "path": "profiles/co-work/mcp.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/mcp.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/mcp.json"
                   },
                   {
                     "bytes": 44,
@@ -2198,7 +2198,7 @@
                     "kind": "enforcement",
                     "path": "profiles/co-work/enforcement.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/enforcement.toml"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/enforcement.toml"
                   },
                   {
                     "bytes": 42,
@@ -2209,7 +2209,7 @@
                     "kind": "detection",
                     "path": "profiles/co-work/detection.yaml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/detection.yaml"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/detection.yaml"
                   },
                   {
                     "bytes": 44,
@@ -2220,7 +2220,7 @@
                     "kind": "apt",
                     "path": "profiles/co-work/apt-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/apt-packages.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/apt-packages.txt"
                   },
                   {
                     "bytes": 51,
@@ -2231,7 +2231,7 @@
                     "kind": "python",
                     "path": "profiles/co-work/python-requirements.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/python-requirements.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/python-requirements.txt"
                   },
                   {
                     "bytes": 44,
@@ -2242,7 +2242,7 @@
                     "kind": "npm",
                     "path": "profiles/co-work/npm-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/npm-packages.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/npm-packages.txt"
                   },
                   {
                     "bytes": 36,
@@ -2253,7 +2253,7 @@
                     "kind": "build",
                     "path": "profiles/co-work/build.sh",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/build.sh"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/build.sh"
                   },
                   {
                     "bytes": 36,
@@ -2264,7 +2264,7 @@
                     "kind": "tips",
                     "path": "profiles/co-work/tips.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/tips.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/tips.txt"
                   },
                   {
                     "bytes": 46,
@@ -2275,7 +2275,7 @@
                     "kind": "root_manifest",
                     "path": "profiles/co-work/root.manifest.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/root.manifest.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/root.manifest.json"
                   }
                 ],
                 "images": [
@@ -2288,7 +2288,7 @@
                     "kind": "kernel",
                     "name": "vmlinuz",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/vmlinuz"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/vmlinuz"
                   },
                   {
                     "bytes": 43,
@@ -2299,7 +2299,7 @@
                     "kind": "initrd",
                     "name": "initrd.img",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/initrd.img"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/initrd.img"
                   },
                   {
                     "bytes": 45,
@@ -2310,7 +2310,7 @@
                     "kind": "rootfs",
                     "name": "rootfs.erofs",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/rootfs.erofs"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/rootfs.erofs"
                   }
                 ],
                 "evidence": [
@@ -2322,7 +2322,7 @@
                     },
                     "kind": "abom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/abom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/abom.cdx.json"
                   },
                   {
                     "bytes": 49,
@@ -2332,7 +2332,7 @@
                     },
                     "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/arm64/obom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/arm64/obom.cdx.json"
                   },
                   {
                     "bytes": 331,
@@ -2345,7 +2345,7 @@
                   }
                 ],
                 "package_inventory_revision": "2026.07.02.1",
-                "image_revision": "2026.07.02.1-stable"
+                "image_revision": "1.0.0-stable.20260702"
               },
               {
                 "architecture": "x86_64",
@@ -2383,7 +2383,7 @@
                     "kind": "profile",
                     "path": "profiles/co-work/profile.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/profile.toml"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/profile.toml"
                   },
                   {
                     "bytes": 36,
@@ -2394,7 +2394,7 @@
                     "kind": "mcp",
                     "path": "profiles/co-work/mcp.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/mcp.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/mcp.json"
                   },
                   {
                     "bytes": 44,
@@ -2405,7 +2405,7 @@
                     "kind": "enforcement",
                     "path": "profiles/co-work/enforcement.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/enforcement.toml"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/enforcement.toml"
                   },
                   {
                     "bytes": 42,
@@ -2416,7 +2416,7 @@
                     "kind": "detection",
                     "path": "profiles/co-work/detection.yaml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/detection.yaml"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/detection.yaml"
                   },
                   {
                     "bytes": 44,
@@ -2427,7 +2427,7 @@
                     "kind": "apt",
                     "path": "profiles/co-work/apt-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/apt-packages.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/apt-packages.txt"
                   },
                   {
                     "bytes": 51,
@@ -2438,7 +2438,7 @@
                     "kind": "python",
                     "path": "profiles/co-work/python-requirements.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/python-requirements.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/python-requirements.txt"
                   },
                   {
                     "bytes": 44,
@@ -2449,7 +2449,7 @@
                     "kind": "npm",
                     "path": "profiles/co-work/npm-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/npm-packages.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/npm-packages.txt"
                   },
                   {
                     "bytes": 36,
@@ -2460,7 +2460,7 @@
                     "kind": "build",
                     "path": "profiles/co-work/build.sh",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/build.sh"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/build.sh"
                   },
                   {
                     "bytes": 36,
@@ -2471,7 +2471,7 @@
                     "kind": "tips",
                     "path": "profiles/co-work/tips.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/tips.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/tips.txt"
                   },
                   {
                     "bytes": 46,
@@ -2482,7 +2482,7 @@
                     "kind": "root_manifest",
                     "path": "profiles/co-work/root.manifest.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/root.manifest.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/root.manifest.json"
                   }
                 ],
                 "images": [
@@ -2495,7 +2495,7 @@
                     "kind": "kernel",
                     "name": "vmlinuz",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/vmlinuz"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/vmlinuz"
                   },
                   {
                     "bytes": 44,
@@ -2506,7 +2506,7 @@
                     "kind": "initrd",
                     "name": "initrd.img",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/initrd.img"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/initrd.img"
                   },
                   {
                     "bytes": 46,
@@ -2517,7 +2517,7 @@
                     "kind": "rootfs",
                     "name": "rootfs.erofs",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/rootfs.erofs"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/rootfs.erofs"
                   }
                 ],
                 "evidence": [
@@ -2529,7 +2529,7 @@
                     },
                     "kind": "abom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/abom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/abom.cdx.json"
                   },
                   {
                     "bytes": 50,
@@ -2539,7 +2539,7 @@
                     },
                     "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/co-work/x86_64/obom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/co-work/x86_64/obom.cdx.json"
                   },
                   {
                     "bytes": 332,
@@ -2552,7 +2552,7 @@
                   }
                 ],
                 "package_inventory_revision": "2026.07.02.1",
-                "image_revision": "2026.07.02.1-stable"
+                "image_revision": "1.0.0-stable.20260702"
               }
             ]
           },
@@ -2561,9 +2561,9 @@
             "id": "code",
             "min_capsem_version": "1.4.0",
             "name": "Code",
-            "revision": "2026.07.02.1-stable",
+            "revision": "1.0.0-stable.20260702",
             "status": "current",
-            "version": "2026.07.02.1-stable",
+            "version": "1.0.0-stable.20260702",
             "architectures": [
               {
                 "architecture": "arm64",
@@ -2601,7 +2601,7 @@
                     "kind": "profile",
                     "path": "profiles/code/profile.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/profile.toml"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/profile.toml"
                   },
                   {
                     "bytes": 33,
@@ -2612,7 +2612,7 @@
                     "kind": "mcp",
                     "path": "profiles/code/mcp.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/mcp.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/mcp.json"
                   },
                   {
                     "bytes": 41,
@@ -2623,7 +2623,7 @@
                     "kind": "enforcement",
                     "path": "profiles/code/enforcement.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/enforcement.toml"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/enforcement.toml"
                   },
                   {
                     "bytes": 39,
@@ -2634,7 +2634,7 @@
                     "kind": "detection",
                     "path": "profiles/code/detection.yaml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/detection.yaml"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/detection.yaml"
                   },
                   {
                     "bytes": 41,
@@ -2645,7 +2645,7 @@
                     "kind": "apt",
                     "path": "profiles/code/apt-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/apt-packages.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/apt-packages.txt"
                   },
                   {
                     "bytes": 48,
@@ -2656,7 +2656,7 @@
                     "kind": "python",
                     "path": "profiles/code/python-requirements.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/python-requirements.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/python-requirements.txt"
                   },
                   {
                     "bytes": 41,
@@ -2667,7 +2667,7 @@
                     "kind": "npm",
                     "path": "profiles/code/npm-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/npm-packages.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/npm-packages.txt"
                   },
                   {
                     "bytes": 33,
@@ -2678,7 +2678,7 @@
                     "kind": "build",
                     "path": "profiles/code/build.sh",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/build.sh"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/build.sh"
                   },
                   {
                     "bytes": 33,
@@ -2689,7 +2689,7 @@
                     "kind": "tips",
                     "path": "profiles/code/tips.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/tips.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/tips.txt"
                   },
                   {
                     "bytes": 43,
@@ -2700,7 +2700,7 @@
                     "kind": "root_manifest",
                     "path": "profiles/code/root.manifest.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/root.manifest.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/root.manifest.json"
                   }
                 ],
                 "images": [
@@ -2713,7 +2713,7 @@
                     "kind": "kernel",
                     "name": "vmlinuz",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/vmlinuz"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/vmlinuz"
                   },
                   {
                     "bytes": 40,
@@ -2724,7 +2724,7 @@
                     "kind": "initrd",
                     "name": "initrd.img",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/initrd.img"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/initrd.img"
                   },
                   {
                     "bytes": 42,
@@ -2735,7 +2735,7 @@
                     "kind": "rootfs",
                     "name": "rootfs.erofs",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/rootfs.erofs"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/rootfs.erofs"
                   }
                 ],
                 "evidence": [
@@ -2747,7 +2747,7 @@
                     },
                     "kind": "abom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/abom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/abom.cdx.json"
                   },
                   {
                     "bytes": 46,
@@ -2757,7 +2757,7 @@
                     },
                     "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/arm64/obom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/arm64/obom.cdx.json"
                   },
                   {
                     "bytes": 331,
@@ -2770,7 +2770,7 @@
                   }
                 ],
                 "package_inventory_revision": "2026.07.02.1",
-                "image_revision": "2026.07.02.1-stable"
+                "image_revision": "1.0.0-stable.20260702"
               },
               {
                 "architecture": "x86_64",
@@ -2808,7 +2808,7 @@
                     "kind": "profile",
                     "path": "profiles/code/profile.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/profile.toml"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/profile.toml"
                   },
                   {
                     "bytes": 33,
@@ -2819,7 +2819,7 @@
                     "kind": "mcp",
                     "path": "profiles/code/mcp.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/mcp.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/mcp.json"
                   },
                   {
                     "bytes": 41,
@@ -2830,7 +2830,7 @@
                     "kind": "enforcement",
                     "path": "profiles/code/enforcement.toml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/enforcement.toml"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/enforcement.toml"
                   },
                   {
                     "bytes": 39,
@@ -2841,7 +2841,7 @@
                     "kind": "detection",
                     "path": "profiles/code/detection.yaml",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/detection.yaml"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/detection.yaml"
                   },
                   {
                     "bytes": 41,
@@ -2852,7 +2852,7 @@
                     "kind": "apt",
                     "path": "profiles/code/apt-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/apt-packages.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/apt-packages.txt"
                   },
                   {
                     "bytes": 48,
@@ -2863,7 +2863,7 @@
                     "kind": "python",
                     "path": "profiles/code/python-requirements.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/python-requirements.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/python-requirements.txt"
                   },
                   {
                     "bytes": 41,
@@ -2874,7 +2874,7 @@
                     "kind": "npm",
                     "path": "profiles/code/npm-packages.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/npm-packages.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/npm-packages.txt"
                   },
                   {
                     "bytes": 33,
@@ -2885,7 +2885,7 @@
                     "kind": "build",
                     "path": "profiles/code/build.sh",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/build.sh"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/build.sh"
                   },
                   {
                     "bytes": 33,
@@ -2896,7 +2896,7 @@
                     "kind": "tips",
                     "path": "profiles/code/tips.txt",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/tips.txt"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/tips.txt"
                   },
                   {
                     "bytes": 43,
@@ -2907,7 +2907,7 @@
                     "kind": "root_manifest",
                     "path": "profiles/code/root.manifest.json",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/root.manifest.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/root.manifest.json"
                   }
                 ],
                 "images": [
@@ -2920,7 +2920,7 @@
                     "kind": "kernel",
                     "name": "vmlinuz",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/vmlinuz"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/vmlinuz"
                   },
                   {
                     "bytes": 41,
@@ -2931,7 +2931,7 @@
                     "kind": "initrd",
                     "name": "initrd.img",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/initrd.img"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/initrd.img"
                   },
                   {
                     "bytes": 43,
@@ -2942,7 +2942,7 @@
                     "kind": "rootfs",
                     "name": "rootfs.erofs",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/rootfs.erofs"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/rootfs.erofs"
                   }
                 ],
                 "evidence": [
@@ -2954,7 +2954,7 @@
                     },
                     "kind": "abom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/abom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/abom.cdx.json"
                   },
                   {
                     "bytes": 47,
@@ -2964,7 +2964,7 @@
                     },
                     "kind": "obom",
                     "status": "current",
-                    "url": "/profiles/releases/2026.07.02.1-stable/code/x86_64/obom.cdx.json"
+                    "url": "/profiles/releases/1.0.0-stable.20260702/code/x86_64/obom.cdx.json"
                   },
                   {
                     "bytes": 332,
@@ -2977,7 +2977,7 @@
                   }
                 ],
                 "package_inventory_revision": "2026.07.02.1",
-                "image_revision": "2026.07.02.1-stable"
+                "image_revision": "1.0.0-stable.20260702"
               }
             ]
           }

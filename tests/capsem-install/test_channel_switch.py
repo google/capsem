@@ -72,10 +72,12 @@ def test_switch_stable_to_nightly_and_back() -> None:
     nightly_co_work = nightly["profiles"]["co-work"]
 
     assert stable_before == stable_after
-    assert stable_before["version"] == "1.4.0"
-    assert nightly["version"] == "1.5.0-nightly.20260702"
-    assert stable_co_work["revision"] == "2026.07.02.1-stable"
-    assert nightly_co_work["revision"] == "2026.07.02.1-nightly"
+    assert stable_before["version"] == "1.0.2"
+    assert nightly["version"] == "1.0.2"
+    assert stable_before["packages"][0]["version"] == "1.4.0"
+    assert nightly["packages"][0]["version"] == "1.5.0-nightly.20260702"
+    assert stable_co_work["revision"] == "1.0.0-stable.20260702"
+    assert nightly_co_work["revision"] == "1.0.0-nightly.20260702"
     assert stable_co_work["min_capsem_version"] == "1.4.0"
     assert nightly_co_work["min_capsem_version"] == "1.4.0"
     stable_arch = stable_co_work["architectures"][0]

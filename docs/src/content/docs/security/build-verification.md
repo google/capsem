@@ -187,8 +187,7 @@ to profile catalogs:
   "profiles": [
     {
       "id": "co-work",
-      "revision": "2026.07.02.1-stable",
-      "catalog_url": "https://release.capsem.org/profiles/releases/2026.07.02.1-stable/catalog.json",
+      "revision": "1.0.0-stable.20260702",
       "sha256": "<sha256>",
       "blake3": "<blake3>",
       "hmac": "<hmac>"
@@ -200,8 +199,8 @@ to profile catalogs:
 Profiles own profile images, config files, software inventory, and ABOM/OBOM
 evidence. A profile may declare `min_capsem_version` when its config or image
 requires newer client behavior, but it does not select the Capsem binary. The
-manifest selects package and binary metadata; the profile catalog selects
-profile-owned image/config/evidence metadata.
+manifest selects package and binary metadata; profile entries inside that
+manifest select profile-owned image/config/evidence metadata.
 
 Stable and nightly are independent channels. A stable-to-nightly switch is just
 choosing a different manifest URL, for example

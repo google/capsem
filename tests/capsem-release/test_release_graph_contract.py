@@ -109,8 +109,8 @@ def test_fixture_has_stable_and_nightly() -> None:
         "capsem-tray": "SPDXRef-File-capsem-tray",
         "capsem-tui": "SPDXRef-File-capsem-tui",
     }
-    assert nightly["profiles"]["co-work"]["revision"].endswith("-nightly")
-    assert stable["profiles"]["co-work"]["revision"].endswith("-stable")
+    assert "-nightly." in nightly["profiles"]["co-work"]["revision"]
+    assert "-stable." in stable["profiles"]["co-work"]["revision"]
     assert nightly["profiles"]["co-work"]["min_capsem_version"] == "1.4.0"
     assert (
         nightly["profiles"]["co-work"]["architectures"][0]["evidence"][0]["kind"]
