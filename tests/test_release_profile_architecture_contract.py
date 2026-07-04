@@ -690,17 +690,37 @@ def test_all_profile_image_artifacts() -> None:
 
 
 def test_software_inventory_not_all_arch() -> None:
+    build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
     for channel, record in graph["channels"].items():
         current = next(item for item in record["manifests"] if item["status"] == "current")
         manifest = graph["manifests"][channel][current["version"]]
-        for profile in manifest["profiles"].values():
+        for profile_id, profile in manifest["profiles"].items():
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
                 arch = architecture["architecture"]
+                section = page.split(f"Architecture {arch}", maxsplit=1)[1].split(
+                    "</section>",
+                    maxsplit=1,
+                )[0]
+                software_block = section.split("Installed Software", maxsplit=1)[1].split(
+                    "Config Files",
+                    maxsplit=1,
+                )[0]
+                assert ">all<" not in software_block
+                assert "<code>all</code>" not in software_block
                 for software in architecture["software"]:
                     assert software["architecture"] == arch
                     assert software["architecture"] != "all"
+                    assert software["name"] in software_block
 
 
 def test_software_versions_are_real(monkeypatch) -> None:

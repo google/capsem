@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Hardened the software architecture scope gate so rendered profile software
+  sections cannot show `all` instead of concrete profile architectures.
 - Hardened the profile architecture section gate so every current stable and
   nightly profile page must render profile-owned architecture sections.
 - Hardened the binary-description release gate so every package page renders
