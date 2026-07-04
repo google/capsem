@@ -75,6 +75,22 @@ def test_channel_descriptions_from_metadata() -> None:
     assert "Faster-moving release channel for daily fixes and early validation." not in stripped_index
 
 
+def test_root_channel_duplicate_id_removed() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+
+    for channel_id, channel in graph["channels"].items():
+        channel_row = index.split(f"/channels/{channel_id}/", maxsplit=1)[1].split(
+            "</tr>",
+            maxsplit=1,
+        )[0]
+        assert f"<code>{channel_id}</code>" not in channel_row
+        assert f">{channel_id}<" not in channel_row
+        assert channel["description"] in channel_row
+
+
 def test_channel_root_update_time_no_status_records() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
