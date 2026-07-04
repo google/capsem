@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a package-target regression proving channel manifests and pages group
+  Capsem packages by explicit operating system and architecture JSON fields.
 - Added a manifest-version independence regression proving channel manifest
   versions stay separate from binary package and profile asset versions.
 - Added a root channel metadata regression proving the table uses manifest

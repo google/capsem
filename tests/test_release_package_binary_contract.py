@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import blake3
 
@@ -743,6 +744,14 @@ def test_package_target_parity() -> None:
             assert f"Package target {platform} {package['architecture']}" in packages_section
             assert package["name"] in packages_section
             assert package["url"] in packages_section
+
+
+def test_channel_manifest_package_targets_grouped_by_os_and_architecture() -> None:
+    test_manifest_package_targets_by_architecture()
+    test_package_architecture_sections_are_explicit()
+    with TemporaryDirectory() as tmpdir:
+        test_package_architecture_not_filename_derived(Path(tmpdir))
+    test_package_target_parity()
 
 
 def test_full_binary_cohort() -> None:
