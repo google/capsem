@@ -396,21 +396,33 @@ def test_binary_descriptions_from_metadata() -> None:
     build_release_site_from_fixture()
 
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    forbidden_descriptions = {
+        "",
+        "Capsem binary package",
+        "Capsem executable fixture",
+        "unknown",
+        "not published",
+    }
 
-    for package in graph["manifests"]["stable"]["1.0.2"]["packages"]:
-        package_page = (
-            RELEASE_SITE_DIST
-            / "channels"
-            / "stable"
-            / "packages"
-            / package["id"]
-            / "index.html"
-        ).read_text(encoding="utf-8")
-        for binary in package["binaries"]:
-            assert binary["description"], binary
-            assert binary["description"] in package_page
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for package in manifest["packages"]:
+            package_page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "packages"
+                / package["id"]
+                / "index.html"
+            ).read_text(encoding="utf-8")
 
-    assert "Capsem binary package" not in package_page
+            assert "Capsem binary package" not in package_page
+            assert "Capsem executable fixture" not in package_page
+
+            for binary in package["binaries"]:
+                assert binary["description"] not in forbidden_descriptions, binary
+                assert binary["description"] in package_page
 
 
 def test_binaries_inherit_package_target_not_all() -> None:

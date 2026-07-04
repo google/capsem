@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Hardened the binary-description release gate so every package page renders
+  source-owned binary descriptions for both stable and nightly packages.
 - Added a named owned-binary-cohort gate proving package detail pages list all
   binaries owned by each package while channel pages stay package-focused.
 - Added a package-target parity gate requiring current channel manifests and
