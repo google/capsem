@@ -614,6 +614,11 @@ def test_profile_config_inventory_includes_security_and_detection() -> None:
                     assert config_by_kind[kind]["url"] in config_block, label
 
 
+def test_all_config_classes() -> None:
+    test_all_config_classes_render()
+    test_profile_config_inventory_includes_security_and_detection()
+
+
 def test_config_kind_enum_contract(monkeypatch) -> None:
     checker = _readiness_checker_module()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
