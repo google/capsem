@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a manifest-version independence gate so channel manifest versions stay
+  separate from Capsem package, profile, and VM asset/image versions.
 - Added a named root-channel last-updated regression so channel rows keep
   manifest revision/update metadata and reject status/records columns.
 - Added a named root-channel duplicate-id regression so stable/nightly rows
