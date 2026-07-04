@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Labeled channel-page manifest versions explicitly so package versions,
+  profile revisions, and manifest versions stay visually separated.
 - Added a release-site review regression gate for root channel table semantics
   so Selected/Status/Records labels cannot return.
 - Removed hardcoded release-site channel description fallbacks so root channel

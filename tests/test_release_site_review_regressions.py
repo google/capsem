@@ -90,6 +90,45 @@ def test_root_channel_table_semantics() -> None:
     assert "/assets/nightly/manifest.json" in index
 
 
+def test_manifest_version_independence() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        page = (RELEASE_SITE_DIST / "channels" / channel / "index.html").read_text(
+            encoding="utf-8"
+        )
+        current_block = page.split("Current Manifest", maxsplit=1)[1].split(
+            "Manifest History",
+            maxsplit=1,
+        )[0]
+
+        assert "Manifest version" in current_block
+        assert ">Version<" not in current_block
+        assert f"<code>{current['version']}</code>" in current_block
+
+        for package in manifest["packages"]:
+            if package["version"] != current["version"]:
+                assert f"<code>{package['version']}</code>" not in current_block
+        for profile in manifest["profiles"].values():
+            assert profile["revision"] not in current_block
+
+        package_block = page.split("Capsem Packages", maxsplit=1)[1].split(
+            "Profile References",
+            maxsplit=1,
+        )[0]
+        assert "Manifest version" not in package_block
+        for package in manifest["packages"]:
+            assert f"<code>{package['version']}</code>" in package_block
+
+        profile_block = page.split("Profile References", maxsplit=1)[1]
+        assert "Manifest version" not in profile_block
+        for profile in manifest["profiles"].values():
+            assert f"<code>{profile['revision']}</code>" in profile_block
+
+
 def build_release_site_from_graph(graph_path: Path) -> None:
     env = {
         **os.environ,

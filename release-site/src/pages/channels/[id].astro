@@ -60,7 +60,7 @@ const packageGroups = Array.from(
     <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-[12rem_1fr]">
       <dt class="text-zinc-500">Channel</dt><dd><code>{data.channel}</code></dd>
       <dt class="text-zinc-500">Generated</dt><dd><code>{generatedAt(data)}</code></dd>
-      <dt class="text-zinc-500">Version</dt><dd><code>{data.manifestRecord.version}</code></dd>
+      <dt class="text-zinc-500">Manifest version</dt><dd><code>{data.manifestRecord.version}</code></dd>
       <dt class="text-zinc-500">Status</dt><dd>{data.manifestRecord.status ?? data.manifest.status ?? 'unknown'}</dd>
       <dt class="text-zinc-500">Manifest URL</dt><dd><a class="break-all text-blue-600 underline" href={manifestUrl(data)}>{manifestUrl(data)}</a></dd>
       <dt class="text-zinc-500">Manifest SHA-256</dt><dd><code class="break-all">{hashLabel(data.manifestRecord.digest?.sha256)}</code></dd>
@@ -76,7 +76,7 @@ const packageGroups = Array.from(
       <table class="w-full min-w-[860px] border-collapse text-sm">
         <thead>
           <tr class="border-b border-zinc-200 text-left text-zinc-500">
-            <th class="py-2 pr-4 font-medium">Version</th>
+            <th class="py-2 pr-4 font-medium">Manifest version</th>
             <th class="py-2 pr-4 font-medium">Status</th>
             <th class="py-2 pr-4 font-medium">SHA-256</th>
             <th class="py-2 pr-4 font-medium">BLAKE3</th>
