@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a release-site content validator regression proving remote deploy checks
+  package-detail and profile-artifact page values, not just file existence.
 - Added a named Codecov crate-and-binary enumeration gate covering workspace
   crates, binary targets, Codecov components, `--bins`, and package rail tests.
 - Added a generated-from-JSON release-site gate proving root, channel, package,

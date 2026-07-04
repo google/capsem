@@ -462,6 +462,85 @@ def test_stale_html_rejected(monkeypatch: Any) -> None:
     assert f"channel page {channel} missing package name {package_name}" in stale.detail
 
 
+def test_release_site_validator_checks_content_not_file_existence(
+    monkeypatch: Any,
+) -> None:
+    checker = load_remote_readiness_checker()
+    site = "https://release.test"
+    channel = "stable"
+    channels, manifest, manifest_payload, artifact_bytes = minimal_release_graph(checker)
+    pages = minimal_release_pages(checker, site, channel, channels, manifest)
+
+    patch_release_fetches(
+        monkeypatch,
+        checker,
+        site=site,
+        channels=channels,
+        manifest_payload=manifest_payload,
+        artifact_bytes=artifact_bytes,
+        pages=pages,
+    )
+    good = checker.check_release_site_contract(site, channel)
+    assert good.ok, good.detail
+
+    package = manifest["packages"][0]
+    binary = package["binaries"][0]
+    package_pages = dict(pages)
+    package_pages[f"{site}/channels/{channel}/packages/{package['id']}/"] = (
+        package_pages[f"{site}/channels/{channel}/packages/{package['id']}/"]
+        .replace(binary["installed_path"], "/Applications/Capsem.app/stale")
+        .replace(
+            checker.hash_label(binary["digest"]["sha256"]),
+            "stale-bin-sha...",
+        )
+    )
+    patch_release_fetches(
+        monkeypatch,
+        checker,
+        site=site,
+        channels=channels,
+        manifest_payload=manifest_payload,
+        artifact_bytes=artifact_bytes,
+        pages=package_pages,
+    )
+    stale_package = checker.check_release_site_contract(site, channel)
+    assert not stale_package.ok
+    assert (
+        f"package page {channel}/{package['id']} missing binary installed path "
+        f"{binary['installed_path']}"
+    ) in stale_package.detail
+    assert (
+        f"package page {channel}/{package['id']} missing binary SHA-256 "
+        f"{checker.hash_label(binary['digest']['sha256'])}"
+    ) in stale_package.detail
+
+    profile = manifest["profiles"]["co-work"]
+    architecture = profile["architectures"][0]
+    image = architecture["images"][0]
+    profile_pages = dict(pages)
+    profile_pages[f"{site}/channels/{channel}/profiles/co-work/"] = profile_pages[
+        f"{site}/channels/{channel}/profiles/co-work/"
+    ].replace(
+        checker.hash_label(image["digest"]["sha256"]),
+        "stale-img-sha...",
+    )
+    patch_release_fetches(
+        monkeypatch,
+        checker,
+        site=site,
+        channels=channels,
+        manifest_payload=manifest_payload,
+        artifact_bytes=artifact_bytes,
+        pages=profile_pages,
+    )
+    stale_profile = checker.check_release_site_contract(site, channel)
+    assert not stale_profile.ok
+    assert (
+        "profile page missing profile co-work architecture arm64 image "
+        f"sha256 for {image['url']}"
+    ) in stale_profile.detail
+
+
 def load_remote_readiness_checker() -> Any:
     module_path = PROJECT_ROOT / "scripts" / "check-remote-release-readiness.py"
     spec = importlib.util.spec_from_file_location(
