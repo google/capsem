@@ -20,6 +20,9 @@ FIXTURE_GRAPH = (
     / "fixtures"
     / "release-graph-stable-nightly.json"
 )
+FIXTURE_FILE_ROOT = (
+    PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-channel-files"
+)
 RELEASE_OUTPUT_DOC = (
     PROJECT_ROOT
     / "docs"
@@ -240,6 +243,50 @@ def test_forbid_sha1_only_file_evidence() -> None:
     )
 
 
+def test_package_binary_hashes_from_bytes() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for package in manifest["packages"]:
+            package_sbom = next(
+                evidence
+                for evidence in package.get("evidence", [])
+                if evidence.get("kind") == "sbom"
+            )
+            sbom_bytes = _fixture_artifact_bytes(package_sbom["url"])
+
+            assert package_sbom["bytes"] == len(sbom_bytes), (
+                f"{channel}:{package['name']}:sbom bytes"
+            )
+            assert package_sbom["digest"] == {
+                "sha256": hashlib.sha256(sbom_bytes).hexdigest(),
+                "blake3": blake3(sbom_bytes).hexdigest(),
+            }, f"{channel}:{package['name']}:sbom digest"
+
+            sbom = json.loads(sbom_bytes)
+            files_by_id = {
+                file["SPDXID"]: file
+                for file in sbom.get("files", [])
+                if isinstance(file, dict) and "SPDXID" in file
+            }
+
+            for binary in package["binaries"]:
+                component = files_by_id.get(binary["sbom_component_ref"])
+                assert component is not None, (
+                    f"{channel}:{package['name']}:{binary['name']}"
+                )
+                sha256_checksums = [
+                    checksum["checksumValue"]
+                    for checksum in component.get("checksums", [])
+                    if checksum.get("algorithm") == "SHA256"
+                ]
+                assert sha256_checksums == [binary["digest"]["sha256"]], (
+                    f"{channel}:{package['name']}:{binary['name']}"
+                )
+
+
 def _assert_software_rows_do_not_reuse_inventory_digest() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
@@ -272,6 +319,13 @@ def _software_row_digest(software: dict) -> dict[str, str]:
         "sha256": hashlib.sha256(payload).hexdigest(),
         "blake3": blake3(payload).hexdigest(),
     }
+
+
+def _fixture_artifact_bytes(url: str) -> bytes:
+    assert url.startswith("/"), url
+    artifact_path = FIXTURE_FILE_ROOT / url.lstrip("/")
+    assert artifact_path.exists(), url
+    return artifact_path.read_bytes()
 
 
 def _digest_subjects(graph: dict):

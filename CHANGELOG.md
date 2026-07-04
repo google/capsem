@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a byte-backed package/binary hash regression covering package SBOM
+  artifact digests and binary SHA-256 component checksums from SPDX evidence.
 - Added a SHA1-only SBOM regression proving SPDX file evidence must include
   SHA-256 checksums; SHA1 is ignored as upstream noise, not trusted evidence.
 - Added a Linux package cohort regression proving each Debian architecture
