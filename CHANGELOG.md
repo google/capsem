@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a manifest history audit regression proving retained channel manifest
+  records use status enums, full digests, and never publish `removed`.
 - Added a public release HMAC regression proving generated release pages and
   JSON graph inventory expose only SHA-256 and BLAKE3 digest fields.
 - Added a release-site canonical URL regression proving human pages expose

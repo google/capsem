@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 from copy import deepcopy
@@ -211,6 +212,30 @@ def test_manifest_version_independence() -> None:
     assert nightly_version not in package_versions
     assert stable_version not in profile_versions
     assert nightly_version not in profile_versions
+
+
+def test_manifest_history_audit_records() -> None:
+    graph = _fixture_graph()
+    allowed_statuses = {"current", "supported", "deprecated", "revoked"}
+
+    for channel, record in graph["channels"].items():
+        manifests = record["manifests"]
+        statuses = [manifest["status"] for manifest in manifests]
+        versions = [manifest["version"] for manifest in manifests]
+
+        assert statuses == ["current", "supported", "deprecated", "revoked"], channel
+        assert "removed" not in statuses, channel
+        assert len(versions) == len(set(versions)), channel
+
+        for manifest in manifests:
+            assert manifest["status"] in allowed_statuses, f"{channel}:{manifest}"
+            assert manifest["url"], f"{channel}:{manifest['version']}"
+            digest = manifest["digest"]
+            assert set(digest) == {"sha256", "blake3"}, f"{channel}:{manifest['version']}"
+            for value in digest.values():
+                assert re.fullmatch(r"[0-9a-f]{64}", value), (
+                    f"{channel}:{manifest['version']}:{value}"
+                )
 
 
 def _fixture_graph() -> dict[str, Any]:
