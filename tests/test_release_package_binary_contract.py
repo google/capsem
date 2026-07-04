@@ -683,6 +683,12 @@ def test_macos_package_binary_cohort() -> None:
     test_macos_package_complete_binary_cohort()
 
 
+def test_macos_package_owns_app_tray_gateway_cli_binaries() -> None:
+    test_macos_package_present()
+    test_macos_package_complete_binary_cohort()
+    test_package_detail_binary_cohort()
+
+
 def test_linux_package_complete_binary_cohort() -> None:
     build_release_site_from_fixture()
 

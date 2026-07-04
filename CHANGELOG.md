@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a macOS package cohort regression proving the package owns app, tray,
+  helper, gateway, service, MCP, TUI, admin, and CLI executable inventory rows.
 - Added a binary SBOM reference regression proving binary rows keep component
   refs and do not repeat package SBOM file links.
 - Added a package SBOM owner-level regression proving SBOM links render once
