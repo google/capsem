@@ -73,8 +73,9 @@ def test_channel_descriptions_from_metadata() -> None:
     assert "Faster-moving release channel for daily fixes and early validation." not in stripped_index
 
 
-def test_root_channel_table_semantics() -> None:
+def test_channel_root_update_time_no_status_records() -> None:
     build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
     index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
 
@@ -87,13 +88,20 @@ def test_root_channel_table_semantics() -> None:
     assert "Updated" in index
     assert "Coverage" in index
     assert "Manifest URL" in index
-    assert "<code>1.0.2</code>" in index
-    assert "2026-07-03T05:45:26Z" in index
+
+    for channel_id, channel in graph["channels"].items():
+        current = next(item for item in channel["manifests"] if item["status"] == "current")
+        row = index.split(f"/channels/{channel_id}/", maxsplit=1)[1].split(
+            "</tr>",
+            maxsplit=1,
+        )[0]
+        assert current["revision"] in row
+        assert graph["generated_at"] in row
+        assert current["url"] in row
+        assert current["status"] not in row
     assert "3 packages" in index
     assert "2 profiles" in index
     assert "arm64, x86_64" in index
-    assert "/assets/stable/manifest.json" in index
-    assert "/assets/nightly/manifest.json" in index
 
 
 def test_manifest_version_independence() -> None:

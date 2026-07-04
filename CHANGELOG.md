@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Hardened the root channel update-time gate so channel rows show generated
+  provenance and never reintroduce Status/Records noise.
 - Hardened the root channel-description review gate so stable/nightly copy is
   rendered from channel metadata in the matching channel row.
 - Added a release-site content validator regression proving remote deploy checks
