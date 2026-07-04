@@ -723,6 +723,10 @@ def test_profile_arch_packages_and_images_blocks() -> None:
                     assert evidence["url"] in owner_block, label
 
 
+def test_profile_page_has_architecture_package_and_image_blocks() -> None:
+    test_profile_arch_packages_and_images_blocks()
+
+
 def _walk_values(value: object, needle: str) -> list[str]:
     matches: list[str] = []
 

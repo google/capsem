@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a profile page architecture regression proving package, config, image,
+  and evidence records stay in their owning architecture blocks.
 - Added a profile software architecture regression proving software inventory
   rows live under architecture nodes and never render as architecture `all`.
 - Added a binary description regression proving executable descriptions come
