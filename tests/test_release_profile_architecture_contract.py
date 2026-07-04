@@ -30,6 +30,18 @@ SEMVER_RE = re.compile(
     r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
+CONFIG_KIND_LABELS = {
+    "profile": "Profile metadata",
+    "mcp": "MCP configuration",
+    "enforcement": "Enforcement rules",
+    "detection": "Detection rules",
+    "apt": "APT package list",
+    "python": "Python requirements",
+    "npm": "NPM package list",
+    "build": "Build script",
+    "tips": "Usage tips",
+    "root_manifest": "Root manifest",
+}
 
 
 def _readiness_checker_module():
@@ -705,7 +717,7 @@ def test_all_config_classes_render() -> None:
                     maxsplit=1,
                 )[0]
                 for config in architecture["config"]:
-                    assert config["kind"] in config_block, label
+                    assert CONFIG_KIND_LABELS[config["kind"]] in config_block, label
                     assert config["path"] in config_block, label
                     assert config["url"] in config_block, label
 
@@ -808,7 +820,7 @@ def test_config_inventory_all_classes() -> None:
                     maxsplit=1,
                 )[0]
                 for kind in expected_kinds:
-                    assert kind in config_block, label
+                    assert CONFIG_KIND_LABELS[kind] in config_block, label
                 assert config_block.count("<tr class=\"border-b border-zinc-100 align-top\">") >= len(
                     expected_kinds
                 ), label
@@ -864,6 +876,43 @@ def test_config_kind_enum_contract(monkeypatch) -> None:
         "profile co-work architecture arm64 config kind misc is not allowed"
         in failures
     )
+
+
+def test_config_kinds_are_typed_enums() -> None:
+    build_release_site_from_fixture()
+    source = PROFILE_PAGE.read_text(encoding="utf-8")
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    assert "configKindLabel" in source
+    assert "file.kind ?? file.label" not in source
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                label = f"{channel}:{profile_id}:{architecture['architecture']}"
+                section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[
+                    1
+                ].split("</section>", maxsplit=1)[0]
+                config_block = section.split("Config Files", maxsplit=1)[1].split(
+                    "Profile Images",
+                    maxsplit=1,
+                )[0]
+
+                for config in architecture["config"]:
+                    expected_label = CONFIG_KIND_LABELS[config["kind"]]
+                    assert expected_label in config_block, label
+                    assert f">{config['kind']}<" not in config_block, label
+                    assert config["path"] in config_block, label
 
 
 def test_all_profile_image_artifacts() -> None:

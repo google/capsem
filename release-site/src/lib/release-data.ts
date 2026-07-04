@@ -355,6 +355,24 @@ export function packageTargetLabel(pkg: JsonObject): string {
   return `${platformLabel} ${architecture}`;
 }
 
+const CONFIG_KIND_LABELS: Record<string, string> = {
+  profile: 'Profile metadata',
+  mcp: 'MCP configuration',
+  enforcement: 'Enforcement rules',
+  detection: 'Detection rules',
+  apt: 'APT package list',
+  python: 'Python requirements',
+  npm: 'NPM package list',
+  build: 'Build script',
+  tips: 'Usage tips',
+  root_manifest: 'Root manifest',
+};
+
+export function configKindLabel(kind: unknown): string {
+  const key = String(kind ?? '');
+  return CONFIG_KIND_LABELS[key] ?? `Unknown config kind: ${key || 'missing'}`;
+}
+
 export function packageById(data: ReleaseData, id: string): JsonObject | undefined {
   return packageRows(data).find((pkg) => String(pkg.id) === id);
 }
