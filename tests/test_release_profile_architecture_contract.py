@@ -133,6 +133,11 @@ def test_abom_obom_architecture_scoped() -> None:
                 section = page.split(f"Architecture {arch}", maxsplit=1)[1].split(
                     "</section>", maxsplit=1
                 )[0]
+                profile_evidence_block = section.split("Profile Evidence", maxsplit=1)[1].split(
+                    "Installed Software",
+                    maxsplit=1,
+                )[0]
+                image_block = section.split("Profile Images", maxsplit=1)[1]
                 evidence = {
                     item["kind"]: item
                     for item in architecture["evidence"]
@@ -146,9 +151,15 @@ def test_abom_obom_architecture_scoped() -> None:
                         assert item["url"].endswith(
                             f"/{arch}-software-inventory.json"
                         ), f"{channel}:{profile_id}:{arch}:{kind}"
+                        assert item["url"] in profile_evidence_block, (
+                            f"{channel}:{profile_id}:{arch}:{kind}"
+                        )
                     else:
                         assert f"/{arch}/" in item["url"], f"{channel}:{profile_id}:{arch}:{kind}"
-                    assert item["url"] in section, f"{channel}:{profile_id}:{arch}:{kind}"
+                        assert item["url"] in image_block, f"{channel}:{profile_id}:{arch}:{kind}"
+                        assert item["url"] not in profile_evidence_block, (
+                            f"{channel}:{profile_id}:{arch}:{kind}"
+                        )
 
             for other_profile_id, other_profile in manifest["profiles"].items():
                 if other_profile_id == profile_id:

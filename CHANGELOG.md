@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Hardened the ABOM/OBOM architecture-scope gate so profile pages render image
+  evidence in the image-owned block, not generic profile evidence.
 - Hardened the profile image artifact gate so every architecture-local image
   block renders each image artifact's kind, name, URL, and digests.
 - Added a named all-config-classes gate covering rendered profile config
