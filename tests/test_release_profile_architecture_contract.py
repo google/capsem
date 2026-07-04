@@ -584,6 +584,10 @@ def test_software_inventory_evidence_once_per_architecture() -> None:
                 assert evidence_url not in software_block, label
 
 
+def test_software_inventory_evidence_link_once_per_architecture_block() -> None:
+    test_software_inventory_evidence_once_per_architecture()
+
+
 def test_profile_architecture_sections() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))

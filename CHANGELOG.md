@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a software inventory evidence regression proving each architecture
+  links its inventory once and keeps row hashes row-owned.
 - Added a profile page architecture regression proving package, config, image,
   and evidence records stay in their owning architecture blocks.
 - Added a profile software architecture regression proving software inventory
