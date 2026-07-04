@@ -855,6 +855,10 @@ def test_profile_config_inventory_includes_security_and_detection() -> None:
                     assert config_by_kind[kind]["url"] in config_block, label
 
 
+def test_config_inventory_security_rules_detection() -> None:
+    test_profile_config_inventory_includes_security_and_detection()
+
+
 def test_all_config_classes() -> None:
     test_all_config_classes_render()
     test_profile_config_inventory_includes_security_and_detection()

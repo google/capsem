@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named profile config inventory regression proving security,
+  detection, MCP, package-manager, build, tips, and root manifest config files render.
 - Added a named software-inventory real-version regression proving profile
   software rows reject missing, latest, unknown, and unversioned placeholders.
 - Added a named macOS package binary cohort regression covering app, tray,
