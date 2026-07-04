@@ -947,6 +947,77 @@ def test_all_profile_image_artifacts() -> None:
                     assert image["digest"]["blake3"][:8] + "..." in image_block, label
 
 
+def test_profile_images_grouped_by_architecture_complete_set(monkeypatch) -> None:
+    checker = _readiness_checker_module()
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    monkeypatch.setattr(
+        checker,
+        "fetch_text",
+        lambda _url: checker.FetchText(text="profile page"),
+    )
+    monkeypatch.setattr(
+        checker,
+        "check_release_graph_artifact",
+        lambda *_args, **_kwargs: [],
+    )
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            profile_page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                arch = architecture["architecture"]
+                label = f"{channel}:{profile_id}:{arch}"
+                section = profile_page.split(f"Architecture {arch}", maxsplit=1)[1].split(
+                    "</section>",
+                    maxsplit=1,
+                )[0]
+                image_block = section.split("Profile Images", maxsplit=1)[1].split(
+                    "Profile Image Evidence",
+                    maxsplit=1,
+                )[0]
+                image_kinds = {image["kind"] for image in architecture["images"]}
+                assert image_kinds == {"kernel", "initrd", "rootfs"}, label
+                for image in architecture["images"]:
+                    assert f"/{arch}/" in image["url"], label
+                    assert image["url"] in image_block, label
+
+                invalid_profile = deepcopy(profile)
+                invalid_architecture = next(
+                    item
+                    for item in invalid_profile["architectures"]
+                    if item["architecture"] == arch
+                )
+                removed_kind = next(iter(image_kinds))
+                invalid_architecture["images"] = [
+                    image
+                    for image in invalid_architecture["images"]
+                    if image["kind"] != removed_kind
+                ]
+
+                failures = checker.check_release_graph_profile(
+                    "https://release.capsem.test",
+                    channel,
+                    profile_id,
+                    invalid_profile,
+                )
+                assert any(
+                    f"profile {profile_id} architecture {arch} images missing {removed_kind}"
+                    in failure
+                    for failure in failures
+                ), label
+
+
 def test_software_inventory_not_all_arch() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))

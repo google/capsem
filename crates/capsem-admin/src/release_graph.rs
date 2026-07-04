@@ -5,6 +5,12 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as ShaDigest, Sha256};
 
+const REQUIRED_PROFILE_IMAGE_ARTIFACT_KINDS: [ProfileImageArtifactKind; 3] = [
+    ProfileImageArtifactKind::Kernel,
+    ProfileImageArtifactKind::Initrd,
+    ProfileImageArtifactKind::Rootfs,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
@@ -709,9 +715,9 @@ impl ProfileDocument {
 }
 
 fn validate_profile_semver(value: &str) -> Result<()> {
-    Version::parse(value.trim()).map(|_| ()).with_context(|| {
-        format!("profile release version {value:?} must be SemVer-compatible")
-    })
+    Version::parse(value.trim())
+        .map(|_| ())
+        .with_context(|| format!("profile release version {value:?} must be SemVer-compatible"))
 }
 
 impl ProfileVersionHistory {
@@ -917,6 +923,19 @@ impl ProfileArchitectureImages {
         if self.artifacts.is_empty() {
             bail!("profile {profile} image set must list artifacts");
         }
+        for required_kind in REQUIRED_PROFILE_IMAGE_ARTIFACT_KINDS {
+            if !self
+                .artifacts
+                .iter()
+                .any(|artifact| artifact.kind == required_kind)
+            {
+                bail!(
+                    "profile {profile} architecture {:?} images missing {}",
+                    self.architecture,
+                    required_kind.as_str()
+                );
+            }
+        }
         for artifact in &self.artifacts {
             artifact.validate(profile)?;
         }
@@ -924,6 +943,16 @@ impl ProfileArchitectureImages {
             evidence.validate(&format!("profile {profile} image evidence"))?;
         }
         Ok(())
+    }
+}
+
+impl ProfileImageArtifactKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Kernel => "kernel",
+            Self::Initrd => "initrd",
+            Self::Rootfs => "rootfs",
+        }
     }
 }
 
@@ -1750,24 +1779,18 @@ mod tests {
         }
     }
 
+    fn profile_image_artifact_set(revision: &str) -> Vec<ProfileImageArtifactRef> {
+        vec![
+            profile_image_artifact(ProfileImageArtifactKind::Kernel, "vmlinuz", revision),
+            profile_image_artifact(ProfileImageArtifactKind::Initrd, "initrd.img", revision),
+            profile_image_artifact(ProfileImageArtifactKind::Rootfs, "rootfs.erofs", revision),
+        ]
+    }
+
     #[test]
     fn profile_image_versions_append_without_deprecating_previous() {
-        let first = profile_with_image_artifacts(
-            "1.0.0",
-            vec![profile_image_artifact(
-                ProfileImageArtifactKind::Rootfs,
-                "rootfs.erofs",
-                "1.0.0",
-            )],
-        );
-        let second = profile_with_image_artifacts(
-            "1.0.1",
-            vec![profile_image_artifact(
-                ProfileImageArtifactKind::Rootfs,
-                "rootfs.erofs",
-                "1.0.1",
-            )],
-        );
+        let first = profile_with_image_artifacts("1.0.0", profile_image_artifact_set("1.0.0"));
+        let second = profile_with_image_artifacts("1.0.1", profile_image_artifact_set("1.0.1"));
         let mut history =
             ProfileVersionHistory::new("nightly", first).expect("first profile version");
 
@@ -1777,55 +1800,51 @@ mod tests {
 
         assert_eq!(history.versions.len(), 2);
         assert_eq!(history.versions[0].revision, "1.0.0");
-        assert_eq!(
-            history.versions[0].architectures[0].artifacts[0].status,
-            Status::Current
-        );
+        assert!(history.versions[0].architectures[0]
+            .artifacts
+            .iter()
+            .all(|artifact| artifact.status == Status::Current));
         assert_eq!(history.versions[1].revision, "1.0.1");
     }
 
     #[test]
-    fn profile_image_versions_removed_image_is_absent_not_status_removed() {
-        let previous = profile_with_image_artifacts(
+    fn profile_image_artifact_sets_require_kernel_initrd_and_rootfs() {
+        let profile = profile_with_image_artifacts(
             "1.0.0",
             vec![
-                profile_image_artifact(
-                    ProfileImageArtifactKind::Initrd,
-                    "initrd.img",
-                    "1.0.0",
-                ),
-                profile_image_artifact(
-                    ProfileImageArtifactKind::Rootfs,
-                    "rootfs.erofs",
-                    "1.0.0",
-                ),
+                profile_image_artifact(ProfileImageArtifactKind::Initrd, "initrd.img", "1.0.0"),
+                profile_image_artifact(ProfileImageArtifactKind::Rootfs, "rootfs.erofs", "1.0.0"),
             ],
         );
+
+        let error = profile
+            .validate_profile_ownership()
+            .expect_err("profile image sets must include every required image kind");
+
+        assert!(
+            error.to_string().contains("images missing kernel"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn profile_image_versions_removed_image_is_absent_not_status_removed() {
+        let previous = profile_with_image_artifacts("1.0.0", profile_image_artifact_set("1.0.0"));
         let next = profile_with_image_artifacts(
             "1.0.1",
-            vec![profile_image_artifact(
-                ProfileImageArtifactKind::Rootfs,
-                "rootfs.erofs",
-                "1.0.1",
-            )],
+            vec![
+                profile_image_artifact(ProfileImageArtifactKind::Kernel, "vmlinuz", "1.0.1"),
+                profile_image_artifact(ProfileImageArtifactKind::Rootfs, "rootfs.erofs", "1.0.1"),
+            ],
         );
 
-        let diff = diff_profile_image_artifacts(&previous, &next).expect("profile diff");
+        let error = diff_profile_image_artifacts(&previous, &next)
+            .expect_err("required image artifacts cannot be omitted from a profile revision");
 
-        assert_eq!(
-            diff.removed,
-            vec![ProfileImageArtifactKey {
-                architecture: Architecture::Arm64,
-                kind: ProfileImageArtifactKind::Initrd,
-                name: "initrd.img".to_string(),
-            }]
+        assert!(
+            error.to_string().contains("images missing initrd"),
+            "{error}"
         );
-        assert_eq!(next.architectures[0].artifacts.len(), 1);
-        assert!(next
-            .architectures
-            .iter()
-            .flat_map(|images| images.artifacts.iter())
-            .all(|artifact| artifact.status != Status::Deprecated));
 
         let invalid_removed_status = serde_json::json!({
             "kind": "initrd",
@@ -1894,8 +1913,7 @@ mod tests {
                     ProfileImageArtifactRef {
                         kind: ProfileImageArtifactKind::Rootfs,
                         name: "rootfs.erofs".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/rootfs.erofs"
-                            .to_string(),
+                        url: "/profiles/releases/1.0.0/co-work/arm64/rootfs.erofs".to_string(),
                         bytes: 42,
                         digest: digest_set(),
                         status: Status::Current,
@@ -1904,21 +1922,18 @@ mod tests {
                 evidence: vec![
                     EvidenceRef {
                         kind: "abom".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/abom.cdx.json"
-                            .to_string(),
+                        url: "/profiles/releases/1.0.0/co-work/arm64/abom.cdx.json".to_string(),
                         digest: digest_set(),
                     },
                     EvidenceRef {
                         kind: "obom".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/obom.cdx.json"
-                            .to_string(),
+                        url: "/profiles/releases/1.0.0/co-work/arm64/obom.cdx.json".to_string(),
                         digest: digest_set(),
                     },
                     EvidenceRef {
                         kind: "software_inventory".to_string(),
-                        url:
-                            "/profiles/releases/1.0.0/co-work/arm64/software-inventory.json"
-                                .to_string(),
+                        url: "/profiles/releases/1.0.0/co-work/arm64/software-inventory.json"
+                            .to_string(),
                         digest: digest_set_with('c', 'd'),
                     },
                 ],
@@ -2060,8 +2075,7 @@ mod tests {
                     artifacts: vec![ProfileImageArtifactRef {
                         kind: ProfileImageArtifactKind::Rootfs,
                         name: "rootfs.erofs".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/rootfs.erofs"
-                            .to_string(),
+                        url: "/profiles/releases/1.0.0/co-work/arm64/rootfs.erofs".to_string(),
                         bytes: 42,
                         digest: digest_set(),
                         status: Status::Current,
@@ -2069,14 +2083,12 @@ mod tests {
                     evidence: vec![
                         EvidenceRef {
                             kind: "abom".to_string(),
-                            url: "/profiles/releases/1.0.0/co-work/arm64/abom.cdx.json"
-                                .to_string(),
+                            url: "/profiles/releases/1.0.0/co-work/arm64/abom.cdx.json".to_string(),
                             digest: digest_set(),
                         },
                         EvidenceRef {
                             kind: "obom".to_string(),
-                            url: "/profiles/releases/1.0.0/co-work/arm64/obom.cdx.json"
-                                .to_string(),
+                            url: "/profiles/releases/1.0.0/co-work/arm64/obom.cdx.json".to_string(),
                             digest: digest_set(),
                         },
                         EvidenceRef {

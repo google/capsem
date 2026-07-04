@@ -55,6 +55,7 @@ ALLOWED_PROFILE_CONFIG_KINDS = {
     "root_manifest",
 }
 ALLOWED_RELEASE_STATUSES = {"current", "supported", "deprecated", "revoked"}
+REQUIRED_PROFILE_IMAGE_KINDS = {"kernel", "initrd", "rootfs"}
 RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"
 _FETCH_BYTES_CACHE: dict[str, "FetchBytes"] = {}
 
@@ -795,6 +796,15 @@ def check_release_graph_profile(
             failures.append(f"profile {profile_id} architecture {arch} config empty")
         if not images:
             failures.append(f"profile {profile_id} architecture {arch} images empty")
+        image_kinds = {
+            str(artifact.get("kind", "")).lower()
+            for artifact in images
+            if isinstance(artifact, dict)
+        }
+        for required_kind in sorted(REQUIRED_PROFILE_IMAGE_KINDS - image_kinds):
+            failures.append(
+                f"profile {profile_id} architecture {arch} images missing {required_kind}"
+            )
         software_inventory_digests = [
             evidence.get("digest")
             for evidence in evidence_entries

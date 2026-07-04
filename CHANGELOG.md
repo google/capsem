@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a profile-image completeness gate so every profile architecture must
+  publish kernel, initrd, and rootfs artifacts before release validation passes.
 - Added a profile software inventory regression proving software rows are
   scoped to architecture blocks and never flattened as architecture `all`.
 - Added explicit release-site labels for profile config enum values so rendered
