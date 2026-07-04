@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a profile software architecture regression proving software inventory
+  rows live under architecture nodes and never render as architecture `all`.
 - Added a binary description regression proving executable descriptions come
   from generated metadata and never from release-site fallback text.
 - Added a macOS package cohort regression proving the package owns app, tray,

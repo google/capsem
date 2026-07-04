@@ -1208,6 +1208,11 @@ def test_software_inventory_grouped_by_architecture_blocks() -> None:
                         )
 
 
+def test_profile_software_inventory_stored_under_architecture_nodes() -> None:
+    test_software_inventory_not_all_arch()
+    test_software_inventory_grouped_by_architecture_blocks()
+
+
 def test_software_versions_are_real(monkeypatch) -> None:
     checker = _readiness_checker_module()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
