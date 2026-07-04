@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a release-site generation regression proving profile catalog side
+  channels stay out of the public pages and graph.
 - Added an adversarial software inventory regression proving distinct package
   rows cannot share identical SHA-256/BLAKE3 digest pairs.
 - Added a software inventory hash regression proving each row owns distinct
