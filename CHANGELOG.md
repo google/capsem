@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a root channel metadata regression proving the table uses manifest
+  version, last updated, and manifest URL labels without selected/status/records jargon.
 - Added a root channel page regression proving stable/nightly rows render
   descriptions once and do not repeat raw channel identifiers.
 - Added a human hash display regression proving release-site pages truncate
