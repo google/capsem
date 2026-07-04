@@ -156,6 +156,37 @@ def test_canonical_manifest_url() -> None:
             assert url not in page
 
 
+def test_no_profile_catalog_side_channel() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    rendered_pages = [
+        RELEASE_SITE_DIST / "index.html",
+        *[
+            RELEASE_SITE_DIST / "channels" / channel / "index.html"
+            for channel in graph["channels"]
+        ],
+    ]
+    forbidden_tokens = ("Profile Catalog", "profile_catalog", "catalog.json")
+    for page_path in rendered_pages:
+        page = page_path.read_text(encoding="utf-8")
+        for token in forbidden_tokens:
+            assert token not in page
+
+    catalog_outputs = [
+        path
+        for path in RELEASE_SITE_DIST.rglob("catalog.json")
+        if "node_modules" not in path.parts
+    ]
+    assert catalog_outputs == []
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        assert "profile_catalog" not in manifest
+        assert "catalog" not in manifest
+
+
 def build_release_site_from_graph(graph_path: Path) -> None:
     env = {
         **os.environ,

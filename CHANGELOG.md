@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a release-site review regression that rejects profile catalog files
+  and profile-catalog page links as a second profile registry.
 - Added a release-site review regression that rejects versioned manifest paths
   and profile-catalog links as alternate client entrypoints.
 - Labeled channel-page manifest versions explicitly so package versions,
