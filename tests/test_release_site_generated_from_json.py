@@ -1,9 +1,10 @@
-"""Release-site generated-page ownership contract gates."""
+"""Release-site generation gates proving HTML values come from owner JSON."""
 
 from __future__ import annotations
 
-import hashlib
+import copy
 import fcntl
+import hashlib
 import importlib.util
 import json
 import os
@@ -13,7 +14,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from blake3 import blake3
+
 from test_release_site_html_contract import (
+    FIXTURE_GRAPH,
     PROJECT_ROOT,
     RELEASE_SITE_DIST,
     build_release_site_from_fixture,
@@ -41,6 +45,7 @@ def build_release_site_from_graph(graph_path: Path) -> None:
             stderr=subprocess.PIPE,
             check=False,
         )
+    build_release_site_from_fixture.cache_clear()
     assert result.returncode == 0, result.stdout + result.stderr
 
 
@@ -49,16 +54,11 @@ def test_no_invented_data() -> None:
     graph = fixture_graph()
 
     index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
-    stable = (
-        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
-    ).read_text(encoding="utf-8")
+    stable = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(
+        encoding="utf-8"
+    )
     profile = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "stable"
-        / "profiles"
-        / "co-work"
-        / "index.html"
+        RELEASE_SITE_DIST / "channels" / "stable" / "profiles" / "co-work" / "index.html"
     ).read_text(encoding="utf-8")
 
     stable_manifest = graph["manifests"]["stable"]["1.0.2"]
@@ -157,9 +157,9 @@ def test_astro_renders_json_graph(tmp_path: Path) -> None:
     build_release_site_from_graph(graph_path)
 
     index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
-    stable = (
-        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
-    ).read_text(encoding="utf-8")
+    stable = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(
+        encoding="utf-8"
+    )
     package_page = (
         RELEASE_SITE_DIST
         / "channels"
@@ -169,12 +169,7 @@ def test_astro_renders_json_graph(tmp_path: Path) -> None:
         / "index.html"
     ).read_text(encoding="utf-8")
     profile_page = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "stable"
-        / "profiles"
-        / "co-work"
-        / "index.html"
+        RELEASE_SITE_DIST / "channels" / "stable" / "profiles" / "co-work" / "index.html"
     ).read_text(encoding="utf-8")
 
     assert "Stable Graph Mutation" in index
@@ -187,6 +182,245 @@ def test_astro_renders_json_graph(tmp_path: Path) -> None:
     assert "Profile description rendered from mutated manifest JSON." in profile_page
     assert "99.99.99-json-mutation" in profile_page
     assert "rootfs-json-mutated.erofs" in profile_page
+
+
+def test_rendered_values_map_to_owning_json_paths(tmp_path: Path) -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    mutated = copy.deepcopy(graph)
+    mutated["generated_at"] = "2031-02-03T04:05:06Z"
+
+    channel = mutated["channels"]["stable"]
+    current_record = next(item for item in channel["manifests"] if item["status"] == "current")
+    current_record["revision"] = "manifest-json-owned-1"
+    current_record["updated_at"] = "2030-01-02T03:04:05Z"
+    current_record["digest"] = _digest("stable-current-manifest-record")
+
+    manifest = mutated["manifests"]["stable"][current_record["version"]]
+    package = manifest["packages"][0]
+    package["name"] = "Capsem JSON-owned Package"
+    package["version"] = "9.8.7-json-package"
+    package["url"] = "https://release.example.invalid/json-owned-package.pkg"
+    package["bytes"] = 9876543
+    package["digest"] = _digest("json-owned-package")
+    package["evidence"][0]["url"] = (
+        "https://release.example.invalid/json-owned-package-sbom.spdx.json"
+    )
+    package["evidence"][0]["bytes"] = 7654321
+    package["evidence"][0]["digest"] = _digest("json-owned-package-sbom")
+
+    binary = package["binaries"][0]
+    binary["name"] = "capsem-json-owned-binary"
+    binary["version"] = "9.8.7-json-binary"
+    binary["description"] = "JSON-owned binary description"
+    binary["installed_path"] = "/usr/local/bin/capsem-json-owned-binary"
+    binary["bytes"] = 1234567
+    binary["digest"] = _digest("json-owned-binary")
+    binary["sbom_component_ref"] = "SPDXRef-File-json-owned-binary"
+
+    profile = manifest["profiles"]["co-work"]
+    profile["name"] = "JSON-owned Co-work"
+    profile["description"] = "JSON-owned profile description"
+    profile["revision"] = "2030.01.02-json"
+    profile["min_capsem_version"] = "9.8.7"
+
+    architecture = next(
+        item for item in profile["architectures"] if item["architecture"] == "arm64"
+    )
+    software = architecture["software"][0]
+    software["name"] = "@json/owned-tool"
+    software["version"] = "7.6.5"
+    software["source"] = "npm-json-owned"
+    software["digest"] = _digest("json-owned-software")
+
+    config = architecture["config"][0]
+    config["kind"] = "json_owned_config"
+    config["path"] = "profiles/co-work/json-owned-config.json"
+    config["url"] = "/profiles/releases/json-owned/co-work/json-owned-config.json"
+    config["bytes"] = 4567
+    config["digest"] = _digest("json-owned-config")
+
+    image = architecture["images"][0]
+    image["kind"] = "json-owned-rootfs"
+    image["name"] = "json-owned-rootfs.erofs"
+    image["url"] = "https://release.example.invalid/json-owned-rootfs.erofs"
+    image["bytes"] = 6789
+    image["digest"] = _digest("json-owned-image")
+
+    evidence = next(
+        item for item in architecture["evidence"] if item["kind"] == "software_inventory"
+    )
+    evidence["url"] = "https://release.example.invalid/json-owned-software-inventory.json"
+    evidence["bytes"] = 2345
+    evidence["digest"] = _digest("json-owned-profile-evidence")
+
+    image_evidence = next(item for item in architecture["evidence"] if item["kind"] == "abom")
+    image_evidence["url"] = "https://release.example.invalid/json-owned-abom.cdx.json"
+    image_evidence["bytes"] = 3456
+    image_evidence["digest"] = _digest("json-owned-image-evidence")
+
+    graph_path = tmp_path / "release-graph-json-owned.json"
+    graph_path.write_text(json.dumps(mutated), encoding="utf-8")
+    build_release_site_from_graph(graph_path)
+
+    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+    stable_page = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    package_page = (
+        RELEASE_SITE_DIST
+        / "channels"
+        / "stable"
+        / "packages"
+        / package["id"]
+        / "index.html"
+    ).read_text(encoding="utf-8")
+    profile_page = (
+        RELEASE_SITE_DIST / "channels" / "stable" / "profiles" / "co-work" / "index.html"
+    ).read_text(encoding="utf-8")
+
+    _assert_values(
+        index,
+        "root channel table",
+        [
+            "Stable",
+            "manifest-json-owned-1",
+            "2030-01-02T03:04:05Z",
+            "/assets/stable/manifest.json",
+        ],
+    )
+
+    _assert_values(
+        _section(stable_page, "Current Manifest", "Manifest History"),
+        "current manifest section",
+        [
+            current_record["version"],
+            "2031-02-03T04:05:06Z",
+            _hash_label(current_record["digest"]["sha256"]),
+            _hash_label(current_record["digest"]["blake3"]),
+        ],
+    )
+    _assert_values(
+        _section(stable_page, "Manifest History", "Capsem Packages"),
+        "manifest history section",
+        [
+            _hash_label(current_record["digest"]["sha256"]),
+            _hash_label(current_record["digest"]["blake3"]),
+        ],
+    )
+    _assert_values(
+        _section(stable_page, "Capsem Packages", "Profile References"),
+        "channel packages section",
+        [
+            package["name"],
+            package["version"],
+            package["url"],
+            "9,876,543",
+            _hash_label(package["digest"]["sha256"]),
+            _hash_label(package["evidence"][0]["digest"]["blake3"]),
+        ],
+    )
+    _assert_values(
+        _section(stable_page, "Profile References", "</section>"),
+        "profile references section",
+        [profile["name"], profile["revision"], profile["min_capsem_version"], "arm64"],
+    )
+
+    _assert_values(
+        _section(package_page, "Package", "Contained Binaries"),
+        "package detail section",
+        [
+            package["id"],
+            package["name"],
+            package["version"],
+            package["url"],
+            _hash_label(package["digest"]["sha256"]),
+        ],
+    )
+    _assert_values(
+        _section(package_page, "Contained Binaries", "Package Evidence"),
+        "contained binaries section",
+        [
+            binary["name"],
+            binary["version"],
+            binary["description"],
+            binary["installed_path"],
+            "1,234,567",
+            _hash_label(binary["digest"]["sha256"]),
+            binary["sbom_component_ref"],
+        ],
+    )
+    _assert_values(
+        _section(package_page, "Package Evidence", "</section>"),
+        "package evidence section",
+        [
+            "json-owned-package-sbom.spdx.json",
+            "7,654,321",
+            _hash_label(package["evidence"][0]["digest"]["sha256"]),
+            _hash_label(package["evidence"][0]["digest"]["blake3"]),
+        ],
+    )
+
+    _assert_values(
+        _section(profile_page, "Profile", "Architecture arm64"),
+        "profile summary section",
+        [
+            profile["name"],
+            profile["description"],
+            profile["revision"],
+            profile["min_capsem_version"],
+        ],
+    )
+    _assert_values(
+        _section(profile_page, "Profile Evidence", "Installed Software"),
+        "profile evidence section",
+        [
+            "json-owned-software-inventory.json",
+            "2,345",
+            _hash_label(evidence["digest"]["sha256"]),
+        ],
+    )
+    _assert_values(
+        _section(profile_page, "Installed Software", "Config Files"),
+        "installed software section",
+        [
+            software["name"],
+            software["version"],
+            software["source"],
+            _hash_label(software["digest"]["blake3"]),
+        ],
+    )
+    _assert_values(
+        _section(profile_page, "Config Files", "Profile Images"),
+        "config files section",
+        [
+            config["kind"],
+            config["path"],
+            config["url"],
+            "4,567",
+            _hash_label(config["digest"]["sha256"]),
+        ],
+    )
+    _assert_values(
+        _section(profile_page, "Profile Images", "Profile Image Evidence"),
+        "profile images section",
+        [
+            image["kind"],
+            image["name"],
+            image["url"],
+            "6,789",
+            _hash_label(image["digest"]["sha256"]),
+        ],
+    )
+    _assert_values(
+        _section(profile_page, "Profile Image Evidence", "</section>"),
+        "profile image evidence section",
+        [
+            "json-owned-abom.cdx.json",
+            "3,456",
+            _hash_label(image_evidence["digest"]["sha256"]),
+            _hash_label(image_evidence["digest"]["blake3"]),
+        ],
+    )
 
 
 def test_stale_html_rejected(monkeypatch: Any) -> None:
@@ -485,3 +719,29 @@ def digest(checker: Any, payload: bytes) -> dict[str, str]:
         "sha256": hashlib.sha256(payload).hexdigest(),
         "blake3": checker.blake3.blake3(payload).hexdigest(),
     }
+
+
+def _digest(seed: str) -> dict[str, str]:
+    payload = seed.encode("utf-8")
+    return {
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "blake3": blake3(payload).hexdigest(),
+    }
+
+
+def _hash_label(value: str) -> str:
+    return f"{value[:8]}..."
+
+
+def _assert_values(page: str, section: str, values: list[str]) -> None:
+    for value in values:
+        assert value in page, f"{section} did not render JSON-owned value {value!r}"
+
+
+def _section(page: str, start: str, end: str) -> str:
+    assert start in page, f"missing section start {start!r}"
+    body = page.split(start, maxsplit=1)[1]
+    if end != "</section>":
+        assert end in body, f"missing section end {end!r}"
+        return body.split(end, maxsplit=1)[0]
+    return body.split(end, maxsplit=1)[0]

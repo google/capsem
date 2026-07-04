@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a generated-from-JSON release-site gate proving root, channel, package,
+  binary, profile, software, config, image, and evidence cells render owner JSON.
 - Added a named placeholder-or-copied-hash gate covering fake digest patterns,
   copied row digests, and duplicate digest reuse across release artifacts.
 - Added a full-site digest display regression so human release pages must show
