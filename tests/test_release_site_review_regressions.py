@@ -129,6 +129,33 @@ def test_manifest_version_independence() -> None:
             assert f"<code>{profile['revision']}</code>" in profile_block
 
 
+def test_canonical_manifest_url() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        canonical = f"/assets/{channel}/manifest.json"
+        assert current["url"] == canonical
+        assert canonical in index
+
+        page = (RELEASE_SITE_DIST / "channels" / channel / "index.html").read_text(
+            encoding="utf-8"
+        )
+        assert canonical in page
+        assert "Profile Catalog" not in page
+        assert "catalog.json" not in page
+        assert "profile_catalog" not in page
+
+        for manifest_record in record["manifests"]:
+            url = manifest_record["url"]
+            if url == canonical:
+                continue
+            assert url not in index
+            assert url not in page
+
+
 def build_release_site_from_graph(graph_path: Path) -> None:
     env = {
         **os.environ,
