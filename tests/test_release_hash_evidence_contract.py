@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any
 
 from blake3 import blake3
+from test_release_site_html_contract import (
+    RELEASE_SITE_DIST,
+    build_release_site_from_fixture,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_GRAPH = (
@@ -102,6 +106,22 @@ def test_full_machine_digests() -> None:
         "profile_evidence_obom",
         "profile_evidence_software_inventory",
     } <= categories
+
+
+def test_human_hash_display_truncates_to_8_prefixes() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    pages = [
+        path.read_text(encoding="utf-8")
+        for path in sorted(RELEASE_SITE_DIST.rglob("*.html"))
+    ]
+    html = "\n".join(pages)
+
+    for category, subject, digest in _digest_subjects(graph):
+        _assert_full_digest(digest, f"{category}:{subject}")
+        for value in digest.values():
+            assert value not in html, f"{category}:{subject}"
+            assert f"{value[:8]}..." in html, f"{category}:{subject}"
 
 
 def test_reject_placeholder_hashes() -> None:
