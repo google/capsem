@@ -457,6 +457,40 @@ def test_macos_package_present() -> None:
         assert package["url"] in stable
 
 
+def test_package_target_parity() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    expected_targets = {
+        ("macos", "arm64", "macos_pkg"),
+        ("linux", "arm64", "debian_package"),
+        ("linux", "x86_64", "debian_package"),
+    }
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        packages = manifest["packages"]
+        observed_targets = {
+            (package["platform"], package["architecture"], package["kind"])
+            for package in packages
+        }
+        assert observed_targets == expected_targets, channel
+
+        page = (
+            RELEASE_SITE_DIST / "channels" / channel / "index.html"
+        ).read_text(encoding="utf-8")
+        packages_section = page.split("Capsem Packages", maxsplit=1)[1].split(
+            "Profile References",
+            maxsplit=1,
+        )[0]
+        for package in packages:
+            platform = "macOS" if package["platform"] == "macos" else package["platform"].title()
+            assert f"Package target {platform} {package['architecture']}" in packages_section
+            assert package["name"] in packages_section
+            assert package["url"] in packages_section
+
+
 def test_full_binary_cohort() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a package-target parity gate requiring current channel manifests and
+  channel pages to include macOS arm64 and Linux arm64/x86_64 packages.
 - Added a named package-target SBOM regression gate so every package row must
   expose the SBOM evidence owned by that package target.
 - Added a release-site review regression that rejects profile catalog files
