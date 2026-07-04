@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Hardened the release-graph status enum gate so `removed`, `payload_status`,
+  and deprecated boolean fields cannot survive in generated graph JSON.
 - Hardened the root channel update-time gate so channel rows show generated
   provenance and never reintroduce Status/Records noise.
 - Hardened the root channel-description review gate so stable/nightly copy is

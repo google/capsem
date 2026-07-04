@@ -108,7 +108,7 @@ def test_manifest_has_independent_version() -> None:
         assert current["version"] not in profile_revisions
 
 
-def test_status_enum() -> None:
+def test_one_status_enum_no_removed() -> None:
     doc = RELEASE_OUTPUT_DOC.read_text(encoding="utf-8")
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     allowed = {"current", "supported", "deprecated", "revoked"}
@@ -145,6 +145,48 @@ def test_status_enum() -> None:
     assert statuses
     assert set(statuses) <= allowed
     assert "removed" not in statuses
+    assert not list(_walk_values(graph, "removed"))
+    assert not list(_walk_keys(graph, "payload_status"))
+    assert not list(_walk_keys(graph, "deprecated"))
+    assert not list(_walk_keys(graph, "deprecated_date"))
+    assert "payload_status" not in doc
+    assert "`deprecated`: true" not in doc
+
+
+def _walk_keys(value: object, key: str) -> list[str]:
+    matches: list[str] = []
+
+    def visit(item: object, path: str) -> None:
+        if isinstance(item, dict):
+            for item_key, item_value in item.items():
+                next_path = f"{path}.{item_key}" if path else str(item_key)
+                if item_key == key:
+                    matches.append(next_path)
+                visit(item_value, next_path)
+        elif isinstance(item, list):
+            for index, item_value in enumerate(item):
+                visit(item_value, f"{path}[{index}]")
+
+    visit(value, "")
+    return matches
+
+
+def _walk_values(value: object, needle: str) -> list[str]:
+    matches: list[str] = []
+
+    def visit(item: object, path: str) -> None:
+        if isinstance(item, dict):
+            for item_key, item_value in item.items():
+                next_path = f"{path}.{item_key}" if path else str(item_key)
+                visit(item_value, next_path)
+        elif isinstance(item, list):
+            for index, item_value in enumerate(item):
+                visit(item_value, f"{path}[{index}]")
+        elif item == needle:
+            matches.append(path)
+
+    visit(value, "")
+    return matches
 
 
 def test_profile_paths_are_channel_profile_arch_payloads() -> None:
