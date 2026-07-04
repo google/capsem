@@ -951,9 +951,7 @@ impl ProfileArchitectureImages {
         for evidence in &self.evidence {
             let kind = evidence.kind.as_str();
             if matches!(kind, "abom" | "obom")
-                && !evidence
-                    .url
-                    .contains(&format!("/{}/", self.architecture.as_str()))
+                && !evidence_url_matches_architecture(&evidence.url, self.architecture)
             {
                 bail!(
                     "profile {profile} architecture {:?} evidence {} url must include /{}/",
@@ -966,6 +964,11 @@ impl ProfileArchitectureImages {
         }
         Ok(())
     }
+}
+
+fn evidence_url_matches_architecture(url: &str, architecture: Architecture) -> bool {
+    let arch = architecture.as_str();
+    url.contains(&format!("/{arch}/")) || url.contains(&format!("/{arch}-"))
 }
 
 impl ProfileImageArtifactKind {

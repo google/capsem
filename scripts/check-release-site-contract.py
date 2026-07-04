@@ -9,6 +9,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 
 def main() -> int:
@@ -63,6 +64,7 @@ def validate_release_site(
     checker: Any | None = None,
 ) -> int:
     checker = checker or load_readiness_checker()
+    release_site = normalize_release_site(release_site)
     if getattr(checker, "BLAKE3_IMPORT_ERROR", None) is not None:
         print(
             "missing Python dependency: blake3. Run `uv sync` before validation.",
@@ -73,10 +75,10 @@ def validate_release_site(
     attempts = max(attempts, 1)
     last_failures: list[Any] = []
     for attempt in range(1, attempts + 1):
-        checks = [
-            checker.check_release_site_dns(release_site),
-            checker.check_release_site_contract(release_site, channel),
-        ]
+        checks = []
+        if urlparse(release_site).scheme != "file":
+            checks.append(checker.check_release_site_dns(release_site))
+        checks.append(checker.check_release_site_contract(release_site, channel))
         failures = [check for check in checks if not check.ok]
         if not failures:
             print(
@@ -99,6 +101,13 @@ def validate_release_site(
     for failure in last_failures:
         print(f"FAIL: {failure.name}: {failure.detail}", file=sys.stderr)
     return 1
+
+
+def normalize_release_site(release_site: str) -> str:
+    parsed = urlparse(release_site)
+    if parsed.scheme:
+        return release_site
+    return Path(release_site).resolve().as_uri()
 
 
 def load_readiness_checker() -> Any:

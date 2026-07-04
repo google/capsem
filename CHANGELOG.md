@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Fixed the local release-site contract checker so filesystem release outputs
+  validate stable and nightly channel pages without stale asset-version or
+  production-only HTTP header assumptions.
 - Added an ABOM/OBOM image-scope gate so profile evidence must point at the
   owning architecture path and cannot leak into channel or generic evidence tables.
 - Added a profile-image completeness gate so every profile architecture must

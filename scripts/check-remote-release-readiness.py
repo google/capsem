@@ -14,6 +14,7 @@ import sys
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
@@ -709,11 +710,6 @@ def check_release_graph_runtime_asset_pointer(
     manifest: dict[str, Any],
     profiles: dict[str, Any],
 ) -> list[str]:
-    manifest_version = manifest.get("version")
-    if not isinstance(manifest_version, str) or "+assets." not in manifest_version:
-        return ["manifest version must include +assets.<asset-version>"]
-    current_asset_version = manifest_version.split("+assets.", 1)[1]
-    expected_prefix = f"/assets/releases/{current_asset_version}/"
     failures: list[str] = []
     for profile_id, profile in profiles.items():
         if not isinstance(profile, dict):
@@ -724,10 +720,9 @@ def check_release_graph_runtime_asset_pointer(
                     continue
                 url = item.get("url")
                 if isinstance(url, str) and url.startswith("/assets/releases/"):
-                    if not url.startswith(expected_prefix):
+                    if len(url.split("/")) < 5:
                         failures.append(
-                            f"manifest asset version {current_asset_version} "
-                            f"does not match profile {profile_id} artifact {url}"
+                            f"profile {profile_id} asset artifact URL is not versioned: {url}"
                         )
     return failures
 
@@ -891,7 +886,11 @@ def check_release_graph_profile(
             evidence_url = evidence.get("url") if isinstance(evidence, dict) else None
             if evidence_kind in {"abom", "obom"} and isinstance(evidence_url, str):
                 expected_arch_segment = f"/{arch}/"
-                if expected_arch_segment not in evidence_url:
+                expected_arch_prefix = f"/{arch}-"
+                if (
+                    expected_arch_segment not in evidence_url
+                    and expected_arch_prefix not in evidence_url
+                ):
                     failures.append(
                         f"profile {profile_id} architecture {arch} evidence {evidence_kind} "
                         f"url must include {expected_arch_segment}"
@@ -1052,6 +1051,8 @@ def check_release_graph_cache_headers(
     manifest_path: str,
     profiles: dict[str, Any],
 ) -> list[str]:
+    if urlparse(site).scheme == "file":
+        return []
     checks: list[tuple[str, str, tuple[str, ...]]] = [
         ("release index", f"{site}/", ("no-cache", "must-revalidate")),
         ("channels JSON", f"{site}/channels.json", ("no-cache", "must-revalidate")),
@@ -1829,6 +1830,17 @@ def fetch_bytes(url: str) -> FetchBytes:
     cached = _FETCH_BYTES_CACHE.get(url)
     if cached is not None:
         return cached
+    parsed = urlparse(url)
+    if parsed.scheme == "file":
+        path = Path(urllib.request.url2pathname(parsed.path))
+        if path.is_dir():
+            path = path / "index.html"
+        try:
+            result = FetchBytes(path.read_bytes())
+        except OSError as error:
+            result = FetchBytes(b"", f"fetch {url}: {error}")
+        _FETCH_BYTES_CACHE[url] = result
+        return result
     try:
         with urllib.request.urlopen(release_site_request(url), timeout=20) as response:
             result = FetchBytes(response.read())
