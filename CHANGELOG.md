@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a binary SBOM reference regression proving binary rows keep component
+  refs and do not repeat package SBOM file links.
 - Added a package SBOM owner-level regression proving SBOM links render once
   on the owning package page and not on each binary row.
 - Added a package detail navigation regression proving every manifest package
