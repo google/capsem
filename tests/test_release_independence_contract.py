@@ -179,6 +179,43 @@ def test_cowork_nightly_profile_update_is_isolated() -> None:
     )
 
 
+def test_nightly_binary_update_without_profile_churn() -> None:
+    old = _fixture_graph()
+    new = deepcopy(old)
+    channel = "nightly"
+    manifest_version = _current_manifest_version(new, channel)
+    manifest = new["manifests"][channel][manifest_version]
+    package = manifest["packages"][0]
+
+    package["version"] = "1.5.0-nightly.20260704"
+    package["name"] = "Capsem-1.5.0-nightly.20260704.pkg"
+    package["url"] = (
+        "https://github.com/google/capsem/releases/download/"
+        "v1.5.0-nightly.20260704/Capsem-1.5.0-nightly.20260704.pkg"
+    )
+    package["bytes"] += 4096
+    package["digest"] = _digest("nightly-package-1.5.0-20260704")
+    package["evidence"][0]["url"] = (
+        "https://github.com/google/capsem/releases/download/"
+        "v1.5.0-nightly.20260704/capsem-1-5-0-nightly-20260704-pkg-sbom.spdx.json"
+    )
+    package["evidence"][0]["digest"] = _digest("nightly-package-1.5.0-20260704-sbom")
+    for binary in package["binaries"]:
+        binary["version"] = package["version"]
+        binary["bytes"] += 17
+        binary["digest"] = _digest(f"nightly-binary-{binary['name']}-1.5.0-20260704")
+
+    allowed_prefix = ("manifests", channel, manifest_version, "packages")
+    changed = _changed_paths(old, new)
+
+    assert changed
+    assert all(path[: len(allowed_prefix)] == allowed_prefix for path in changed)
+    assert new["manifests"]["stable"] == old["manifests"]["stable"]
+    assert new["channels"]["stable"] == old["channels"]["stable"]
+    assert new["channels"]["nightly"] == old["channels"]["nightly"]
+    assert manifest["profiles"] == old["manifests"][channel][manifest_version]["profiles"]
+
+
 def _fixture_graph() -> dict[str, Any]:
     return json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 

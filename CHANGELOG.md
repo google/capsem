@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a nightly binary/package isolation gate proving binary updates do not
+  mutate profile, stable, or channel state.
 - Added a co-work nightly profile isolation gate proving profile updates do not
   mutate stable, code, package, binary, or sibling architecture state.
 - Added a stable-to-nightly manifest URL switch gate and channel identity in
