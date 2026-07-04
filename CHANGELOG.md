@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named review gate proving software inventory evidence appears once
+  per profile architecture rather than repeating on every software row.
 - Hardened the software architecture scope gate so rendered profile software
   sections cannot show `all` instead of concrete profile architectures.
 - Hardened the profile architecture section gate so every current stable and

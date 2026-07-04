@@ -187,6 +187,14 @@ def test_no_profile_catalog_side_channel() -> None:
         assert "catalog" not in manifest
 
 
+def test_software_evidence_once_per_architecture() -> None:
+    from test_release_profile_architecture_contract import (
+        test_software_inventory_evidence_once_per_architecture,
+    )
+
+    test_software_inventory_evidence_once_per_architecture()
+
+
 def build_release_site_from_graph(graph_path: Path) -> None:
     env = {
         **os.environ,
