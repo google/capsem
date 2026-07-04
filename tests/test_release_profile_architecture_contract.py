@@ -688,10 +688,19 @@ def test_all_profile_image_artifacts() -> None:
                 / "index.html"
             ).read_text(encoding="utf-8")
             for architecture in profile["architectures"]:
+                label = f"{channel}:{profile_id}:{architecture['architecture']}"
                 kinds = {image["kind"] for image in architecture["images"]}
-                assert {"kernel", "initrd", "rootfs"}.issubset(kinds), f"{channel}:{profile_id}"
+                assert {"kernel", "initrd", "rootfs"}.issubset(kinds), label
+                section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[
+                    1
+                ].split("</section>", maxsplit=1)[0]
+                image_block = section.split("Profile Images", maxsplit=1)[1]
                 for image in architecture["images"]:
-                    assert image["url"] in page
+                    assert image["kind"] in image_block, label
+                    assert image["name"] in image_block, label
+                    assert image["url"] in image_block, label
+                    assert image["digest"]["sha256"][:8] + "..." in image_block, label
+                    assert image["digest"]["blake3"][:8] + "..." in image_block, label
 
 
 def test_software_inventory_not_all_arch() -> None:

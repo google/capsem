@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Hardened the profile image artifact gate so every architecture-local image
+  block renders each image artifact's kind, name, URL, and digests.
 - Added a named all-config-classes gate covering rendered profile config
   classes and source TOML-owned security, detection, and MCP config paths.
 - Added a named real-software-versions gate covering forbidden software
