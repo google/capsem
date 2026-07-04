@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added an adversarial software inventory regression proving distinct package
+  rows cannot share identical SHA-256/BLAKE3 digest pairs.
 - Added a software inventory hash regression proving each row owns distinct
   SHA-256 and BLAKE3 values instead of reusing inventory evidence digests.
 - Added a software inventory version regression proving profile package rows

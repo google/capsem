@@ -1336,6 +1336,41 @@ def test_software_inventory_rows_require_row_owned_hashes(monkeypatch) -> None:
     test_software_rows_do_not_reuse_inventory_digest(monkeypatch)
 
 
+def test_software_inventory_rejects_repeated_hashes_for_distinct_rows(monkeypatch) -> None:
+    checker = _readiness_checker_module()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    profile = deepcopy(graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"])
+    architecture = profile["architectures"][0]
+    first, second = architecture["software"][:2]
+    second["digest"] = first["digest"]
+
+    monkeypatch.setattr(
+        checker,
+        "fetch_text",
+        lambda _url: checker.FetchText(
+            text="co-work Co-work 1.0.0-stable.20260702 arm64"
+        ),
+    )
+    monkeypatch.setattr(
+        checker,
+        "check_release_graph_artifact",
+        lambda *_args, **_kwargs: [],
+    )
+
+    failures = checker.check_release_graph_profile(
+        "https://release.capsem.test",
+        "stable",
+        "co-work",
+        profile,
+    )
+
+    assert (
+        "profile co-work architecture arm64 software "
+        f"digest {first['digest']['sha256']} is reused by {first['name']} and {second['name']}"
+        in failures
+    )
+
+
 def _software_row_digest(software: dict) -> dict[str, str]:
     row_core = {
         "name": software["name"],
