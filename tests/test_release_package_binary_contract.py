@@ -653,6 +653,10 @@ def test_macos_package_complete_binary_cohort() -> None:
             assert f"<code>{binary['sbom_component_ref']}</code>" in package_page
 
 
+def test_macos_package_binary_cohort() -> None:
+    test_macos_package_complete_binary_cohort()
+
+
 def test_linux_package_complete_binary_cohort() -> None:
     build_release_site_from_fixture()
 
