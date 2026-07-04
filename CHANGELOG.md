@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a package-architecture regression proving channel package grouping uses
+  explicit JSON platform/architecture fields even when the package filename lies.
 - Added a profile/image revision SemVer gate and admin validation so profile
   payload versions are channel-scoped release coordinates, not date strings.
 - Added a profile-image removal gate proving image removal is represented by

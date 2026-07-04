@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-import json
+import fcntl
 import hashlib
+import json
+import os
 import re
+import subprocess
 from pathlib import Path
 
 import blake3
@@ -34,6 +37,28 @@ EXPECTED_BINARY_COHORT = {
     "capsem-tray",
     "capsem-tui",
 }
+
+
+def build_release_site_from_graph(graph_path: Path) -> None:
+    lock_path = Path(os.environ.get("TMPDIR", "/tmp")) / "capsem-release-site-build.lock"
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        env = {
+            **os.environ,
+            "ASTRO_TELEMETRY_DISABLED": "1",
+            "CAPSEM_RELEASE_CHANNEL_DIST": str(graph_path),
+        }
+        result = subprocess.run(
+            ["pnpm", "--dir", "release-site", "run", "build"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    assert result.returncode == 0, result.stdout + result.stderr
+    build_release_site_from_fixture.cache_clear()
 
 
 def test_package_owns_binaries() -> None:
@@ -207,6 +232,38 @@ def test_package_architecture_sections_are_explicit() -> None:
         heading = f"Package target {platform} {package['architecture']}"
         assert heading in packages_section
         assert packages_section.index(heading) < packages_section.index(package["name"])
+
+
+def test_package_architecture_not_filename_derived(tmp_path: Path) -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    stable_packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
+    arm64_deb = next(
+        package
+        for package in stable_packages
+        if package["platform"] == "linux" and package["architecture"] == "arm64"
+    )
+    lying_name = "Capsem_1.4.0_amd64-looking-name.deb"
+    arm64_deb["name"] = lying_name
+    arm64_deb["url"] = arm64_deb["url"].replace("arm64.deb", "amd64-looking-name.deb")
+
+    graph_path = tmp_path / "release-graph-filename-lies.json"
+    graph_path.write_text(json.dumps(graph, indent=2), encoding="utf-8")
+
+    build_release_site_from_graph(graph_path)
+
+    stable = (
+        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
+    ).read_text(encoding="utf-8")
+    packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
+        "Profile References",
+        maxsplit=1,
+    )[0]
+    linux_arm64 = packages_section.split("Package target Linux arm64", maxsplit=1)[1]
+    linux_x86_64 = packages_section.split("Package target Linux x86_64", maxsplit=1)[1]
+
+    assert lying_name in linux_arm64
+    assert lying_name not in linux_x86_64
+    assert "Package target Linux amd64" not in packages_section
 
 
 def test_package_target_rows_include_own_sbom() -> None:
