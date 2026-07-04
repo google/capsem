@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a software inventory hash regression proving each row owns distinct
+  SHA-256 and BLAKE3 values instead of reusing inventory evidence digests.
 - Added a software inventory version regression proving profile package rows
   reject missing, unknown, unversioned, and fallback versions.
 - Added a software inventory evidence regression proving each architecture

@@ -1331,6 +1331,11 @@ def test_software_inventory_rows_require_real_versions(monkeypatch) -> None:
     test_software_inventory_real_versions(monkeypatch)
 
 
+def test_software_inventory_rows_require_row_owned_hashes(monkeypatch) -> None:
+    test_software_versions_and_hashes()
+    test_software_rows_do_not_reuse_inventory_digest(monkeypatch)
+
+
 def _software_row_digest(software: dict) -> dict[str, str]:
     row_core = {
         "name": software["name"],
