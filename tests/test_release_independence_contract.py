@@ -132,6 +132,53 @@ def test_switch_stable_to_nightly_via_manifest_url() -> None:
     assert json.dumps(switched_back, sort_keys=True, separators=(",", ":")) == stable_snapshot
 
 
+def test_cowork_nightly_profile_update_is_isolated() -> None:
+    old = _fixture_graph()
+    new = deepcopy(old)
+    channel = "nightly"
+    manifest_version = _current_manifest_version(new, channel)
+    profile_id = "co-work"
+    manifest = new["manifests"][channel][manifest_version]
+    profile = manifest["profiles"][profile_id]
+    architecture = _architecture(profile, "arm64")
+
+    profile["revision"] = "2026.07.04.1-nightly"
+    profile["version"] = "2026.07.04.1-nightly"
+    architecture["image_revision"] = "2026.0704.1"
+    architecture["package_inventory_revision"] = "2026.0704.1"
+    architecture["software"][0]["version"] = "3.12.12"
+    architecture["software"][0]["digest"] = _digest("nightly-co-work-arm64-python-3.12.12")
+    architecture["config"][0]["digest"] = _digest("nightly-co-work-arm64-mcp-2026.0704.1")
+    architecture["images"][0]["digest"] = _digest("nightly-co-work-arm64-rootfs-2026.0704.1")
+    architecture["evidence"][0]["digest"] = _digest("nightly-co-work-arm64-abom-2026.0704.1")
+
+    allowed_prefix = (
+        "manifests",
+        channel,
+        manifest_version,
+        "profiles",
+        profile_id,
+    )
+    changed = _changed_paths(old, new)
+
+    assert changed
+    assert all(path[: len(allowed_prefix)] == allowed_prefix for path in changed)
+    assert new["manifests"]["stable"] == old["manifests"]["stable"]
+    assert new["channels"]["stable"] == old["channels"]["stable"]
+    assert manifest["packages"] == old["manifests"][channel][manifest_version]["packages"]
+    assert (
+        manifest["profiles"]["code"]
+        == old["manifests"][channel][manifest_version]["profiles"]["code"]
+    )
+    assert (
+        _architecture(manifest["profiles"][profile_id], "x86_64")
+        == _architecture(
+            old["manifests"][channel][manifest_version]["profiles"][profile_id],
+            "x86_64",
+        )
+    )
+
+
 def _fixture_graph() -> dict[str, Any]:
     return json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
@@ -230,3 +277,14 @@ def _changed_paths(old: Any, new: Any, prefix: tuple[str, ...] = ()) -> set[tupl
             paths.update(_changed_paths(left, right, (*prefix, str(index))))
         return paths
     return {prefix}
+
+
+def _digest(seed: str) -> dict[str, str]:
+    import blake3
+    import hashlib
+
+    payload = seed.encode("utf-8")
+    return {
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "blake3": blake3.blake3(payload).hexdigest(),
+    }
