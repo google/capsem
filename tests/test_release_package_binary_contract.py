@@ -141,6 +141,51 @@ def test_package_sbom_not_repeated_per_binary() -> None:
                 assert "sbom" not in binary
 
 
+def test_package_detail_sbom_once_binary_refs() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for package in manifest["packages"]:
+            package_page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "packages"
+                / package["id"]
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            binaries_section = package_page.split("Contained Binaries", maxsplit=1)[1].split(
+                "Package Evidence",
+                maxsplit=1,
+            )[0]
+            evidence_section = package_page.split("Package Evidence", maxsplit=1)[1]
+            sboms = [
+                item
+                for item in package.get("evidence", [])
+                if item.get("kind") == "sbom"
+            ]
+
+            assert len(sboms) == 1, f"{channel}:{package['name']}"
+            sbom_url = sboms[0]["url"]
+            assert package_page.count(sbom_url) == 1, f"{channel}:{package['name']}"
+            assert sbom_url not in binaries_section, f"{channel}:{package['name']}"
+            assert sbom_url in evidence_section, f"{channel}:{package['name']}"
+
+            for binary in package["binaries"]:
+                ref = binary["sbom_component_ref"]
+                rendered_ref = f"<code>{ref}</code>"
+                assert binaries_section.count(rendered_ref) == 1, (
+                    f"{channel}:{package['name']}:{binary['name']}"
+                )
+                assert rendered_ref not in evidence_section, (
+                    f"{channel}:{package['name']}:{binary['name']}"
+                )
+
+
 def test_binary_sbom_component_refs_resolve() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 

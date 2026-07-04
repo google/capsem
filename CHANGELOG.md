@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a package-detail SBOM regression proving package evidence is rendered
+  once while binary rows show only their SBOM component references.
 - Added a package-architecture regression proving channel package grouping uses
   explicit JSON platform/architecture fields even when the package filename lies.
 - Added a profile/image revision SemVer gate and admin validation so profile
