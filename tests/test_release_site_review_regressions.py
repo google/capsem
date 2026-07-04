@@ -43,14 +43,19 @@ def test_packages_grouped_by_os_architecture() -> None:
             assert package["url"] in package_block
 
 
-def test_channel_descriptions() -> None:
+def test_channel_descriptions_from_metadata() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
     index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
 
-    for channel in graph["channels"].values():
+    for channel_id, channel in graph["channels"].items():
+        channel_row = index.split(f"/channels/{channel_id}/", maxsplit=1)[1].split(
+            "</tr>",
+            maxsplit=1,
+        )[0]
         assert channel["description"] in index
+        assert channel["description"] in channel_row
     assert "<code>stable</code>" not in index
     assert "<code>nightly</code>" not in index
 
