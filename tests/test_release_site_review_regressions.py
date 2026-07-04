@@ -49,6 +49,34 @@ def test_channel_packages_grouped_by_architecture() -> None:
     test_packages_grouped_by_os_architecture()
 
 
+def test_package_sbom_owner_level() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for package in manifest["packages"]:
+            package_page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "packages"
+                / package["id"]
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            binary_section = package_page.split("Contained Binaries", maxsplit=1)[1].split(
+                "Package Evidence",
+                maxsplit=1,
+            )[0]
+            evidence_section = package_page.split("Package Evidence", maxsplit=1)[1]
+
+            for evidence in package["evidence"]:
+                if evidence["kind"] == "sbom":
+                    assert evidence["url"] in evidence_section
+                    assert evidence["url"] not in binary_section
+
+
 def test_channel_descriptions_from_metadata() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
