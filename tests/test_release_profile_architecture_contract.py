@@ -341,6 +341,12 @@ def test_profile_image_evidence() -> None:
                     assert evidence["url"] in image_block, f"{label}:{kind}"
 
 
+def test_profile_evidence_scoped_to_image_artifacts() -> None:
+    test_abom_obom_architecture_scoped()
+    test_abom_obom_image_scoped_evidence(MonkeyPatch())
+    test_profile_image_evidence()
+
+
 def test_image_removal_is_absence_not_status(monkeypatch) -> None:
     checker = _readiness_checker_module()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))

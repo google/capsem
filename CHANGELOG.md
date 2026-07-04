@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named profile evidence scoping regression proving ABOM and OBOM
+  evidence stays under profile image artifacts, not loose channel/profile evidence.
 - Added a named profile image bundle regression proving each profile
   architecture renders the complete kernel, initrd, and rootfs artifact set.
 - Added a named profile config inventory regression proving security,
