@@ -270,6 +270,26 @@ def test_packages_group_by_os_architecture() -> None:
     assert "Architecture arm64 / linux" not in packages_section
 
 
+def test_manifest_package_targets_by_architecture() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        targets = {
+            (package["platform"], package["architecture"])
+            for package in manifest["packages"]
+        }
+
+        assert targets, channel
+        for package in manifest["packages"]:
+            assert package["platform"] in {"macos", "linux"}, package
+            assert package["architecture"] in {"arm64", "x86_64"}, package
+            for binary in package["binaries"]:
+                assert binary["platform"] == package["platform"], binary
+                assert binary["architecture"] == package["architecture"], binary
+
+
 def test_package_architecture_sections_are_explicit() -> None:
     build_release_site_from_fixture()
 
