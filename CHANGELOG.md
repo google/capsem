@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named real-software-versions gate covering forbidden software
+  versions, row-owned hashes, and inventory-digest reuse rejection.
 - Added a named review gate proving software inventory evidence appears once
   per profile architecture rather than repeating on every software row.
 - Hardened the software architecture scope gate so rendered profile software
