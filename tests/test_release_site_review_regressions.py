@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -339,18 +341,25 @@ def _assert_digest_label(page: str, item: dict, label: str) -> None:
 
 
 def build_release_site_from_graph(graph_path: Path) -> None:
-    env = {
-        **os.environ,
-        "ASTRO_TELEMETRY_DISABLED": "1",
-        "CAPSEM_RELEASE_CHANNEL_DIST": str(graph_path),
-    }
-    result = subprocess.run(
-        ["pnpm", "--dir", "release-site", "run", "build"],
-        cwd=PROJECT_ROOT,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    if RELEASE_SITE_DIST.exists():
+        shutil.rmtree(RELEASE_SITE_DIST)
+
+    lock_path = Path(os.environ.get("TMPDIR", "/tmp")) / "capsem-release-site-build.lock"
+    with lock_path.open("w", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        env = {
+            **os.environ,
+            "ASTRO_TELEMETRY_DISABLED": "1",
+            "CAPSEM_RELEASE_CHANNEL_DIST": str(graph_path),
+        }
+        result = subprocess.run(
+            ["pnpm", "--dir", "release-site", "run", "build"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    build_release_site_from_fixture.cache_clear()
     assert result.returncode == 0, result.stdout + result.stderr

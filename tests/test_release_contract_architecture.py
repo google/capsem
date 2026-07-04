@@ -153,6 +153,27 @@ def test_one_status_enum_no_removed() -> None:
     assert "`deprecated`: true" not in doc
 
 
+def test_manifest_history_immutable_auditable() -> None:
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    expected_statuses = {"current", "supported", "deprecated", "revoked"}
+
+    for channel_id, channel in graph["channels"].items():
+        records = channel["manifests"]
+        assert {record["status"] for record in records} == expected_statuses
+        assert len({record["version"] for record in records}) == len(records)
+        assert all(record["url"].endswith("/manifest.json") for record in records)
+
+        current = next(record for record in records if record["status"] == "current")
+        assert current["url"] == f"/assets/{channel_id}/manifest.json"
+
+        historical = [record for record in records if record["status"] != "current"]
+        assert historical
+        for record in historical:
+            assert record["url"] == (
+                f"/manifests/{channel_id}/{record['version']}/manifest.json"
+            )
+
+
 def _walk_keys(value: object, key: str) -> list[str]:
     matches: list[str] = []
 

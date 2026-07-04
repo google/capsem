@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added an immutable manifest-history gate proving old channel manifest records
+  stay addressable while current uses the canonical asset URL.
 - Hardened the release-graph status enum gate so `removed`, `payload_status`,
   and deprecated boolean fields cannot survive in generated graph JSON.
 - Hardened the root channel update-time gate so channel rows show generated
