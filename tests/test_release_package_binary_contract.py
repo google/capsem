@@ -490,6 +490,10 @@ def test_package_detail_lists_owned_binaries_only() -> None:
         assert evidence["url"] not in package_page
 
 
+def test_package_owns_only_its_binaries() -> None:
+    test_package_detail_lists_owned_binaries_only()
+
+
 def test_package_detail_is_binary_owner_view() -> None:
     build_release_site_from_fixture()
 
