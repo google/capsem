@@ -192,6 +192,54 @@ def test_placeholder_or_copied_hashes(monkeypatch) -> None:
     test_copied_inventory_digests_rejected()
 
 
+def test_forbid_sha1_only_file_evidence() -> None:
+    checker = _readiness_checker_module()
+    sha1_only_spdx = {
+        "spdxVersion": "SPDX-2.3",
+        "files": [
+            {
+                "SPDXID": "SPDXRef-File-capsem-gateway",
+                "checksums": [
+                    {
+                        "algorithm": "SHA1",
+                        "checksumValue": "2a2bebeee60f894f3599e06c755c91944f1c3cc8",
+                    }
+                ],
+            }
+        ],
+    }
+
+    failure = checker.validate_evidence_document(
+        json.dumps(sha1_only_spdx).encode("utf-8"),
+        "spdx",
+        "host SBOM evidence",
+        "/packages/stable/capsem-sbom.spdx.json",
+    )
+
+    assert failure == (
+        "host SBOM evidence /packages/stable/capsem-sbom.spdx.json "
+        "SPDX file SPDXRef-File-capsem-gateway missing SHA256 checksum"
+    )
+
+    sha1_plus_sha256_spdx = json.loads(json.dumps(sha1_only_spdx))
+    sha1_plus_sha256_spdx["files"][0]["checksums"].append(
+        {
+            "algorithm": "SHA256",
+            "checksumValue": hashlib.sha256(b"capsem-gateway").hexdigest(),
+        }
+    )
+
+    assert (
+        checker.validate_evidence_document(
+            json.dumps(sha1_plus_sha256_spdx).encode("utf-8"),
+            "spdx",
+            "host SBOM evidence",
+            "/packages/stable/capsem-sbom.spdx.json",
+        )
+        is None
+    )
+
+
 def _assert_software_rows_do_not_reuse_inventory_digest() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 

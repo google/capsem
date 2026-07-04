@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a SHA1-only SBOM regression proving SPDX file evidence must include
+  SHA-256 checksums; SHA1 is ignored as upstream noise, not trusted evidence.
 - Added a Linux package cohort regression proving each Debian architecture
   owns the full Capsem binary set with paths, digests, and SBOM refs.
 - Added a macOS package cohort regression proving app, tray, CLI, service,
