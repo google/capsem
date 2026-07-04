@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a package detail navigation regression proving every manifest package
+  has a generated package page linked from its channel page.
 - Added a channel package table regression proving package rows render under
   explicit OS/architecture sections with no architecture-all fallback.
 - Added a package-target regression proving channel manifests and pages group

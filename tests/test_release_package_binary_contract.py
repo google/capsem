@@ -457,6 +457,20 @@ def test_every_package_has_detail_page() -> None:
             assert "No package evidence is published for this package." not in package_page
 
 
+def test_every_package_has_detail_page_and_channel_link() -> None:
+    test_every_package_has_detail_page()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        channel_page = (
+            RELEASE_SITE_DIST / "channels" / channel / "index.html"
+        ).read_text(encoding="utf-8")
+        for package in manifest["packages"]:
+            assert f"/channels/{channel}/packages/{package['id']}/" in channel_page
+
+
 def test_package_detail_lists_owned_binaries_only() -> None:
     build_release_site_from_fixture()
 
