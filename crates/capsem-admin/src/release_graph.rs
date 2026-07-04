@@ -54,6 +54,15 @@ pub enum Architecture {
     X86_64,
 }
 
+impl Architecture {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Arm64 => "arm64",
+            Self::X86_64 => "x86_64",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProfileImageArtifactKind {
@@ -940,6 +949,19 @@ impl ProfileArchitectureImages {
             artifact.validate(profile)?;
         }
         for evidence in &self.evidence {
+            let kind = evidence.kind.as_str();
+            if matches!(kind, "abom" | "obom")
+                && !evidence
+                    .url
+                    .contains(&format!("/{}/", self.architecture.as_str()))
+            {
+                bail!(
+                    "profile {profile} architecture {:?} evidence {} url must include /{}/",
+                    self.architecture,
+                    kind,
+                    self.architecture.as_str()
+                );
+            }
             evidence.validate(&format!("profile {profile} image evidence"))?;
         }
         Ok(())
@@ -1823,6 +1845,29 @@ mod tests {
 
         assert!(
             error.to_string().contains("images missing kernel"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn profile_image_evidence_must_match_owning_architecture() {
+        let mut profile =
+            profile_with_image_artifacts("1.0.0", profile_image_artifact_set("1.0.0"));
+        let abom = profile.architectures[0]
+            .evidence
+            .iter_mut()
+            .find(|evidence| evidence.kind == "abom")
+            .expect("abom evidence");
+        abom.url = abom.url.replace("/arm64/", "/x86_64/");
+
+        let error = profile
+            .validate_profile_ownership()
+            .expect_err("image evidence must stay scoped to its owning architecture");
+
+        assert!(
+            error
+                .to_string()
+                .contains("evidence abom url must include /arm64/"),
             "{error}"
         );
     }

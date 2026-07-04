@@ -888,6 +888,14 @@ def check_release_graph_profile(
             )
         for evidence in evidence_entries:
             evidence_kind = str(evidence.get("kind", "")).lower() if isinstance(evidence, dict) else ""
+            evidence_url = evidence.get("url") if isinstance(evidence, dict) else None
+            if evidence_kind in {"abom", "obom"} and isinstance(evidence_url, str):
+                expected_arch_segment = f"/{arch}/"
+                if expected_arch_segment not in evidence_url:
+                    failures.append(
+                        f"profile {profile_id} architecture {arch} evidence {evidence_kind} "
+                        f"url must include {expected_arch_segment}"
+                    )
             expected_document = (
                 "software_inventory"
                 if evidence_kind == "software_inventory"

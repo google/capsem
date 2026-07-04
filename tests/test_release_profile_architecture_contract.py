@@ -223,6 +223,90 @@ def test_abom_obom_architecture_scoped() -> None:
                             )
 
 
+def test_abom_obom_image_scoped_evidence(monkeypatch) -> None:
+    checker = _readiness_checker_module()
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    monkeypatch.setattr(
+        checker,
+        "fetch_text",
+        lambda _url: checker.FetchText(text="profile page"),
+    )
+    monkeypatch.setattr(
+        checker,
+        "check_release_graph_artifact",
+        lambda *_args, **_kwargs: [],
+    )
+
+    for channel, record in graph["channels"].items():
+        channel_page = (RELEASE_SITE_DIST / "channels" / channel / "index.html").read_text(
+            encoding="utf-8"
+        )
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            profile_page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                arch = architecture["architecture"]
+                label = f"{channel}:{profile_id}:{arch}"
+                section = profile_page.split(f"Architecture {arch}", maxsplit=1)[1].split(
+                    "</section>",
+                    maxsplit=1,
+                )[0]
+                profile_evidence_block = section.split("Profile Evidence", maxsplit=1)[1].split(
+                    "Installed Software",
+                    maxsplit=1,
+                )[0]
+                image_evidence_block = section.split("Profile Image Evidence", maxsplit=1)[1]
+                image_evidence = [
+                    item for item in architecture["evidence"] if item["kind"] in {"abom", "obom"}
+                ]
+
+                assert {item["kind"] for item in image_evidence} == {"abom", "obom"}, label
+                for evidence in image_evidence:
+                    assert f"/{arch}/" in evidence["url"], label
+                    assert evidence["url"] in image_evidence_block, label
+                    assert evidence["url"] not in profile_evidence_block, label
+                    assert evidence["url"] not in channel_page, label
+
+                invalid_profile = deepcopy(profile)
+                invalid_architecture = next(
+                    item
+                    for item in invalid_profile["architectures"]
+                    if item["architecture"] == arch
+                )
+                invalid_evidence = next(
+                    item
+                    for item in invalid_architecture["evidence"]
+                    if item["kind"] in {"abom", "obom"}
+                )
+                wrong_arch = "x86_64" if arch != "x86_64" else "arm64"
+                invalid_evidence["url"] = invalid_evidence["url"].replace(
+                    f"/{arch}/",
+                    f"/{wrong_arch}/",
+                )
+
+                failures = checker.check_release_graph_profile(
+                    "https://release.capsem.test",
+                    channel,
+                    profile_id,
+                    invalid_profile,
+                )
+                assert any(
+                    f"profile {profile_id} architecture {arch} evidence "
+                    f"{invalid_evidence['kind']} url must include /{arch}/" in failure
+                    for failure in failures
+                ), label
+
+
 def test_profile_image_evidence() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
