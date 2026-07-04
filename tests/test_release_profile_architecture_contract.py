@@ -981,6 +981,62 @@ def test_software_inventory_not_all_arch() -> None:
                     assert software["name"] in software_block
 
 
+def test_software_inventory_grouped_by_architecture_blocks() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            assert "software" not in profile, f"{channel}:{profile_id}"
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+
+            sections = {}
+            for architecture in profile["architectures"]:
+                arch = architecture["architecture"]
+                label = f"{channel}:{profile_id}:{arch}"
+                assert architecture["software"], label
+                assert all(item["architecture"] == arch for item in architecture["software"]), label
+
+                section = page.split(f"Architecture {arch}", maxsplit=1)[1].split(
+                    "</section>",
+                    maxsplit=1,
+                )[0]
+                software_block = section.split("Installed Software", maxsplit=1)[1].split(
+                    "Config Files",
+                    maxsplit=1,
+                )[0]
+                sections[arch] = software_block
+
+                assert ">all<" not in software_block, label
+                assert "<code>all</code>" not in software_block, label
+                for software in architecture["software"]:
+                    assert software["name"] in software_block, label
+                    assert software["version"] in software_block, label
+                    assert software["source"] in software_block, label
+                    assert software["digest"]["sha256"][:8] + "..." in software_block, label
+                    assert software["digest"]["blake3"][:8] + "..." in software_block, label
+
+            for architecture in profile["architectures"]:
+                arch = architecture["architecture"]
+                other_blocks = [
+                    block for other_arch, block in sections.items() if other_arch != arch
+                ]
+                for software in architecture["software"]:
+                    for block in other_blocks:
+                        assert software["digest"]["sha256"][:8] + "..." not in block, (
+                            f"{channel}:{profile_id}:{arch}:{software['name']}"
+                        )
+
+
 def test_software_versions_are_real(monkeypatch) -> None:
     checker = _readiness_checker_module()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
