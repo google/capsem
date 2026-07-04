@@ -91,7 +91,7 @@ def test_root_channel_duplicate_id_removed() -> None:
         assert channel["description"] in channel_row
 
 
-def test_channel_root_update_time_no_status_records() -> None:
+def test_root_channel_last_updated_no_status_records() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named root-channel last-updated regression so channel rows keep
+  manifest revision/update metadata and reject status/records columns.
 - Added a named root-channel duplicate-id regression so stable/nightly rows
   render metadata descriptions instead of repeating raw channel identifiers.
 - Fixed the local release-site contract checker so filesystem release outputs
