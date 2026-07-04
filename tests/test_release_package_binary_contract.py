@@ -45,6 +45,9 @@ EXPECTED_MACOS_BINARY_PATHS = {
         if name != "capsem-app"
     },
 }
+EXPECTED_LINUX_BINARY_PATHS = {
+    name: f"/usr/bin/{name}" for name in EXPECTED_BINARY_COHORT
+}
 
 
 def build_release_site_from_graph(graph_path: Path) -> None:
@@ -624,6 +627,60 @@ def test_macos_package_complete_binary_cohort() -> None:
             assert binary["digest"]["sha256"][:8] + "..." in package_page
             assert binary["digest"]["blake3"][:8] + "..." in package_page
             assert f"<code>{binary['sbom_component_ref']}</code>" in package_page
+
+
+def test_linux_package_complete_binary_cohort() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    expected_architectures = {"arm64", "x86_64"}
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        linux_packages = [
+            package
+            for package in manifest["packages"]
+            if package["kind"] == "debian_package"
+        ]
+
+        assert {package["architecture"] for package in linux_packages} == expected_architectures
+        for package in linux_packages:
+            assert package["platform"] == "linux"
+            assert package["architecture"] in expected_architectures
+
+            binaries = {binary["name"]: binary for binary in package["binaries"]}
+            assert set(binaries) == EXPECTED_BINARY_COHORT, (
+                f"{channel}:{package['name']}"
+            )
+
+            package_page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "packages"
+                / package["id"]
+                / "index.html"
+            ).read_text(encoding="utf-8")
+
+            for name, expected_path in EXPECTED_LINUX_BINARY_PATHS.items():
+                binary = binaries[name]
+                assert binary["version"] == package["version"], f"{channel}:{name}"
+                assert binary["platform"] == "linux", f"{channel}:{name}"
+                assert binary["architecture"] == package["architecture"], (
+                    f"{channel}:{name}"
+                )
+                assert binary["installed_path"] == expected_path, f"{channel}:{name}"
+                assert binary["bytes"] > 0, f"{channel}:{name}"
+                assert len(binary["digest"]["sha256"]) == 64, f"{channel}:{name}"
+                assert len(binary["digest"]["blake3"]) == 64, f"{channel}:{name}"
+                assert binary["sbom_component_ref"] == f"SPDXRef-File-{name}", (
+                    f"{channel}:{name}"
+                )
+                assert binary["installed_path"] in package_page
+                assert binary["digest"]["sha256"][:8] + "..." in package_page
+                assert binary["digest"]["blake3"][:8] + "..." in package_page
+                assert f"<code>{binary['sbom_component_ref']}</code>" in package_page
 
 
 def test_package_target_parity() -> None:
