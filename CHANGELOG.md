@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a stable-to-nightly manifest URL switch gate and channel identity in
+  graph manifests so clients can validate selected channel state without a side registry.
 - Added an immutable manifest-history gate proving old channel manifest records
   stay addressable while current uses the canonical asset URL.
 - Hardened the release-graph status enum gate so `removed`, `payload_status`,

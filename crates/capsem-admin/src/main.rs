@@ -1297,6 +1297,7 @@ fn build_assets_channel(
     let graph_manifest_url = format!("/assets/{channel}/manifest.json");
     let graph_manifest = render_graph_release_manifest(
         &channel_manifest_doc,
+        channel,
         &publishable_profiles.profiles,
         asset_base,
         &graph_manifest_version,
@@ -3082,6 +3083,7 @@ fn validate_graph_manifest_version(version: &str) -> Result<()> {
 
 fn render_graph_release_manifest(
     manifest: &ManifestV2,
+    channel: &str,
     profiles: &[serde_json::Value],
     _asset_base: &str,
     version: &str,
@@ -3101,6 +3103,7 @@ fn render_graph_release_manifest(
         "{}\n",
         serde_json::to_string_pretty(&serde_json::json!({
             "version": version,
+            "channel": channel,
             "status": "current",
             "packages": packages,
             "profiles": profile_map,

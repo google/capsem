@@ -1537,7 +1537,8 @@
         },
         "status": "current",
         "version": "1.0.2",
-        "revision": "1.0.2"
+        "revision": "1.0.2",
+        "channel": "nightly"
       }
     },
     "stable": {
@@ -2983,7 +2984,8 @@
         },
         "status": "current",
         "version": "1.0.2",
-        "revision": "1.0.2"
+        "revision": "1.0.2",
+        "channel": "stable"
       }
     }
   },

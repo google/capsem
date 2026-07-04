@@ -108,8 +108,48 @@ def test_independent_version_matrix() -> None:
         assert changed == set(allowed), label
 
 
+def test_switch_stable_to_nightly_via_manifest_url() -> None:
+    graph = _fixture_graph()
+    stable_url = "/assets/stable/manifest.json"
+    nightly_url = "/assets/nightly/manifest.json"
+
+    stable = _manifest_for_url(graph, stable_url)
+    nightly = _manifest_for_url(graph, nightly_url)
+    stable_snapshot = json.dumps(stable, sort_keys=True, separators=(",", ":"))
+
+    assert stable["channel"] == "stable"
+    assert nightly["channel"] == "nightly"
+    assert stable["version"] == nightly["version"]
+    assert stable["packages"][0]["version"] == "1.4.0"
+    assert nightly["packages"][0]["version"] == "1.5.0-nightly.20260702"
+    assert stable["profiles"]["co-work"]["revision"].endswith("-stable")
+    assert nightly["profiles"]["co-work"]["revision"].endswith("-nightly")
+    assert stable["packages"] != nightly["packages"]
+    assert stable["profiles"]["co-work"] != nightly["profiles"]["co-work"]
+    assert "profile_catalog" not in json.dumps(nightly, sort_keys=True)
+
+    switched_back = _manifest_for_url(graph, stable_url)
+    assert json.dumps(switched_back, sort_keys=True, separators=(",", ":")) == stable_snapshot
+
+
 def _fixture_graph() -> dict[str, Any]:
     return json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+
+def _manifest_for_url(graph: dict[str, Any], manifest_url: str) -> dict[str, Any]:
+    matches = [
+        (channel_id, record)
+        for channel_id, channel in graph["channels"].items()
+        for record in channel["manifests"]
+        if record["url"] == manifest_url and record["status"] == "current"
+    ]
+    assert len(matches) == 1, manifest_url
+    channel_id, record = matches[0]
+    assert manifest_url == f"/assets/{channel_id}/manifest.json"
+    manifest = graph["manifests"][channel_id][record["version"]]
+    assert manifest["version"] == record["version"]
+    assert manifest["channel"] == channel_id
+    return manifest
 
 
 def _current_manifest_record(graph: dict[str, Any], channel: str) -> dict[str, Any]:
