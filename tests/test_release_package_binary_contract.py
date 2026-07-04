@@ -754,6 +754,12 @@ def test_channel_manifest_package_targets_grouped_by_os_and_architecture() -> No
     test_package_target_parity()
 
 
+def test_channel_page_packages_grouped_by_os_architecture_sections() -> None:
+    test_packages_group_by_os_architecture()
+    test_package_architecture_sections_are_explicit()
+    test_binaries_inherit_package_target_not_all()
+
+
 def test_full_binary_cohort() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 

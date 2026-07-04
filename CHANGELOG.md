@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a channel package table regression proving package rows render under
+  explicit OS/architecture sections with no architecture-all fallback.
 - Added a package-target regression proving channel manifests and pages group
   Capsem packages by explicit operating system and architecture JSON fields.
 - Added a manifest-version independence regression proving channel manifest
