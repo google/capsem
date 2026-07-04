@@ -242,6 +242,10 @@ def test_package_target_rows_include_own_sbom() -> None:
         assert sbom["digest"]["blake3"][:8] + "..." in target_section
 
 
+def test_package_target_sbom() -> None:
+    test_package_target_rows_include_own_sbom()
+
+
 def test_every_package_has_sbom() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
