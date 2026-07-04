@@ -588,6 +588,10 @@ def test_binary_descriptions_from_metadata() -> None:
                 assert binary["description"] in package_page
 
 
+def test_binary_descriptions_come_from_metadata_not_fallbacks() -> None:
+    test_binary_descriptions_from_metadata()
+
+
 def test_binaries_inherit_package_target_not_all() -> None:
     build_release_site_from_fixture()
 
