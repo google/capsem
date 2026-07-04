@@ -37,6 +37,14 @@ EXPECTED_BINARY_COHORT = {
     "capsem-tray",
     "capsem-tui",
 }
+EXPECTED_MACOS_BINARY_PATHS = {
+    "capsem-app": "/Applications/Capsem.app/Contents/MacOS/capsem-app",
+    **{
+        name: f"/usr/local/share/capsem/bin/{name}"
+        for name in EXPECTED_BINARY_COHORT
+        if name != "capsem-app"
+    },
+}
 
 
 def build_release_site_from_graph(graph_path: Path) -> None:
@@ -569,6 +577,53 @@ def test_macos_package_present() -> None:
         assert package["name"].endswith(".pkg")
         assert package["name"] in stable
         assert package["url"] in stable
+
+
+def test_macos_package_complete_binary_cohort() -> None:
+    build_release_site_from_fixture()
+
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        macos_packages = [
+            package for package in manifest["packages"] if package["kind"] == "macos_pkg"
+        ]
+
+        assert len(macos_packages) == 1, channel
+        package = macos_packages[0]
+        assert package["platform"] == "macos"
+        assert package["architecture"] == "arm64"
+
+        binaries = {binary["name"]: binary for binary in package["binaries"]}
+        assert set(binaries) == EXPECTED_BINARY_COHORT, f"{channel}:{package['name']}"
+
+        package_page = (
+            RELEASE_SITE_DIST
+            / "channels"
+            / channel
+            / "packages"
+            / package["id"]
+            / "index.html"
+        ).read_text(encoding="utf-8")
+
+        for name, expected_path in EXPECTED_MACOS_BINARY_PATHS.items():
+            binary = binaries[name]
+            assert binary["version"] == package["version"], f"{channel}:{name}"
+            assert binary["platform"] == "macos", f"{channel}:{name}"
+            assert binary["architecture"] == "arm64", f"{channel}:{name}"
+            assert binary["installed_path"] == expected_path, f"{channel}:{name}"
+            assert binary["bytes"] > 0, f"{channel}:{name}"
+            assert len(binary["digest"]["sha256"]) == 64, f"{channel}:{name}"
+            assert len(binary["digest"]["blake3"]) == 64, f"{channel}:{name}"
+            assert binary["sbom_component_ref"] == f"SPDXRef-File-{name}", (
+                f"{channel}:{name}"
+            )
+            assert binary["installed_path"] in package_page
+            assert binary["digest"]["sha256"][:8] + "..." in package_page
+            assert binary["digest"]["blake3"][:8] + "..." in package_page
+            assert f"<code>{binary['sbom_component_ref']}</code>" in package_page
 
 
 def test_package_target_parity() -> None:

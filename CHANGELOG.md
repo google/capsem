@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a macOS package cohort regression proving app, tray, CLI, service,
+  gateway, MCP, and TUI binaries are package-owned with paths, digests, and SBOM refs.
 - Added a package-detail SBOM regression proving package evidence is rendered
   once while binary rows show only their SBOM component references.
 - Added a package-architecture regression proving channel package grouping uses
