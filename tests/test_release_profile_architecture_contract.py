@@ -18,6 +18,7 @@ import sys
 import tomllib
 
 from blake3 import blake3
+from pytest import MonkeyPatch
 
 
 PROFILE_PAGE = (
@@ -1104,6 +1105,11 @@ def test_profile_images_grouped_by_architecture_complete_set(monkeypatch) -> Non
                     in failure
                     for failure in failures
                 ), label
+
+
+def test_profile_image_complete_architecture_bundle() -> None:
+    test_all_profile_image_artifacts()
+    test_profile_images_grouped_by_architecture_complete_set(MonkeyPatch())
 
 
 def test_software_inventory_not_all_arch() -> None:
