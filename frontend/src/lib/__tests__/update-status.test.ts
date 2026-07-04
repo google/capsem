@@ -26,7 +26,7 @@ function currentTrack(current = '1.4.0'): UpdateTrackStatus {
 function updateStatus(patch: Partial<UpdateStatusResponse> = {}): UpdateStatusResponse {
   return {
     checked_at: 1718444400,
-    channel_url: 'https://release.capsem.org/health.json',
+    channel_url: 'https://release.capsem.org/assets/stable/manifest.json',
     stale: false,
     binary: currentTrack(),
     assets: currentTrack('assets-1'),
@@ -297,7 +297,7 @@ describe('update status model', () => {
           blake3: 'manifest-hash',
         },
         channel_index: {
-          url: 'https://release.capsem.org/health.json',
+          url: 'https://release.capsem.org/assets/stable/manifest.json',
           sha256: 'channel-hash',
         },
         host_sbom: {

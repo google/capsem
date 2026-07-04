@@ -184,7 +184,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self._send_json(
                 {
                     "checked_at": 1718444400,
-                    "channel_url": "https://release.capsem.org/health.json",
+                    "channel_url": "https://release.capsem.org/assets/stable/manifest.json",
                     "channel_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
                     "validation_status": "valid",
                     "stale": False,

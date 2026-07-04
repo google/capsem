@@ -4966,7 +4966,7 @@ fn update_status_response_from_paths(
 ) -> api::UpdateStatusResponse {
     let current_assets = current_asset_version_from_manifest(assets_dir);
     let manifest_channel = manifest_channel_source(assets_dir);
-    let cache_result = read_update_check_cache(cache_path);
+    let cache_result = read_update_check_cache_for_channel(cache_path, manifest_channel.as_deref());
     let (cache, parse_error) = match cache_result {
         Ok(cache) => (cache, None),
         Err(error) => (None, Some(error)),
@@ -5142,6 +5142,61 @@ fn read_update_check_cache(
         .map_err(|error| format!("parse {}: {error}", path.display()))
 }
 
+fn read_update_check_cache_for_channel(
+    legacy_path: &StdPath,
+    channel_source: Option<&str>,
+) -> std::result::Result<Option<UpdateCheckCache>, String> {
+    if let Some(source) = channel_source {
+        if let Some(cache) = read_source_scoped_update_cache(legacy_path, source)? {
+            return Ok(Some(cache));
+        }
+    }
+
+    let legacy = read_update_check_cache(legacy_path)?;
+    let Some(cache) = legacy else {
+        return Ok(None);
+    };
+    if let (Some(source), Some(cache_source)) = (channel_source, cache.source.as_deref()) {
+        if cache_source != source {
+            return Ok(None);
+        }
+    }
+    Ok(Some(cache))
+}
+
+fn read_source_scoped_update_cache(
+    legacy_path: &StdPath,
+    source: &str,
+) -> std::result::Result<Option<UpdateCheckCache>, String> {
+    let Some(parent) = legacy_path.parent() else {
+        return Ok(None);
+    };
+    let dir = parent.join("update-checks");
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("read {}: {error}", dir.display())),
+    };
+
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("read {}: {error}", dir.display()))?;
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+        let content = std::fs::read_to_string(&path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        let cache = match serde_json::from_str::<UpdateCheckCache>(&content) {
+            Ok(cache) => cache,
+            Err(_) => continue,
+        };
+        if cache.source.as_deref() == Some(source) {
+            return Ok(Some(cache));
+        }
+    }
+    Ok(None)
+}
+
 fn current_asset_version_from_manifest(assets_dir: &StdPath) -> Option<String> {
     let content = std::fs::read_to_string(assets_dir.join("manifest.json")).ok()?;
     capsem_core::asset_manager::ManifestV2::from_json(&content)
@@ -5152,39 +5207,10 @@ fn current_asset_version_from_manifest(assets_dir: &StdPath) -> Option<String> {
 fn manifest_channel_source(assets_dir: &StdPath) -> Option<String> {
     let content = std::fs::read_to_string(assets_dir.join("manifest-origin.json")).ok()?;
     let value: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let source = value
+    value
         .get("source")
         .and_then(|source| source.as_str())
-        .map(ToOwned::to_owned)?;
-    release_health_url_from_manifest_url(&source).or(Some(source))
-}
-
-fn release_health_url_from_manifest_url(manifest_url: &str) -> Option<String> {
-    let mut url = reqwest::Url::parse(manifest_url).ok()?;
-    if !matches!(url.scheme(), "https" | "http") {
-        return None;
-    }
-    let segments = url.path_segments().map(|segments| {
-        segments
-            .map(std::string::ToString::to_string)
-            .collect::<Vec<_>>()
-    })?;
-    let assets_pos = segments.iter().position(|segment| *segment == "assets")?;
-    if segments.last().map(String::as_str) != Some("manifest.json")
-        || segments.len() < assets_pos + 3
-    {
-        return None;
-    }
-    let root_segments = segments[..assets_pos].to_vec();
-    {
-        let mut out = url.path_segments_mut().ok()?;
-        out.clear();
-        for segment in root_segments {
-            out.push(&segment);
-        }
-        out.push("health.json");
-    }
-    Some(url.to_string())
+        .map(ToOwned::to_owned)
 }
 
 fn update_track(

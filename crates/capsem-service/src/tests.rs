@@ -49,7 +49,7 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
             "update_available": true,
             "latest_assets": "2026.0628.1",
             "assets_update_available": true,
-            "source": "https://release.capsem.org/health.json",
+            "source": "https://release.capsem.org/assets/stable/manifest.json",
             "channel_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "validation_status": "valid"
         })
@@ -64,7 +64,7 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
     assert!(!status.stale);
     assert_eq!(
         status.channel_url.as_deref(),
-        Some("https://release.capsem.org/health.json")
+        Some("https://release.capsem.org/assets/stable/manifest.json")
     );
     assert_eq!(
         status.channel_hash.as_deref(),
@@ -88,7 +88,7 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
     );
     assert_eq!(
         status.supply_chain.channel_index.url.as_deref(),
-        Some("https://release.capsem.org/health.json")
+        Some("https://release.capsem.org/assets/stable/manifest.json")
     );
     assert_eq!(
         status.supply_chain.channel_index.sha256.as_deref(),
@@ -308,11 +308,11 @@ fn update_status_reports_unknown_when_cache_is_missing_and_keeps_manifest_channe
     assert!(status.stale);
     assert_eq!(
         status.channel_url.as_deref(),
-        Some("https://corp.example/capsem/health.json")
+        Some("https://corp.example/capsem/assets/internal/manifest.json")
     );
     assert_eq!(
         status.supply_chain.channel_index.url.as_deref(),
-        Some("https://corp.example/capsem/health.json")
+        Some("https://corp.example/capsem/assets/internal/manifest.json")
     );
     assert_eq!(
         status.supply_chain.manifest.source.as_deref(),
@@ -327,7 +327,7 @@ fn update_status_reports_unknown_when_cache_is_missing_and_keeps_manifest_channe
 }
 
 #[test]
-fn update_status_derives_health_url_from_manifest_origin_when_cache_is_missing() {
+fn update_status_uses_manifest_url_from_manifest_origin_when_cache_is_missing() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
     std::fs::create_dir_all(&assets_dir).unwrap();
@@ -351,15 +351,127 @@ fn update_status_derives_health_url_from_manifest_origin_when_cache_is_missing()
 
     assert_eq!(
         status.channel_url.as_deref(),
-        Some("https://updates.corp.example/releases/health.json")
+        Some("https://updates.corp.example/releases/assets/stable/manifest.json")
     );
     assert_eq!(
         status.supply_chain.channel_index.url.as_deref(),
-        Some("https://updates.corp.example/releases/health.json")
+        Some("https://updates.corp.example/releases/assets/stable/manifest.json")
     );
     assert_eq!(
         status.supply_chain.manifest.source.as_deref(),
         Some("https://updates.corp.example/releases/assets/stable/manifest.json")
+    );
+}
+
+#[test]
+fn update_status_ignores_legacy_health_cache_when_manifest_origin_is_present() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    std::fs::write(
+        assets_dir.join("manifest-origin.json"),
+        serde_json::json!({
+            "schema": "capsem.manifest_origin.v1",
+            "origin": "package",
+            "source": "https://release.capsem.org/assets/stable/manifest.json"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let cache_path = dir.path().join("update-check.json");
+    std::fs::write(
+        &cache_path,
+        serde_json::json!({
+            "checked_at": 1000,
+            "source": "https://release.capsem.org/health.json",
+            "validation_status": "fetch_error",
+            "validation_error": "GET https://release.capsem.org/health.json timed out"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let status =
+        update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
+
+    assert_eq!(
+        status.channel_url.as_deref(),
+        Some("https://release.capsem.org/assets/stable/manifest.json")
+    );
+    assert_eq!(status.validation_status, None);
+    assert_eq!(status.validation_error, None);
+    assert_eq!(status.last_error, None);
+    assert_eq!(
+        status.supply_chain.channel_index.url.as_deref(),
+        Some("https://release.capsem.org/assets/stable/manifest.json")
+    );
+}
+
+#[test]
+fn update_status_reads_source_scoped_cache_for_manifest_channel() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    std::fs::write(
+        assets_dir.join("manifest-origin.json"),
+        serde_json::json!({
+            "schema": "capsem.manifest_origin.v1",
+            "origin": "package",
+            "source": "https://release.capsem.org/assets/stable/manifest.json"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let legacy_cache_path = dir.path().join("update-check.json");
+    std::fs::write(
+        &legacy_cache_path,
+        serde_json::json!({
+            "checked_at": 1000,
+            "source": "https://release.capsem.org/health.json",
+            "validation_status": "fetch_error",
+            "validation_error": "GET https://release.capsem.org/health.json timed out"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let scoped_dir = dir.path().join("update-checks");
+    std::fs::create_dir_all(&scoped_dir).unwrap();
+    std::fs::write(
+        scoped_dir.join("stable-manifest-cache.json"),
+        serde_json::json!({
+            "checked_at": 1100,
+            "latest_version": "1.3.1782600000",
+            "update_available": true,
+            "latest_profiles": "profiles-2030.0101.1",
+            "current_profiles": "profiles-2030.0101.0",
+            "profiles_update_available": true,
+            "profiles_state": "update_available",
+            "source": "https://release.capsem.org/assets/stable/manifest.json",
+            "channel_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "validation_status": "valid"
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let status =
+        update_status_response_from_paths("1.3.1782582155", &assets_dir, &legacy_cache_path, 1200);
+
+    assert_eq!(status.checked_at, Some(1100));
+    assert_eq!(
+        status.channel_url.as_deref(),
+        Some("https://release.capsem.org/assets/stable/manifest.json")
+    );
+    assert_eq!(status.validation_status.as_deref(), Some("valid"));
+    assert_eq!(status.validation_error, None);
+    assert_eq!(
+        status.channel_hash.as_deref(),
+        Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+    );
+    assert_eq!(status.binary.latest.as_deref(), Some("1.3.1782600000"));
+    assert_eq!(
+        status.profiles.state,
+        api::UpdateTrackState::UpdateAvailable
     );
 }
 
@@ -6133,6 +6245,7 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
                                 "rootfs.erofs".into(),
                                 capsem_core::asset_manager::AssetEntry {
                                     hash: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".into(),
+                                    sha256: String::new(),
                                     size: 1,
                                 },
                             ),
@@ -6140,6 +6253,7 @@ fn deprecated_asset_cleanup_preserves_persistent_vm_pins() {
                                 "rootfs-pinned.erofs".into(),
                                 capsem_core::asset_manager::AssetEntry {
                                     hash: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd".into(),
+                                    sha256: String::new(),
                                     size: 1,
                                 },
                             ),

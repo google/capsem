@@ -36,7 +36,7 @@ def test_gateway_forwards_update_status_for_update_surfaces(
 ) -> None:
     status = _json_route(gw_client, "/update/status")
 
-    assert status["channel_url"] == "https://release.capsem.org/health.json"
+    assert status["channel_url"] == "https://release.capsem.org/assets/stable/manifest.json"
     assert status["channel_hash"] == (
         "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     )

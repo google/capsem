@@ -1424,7 +1424,7 @@ describe('api', () => {
 function updateStatusFixture() {
   return {
     checked_at: 1718444400,
-    channel_url: 'https://release.capsem.org/health.json',
+    channel_url: 'https://release.capsem.org/assets/stable/manifest.json',
     stale: false,
     binary: {
       current: '1.4.0',
