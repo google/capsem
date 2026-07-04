@@ -46,6 +46,17 @@ def test_no_hmac() -> None:
     assert list(_hmac_paths(graph)) == []
 
 
+def test_public_release_contract_has_no_hmac_fields() -> None:
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    assert list(_hmac_paths(graph)) == []
+
+    for page in RELEASE_SITE_DIST.rglob("*.html"):
+        html = page.read_text(encoding="utf-8")
+        assert "HMAC" not in html, page
+        assert "hmac" not in html, page
+
+
 def test_full_machine_digests() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     categories: set[str] = set()
