@@ -54,6 +54,7 @@ ALLOWED_PROFILE_CONFIG_KINDS = {
     "tips",
     "root_manifest",
 }
+ALLOWED_RELEASE_STATUSES = {"current", "supported", "deprecated", "revoked"}
 RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"
 _FETCH_BYTES_CACHE: dict[str, "FetchBytes"] = {}
 
@@ -861,6 +862,12 @@ def check_release_graph_profile(
             )
         for artifact in images:
             failures.extend(
+                check_release_graph_status(
+                    artifact,
+                    f"profile {profile_id} architecture {arch} image",
+                )
+            )
+            failures.extend(
                 check_release_graph_artifact(
                     site,
                     artifact,
@@ -919,6 +926,16 @@ def check_release_graph_unique_digests(
         else:
             seen[digest_key] = identity
     return failures
+
+
+def check_release_graph_status(item: Any, label: str) -> list[str]:
+    if not isinstance(item, dict):
+        return []
+    status = item.get("status")
+    if status not in ALLOWED_RELEASE_STATUSES:
+        identity = item.get("url") or item.get("name") or "<unknown>"
+        return [f"{label} {identity} status {status} is not allowed"]
+    return []
 
 
 def check_release_graph_software_row(item: Any, label: str, architecture: str) -> list[str]:

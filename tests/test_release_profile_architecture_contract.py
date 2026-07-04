@@ -9,6 +9,7 @@ from test_release_site_html_contract import (
     build_release_site_from_fixture,
 )
 
+from copy import deepcopy
 import hashlib
 import importlib.util
 import json
@@ -203,6 +204,79 @@ def test_profile_image_evidence() -> None:
                 for kind, evidence in evidence_by_kind.items():
                     assert f"/{architecture['architecture']}/" in evidence["url"], label
                     assert evidence["url"] in image_block, f"{label}:{kind}"
+
+
+def test_image_removal_is_absence_not_status(monkeypatch) -> None:
+    checker = _readiness_checker_module()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    channel = "stable"
+    profile_id = "co-work"
+    current = next(
+        item for item in graph["channels"][channel]["manifests"] if item["status"] == "current"
+    )
+    manifest = graph["manifests"][channel][current["version"]]
+    profile = deepcopy(manifest["profiles"][profile_id])
+    architecture = next(
+        item for item in profile["architectures"] if item["architecture"] == "arm64"
+    )
+    removed_image = next(item for item in architecture["images"] if item["kind"] == "initrd")
+    removed_key = (removed_image["kind"], removed_image["name"], removed_image["url"])
+
+    architecture["images"] = [
+        image
+        for image in architecture["images"]
+        if (image["kind"], image["name"], image["url"]) != removed_key
+    ]
+
+    assert removed_key not in {
+        (image["kind"], image["name"], image["url"]) for image in architecture["images"]
+    }
+    assert not list(_walk_values(profile, "removed"))
+    assert {item["status"] for item in graph["channels"][channel]["manifests"]} == {
+        "current",
+        "supported",
+        "deprecated",
+        "revoked",
+    }
+    assert any(
+        item["status"] != "current" and item["url"].startswith(f"/manifests/{channel}/")
+        for item in graph["channels"][channel]["manifests"]
+    )
+
+    monkeypatch.setattr(
+        checker,
+        "fetch_text",
+        lambda _url: checker.FetchText(
+            text=f"{profile_id} {profile['name']} {profile['revision']} arm64"
+        ),
+    )
+    monkeypatch.setattr(
+        checker,
+        "check_release_graph_artifact",
+        lambda *_args, **_kwargs: [],
+    )
+
+    valid_failures = checker.check_release_graph_profile(
+        "https://release.capsem.test",
+        channel,
+        profile_id,
+        profile,
+    )
+    assert not [failure for failure in valid_failures if "removed" in failure.lower()]
+
+    invalid_profile = deepcopy(profile)
+    invalid_architecture = next(
+        item for item in invalid_profile["architectures"] if item["architecture"] == "arm64"
+    )
+    invalid_architecture["images"].append({**removed_image, "status": "removed"})
+
+    invalid_failures = checker.check_release_graph_profile(
+        "https://release.capsem.test",
+        channel,
+        profile_id,
+        invalid_profile,
+    )
+    assert any("status removed is not allowed" in failure for failure in invalid_failures)
 
 
 def test_image_entries_own_abom_obom() -> None:
@@ -506,6 +580,24 @@ def test_profile_arch_packages_and_images_blocks() -> None:
                 for evidence in architecture["evidence"]:
                     owner_block = image_block if evidence["kind"] in {"abom", "obom"} else evidence_block
                     assert evidence["url"] in owner_block, label
+
+
+def _walk_values(value: object, needle: str) -> list[str]:
+    matches: list[str] = []
+
+    def visit(item: object, path: str) -> None:
+        if isinstance(item, dict):
+            for item_key, item_value in item.items():
+                next_path = f"{path}.{item_key}" if path else str(item_key)
+                visit(item_value, next_path)
+        elif isinstance(item, list):
+            for index, item_value in enumerate(item):
+                visit(item_value, f"{path}[{index}]")
+        elif item == needle:
+            matches.append(path)
+
+    visit(value, "")
+    return matches
 
 
 def test_all_profile_config_files() -> None:

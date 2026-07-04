@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a profile-image removal gate proving image removal is represented by
+  omission from the current profile and `status: removed` is rejected.
 - Added a nightly binary/package isolation gate proving binary updates do not
   mutate profile, stable, or channel state.
 - Added a co-work nightly profile isolation gate proving profile updates do not
