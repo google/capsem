@@ -530,3 +530,9 @@ def test_package_detail_binary_cohort() -> None:
                 assert binary["digest"]["sha256"][:8] + "..." in package_page
                 assert binary["digest"]["blake3"][:8] + "..." in package_page
                 assert binary["sbom_component_ref"] in package_page
+
+
+def test_owned_binary_cohort() -> None:
+    test_full_binary_cohort()
+    test_package_detail_binary_cohort()
+    test_package_detail_is_binary_owner_view()

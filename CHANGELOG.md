@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named owned-binary-cohort gate proving package detail pages list all
+  binaries owned by each package while channel pages stay package-focused.
 - Added a package-target parity gate requiring current channel manifests and
   channel pages to include macOS arm64 and Linux arm64/x86_64 packages.
 - Added a named package-target SBOM regression gate so every package row must
