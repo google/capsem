@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a profile config inventory regression proving every architecture renders
+  MCP, enforcement, detection, package-manager, build, tips, and root manifest files.
 - Added a byte-backed package/binary hash regression covering package SBOM
   artifact digests and binary SHA-256 component checksums from SPDX evidence.
 - Added a SHA1-only SBOM regression proving SPDX file evidence must include

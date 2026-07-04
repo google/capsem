@@ -764,6 +764,56 @@ def test_all_config_classes() -> None:
     test_profile_config_inventory_includes_security_and_detection()
 
 
+def test_config_inventory_all_classes() -> None:
+    test_all_config_classes_render()
+    test_profile_config_inventory_includes_security_and_detection()
+
+    build_release_site_from_fixture()
+    graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
+    expected_kinds = {
+        "profile",
+        "mcp",
+        "enforcement",
+        "detection",
+        "apt",
+        "python",
+        "npm",
+        "build",
+        "tips",
+        "root_manifest",
+    }
+
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                label = f"{channel}:{profile_id}:{architecture['architecture']}"
+                config_kinds = {config["kind"] for config in architecture["config"]}
+                assert config_kinds == expected_kinds, label
+
+                section = page.split(f"Architecture {architecture['architecture']}", maxsplit=1)[
+                    1
+                ].split("</section>", maxsplit=1)[0]
+                config_block = section.split("Config Files", maxsplit=1)[1].split(
+                    "Profile Images",
+                    maxsplit=1,
+                )[0]
+                for kind in expected_kinds:
+                    assert kind in config_block, label
+                assert config_block.count("<tr class=\"border-b border-zinc-100 align-top\">") >= len(
+                    expected_kinds
+                ), label
+
+
 def test_config_kind_enum_contract(monkeypatch) -> None:
     checker = _readiness_checker_module()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
