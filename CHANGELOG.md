@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named channel package grouping regression proving package rows stay
+  under OS/architecture target sections on channel pages.
 - Added a manifest package-target gate proving package and binary rows carry
   explicit operating-system and architecture coordinates in machine JSON.
 - Added a manifest-version independence gate so channel manifest versions stay

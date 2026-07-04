@@ -45,6 +45,10 @@ def test_packages_grouped_by_os_architecture() -> None:
             assert package["url"] in package_block
 
 
+def test_channel_packages_grouped_by_architecture() -> None:
+    test_packages_grouped_by_os_architecture()
+
+
 def test_channel_descriptions_from_metadata() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
