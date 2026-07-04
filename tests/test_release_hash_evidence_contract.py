@@ -185,6 +185,13 @@ def test_copied_inventory_digests_rejected() -> None:
     _assert_software_rows_do_not_reuse_inventory_digest()
 
 
+def test_placeholder_or_copied_hashes(monkeypatch) -> None:
+    test_reject_placeholder_hashes()
+    test_repeated_row_digest_theater(monkeypatch)
+    test_no_repeated_digest_for_distinct_files()
+    test_copied_inventory_digests_rejected()
+
+
 def _assert_software_rows_do_not_reuse_inventory_digest() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
