@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a package SBOM owner-level regression proving SBOM links render once
+  on the owning package page and not on each binary row.
 - Added a package detail navigation regression proving every manifest package
   has a generated package page linked from its channel page.
 - Added a channel package table regression proving package rows render under

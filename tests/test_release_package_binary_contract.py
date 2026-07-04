@@ -198,6 +198,12 @@ def test_package_detail_sbom_once_binary_refs() -> None:
                 )
 
 
+def test_package_sbom_renders_once_at_owner_level() -> None:
+    test_sbom_not_repeated_per_binary()
+    test_package_sbom_not_repeated_per_binary()
+    test_package_detail_sbom_once_binary_refs()
+
+
 def test_binary_sbom_component_refs_resolve() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
