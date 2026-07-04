@@ -82,7 +82,8 @@ serves the generated release graph. The public contract is the root
 `channels.json`, one selectable channel manifest URL
 `/assets/<channel>/manifest.json`, package-owned binary inventory, and
 profile-owned config, image, software inventory, ABOM, and OBOM records inside
-that manifest.
+that manifest. Release checks fetch profile-owned config, image, ABOM, and OBOM
+files from those manifest records.
 
 The checker verifies every channel record's `version`, `status`, manifest URL,
 SHA-256, and BLAKE3; confirms exactly one selectable record is `current`

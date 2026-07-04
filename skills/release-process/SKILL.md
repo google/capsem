@@ -38,9 +38,10 @@ The public graph is hierarchical and signed by reference:
    enum value: `current`, `supported`, `deprecated`, or `revoked`.
 3. Each manifest record carries `version`, `url`, SHA-256, and BLAKE3
    digests. The only public manifest URL for a channel is
-   `/assets/<channel>/manifest.json`; retained manifest records are audit rows,
-   not alternate fetch URLs. Removal means the record is absent from the channel
-   list, not marked with a second status.
+   `/assets/<channel>/manifest.json`. Manifest records are retained for
+   auditability; retained manifest records are audit rows, not alternate fetch
+   URLs. Removal means the record is absent from the channel list, not marked
+   with a second status.
 4. Each manifest lists package artifacts separately from the per-binary
    inventory. Packages are delivery containers such as `.pkg` and `.deb`.
    Binaries are executable files inside those packages, and every binary entry
@@ -55,7 +56,8 @@ The public graph is hierarchical and signed by reference:
 
 Do not add a parallel release truth file. The root `channels.json`, selected
 manifest, and profile-owned image/config/evidence files are the update
-contract. Runtime checks consume manifest URLs only:
+contract. The root channel catalog live on `release.capsem.org` is
+`/channels.json`. Runtime checks consume manifest URLs only:
 `CAPSEM_RELEASE_MANIFEST_URL=https://release.capsem.org/assets/stable/manifest.json`
 for stable, and the same variable pointing at
 `https://release.capsem.org/assets/nightly/manifest.json` for nightly until a
