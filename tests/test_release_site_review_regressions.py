@@ -12,6 +12,7 @@ from test_release_site_html_contract import (
     PROJECT_ROOT,
     RELEASE_SITE_DIST,
     build_release_site_from_fixture,
+    fixture_graph,
 )
 
 
@@ -193,6 +194,135 @@ def test_software_evidence_once_per_architecture() -> None:
     )
 
     test_software_inventory_evidence_once_per_architecture()
+
+
+def test_digest_display_truncated() -> None:
+    build_release_site_from_fixture()
+    graph = fixture_graph()
+
+    html_pages = list(RELEASE_SITE_DIST.rglob("*.html"))
+    assert html_pages, "release site build produced no HTML pages"
+
+    for page_path in html_pages:
+        page = page_path.read_text(encoding="utf-8")
+        for digest in _all_machine_digests(graph):
+            assert digest not in page, f"{page_path} leaked full machine digest {digest}"
+
+    for channel, channel_record in graph["channels"].items():
+        manifest_record = _current_manifest_record(channel_record)
+        manifest = graph["manifests"][channel][manifest_record["version"]]
+        channel_page = (
+            RELEASE_SITE_DIST / "channels" / channel / "index.html"
+        ).read_text(encoding="utf-8")
+
+        for record in channel_record["manifests"]:
+            _assert_digest_label(channel_page, record, f"{channel} manifest history")
+        for package in manifest["packages"]:
+            _assert_digest_label(
+                channel_page,
+                package,
+                f"{channel} package {package['id']}",
+            )
+            for evidence in package["evidence"]:
+                _assert_digest_label(
+                    channel_page,
+                    evidence,
+                    f"{channel} package {package['id']} evidence {evidence['kind']}",
+                )
+
+            package_page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "packages"
+                / package["id"]
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            _assert_digest_label(
+                package_page,
+                package,
+                f"{channel} package detail {package['id']}",
+            )
+            for binary in package["binaries"]:
+                _assert_digest_label(
+                    package_page,
+                    binary,
+                    f"{channel} package {package['id']} binary {binary['name']}",
+                )
+            for evidence in package["evidence"]:
+                _assert_digest_label(
+                    package_page,
+                    evidence,
+                    f"{channel} package {package['id']} package evidence {evidence['kind']}",
+                )
+
+        for profile in manifest["profiles"].values():
+            profile_page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile["id"]
+                / "index.html"
+            ).read_text(encoding="utf-8")
+            for architecture in profile["architectures"]:
+                for evidence in architecture["evidence"]:
+                    _assert_digest_label(
+                        profile_page,
+                        evidence,
+                        f"{channel} profile {profile['id']} {architecture['architecture']} evidence {evidence['kind']}",
+                    )
+                for software in architecture["software"]:
+                    _assert_digest_label(
+                        profile_page,
+                        software,
+                        f"{channel} profile {profile['id']} {architecture['architecture']} software {software['name']}",
+                    )
+                for config in architecture["config"]:
+                    _assert_digest_label(
+                        profile_page,
+                        config,
+                        f"{channel} profile {profile['id']} {architecture['architecture']} config {config['path']}",
+                    )
+                for image in architecture["images"]:
+                    _assert_digest_label(
+                        profile_page,
+                        image,
+                        f"{channel} profile {profile['id']} {architecture['architecture']} image {image['name']}",
+                    )
+
+
+def _current_manifest_record(channel_record: dict) -> dict:
+    return next(
+        record for record in channel_record["manifests"] if record["status"] == "current"
+    )
+
+
+def _all_machine_digests(value: object) -> set[str]:
+    digests: set[str] = set()
+    if isinstance(value, dict):
+        for key in ("sha256", "blake3"):
+            digest = value.get(key)
+            if isinstance(digest, str) and len(digest) == 64:
+                digests.add(digest)
+        for child in value.values():
+            digests.update(_all_machine_digests(child))
+    elif isinstance(value, list):
+        for child in value:
+            digests.update(_all_machine_digests(child))
+    return digests
+
+
+def _assert_digest_label(page: str, item: dict, label: str) -> None:
+    digest = item.get("digest", {})
+    assert isinstance(digest, dict), f"{label} has no digest object"
+    for algorithm in ("sha256", "blake3"):
+        value = digest.get(algorithm)
+        assert isinstance(value, str), f"{label} missing {algorithm}"
+        assert len(value) == 64, f"{label} {algorithm} is not a full machine digest"
+        assert f"{value[:8]}..." in page, (
+            f"{label} {algorithm} is not shown as a short human label"
+        )
 
 
 def build_release_site_from_graph(graph_path: Path) -> None:

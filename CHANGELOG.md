@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a full-site digest display regression so human release pages must show
+  SHA-256 and BLAKE3 values as short labels without leaking full machine hashes.
 - Hardened the ABOM/OBOM architecture-scope gate so profile pages render image
   evidence in the image-owned block, not generic profile evidence.
 - Hardened the profile image artifact gate so every architecture-local image
