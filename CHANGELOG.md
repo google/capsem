@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a root channel page regression proving stable/nightly rows render
+  descriptions once and do not repeat raw channel identifiers.
 - Added a human hash display regression proving release-site pages truncate
   SHA-256 and BLAKE3 values to 8-character prefixes while machine JSON stays full.
 - Added a named Codecov binary/release-target regression proving CI covers
