@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named Codecov crate reporting regression proving every Rust
+  workspace crate source directory appears in the uploaded coverage surface.
 - Added a named profile evidence scoping regression proving ABOM and OBOM
   evidence stays under profile image artifacts, not loose channel/profile evidence.
 - Added a named profile image bundle regression proving each profile

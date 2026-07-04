@@ -120,6 +120,11 @@ def test_all_workspace_crates_reported() -> None:
     )
 
 
+def test_every_crate_reported() -> None:
+    test_every_crate_in_codecov()
+    test_all_workspace_crates_reported()
+
+
 def test_low_coverage_components_visible() -> None:
     components = codecov_components((PROJECT_ROOT / "codecov.yml").read_text())
 
