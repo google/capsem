@@ -1149,6 +1149,7 @@ class TestBuildLedger:
         assert cdxgen_cmd[4] == str(output)
 
     @patch("capsem.builder.docker.remove_image")
+    @patch("capsem.builder.docker.extract_software_inventory")
     @patch("capsem.builder.docker.extract_tool_versions")
     @patch("capsem.builder.docker.generate_cyclonedx_obom")
     @patch("capsem.builder.docker.create_erofs")
@@ -1167,6 +1168,7 @@ class TestBuildLedger:
         mock_create_erofs,
         mock_generate_obom,
         mock_extract_versions,
+        mock_extract_inventory,
         _mock_remove,
         real_config,
         tmp_path,
@@ -1203,11 +1205,23 @@ class TestBuildLedger:
         def fake_versions(_runtime, _tag, _platform, output_dir, _config):
             (output_dir / "tool-versions.txt").write_text("codex=1.0.0\n")
 
+        def fake_inventory(_runtime, _tag, _platform, _arch_name, output_dir):
+            path = output_dir / "software-inventory.json"
+            path.write_text(
+                json.dumps({
+                    "schema": "capsem.profile_software_inventory.v1",
+                    "architecture": "arm64",
+                    "packages": [],
+                })
+            )
+            return path
+
         mock_cross_compile.side_effect = fake_cross_compile
         mock_export.side_effect = fake_export
         mock_create_erofs.side_effect = fake_erofs
         mock_generate_obom.side_effect = fake_obom
         mock_extract_versions.side_effect = fake_versions
+        mock_extract_inventory.side_effect = fake_inventory
 
         build_image(
             real_config,
@@ -1223,6 +1237,7 @@ class TestBuildLedger:
         ]
         assert [record["stage"] for record in records] == [
             "rootfs.config_inputs",
+            "rootfs.software_inventory",
             "rootfs.export",
             "rootfs.erofs",
             "rootfs.obom",
@@ -1232,7 +1247,9 @@ class TestBuildLedger:
         assert config_record["package_inputs"]["apt"]["packages"]
         assert config_record["profile_inputs"]["root_seed"]["enabled"] is True
         assert "installed_packages" not in config_record
-        erofs_record = records[2]
+        inventory_record = records[1]
+        assert inventory_record["outputs"][0]["path"] == "software-inventory.json"
+        erofs_record = records[3]
         assert erofs_record["erofs"] == {
             "compression": "lz4hc",
             "compression_level": "12",
@@ -1241,7 +1258,7 @@ class TestBuildLedger:
         }
         assert erofs_record["outputs"][0]["path"] == "rootfs.erofs"
         assert erofs_record["inputs"]["build_context"]["hash"]
-        obom_record = records[3]
+        obom_record = records[4]
         assert obom_record["generator"] == "cdxgen"
         assert obom_record["outputs"][0]["path"] == "obom.cdx.json"
 

@@ -809,6 +809,26 @@ impl ServiceState {
     ) -> anyhow::Result<Arc<capsem_logger::DbHandle>> {
         let db_path = session_db_path_for_session_dir(session_dir);
         let started = std::time::Instant::now();
+        let mut handles = self.session_db_handles.lock().unwrap();
+        if let Some(handle) = handles.get(vm_id) {
+            if handle.path() == db_path.as_path() {
+                tracing::debug!(
+                    vm_id,
+                    db_path = %db_path.display(),
+                    operation = "register_session_db_handle",
+                    duration_ms = started.elapsed().as_millis(),
+                    "reused existing session DB handle"
+                );
+                return Ok(Arc::clone(handle));
+            }
+            warn!(
+                vm_id,
+                cached_db_path = %handle.path().display(),
+                db_path = %db_path.display(),
+                operation = "register_session_db_handle",
+                "replacing session DB handle for rebound session path"
+            );
+        }
         let handle = match capsem_logger::DbHandle::open_external_reader(&db_path) {
             Ok(handle) => Arc::new(handle),
             Err(error) => {
@@ -826,10 +846,7 @@ impl ServiceState {
                 ));
             }
         };
-        self.session_db_handles
-            .lock()
-            .unwrap()
-            .insert(vm_id.to_string(), Arc::clone(&handle));
+        handles.insert(vm_id.to_string(), Arc::clone(&handle));
         info!(
             vm_id,
             db_path = %db_path.display(),
@@ -8912,6 +8929,67 @@ fn hydrate_startup_route_caches(state: &ServiceState) -> Result<(), AppError> {
     Ok(())
 }
 
+const SESSION_STATUS_STATS_SQL: &str = r#"
+SELECT
+  COUNT(*) AS model_call_count,
+  COALESCE(SUM(COALESCE(input_tokens, 0)), 0) AS total_input_tokens,
+  COALESCE((
+    SELECT SUM(CAST(je.value AS INTEGER))
+    FROM model_calls mc2, json_each(mc2.usage_details) je
+    WHERE mc2.usage_details IS NOT NULL
+      AND je.key IN ('thinking', 'thinking_tokens', 'reasoning', 'reasoning_tokens')
+  ), 0) AS total_thinking_tokens,
+  COALESCE(SUM(COALESCE(output_tokens, 0)), 0) AS total_output_tokens,
+  COALESCE(SUM(estimated_cost_usd), 0.0) AS total_estimated_cost,
+  (
+    SELECT COUNT(*)
+    FROM tool_calls tc
+    WHERE tc.origin IN ('model', 'native', 'mcp', 'builtin', 'local', 'mcp_proxy')
+  ) AS total_tool_calls,
+  (SELECT COUNT(*) FROM net_events) AS total_requests,
+  (SELECT COUNT(*) FROM net_events WHERE decision = 'allowed') AS allowed_requests,
+  (SELECT COUNT(*) FROM net_events WHERE decision = 'denied') AS denied_requests,
+  (SELECT COUNT(*) FROM fs_events) AS total_file_events
+FROM model_calls
+"#;
+
+fn row_u64(row: &serde_json::Value, field: &str) -> Option<u64> {
+    row.get(field).and_then(serde_json::Value::as_u64)
+}
+
+async fn apply_session_db_stats(
+    info: &mut SandboxInfo,
+    db_path: &StdPath,
+    db: &capsem_logger::DbHandle,
+) -> Result<(), AppError> {
+    let row = query_route_objects(
+        &info.id,
+        "session status",
+        "toolbar_stats",
+        db_path,
+        db,
+        SESSION_STATUS_STATS_SQL,
+        &[],
+    )
+    .await?
+    .into_iter()
+    .next()
+    .unwrap_or_else(|| json!({}));
+    info.model_call_count = row_u64(&row, "model_call_count");
+    info.total_input_tokens = row_u64(&row, "total_input_tokens");
+    info.total_thinking_tokens = row_u64(&row, "total_thinking_tokens");
+    info.total_output_tokens = row_u64(&row, "total_output_tokens");
+    info.total_estimated_cost = row
+        .get("total_estimated_cost")
+        .and_then(serde_json::Value::as_f64);
+    info.total_tool_calls = row_u64(&row, "total_tool_calls");
+    info.total_requests = row_u64(&row, "total_requests");
+    info.allowed_requests = row_u64(&row, "allowed_requests");
+    info.denied_requests = row_u64(&row, "denied_requests");
+    info.total_file_events = row_u64(&row, "total_file_events");
+    Ok(())
+}
+
 async fn apply_session_db_status(
     state: &ServiceState,
     info: &mut SandboxInfo,
@@ -8933,7 +9011,23 @@ async fn apply_session_db_status(
         return;
     }
     match open_ready_session_db(state, &info.id, "session status", &db_path).await {
-        Ok(_) => {
+        Ok(db) => {
+            if let Err(error) = apply_session_db_stats(info, &db_path, &db).await {
+                let message = error.1;
+                info.session_db = Some(api::SessionDbStatus {
+                    ready: false,
+                    error: Some(message.clone()),
+                });
+                warn!(
+                    vm_id = info.id.as_str(),
+                    operation = "session_db_status",
+                    db_path = %db_path.display(),
+                    ready = false,
+                    error = %message,
+                    "session DB stats unavailable for session status"
+                );
+                return;
+            }
             info.session_db = Some(api::SessionDbStatus {
                 ready: true,
                 error: None,

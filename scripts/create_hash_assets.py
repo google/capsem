@@ -58,6 +58,28 @@ def _cleanup_stale(arch_dir: str, expected: set[str]) -> int:
     return removed
 
 
+def _restore_missing_canonical_assets(arch_dir: str, assets: dict) -> int:
+    """Restore canonical manifest files from matching hash aliases when needed."""
+    restored = 0
+    for name, entry in assets.items():
+        src = os.path.join(arch_dir, name)
+        if os.path.exists(src):
+            continue
+
+        h = entry["hash"][:16]
+        dot = name.find(".")
+        if dot >= 0:
+            hashed = f"{name[:dot]}-{h}{name[dot:]}"
+        else:
+            hashed = f"{name}-{h}"
+        alias = os.path.join(arch_dir, hashed)
+        if not os.path.exists(alias):
+            continue
+        os.link(alias, src)
+        restored += 1
+    return restored
+
+
 def main():
     if len(sys.argv) != 2:
         print(f"Usage: {sys.argv[0]} <assets_dir>", file=sys.stderr)
@@ -83,12 +105,14 @@ def main():
         if os.path.isdir(arch_dir):
             removed += _cleanup_stale(arch_dir, expected)
 
+    restored = 0
     created = 0
     for release in manifest["assets"]["releases"].values():
         for arch_name, assets in release["arches"].items():
             arch_dir = os.path.join(assets_dir, arch_name)
             if not os.path.isdir(arch_dir):
                 continue
+            restored += _restore_missing_canonical_assets(arch_dir, assets)
             for name, entry in assets.items():
                 h = entry["hash"][:16]
                 dot = name.find(".")
@@ -106,6 +130,8 @@ def main():
 
     if removed:
         print(f"  removed {removed} stale hash-tagged alias(es)")
+    if restored:
+        print(f"  restored {restored} canonical asset(s)")
     if created:
         print(f"  created {created} hash-named asset(s)")
 

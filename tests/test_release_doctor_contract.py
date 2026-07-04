@@ -433,119 +433,17 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
         in workflow
     )
     assert "assets/stable/manifest.json" not in workflow
-    assert "Smoke public asset channel" in workflow
     assert "RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}" in workflow
-    assert 'curl -fsSL "$RELEASE_SITE_URL/" -o /tmp/release-index.html' in workflow
-    assert 'curl -fsSL "$RELEASE_SITE_URL/health.json" -o /tmp/release-health.json' in workflow
-    assert (
-        'curl -fsSL "$RELEASE_SITE_URL/assets/$CHANNEL/manifest.json" -o /tmp/release-manifest.json'
-        in workflow
+    assert "Validate deployed asset channel content" in workflow
+    assert "uv run python scripts/check-release-site-contract.py" in workflow
+    assert "--base-url \"$RELEASE_SITE_URL\"" in workflow
+    assert "--channel stable" in workflow
+    assert "--channel nightly" in workflow
+    assert "--attempts 6" in workflow
+    assert "--delay-seconds 10" in workflow
+    assert workflow.index("cloudflare/wrangler-action@v3") < workflow.index(
+        "Validate deployed asset channel content"
     )
-    assert 'health.get("schema") != "capsem.assets_channel.health.v1"' in workflow
-    assert "health ok mismatch" in workflow
-    assert "health channel mismatch" in workflow
-    assert "health state mismatch" in workflow
-    assert "health index URL mismatch" in workflow
-    assert "health health URL mismatch" in workflow
-    assert 'health.get("urls", {}).get("manifest") != expected_manifest' in workflow
-    assert "valid_asset_base(asset_base)" in workflow
-    assert "health binary version mismatch" in workflow
-    assert "health asset version mismatch" in workflow
-    assert "expected_asset_compatibility" in workflow
-    assert "health asset compatibility {field} mismatch" in workflow
-    assert "health asset requirement binary mismatch" in workflow
-    assert "def current_asset_file_refs" in workflow
-    assert "manifest current asset release arches missing or not an object" in workflow
-    assert "def check_health_asset_files" in workflow
-    assert "health missing asset file {url}" in workflow
-    assert "health asset {field} mismatch for {url}" in workflow
-    assert "health unexpected asset file {url}" in workflow
-    assert workflow.index("current_binary = current.get") < workflow.index(
-        'health.get("binary", {}).get("version") != current_binary'
-    )
-    assert "health profile state mismatch" in workflow
-    assert "expected_profile_compatibility" in workflow
-    assert "health profile compatibility {field} mismatch" in workflow
-    assert "health profile requirement {field} mismatch" in workflow
-    assert 'for key in ("binary", "assets")' in workflow
-    assert "health binary update latest mismatch" in workflow
-    assert "health binary update current mismatch" in workflow
-    assert "health binary update state mismatch" in workflow
-    assert "health binary update source mismatch" in workflow
-    assert "health binary update files mismatch" in workflow
-    assert "def current_binary_file_refs" in workflow
-    assert "manifest current binary release files missing or not a list" in workflow
-    assert "def check_host_binary_files" in workflow
-    assert "{label} host binary {field} mismatch for {url}" in workflow
-    assert "{label} unexpected host binary file {url}" in workflow
-    assert "health image update latest must be null while unpublished" in workflow
-    assert "health image update current must be null while unpublished" in workflow
-    assert "health image update state mismatch" in workflow
-    assert "health image update source mismatch" in workflow
-    assert "health asset update latest mismatch" in workflow
-    assert "health asset update current mismatch" in workflow
-    assert "health asset update state mismatch" in workflow
-    assert "health asset update source mismatch" in workflow
-    assert "health asset update manifest mismatch" in workflow
-    assert "health asset update base mismatch" in workflow
-    assert "health asset update compatibility mismatch" in workflow
-    assert "health asset update requirement mismatch" in workflow
-    assert "health asset update canonical compatibility mismatch" in workflow
-    assert "health asset update canonical requirement mismatch" in workflow
-    assert "health profile update source mismatch" in workflow
-    assert "health profile update hash mismatch" in workflow
-    assert "health profile update compatibility mismatch" in workflow
-    assert "health profile update requirement mismatch" in workflow
-    assert "def check_profile_catalog_artifact" in workflow
-    assert "profile catalog {source} blake3 mismatch" in workflow
-    assert "profile catalog {source} must not contain file:// URLs" in workflow
-    assert "profile catalog {source} revision mismatch" in workflow
-    assert "profile catalog {source} current_binary mismatch" in workflow
-    assert "profile catalog {source} current_assets mismatch" in workflow
-    assert "catalog_expected_compatibility" in workflow
-    assert "requires_newer_assets" in workflow
-    assert "profile catalog {source} compatibility {field} mismatch" in workflow
-    assert "health updates.{key}.latest missing or not a string" in workflow
-    assert 'for key in ("profiles", "images")' in workflow
-    assert "health updates.{key}.latest missing" in workflow
-    assert "health updates.{key}.state missing or not a string" in workflow
-    assert 'for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations")' in workflow
-    assert "health evidence.{key} missing or not a list" in workflow
-    assert 'manifest.get("format") != 2' in workflow
-    assert 'manifest.get("assets", {}).get("current") != current_assets' in workflow
-    assert 'manifest.get("binaries", {}).get("current") != current_binary' in workflow
-    assert '("current binary", current_binary)' in workflow
-    assert '("current assets", current_assets)' in workflow
-    assert '("generated timestamp", health.get("generated_at"))' in workflow
-    assert '("profile revision", health.get("profiles", {}).get("revision"))' in workflow
-    assert '("profile catalog", health.get("profiles", {}).get("source"))' in workflow
-    assert '("channel manifest", expected_manifest)' in workflow
-    assert "index page missing {label} {value}" in workflow
-    assert 'manifest_asset_releases = manifest.get("assets", {}).get("releases", {})' in workflow
-    assert "health asset releases missing or not a list" in workflow
-    assert "health missing asset release {version}" in workflow
-    assert '"deprecated_date", manifest_release.get("deprecated_date")' in workflow
-    assert "health asset release {version} {field} mismatch" in workflow
-    assert "health current asset release date missing" in workflow
-    assert "index page missing current asset release date" in workflow
-    assert "def fetch_headers" in workflow
-    assert 'RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"' in workflow
-    assert "def release_site_request" in workflow
-    assert "headers={\"User-Agent\": RELEASE_VALIDATOR_USER_AGENT}" in workflow
-    assert "urllib.request.urlopen(release_site_request(url), timeout=20)" in workflow
-    assert 'release_site_request(url, method="HEAD")' in workflow
-    assert "def check_cache_header" in workflow
-    assert 'check_cache_header("release index", f"{release_site_url}/", ("no-cache", "must-revalidate"))' in workflow
-    assert "Cache-Control must contain {directive}" in workflow
-    assert '("public", "max-age=31536000", "immutable")' in workflow
-    assert '"Channel Manifest"' in workflow
-    assert '"Manifest URL"' in workflow
-    assert '"Capsem Binaries"' in workflow
-    assert '"Profiles"' in workflow
-    assert '"Asset Release History"' in workflow
-    assert "index page missing {marker}" in workflow
-    assert "Current Asset Files" not in workflow
-    assert "release.capsem.org smoke failed after deploy." in workflow
 
 
 def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_deploy() -> None:
@@ -771,29 +669,24 @@ def test_cloudflare_pages_project_checker_reports_visibility_failures() -> None:
 
 def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None:
     workflow = _workflow_text("release-channel.yaml")
+    script = _source_text("scripts/check-remote-release-readiness.py")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
     assert "astral-sh/setup-uv@v5" in workflow
-    assert "uv run python3 - <<'PY'" in workflow
-    assert "import hashlib" in workflow
-    assert "import blake3" in workflow
-    assert "def check_evidence_artifact" in workflow
-    assert (
-        'check_evidence_artifact(sbom, "sha256", "sha256", "host SBOM evidence", "spdx")'
-        in workflow
-    )
-    assert (
-        'check_evidence_artifact(obom, "hash", "blake3", "VM OBOM evidence", "cyclonedx")'
-        in workflow
-    )
-    assert 'data = fetch_bytes(resolve_release_url(url))' in workflow
-    assert "health evidence host_sboms missing for published binary files" in workflow
-    assert "health evidence vm_oboms missing for published VM assets" in workflow
-    assert "health evidence attestations missing for published artifacts" in workflow
-    assert "attestation_predicate_evidence_urls" in workflow
-    assert "attestation predicate_url {predicate_url} missing from {predicate_label}" in workflow
-    assert "attestation subject {subject} missing from published file lists" in workflow
+    assert "uv run python scripts/check-release-site-contract.py" in workflow
+    assert "import hashlib" in script
+    assert "import blake3" in script
+    assert "def fetch_and_verify_evidence_artifact" in script
+    assert 'site, sbom, "sha256", "host SBOM evidence", "spdx"' in script
+    assert 'site, obom, "blake3", "VM OBOM evidence", "cyclonedx"' in script
+    assert "data = fetch_bytes(url)" in script
+    assert "health evidence host_sboms missing for published binary files" in script
+    assert "health evidence vm_oboms missing for published VM assets" in script
+    assert "health evidence attestations missing for published artifacts" in script
+    assert "attestation_predicate_evidence_urls" in script
+    assert "attestation predicate_url {predicate_url} missing from {predicate_label}" in script
+    assert "attestation subject {subject} missing from published file lists" in script
     assert "resolves published host SBOM and VM OBOM evidence artifacts from the graph" in docs_text
     assert "verifies their advertised hashes and sizes" in docs_text
     assert "validates their SPDX 2.3 or CycloneDX document shape" in docs_text
@@ -829,9 +722,11 @@ def test_release_channel_cache_header_documentation_matches_deploy_smoke() -> No
     release_skill = _source_text("skills/release-process/SKILL.md")
     asset_skill = _source_text("skills/asset-pipeline/SKILL.md")
 
-    assert "def check_cache_header" in workflow
-    assert '("no-cache", "must-revalidate")' in workflow
-    assert '("public", "max-age=31536000", "immutable")' in workflow
+    script = _source_text("scripts/check-remote-release-readiness.py")
+    assert "uv run python scripts/check-release-site-contract.py" in workflow
+    assert "def check_release_cache_headers" in script
+    assert '("no-cache", "must-revalidate")' in script
+    assert '("public", "max-age=31536000", "immutable")' in script
 
     for source in [ci_docs, architecture_docs, release_skill, asset_skill]:
         normalized = " ".join(source.split())
@@ -1221,90 +1116,178 @@ def _install_release_graph_contract_fixture(
 ) -> dict[str, object]:
     site = "https://release.capsem.org"
     channel = "stable"
-    generated_at = "2030-01-01T00:00:00Z"
     current_binary = "1.4.0"
     current_assets = "2030.0101.1"
     profile_revision = "profiles-2030.0101.1"
     manifest_path = "/assets/stable/manifest.json"
-    profile_source = f"/profiles/releases/{profile_revision}/catalog.json"
     asset_base = "/assets/releases"
 
-    catalog = {
-        "schema": "capsem.profile_catalog.v1",
-        "revision": profile_revision,
-        "state": "current",
-        "current_binary": current_binary,
-        "current_assets": current_assets,
-        "compatibility": {
-            "binary": current_binary,
-            "assets": current_assets,
-            "min_binary": current_binary,
-            "min_assets": current_assets,
-            "requires_newer_binary": False,
-            "requires_newer_assets": False,
-        },
-        "profiles": [],
+    def digest(data: bytes) -> dict[str, str]:
+        return {
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "blake3": checker.blake3.blake3(data).hexdigest(),
+        }
+
+    artifacts = {
+        "/packages/Capsem-1.4.0.pkg": b"package bytes\n",
+        "/packages/Capsem-1.4.0.spdx.json": b'{"spdxVersion":"SPDX-2.3","files":[]}\n',
+        f"/profiles/releases/{profile_revision}/co-work/arm64/profile.toml": b'id = "co-work"\n',
+        f"/profiles/releases/{profile_revision}/co-work/arm64/software-inventory.json": (
+            b'{"schema":"capsem.profile_software_inventory.v1","packages":[]}\n'
+        ),
+        f"{asset_base}/{current_assets}/arm64-vmlinuz": b"kernel bytes\n",
+        f"{asset_base}/{current_assets}/arm64-initrd.img": b"initrd bytes\n",
+        f"{asset_base}/{current_assets}/arm64-rootfs.erofs": b"rootfs bytes\n",
+        f"{asset_base}/{current_assets}/arm64-obom.cdx.json": (
+            b'{"bomFormat":"CycloneDX","components":[]}\n'
+        ),
     }
-    if catalog_mutator is not None:
-        catalog_mutator(catalog)
-    catalog_bytes = (json.dumps(catalog, sort_keys=True) + "\n").encode()
-    catalog_hash = checker.blake3.blake3(catalog_bytes).hexdigest()
+
+    def file_record(kind: str, name: str, url: str) -> dict[str, object]:
+        data = artifacts[url]
+        return {
+            "kind": kind,
+            "name": name,
+            "url": url,
+            "status": "current",
+            "bytes": len(data),
+            "digest": digest(data),
+        }
+
+    package_url = "/packages/Capsem-1.4.0.pkg"
+    package_sbom_url = "/packages/Capsem-1.4.0.spdx.json"
+    config_url = f"/profiles/releases/{profile_revision}/co-work/arm64/profile.toml"
+    software_inventory_url = (
+        f"/profiles/releases/{profile_revision}/co-work/arm64/software-inventory.json"
+    )
+    obom_url = f"{asset_base}/{current_assets}/arm64-obom.cdx.json"
 
     manifest = {
-        "format": 2,
-        "asset_base": asset_base,
-        "assets": {
-            "current": current_assets,
-            "releases": {
-                current_assets: {
-                    "date": "2030-01-01",
-                    "deprecated": False,
-                    "min_binary": current_binary,
-                    "arches": {},
-                }
-            },
-        },
-        "binaries": {
-            "current": current_binary,
-            "releases": {
-                current_binary: {
-                    "date": "2030-01-01",
-                    "deprecated": False,
-                    "min_assets": current_assets,
-                    "files": [],
-                }
-            },
+        "version": current_binary,
+        "status": "current",
+        "packages": [
+            {
+                "id": "capsem-1-4-0-pkg",
+                "kind": "macos_pkg",
+                "platform": "macos",
+                "architecture": "arm64",
+                "name": "Capsem-1.4.0.pkg",
+                "version": current_binary,
+                "url": package_url,
+                "bytes": len(artifacts[package_url]),
+                "digest": digest(artifacts[package_url]),
+                "evidence": [
+                    {
+                        "kind": "sbom",
+                        "url": package_sbom_url,
+                        "bytes": len(artifacts[package_sbom_url]),
+                        "digest": digest(artifacts[package_sbom_url]),
+                    }
+                ],
+                "binaries": [
+                    {
+                        "name": "capsem-app",
+                        "version": current_binary,
+                        "description": "Capsem desktop application executable",
+                        "installed_path": "/Applications/Capsem.app/Contents/MacOS/capsem-app",
+                        "architecture": "arm64",
+                        "platform": "macos",
+                        "bytes": 12,
+                        "digest": digest(b"capsem-app binary\n"),
+                        "sbom_component_ref": "SPDXRef-File-capsem-app",
+                    }
+                ],
+            }
+        ],
+        "profiles": {
+            "co-work": {
+                "id": "co-work",
+                "name": "Co-work",
+                "description": "Collaborative agent profile.",
+                "revision": profile_revision,
+                "min_capsem_version": current_binary,
+                "architectures": [
+                    {
+                        "architecture": "arm64",
+                        "software": [
+                            {
+                                "name": "@openai/codex",
+                                "version": "0.142.5",
+                                "source": "npm",
+                                "architecture": "arm64",
+                                "evidence": software_inventory_url,
+                                "digest": digest(b"codex software row\n"),
+                            }
+                        ],
+                        "config": [
+                            {
+                                "kind": "profile",
+                                "path": "profiles/co-work/profile.toml",
+                                "url": config_url,
+                                "status": "current",
+                                "bytes": len(artifacts[config_url]),
+                                "digest": digest(artifacts[config_url]),
+                            }
+                        ],
+                        "images": [
+                            file_record(
+                                "kernel",
+                                "vmlinuz",
+                                f"{asset_base}/{current_assets}/arm64-vmlinuz",
+                            ),
+                            file_record(
+                                "initrd",
+                                "initrd.img",
+                                f"{asset_base}/{current_assets}/arm64-initrd.img",
+                            ),
+                            file_record(
+                                "rootfs",
+                                "rootfs.erofs",
+                                f"{asset_base}/{current_assets}/arm64-rootfs.erofs",
+                            ),
+                        ],
+                        "evidence": [
+                            {
+                                "kind": "software_inventory",
+                                "url": software_inventory_url,
+                                "status": "current",
+                                "bytes": len(artifacts[software_inventory_url]),
+                                "digest": digest(artifacts[software_inventory_url]),
+                            },
+                            {
+                                "kind": "obom",
+                                "url": obom_url,
+                                "status": "current",
+                                "bytes": len(artifacts[obom_url]),
+                                "digest": digest(artifacts[obom_url]),
+                            },
+                        ],
+                    }
+                ],
+            }
         },
     }
+    if catalog_mutator is not None:
+        catalog_mutator(manifest["profiles"]["co-work"])
     if manifest_mutator is not None:
         manifest_mutator(manifest)
     manifest_bytes = (json.dumps(manifest, sort_keys=True) + "\n").encode()
-    manifest_hash = checker.blake3.blake3(manifest_bytes).hexdigest()
+    manifest_digest = digest(manifest_bytes)
 
     channels = {
         "version": 1,
-        "generated_at": generated_at,
+        "generated_at": "2030-01-01T00:00:00Z",
         "channels": {
             channel: {
                 "label": "Stable",
-                "profile_catalog": {
-                    "source": profile_source,
-                    "hash": catalog_hash,
-                    "revision": profile_revision,
-                },
+                "description": "Recommended release channel.",
                 "manifests": [
                     {
                         "version": current_binary,
+                        "revision": current_binary,
                         "status": "current",
                         "url": manifest_path,
-                        "asset_base": asset_base,
-                        "binary_version": current_binary,
-                        "asset_version": current_assets,
-                        "digest": {
-                            "blake3": manifest_hash,
-                            "sha256": "a" * 64,
-                            "hmac": "stable-manifest-hmac",
-                        },
+                        "digest": manifest_digest,
                     }
                 ],
             }
@@ -1313,39 +1296,103 @@ def _install_release_graph_contract_fixture(
     if channels_mutator is not None:
         channels_mutator(channels)
 
-    payloads = {
-        f"{site}{manifest_path}": manifest_bytes,
-        f"{site}{profile_source}": catalog_bytes,
-    }
+    payloads = {f"{site}{manifest_path}": manifest_bytes}
+    payloads.update({f"{site}{path}": data for path, data in artifacts.items()})
     if payload_mutator is not None:
         payload_mutator(payloads, checker)
 
     if index_text is None:
         index_text = " ".join(
             [
+                "Stable",
+                "Recommended release channel.",
                 current_binary,
-                current_assets,
-                "2030-01-01",
-                generated_at,
-                profile_revision,
-                profile_source,
                 manifest_path,
-                "/channels.json",
             ]
         )
+
+    package = manifest["packages"][0]
+    binary = package["binaries"][0]
+    profile = manifest["profiles"]["co-work"]
+    architecture = profile["architectures"][0]
+    config = architecture["config"][0]
+    image_digest_labels = [
+        label
+        for image in architecture["images"]
+        for label in (
+            checker.hash_label(image["digest"]["sha256"]),
+            checker.hash_label(image["digest"]["blake3"]),
+        )
+    ]
+    evidence_digest_labels = [
+        label
+        for evidence in architecture["evidence"]
+        for label in (
+            checker.hash_label(evidence["digest"]["sha256"]),
+            checker.hash_label(evidence["digest"]["blake3"]),
+        )
+    ]
+    channel_page_text = " ".join(
+        [
+            "Stable",
+            current_binary,
+            manifest_path,
+            package["name"],
+            package["version"],
+            profile["id"],
+            profile["name"],
+            profile["revision"],
+            profile["min_capsem_version"],
+        ]
+    )
+    package_page_text = " ".join(
+        [
+            package["name"],
+            package["version"],
+            package["kind"],
+            checker.hash_label(package["digest"]["sha256"]),
+            checker.hash_label(package["digest"]["blake3"]),
+            binary["name"],
+            binary["version"],
+            binary["description"],
+            binary["installed_path"],
+            binary["sbom_component_ref"],
+            checker.hash_label(binary["digest"]["sha256"]),
+            checker.hash_label(binary["digest"]["blake3"]),
+        ]
+    )
+    profile_page_text = " ".join(
+        [
+            profile["name"],
+            profile["id"],
+            profile["revision"],
+            architecture["architecture"],
+            checker.hash_label(config["digest"]["sha256"]),
+            checker.hash_label(config["digest"]["blake3"]),
+            *image_digest_labels,
+            *evidence_digest_labels,
+        ]
+    )
 
     headers = {
         f"{site}/": "no-cache, must-revalidate",
         f"{site}/channels.json": "no-cache, must-revalidate",
         f"{site}{manifest_path}": "no-cache, must-revalidate",
-        f"{site}{profile_source}": "public, max-age=31536000, immutable",
     }
+    for path in artifacts:
+        headers[f"{site}{path}"] = "public, max-age=31536000, immutable"
     if headers_mutator is not None:
         headers_mutator(headers)
 
     def fake_fetch_text(url: str):
         if url == f"{site}/":
             return checker.FetchText(text=index_text)
+        if url == f"{site}/channels/{channel}/":
+            return checker.FetchText(text=channel_page_text)
+        if url == f"{site}/channels/{channel}/packages/{package['id']}/":
+            return checker.FetchText(text=package_page_text)
+        if url == f"{site}/channels/{channel}/profiles/{profile['id']}/":
+            return checker.FetchText(text=profile_page_text)
         return checker.FetchText(text="", error=f"unexpected text fetch {url}")
 
     def fake_fetch_json(url: str):
@@ -1373,13 +1420,11 @@ def _install_release_graph_contract_fixture(
         "site": site,
         "channel": channel,
         "manifest_path": manifest_path,
-        "profile_source": profile_source,
         "current_binary": current_binary,
         "current_assets": current_assets,
         "profile_revision": profile_revision,
         "manifest": manifest,
         "channels": channels,
-        "catalog": catalog,
     }
 
 
@@ -1391,8 +1436,8 @@ def test_remote_readiness_accepts_channels_manifest_profile_graph_contract() -> 
 
     assert result.ok, result.detail
     assert "channels.json" in result.detail
-    assert "manifest" in result.detail
-    assert "profile catalog" in result.detail
+    assert "graph manifest" in result.detail
+    assert "profile artifacts" in result.detail
 
 
 def test_remote_readiness_helper_edge_cases_reject_malformed_release_contract() -> None:
@@ -1416,14 +1461,12 @@ def test_remote_readiness_rejects_stale_index_profile_metadata() -> None:
     result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
 
     assert not result.ok
-    assert "index missing generated timestamp 2030-01-01T00:00:00Z" in result.detail
-    assert "index missing profile revision profiles-2030.0101.1" in result.detail
+    assert "release index stable missing channel label Stable" in result.detail
     assert (
-        "index missing profile catalog /profiles/releases/profiles-2030.0101.1/catalog.json"
+        "release index stable missing channel description Recommended release channel."
         in result.detail
     )
-    assert "index missing channel manifest /assets/stable/manifest.json" in result.detail
-    assert "index missing channels catalog /channels.json" in result.detail
+    assert "release index stable missing manifest URL /assets/stable/manifest.json" in result.detail
 
 
 def test_remote_readiness_rejects_channel_manifest_digest_drift() -> None:
@@ -1461,72 +1504,74 @@ def test_remote_readiness_rejects_manifest_pointer_drift() -> None:
     result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
 
     assert not result.ok
-    assert "channel manifest URL mismatch" in result.detail
+    assert "release index stable missing manifest URL /assets/nightly/manifest.json" in result.detail
+    assert "channel page stable missing manifest URL /assets/nightly/manifest.json" in result.detail
+    assert "unexpected header fetch https://release.capsem.org/assets/nightly/manifest.json" in result.detail
 
 
 def test_remote_readiness_rejects_profile_catalog_artifact_drift() -> None:
     checker = _readiness_checker_module()
+
+    def stale_rootfs_digest(manifest: dict[str, object]) -> None:
+        profile = manifest["profiles"]["co-work"]
+        architecture = profile["architectures"][0]
+        rootfs = next(item for item in architecture["images"] if item["kind"] == "rootfs")
+        rootfs["digest"]["blake3"] = "0" * 64
+
     fixture = _install_release_graph_contract_fixture(
         checker,
-        channels_mutator=lambda channels: channels["channels"]["stable"]["profile_catalog"].update(
-            {"hash": "0" * 64}
-        ),
+        manifest_mutator=stale_rootfs_digest,
     )
 
     result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
 
     assert not result.ok
     assert (
-        "profile catalog /profiles/releases/profiles-2030.0101.1/catalog.json blake3 mismatch"
+        "profile co-work architecture arm64 image "
+        "/assets/releases/2030.0101.1/arm64-rootfs.erofs blake3 mismatch"
         in result.detail
     )
 
 
 def test_remote_readiness_rejects_profile_catalog_content_drift() -> None:
     checker = _readiness_checker_module()
+    source = "/profiles/releases/profiles-2030.0101.1/co-work/arm64/software-inventory.json"
 
-    def stale_catalog(catalog: dict[str, object]) -> None:
-        catalog["schema"] = "capsem.profile_catalog.v0"
-        catalog["revision"] = "profiles-stale"
+    def stale_inventory(payloads: dict[str, bytes], _checker) -> None:
+        payloads[f"https://release.capsem.org{source}"] = (
+            b'{"schema":"capsem.profile_software_inventory.v0","packages":[]}\n'
+        )
 
-    fixture = _install_release_graph_contract_fixture(checker, catalog_mutator=stale_catalog)
+    fixture = _install_release_graph_contract_fixture(checker, payload_mutator=stale_inventory)
 
     result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
 
     assert not result.ok
-    source = fixture["profile_source"]
-    assert f"profile catalog {source} schema mismatch" in result.detail
-    assert f"profile catalog {source} revision mismatch" in result.detail
+    assert (
+        f"profile co-work architecture arm64 evidence {source} software inventory schema mismatch"
+        in result.detail
+    )
 
 
 def test_remote_readiness_rejects_asset_file_metadata_drift() -> None:
     checker = _readiness_checker_module()
     asset_path = "/assets/releases/2030.0101.1/arm64-rootfs.erofs"
-    asset_url = f"https://release.capsem.org{asset_path}"
 
-    def add_asset(manifest: dict[str, object]) -> None:
-        release = manifest["assets"]["releases"]["2030.0101.1"]
-        release["arches"] = {
-            "arm64": {"rootfs.erofs": {"hash": "blake3:" + "0" * 64, "size": 4}}
-        }
-
-    def add_payload(payloads: dict[str, bytes], checker) -> None:
-        payloads[asset_url] = b"rootfs"
-
-    def add_headers(headers: dict[str, str]) -> None:
-        headers[asset_url] = "public, max-age=31536000, immutable"
+    def stale_rootfs_size(manifest: dict[str, object]) -> None:
+        profile = manifest["profiles"]["co-work"]
+        architecture = profile["architectures"][0]
+        rootfs = next(item for item in architecture["images"] if item["kind"] == "rootfs")
+        rootfs["bytes"] = 4
 
     fixture = _install_release_graph_contract_fixture(
         checker,
-        manifest_mutator=add_asset,
-        payload_mutator=add_payload,
-        headers_mutator=add_headers,
+        manifest_mutator=stale_rootfs_size,
     )
 
     result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
 
     assert not result.ok
-    assert f"VM asset file {asset_path} size mismatch" in result.detail
+    assert f"profile co-work architecture arm64 image {asset_path} size mismatch" in result.detail
 
 
 def test_remote_readiness_rejects_cache_header_drift() -> None:
@@ -1687,12 +1732,12 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     assert "`/assets/<channel>/manifest.json`" in release_skill
     assert "reject stale public HTML" in release_skill_text
     assert "generated timestamp, manifest URL, manifest version" in release_skill_text
-    assert "profile revision, profile catalog URL" in release_skill
+    assert "profile revision, image artifact URLs" in release_skill
     assert "image artifact URLs" in release_skill
     assert "evidence URLs" in release_skill
     assert "Host SBOM evidence is incomplete unless" in release_skill
     assert "per-binary metadata" in release_skill
-    assert "fetch immutable profile catalogs and profile-owned artifacts" in release_skill
+    assert "fetch profile-owned artifacts" in release_skill
     assert "attestation subjects and predicate URLs" in release_skill
     assert "curl -fsSL https://release.capsem.org/channels.json" in release_skill
     assert "curl -fsSL https://release.capsem.org/assets/stable/manifest.json" in release_skill
@@ -2432,7 +2477,7 @@ def test_remote_release_readiness_checker_verifies_vm_asset_file_content() -> No
     )
     assert 'fetch_and_verify_evidence_artifact(' in script
     assert '"VM asset file"' in script
-    assert 'check_evidence_artifact(item, "hash", "blake3", "VM asset file")' in workflow
+    assert "uv run python scripts/check-release-site-contract.py" in workflow
 
 
 def test_remote_release_readiness_rejects_evidence_content_drift() -> None:
@@ -2736,16 +2781,12 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
     assert '"host SBOM evidence"' in script
     assert "VM asset attestation predicate_url missing" in script
     assert "missing from {predicate_label}" in script
-    assert "attestation_predicate_evidence_urls" in workflow
-    assert '"VM OBOM evidence"' in workflow
-    assert '"host SBOM evidence"' in workflow
-    assert "VM asset attestation predicate_url missing" in workflow
-    assert "missing from {predicate_label}" in workflow
+    assert "uv run python scripts/check-release-site-contract.py" in workflow
 
 
 def test_remote_readiness_rejects_attestation_rail_drift() -> None:
     module = _readiness_checker_module()
-    workflow = _workflow_text("release-channel.yaml")
+    script = _source_text("scripts/check-remote-release-readiness.py")
     obom_bytes = b'{"bomFormat":"CycloneDX"}'
     obom_path = "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
     obom_url = f"https://release.capsem.test{obom_path}"
@@ -2794,9 +2835,9 @@ def test_remote_readiness_rejects_attestation_rail_drift() -> None:
 
     assert "health evidence github_attestations_vm_assets scope mismatch" in failures
     assert "health evidence github_attestations_vm_assets workflow mismatch" in failures
-    assert "attestation_expected_rails" in workflow
-    assert "health evidence {attestation_name} scope mismatch" in workflow
-    assert "health evidence {attestation_name} workflow mismatch" in workflow
+    assert "attestation_expected_rails" in script
+    assert "health evidence {attestation_name} scope mismatch" in script
+    assert "health evidence {attestation_name} workflow mismatch" in script
 
 
 def test_remote_readiness_rejects_host_sbom_attestation_subjects_missing_package() -> None:
@@ -2868,7 +2909,7 @@ def test_remote_readiness_rejects_host_sbom_attestation_subjects_missing_package
 
 def test_remote_readiness_rejects_noncanonical_host_sbom_evidence() -> None:
     module = _readiness_checker_module()
-    workflow = _workflow_text("release-channel.yaml")
+    script = _source_text("scripts/check-remote-release-readiness.py")
     sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
     sbom_url = "https://github.com/google/capsem/releases/download/v1.4.1/capsem-sbom.spdx.json"
     pkg_url = "https://github.com/google/capsem/releases/download/v1.4.1/Capsem-1.4.1.pkg"
@@ -2922,16 +2963,16 @@ def test_remote_readiness_rejects_noncanonical_host_sbom_evidence() -> None:
 
     assert f"host SBOM evidence {sbom_url} name mismatch" in failures
     assert "health evidence host SBOM attestation predicate_url missing" in failures
-    assert "host SBOM evidence {url} name mismatch" in workflow
-    assert "host SBOM attestation predicate_url missing" in workflow
+    assert "host SBOM evidence {url} name mismatch" in script
+    assert "host SBOM attestation predicate_url missing" in script
 
 
 def test_release_channel_smoke_host_sbom_attestation_subjects_cover_packages() -> None:
-    workflow = _workflow_text("release-channel.yaml")
+    script = _source_text("scripts/check-remote-release-readiness.py")
 
-    assert "host_sbom_attestation_subjects" in workflow
-    assert "github_attestations_host_sbom" in workflow
-    assert "host SBOM attestation subjects missing" in workflow
+    assert "host_sbom_attestation_subjects" in script
+    assert "github_attestations_host_sbom" in script
+    assert "host SBOM attestation subjects missing" in script
 
 
 def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
@@ -2945,9 +2986,6 @@ def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
         "https://release.capsem.test/channels.json": "no-cache, must-revalidate",
         "https://release.capsem.test/assets/stable/manifest.json": "no-cache, must-revalidate",
         "https://release.capsem.test/assets/releases/2030.0101.1/arm64-rootfs.erofs": (
-            "public, max-age=31536000, immutable"
-        ),
-        "https://release.capsem.test/profiles/releases/2026.06.08.7/catalog.json": (
             "public, max-age=31536000, immutable"
         ),
     }
@@ -2967,11 +3005,9 @@ def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
             "size": 4,
         }
     ]
-    profile_source = "/profiles/releases/2026.06.08.7/catalog.json"
-
     assert (
         module.check_release_cache_headers(
-            "https://release.capsem.test", "stable", profile_source, asset_files
+            "https://release.capsem.test", "stable", asset_files
         )
         == []
     )
@@ -2981,7 +3017,7 @@ def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
         "public, max-age=31536000, immutable"
     )
     failures = module.check_release_cache_headers(
-        "https://release.capsem.test", "stable", profile_source, asset_files
+        "https://release.capsem.test", "stable", asset_files
     )
     assert (
         "channel manifest https://release.capsem.test/assets/stable/manifest.json "

@@ -26,6 +26,11 @@
   let menuOpen = $state(false);
   let busy = $derived(vmStore.acting);
   let activeVm = $derived(isVM && active?.vmId ? vmStore.vms.find(v => v.id === active!.vmId) : null);
+  let activeTokenStats = $derived({
+    input: activeVm?.total_input_tokens ?? 0,
+    thinking: activeVm?.total_thinking_tokens ?? 0,
+    output: activeVm?.total_output_tokens ?? 0,
+  });
 
   const vmViewButtons: { view: TabView; label: string; icon: typeof Terminal }[] = [
     { view: 'terminal', label: 'Terminal', icon: Terminal },
@@ -265,7 +270,7 @@
   <!-- Right: active-session stats -->
   <div class="flex items-center gap-x-3 text-[11px] text-muted-foreground-1 tabular-nums">
     {#if isVM && activeVm}
-      <span title="Tokens">{formatTokens((activeVm.total_input_tokens ?? 0) + (activeVm.total_output_tokens ?? 0))} tok</span>
+      <span title="Tokens: input / thinking / output">{formatTokens(activeTokenStats.input)} in / {formatTokens(activeTokenStats.thinking)} think / {formatTokens(activeTokenStats.output)} out</span>
       <span title="Tool calls">{activeVm.total_tool_calls ?? 0} calls</span>
       <span title="Cost">{formatCost(activeVm.total_estimated_cost ?? 0)}</span>
     {/if}

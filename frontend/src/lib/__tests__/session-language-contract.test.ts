@@ -13,6 +13,10 @@ const toolbar = readFileSync(
   new URL('../components/shell/Toolbar.svelte', import.meta.url),
   'utf8',
 );
+const vmStore = readFileSync(
+  new URL('../stores/vms.svelte.ts', import.meta.url),
+  'utf8',
+);
 const stats = readFileSync(
   new URL('../components/views/StatsView.svelte', import.meta.url),
   'utf8',
@@ -91,6 +95,17 @@ describe('user-facing session language contract', () => {
     expect(toolbar).not.toContain('bg-green-');
     expect(toolbar).not.toContain('bg-amber-');
     expect(toolbar).not.toContain('bg-red-');
+  });
+
+  it('keeps active toolbar stats live and splits input, thinking, and output tokens', () => {
+    expect(vmStore).toContain('api.getVmInfo(vm.id)');
+    expect(toolbar).toContain('total_input_tokens');
+    expect(toolbar).toContain('total_thinking_tokens');
+    expect(toolbar).toContain('total_output_tokens');
+    expect(toolbar).toContain('in /');
+    expect(toolbar).toContain('think /');
+    expect(toolbar).toContain('out');
+    expect(toolbar).not.toContain('} tok</span>');
   });
 
   it('uses session wording in stats subtitles', () => {

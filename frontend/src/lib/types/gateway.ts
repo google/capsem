@@ -127,6 +127,7 @@ export interface VmSummary {
   // Telemetry (present for running sessions, absent for stopped)
   uptime_secs?: number;
   total_input_tokens?: number;
+  total_thinking_tokens?: number;
   total_output_tokens?: number;
   total_estimated_cost?: number;
   total_tool_calls?: number;
@@ -168,6 +169,7 @@ export interface SandboxInfo {
   created_at?: string;
   uptime_secs?: number;
   total_input_tokens?: number;
+  total_thinking_tokens?: number;
   total_output_tokens?: number;
   total_estimated_cost?: number;
   total_tool_calls?: number;

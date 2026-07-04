@@ -5,8 +5,10 @@
 //! publishes one; the privileged installer apply step is intentionally separate
 //! from VM asset hydration.
 
+#[cfg(test)]
+use std::collections::BTreeMap;
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::BTreeSet,
     path::{Path, PathBuf},
 };
 
@@ -231,17 +233,20 @@ struct PublishedProfileCatalogDocument {
     profiles: Vec<ProfileConfigFile>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
 struct ReleaseChannelsCatalog {
     version: u64,
     channels: BTreeMap<String, ReleaseChannelRecord>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
 struct ReleaseChannelRecord {
     manifests: Vec<ReleaseManifestRecord>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
 struct ReleaseManifestRecord {
     version: String,
@@ -254,6 +259,7 @@ struct ReleaseManifestRecord {
     max_capsem_version: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum ReleaseManifestStatus {
@@ -263,6 +269,7 @@ enum ReleaseManifestStatus {
     Revoked,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
 struct ReleaseManifestDigest {
     sha256: String,
@@ -630,6 +637,7 @@ fn release_manifest_url() -> Result<String> {
     Ok(DEFAULT_RELEASE_MANIFEST_URL.to_string())
 }
 
+#[cfg(test)]
 fn select_channel_manifest_url(
     catalog: &ReleaseChannelsCatalog,
     channel: &str,
@@ -660,6 +668,7 @@ fn select_channel_manifest_url(
         .ok_or_else(|| anyhow::anyhow!("channel {channel} has no compatible selectable manifest"))
 }
 
+#[cfg(test)]
 fn manifest_is_compatible_with_capsem(
     manifest: &ReleaseManifestRecord,
     capsem_version: &semver::Version,
@@ -683,6 +692,7 @@ fn manifest_is_compatible_with_capsem(
     true
 }
 
+#[cfg(test)]
 fn validate_channel_manifest_record(channel: &str, manifest: &ReleaseManifestRecord) -> Result<()> {
     if manifest.version.trim().is_empty() {
         anyhow::bail!("channel {channel} manifest version must not be empty");
@@ -714,6 +724,7 @@ fn validate_channel_manifest_record(channel: &str, manifest: &ReleaseManifestRec
     Ok(())
 }
 
+#[cfg(test)]
 impl ReleaseManifestStatus {
     fn selection_rank(self) -> u8 {
         match self {
@@ -1811,6 +1822,7 @@ fn validate_blake3_hex(field: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_hex_digest(value: &str, expected_len: usize, field: &str) -> Result<()> {
     if value.len() != expected_len || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         anyhow::bail!("{field} must be a {expected_len}-character hex digest");
@@ -2729,6 +2741,8 @@ mod tests {
     fn release_health_update_check_uses_updates_block() {
         let pkg_sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let deb_sha = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+        let pkg_blake3 = "1111111111111111111111111111111111111111111111111111111111111111";
+        let deb_blake3 = "2222222222222222222222222222222222222222222222222222222222222222";
         let health: ReleaseChannelHealth = serde_json::from_value(serde_json::json!({
             "schema": "capsem.assets_channel.legacy.v1",
             "updates": {
@@ -2740,12 +2754,14 @@ mod tests {
                             "name": "Capsem-99.99.99.pkg",
                             "url": "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg",
                             "sha256": pkg_sha,
+                            "blake3": pkg_blake3,
                             "size": 123
                         },
                         {
                             "name": format!("Capsem_99.99.99_{}.deb", deb_arch()),
                             "url": format!("https://github.com/google/capsem/releases/download/v99.99.99/Capsem_99.99.99_{}.deb", deb_arch()),
                             "sha256": deb_sha,
+                            "blake3": deb_blake3,
                             "size": 456
                         }
                     ]

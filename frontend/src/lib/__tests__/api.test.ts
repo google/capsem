@@ -212,6 +212,39 @@ describe('api', () => {
     });
   });
 
+  describe('getVmInfo', () => {
+    it('reads per-session info with live telemetry counters', async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok123' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
+      await api.init();
+
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        id: 'session 1',
+        name: 'Demo',
+        pid: 123,
+        status: 'Running',
+        persistent: true,
+        can_resume: false,
+        available_actions: ['pause', 'stop', 'fork'],
+        total_input_tokens: 12,
+        total_thinking_tokens: 3,
+        total_output_tokens: 7,
+        total_tool_calls: 2,
+        total_estimated_cost: 0.001,
+      }));
+
+      const info = await api.getVmInfo('session 1');
+
+      expect(mockFetch.mock.calls.at(-1)?.[0]).toContain('/vms/session%201/info');
+      expect(info.total_input_tokens).toBe(12);
+      expect(info.total_thinking_tokens).toBe(3);
+      expect(info.total_output_tokens).toBe(7);
+      expect(info.total_tool_calls).toBe(2);
+    });
+  });
+
   // ---- VM lifecycle ----
 
   describe('VM lifecycle', () => {

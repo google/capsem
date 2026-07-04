@@ -150,6 +150,7 @@ struct DbHandleInner {
     ready_cache: Mutex<Option<DbResult<()>>>,
     query_many_cache: Mutex<DbQueryManyCache>,
     read_cache_epoch: AtomicU64,
+    sync_from_disk_before_query: bool,
 }
 
 impl Drop for DbHandleInner {
@@ -220,6 +221,7 @@ impl DbHandle {
                 ready_cache: Mutex::new(None),
                 query_many_cache: Mutex::new(None),
                 read_cache_epoch: AtomicU64::new(0),
+                sync_from_disk_before_query,
             }),
         })
     }
@@ -368,20 +370,22 @@ impl DbHandle {
         let started = Instant::now();
         let query_count = queries.len();
         let params_count: usize = queries.iter().map(|(_, params)| params.len()).sum();
-        if let Some((cached_queries, cached_result)) =
-            self.inner.query_many_cache.lock().unwrap().clone()
-        {
-            if cached_queries == queries {
-                tracing::debug!(
-                    db_path = %self.inner.path.display(),
-                    operation = "query_many",
-                    cached = true,
-                    query_count,
-                    params_count,
-                    duration_ms = elapsed_ms(started),
-                    "session db handle operation completed"
-                );
-                return Ok(cached_result);
+        if !self.inner.sync_from_disk_before_query {
+            if let Some((cached_queries, cached_result)) =
+                self.inner.query_many_cache.lock().unwrap().clone()
+            {
+                if cached_queries == queries {
+                    tracing::debug!(
+                        db_path = %self.inner.path.display(),
+                        operation = "query_many",
+                        cached = true,
+                        query_count,
+                        params_count,
+                        duration_ms = elapsed_ms(started),
+                        "session db handle operation completed"
+                    );
+                    return Ok(cached_result);
+                }
             }
         }
         let cache_key = queries.clone();
@@ -404,8 +408,10 @@ impl DbHandle {
         let result = rx
             .await
             .map_err(|error| format!("db reader worker dropped query_many reply: {error}"))?;
-        if let Ok(raw) = &result {
-            *self.inner.query_many_cache.lock().unwrap() = Some((cache_key, raw.clone()));
+        if !self.inner.sync_from_disk_before_query {
+            if let Ok(raw) = &result {
+                *self.inner.query_many_cache.lock().unwrap() = Some((cache_key, raw.clone()));
+            }
         }
         match &result {
             Ok(_) => tracing::debug!(

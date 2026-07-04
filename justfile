@@ -419,32 +419,36 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     }
     trap cleanup_test_capsem_home_service EXIT
 
-    # ---- Stage 1: parallel fast-fail (audits + lint + frontend) -------------
+    # ---- Stage 1: fast-fail (audits + lint + frontend) ---------------------
     # Cheap, independent, most-common failure class. Clippy (not cargo check)
     # is the Rust lint gate per CLAUDE.md -- it's a strict superset of check
-    # and covers --all-targets. `set -e` does not trip on failed background
-    # jobs, so aggregate with FAIL=1.
-    echo "=== Audits + lint + frontend (parallel) ==="
+    # and covers --all-targets. Keep the production frontend build before
+    # clippy: capsem-app's Tauri context embeds frontend/dist at compile time.
+    # `set -e` does not trip on failed background jobs, so aggregate with
+    # FAIL=1.
+    echo "=== Audits + lint + frontend ==="
     cargo audit & PID_CARGO_AUDIT=$!
     (cd frontend && pnpm audit) & PID_PNPM_AUDIT=$!
-    cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
     uv run ruff check . & PID_RUFF=$!
     uv run ty check src/capsem & PID_TY=$!
     uv run capsem-builder validate-skills skills & PID_SKILLS=$!
-    (
+    FAIL=0
+    if ! (
         cd frontend
         pnpm run check
         pnpm run test
         pnpm run build
-    ) & PID_FE=$!
-    FAIL=0
+    ); then
+        echo "frontend (check/test/build) failed"
+        FAIL=1
+    fi
+    cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
     wait $PID_CARGO_AUDIT || { echo "cargo audit failed"; FAIL=1; }
     wait $PID_PNPM_AUDIT  || { echo "pnpm audit failed";  FAIL=1; }
     wait $PID_CLIPPY      || { echo "cargo clippy failed (warnings = error)"; FAIL=1; }
     wait $PID_RUFF        || { echo "ruff check failed"; FAIL=1; }
     wait $PID_TY          || { echo "ty check failed"; FAIL=1; }
     wait $PID_SKILLS      || { echo "skill validation failed"; FAIL=1; }
-    wait $PID_FE          || { echo "frontend (check/test/build) failed"; FAIL=1; }
     [ $FAIL -eq 0 ] || exit 1
 
     # ---- Stage 2: cross-arch agent cross-compile ----------------------------
@@ -462,7 +466,7 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     # The floor exists to catch a "we deleted half the test suite" regression, not to
     # gate every honest defensive-code addition.
     echo "=== Rust: test suite with coverage ==="
-    cargo llvm-cov --workspace --bins --no-cfg-coverage --fail-under-lines 65
+    cargo llvm-cov --workspace --bins --lib --tests --no-cfg-coverage --fail-under-lines 65
 
     # ---- Stage 4: sign host binaries for VM tests ---------------------------
     echo "=== Sign binaries for integration tests ==="
@@ -500,7 +504,23 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
         --ignore=tests/capsem-install \
         --ignore=tests/capsem-build-chain \
         --ignore=tests/capsem-release \
+        --ignore=tests/test_release_package_binary_contract.py \
+        --ignore=tests/test_release_profile_architecture_contract.py \
+        --ignore=tests/test_release_profile_contract.py \
+        --ignore=tests/test_release_site_generated_from_json.py \
+        --ignore=tests/test_release_site_html_contract.py \
+        --ignore=tests/test_release_site_review_regressions.py \
         --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
+
+    echo "=== Python: release site shared-dist tests (serial) ==="
+    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
+        tests/test_release_package_binary_contract.py \
+        tests/test_release_profile_architecture_contract.py \
+        tests/test_release_profile_contract.py \
+        tests/test_release_site_generated_from_json.py \
+        tests/test_release_site_html_contract.py \
+        tests/test_release_site_review_regressions.py \
+        -v --tb=short
 
     echo "=== Python: serial timing and benchmark tests ==="
     CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
@@ -847,7 +867,7 @@ test-gateway-e2e: _check-assets _pack-initrd _materialize-config _sign
 coverage:
     #!/bin/bash
     set -euo pipefail
-    cargo llvm-cov --workspace --bins --no-cfg-coverage --html
+    cargo llvm-cov --workspace --bins --lib --tests --no-cfg-coverage --html
     echo "Coverage report: target/llvm-cov/html/index.html"
     open target/llvm-cov/html/index.html 2>/dev/null || true
 

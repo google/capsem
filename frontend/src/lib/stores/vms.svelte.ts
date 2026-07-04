@@ -31,9 +31,27 @@ class VmStore {
   async refresh(): Promise<void> {
     try {
       const status = await api.getStatus();
+      const vms = await Promise.all(status.vms.map(async vm => {
+        if (vm.status !== 'Running') return vm;
+        try {
+          const info = await api.getVmInfo(vm.id);
+          return {
+            ...vm,
+            ...info,
+            id: vm.id,
+            name: vm.name,
+            status: vm.status,
+            can_resume: vm.can_resume,
+            available_actions: vm.available_actions,
+            resume_blocked_reason: vm.resume_blocked_reason,
+          };
+        } catch {
+          return vm;
+        }
+      }));
       const prevCount = this.vms.length;
       const prevService = this.serviceStatus;
-      this.vms = status.vms;
+      this.vms = vms;
       this.resourceSummary = status.resource_summary;
       this.serviceStatus = status.service;
       this.polled = true;

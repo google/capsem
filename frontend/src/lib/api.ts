@@ -3,6 +3,7 @@
 import { recordWsEvent } from './tauri-log';
 import type {
   StatusResponse,
+  SandboxInfo,
   TokenResponse,
   HealthResponse,
   ProvisionRequest,
@@ -510,6 +511,12 @@ export async function getStatus(): Promise<StatusResponse> {
     }
     throw err;
   }
+}
+
+export async function getVmInfo(id: string): Promise<SandboxInfo> {
+  if (!_connected) throw new Error('Gateway not connected');
+  const resp = await _get(`/vms/${encodeURIComponent(id)}/info`);
+  return await resp.json();
 }
 
 async function routeJson(path: string): Promise<unknown> {

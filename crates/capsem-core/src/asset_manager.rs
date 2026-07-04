@@ -1675,6 +1675,7 @@ mod tests {
                 name.to_string(),
                 AssetEntry {
                     hash,
+                    sha256: String::new(),
                     size: bytes.len() as u64,
                 },
             );
@@ -1817,8 +1818,7 @@ mod tests {
 
         let asset_dir = capsem_home.join("assets/arm64");
         std::fs::create_dir_all(&asset_dir).unwrap();
-        let stable_rootfs_hash =
-            "1111111111111111111111111111111111111111111111111111111111111111";
+        let stable_rootfs_hash = "1111111111111111111111111111111111111111111111111111111111111111";
         let nightly_rootfs_hash =
             "2222222222222222222222222222222222222222222222222222222222222222";
         let stable_rootfs = asset_dir.join(hash_filename("rootfs.erofs", stable_rootfs_hash));

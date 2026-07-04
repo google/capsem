@@ -51,6 +51,10 @@ def _write_publishable_manifest(root: Path) -> Path:
             arm64 / "obom.cdx.json",
             b'{"bomFormat":"CycloneDX","metadata":{"tools":[{"name":"cdxgen"}]}}',
         ),
+        "software-inventory.json": _write_asset(
+            arm64 / "software-inventory.json",
+            b'{"schema":"capsem.profile_software_inventory.v1","architecture":"arm64","packages":[]}',
+        ),
     }
     manifest = {
         "format": 2,
@@ -240,29 +244,29 @@ def test_assets_channel_profile_catalog_is_publishable_not_local(tmp_path: Path)
         f"capsem-admin assets channel build failed:\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
-    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
-    assert health["profiles"]["source"] == catalog_url
-    assert health["updates"]["profiles"]["source"] == catalog_url
+    assert health["profiles"]["source"] == "manifest.profiles"
+    assert health["updates"]["profiles"]["source"] == "manifest.profiles"
+    assert "profile_catalog" not in health["urls"]
 
-    catalog_path = dist / catalog_url.removeprefix("/")
-    catalog_bytes = catalog_path.read_bytes()
-    catalog_text = catalog_bytes.decode()
-    assert "file://" not in catalog_text
-    assert str(tmp_path) not in catalog_text
-    assert "https://release.capsem.org/assets/releases/2030.0101.1/arm64-vmlinuz" in catalog_text
+    manifest_path = dist / "assets" / "stable" / "manifest.json"
+    manifest_text = manifest_path.read_text(encoding="utf-8")
+    assert "file://" not in manifest_text
+    assert str(tmp_path) not in manifest_text
+    assert "/assets/releases/2030.0101.1/arm64-vmlinuz" in manifest_text
     assert (
-        "https://release.capsem.org/assets/releases/2030.0101.1/arm64-obom.cdx.json" in catalog_text
+        "/assets/releases/2030.0101.1/arm64-obom.cdx.json" in manifest_text
     )
-    assert health["profiles"]["hash"] == blake3(catalog_bytes).hexdigest()
 
-    catalog = json.loads(catalog_text)
-    assert catalog["schema"] == "capsem.profile_catalog.v1"
-    profile = catalog["profiles"][0]
-    arm64 = profile["assets"]["arch"]["arm64"]
-    assert arm64["kernel"]["hash"].startswith("blake3:")
-    assert arm64["kernel"]["size"] > 0
-    assert profile["obom"]["arch"]["arm64"]["url"] == (
-        "https://release.capsem.org/assets/releases/2030.0101.1/arm64-obom.cdx.json"
+    manifest = json.loads(manifest_text)
+    assert "profile_catalog" not in manifest
+    profile = manifest["profiles"]["code"]
+    arm64 = profile["architectures"][0]
+    kernel = next(item for item in arm64["images"] if item["kind"] == "kernel")
+    assert kernel["digest"]["blake3"]
+    assert kernel["bytes"] > 0
+    obom = next(item for item in arm64["evidence"] if item["kind"] == "obom")
+    assert obom["url"] == (
+        "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
     )
 
 

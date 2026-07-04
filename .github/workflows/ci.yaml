@@ -45,7 +45,7 @@ jobs:
       - name: Unit tests (KVM backend) with coverage
         timeout-minutes: 45
         run: |
-          cargo llvm-cov nextest --bins --no-cfg-coverage --profile ci --codecov --output-path codecov-linux.json -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process -p capsem-bench -p capsem-mock-server
+          cargo llvm-cov nextest --no-cfg-coverage --bins --profile ci --codecov --output-path codecov-linux.json -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process -p capsem-bench -p capsem-mock-server
           cargo llvm-cov report --bins --summary-only -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-process -p capsem-bench -p capsem-mock-server 2>&1 | tee coverage-summary-linux.txt
 
       - name: Upload Linux coverage
@@ -154,7 +154,7 @@ jobs:
       # capsem-mcp-builtin are thin binaries that pull capsem-core logic.
       - name: Unit tests with coverage
         run: |
-          cargo llvm-cov nextest --bins --no-cfg-coverage --profile ci --codecov --output-path codecov-unit.json -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server
+          cargo llvm-cov nextest --no-cfg-coverage --bins --profile ci --codecov --output-path codecov-unit.json -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server
           cargo llvm-cov report --bins --summary-only -p capsem-core -p capsem-admin -p capsem-agent -p capsem-logger -p capsem-proto -p capsem-guard -p capsem-gateway -p capsem-service -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-tray -p capsem-app -p capsem-process -p capsem-bench -p capsem-mock-server 2>&1 | tee coverage-summary.txt
 
       # Integration tests (tests/ directory, cross-crate)
@@ -212,8 +212,7 @@ jobs:
           for bin in target/debug/capsem-process target/debug/capsem-service target/debug/capsem target/debug/capsem-mcp target/debug/capsem-mock-server target/debug/capsem-bench-rs; do
             codesign --sign - --entitlements entitlements.plist --force "$bin"
           done
-          uv run python -m pytest \
-            tests/capsem-bootstrap/ \
+          uv run python -m pytest tests/capsem-bootstrap/ \
             tests/capsem-codesign/ \
             tests/capsem-rootfs-artifacts/ \
             tests/capsem-release/ \

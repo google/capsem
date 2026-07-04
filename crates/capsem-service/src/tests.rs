@@ -9301,6 +9301,30 @@ async fn session_db_handle_state_contract() {
     );
 }
 
+#[test]
+fn session_db_handle_registration_is_idempotent_for_same_session_path() {
+    let state = make_test_state();
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("db-state-idempotent");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    writer.shutdown_blocking();
+
+    let first = state
+        .register_session_db_handle("db-state-idempotent", &session_dir)
+        .expect("first handle registration succeeds");
+    let second = state
+        .register_session_db_handle("db-state-idempotent", &session_dir)
+        .expect("second registration for the same session path reuses the handle");
+
+    assert!(
+        Arc::ptr_eq(&first, &second),
+        "route races must not create parallel external reader handles for the same session DB; \
+         the UI polls stats and security ledgers concurrently, and multiple reader workers each \
+         syncing hot tables from disk can surface SQLite table-lock errors"
+    );
+}
+
 #[tokio::test]
 async fn service_rehydrates_session_db_handles() {
     let (state, _dir) = make_test_state_with_tempdir();
@@ -9349,6 +9373,84 @@ async fn status_reports_db_readiness() {
         body["session_db"].get("error").is_none(),
         "ready session DB status must not invent an error: {body}"
     );
+}
+
+#[tokio::test]
+async fn info_route_populates_live_session_toolbar_stats() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let app = build_service_router(Arc::clone(&state));
+    let session_dir = state.run_dir.join("sessions").join("toolbar-stats-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let mut usage_details = BTreeMap::new();
+    usage_details.insert("thinking".to_string(), 3);
+    usage_details.insert("reasoning".to_string(), 4);
+    let writer = capsem_logger::DbWriter::open(&session_dir.join("session.db"), 16).unwrap();
+    writer.write_blocking(capsem_logger::WriteOp::ModelCall(
+        capsem_logger::ModelCall {
+            event_id: Some("abc123abc123".to_string()),
+            timestamp: std::time::SystemTime::now(),
+            provider: "openai".to_string(),
+            protocol: Some("openai".to_string()),
+            model: Some("gpt-5-demo".to_string()),
+            process_name: Some("codex".to_string()),
+            pid: Some(42),
+            method: "POST".to_string(),
+            path: "/v1/responses".to_string(),
+            stream: false,
+            system_prompt_preview: None,
+            messages_count: 1,
+            tools_count: 1,
+            request_bytes: 32,
+            request_body_preview: None,
+            request_body_full: None,
+            message_id: Some("msg-toolbar".to_string()),
+            status_code: Some(200),
+            text_content: Some("done".to_string()),
+            thinking_content: Some("checking stats".to_string()),
+            response_body_full: None,
+            stop_reason: Some("end_turn".to_string()),
+            input_tokens: Some(12),
+            output_tokens: Some(7),
+            usage_details,
+            duration_ms: 25,
+            response_bytes: 64,
+            estimated_cost_usd: 0.001,
+            trace_id: Some("trace-toolbar".to_string()),
+            credential_ref: None,
+            tool_calls: vec![capsem_logger::ToolCallEntry {
+                call_index: 0,
+                call_id: "tool-toolbar".to_string(),
+                tool_name: "Read".to_string(),
+                arguments: Some(r#"{"path":"/root/demo.md"}"#.to_string()),
+                origin: "model".to_string(),
+                trace_id: Some("trace-toolbar".to_string()),
+            }],
+            tool_responses: vec![],
+        },
+    ));
+    writer.shutdown_blocking();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "toolbar-stats-vm",
+        std::process::id(),
+        session_dir,
+    );
+
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/toolbar-stats-vm/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["session_db"]["ready"], true);
+    assert_eq!(body["model_call_count"], 1);
+    assert_eq!(body["total_input_tokens"], 12);
+    assert_eq!(body["total_thinking_tokens"], 7);
+    assert_eq!(body["total_output_tokens"], 7);
+    assert_eq!(body["total_tool_calls"], 1);
+    assert_eq!(body["total_estimated_cost"], 0.001);
 }
 
 #[tokio::test]

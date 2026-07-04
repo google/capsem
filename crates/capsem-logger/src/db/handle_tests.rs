@@ -1269,6 +1269,50 @@ async fn db_handle_query_many_cache_invalidates_after_write() {
 }
 
 #[tokio::test]
+async fn external_reader_query_many_does_not_cache_across_external_writes() {
+    let p = temp_db_path("external-query-many-no-stale-cache");
+    let writer = DbWriter::open(&p, 16).expect("open owning writer");
+    writer.write_blocking(WriteOp::NetEvent(make_net_event(
+        "external-cache-one.example",
+        Decision::Allowed,
+    )));
+    writer.flush().await;
+
+    let db = DbHandle::open_external_reader(&p).expect("open service external reader");
+    db.ready().await.expect("external reader ready");
+    let count_query = || {
+        vec![(
+            "SELECT COUNT(*) AS count FROM net_events".to_string(),
+            Vec::new(),
+        )]
+    };
+
+    let first = db
+        .query_many(count_query())
+        .await
+        .expect("first external batch query");
+    let first: serde_json::Value = serde_json::from_str(&first[0]).expect("first count JSON");
+    assert_eq!(first["rows"], json!([[1]]));
+
+    writer.write_blocking(WriteOp::NetEvent(make_net_event(
+        "external-cache-two.example",
+        Decision::Allowed,
+    )));
+    writer.flush().await;
+
+    let second = db
+        .query_many(count_query())
+        .await
+        .expect("second external batch query after external write");
+    let second: serde_json::Value = serde_json::from_str(&second[0]).expect("second count JSON");
+    assert_eq!(
+        second["rows"],
+        json!([[2]]),
+        "external-reader query_many must resync from disk on every call instead of returning a stale batch cache. {DB_BOUNDARY_RATIONALE}"
+    );
+}
+
+#[tokio::test]
 async fn db_handle_query_rejects_mutations() {
     let p = temp_db_path("query-rejects-mutations");
     let db = DbHandle::open(&p).expect("open handle");

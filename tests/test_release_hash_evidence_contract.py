@@ -360,9 +360,8 @@ def _fixture_artifact_bytes(url: str) -> bytes:
 
 
 def _digest_subjects(graph: dict):
-    for channel, manifests in graph["manifests"].items():
-        for version, manifest in manifests.items():
-            prefix = f"{channel}/{version}"
+    for manifests in graph["manifests"].values():
+        for manifest in manifests.values():
             for package in manifest["packages"]:
                 yield "package", package["url"], package["digest"]
                 for binary in package["binaries"]:
@@ -373,8 +372,6 @@ def _digest_subjects(graph: dict):
 
             for profile_id, profile in manifest["profiles"].items():
                 for architecture in profile["architectures"]:
-                    arch = architecture["architecture"]
-                    profile_prefix = f"{prefix}/{profile_id}/{arch}"
                     for config in architecture["config"]:
                         yield "profile_config", config["path"], config["digest"]
                     for image in architecture["images"]:

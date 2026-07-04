@@ -419,11 +419,11 @@ def check_release_site_contract(release_site: str, channel: str) -> CheckResult:
 
     if failures:
         return CheckResult("release.capsem.org contract", False, "; ".join(failures))
-        return CheckResult(
-            "release.capsem.org contract",
-            True,
-            "index, channels.json, manifest, assets, and cache headers agree",
-        )
+    return CheckResult(
+        "release.capsem.org contract",
+        True,
+        "index, channels.json, manifest, assets, and cache headers agree",
+    )
 
 
 def is_release_graph_manifest(manifest_data: dict[str, Any]) -> bool:

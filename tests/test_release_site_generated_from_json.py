@@ -560,6 +560,8 @@ def minimal_release_graph(
 ) -> tuple[dict[str, Any], dict[str, Any], bytes, dict[str, bytes]]:
     artifact_bytes = {
         "/profiles/releases/2026.0703.1/co-work/arm64/mcp.json": b'{"mcpServers":{}}\n',
+        "/assets/releases/2026.0703.1/arm64-vmlinuz": b"kernel image bytes\n",
+        "/assets/releases/2026.0703.1/arm64-initrd.img": b"initrd image bytes\n",
         "/assets/releases/2026.0703.1/arm64-rootfs.erofs": b"rootfs image bytes\n",
     }
     manifest: dict[str, Any] = {
@@ -636,9 +638,44 @@ def minimal_release_graph(
                         ],
                         "images": [
                             {
+                                "kind": "kernel",
+                                "name": "vmlinuz",
+                                "url": "/assets/releases/2026.0703.1/arm64-vmlinuz",
+                                "status": "current",
+                                "bytes": len(
+                                    artifact_bytes[
+                                        "/assets/releases/2026.0703.1/arm64-vmlinuz"
+                                    ]
+                                ),
+                                "digest": digest(
+                                    checker,
+                                    artifact_bytes[
+                                        "/assets/releases/2026.0703.1/arm64-vmlinuz"
+                                    ],
+                                ),
+                            },
+                            {
+                                "kind": "initrd",
+                                "name": "initrd.img",
+                                "url": "/assets/releases/2026.0703.1/arm64-initrd.img",
+                                "status": "current",
+                                "bytes": len(
+                                    artifact_bytes[
+                                        "/assets/releases/2026.0703.1/arm64-initrd.img"
+                                    ]
+                                ),
+                                "digest": digest(
+                                    checker,
+                                    artifact_bytes[
+                                        "/assets/releases/2026.0703.1/arm64-initrd.img"
+                                    ],
+                                ),
+                            },
+                            {
                                 "kind": "rootfs",
                                 "name": "rootfs.erofs",
                                 "url": "/assets/releases/2026.0703.1/arm64-rootfs.erofs",
+                                "status": "current",
                                 "bytes": len(
                                     artifact_bytes[
                                         "/assets/releases/2026.0703.1/arm64-rootfs.erofs"
@@ -695,7 +732,14 @@ def minimal_release_pages(
     profile = manifest["profiles"]["co-work"]
     architecture = profile["architectures"][0]
     config = architecture["config"][0]
-    image = architecture["images"][0]
+    image_digest_labels = [
+        label
+        for image in architecture["images"]
+        for label in (
+            checker.hash_label(image["digest"]["sha256"]),
+            checker.hash_label(image["digest"]["blake3"]),
+        )
+    ]
     return {
         f"{site}/": " ".join(
             [
@@ -743,8 +787,7 @@ def minimal_release_pages(
                 architecture["architecture"],
                 checker.hash_label(config["digest"]["sha256"]),
                 checker.hash_label(config["digest"]["blake3"]),
-                checker.hash_label(image["digest"]["sha256"]),
-                checker.hash_label(image["digest"]["blake3"]),
+                *image_digest_labels,
             ]
         ),
     }

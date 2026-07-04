@@ -1221,6 +1221,7 @@ fn assets_channel_record_binary_command(args: AssetsChannelRecordBinaryArgs) -> 
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_assets_channel(
     manifest_url: &str,
     assets_dir: &Path,
@@ -1935,10 +1936,8 @@ fn validate_assets_channel_graph_health(
             return Err(anyhow!("graph package must list at least one binary"));
         }
     }
-    if !packages.is_empty() {
-        if host_binary_files.is_empty() {
-            return Err(anyhow!("health.json host binary files missing"));
-        }
+    if !packages.is_empty() && host_binary_files.is_empty() {
+        return Err(anyhow!("health.json host binary files missing"));
     }
 
     let mut current_asset_subjects = BTreeSet::new();
@@ -3194,6 +3193,7 @@ fn package_sbom_refs(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn graph_profile_document(
     profile: &ProfileConfigFile,
     config_root: &Path,
@@ -3657,8 +3657,6 @@ fn package_platform_for_kind(kind: &str) -> &'static str {
 fn package_architecture_for_name(name: &str) -> String {
     if name.contains("x86_64") || name.contains("amd64") {
         "x86_64".to_string()
-    } else if name.contains("arm64") || name.contains("aarch64") {
-        "arm64".to_string()
     } else {
         "arm64".to_string()
     }
@@ -8511,7 +8509,7 @@ decision = "block"
         assert_eq!(header.len(), 60);
         out.write_all(header.as_bytes()).expect("ar header");
         out.write_all(contents).expect("ar contents");
-        if contents.len() % 2 != 0 {
+        if !contents.len().is_multiple_of(2) {
             out.write_all(b"\n").expect("ar padding");
         }
     }
@@ -9033,7 +9031,7 @@ decision = "block"
         write_profile_release_manifest(
             &nightly_manifest,
             "1.5.0-nightly.20300101",
-            "2026.07.02.2",
+            "2026.7.2-2",
             "supported",
         );
 
@@ -9042,7 +9040,7 @@ decision = "block"
             channel: "nightly".to_string(),
             manifest_version: "1.5.0-nightly.20300101".to_string(),
             profile: "co-work".to_string(),
-            profile_version: "2026.07.02.2".to_string(),
+            profile_version: "2026.7.2-2".to_string(),
             json: true,
         };
 
@@ -9056,7 +9054,7 @@ decision = "block"
         assert_eq!(report.changed_manifests, vec!["1.5.0-nightly.20300101"]);
         assert_eq!(report.changed_profiles, vec!["co-work"]);
         assert_eq!(report.changed_config_refs, 1);
-        assert_eq!(report.changed_image_artifacts, 1);
+        assert_eq!(report.changed_image_artifacts, 3);
 
         let nightly: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&nightly_manifest).expect("nightly manifest"))
@@ -9100,7 +9098,7 @@ decision = "block"
             "--profile",
             "co-work",
             "--profile-version",
-            "2026.07.02.2",
+            "2026.7.2-2",
             "--status",
             "removed",
         ])
@@ -9153,11 +9151,27 @@ decision = "block"
 	              "status": "{status}"
 	            }}
 	          ],
-	          "images": [
-	            {{
-	              "kind": "rootfs",
-	              "name": "rootfs.erofs",
-	              "url": "/profiles/releases/{profile_revision}/co-work/arm64/rootfs.erofs",
+		          "images": [
+		            {{
+		              "kind": "kernel",
+		              "name": "vmlinuz",
+		              "url": "/profiles/releases/{profile_revision}/co-work/arm64/vmlinuz",
+		              "bytes": 42,
+		              "digest": {digest},
+		              "status": "{status}"
+		            }},
+		            {{
+		              "kind": "initrd",
+		              "name": "initrd.img",
+		              "url": "/profiles/releases/{profile_revision}/co-work/arm64/initrd.img",
+		              "bytes": 42,
+		              "digest": {digest},
+		              "status": "{status}"
+		            }},
+		            {{
+		              "kind": "rootfs",
+		              "name": "rootfs.erofs",
+		              "url": "/profiles/releases/{profile_revision}/co-work/arm64/rootfs.erofs",
 	              "bytes": 42,
 	              "digest": {digest},
 	              "status": "{status}"
