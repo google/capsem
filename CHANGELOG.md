@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named software-inventory real-version regression proving profile
+  software rows reject missing, latest, unknown, and unversioned placeholders.
 - Added a named macOS package binary cohort regression covering app, tray,
   helper, CLI, hashes, installed paths, and SBOM component refs.
 - Added a named package-owned-binaries regression so package detail pages list
