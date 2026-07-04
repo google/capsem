@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a named Codecov binary/release-target regression proving CI covers
+  executable targets, release-critical components, and package rail tests.
 - Added a named Codecov crate reporting regression proving every Rust
   workspace crate source directory appears in the uploaded coverage surface.
 - Added a named profile evidence scoping regression proving ABOM and OBOM

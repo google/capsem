@@ -348,6 +348,13 @@ def test_binary_targets_in_coverage_workflow() -> None:
     )
 
 
+def test_binary_and_release_targets_reported() -> None:
+    test_rust_coverage_includes_bins()
+    test_release_critical_crates_are_reported()
+    test_release_binaries_and_package_rails_covered()
+    test_binary_targets_in_coverage_workflow()
+
+
 def test_crate_and_binary_enumeration() -> None:
     test_workspace_crates_and_bins_enumerated()
     test_every_crate_in_codecov()
