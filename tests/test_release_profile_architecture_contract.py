@@ -361,35 +361,41 @@ def test_software_inventory_evidence_once_per_architecture() -> None:
 def test_profile_architecture_sections() -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    profile = graph["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]
-    page = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "stable"
-        / "profiles"
-        / "co-work"
-        / "index.html"
-    ).read_text(encoding="utf-8")
 
-    for architecture in profile["architectures"]:
-        heading = f"Architecture {architecture['architecture']}"
-        assert heading in page
-        section = page.split(heading, maxsplit=1)[1].split("</section>", maxsplit=1)[0]
-        assert "Installed Software" in section
-        assert "Config Files" in section
-        assert "Profile Images" in section
-        assert "Profile Evidence" in section
-        for software in architecture["software"]:
-            assert software["name"] in section
-            assert software["evidence"] in section
-        for config in architecture["config"]:
-            assert config["path"] in section
-            assert config["url"] in section
-        for image in architecture["images"]:
-            assert image["name"] in section
-            assert image["url"] in section
-        for evidence in architecture["evidence"]:
-            assert evidence["url"] in section
+    for channel, record in graph["channels"].items():
+        current = next(item for item in record["manifests"] if item["status"] == "current")
+        manifest = graph["manifests"][channel][current["version"]]
+        for profile_id, profile in manifest["profiles"].items():
+            page = (
+                RELEASE_SITE_DIST
+                / "channels"
+                / channel
+                / "profiles"
+                / profile_id
+                / "index.html"
+            ).read_text(encoding="utf-8")
+
+            for architecture in profile["architectures"]:
+                label = f"{channel}:{profile_id}:{architecture['architecture']}"
+                heading = f"Architecture {architecture['architecture']}"
+                assert heading in page, label
+                section = page.split(heading, maxsplit=1)[1].split("</section>", maxsplit=1)[0]
+                assert "Profile Evidence" in section, label
+                assert "Installed Software" in section, label
+                assert "Config Files" in section, label
+                assert "Profile Images" in section, label
+
+                for software in architecture["software"]:
+                    assert software["name"] in section, label
+                    assert software["evidence"] in section, label
+                for config in architecture["config"]:
+                    assert config["path"] in section, label
+                    assert config["url"] in section, label
+                for image in architecture["images"]:
+                    assert image["name"] in section, label
+                    assert image["url"] in section, label
+                for evidence in architecture["evidence"]:
+                    assert evidence["url"] in section, label
 
 
 def test_all_profiles() -> None:
