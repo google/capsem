@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Added a manifest-version independence regression proving channel manifest
+  versions stay separate from binary package and profile asset versions.
 - Added a root channel metadata regression proving the table uses manifest
   version, last updated, and manifest URL labels without selected/status/records jargon.
 - Added a root channel page regression proving stable/nightly rows render
