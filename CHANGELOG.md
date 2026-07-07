@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1783439394] - 2026-07-07
+
 ### Fixed
 - Split the binary release rail across stable and nightly manifests for the
   first 1.5 publish, proving package/SBOM metadata can move without rebuilding
