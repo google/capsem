@@ -169,7 +169,8 @@ pub struct SandboxInfo {
     pub storage: Option<StorageDiagnostics>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_db: Option<SessionDbStatus>,
-    // -- Telemetry (populated for /info, omitted when absent) --
+    // -- Telemetry (populated by explicit stats/status aggregation surfaces,
+    // omitted from hot lifecycle routes such as /vms/{id}/info) --
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

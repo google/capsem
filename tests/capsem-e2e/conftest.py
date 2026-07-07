@@ -9,9 +9,9 @@ we have a test infrastructure bug.
 """
 
 import os
+import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
 
@@ -22,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers.constants import EXEC_READY_TIMEOUT
-from helpers.service import preserve_tmp_dir_on_failure
+from helpers.service import make_capsem_tmp_dir, preserve_tmp_dir_on_failure
 from helpers.sign import sign_binary
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -49,7 +49,7 @@ class RealService:
     """
 
     def __init__(self):
-        self.tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-e2e-"))
+        self.tmp_dir = make_capsem_tmp_dir("capsem-e2e-")
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.proc = None
         self._log_file = None
@@ -128,6 +128,7 @@ class RealService:
         if self._stderr_file:
             self._stderr_file.close()
         preserve_tmp_dir_on_failure(self.tmp_dir)
+        shutil.rmtree(self.tmp_dir, ignore_errors=True)
 
     def cli(self, *args, timeout=60):
         """Run the real capsem CLI binary. Returns CompletedProcess."""

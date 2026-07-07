@@ -2,6 +2,7 @@ use anyhow::Result;
 use capsem_proto::HostToGuest;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::sync::{oneshot, Notify};
 use tracing::{info, warn};
 
@@ -38,6 +39,7 @@ pub(crate) struct JobStore {
 /// "deposit still in flight" without sleeping unconditionally.
 pub(crate) struct ActiveExec {
     pub(crate) id: u64,
+    pub(crate) started_at: Instant,
     pub(crate) event_id: Option<capsem_core::security_engine::SecurityEventId>,
     pub(crate) captured: Vec<u8>,
     pub(crate) deposited: Arc<Notify>,
@@ -47,6 +49,7 @@ impl ActiveExec {
     pub(crate) fn new(id: u64) -> Self {
         Self {
             id,
+            started_at: Instant::now(),
             event_id: None,
             captured: Vec::new(),
             deposited: Arc::new(Notify::new()),

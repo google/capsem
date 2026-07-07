@@ -57,6 +57,23 @@ def _copied_files(archive_root: Path) -> set[str]:
     }
 
 
+def test_make_capsem_tmp_dir_honors_configured_parent(tmp_path, monkeypatch):
+    parent = tmp_path / "configured-tmp"
+    monkeypatch.setenv("CAPSEM_TEST_TMPDIR", str(parent))
+
+    created = svc_mod.make_capsem_tmp_dir("capsem-test-")
+
+    assert created.parent == parent
+    assert created.name.startswith("capsem-test-")
+
+
+def test_linux_default_tmp_parent_is_disk_backed(monkeypatch):
+    monkeypatch.delenv("CAPSEM_TEST_TMPDIR", raising=False)
+    monkeypatch.setattr(svc_mod.sys, "platform", "linux")
+
+    assert svc_mod.capsem_test_tmp_parent() == svc_mod.LINUX_TEST_TMP_PARENT
+
+
 def test_rootfs_img_is_skipped(artifact_env, tmp_path):
     src = _seed_tmp_dir(tmp_path)
     svc_mod.preserve_tmp_dir_on_failure(src)

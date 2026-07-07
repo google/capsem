@@ -3,7 +3,7 @@
 //! Capsem controls guest quiescence, so KVM checkpoints store parked vCPU state
 //! first, followed by a raw guest RAM image.
 
-use std::io::{BufReader, BufWriter, Read, Write};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -24,6 +24,7 @@ const MAGIC: &[u8; 16] = b"CAPSEM-KVM-CKPT\0";
 const VERSION: u32 = 7;
 const HEADER_LEN: u64 = 16 + 4 + 4 + 8 + 4 + 4 + 4;
 const COPY_CHUNK_SIZE: usize = 1024 * 1024;
+const CHECKPOINT_PROGRESS_INTERVAL: u64 = 1024 * 1024 * 1024;
 #[cfg(target_arch = "x86_64")]
 const SELECTED_MSR_INDEXES: &[u32] = &[
     0x0000_0010, // IA32_TSC
@@ -384,20 +385,56 @@ fn write_checkpoint_inner(
         write_mmio_device_snapshot(&mut writer, snapshot)?;
     }
 
+    let memory_start = writer
+        .stream_position()
+        .context("checkpoint memory start position")?;
+    let memory_end = memory_start
+        .checked_add(memory.size())
+        .context("checkpoint memory end offset overflow")?;
     let mut offset = 0u64;
+    let mut sparse_bytes = 0u64;
+    let mut data_bytes = 0u64;
+    let mut next_progress = CHECKPOINT_PROGRESS_INTERVAL;
     let mut buf = vec![0u8; COPY_CHUNK_SIZE.min(memory.size() as usize)];
+    let zero_buf = vec![0u8; buf.len()];
     while offset < memory.size() {
         let len = (memory.size() - offset).min(buf.len() as u64) as usize;
         memory
             .read_at(offset, &mut buf[..len])
             .context("read guest memory for checkpoint")?;
-        writer
-            .write_all(&buf[..len])
-            .context("write guest memory checkpoint")?;
+        if buf[..len] == zero_buf[..len] {
+            writer
+                .seek(SeekFrom::Current(len as i64))
+                .context("seek sparse guest memory checkpoint hole")?;
+            sparse_bytes += len as u64;
+        } else {
+            writer
+                .write_all(&buf[..len])
+                .context("write guest memory checkpoint")?;
+            data_bytes += len as u64;
+        }
         offset += len as u64;
+        if offset >= next_progress || offset == memory.size() {
+            tracing::info!(
+                target: "suspend",
+                op = "kvm_write_checkpoint_memory",
+                copied_bytes = offset,
+                total_bytes = memory.size(),
+                data_bytes,
+                sparse_bytes,
+                "checkpoint memory copy progress"
+            );
+            while next_progress <= offset {
+                next_progress += CHECKPOINT_PROGRESS_INTERVAL;
+            }
+        }
     }
 
     writer.flush().context("flush checkpoint")?;
+    writer
+        .get_ref()
+        .set_len(memory_end)
+        .context("set sparse checkpoint logical length")?;
     writer
         .get_ref()
         .sync_all()
@@ -736,12 +773,17 @@ mod tests {
     use super::*;
 
     fn test_header() -> CheckpointHeader {
+        #[cfg(target_arch = "x86_64")]
+        let vcpu_state_len = X86_VCPU_STATE_LEN;
+        #[cfg(not(target_arch = "x86_64"))]
+        let vcpu_state_len = 0;
+
         CheckpointHeader {
             version: VERSION,
             arch: arch_tag(),
             ram_bytes: 4096,
             vcpu_count: 2,
-            vcpu_state_len: 0,
+            vcpu_state_len,
             mmio_device_count: 3,
         }
     }
@@ -927,6 +969,48 @@ mod tests {
         assert_eq!(restored.vcpus[1].msrs[0].data, 0x1001);
         assert_eq!(restored.vm, vm_snapshot());
         assert_eq!(restored.mmio_devices, vec![mmio(3)]);
+    }
+
+    #[cfg(all(target_arch = "x86_64", unix))]
+    #[test]
+    fn zero_memory_is_written_as_sparse_holes() {
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = temp_dir("sparse-zero-memory");
+        let path = dir.join("state.kvm");
+        let mem_size = 64 * 1024 * 1024;
+        let mem = GuestMemory::new(mem_size).unwrap();
+        mem.write_at(0, b"front").unwrap();
+        mem.write_at(mem_size - 4, b"tail").unwrap();
+
+        write_checkpoint(&path, &mem, &[snapshot(0)], &vm_snapshot(), &[]).unwrap();
+
+        let metadata = std::fs::metadata(&path).unwrap();
+        let logical_len = HEADER_LEN
+            + 4
+            + X86_VCPU_STATE_LEN as u64
+            + (3 * std::mem::size_of::<KvmIrqchip>()) as u64
+            + std::mem::size_of::<KvmPitState2>() as u64
+            + std::mem::size_of::<KvmClockData>() as u64
+            + mem_size;
+        assert_eq!(metadata.len(), logical_len);
+        assert!(
+            metadata.blocks() * 512 < logical_len / 2,
+            "zero memory should be sparse: allocated={} logical={logical_len}",
+            metadata.blocks() * 512
+        );
+
+        let restored_mem = GuestMemory::new(mem_size).unwrap();
+        read_checkpoint(&path, &restored_mem, 1, 0).unwrap();
+        let mut front = [0u8; 5];
+        let mut middle = [1u8; 16];
+        let mut tail = [0u8; 4];
+        restored_mem.read_at(0, &mut front).unwrap();
+        restored_mem.read_at(mem_size / 2, &mut middle).unwrap();
+        restored_mem.read_at(mem_size - 4, &mut tail).unwrap();
+        assert_eq!(&front, b"front");
+        assert_eq!(middle, [0u8; 16]);
+        assert_eq!(&tail, b"tail");
     }
 
     #[cfg(target_arch = "x86_64")]

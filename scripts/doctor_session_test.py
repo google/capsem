@@ -24,9 +24,11 @@ import argparse
 import gzip
 import json
 import os
+import shlex
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -63,6 +65,7 @@ def _run_dir() -> Path:
 
 CAPSEM_HOME = _capsem_home()
 SESSIONS_DIR = _run_dir() / "sessions"
+PERSISTENT_DIR = _run_dir() / "persistent"
 MAIN_DB = CAPSEM_HOME / "sessions" / "main.db"
 
 
@@ -97,57 +100,152 @@ class Results:
         return len(self.failed) == 0
 
 
-def run_doctor(binary: str, assets_dir: str, mock_base_url: str) -> tuple[str, int]:
-    """Boot the VM with capsem-doctor, return (session_id, exit_code).
+def _new_session_dirs(root: Path, existing: set[str]) -> list[Path]:
+    if not root.exists():
+        return []
+    return sorted(
+        (p for p in root.iterdir() if p.is_dir() and p.name not in existing),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
 
-    Finds the session by looking for the newest run-* dir created during
-    this invocation (the service preserves session dirs after `capsem run`).
-    """
-    env = {
+
+def _parse_created_session_id(stdout: str) -> str:
+    for line in stdout.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped.split()[0]
+    raise RuntimeError("capsem create returned no session id")
+
+
+def _cli_env(assets_dir: str) -> dict[str, str]:
+    return {
         **os.environ,
         "CAPSEM_ASSETS_DIR": assets_dir,
-        MOCK_SERVER_ENV: mock_base_url,
         "RUST_LOG": "capsem=warn",
     }
 
-    # Snapshot existing session dirs so we can diff after.
-    existing = set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
 
-    print(f"{BOLD}Booting VM with capsem-doctor ...{RESET}")
-    proc = subprocess.run(
-        [binary, "run", "capsem-doctor"],
+def run_doctor(binary: str, assets_dir: str, mock_base_url: str) -> tuple[str, Path, int]:
+    """Boot the VM with capsem-doctor, return (session_id, exit_code).
+
+    Uses an explicit named session so the post-run session DB remains
+    available for ledger validation. `capsem run` intentionally cleans up its
+    ephemeral session directory after exit.
+    """
+    env = _cli_env(assets_dir)
+
+    existing_persistent = (
+        set(p.name for p in PERSISTENT_DIR.iterdir()) if PERSISTENT_DIR.exists() else set()
+    )
+    existing_sessions = (
+        set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
+    )
+
+    session_name = f"doctor-ledger-{os.getpid()}-{int(time.time())}"
+    print(f"{BOLD}Creating VM for capsem-doctor ...{RESET}")
+    create = subprocess.run(
+        [
+            binary,
+            "create",
+            "-n",
+            session_name,
+            "--ram",
+            "2",
+            "--cpu",
+            "2",
+            "-e",
+            f"{MOCK_SERVER_ENV}={mock_base_url}",
+        ],
         env=env,
         capture_output=True,
         text=True,
         timeout=180,
     )
-    exit_code = proc.returncode
-    if proc.stdout.strip():
-        print(proc.stdout.strip())
+    if create.returncode != 0:
+        if create.stdout.strip():
+            print(create.stdout.strip())
+        if create.stderr.strip():
+            print(create.stderr.strip(), file=sys.stderr)
+        sys.exit(create.returncode)
+    session_id = _parse_created_session_id(create.stdout)
+    session_dir = PERSISTENT_DIR / session_id
 
-    # Find the new session dir.
-    new_sessions = sorted(
-        (p for p in SESSIONS_DIR.iterdir() if p.name not in existing and p.name.startswith("run-")),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    ) if SESSIONS_DIR.exists() else []
+    if not session_dir.exists():
+        new_sessions = _new_session_dirs(PERSISTENT_DIR, existing_persistent)
+        if new_sessions:
+            session_dir = new_sessions[0]
+            session_id = session_dir.name
 
-    if not new_sessions:
-        print(f"{RED}FAIL: no new session directory found in {SESSIONS_DIR}{RESET}")
+    if not session_dir.exists():
+        print(f"{RED}FAIL: no persistent session directory found in {PERSISTENT_DIR}{RESET}")
         print(f"    {YELLOW}--- stderr ---{RESET}")
-        for line in proc.stderr.strip().splitlines()[:30]:
+        for line in create.stderr.strip().splitlines()[:30]:
             print(f"    {line}")
         sys.exit(1)
 
-    session_id = new_sessions[0].name
+    print(f"{BOLD}Booting VM with capsem-doctor ...{RESET}")
+    proc = subprocess.run(
+        [
+            binary,
+            "exec",
+            session_id,
+            (
+                f"export {MOCK_SERVER_ENV}={shlex.quote(mock_base_url)}; "
+                "capsem-doctor"
+            ),
+            "--timeout",
+            "220",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=240,
+    )
+    exit_code = proc.returncode
+    if proc.stdout.strip():
+        print(proc.stdout.strip())
+    if proc.stderr.strip():
+        print(proc.stderr.strip(), file=sys.stderr)
+
+    preserved_dir = cleanup_session(binary, session_id, assets_dir, existing_sessions)
+    if preserved_dir is not None:
+        session_dir = preserved_dir
+
     print(f"  session: {CYAN}{session_id}{RESET}  exit_code: {exit_code}")
-    return session_id, exit_code
+    return session_id, session_dir, exit_code
 
 
-def verify_session(session_id: str) -> bool:
+def cleanup_session(
+    binary: str,
+    session_id: str,
+    assets_dir: str,
+    existing_sessions: set[str],
+) -> Path | None:
+    subprocess.run(
+        [binary, "delete", session_id],
+        env=_cli_env(assets_dir),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    for _ in range(50):
+        matches = [
+            p
+            for p in _new_session_dirs(SESSIONS_DIR, existing_sessions)
+            if p.name.startswith(f"{session_id}-")
+        ]
+        if matches:
+            return matches[0]
+        time.sleep(0.1)
+    return None
+
+
+def verify_session(session_id: str, session_dir: Path) -> bool:
     """Open the session DB, run all assertions, return True on success."""
-    db_path = SESSIONS_DIR / session_id / "session.db"
-    gz_path = SESSIONS_DIR / session_id / "session.db.gz"
+    db_path = session_dir / "session.db"
+    gz_path = session_dir / "session.db.gz"
 
     # Session DB may be gzip-compressed after vacuum.
     if not db_path.exists() and gz_path.exists():
@@ -191,10 +289,11 @@ def verify_session(session_id: str) -> bool:
         f"allowed net_events: {decision_map.get('allowed', 0)}",
         "no allowed net_events (test_network allowed-domain tests may have failed)",
     )
+    blocked_count = sum(decision_map.get(k, 0) for k in ("denied", "blocked", "error"))
     r.check(
-        "denied" in decision_map,
-        f"denied net_events: {decision_map.get('denied', 0)}",
-        "no denied net_events (test_network blocked-domain tests may have failed)",
+        blocked_count > 0,
+        f"blocked/error net_events: {blocked_count}",
+        "no blocked/error net_events (test_network blocked-domain tests may have failed)",
     )
 
     # -- fs_events ---------------------------------------------------------
@@ -212,10 +311,11 @@ def verify_session(session_id: str) -> bool:
             "SELECT action, COUNT(*) as cnt FROM fs_events GROUP BY action"
         ).fetchall()
         action_map = {row["action"]: row["cnt"] for row in actions}
+        write_like_count = sum(action_map.get(k, 0) for k in ("created", "modified", "restored"))
         r.check(
-            "modified" in action_map,
-            f"modified fs_events: {action_map.get('modified', 0)}",
-            "no 'modified' fs_events (capsem-doctor test_workflows writes files)",
+            write_like_count > 0,
+            f"write-like fs_events recorded: {write_like_count}",
+            "no created/modified/restored fs_events (capsem-doctor file probes may not be logged)",
         )
         # deleted events may or may not be present depending on test execution
         if "deleted" in action_map:
@@ -251,8 +351,7 @@ def verify_session(session_id: str) -> bool:
     if model_count > 0:
         fixture_model = conn.execute(
             "SELECT * FROM model_calls"
-            " WHERE provider = 'openai'"
-            " AND model = 'mock-local'"
+            " WHERE model = 'mock-local'"
             " AND path = '/v1/chat/completions'"
             " ORDER BY id DESC LIMIT 1"
         ).fetchone()
@@ -325,7 +424,7 @@ def verify_session(session_id: str) -> bool:
             )
 
             # Cross-check: main.db rollup matches session.db actuals.
-            sconn = sqlite3.connect(str(SESSIONS_DIR / session_id / "session.db"))
+            sconn = sqlite3.connect(str(db_path))
             actual_fs = sconn.execute("SELECT COUNT(*) FROM fs_events").fetchone()[0]
             actual_net = sconn.execute("SELECT COUNT(*) FROM net_events").fetchone()[0]
             actual_tools = sconn.execute("SELECT COUNT(*) FROM tool_calls").fetchone()[0]
@@ -354,7 +453,7 @@ def verify_session(session_id: str) -> bool:
 
     # -- auto-snapshots ----------------------------------------------------
     print(f"\n{BOLD}auto-snapshots{RESET}")
-    snap_dir = SESSIONS_DIR / session_id / "auto_snapshots"
+    snap_dir = session_dir / "auto_snapshots"
     r.check(
         snap_dir.exists(),
         "auto_snapshots directory exists",
@@ -378,7 +477,7 @@ def verify_session(session_id: str) -> bool:
 
     # -- log files ---------------------------------------------------------
     print(f"\n{BOLD}log files{RESET}")
-    vm_log_path = SESSIONS_DIR / session_id / "process.log"
+    vm_log_path = session_dir / "process.log"
     r.check(
         vm_log_path.exists(),
         f"process.log exists at {vm_log_path}",
@@ -452,7 +551,7 @@ def main():
         mock_proc, ready = start_mock_server()
         mock_base_url = ready["base_url"]
         print(f"{BOLD}Local mock server:{RESET} {mock_base_url}")
-        session_id, exit_code = run_doctor(args.binary, args.assets, mock_base_url)
+        session_id, session_dir, exit_code = run_doctor(args.binary, args.assets, mock_base_url)
     finally:
         stop_process(mock_proc)
 
@@ -463,7 +562,7 @@ def main():
         sys.exit(1)
     print(f"  {GREEN}PASS{RESET}  capsem-doctor exited with code 0")
 
-    ok = verify_session(session_id)
+    ok = verify_session(session_id, session_dir)
     sys.exit(0 if ok else 1)
 
 

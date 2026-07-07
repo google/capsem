@@ -263,6 +263,14 @@ pub fn hash_filename(logical_name: &str, hash: &str) -> String {
     }
 }
 
+fn is_hash_tagged_asset_filename(filename: &str) -> bool {
+    let stem = filename.rsplit_once('.').map_or(filename, |(stem, _)| stem);
+    let Some((_, suffix)) = stem.rsplit_once('-') else {
+        return false;
+    };
+    suffix.len() == 16 && suffix.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
 // ---------------------------------------------------------------------------
 // ManifestV2 implementation
 // ---------------------------------------------------------------------------
@@ -629,8 +637,8 @@ where
             continue;
         }
 
-        // Remove hash-named files not referenced by any release
-        if name_str.contains('-') && !referenced.contains(name_str.as_ref()) {
+        // Remove hash-named files not referenced by any release.
+        if is_hash_tagged_asset_filename(&name_str) && !referenced.contains(name_str.as_ref()) {
             info!(path = %entry.path().display(), "removing unreferenced asset");
             std::fs::remove_file(entry.path())?;
             removed.push(entry.path());
@@ -1756,6 +1764,28 @@ mod tests {
         assert!(base.join("vmlinuz-a65f925ebe0b0cc7").exists());
         assert!(!base.join("vmlinuz-deadbeef12345678").exists());
         assert!(base.join("manifest.json").exists());
+    }
+
+    #[test]
+    fn cleanup_preserves_hyphenated_canonical_asset_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+
+        std::fs::write(base.join("software-inventory.json"), b"inventory").unwrap();
+        std::fs::write(
+            base.join("software-inventory-deadbeef12345678.json"),
+            b"old",
+        )
+        .unwrap();
+
+        let m = ManifestV2::from_json(SAMPLE_V2_MANIFEST).unwrap();
+        let removed = cleanup_unused_assets(base, &m).unwrap();
+
+        assert_eq!(
+            removed,
+            vec![base.join("software-inventory-deadbeef12345678.json")]
+        );
+        assert!(base.join("software-inventory.json").exists());
     }
 
     #[test]

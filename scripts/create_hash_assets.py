@@ -19,8 +19,10 @@ Hardlinks share the inode so zero extra disk space is used.
 """
 
 import json
+import errno
 import os
 import re
+import shutil
 import sys
 
 
@@ -58,9 +60,22 @@ def _cleanup_stale(arch_dir: str, expected: set[str]) -> int:
     return removed
 
 
-def _restore_missing_canonical_assets(arch_dir: str, assets: dict) -> int:
+def _link_or_copy(src: str, dst: str) -> str:
+    """Create dst from src, falling back to a copy when hardlinks are blocked."""
+    try:
+        os.link(src, dst)
+        return "linked"
+    except OSError as exc:
+        if exc.errno not in {errno.EPERM, errno.EACCES, errno.EXDEV}:
+            raise
+        shutil.copy2(src, dst)
+        return "copied"
+
+
+def _restore_missing_canonical_assets(arch_dir: str, assets: dict) -> tuple[int, int]:
     """Restore canonical manifest files from matching hash aliases when needed."""
     restored = 0
+    copied = 0
     for name, entry in assets.items():
         src = os.path.join(arch_dir, name)
         if os.path.exists(src):
@@ -75,9 +90,10 @@ def _restore_missing_canonical_assets(arch_dir: str, assets: dict) -> int:
         alias = os.path.join(arch_dir, hashed)
         if not os.path.exists(alias):
             continue
-        os.link(alias, src)
+        if _link_or_copy(alias, src) == "copied":
+            copied += 1
         restored += 1
-    return restored
+    return restored, copied
 
 
 def main():
@@ -107,12 +123,15 @@ def main():
 
     restored = 0
     created = 0
+    copied = 0
     for release in manifest["assets"]["releases"].values():
         for arch_name, assets in release["arches"].items():
             arch_dir = os.path.join(assets_dir, arch_name)
             if not os.path.isdir(arch_dir):
                 continue
-            restored += _restore_missing_canonical_assets(arch_dir, assets)
+            restored_count, copied_count = _restore_missing_canonical_assets(arch_dir, assets)
+            restored += restored_count
+            copied += copied_count
             for name, entry in assets.items():
                 h = entry["hash"][:16]
                 dot = name.find(".")
@@ -125,7 +144,8 @@ def main():
                 if os.path.exists(src):
                     if os.path.exists(dst):
                         os.unlink(dst)
-                    os.link(src, dst)
+                    if _link_or_copy(src, dst) == "copied":
+                        copied += 1
                     created += 1
 
     if removed:
@@ -134,6 +154,8 @@ def main():
         print(f"  restored {restored} canonical asset(s)")
     if created:
         print(f"  created {created} hash-named asset(s)")
+    if copied:
+        print(f"  copied {copied} asset alias(es) because hardlinks were unavailable")
 
 
 if __name__ == "__main__":

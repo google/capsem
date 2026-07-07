@@ -68,17 +68,14 @@ impl InodeTable {
 
         let parent_path = self.entries.get(&parent_ino)?.host_path.clone();
         let child_path = parent_path.join(name_str);
-        let canonical = child_path.canonicalize().ok()?;
-        if !canonical.starts_with(&self.root_canonical) {
-            return None;
-        }
-        let entry_path = if std::fs::symlink_metadata(&child_path)
-            .ok()?
-            .file_type()
-            .is_symlink()
-        {
+        let meta = std::fs::symlink_metadata(&child_path).ok()?;
+        let entry_path = if meta.file_type().is_symlink() {
             child_path
         } else {
+            let canonical = child_path.canonicalize().ok()?;
+            if !canonical.starts_with(&self.root_canonical) {
+                return None;
+            }
             canonical
         };
 
@@ -204,6 +201,28 @@ mod tests {
     }
 
     #[test]
+    fn lookup_preserves_symlink_with_absolute_target() {
+        let dir = temp_share("inode-symlink-absolute");
+        std::os::unix::fs::symlink("/etc/passwd", dir.join("link")).unwrap();
+        let mut table = InodeTable::new(&dir).unwrap();
+
+        let ino = table.lookup(1, b"link").unwrap();
+
+        assert_eq!(table.get(ino).unwrap(), &dir.join("link"));
+    }
+
+    #[test]
+    fn lookup_preserves_broken_symlink() {
+        let dir = temp_share("inode-symlink-broken");
+        std::os::unix::fs::symlink("missing-target", dir.join("link")).unwrap();
+        let mut table = InodeTable::new(&dir).unwrap();
+
+        let ino = table.lookup(1, b"link").unwrap();
+
+        assert_eq!(table.get(ino).unwrap(), &dir.join("link"));
+    }
+
+    #[test]
     fn lookup_bumps_refcount() {
         let dir = temp_share("inode-refcount");
         std::fs::write(dir.join("file.txt"), b"data").unwrap();
@@ -292,20 +311,25 @@ mod tests {
     }
 
     #[test]
-    fn rejects_symlink_escape() {
+    fn preserves_absolute_symlink_target_without_following_it() {
         let dir = temp_share("path-symlink-escape");
         std::os::unix::fs::symlink("/etc/passwd", dir.join("escape")).unwrap();
-        assert!(InodeTable::new(&dir)
-            .unwrap()
-            .lookup(1, b"escape")
-            .is_none());
+        let mut table = InodeTable::new(&dir).unwrap();
+
+        let ino = table.lookup(1, b"escape").unwrap();
+
+        assert_eq!(table.get(ino).unwrap(), &dir.join("escape"));
     }
 
     #[test]
-    fn rejects_symlink_chain_escape() {
+    fn preserves_symlink_to_directory_outside_share_without_following_it() {
         let dir = temp_share("path-chain-escape");
         std::os::unix::fs::symlink("/tmp", dir.join("link")).unwrap();
-        assert!(InodeTable::new(&dir).unwrap().lookup(1, b"link").is_none());
+        let mut table = InodeTable::new(&dir).unwrap();
+
+        let ino = table.lookup(1, b"link").unwrap();
+
+        assert_eq!(table.get(ino).unwrap(), &dir.join("link"));
     }
 
     #[test]

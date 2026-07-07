@@ -21,6 +21,7 @@ GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
 TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
 ASSETS_DIR = PROJECT_ROOT / "assets"
 PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
+LINUX_TEST_TMP_PARENT = Path("/var/tmp/capsem-tests")
 
 
 ARTIFACT_MAX_FILE_BYTES = 25 * 1024 * 1024  # 25 MB hard cap per file
@@ -34,6 +35,26 @@ ARTIFACT_SKIP_NAMES = frozenset({
     "checkpoint.vzsave",
 })
 ARTIFACT_MAX_KEPT_DIRS = 20  # rotate: keep only the N most-recent failure dirs
+
+
+def capsem_test_tmp_parent() -> Path:
+    """Return the parent directory for heavyweight integration-test scratch.
+
+    Linux CI/dev containers often mount /tmp as tmpfs. Live VM fixtures can
+    create multi-GB overlays, so default Linux test scratch to /var/tmp while
+    keeping paths short enough for Unix-domain sockets.
+    """
+    configured = os.environ.get("CAPSEM_TEST_TMPDIR")
+    parent = Path(configured) if configured else (
+        LINUX_TEST_TMP_PARENT if sys.platform.startswith("linux") else Path(tempfile.gettempdir())
+    )
+    parent.mkdir(parents=True, exist_ok=True)
+    return parent
+
+
+def make_capsem_tmp_dir(prefix: str) -> Path:
+    return Path(tempfile.mkdtemp(prefix=prefix, dir=capsem_test_tmp_parent()))
+
 
 def _contains_profile_toml(profiles_dir: Path) -> bool:
     return any(path.name == "profile.toml" for path in profiles_dir.glob("*/profile.toml"))
@@ -206,7 +227,7 @@ class ServiceInstance:
     """A running capsem-service instance on an isolated socket."""
 
     def __init__(self, *, assets_dir: Path | None = None):
-        self.tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-test-"))
+        self.tmp_dir = make_capsem_tmp_dir("capsem-test-")
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.assets_dir = assets_dir
         self.profiles_dir = None

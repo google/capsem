@@ -49,8 +49,8 @@ def _write_config(root: Path) -> Path:
     return root
 
 
-def _write_assets(root: Path, initrd_prefix: str) -> tuple[str, str]:
-    arch = _host_arch()
+def _write_assets(root: Path, initrd_prefix: str, arch: str | None = None) -> tuple[str, str]:
+    arch = arch or _host_arch()
     arch_dir = root / arch
     arch_dir.mkdir(parents=True)
     (arch_dir / "vmlinuz-deadbeefdeadbeef").write_text("kernel")
@@ -168,7 +168,7 @@ def test_simulate_install_codesigns_macho_binaries_on_macos(tmp_path: Path) -> N
     fake_tools = tmp_path / "tools"
     log_path = tmp_path / "codesign.log"
     _write_fake_bins(bin_src)
-    _write_assets(assets, "1111111111111111")
+    _write_assets(assets, "1111111111111111", arch="arm64")
     fake_tools.mkdir()
     (fake_tools / "uname").write_text(
         "#!/bin/sh\n"

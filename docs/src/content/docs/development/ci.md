@@ -20,6 +20,16 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 | `site.yaml` | Push to main | Deploy capsem.org on each main merge, then smoke the live marketing site |
 | `release-channel.yaml` | Called by binary or asset release | Deploy release.capsem.org from the generated release-channel site artifact |
 
+Installers carry host binaries and the selected manifest, not VM image blobs.
+The manual VM asset workflow publishes changed image/evidence blobs to the
+immutable GitHub Release tag `assets-v<asset-version>` using arch-prefixed
+artifact names. The logical manifest names stay `vmlinuz`, `initrd.img`,
+`rootfs.erofs`, `obom.cdx.json`, and `software-inventory.json`; published blob
+names add the architecture prefix, such as `arm64-vmlinuz`,
+`arm64-initrd.img`, `arm64-rootfs.erofs`, `arm64-obom.cdx.json`, and
+`arm64-software-inventory.json`. The generated release channel then records
+the verified manifest URLs and hashes.
+
 ## CI workflow (`ci.yaml`)
 
 Runs on every pull request and push to `main`. Pull requests should require the
@@ -228,6 +238,8 @@ preflight (30s) --> build-app-macos (15 min) --+
 | `build-app-macos` | macos-14 | `.pkg` installer, notarized + stapled |
 | `build-app-linux` | ubuntu arm64 + x86_64 | `.deb` packages for both arches |
 | `create-release` | ubuntu | Publishes packages and host SBOM |
+| `assemble-release-channel` | ubuntu | Records package/SBOM metadata into binary channel manifests without changing profile image metadata |
+| `deploy-release-channel` | ubuntu | Deploys the generated release graph through `release-channel.yaml` |
 
 ### Apple code signing
 
@@ -251,12 +263,21 @@ the profile-owned file metadata before boot. Tag releases do not rebuild or
 upload profile images, and they do not publish `latest.json`; binary freshness
 comes from the selected manifest in the release graph.
 
+The binary rail is optimized for fast package iteration. The first 1.5 release
+records the same package/SBOM metadata into both `stable` and `nightly` so both
+channels start from the same binary baseline. After that, nightly can move
+daily while stable is promoted on the weekly cadence. In every case the binary
+job compares each channel manifest before and after `record-binary` and fails
+if profile image metadata changes.
+
 Release packaging materializes runtime profiles through the same profile-derived build rail as
 local development: `capsem-admin profile materialize` copies checked-in config
 into `target/config/` and pins profile asset descriptors to the current public
 asset channel manifest at
 `https://release.capsem.org/assets/stable/manifest.json`. CI must not hand-edit
-profiles or bypass that step.
+profiles or bypass that step. Nightly binary channel updates still package
+against the stable profile image baseline unless the manual profile image rail
+has intentionally published a newer nightly image.
 
 ## Asset channel workflow (`release-channel.yaml`)
 

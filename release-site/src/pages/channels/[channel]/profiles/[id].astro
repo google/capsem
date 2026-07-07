@@ -141,7 +141,9 @@ const evidenceByKind = (architecture, kinds) =>
             <tbody>
               {architecture.config.length > 0 ? architecture.config.map((file) => (
                 <tr class="border-b border-zinc-100 align-top">
-                  <td class="py-3 pr-4">{configKindLabel(file.kind)}</td>
+                  <td class="py-3 pr-4">
+                    <div>{configKindLabel(file.kind)}</div>
+                  </td>
                   <td class="py-3 pr-4"><code>{file.path ?? file.name}</code></td>
                   <td class="py-3 pr-4">{file.url ? <a class="break-all text-blue-600 underline" href={file.url}>{file.url}</a> : <span class="text-zinc-500">not published</span>}</td>
                   <td class="py-3 pr-4">{byteLabel(file.bytes ?? file.size)}</td>

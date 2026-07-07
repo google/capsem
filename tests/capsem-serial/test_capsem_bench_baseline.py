@@ -77,7 +77,7 @@ def _assert_release_network_benchmarks_ran(data):
 def test_capsem_bench_baseline():
     """Run capsem-bench all in a fresh VM, archive the JSON output."""
     upstream_proc = None
-    upstream_proc, ready = start_mock_server()
+    upstream_proc, ready = start_mock_server(capture_requests=False)
     base_url = ready["base_url"]
     https_base_url = ready["https_base_url"]
 

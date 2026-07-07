@@ -333,6 +333,7 @@ impl Hypervisor for KvmHypervisor {
                 virtio_mmio_device_count(config, vsock_ports),
                 has_pit,
             );
+            tracing::info!("[boot-audit] x86_64 final kernel cmdline: {}", cmdline);
             let e820 = memory::build_e820_map(config.ram_bytes);
 
             boot_x86_64::write_gdt(&guest_mem)?;
@@ -779,11 +780,30 @@ impl VmHandle for KvmHandle {
         self.state.store(VmState::Saving as u8, Ordering::SeqCst);
         #[cfg(target_arch = "x86_64")]
         let result = self.control.snapshots().and_then(|snapshots| {
-            for (_slot, transport) in &self._mmio_transports {
+            tracing::info!(
+                target: "suspend",
+                op = "kvm_vcpu_snapshots",
+                count = snapshots.len(),
+                "stage complete"
+            );
+            for (slot, transport) in &self._mmio_transports {
+                tracing::info!(
+                    target: "suspend",
+                    op = "kvm_mmio_quiesce",
+                    slot,
+                    "stage start"
+                );
                 transport.quiesce()?;
+                tracing::info!(
+                    target: "suspend",
+                    op = "kvm_mmio_quiesce",
+                    slot,
+                    "stage complete"
+                );
             }
             #[cfg(test)]
             let vm_snapshot = if let Some(vm) = self._vm.as_ref() {
+                tracing::info!(target: "suspend", op = "kvm_vm_snapshot", "stage start");
                 checkpoint::snapshot_vm(vm)?
             } else {
                 checkpoint::VmSnapshot::default()
@@ -793,7 +813,12 @@ impl VmHandle for KvmHandle {
                 ._vm
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("missing KVM VM fd for checkpoint save"))
-                .and_then(checkpoint::snapshot_vm)?;
+                .and_then(|vm| {
+                    tracing::info!(target: "suspend", op = "kvm_vm_snapshot", "stage start");
+                    checkpoint::snapshot_vm(vm)
+                })?;
+            tracing::info!(target: "suspend", op = "kvm_vm_snapshot", "stage complete");
+            tracing::info!(target: "suspend", op = "kvm_mmio_snapshot", "stage start");
             let mmio_snapshots: Vec<_> = self
                 ._mmio_transports
                 .iter()
@@ -802,13 +827,32 @@ impl VmHandle for KvmHandle {
                     transport: transport.snapshot(),
                 })
                 .collect();
+            tracing::info!(
+                target: "suspend",
+                op = "kvm_mmio_snapshot",
+                count = mmio_snapshots.len(),
+                "stage complete"
+            );
+            tracing::info!(
+                target: "suspend",
+                op = "kvm_write_checkpoint",
+                path = %path.display(),
+                "stage start"
+            );
             checkpoint::write_checkpoint(
                 path,
                 &self._guest_mem,
                 &snapshots,
                 &vm_snapshot,
                 &mmio_snapshots,
-            )
+            )?;
+            tracing::info!(
+                target: "suspend",
+                op = "kvm_write_checkpoint",
+                path = %path.display(),
+                "stage complete"
+            );
+            Ok(())
         });
         #[cfg(not(target_arch = "x86_64"))]
         let result = Err(anyhow::anyhow!(

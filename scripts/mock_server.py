@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
 import selectors
 import subprocess
 import tempfile
@@ -17,6 +18,7 @@ MOCK_SERVER_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-mock-server"
 MOCK_SERVER_CRATE = PROJECT_ROOT / "crates" / "capsem-mock-server"
 MOCK_SERVER_ADDR = "127.0.0.1:3713"
 MOCK_SERVER_LOCK = Path(tempfile.gettempdir()) / "capsem-mock-server-3713.lock"
+DEFAULT_LOCK_TIMEOUT_S = 600.0
 
 
 def _lock_path_for_addr(addr: str) -> Path:
@@ -37,6 +39,16 @@ def _acquire_lock(addr: str = MOCK_SERVER_ADDR, timeout_s: float = 120) -> Any:
     raise TimeoutError(f"timed out waiting for {_lock_path_for_addr(addr)}")
 
 
+def _lock_timeout(timeout_s: float) -> float:
+    raw = os.environ.get("CAPSEM_MOCK_SERVER_LOCK_TIMEOUT_S")
+    if raw:
+        try:
+            return max(timeout_s, float(raw))
+        except ValueError:
+            pass
+    return max(timeout_s, DEFAULT_LOCK_TIMEOUT_S)
+
+
 def _address_in_use_error(exc: BaseException) -> bool:
     text = str(exc)
     return (
@@ -44,6 +56,7 @@ def _address_in_use_error(exc: BaseException) -> bool:
         or "[Errno 48]" in text
         or "[Errno 98]" in text
         or "bind HTTP" in text
+        or "exited early with code 1" in text
     )
 
 
@@ -124,7 +137,8 @@ def start_mock_server(
     retry_interval_s: float = 0.2,
 ) -> tuple[subprocess.Popen[str], dict[str, Any]]:
     _ensure_mock_server_binary()
-    lock_file = _acquire_lock(addr, timeout_s=timeout_s)
+    lock_timeout_s = _lock_timeout(timeout_s)
+    lock_file = _acquire_lock(addr, timeout_s=lock_timeout_s)
     deadline = time.monotonic() + timeout_s
     last_error: BaseException | None = None
     while time.monotonic() < deadline:
@@ -158,7 +172,7 @@ def start_mock_server(
             if not _address_in_use_error(exc):
                 raise
             time.sleep(retry_interval_s)
-            lock_file = _acquire_lock(addr, timeout_s=timeout_s)
+            lock_file = _acquire_lock(addr, timeout_s=lock_timeout_s)
     lock_file.close()
     raise TimeoutError(f"timed out starting capsem-mock-server on {addr}") from last_error
 

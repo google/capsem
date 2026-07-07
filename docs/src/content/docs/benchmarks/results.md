@@ -1,172 +1,162 @@
 ---
 title: Performance Results
-description: Graph-first benchmark results for Capsem VM lifecycle, disk, app, and network performance.
+description: Current benchmark results for Capsem VM lifecycle, disk, app, network, and control-plane performance across macOS and Linux.
 sidebar:
   order: 1
 ---
 
-| Artifact | Path |
-|---|---|
-| VM lifecycle | `benchmarks/lifecycle/data_1.3.1782571508.json` |
-| Guest benchmark | `benchmarks/capsem-bench/data_1.3.1782571508_arm64.json` |
-| DNS load | `benchmarks/release-hermetic/dns_load_blocked_c1_16_64_1.0.1780977620_arm64.json` |
-| MCP load | `benchmarks/release-hermetic/mcp_load_c1_16_64_1.0.1780977620_arm64.json` |
-| Route latency | `benchmarks/route-latency/data_1.3.1782571508.json` |
+This page tracks the two release-relevant platforms:
 
-## VM lifecycle
+- **macOS arm64** is still the performance baseline.
+- **Linux KVM x86_64** is now fully green in the release gate. The numbers are
+  acceptable, but lifecycle readiness, EROFS reads, scratch I/O, CLI startup,
+  and 10 MiB transfer throughput still trail macOS.
 
-<svg viewBox="0 0 720 300" role="img" aria-labelledby="vm-lifecycle-title" style="width:100%;height:auto;max-width:760px">
-  <title id="vm-lifecycle-title">VM lifecycle mean latency in milliseconds</title>
-  <rect x="0" y="0" width="720" height="300" fill="transparent" />
-  <text x="20" y="30" font-size="20" font-weight="700" fill="currentColor">VM lifecycle mean latency (ms)</text>
-  <line x1="70" y1="245" x2="680" y2="245" stroke="currentColor" stroke-opacity="0.35" />
-  <line x1="70" y1="55" x2="70" y2="245" stroke="currentColor" stroke-opacity="0.35" />
-  <rect x="125" y="79.7" width="72" height="165.3" fill="#2563eb" />
-  <rect x="250" y="240.6" width="72" height="4.4" fill="#059669" />
-  <rect x="375" y="240.8" width="72" height="4.2" fill="#d97706" />
-  <rect x="500" y="233.1" width="72" height="11.9" fill="#7c3aed" />
-  <text x="161" y="72" text-anchor="middle" font-size="14" fill="currentColor">1132.2</text>
-  <text x="286" y="232" text-anchor="middle" font-size="14" fill="currentColor">30.2</text>
-  <text x="411" y="232" text-anchor="middle" font-size="14" fill="currentColor">28.5</text>
-  <text x="536" y="226" text-anchor="middle" font-size="14" fill="currentColor">81.7</text>
-  <text x="161" y="270" text-anchor="middle" font-size="13" fill="currentColor">Provision</text>
-  <text x="286" y="270" text-anchor="middle" font-size="13" fill="currentColor">Ready</text>
-  <text x="411" y="270" text-anchor="middle" font-size="13" fill="currentColor">Exec</text>
-  <text x="536" y="270" text-anchor="middle" font-size="13" fill="currentColor">Delete</text>
-</svg>
+## Headline
 
-| Metric | Mean | p50 | p95 | Max |
-|---|---:|---:|---:|---:|
-| Provision | 1132.2ms | 1094.9ms | 1196.1ms | 1207.3ms |
-| Ready check | 30.2ms | 30.3ms | 31.0ms | 31.1ms |
-| Exec | 28.5ms | 28.4ms | 28.8ms | 28.8ms |
-| Delete | 81.7ms | 78.2ms | 89.9ms | 91.2ms |
-| Total loop | 1272.6ms | 1232.4ms | 1344.7ms | 1357.2ms |
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;margin:1rem 0 1.5rem">
+  <div style="border:1px solid var(--sl-color-gray-5);border-radius:8px;padding:1rem">
+    <div style="font-size:0.85rem;color:var(--sl-color-gray-3)">macOS arm64 baseline</div>
+    <div style="font-size:1.8rem;font-weight:700">1.27s</div>
+    <div>Total VM lifecycle loop</div>
+    <div style="font-size:0.85rem;color:var(--sl-color-gray-3)">1.3.1782571508</div>
+  </div>
+  <div style="border:1px solid var(--sl-color-gray-5);border-radius:8px;padding:1rem">
+    <div style="font-size:0.85rem;color:var(--sl-color-gray-3)">Linux KVM x86_64</div>
+    <div style="font-size:1.8rem;font-weight:700">1.94s</div>
+    <div>Total VM lifecycle loop</div>
+    <div style="font-size:0.85rem;color:var(--sl-color-gray-3)">1.4.1783187504</div>
+  </div>
+  <div style="border:1px solid var(--sl-color-gray-5);border-radius:8px;padding:1rem">
+    <div style="font-size:0.85rem;color:var(--sl-color-gray-3)">Linux release gate</div>
+    <div style="font-size:1.8rem;font-weight:700">pass</div>
+    <div>Full `just test`, cross-compile, install E2E</div>
+    <div style="font-size:0.85rem;color:var(--sl-color-gray-3)">July 7, 2026</div>
+  </div>
+</div>
 
-## Disk
+## Readout
 
-<svg viewBox="0 0 720 300" role="img" aria-labelledby="disk-throughput-title" style="width:100%;height:auto;max-width:760px">
-  <title id="disk-throughput-title">Disk sequential throughput in megabytes per second</title>
-  <rect x="0" y="0" width="720" height="300" fill="transparent" />
-  <text x="20" y="30" font-size="20" font-weight="700" fill="currentColor">Sequential throughput (MB/s)</text>
-  <line x1="70" y1="245" x2="680" y2="245" stroke="currentColor" stroke-opacity="0.35" />
-  <line x1="70" y1="55" x2="70" y2="245" stroke="currentColor" stroke-opacity="0.35" />
-  <rect x="145" y="122.1" width="82" height="122.9" fill="#2563eb" />
-  <rect x="315" y="158.3" width="82" height="86.7" fill="#059669" />
-  <rect x="485" y="65.4" width="82" height="179.6" fill="#d97706" />
-  <text x="186" y="114" text-anchor="middle" font-size="14" fill="currentColor">2541.9</text>
-  <text x="356" y="150" text-anchor="middle" font-size="14" fill="currentColor">1792.8</text>
-  <text x="526" y="58" text-anchor="middle" font-size="14" fill="currentColor">3715.8</text>
-  <text x="186" y="270" text-anchor="middle" font-size="13" fill="currentColor">Rootfs read</text>
-  <text x="356" y="270" text-anchor="middle" font-size="13" fill="currentColor">Workspace write</text>
-  <text x="526" y="270" text-anchor="middle" font-size="13" fill="currentColor">Workspace read</text>
-</svg>
+- **Linux is functionally ready.** The full Linux run passed unit, integration,
+  Ironbank, benchmark, cross-compile, package boot, and install E2E gates.
+- **Network protocol overhead is reasonable.** Linux guest model protocol is
+  slightly above the macOS baseline (`2563.7` vs `2477.2` rps), while credential
+  protocol is lower (`2288.5` vs `3092.8` rps).
+- **Storage is the main Linux gap.** Scratch writes are `120.5 MB/s` on Linux
+  versus `1792.8 MB/s` on macOS. Rootfs sequential reads are `310.3 MB/s`
+  versus `2541.9 MB/s`.
+- **Control-plane latency is still comfortably inside budget.** Linux `/stats`
+  under profile writes has p95 `1.336ms` against a `15ms` gate.
+- **Large transfer throughput is acceptable but lower.** Linux `/bytes/10mb`
+  is `32.9 MB/s`; macOS is `64.7 MB/s`.
 
-<svg viewBox="0 0 720 300" role="img" aria-labelledby="disk-iops-title" style="width:100%;height:auto;max-width:760px">
-  <title id="disk-iops-title">Disk random 4K input/output operations per second</title>
-  <rect x="0" y="0" width="720" height="300" fill="transparent" />
-  <text x="20" y="30" font-size="20" font-weight="700" fill="currentColor">Random 4K IOPS</text>
-  <line x1="70" y1="245" x2="680" y2="245" stroke="currentColor" stroke-opacity="0.35" />
-  <line x1="70" y1="55" x2="70" y2="245" stroke="currentColor" stroke-opacity="0.35" />
-  <rect x="145" y="119.4" width="82" height="125.6" fill="#2563eb" />
-  <rect x="315" y="214.9" width="82" height="30.1" fill="#059669" />
-  <rect x="485" y="55" width="82" height="190" fill="#d97706" />
-  <text x="186" y="111" text-anchor="middle" font-size="14" fill="currentColor">29045</text>
-  <text x="356" y="207" text-anchor="middle" font-size="14" fill="currentColor">6959</text>
-  <text x="526" y="48" text-anchor="middle" font-size="14" fill="currentColor">43921</text>
-  <text x="186" y="270" text-anchor="middle" font-size="13" fill="currentColor">Rootfs read</text>
-  <text x="356" y="270" text-anchor="middle" font-size="13" fill="currentColor">Workspace write</text>
-  <text x="526" y="270" text-anchor="middle" font-size="13" fill="currentColor">Workspace read</text>
-</svg>
+## Platform Comparison
 
-| Metric | Value |
-|---|---:|
-| Rootfs sequential read | 2541.9 MB/s |
-| Rootfs random 4K read | 29045.2 IOPS |
-| Workspace sequential write | 1792.8 MB/s |
-| Workspace sequential read | 3715.8 MB/s |
-| Workspace random 4K write | 6959.0 IOPS |
-| Workspace random 4K read | 43921.1 IOPS |
+Lower is better for latency. Higher is better for throughput and IOPS.
 
-## App
-
-<svg viewBox="0 0 720 300" role="img" aria-labelledby="app-startup-title" style="width:100%;height:auto;max-width:760px">
-  <title id="app-startup-title">CLI startup mean latency in milliseconds</title>
-  <rect x="0" y="0" width="720" height="300" fill="transparent" />
-  <text x="20" y="30" font-size="20" font-weight="700" fill="currentColor">CLI startup mean latency (ms)</text>
-  <line x1="70" y1="245" x2="680" y2="245" stroke="currentColor" stroke-opacity="0.35" />
-  <line x1="70" y1="55" x2="70" y2="245" stroke="currentColor" stroke-opacity="0.35" />
-  <rect x="105" y="244.1" width="66" height="0.9" fill="#2563eb" />
-  <rect x="220" y="238.4" width="66" height="6.6" fill="#059669" />
-  <rect x="335" y="212.5" width="66" height="32.5" fill="#d97706" />
-  <rect x="450" y="55" width="66" height="190" fill="#7c3aed" />
-  <rect x="565" y="217.3" width="66" height="27.7" fill="#dc2626" />
-  <text x="138" y="236" text-anchor="middle" font-size="14" fill="currentColor">3.8</text>
-  <text x="253" y="230" text-anchor="middle" font-size="14" fill="currentColor">28.1</text>
-  <text x="368" y="205" text-anchor="middle" font-size="14" fill="currentColor">137.0</text>
-  <text x="483" y="48" text-anchor="middle" font-size="14" fill="currentColor">802.3</text>
-  <text x="598" y="210" text-anchor="middle" font-size="14" fill="currentColor">116.9</text>
-  <text x="138" y="270" text-anchor="middle" font-size="13" fill="currentColor">python3</text>
-  <text x="253" y="270" text-anchor="middle" font-size="13" fill="currentColor">node</text>
-  <text x="368" y="270" text-anchor="middle" font-size="13" fill="currentColor">claude</text>
-  <text x="483" y="270" text-anchor="middle" font-size="13" fill="currentColor">AGY</text>
-  <text x="598" y="270" text-anchor="middle" font-size="13" fill="currentColor">codex</text>
-</svg>
-
-| Command | Min | Mean | Max |
+| Metric | macOS arm64 | Linux KVM x86_64 | Linux vs macOS |
 |---|---:|---:|---:|
-| python3 --version | 3.4ms | 3.8ms | 4.4ms |
-| node --version | 26.9ms | 28.1ms | 29.0ms |
-| claude --version | 134.8ms | 137.0ms | 138.2ms |
-| AGY --version | 772.6ms | 802.3ms | 818.0ms |
-| codex --version | 85.3ms | 116.9ms | 134.3ms |
+| Lifecycle loop mean | 1272.6ms | 1944.3ms | 1.53x slower |
+| Exec-ready mean | 30.2ms | 857.5ms | 28.4x slower |
+| Running exec mean | 28.5ms | 106.7ms | 3.74x slower |
+| Fork mean | 55.9ms | 163.3ms | 2.92x slower |
+| `/stats` contention p95 | 0.449ms | 1.336ms | 2.98x slower |
 
-## Network
+| Storage metric | macOS arm64 | Linux KVM x86_64 | Linux vs macOS |
+|---|---:|---:|---:|
+| Scratch sequential write | 1792.8 MB/s | 120.5 MB/s | 6.7% |
+| Scratch sequential read | 3715.8 MB/s | 586.7 MB/s | 15.8% |
+| Scratch random 4K write | 6959.0 IOPS | 625.8 IOPS | 9.0% |
+| Scratch random 4K read | 43921.1 IOPS | 6904.0 IOPS | 15.7% |
+| Rootfs sequential read | 2541.9 MB/s | 310.3 MB/s | 12.2% |
+| Rootfs random 4K read | 29045.2 IOPS | 7277.6 IOPS | 25.1% |
+| Large binary warm read | 19876.3 MB/s | 5790.9 MB/s | 29.1% |
+| Metadata stat walk | 125012.6 stats/s | 32121.7 stats/s | 25.7% |
 
-<svg viewBox="0 0 720 300" role="img" aria-labelledby="network-rps-title" style="width:100%;height:auto;max-width:760px">
-  <title id="network-rps-title">Network requests per second by workload</title>
-  <rect x="0" y="0" width="720" height="300" fill="transparent" />
-  <text x="20" y="30" font-size="20" font-weight="700" fill="currentColor">Requests per second</text>
-  <line x1="70" y1="245" x2="680" y2="245" stroke="currentColor" stroke-opacity="0.35" />
-  <line x1="70" y1="55" x2="70" y2="245" stroke="currentColor" stroke-opacity="0.35" />
-  <rect x="115" y="142.1" width="78" height="102.9" fill="#2563eb" />
-  <rect x="255" y="115.2" width="78" height="129.8" fill="#059669" />
-  <rect x="395" y="55" width="78" height="190" fill="#d97706" />
-  <rect x="535" y="162.7" width="78" height="82.3" fill="#7c3aed" />
-  <text x="154" y="134" text-anchor="middle" font-size="14" fill="currentColor">3098</text>
-  <text x="294" y="107" text-anchor="middle" font-size="14" fill="currentColor">3906</text>
-  <text x="434" y="48" text-anchor="middle" font-size="14" fill="currentColor">5723</text>
-  <text x="574" y="155" text-anchor="middle" font-size="14" fill="currentColor">2477</text>
-  <text x="154" y="270" text-anchor="middle" font-size="13" fill="currentColor">HTTP</text>
-  <text x="294" y="270" text-anchor="middle" font-size="13" fill="currentColor">DNS</text>
-  <text x="434" y="270" text-anchor="middle" font-size="13" fill="currentColor">MCP</text>
-  <text x="574" y="270" text-anchor="middle" font-size="13" fill="currentColor">Model</text>
-</svg>
+| Network metric | macOS arm64 | Linux KVM x86_64 | Linux vs macOS |
+|---|---:|---:|---:|
+| Local HTTP `/tiny` | 3098.3 rps | 2617.6 rps | 84.5% |
+| Local HTTP p95 | 35.2ms | 35.6ms | roughly equal |
+| Guest model protocol | 2477.2 rps | 2563.7 rps | 103.5% |
+| Guest model p95 | 40.7ms | 36.0ms | faster |
+| Guest credential protocol | 3092.8 rps | 2288.5 rps | 74.0% |
+| Guest credential p95 | 35.9ms | 41.3ms | 1.15x slower |
+| 10 MiB HTTP transfer | 64.7 MB/s | 32.9 MB/s | 50.9% |
 
-<svg viewBox="0 0 720 300" role="img" aria-labelledby="network-latency-title" style="width:100%;height:auto;max-width:760px">
-  <title id="network-latency-title">Network p95 latency by workload in milliseconds</title>
-  <rect x="0" y="0" width="720" height="300" fill="transparent" />
-  <text x="20" y="30" font-size="20" font-weight="700" fill="currentColor">p95 latency (ms)</text>
-  <line x1="70" y1="245" x2="680" y2="245" stroke="currentColor" stroke-opacity="0.35" />
-  <line x1="70" y1="55" x2="70" y2="245" stroke="currentColor" stroke-opacity="0.35" />
-  <rect x="115" y="80.7" width="78" height="164.3" fill="#2563eb" />
-  <rect x="255" y="103.7" width="78" height="141.3" fill="#059669" />
-  <rect x="395" y="141.0" width="78" height="104.0" fill="#d97706" />
-  <rect x="535" y="55" width="78" height="190" fill="#7c3aed" />
-  <text x="154" y="73" text-anchor="middle" font-size="14" fill="currentColor">35.2</text>
-  <text x="294" y="96" text-anchor="middle" font-size="14" fill="currentColor">30.3</text>
-  <text x="434" y="133" text-anchor="middle" font-size="14" fill="currentColor">22.3</text>
-  <text x="574" y="48" text-anchor="middle" font-size="14" fill="currentColor">40.7</text>
-  <text x="154" y="270" text-anchor="middle" font-size="13" fill="currentColor">HTTP</text>
-  <text x="294" y="270" text-anchor="middle" font-size="13" fill="currentColor">DNS</text>
-  <text x="434" y="270" text-anchor="middle" font-size="13" fill="currentColor">MCP</text>
-  <text x="574" y="270" text-anchor="middle" font-size="13" fill="currentColor">Model</text>
-</svg>
+## Linux Detail
 
-| Workload | RPS | Throughput | p50 | p95 | p99 | Errors |
-|---|---:|---:|---:|---:|---:|---:|
-| HTTP | 3098.3 | - | 19.7ms | 35.2ms | 45.4ms | 0 |
-| DNS | 3905.5 | - | 14.3ms | 30.3ms | 34.9ms | 0 |
-| MCP | 5723.4 | - | 9.0ms | 22.3ms | 27.0ms | 0 |
-| Model | 2477.2 | - | 25.1ms | 40.7ms | 51.7ms | 0 |
-| 10 MiB HTTP transfer | - | 64.7 MB/s | - | - | - | 0 |
+Linux KVM x86_64 run: `1.4.1783187504`, July 7, 2026.
+
+**Lifecycle:** provision `792.7ms`, exec-ready `857.5ms`, running exec
+`106.7ms`, delete `187.4ms`, total loop `1944.3ms`. Fork mean is `163.3ms`;
+forked image size is `17.5 MB`.
+
+**EROFS/rootfs:** rootfs sequential read `310.3 MB/s`, random 4K read
+`7277.6 IOPS`, large binary cold/warm reads `377.9 / 5790.9 MB/s`, small
+JS/package reads `226137.5 ops/s`, metadata stat walk `32121.7 stats/s`.
+
+**Scratch storage:** sequential write/read `120.5 / 586.7 MB/s`; random 4K
+write/read `625.8 / 6904.0 IOPS`.
+
+**CLI startup mean:** Python `18.9ms`, Node `136.8ms`, Claude `777.8ms`,
+Gemini `2451.4ms`, Codex `398.7ms`.
+
+**Network:** local HTTP `/tiny` `2617.6 rps` with p95 `35.6ms`; 10 MiB transfer
+`32.9 MB/s`; guest model protocol `2563.7 rps`; guest credential protocol
+`2288.5 rps`; all reported `0` failures.
+
+**Snapshots:** 10-file create/list/changes/revert/delete:
+`2223.7 / 902.5 / 875.7 / 892.5 / 925.2ms`. 500-file path:
+`1114.7 / 920.8 / 979.7 / 886.5 / 904.8ms`.
+
+**Parallel VM benchmark:** 4 VMs completed successfully in `132.18s`.
+
+## macOS Detail
+
+macOS arm64 baseline: `1.3.1782571508`.
+
+**Lifecycle:** provision `1132.2ms`, exec-ready `30.2ms`, running exec
+`28.5ms`, delete `81.7ms`, total loop `1272.6ms`. Fork mean is `55.9ms`;
+forked image size is `15.1 MB`.
+
+**Rootfs/storage:** rootfs sequential read `2541.9 MB/s`, random 4K read
+`29045.2 IOPS`, large binary cold/warm reads `2804.6 / 19876.3 MB/s`, small
+JS/package reads `572625.7 ops/s`, metadata stat walk `125012.6 stats/s`.
+Scratch sequential write/read is `1792.8 / 3715.8 MB/s`; random 4K write/read
+is `6959.0 / 43921.1 IOPS`.
+
+**CLI startup mean:** Python `3.8ms`, Node `28.1ms`, Claude `137.0ms`,
+Gemini `802.3ms`, Codex `116.9ms`.
+
+**Network:** local HTTP `/tiny` `3098.3 rps` with p95 `35.2ms`; 10 MiB transfer
+`64.7 MB/s`; guest model protocol `2477.2 rps`; guest credential protocol
+`3092.8 rps`; all reported `0` failures.
+
+## Release Gate Proof
+
+Linux release validation from the same run:
+
+- Main Python matrix: `1617 passed`, `78 skipped`, coverage `90.09%`.
+- Release-site shared dist: `112 passed`.
+- Serial timing and benchmark gates: `17 passed`.
+- Build-chain and release serial suite: `199 passed`, `2 skipped`.
+- Integration: `95` guest diagnostics and `45` ledger checks passed.
+- Cross-compiled Linux `.deb`: `43 MB`, full `/usr/bin` binary cohort, package
+  boot test passed `327` guest diagnostics and `28` doctor session checks.
+- Install E2E: `81 passed`, `23 skipped`, `6 xfailed`.
+- Workspace ownership after Docker cleanup: clean.
+
+## Artifacts
+
+| Platform | Artifact | Path |
+|---|---|---|
+| Linux x86_64 | Guest benchmark | `benchmarks/capsem-bench/data_1.4.1783187504_x86_64.json` |
+| Linux x86_64 | Host protocol baseline | `benchmarks/mock-server-protocol/data_1.4.1783187504_x86_64.json` |
+| Linux x86_64 | Lifecycle | `benchmarks/lifecycle/data_1.4.1783187504.json` |
+| Linux x86_64 | Fork | `benchmarks/fork/data_1.4.1783187504.json` |
+| Linux x86_64 | Parallel VMs | `benchmarks/parallel/data_1.0.json` |
+| Linux x86_64 | Route latency | `benchmarks/route-latency/data_1.4.1783187504.json` |
+| macOS arm64 | Guest benchmark | `benchmarks/capsem-bench/data_1.3.1782571508_arm64.json` |
+| macOS arm64 | Lifecycle | `benchmarks/lifecycle/data_1.3.1782571508.json` |
+| macOS arm64 | Fork | `benchmarks/fork/data_1.3.1782571508.json` |
+| macOS arm64 | Route latency | `benchmarks/route-latency/data_1.3.1782571508.json` |

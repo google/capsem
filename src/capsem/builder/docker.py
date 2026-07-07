@@ -466,6 +466,8 @@ def create_erofs(
     cluster_flag = f" -C{cluster_size}" if cluster_size else ""
     level_flag = f",level={compression_level}" if compression_level else ""
     mkdir_output = "" if out_dir == "." else f"mkdir -p /assets/{out_dir} && "
+    host_uid = os.getuid()
+    host_gid = os.getgid()
 
     run_cmd([
         runtime, "run", "--rm",
@@ -476,7 +478,8 @@ def create_erofs(
         f"DEBIAN_FRONTEND=noninteractive apt-get install -y erofs-utils && "
         f"mkdir /rootfs && {mkdir_output}tar xf /assets/{tar_rel} -C /rootfs && "
         f"mkfs.erofs -Enosbcrc -z{compression}{level_flag}{cluster_flag} "
-        f"/assets/{out_rel} /rootfs",
+        f"/assets/{out_rel} /rootfs && "
+        f"chown {host_uid}:{host_gid} /assets/{out_rel}",
     ])
 
 
@@ -643,6 +646,7 @@ def cross_compile_agent(
         if not src.exists():
             raise RuntimeError(f"Expected binary not found: {src}")
         dst = output_dir / binary
+        dst.unlink(missing_ok=True)
         shutil.copy2(str(src), str(dst))
         if dst.stat().st_size == 0:
             raise RuntimeError(f"Binary is empty: {dst}")
@@ -1088,8 +1092,47 @@ def _next_or_existing_asset_version(
     return f"{date_prefix}.{patch}"
 
 
+def _hash_filename(logical_name: str, digest: str) -> str:
+    prefix = digest[:16]
+    if "." in logical_name:
+        stem, ext = logical_name.split(".", 1)
+        return f"{stem}-{prefix}.{ext}"
+    return f"{logical_name}-{prefix}"
+
+
+def _restore_canonical_assets_from_existing_manifest(output_dir: Path) -> None:
+    manifest_path = output_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return
+    try:
+        manifest = json.loads(manifest_path.read_text())
+    except json.JSONDecodeError:
+        return
+    for release in manifest.get("assets", {}).get("releases", {}).values():
+        for arch_name, assets in release.get("arches", {}).items():
+            arch_dir = output_dir / arch_name
+            if not arch_dir.is_dir():
+                continue
+            for logical_name, meta in assets.items():
+                canonical = arch_dir / logical_name
+                if canonical.exists():
+                    continue
+                digest = meta.get("hash")
+                if not isinstance(digest, str):
+                    continue
+                alias = arch_dir / _hash_filename(logical_name, digest)
+                if not alias.is_file():
+                    continue
+                try:
+                    os.link(alias, canonical)
+                except OSError:
+                    shutil.copy2(alias, canonical)
+
+
 def generate_checksums(output_dir: Path, version: str) -> Path:
     """Generate BLAKE3 checksums and manifest.json for all assets."""
+    _restore_canonical_assets_from_existing_manifest(output_dir)
+
     # Collect all asset files across arch subdirs
     arch_dirs = [d for d in output_dir.iterdir() if d.is_dir() and d.name != "current"]
     all_files: list[str] = []

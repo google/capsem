@@ -96,6 +96,17 @@ pub(super) struct VirtQueue {
     mem: GuestMemoryRef,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct QueueIndices {
+    desc_table_gpa: u64,
+    avail_ring_gpa: u64,
+    used_ring_gpa: u64,
+    size: u16,
+    next_avail: u16,
+    next_used: u16,
+    event_idx: bool,
+}
+
 impl VirtQueue {
     /// Create a new virtqueue from guest-provided addresses.
     pub fn new(
@@ -108,13 +119,15 @@ impl VirtQueue {
         let next_used = read_u16(&mem, used_ring_gpa + 2);
         Self::from_indices(
             mem,
-            desc_table_gpa,
-            avail_ring_gpa,
-            used_ring_gpa,
-            size,
-            next_used,
-            next_used,
-            false,
+            QueueIndices {
+                desc_table_gpa,
+                avail_ring_gpa,
+                used_ring_gpa,
+                size,
+                next_avail: next_used,
+                next_used,
+                event_idx: false,
+            },
         )
     }
 
@@ -131,13 +144,15 @@ impl VirtQueue {
         let next_used = read_u16(&mem, used_ring_gpa + 2);
         Self::from_indices(
             mem,
-            desc_table_gpa,
-            avail_ring_gpa,
-            used_ring_gpa,
-            size,
-            next_used,
-            next_used,
-            event_idx,
+            QueueIndices {
+                desc_table_gpa,
+                avail_ring_gpa,
+                used_ring_gpa,
+                size,
+                next_avail: next_used,
+                next_used,
+                event_idx,
+            },
         )
     }
 
@@ -170,13 +185,15 @@ impl VirtQueue {
         );
         Self::from_indices(
             mem,
-            desc_table_gpa,
-            avail_ring_gpa,
-            used_ring_gpa,
-            size,
-            next_avail,
-            next_used,
-            false,
+            QueueIndices {
+                desc_table_gpa,
+                avail_ring_gpa,
+                used_ring_gpa,
+                size,
+                next_avail,
+                next_used,
+                event_idx: false,
+            },
         )
     }
 
@@ -205,35 +222,28 @@ impl VirtQueue {
         );
         Self::from_indices(
             mem,
-            desc_table_gpa,
-            avail_ring_gpa,
-            used_ring_gpa,
-            size,
-            next_avail,
-            next_used,
-            event_idx,
+            QueueIndices {
+                desc_table_gpa,
+                avail_ring_gpa,
+                used_ring_gpa,
+                size,
+                next_avail,
+                next_used,
+                event_idx,
+            },
         )
     }
 
-    fn from_indices(
-        mem: GuestMemoryRef,
-        desc_table_gpa: u64,
-        avail_ring_gpa: u64,
-        used_ring_gpa: u64,
-        size: u16,
-        next_avail: u16,
-        next_used: u16,
-        event_idx: bool,
-    ) -> Self {
+    fn from_indices(mem: GuestMemoryRef, indices: QueueIndices) -> Self {
         Self {
-            desc_table_gpa,
-            avail_ring_gpa,
-            used_ring_gpa,
-            size,
-            next_avail,
-            next_used,
+            desc_table_gpa: indices.desc_table_gpa,
+            avail_ring_gpa: indices.avail_ring_gpa,
+            used_ring_gpa: indices.used_ring_gpa,
+            size: indices.size,
+            next_avail: indices.next_avail,
+            next_used: indices.next_used,
             num_added: 0,
-            event_idx,
+            event_idx: indices.event_idx,
             mem,
         }
     }

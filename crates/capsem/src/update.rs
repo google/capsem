@@ -414,13 +414,22 @@ fn write_cache(check: &UpdateCheck) -> Result<()> {
         .as_deref()
         .context("update check source missing")?;
     let path = cache_path_for_source(source).context("HOME not set")?;
+    let json = serde_json::to_string_pretty(check)?;
+    write_json_atomic(&path, &json)?;
+
+    if let Some(legacy_path) = legacy_cache_path() {
+        write_json_atomic(&legacy_path, &json)?;
+    }
+    Ok(())
+}
+
+fn write_json_atomic(path: &Path, json: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let json = serde_json::to_string_pretty(check)?;
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, &json)?;
-    std::fs::rename(&tmp, &path)?;
+    std::fs::write(&tmp, json).with_context(|| format!("write {}", tmp.display()))?;
+    std::fs::rename(&tmp, path).with_context(|| format!("replace {}", path.display()))?;
     Ok(())
 }
 
@@ -2331,6 +2340,26 @@ mod tests {
             nightly.extension().and_then(|ext| ext.to_str()),
             Some("json")
         );
+    }
+
+    #[test]
+    fn write_cache_mirrors_latest_check_to_legacy_path() {
+        let _lock = crate::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+
+        let check = cached_notice_check();
+        let source = check.source.as_deref().unwrap();
+        let scoped = cache_path_for_source(source).expect("scoped cache path");
+        let legacy = home.path().join("update-check.json");
+
+        write_cache(&check).unwrap();
+
+        let scoped_json = std::fs::read_to_string(&scoped).unwrap();
+        let legacy_json = std::fs::read_to_string(&legacy).unwrap();
+        assert_eq!(legacy_json, scoped_json);
+        let legacy_check: UpdateCheck = serde_json::from_str(&legacy_json).unwrap();
+        assert_eq!(legacy_check.source.as_deref(), Some(source));
     }
 
     #[test]

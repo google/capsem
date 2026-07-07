@@ -131,8 +131,8 @@ the current-build runtime profile under `target/config/` from checked-in
 
 | Recipe | What it does |
 |--------|-------------|
-| `just cut-release` | Run tests, bump version, stamp changelog, tag, push, wait for CI |
-| `just release [tag]` | Wait for CI to build + publish an existing tag |
+| `just cut-release` | Run tests, bump version, stamp changelog, commit, and create a local tag |
+| `just release [tag]` | Wait for CI to build + publish a pushed tag |
 | `just install` | Build release package and install locally |
 
 ## Cleanup

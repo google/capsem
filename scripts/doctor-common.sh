@@ -46,6 +46,8 @@ _reg rustup-targets   "rustup target add aarch64-unknown-linux-musl x86_64-unkno
                       "Install Rust cross-compile targets"
 _reg llvm-tools       "rustup component add llvm-tools" \
                       "Install llvm-tools (provides rust-lld)"
+_reg linux-musl-tools "_doctor_install_linux_musl_tools" \
+                      "Install Linux musl C compiler/linker (musl-tools)"
 _reg cargo-llvm-cov   "cargo install cargo-llvm-cov" \
                       "Install cargo-llvm-cov"
 _reg cargo-audit      "cargo install cargo-audit" \
@@ -171,6 +173,10 @@ if rustup component list --installed 2>/dev/null | grep -q llvm-tools; then
     pass "component: llvm-tools"
 else
     fixable llvm-tools "component: llvm-tools missing"
+fi
+
+if declare -F check_linux_musl_toolchain >/dev/null; then
+    check_linux_musl_toolchain
 fi
 
 section "Cargo Tools"

@@ -2,8 +2,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use axum::extract::{Request, State};
-use axum::http::StatusCode;
+use axum::http::{
+    header::{CONTENT_LENGTH, CONTENT_TYPE, TRANSFER_ENCODING},
+    HeaderMap, HeaderValue, Method, StatusCode,
+};
 use axum::response::{IntoResponse, Response};
+use http_body_util::BodyExt;
 use hyper_util::rt::TokioIo;
 use tokio::net::UnixStream;
 
@@ -105,7 +109,9 @@ fn gateway_request_id() -> String {
 }
 
 async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response> {
+    let method = req.method().clone();
     let uri = req.uri().clone();
+    let path = uri.path().to_string();
 
     // Clean up headers
     let headers = req.headers_mut();
@@ -146,8 +152,30 @@ async fn forward(state: &AppState, mut req: Request) -> anyhow::Result<Response>
         .await
         .map_err(|_| anyhow::anyhow!("request timed out"))??;
 
-    let (parts, body) = res.into_parts();
+    let (mut parts, body) = res.into_parts();
+    if should_buffer_json_response(&method, &path, &parts.headers) {
+        let body = body.collect().await?.to_bytes();
+        parts.headers.remove(TRANSFER_ENCODING);
+        parts.headers.insert(
+            CONTENT_LENGTH,
+            HeaderValue::from_str(&body.len().to_string())?,
+        );
+        return Ok(Response::from_parts(parts, axum::body::Body::from(body)));
+    }
     Ok(Response::from_parts(parts, axum::body::Body::new(body)))
+}
+
+fn should_buffer_json_response(method: &Method, path: &str, headers: &HeaderMap) -> bool {
+    if method != Method::GET {
+        return false;
+    }
+    if path.contains("/logs") || path.starts_with("/host-logs/") || path == "/service-logs" {
+        return false;
+    }
+    headers
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.starts_with("application/json"))
 }
 
 #[cfg(test)]

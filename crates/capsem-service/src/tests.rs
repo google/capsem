@@ -7,6 +7,14 @@ use tower::ServiceExt;
 static SETTINGS_ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[test]
+fn suspend_confirm_timeout_matches_public_api_budget() {
+    assert_eq!(
+        SUSPEND_CONFIRM_TIMEOUT_SECS, 45,
+        "service must not kill an in-progress KVM checkpoint before clients' documented suspend timeout"
+    );
+}
+
+#[test]
 fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
@@ -1105,6 +1113,7 @@ fn install_test_profile_assets(state: &ServiceState) {
         )
         .unwrap();
     }
+    refresh_profile_route_caches(state).expect("test profile route caches should refresh");
 }
 
 fn install_test_profile_catalog(state: &ServiceState, profile: &ProfileConfigFile) {
@@ -8280,6 +8289,55 @@ fn archive_failed_restore_checkpoint_moves_checkpoint_aside() {
         .starts_with("checkpoint.vzsave.failed-restore-"));
 }
 
+#[tokio::test]
+async fn failed_restore_teardown_clears_running_instance_before_cold_fallback() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    let vm_id = new_persistent_vm_id();
+    let session_dir = state.run_dir.join("persistent").join(&vm_id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let uds_path = state
+        .run_dir
+        .join("instances")
+        .join(format!("{vm_id}.sock"));
+    std::fs::create_dir_all(uds_path.parent().unwrap()).unwrap();
+    std::fs::write(&uds_path, b"stale socket").unwrap();
+    std::fs::write(uds_path.with_extension("ready"), b"stale ready").unwrap();
+
+    state.instances.lock().unwrap().insert(
+        vm_id.clone(),
+        InstanceInfo {
+            id: vm_id.clone(),
+            name: "resume-vm".into(),
+            profile_id: "code".into(),
+            profile_revision: test_profile_revision(),
+            profile_payload_hash: test_profile_payload_hash(),
+            asset_pins: test_asset_pins(),
+            pid: 0,
+            uds_path: uds_path.clone(),
+            session_dir,
+            ram_mb: 2048,
+            cpus: 2,
+            start_time: std::time::Instant::now(),
+            base_version: "0.0.0".into(),
+            persistent: true,
+            env: None,
+            forked_from: None,
+        },
+    );
+
+    stop_failed_restore_process_under_lock(&state, &vm_id).await;
+
+    assert!(
+        !state.instances.lock().unwrap().contains_key(&vm_id),
+        "failed warm restore must not remain registered before cold fallback"
+    );
+    assert!(!uds_path.exists(), "stale UDS socket should be removed");
+    assert!(
+        !uds_path.with_extension("ready").exists(),
+        "stale ready sentinel should be removed"
+    );
+}
+
 #[test]
 fn existing_resume_checkpoint_requires_completion_marker() {
     let (state, _dir) = make_test_state_with_tempdir();
@@ -9113,6 +9171,67 @@ fn resume_sandbox_requires_uuid_route_id_not_display_name() {
     );
 }
 
+#[tokio::test]
+async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
+    let (mut state, _dir) = make_test_state_with_tempdir();
+    let run_dir = state.run_dir.clone();
+    let argv_path = run_dir.join("resume-argv.txt");
+    let process_path = run_dir.join("record-process-argv.sh");
+    std::fs::write(
+        &process_path,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nsleep 1\n",
+            argv_path.display()
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&process_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&process_path, perms).unwrap();
+    }
+    Arc::get_mut(&mut state).unwrap().process_binary = process_path;
+    install_test_profile_assets(&state);
+
+    let vm_id = new_persistent_vm_id();
+    let session_dir = state.run_dir.join("persistent").join(&vm_id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    let mut entry = test_persistent_entry("resume-size", session_dir);
+    entry.id = vm_id.clone();
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert("resume-size".to_string(), entry);
+
+    assert_eq!(state.resume_sandbox(&vm_id, None, None).unwrap(), vm_id);
+    for _ in 0..50 {
+        if argv_path.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let argv = std::fs::read_to_string(&argv_path).expect("resume process argv should be recorded");
+    let args: Vec<&str> = argv.lines().collect();
+    let size_flag = args
+        .windows(2)
+        .find(|window| window[0] == "--scratch-disk-size-gb")
+        .map(|window| window[1]);
+    let expected_size = materialized_test_profile()
+        .vm
+        .scratch_disk_size_gb
+        .to_string();
+    assert_eq!(
+        size_flag,
+        Some(expected_size.as_str()),
+        "resume must preserve the profile-owned system overlay size; argv={args:?}"
+    );
+}
+
 #[test]
 fn persistent_route_identity_source_guard() {
     let source = include_str!("main.rs");
@@ -9376,7 +9495,7 @@ async fn status_reports_db_readiness() {
 }
 
 #[tokio::test]
-async fn info_route_populates_live_session_toolbar_stats() {
+async fn info_route_reports_db_readiness_without_inline_ledger_stats() {
     let (state, _dir) = make_test_state_with_tempdir();
     let app = build_service_router(Arc::clone(&state));
     let session_dir = state.run_dir.join("sessions").join("toolbar-stats-vm");
@@ -9445,12 +9564,15 @@ async fn info_route_populates_live_session_toolbar_stats() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["session_db"]["ready"], true);
-    assert_eq!(body["model_call_count"], 1);
-    assert_eq!(body["total_input_tokens"], 12);
-    assert_eq!(body["total_thinking_tokens"], 7);
-    assert_eq!(body["total_output_tokens"], 7);
-    assert_eq!(body["total_tool_calls"], 1);
-    assert_eq!(body["total_estimated_cost"], 0.001);
+    assert!(
+        body.get("model_call_count").is_none(),
+        "/vms/{{id}}/info must not inline ledger counters; use /vms/{{id}}/stats/detail"
+    );
+    assert!(body.get("total_input_tokens").is_none());
+    assert!(body.get("total_thinking_tokens").is_none());
+    assert!(body.get("total_output_tokens").is_none());
+    assert!(body.get("total_tool_calls").is_none());
+    assert!(body.get("total_estimated_cost").is_none());
 }
 
 #[tokio::test]

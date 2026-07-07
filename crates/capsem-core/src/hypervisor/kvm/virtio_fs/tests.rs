@@ -1084,7 +1084,7 @@ fn symlink_and_readlink() {
     std::fs::write(dir.join("target.txt"), b"real").unwrap();
     let mut proc = test_processor(&dir);
 
-    // SYMLINK: create "link.txt" -> "target.txt"
+    // SYMLINK: create "link.txt" -> "target.txt".
     let h = make_header(FUSE_SYMLINK, 1, 1);
     let resp = proc.handle_request(&build_request(&h, b"link.txt\0target.txt\0"));
     assert_eq!(response_error(&resp), 0);
@@ -1131,14 +1131,17 @@ fn symlink_readonly_rejected() {
 }
 
 #[test]
-fn symlink_escape_rejected_and_removed() {
+fn symlink_absolute_target_is_preserved() {
     let dir = temp_share("symlink-escape");
     let mut proc = test_processor(&dir);
 
     let h = make_header(FUSE_SYMLINK, 1, 1);
     let resp = proc.handle_request(&build_request(&h, b"escape\0/etc/passwd\0"));
-    assert_eq!(response_error(&resp), -libc::EINVAL);
-    assert!(!dir.join("escape").exists());
+    assert_eq!(response_error(&resp), 0);
+    assert_eq!(
+        std::fs::read_link(dir.join("escape")).unwrap(),
+        PathBuf::from("/etc/passwd")
+    );
 }
 
 #[test]

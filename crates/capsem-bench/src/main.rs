@@ -13,6 +13,7 @@ use tokio::net::UdpSocket;
 
 const VERSION: &str = "0.4.0-rust";
 const SECRET_SHAPED_MARKER: &str = "capsem_test_";
+const HTTP_REQUEST_ATTEMPTS: usize = 3;
 
 #[derive(Parser, Debug)]
 #[command(about = "Capsem benchmark harness")]
@@ -284,6 +285,8 @@ struct ScenarioResult {
     concurrency: usize,
     successful: usize,
     failed: usize,
+    #[serde(default)]
+    transport_retries: usize,
     total_duration_ms: f64,
     requests_per_sec: f64,
     transfer_bytes: u64,
@@ -311,6 +314,7 @@ struct RequestSample {
     status: u16,
     size: usize,
     latency_ms: f64,
+    attempts: usize,
     error: Option<String>,
     required_text_present: bool,
     secret_shaped_fixture_seen: bool,
@@ -629,6 +633,7 @@ async fn run_dns_scenario(
                         status: 0,
                         size: 0,
                         latency_ms: 0.0,
+                        attempts: 1,
                         error: Some(format!("dns bind: {error}")),
                         required_text_present: false,
                         secret_shaped_fixture_seen: false,
@@ -682,6 +687,7 @@ async fn run_one_dns_query(
                 status: 0,
                 size: 0,
                 latency_ms: 0.0,
+                attempts: 1,
                 error: Some(format!("dns query: {error}")),
                 required_text_present: false,
                 secret_shaped_fixture_seen: false,
@@ -694,6 +700,7 @@ async fn run_one_dns_query(
             status: 0,
             size: 0,
             latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+            attempts: 1,
             error: Some(format!("dns send: {error}")),
             required_text_present: false,
             secret_shaped_fixture_seen: false,
@@ -710,6 +717,7 @@ async fn run_one_dns_query(
                 status: rcode,
                 size: len,
                 latency_ms,
+                attempts: 1,
                 error: (!id_matches).then(|| "dns id mismatch".to_string()),
                 required_text_present: true,
                 secret_shaped_fixture_seen: false,
@@ -719,6 +727,7 @@ async fn run_one_dns_query(
             status: 0,
             size: 0,
             latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+            attempts: 1,
             error: Some(format!("dns recv: {error}")),
             required_text_present: false,
             secret_shaped_fixture_seen: false,
@@ -727,6 +736,7 @@ async fn run_one_dns_query(
             status: 0,
             size: 0,
             latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+            attempts: 1,
             error: Some("dns timeout".to_string()),
             required_text_present: false,
             secret_shaped_fixture_seen: false,
@@ -741,57 +751,73 @@ async fn run_one_request(
     timeout: Duration,
 ) -> RequestSample {
     let started = Instant::now();
-    let request = match scenario.method {
-        HttpMethod::Get => client.request(Method::GET, url),
-        HttpMethod::PostJson => {
-            let body = scenario.request_body.unwrap_or("{}");
-            client
-                .request(Method::POST, url)
-                .header("content-type", "application/json")
-                .body(body.to_string())
-        }
-    };
-    match tokio::time::timeout(timeout, request.send()).await {
-        Ok(Ok(response)) => {
-            let status = response.status().as_u16();
-            match response.bytes().await {
-                Ok(body) => {
-                    let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
-                    RequestSample {
-                        status,
-                        size: body.len(),
-                        latency_ms,
-                        error: None,
-                        required_text_present: required_text_present(&body, scenario),
-                        secret_shaped_fixture_seen: secret_fixture_seen(&body, scenario),
+    let mut last_request_error = None;
+    for attempt in 1..=HTTP_REQUEST_ATTEMPTS {
+        let request = match scenario.method {
+            HttpMethod::Get => client.request(Method::GET, url),
+            HttpMethod::PostJson => {
+                let body = scenario.request_body.unwrap_or("{}");
+                client
+                    .request(Method::POST, url)
+                    .header("content-type", "application/json")
+                    .body(body.to_string())
+            }
+        };
+        match tokio::time::timeout(timeout, request.send()).await {
+            Ok(Ok(response)) => {
+                let status = response.status().as_u16();
+                return match response.bytes().await {
+                    Ok(body) => {
+                        let latency_ms = started.elapsed().as_secs_f64() * 1000.0;
+                        RequestSample {
+                            status,
+                            size: body.len(),
+                            latency_ms,
+                            attempts: attempt,
+                            error: None,
+                            required_text_present: required_text_present(&body, scenario),
+                            secret_shaped_fixture_seen: secret_fixture_seen(&body, scenario),
+                        }
                     }
+                    Err(error) => RequestSample {
+                        status,
+                        size: 0,
+                        latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+                        attempts: attempt,
+                        error: Some(format!("body: {error}")),
+                        required_text_present: false,
+                        secret_shaped_fixture_seen: false,
+                    },
+                };
+            }
+            Ok(Err(error)) => {
+                last_request_error = Some(format!("request: {error}"));
+                if attempt < HTTP_REQUEST_ATTEMPTS {
+                    tokio::task::yield_now().await;
+                    continue;
                 }
-                Err(error) => RequestSample {
-                    status,
+            }
+            Err(_) => {
+                return RequestSample {
+                    status: 0,
                     size: 0,
                     latency_ms: started.elapsed().as_secs_f64() * 1000.0,
-                    error: Some(format!("body: {error}")),
+                    attempts: attempt,
+                    error: Some("timeout".to_string()),
                     required_text_present: false,
                     secret_shaped_fixture_seen: false,
-                },
+                };
             }
         }
-        Ok(Err(error)) => RequestSample {
-            status: 0,
-            size: 0,
-            latency_ms: started.elapsed().as_secs_f64() * 1000.0,
-            error: Some(format!("request: {error}")),
-            required_text_present: false,
-            secret_shaped_fixture_seen: false,
-        },
-        Err(_) => RequestSample {
-            status: 0,
-            size: 0,
-            latency_ms: started.elapsed().as_secs_f64() * 1000.0,
-            error: Some("timeout".to_string()),
-            required_text_present: false,
-            secret_shaped_fixture_seen: false,
-        },
+    }
+    RequestSample {
+        status: 0,
+        size: 0,
+        latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+        attempts: HTTP_REQUEST_ATTEMPTS,
+        error: Some(last_request_error.unwrap_or_else(|| "request failed".to_string())),
+        required_text_present: false,
+        secret_shaped_fixture_seen: false,
     }
 }
 
@@ -841,6 +867,10 @@ fn summarize(
         concurrency,
         successful,
         failed: total_requests.saturating_sub(successful),
+        transport_retries: samples
+            .iter()
+            .map(|sample| sample.attempts.saturating_sub(1))
+            .sum(),
         total_duration_ms: round1(duration_s * 1000.0),
         requests_per_sec: round1(total_requests as f64 / duration_s),
         transfer_bytes,
@@ -1267,6 +1297,7 @@ mod tests {
                 status: 200,
                 size: 24,
                 latency_ms: 1.0,
+                attempts: 1,
                 error: None,
                 required_text_present: true,
                 secret_shaped_fixture_seen: false,
@@ -1278,6 +1309,7 @@ mod tests {
                 status: 200,
                 size: 23,
                 latency_ms: 1.0,
+                attempts: 1,
                 error: None,
                 required_text_present: true,
                 secret_shaped_fixture_seen: false,
@@ -1309,6 +1341,7 @@ mod tests {
             concurrency: 10,
             successful: 100,
             failed: 0,
+            transport_retries: 0,
             total_duration_ms: 10.0,
             requests_per_sec: 10_000.0,
             transfer_bytes: 2400,
@@ -1363,6 +1396,7 @@ mod tests {
             concurrency: 10,
             successful: 0,
             failed: 100,
+            transport_retries: 0,
             total_duration_ms: 10.0,
             requests_per_sec: 10_000.0,
             transfer_bytes: 0,
@@ -1486,6 +1520,7 @@ JSON results saved to /tmp/capsem-benchmark.json
             concurrency: 10,
             successful: 100,
             failed: 0,
+            transport_retries: 0,
             total_duration_ms: 10.0,
             requests_per_sec: 10_000.0,
             transfer_bytes: 2400,

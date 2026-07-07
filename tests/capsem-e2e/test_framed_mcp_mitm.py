@@ -679,6 +679,17 @@ MCP_FRAME_VERSION = 1
 MCP_FRAME_HEADER_LEN = 16
 MCP_FRAME_MAGIC = 0x4D43
 
+def capsem_vsock_port(logical_port):
+    offset = 0
+    try:
+        for arg in open("/proc/cmdline", encoding="utf-8").read().split():
+            if arg.startswith("capsem.vsock_port_offset="):
+                offset = int(arg.split("=", 1)[1])
+                break
+    except OSError:
+        pass
+    return logical_port + offset
+
 def encode_frame(stream_id, process_name, payload, *, magic=MCP_FRAME_MAGIC):
     process_bytes = process_name.encode()
     payload_bytes = payload.encode()
@@ -717,7 +728,7 @@ def read_frame(sock):
 
 sock = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
 sock.settimeout(10)
-sock.connect((socket.VMADDR_CID_HOST, 5002))
+sock.connect((socket.VMADDR_CID_HOST, capsem_vsock_port(5002)))
 sock.sendall(b"\0CAPSEM_META:raw-corruptor\n")
 
 initial_payload = json.dumps({"jsonrpc": "2.0", "id": "before-corrupt", "method": "initialize", "params": {
@@ -1324,11 +1335,22 @@ def test_guest_mcp_legacy_vsock_5003_is_closed():
 import json
 import socket
 
+def capsem_vsock_port(logical_port):
+    offset = 0
+    try:
+        for arg in open("/proc/cmdline", encoding="utf-8").read().split():
+            if arg.startswith("capsem.vsock_port_offset="):
+                offset = int(arg.split("=", 1)[1])
+                break
+    except OSError:
+        pass
+    return logical_port + offset
+
 result = {"connected": False}
 sock = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
 sock.settimeout(3)
 try:
-    sock.connect((socket.VMADDR_CID_HOST, 5003))
+    sock.connect((socket.VMADDR_CID_HOST, capsem_vsock_port(5003)))
     result["connected"] = True
 except OSError as exc:
     result["errno"] = exc.errno

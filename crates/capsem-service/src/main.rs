@@ -44,6 +44,7 @@ mod startup;
 
 const RESUME_CHECKPOINT_NAME: &str = "checkpoint.vzsave";
 const RESUME_CHECKPOINT_COMPLETE_NAME: &str = "checkpoint.vzsave.complete";
+const SUSPEND_CONFIRM_TIMEOUT_SECS: u64 = 45;
 const UPDATE_CACHE_TTL_SECS: u64 = 24 * 3600;
 
 fn checkpoint_complete_path(checkpoint_path: &StdPath) -> PathBuf {
@@ -636,6 +637,97 @@ fn resolve_profile_vm_resources(
         ram_mb: requested_ram_mb.unwrap_or(profile.vm.ram_gb as u64 * 1024),
         cpus: requested_cpus.unwrap_or(profile.vm.cpu_count),
         scratch_disk_size_gb: profile.vm.scratch_disk_size_gb,
+    }
+}
+
+fn prewarm_system_overlay_templates(run_dir: &StdPath, profiles: &BTreeMap<String, Profile>) {
+    let sizes: HashSet<u32> = profiles
+        .values()
+        .map(|profile| profile.config().vm.scratch_disk_size_gb)
+        .chain(std::iter::once(16))
+        .collect();
+    for size_gb in sizes {
+        let template_path = capsem_core::system_overlay_template_path(run_dir, size_gb);
+        match capsem_core::ensure_preformatted_system_overlay_template(&template_path, size_gb) {
+            Ok(true) => info!(
+                path = %template_path.display(),
+                size_gb,
+                "prewarmed system overlay template"
+            ),
+            Ok(false) => info!(
+                path = %template_path.display(),
+                size_gb,
+                "system overlay template ready"
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => warn!(
+                path = %template_path.display(),
+                size_gb,
+                error = %error,
+                "mke2fs unavailable; guest will format system overlay at first boot"
+            ),
+            Err(error) => warn!(
+                path = %template_path.display(),
+                size_gb,
+                error = %error,
+                "failed to prewarm system overlay template; launch will retry"
+            ),
+        }
+    }
+}
+
+fn prewarm_vm_asset_hash_cache(
+    assets_base_dir: &StdPath,
+    manifest: Option<&capsem_core::asset_manager::ManifestV2>,
+    current_version: &str,
+) {
+    let Some(manifest) = manifest else {
+        return;
+    };
+    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let resolved = match manifest.resolve(current_version, arch, assets_base_dir) {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            warn!(error = %error, arch, "failed to resolve VM assets for hash cache prewarm");
+            return;
+        }
+    };
+    let Some(expected) = manifest.expected_hashes_current(arch) else {
+        warn!(
+            arch,
+            "failed to resolve expected VM asset hashes for hash cache prewarm"
+        );
+        return;
+    };
+    for (kind, path, hash) in [
+        (
+            "kernel",
+            resolved.kernel.as_path(),
+            expected.kernel.as_str(),
+        ),
+        (
+            "initrd",
+            resolved.initrd.as_path(),
+            expected.initrd.as_str(),
+        ),
+        (
+            "rootfs",
+            resolved.rootfs.as_path(),
+            expected.rootfs.as_str(),
+        ),
+    ] {
+        match capsem_core::VmConfig::verify_hash(path, hash) {
+            Ok(()) => info!(
+                kind,
+                path = %path.display(),
+                "prewarmed VM asset hash cache"
+            ),
+            Err(error) => warn!(
+                kind,
+                path = %path.display(),
+                error = %error,
+                "failed to prewarm VM asset hash cache; launch will retry"
+            ),
+        }
     }
 }
 
@@ -1275,7 +1367,7 @@ impl ServiceState {
                 .context("failed to clone sandbox state")?;
         }
 
-        let runtime_profile = self.profile_for_runtime(&profile_id)?;
+        let runtime_profile = self.cached_profile_for_runtime(&profile_id)?;
         let active_profile_path =
             self.materialize_active_profile(&runtime_profile, &session_dir)?;
         let profile = runtime_profile.config();
@@ -1638,6 +1730,7 @@ impl ServiceState {
         let active_profile_path =
             self.materialize_active_profile(&runtime_profile, &entry.session_dir)?;
         let profile = runtime_profile.config();
+        let scratch_disk_size_gb = profile.vm.scratch_disk_size_gb;
         self.validate_profile_pins(
             profile,
             &entry.profile_revision,
@@ -1735,6 +1828,8 @@ impl ServiceState {
                 .arg(cpus.to_string())
                 .arg("--ram-mb")
                 .arg(ram_mb.to_string())
+                .arg("--scratch-disk-size-gb")
+                .arg(scratch_disk_size_gb.to_string())
                 .arg("--uds-path")
                 .arg(&uds_path)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
@@ -1937,6 +2032,22 @@ impl ServiceState {
             .get(profile_id)
             .cloned()
             .ok_or_else(|| anyhow!("profile not found: {profile_id}"))
+    }
+
+    fn cached_profile_for_runtime(&self, profile_id: &str) -> Result<Profile> {
+        self.profile_cache
+            .lock()
+            .map_err(|error| anyhow!("profile cache lock poisoned: {error}"))?
+            .get(profile_id)
+            .cloned()
+            .ok_or_else(|| anyhow!("profile not found: {profile_id}"))
+    }
+
+    fn cached_profile_config(&self, profile_id: &str) -> Result<ProfileConfigFile> {
+        Ok(self
+            .cached_profile_for_runtime(profile_id)?
+            .config()
+            .clone())
     }
 
     fn profile_for_runtime(&self, profile_id: &str) -> Result<Profile> {
@@ -3044,7 +3155,7 @@ async fn handle_fork(
         }
     };
     let profile = state
-        .profile_config(&profile_id)
+        .cached_profile_config(&profile_id)
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
     state
         .validate_profile_pins(
@@ -3055,22 +3166,24 @@ async fn handle_fork(
         )
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
 
-    // Freeze + thaw the guest root filesystem so the ext4 system overlay
-    // (/dev/vdb backed by rootfs.img) is fully flushed before fork clone.
+    // Flush the guest root filesystem so the ext4 system overlay (/dev/vdb
+    // backed by rootfs.img) has pushed dirty pages into the host-visible image
+    // before fork clone. Do not fsfreeze here: the old shell command thawed
+    // before cloning, so it paid freeze latency without actually snapshotting
+    // while frozen.
     if let Some(ref uds) = uds_path {
-        let freeze_id = state.next_job_id();
+        let flush_id = state.next_job_id();
         if let Err(e) = send_ipc_command(
             uds,
             ServiceToProcess::Exec {
-                id: freeze_id,
-                command: "fsfreeze -f / 2>/dev/null; sync; fsfreeze -u / 2>/dev/null; true"
-                    .to_string(),
+                id: flush_id,
+                command: "sync; true".to_string(),
             },
             Some(10),
         )
         .await
         {
-            tracing::warn!("pre-fork fsfreeze failed (non-fatal): {e}");
+            tracing::warn!("pre-fork guest sync failed (non-fatal): {e}");
         }
     }
 
@@ -3254,7 +3367,7 @@ async fn handle_provision(
     let id = new_persistent_vm_id();
 
     let profile = state
-        .profile_config(&profile_id)
+        .cached_profile_config(&profile_id)
         .map_err(|e| AppError(StatusCode::PRECONDITION_FAILED, e.to_string()))?;
     let resources = resolve_profile_vm_resources(&profile, payload.ram_mb, payload.cpus);
     let ram_mb = resources.ram_mb;
@@ -3366,7 +3479,7 @@ async fn handle_provision(
     }
 }
 
-/// Run one provision attempt: spawn capsem-process, then poll up to 5s
+/// Run one provision attempt: spawn capsem-process, then poll briefly
 /// for either the `.ready` sentinel or a crash-before-ready signal.
 /// Pure bookkeeping; no retry logic here -- caller drives the retry
 /// loop on `ProvisionAttemptOutcome::LaunchdTransient`.
@@ -3431,13 +3544,12 @@ async fn provision_attempt(
     // Wait briefly for either the `.ready` sentinel or the child-exit
     // handler to remove the VM from the instances map (crash). Without
     // this poll, `capsem create` prints the id and exits 0 while the
-    // guest is already dead. 5s is enough to catch synchronous boot
-    // failures (missing asset, signed-manifest mismatch, Apple VZ
-    // entitlement transient -- all < 1s) without penalizing slow-but-
-    // valid boots; on hit we let the caller still hand the id back.
+    // guest is already dead. The window is deliberately shorter than a
+    // normal cold boot: create must catch synchronous launch failures, while
+    // exec/file routes own the full readiness wait for valid slow boots.
     let uds_path = state.instance_socket_path(id);
     let ready_path = uds_path.with_extension("ready");
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(500);
     loop {
         if ready_path.exists() {
             return ProvisionAttemptOutcome::Ready { uds_path };
@@ -3485,7 +3597,7 @@ fn storage_diagnostics(session_dir: &StdPath) -> Option<api::StorageDiagnostics>
     let metadata = std::fs::metadata(&rootfs_image_path).ok()?;
     let stat = nix::sys::statvfs::statvfs(session_dir).ok()?;
     let block_size = stat.block_size();
-    let fs_bytes = |blocks| u64::from(blocks).saturating_mul(block_size);
+    let fs_bytes = |blocks: u64| blocks.saturating_mul(block_size);
 
     Some(api::StorageDiagnostics {
         rootfs_image_path: rootfs_image_path.to_string_lossy().to_string(),
@@ -3504,8 +3616,8 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
     let mut sandboxes: Vec<SandboxInfo> = Vec::new();
 
     // Running instances. Keep this list route in-memory only; callers that
-    // need ledger-backed counters use `/vms/{id}/info` or explicit stats
-    // routes instead of making every UI/TUI poll open session.db.
+    // need ledger-backed counters use explicit stats routes instead of making
+    // every UI/TUI poll open session.db.
     {
         let instances = state.instances.lock().unwrap();
         for i in instances.values() {
@@ -8929,67 +9041,6 @@ fn hydrate_startup_route_caches(state: &ServiceState) -> Result<(), AppError> {
     Ok(())
 }
 
-const SESSION_STATUS_STATS_SQL: &str = r#"
-SELECT
-  COUNT(*) AS model_call_count,
-  COALESCE(SUM(COALESCE(input_tokens, 0)), 0) AS total_input_tokens,
-  COALESCE((
-    SELECT SUM(CAST(je.value AS INTEGER))
-    FROM model_calls mc2, json_each(mc2.usage_details) je
-    WHERE mc2.usage_details IS NOT NULL
-      AND je.key IN ('thinking', 'thinking_tokens', 'reasoning', 'reasoning_tokens')
-  ), 0) AS total_thinking_tokens,
-  COALESCE(SUM(COALESCE(output_tokens, 0)), 0) AS total_output_tokens,
-  COALESCE(SUM(estimated_cost_usd), 0.0) AS total_estimated_cost,
-  (
-    SELECT COUNT(*)
-    FROM tool_calls tc
-    WHERE tc.origin IN ('model', 'native', 'mcp', 'builtin', 'local', 'mcp_proxy')
-  ) AS total_tool_calls,
-  (SELECT COUNT(*) FROM net_events) AS total_requests,
-  (SELECT COUNT(*) FROM net_events WHERE decision = 'allowed') AS allowed_requests,
-  (SELECT COUNT(*) FROM net_events WHERE decision = 'denied') AS denied_requests,
-  (SELECT COUNT(*) FROM fs_events) AS total_file_events
-FROM model_calls
-"#;
-
-fn row_u64(row: &serde_json::Value, field: &str) -> Option<u64> {
-    row.get(field).and_then(serde_json::Value::as_u64)
-}
-
-async fn apply_session_db_stats(
-    info: &mut SandboxInfo,
-    db_path: &StdPath,
-    db: &capsem_logger::DbHandle,
-) -> Result<(), AppError> {
-    let row = query_route_objects(
-        &info.id,
-        "session status",
-        "toolbar_stats",
-        db_path,
-        db,
-        SESSION_STATUS_STATS_SQL,
-        &[],
-    )
-    .await?
-    .into_iter()
-    .next()
-    .unwrap_or_else(|| json!({}));
-    info.model_call_count = row_u64(&row, "model_call_count");
-    info.total_input_tokens = row_u64(&row, "total_input_tokens");
-    info.total_thinking_tokens = row_u64(&row, "total_thinking_tokens");
-    info.total_output_tokens = row_u64(&row, "total_output_tokens");
-    info.total_estimated_cost = row
-        .get("total_estimated_cost")
-        .and_then(serde_json::Value::as_f64);
-    info.total_tool_calls = row_u64(&row, "total_tool_calls");
-    info.total_requests = row_u64(&row, "total_requests");
-    info.allowed_requests = row_u64(&row, "allowed_requests");
-    info.denied_requests = row_u64(&row, "denied_requests");
-    info.total_file_events = row_u64(&row, "total_file_events");
-    Ok(())
-}
-
 async fn apply_session_db_status(
     state: &ServiceState,
     info: &mut SandboxInfo,
@@ -9011,23 +9062,7 @@ async fn apply_session_db_status(
         return;
     }
     match open_ready_session_db(state, &info.id, "session status", &db_path).await {
-        Ok(db) => {
-            if let Err(error) = apply_session_db_stats(info, &db_path, &db).await {
-                let message = error.1;
-                info.session_db = Some(api::SessionDbStatus {
-                    ready: false,
-                    error: Some(message.clone()),
-                });
-                warn!(
-                    vm_id = info.id.as_str(),
-                    operation = "session_db_status",
-                    db_path = %db_path.display(),
-                    ready = false,
-                    error = %message,
-                    "session DB stats unavailable for session status"
-                );
-                return;
-            }
+        Ok(_) => {
             info.session_db = Some(api::SessionDbStatus {
                 ready: true,
                 error: None,
@@ -11116,6 +11151,31 @@ async fn shutdown_vm_process(
     Ok(Some((session_dir, persistent, pid)))
 }
 
+/// Tear down a warm-restore process that failed to reach ready while the
+/// caller already holds the save/restore locks.
+async fn stop_failed_restore_process_under_lock(state: &ServiceState, id: &str) {
+    let Some((uds_path, pid)) = ({
+        let instances = state.instances.lock().unwrap();
+        instances.get(id).map(|i| (i.uds_path.clone(), i.pid))
+    }) else {
+        return;
+    };
+
+    if pid > 0 {
+        let _ = nix::sys::signal::kill(
+            nix::unistd::Pid::from_raw(pid as i32),
+            nix::sys::signal::Signal::SIGTERM,
+        );
+    }
+
+    tracing::warn!(id, pid, "removing failed warm restore before cold fallback");
+    state.instances.lock().unwrap().remove(id);
+    state.unregister_session_db_handle(id);
+    wait_for_process_exit(pid, std::time::Duration::from_secs(1)).await;
+    let _ = std::fs::remove_file(&uds_path);
+    let _ = std::fs::remove_file(uds_path.with_extension("ready"));
+}
+
 #[tracing::instrument(skip_all, fields(vm_id = %id))]
 async fn handle_suspend(
     State(state): State<Arc<ServiceState>>,
@@ -11192,15 +11252,18 @@ async fn handle_suspend(
     // a subsequent resume request fails with permission denied because the old process
     // hasn't released the checkpoint file yet.
     let mut suspended = false;
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(15), async {
-        while let Ok(msg) = rx.recv().await {
-            if let ProcessToService::StateChanged { state, .. } = msg {
-                if state == "Suspended" {
-                    suspended = true;
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(SUSPEND_CONFIRM_TIMEOUT_SECS),
+        async {
+            while let Ok(msg) = rx.recv().await {
+                if let ProcessToService::StateChanged { state, .. } = msg {
+                    if state == "Suspended" {
+                        suspended = true;
+                    }
                 }
             }
-        }
-    })
+        },
+    )
     .await;
 
     if !suspended {
@@ -11362,6 +11425,7 @@ async fn handle_resume(
                         id,
                         "warm restore failed; archiving checkpoint and retrying as a cold persistent boot"
                     );
+                    stop_failed_restore_process_under_lock(&state, &resumed_id).await;
                     state.archive_failed_restore_checkpoint(&resumed_id);
 
                     match state.resume_sandbox(&resumed_id, None, None) {
@@ -12413,6 +12477,8 @@ async fn main() -> Result<()> {
     })?;
     let profile_cache = build_profile_cache()
         .map_err(|AppError(_, message)| anyhow!("failed to build profile cache: {message}"))?;
+    prewarm_system_overlay_templates(&run_dir, &profile_cache);
+    prewarm_vm_asset_hash_cache(&assets_base_dir, manifest.as_deref(), &current_version);
     let profile_rule_cache = build_profile_rule_cache(None)
         .map_err(|AppError(_, message)| anyhow!("failed to build profile rule cache: {message}"))?;
     let profile_plugin_policy_cache =

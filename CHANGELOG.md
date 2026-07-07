@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Split the binary release rail across stable and nightly manifests for the
+  first 1.5 publish, proving package/SBOM metadata can move without rebuilding
+  or mutating VM image/profile metadata.
 - Added a manifest history audit regression proving retained channel manifest
   records use status enums, full digests, and never publish `removed`.
 - Added a public release HMAC regression proving generated release pages and

@@ -156,7 +156,10 @@ impl VirtioBlockDevice {
     ) -> u8 {
         let offset = match sector.checked_mul(SECTOR_SIZE) {
             Some(o) => o,
-            None => return VIRTIO_BLK_S_IOERR,
+            None => {
+                log_block_ioerr("read", sector, 0, "sector_overflow", None);
+                return VIRTIO_BLK_S_IOERR;
+            }
         };
 
         let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
@@ -164,17 +167,23 @@ impl VirtioBlockDevice {
             .checked_add(total_len)
             .is_none_or(|end| end > capacity_sectors * SECTOR_SIZE)
         {
+            log_block_ioerr("read", sector, total_len, "out_of_bounds", None);
             return VIRTIO_BLK_S_IOERR;
         }
 
         let iovecs = match Self::guest_iovecs(mem, data_descs) {
             Some(iovecs) => iovecs,
-            None => return VIRTIO_BLK_S_IOERR,
+            None => {
+                log_block_ioerr("read", sector, total_len, "guest_memory", None);
+                return VIRTIO_BLK_S_IOERR;
+            }
         };
-        if Self::preadv_all(file.as_raw_fd(), &iovecs, offset, total_len).is_ok() {
-            VIRTIO_BLK_S_OK
-        } else {
-            VIRTIO_BLK_S_IOERR
+        match Self::preadv_all(file.as_raw_fd(), &iovecs, offset, total_len) {
+            Ok(()) => VIRTIO_BLK_S_OK,
+            Err(error) => {
+                log_block_ioerr("read", sector, total_len, "host_preadv", Some(&error));
+                VIRTIO_BLK_S_IOERR
+            }
         }
     }
 
@@ -188,12 +197,17 @@ impl VirtioBlockDevice {
         data_descs: &[(u64, u32)],
     ) -> u8 {
         if read_only {
+            let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
+            log_block_ioerr("write", sector, total_len, "read_only", None);
             return VIRTIO_BLK_S_IOERR;
         }
 
         let offset = match sector.checked_mul(SECTOR_SIZE) {
             Some(o) => o,
-            None => return VIRTIO_BLK_S_IOERR,
+            None => {
+                log_block_ioerr("write", sector, 0, "sector_overflow", None);
+                return VIRTIO_BLK_S_IOERR;
+            }
         };
 
         let total_len: u64 = data_descs.iter().map(|&(_, l)| l as u64).sum();
@@ -201,17 +215,23 @@ impl VirtioBlockDevice {
             .checked_add(total_len)
             .is_none_or(|end| end > capacity_sectors * SECTOR_SIZE)
         {
+            log_block_ioerr("write", sector, total_len, "out_of_bounds", None);
             return VIRTIO_BLK_S_IOERR;
         }
 
         let iovecs = match Self::guest_iovecs(mem, data_descs) {
             Some(iovecs) => iovecs,
-            None => return VIRTIO_BLK_S_IOERR,
+            None => {
+                log_block_ioerr("write", sector, total_len, "guest_memory", None);
+                return VIRTIO_BLK_S_IOERR;
+            }
         };
-        if Self::pwritev_all(file.as_raw_fd(), &iovecs, offset, total_len).is_ok() {
-            VIRTIO_BLK_S_OK
-        } else {
-            VIRTIO_BLK_S_IOERR
+        match Self::pwritev_all(file.as_raw_fd(), &iovecs, offset, total_len) {
+            Ok(()) => VIRTIO_BLK_S_OK,
+            Err(error) => {
+                log_block_ioerr("write", sector, total_len, "host_pwritev", Some(&error));
+                VIRTIO_BLK_S_IOERR
+            }
         }
     }
 
@@ -1205,6 +1225,24 @@ fn emit_queue_drain_metrics(backend: &'static str, result: &QueueProcessResult) 
         .record(duration_ms(result.drain_duration));
 }
 
+fn log_block_ioerr(
+    operation: &'static str,
+    sector: u64,
+    bytes: u64,
+    reason: &'static str,
+    error: Option<&std::io::Error>,
+) {
+    tracing::warn!(
+        event_name = "virtio.blk.ioerr",
+        operation,
+        sector,
+        bytes,
+        reason,
+        error = error.map(tracing::field::display),
+        "virtio-blk request failed"
+    );
+}
+
 fn request_operation_label(type_: u32) -> &'static str {
     match type_ {
         VIRTIO_BLK_T_IN => "read",
@@ -1300,18 +1338,18 @@ impl VirtioDevice for VirtioBlockDevice {
                             let handle = std::thread::Builder::new()
                                 .name("virtio-blk-ioeventfd".into())
                                 .spawn(move || {
-                                    block_worker_loop(
+                                    block_worker_loop(BlockWorker {
                                         file,
                                         read_only,
                                         capacity_sectors,
                                         device_id,
-                                        worker_mem,
+                                        mem: worker_mem,
                                         queue,
-                                        worker_notify_fd,
+                                        notify_fd: worker_notify_fd,
                                         rx,
                                         irq_fd,
                                         interrupt_status,
-                                    )
+                                    })
                                 })
                                 .expect("failed to spawn virtio-blk ioeventfd worker");
                             self.control_tx = Some(tx);
@@ -1426,7 +1464,7 @@ impl Drop for VirtioBlockDevice {
     }
 }
 
-fn block_worker_loop(
+struct BlockWorker {
     file: std::fs::File,
     read_only: bool,
     capacity_sectors: u64,
@@ -1437,55 +1475,23 @@ fn block_worker_loop(
     rx: mpsc::Receiver<BlockWorkerCommand>,
     irq_fd: RawFd,
     interrupt_status: Arc<AtomicU32>,
-) {
-    if !should_use_io_uring(read_only) {
-        block_worker_loop_sync(
-            file,
-            read_only,
-            capacity_sectors,
-            device_id,
-            mem,
-            queue,
-            notify_fd,
-            rx,
-            irq_fd,
-            interrupt_status,
-        );
+}
+
+fn block_worker_loop(worker: BlockWorker) {
+    if !should_use_io_uring(worker.read_only) {
+        block_worker_loop_sync(worker);
         return;
     }
 
-    match BlockIoUring::new(file.as_raw_fd()) {
-        Ok(uring) => block_worker_loop_uring(
-            file,
-            read_only,
-            capacity_sectors,
-            device_id,
-            mem,
-            queue,
-            notify_fd,
-            rx,
-            irq_fd,
-            interrupt_status,
-            uring,
-        ),
+    match BlockIoUring::new(worker.file.as_raw_fd()) {
+        Ok(uring) => block_worker_loop_uring(worker, uring),
         Err(error) => {
             tracing::warn!(
                 event_name = "virtio.blk.io_uring_disabled",
                 %error,
                 "virtio-blk io_uring backend unavailable; using synchronous worker"
             );
-            block_worker_loop_sync(
-                file,
-                read_only,
-                capacity_sectors,
-                device_id,
-                mem,
-                queue,
-                notify_fd,
-                rx,
-                irq_fd,
-                interrupt_status,
-            );
+            block_worker_loop_sync(worker);
         }
     }
 }
@@ -1500,20 +1506,9 @@ fn should_use_io_uring(read_only: bool) -> bool {
     !read_only && std::env::var_os("CAPSEM_KVM_BLK_IO_URING").is_some()
 }
 
-fn block_worker_loop_sync(
-    mut file: std::fs::File,
-    read_only: bool,
-    capacity_sectors: u64,
-    device_id: [u8; VIRTIO_BLK_ID_LEN],
-    mem: GuestMemoryRef,
-    mut queue: VirtQueue,
-    notify_fd: OwnedFd,
-    rx: mpsc::Receiver<BlockWorkerCommand>,
-    irq_fd: RawFd,
-    interrupt_status: Arc<AtomicU32>,
-) {
+fn block_worker_loop_sync(mut worker: BlockWorker) {
     loop {
-        let notify_count = match read_eventfd(notify_fd.as_raw_fd()) {
+        let notify_count = match read_eventfd(worker.notify_fd.as_raw_fd()) {
             Ok(count) => count,
             Err(error) => {
                 tracing::warn!(
@@ -1528,7 +1523,7 @@ fn block_worker_loop_sync(
 
         let mut stop = false;
         let mut drain_replies = Vec::new();
-        while let Ok(command) = rx.try_recv() {
+        while let Ok(command) = worker.rx.try_recv() {
             match command {
                 BlockWorkerCommand::Drain(done) => drain_replies.push(done),
                 BlockWorkerCommand::Stop => stop = true,
@@ -1536,16 +1531,16 @@ fn block_worker_loop_sync(
         }
 
         let result = VirtioBlockDevice::process_queue(
-            &mut file,
-            read_only,
-            capacity_sectors,
-            &device_id,
-            &mem,
-            &mut queue,
+            &mut worker.file,
+            worker.read_only,
+            worker.capacity_sectors,
+            &worker.device_id,
+            &worker.mem,
+            &mut worker.queue,
         );
         emit_queue_drain_metrics("ioeventfd", &result);
         if result.should_interrupt {
-            signal_irq(irq_fd, &interrupt_status);
+            signal_irq(worker.irq_fd, &worker.interrupt_status);
         }
         for done in drain_replies {
             let _ = done.send(());
@@ -1574,20 +1569,7 @@ fn block_worker_loop_sync(
 const EPOLL_TOKEN_NOTIFY: u64 = 1;
 const EPOLL_TOKEN_COMPLETION: u64 = 2;
 
-#[allow(clippy::too_many_arguments)]
-fn block_worker_loop_uring(
-    mut file: std::fs::File,
-    read_only: bool,
-    capacity_sectors: u64,
-    device_id: [u8; VIRTIO_BLK_ID_LEN],
-    mem: GuestMemoryRef,
-    mut queue: VirtQueue,
-    notify_fd: OwnedFd,
-    rx: mpsc::Receiver<BlockWorkerCommand>,
-    irq_fd: RawFd,
-    interrupt_status: Arc<AtomicU32>,
-    mut uring: BlockIoUring,
-) {
+fn block_worker_loop_uring(mut worker: BlockWorker, mut uring: BlockIoUring) {
     let epoll_fd = match create_epoll_fd() {
         Ok(fd) => fd,
         Err(error) => {
@@ -1601,7 +1583,7 @@ fn block_worker_loop_uring(
     };
     if let Err(error) = epoll_add(
         epoll_fd.as_raw_fd(),
-        notify_fd.as_raw_fd(),
+        worker.notify_fd.as_raw_fd(),
         EPOLL_TOKEN_NOTIFY,
     )
     .and_then(|_| {
@@ -1637,7 +1619,7 @@ fn block_worker_loop_uring(
         for token in events {
             match token {
                 EPOLL_TOKEN_NOTIFY => {
-                    let notify_count = match read_eventfd(notify_fd.as_raw_fd()) {
+                    let notify_count = match read_eventfd(worker.notify_fd.as_raw_fd()) {
                         Ok(count) => count,
                         Err(error) => {
                             tracing::warn!(
@@ -1650,7 +1632,7 @@ fn block_worker_loop_uring(
                     };
                     emit_queue_notification_metric("io_uring", notify_count);
 
-                    while let Ok(command) = rx.try_recv() {
+                    while let Ok(command) = worker.rx.try_recv() {
                         match command {
                             BlockWorkerCommand::Drain(done) => drain_replies.push(done),
                             BlockWorkerCommand::Stop => stop = true,
@@ -1658,17 +1640,17 @@ fn block_worker_loop_uring(
                     }
 
                     let result = VirtioBlockDevice::process_queue_uring(
-                        &mut file,
-                        read_only,
-                        capacity_sectors,
-                        &device_id,
-                        &mem,
-                        &mut queue,
+                        &mut worker.file,
+                        worker.read_only,
+                        worker.capacity_sectors,
+                        &worker.device_id,
+                        &worker.mem,
+                        &mut worker.queue,
                         &mut uring,
                     );
                     emit_queue_drain_metrics("io_uring", &result);
                     if result.should_interrupt {
-                        signal_irq(irq_fd, &interrupt_status);
+                        signal_irq(worker.irq_fd, &worker.interrupt_status);
                     }
                     tracing::trace!(
                         event_name = "virtio.blk.queue_drain",
@@ -1689,9 +1671,9 @@ fn block_worker_loop_uring(
                 }
                 EPOLL_TOKEN_COMPLETION => {
                     let _ = drain_eventfd(uring.completion_fd());
-                    let completion = uring.reap_completions(&mem, &mut queue);
+                    let completion = uring.reap_completions(&worker.mem, &mut worker.queue);
                     if completion.should_interrupt {
-                        signal_irq(irq_fd, &interrupt_status);
+                        signal_irq(worker.irq_fd, &worker.interrupt_status);
                     }
                     tracing::trace!(
                         event_name = "virtio.blk.async_completions",

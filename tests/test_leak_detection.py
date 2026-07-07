@@ -20,9 +20,11 @@ import pytest
 from conftest import (
     _ancestry,
     _CAUGHT_THREAD_EXCEPTIONS,
+    _desired_open_file_limit,
     _is_pytest_descendant,
     _leak_log_path,
     _missing_required_artifacts,
+    _raise_open_file_limit,
     _sanitize_leak_log_namespace,
     _thread_exception_hook,
     get_capsem_processes,
@@ -257,6 +259,59 @@ def test_required_artifacts_manifest_path_is_flat():
         _REQUIRED_ARTIFACTS["assets/manifest.json"]
         == _PROJECT_ROOT / "assets" / "manifest.json"
     )
+
+
+# ---------------------------------------------------------------------------
+# File descriptor limit guard. Full pytest runs use xdist plus live KVM VMs;
+# a 1024 soft nofile limit causes EMFILE cascades in unrelated fixtures.
+# ---------------------------------------------------------------------------
+
+
+class _FakeResource:
+    RLIMIT_NOFILE = object()
+
+    def __init__(self, soft: int, hard: int):
+        self._limit = (soft, hard)
+        self.set_calls = []
+
+    def getrlimit(self, which):
+        assert which is self.RLIMIT_NOFILE
+        return self._limit
+
+    def setrlimit(self, which, limit):
+        assert which is self.RLIMIT_NOFILE
+        self.set_calls.append(limit)
+        self._limit = limit
+
+
+def test_open_file_limit_default_is_large_enough_for_xdist_vm_runs():
+    assert _desired_open_file_limit({}) >= 8192
+
+
+def test_open_file_limit_env_override_and_bad_values():
+    assert _desired_open_file_limit({"CAPSEM_TEST_NOFILE_LIMIT": "16384"}) == 16384
+    assert _desired_open_file_limit({"CAPSEM_TEST_NOFILE_LIMIT": "not-an-int"}) >= 8192
+    assert _desired_open_file_limit({"CAPSEM_TEST_NOFILE_LIMIT": "-1"}) == 0
+
+
+def test_raise_open_file_limit_raises_soft_limit_when_hard_allows():
+    fake = _FakeResource(soft=1024, hard=524288)
+
+    assert _raise_open_file_limit({}, resource_module=fake) == (1024, 8192, 524288)
+    assert fake.set_calls == [(8192, 524288)]
+
+
+def test_raise_open_file_limit_clamps_to_hard_limit_and_can_disable():
+    limited = _FakeResource(soft=1024, hard=4096)
+    assert _raise_open_file_limit({}, resource_module=limited) == (1024, 4096, 4096)
+    assert limited.set_calls == [(4096, 4096)]
+
+    disabled = _FakeResource(soft=1024, hard=524288)
+    assert _raise_open_file_limit(
+        {"CAPSEM_TEST_NOFILE_LIMIT": "0"},
+        resource_module=disabled,
+    ) == (1024, 1024, 524288)
+    assert disabled.set_calls == []
 
 
 # ---------------------------------------------------------------------------

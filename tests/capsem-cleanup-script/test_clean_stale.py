@@ -233,6 +233,68 @@ def test_recent_tmp_fixture_kept(tmp_path: Path):
     assert fresh.exists()
 
 
+def test_tmp_fixture_budget_evicts_oldest_recent_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    tmp = tmp_path / "T"
+    tmp.mkdir()
+    monkeypatch.delenv("CAPSEM_TEST_TMP_BUDGET_GB", raising=False)
+    monkeypatch.setattr(clean_stale, "TEST_TMP_BUDGET_GB", 0.000_01)  # ~10 KB
+
+    oldest = tmp / "capsem-test-old"
+    newest = tmp / "capsem-test-new"
+    unrelated = tmp / "not-capsem-test"
+    for path, age_days in [(oldest, 2), (newest, 0), (unrelated, 20)]:
+        path.mkdir()
+        (path / "blob").write_bytes(b"\x00" * 8192)
+        t = time.time() - age_days * 86400
+        os.utime(path, (t, t))
+
+    result = clean_stale.clean_tmp_fixtures_to_budget(tmp, dry_run=False, verbose=False)
+
+    assert result.removed == 1
+    assert not oldest.exists()
+    assert newest.exists()
+    assert unrelated.exists()
+
+
+def test_tmp_fixture_budget_uses_allocated_size_for_sparse_images(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    tmp = tmp_path / "T"
+    tmp.mkdir()
+    monkeypatch.delenv("CAPSEM_TEST_TMP_BUDGET_GB", raising=False)
+    monkeypatch.setattr(clean_stale, "TEST_TMP_BUDGET_GB", 0.001)  # ~1 MB
+
+    sparse = tmp / "capsem-test-sparse"
+    sparse.mkdir()
+    rootfs = sparse / "rootfs.img"
+    with rootfs.open("wb") as f:
+        f.truncate(64 * 1024 * 1024 * 1024)
+
+    result = clean_stale.clean_tmp_fixtures_to_budget(tmp, dry_run=False, verbose=False)
+
+    assert result.removed == 0
+    assert sparse.exists(), "sparse logical size alone must not trigger pruning"
+
+
+def test_tmp_fixture_budget_can_be_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    tmp = tmp_path / "T"
+    tmp.mkdir()
+    monkeypatch.setenv("CAPSEM_TEST_TMP_BUDGET_GB", "0")
+    fixture = tmp / "capsem-test-big"
+    fixture.mkdir()
+    (fixture / "blob").write_bytes(b"\x00" * 8192)
+
+    result = clean_stale.clean_tmp_fixtures_to_budget(tmp, dry_run=False, verbose=False)
+
+    assert result.removed == 0
+    assert fixture.exists()
+    assert "disabled" in result.detail
+
+
 def test_tmp_fixture_non_matching_name_kept(tmp_path: Path):
     tmp = tmp_path / "T"
     tmp.mkdir()

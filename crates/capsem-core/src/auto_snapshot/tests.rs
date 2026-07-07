@@ -701,6 +701,72 @@ fn reflink_snapshot_preserves_binary_content() {
 
 #[cfg(target_os = "linux")]
 #[test]
+fn sparse_copy_preserves_large_sparse_images() {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::os::unix::fs::MetadataExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("rootfs.img");
+    let dst = tmp.path().join("snapshot-rootfs.img");
+    let logical_size = 64 * 1024 * 1024;
+
+    let mut src_file = std::fs::File::create(&src).unwrap();
+    src_file.set_len(logical_size).unwrap();
+    src_file.seek(SeekFrom::Start(1024 * 1024)).unwrap();
+    src_file.write_all(b"capsem-rootfs-marker").unwrap();
+    drop(src_file);
+
+    copy_file_sparse(&src, &dst).unwrap();
+
+    let dst_meta = std::fs::metadata(&dst).unwrap();
+    assert_eq!(dst_meta.len(), logical_size);
+    assert!(
+        dst_meta.blocks() * 512 < logical_size / 8,
+        "sparse fallback allocated too much space"
+    );
+
+    let mut dst_file = std::fs::File::open(&dst).unwrap();
+    dst_file.seek(SeekFrom::Start(1024 * 1024)).unwrap();
+    let mut marker = vec![0_u8; b"capsem-rootfs-marker".len()];
+    dst_file.read_exact(&mut marker).unwrap();
+    assert_eq!(marker, b"capsem-rootfs-marker");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn sparse_copy_drops_allocated_zero_extents() {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::os::unix::fs::MetadataExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("allocated-zeroes.img");
+    let dst = tmp.path().join("copy.img");
+    let zero_len = 16 * 1024 * 1024;
+
+    let mut src_file = std::fs::File::create(&src).unwrap();
+    src_file.write_all(&vec![0_u8; zero_len]).unwrap();
+    src_file.write_all(b"after-zero-extent").unwrap();
+    drop(src_file);
+
+    copy_file_sparse(&src, &dst).unwrap();
+
+    let src_meta = std::fs::metadata(&src).unwrap();
+    let dst_meta = std::fs::metadata(&dst).unwrap();
+    assert_eq!(dst_meta.len(), src_meta.len());
+    assert!(
+        dst_meta.blocks() * 512 < src_meta.blocks() * 512 / 4,
+        "zero extents should be holes in sparse copy"
+    );
+
+    let mut dst_file = std::fs::File::open(&dst).unwrap();
+    dst_file.seek(SeekFrom::Start(zero_len as u64)).unwrap();
+    let mut marker = vec![0_u8; b"after-zero-extent".len()];
+    dst_file.read_exact(&mut marker).unwrap();
+    assert_eq!(marker, b"after-zero-extent");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn reflink_try_reflink_returns_false_on_unsupported_fs() {
     // tmpfs doesn't support FICLONE -- verify graceful fallback.
     let tmp = tempfile::tempdir().unwrap();
@@ -711,7 +777,7 @@ fn reflink_try_reflink_returns_false_on_unsupported_fs() {
     let result = ReflinkSnapshot::try_reflink(&src_path, &dst_path).unwrap();
     // On tmpfs/ext4, FICLONE is not supported so this should be false.
     // On btrfs/xfs, it would be true. Either way, no error.
-    assert!(result == true || result == false);
+    assert!(result || !dst_path.exists());
     // If reflink failed, dst was cleaned up and caller does byte copy.
     if !result {
         assert!(!dst_path.exists());

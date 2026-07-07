@@ -130,6 +130,10 @@ def _write_release_manifest(
         "vmlinuz": _write_asset(arm64 / "vmlinuz", b"kernel-arm64"),
         "initrd.img": _write_asset(arm64 / "initrd.img", b"initrd-arm64"),
         "rootfs.erofs": _write_asset(arm64 / "rootfs.erofs", b"rootfs-arm64"),
+        "abom.cdx.json": _write_asset(
+            arm64 / "abom.cdx.json",
+            b'{"bomFormat":"CycloneDX","metadata":{"tools":[{"name":"cdxgen"}]}}',
+        ),
         "obom.cdx.json": _write_asset(
             arm64 / "obom.cdx.json",
             b'{"bomFormat":"CycloneDX","metadata":{"tools":[{"name":"cdxgen"}]}}',
@@ -159,6 +163,10 @@ def _write_release_manifest(
             "vmlinuz": _write_asset(x86_64 / "vmlinuz", b"kernel-x86_64"),
             "initrd.img": _write_asset(x86_64 / "initrd.img", b"initrd-x86_64"),
             "rootfs.erofs": _write_asset(x86_64 / "rootfs.erofs", b"rootfs-x86_64"),
+            "abom.cdx.json": _write_asset(
+                x86_64 / "abom.cdx.json",
+                b'{"bomFormat":"CycloneDX","metadata":{"tools":[{"name":"cdxgen"}]}}',
+            ),
             "obom.cdx.json": _write_asset(
                 x86_64 / "obom.cdx.json",
                 b'{"bomFormat":"CycloneDX","metadata":{"tools":[{"name":"cdxgen"}]}}',
@@ -400,7 +408,7 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert report["human_site_source"] == "release-site"
     assert "index_html" not in report
     assert report["manifest"] == str(dist / "assets" / "stable" / "manifest.json")
-    assert report["copied_assets"] == 10
+    assert report["copied_assets"] == 12
 
     index_html = (dist / "index.html").read_text(encoding="utf-8")
     assert "Capsem Release Channels" in index_html
@@ -434,7 +442,7 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "apt_packages" in profile_html
     assert "python_requirements" in profile_html
     assert "npm_packages" in profile_html
-    assert "root_manifest" in profile_html
+    assert "Root manifest" in profile_html
 
     headers = (dist / "_headers").read_text(encoding="utf-8")
     assert "/\n  Cache-Control: no-cache, must-revalidate" in headers
@@ -586,10 +594,10 @@ def test_asset_release_updates_release_index_without_moving_binary_pointer(
     assert health["updates"]["assets"]["latest"] == "2030.0102.1"
     assert health["updates"]["assets"]["current"] == "2030.0102.1"
     assert health["updates"]["assets"]["manifest"] == "/assets/stable/manifest.json"
-    assert (
-        health["assets"]["files"][0]["url"]
-        == "/assets/releases/2030.0102.1/arm64-initrd.img"
+    initrd_file = next(
+        item for item in health["assets"]["files"] if item["logical_name"] == "initrd.img"
     )
+    assert initrd_file["url"] == "/assets/releases/2030.0102.1/arm64-initrd.img"
     assert (
         dist / "assets" / "releases" / "2030.0102.1" / "arm64-rootfs.erofs"
     ).read_bytes() == b"rootfs-arm64"
@@ -655,7 +663,7 @@ def test_asset_channel_deprecate_release_reports_history_without_moving_current(
     channel_manifest = json.loads(
         (dist / "assets" / "stable" / "manifest.json").read_text(encoding="utf-8")
     )
-    assert channel_manifest["assets"]["releases"]["2030.0101.1"]["deprecated"] is True
+    assert "assets" not in channel_manifest
 
     _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))
 
@@ -745,7 +753,7 @@ def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path)
     )
 
     assert result.returncode != 0
-    assert "health.json profile update latest target does not match catalog" in result.stderr
+    assert "health.json profile update latest target does not match manifest profiles" in result.stderr
 
 
 def test_release_index_check_rejects_stale_human_index_state(tmp_path: Path) -> None:
@@ -772,7 +780,10 @@ def test_release_index_check_rejects_stale_human_index_state(tmp_path: Path) -> 
 
     index_path = dist / "index.html"
     index_html = index_path.read_text(encoding="utf-8")
-    index_html = index_html.replace("1.4.1234567890", "1.4.0000000000")
+    manifest_version = json.loads(
+        (dist / "assets" / "stable" / "manifest.json").read_text(encoding="utf-8")
+    )["version"]
+    index_html = index_html.replace(manifest_version, "1.5.0-stale.20300101")
     index_path.write_text(index_html, encoding="utf-8")
 
     result = _run_admin(
@@ -787,7 +798,7 @@ def test_release_index_check_rejects_stale_human_index_state(tmp_path: Path) -> 
     )
 
     assert result.returncode != 0
-    assert "asset channel index missing current binary 1.4.1234567890" in result.stderr
+    assert f"asset channel index missing manifest version {manifest_version}" in result.stderr
 
 
 def test_release_index_check_rejects_profile_catalog_url_drift(tmp_path: Path) -> None:
@@ -887,27 +898,11 @@ def test_release_index_check_rejects_profile_catalog_content_drift(tmp_path: Pat
         str(dist),
     )
 
-    health_path = dist / "health.json"
-    health = json.loads(health_path.read_text(encoding="utf-8"))
-    catalog_path = dist / health["profiles"]["source"].removeprefix("/")
-    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
-    catalog["state"] = "current"
-    catalog["current_binary"] = "1.3.0"
-    catalog["current_assets"] = "2030.0101.0"
-    catalog["compatibility"] = {
-        "binary": "1.3.0",
-        "assets": "2030.0101.0",
-        "min_binary": "1.3.0",
-        "min_assets": "2030.0101.0",
-        "requires_newer_binary": True,
-        "requires_newer_assets": True,
-    }
-    catalog_bytes = (json.dumps(catalog, indent=2) + "\n").encode()
-    catalog_path.write_bytes(catalog_bytes)
-    catalog_hash = blake3(catalog_bytes).hexdigest()
-    health["profiles"]["hash"] = catalog_hash
-    health["updates"]["profiles"]["hash"] = catalog_hash
-    health_path.write_text(json.dumps(health, indent=2) + "\n", encoding="utf-8")
+    manifest_path = dist / "assets" / "stable" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    profile = next(iter(manifest["profiles"].values()))
+    profile["revision"] = "profiles-stale"
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
     result = _run_admin(
         "assets",
@@ -921,7 +916,7 @@ def test_release_index_check_rejects_profile_catalog_content_drift(tmp_path: Pat
     )
 
     assert result.returncode != 0
-    assert "profile catalog must not publish current_binary" in result.stderr
+    assert "channels.json manifest sha256 mismatch" in result.stderr
 
 
 def test_release_index_check_rejects_missing_vm_obom_evidence(tmp_path: Path) -> None:
@@ -1534,7 +1529,8 @@ def test_binary_release_profile_catalog_index_builds_release_site_without_rebuil
     profiles_dir = _write_profile_catalog(tmp_path)
     # A tag release runner must not need local VM build outputs.
     for local_asset in (tmp_path / "assets" / "arm64").iterdir():
-        local_asset.unlink()
+        if local_asset.name != "software-inventory.json":
+            local_asset.unlink()
 
     dist = tmp_path / "target" / "release-channel"
     asset_base = "https://github.com/google/capsem/releases/download/assets-v{asset_version}"
@@ -1567,25 +1563,18 @@ def test_binary_release_profile_catalog_index_builds_release_site_without_rebuil
         "assets-v2030.0101.1/arm64-rootfs.erofs"
     )
     assert any(file["url"] == rootfs_url for file in health["assets"]["files"])
-    channel_manifest = json.loads(
-        (dist / "assets" / "stable" / "manifest.json").read_text(encoding="utf-8")
+    channel_manifest_text = (dist / "assets" / "stable" / "manifest.json").read_text(
+        encoding="utf-8"
     )
-    assert channel_manifest["asset_base"] == asset_base
     assert health["evidence"]["host_binary_files"]
     assert health["evidence"]["host_sboms"]
     assert health["evidence"]["attestations"]
-    catalog_url = "/profiles/releases/profiles-2030.0101.1/catalog.json"
-    assert health["profiles"]["source"] == catalog_url
-    assert health["updates"]["profiles"]["source"] == catalog_url
-    assert health["profiles"]["hash"] == health["updates"]["profiles"]["hash"]
-    catalog_path = dist / catalog_url.removeprefix("/")
-    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
-    assert catalog["schema"] == "capsem.profile_catalog.v1"
-    assert catalog["revision"] == "profiles-2030.0101.1"
-    assert "compatibility" not in catalog
-    assert all(profile["min_capsem_version"] == "1.4.0" for profile in catalog["profiles"])
-    assert "file://" not in catalog_path.read_text(encoding="utf-8")
-    assert str(tmp_path) not in catalog_path.read_text(encoding="utf-8")
-    assert rootfs_url in catalog_path.read_text(encoding="utf-8")
+    assert health["profiles"]["source"] == "manifest.profiles"
+    assert health["updates"]["profiles"]["source"] == "manifest.profiles"
+    assert '"profiles"' in channel_manifest_text
+    assert '"min_capsem_version": "1.4.0"' in channel_manifest_text
+    assert "file://" not in channel_manifest_text
+    assert str(tmp_path) not in channel_manifest_text
+    assert rootfs_url in channel_manifest_text
     assert not (dist / "assets" / "releases").exists()
     _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))

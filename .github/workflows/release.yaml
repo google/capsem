@@ -11,6 +11,7 @@ permissions:
 
 env:
   ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json
+  BINARY_RELEASE_CHANNELS: stable nightly
 
 jobs:
   preflight:
@@ -664,6 +665,8 @@ jobs:
         with:
           key: release-channel-binary
 
+      - uses: astral-sh/setup-uv@v5
+
       - uses: actions/download-artifact@v8
         with:
           name: release-macos
@@ -698,12 +701,19 @@ jobs:
             exit 1
           fi
 
-      - name: Fetch current asset channel manifest
+      - name: Fetch current asset channel manifests
         run: |
+          set -euo pipefail
           mkdir -p target/binary-channel
-          curl -fsSL "$ASSET_MANIFEST_URL" -o target/binary-channel/manifest.json
+          for channel in $BINARY_RELEASE_CHANNELS; do
+            mkdir -p "target/binary-channel/$channel"
+            curl -fsSL "https://release.capsem.org/assets/$channel/manifest.json" \
+              -o "target/binary-channel/$channel/manifest.json"
+            cp "target/binary-channel/$channel/manifest.json" \
+              "target/binary-channel/$channel/manifest.before.json"
+          done
 
-      - name: Record binary release metadata in channel manifest
+      - name: Record binary release metadata in channel manifests
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME#v}"
@@ -711,10 +721,30 @@ jobs:
           for file in release-artifacts/*.pkg release-artifacts/*.deb release-artifacts/capsem-sbom.spdx.json; do
             [ -f "$file" ] && ARTIFACT_ARGS+=(--artifact "$file")
           done
-          cargo run -p capsem-admin -- assets channel record-binary \
-            --manifest-path target/binary-channel/manifest.json \
-            --version "$VERSION" \
-            "${ARTIFACT_ARGS[@]}"
+          for channel in $BINARY_RELEASE_CHANNELS; do
+            cargo run -p capsem-admin -- assets channel record-binary \
+              --manifest-path "target/binary-channel/$channel/manifest.json" \
+              --version "$VERSION" \
+              "${ARTIFACT_ARGS[@]}"
+          done
+
+      - name: Prove binary lane did not change VM assets
+        run: |
+          set -euo pipefail
+          for channel in $BINARY_RELEASE_CHANNELS; do
+            python3 - "$channel" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          channel = sys.argv[1]
+          root = Path("target/binary-channel") / channel
+          before = json.loads((root / "manifest.before.json").read_text())
+          after = json.loads((root / "manifest.json").read_text())
+          if after["assets"] != before["assets"]:
+              raise SystemExit(f"{channel} binary release changed VM asset metadata")
+          PY
+          done
 
       - name: Verify binary release lane policy
         run: |
@@ -722,25 +752,32 @@ jobs:
             tests/capsem-release/test_binary_lane_gate.py \
             tests/capsem-release/test_release_lane_diff_policy.py -q
 
-      - name: Build release channel with existing VM assets
+      - name: Build release channels with existing VM assets
         run: |
-          cargo run -p capsem-admin -- assets channel build \
-            --manifest "file://$PWD/target/binary-channel/manifest.json" \
-            --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
-            --channel stable \
-            --manifest-version "1.0.${{ github.run_number }}" \
-            --out-dir target/release-channel
+          set -euo pipefail
+          rm -rf target/release-channel
+          for channel in $BINARY_RELEASE_CHANNELS; do
+            cargo run -p capsem-admin -- assets channel build \
+              --manifest "file://$PWD/target/binary-channel/$channel/manifest.json" \
+              --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
+              --channel "$channel" \
+              --manifest-version "1.0.${{ github.run_number }}" \
+              --out-dir target/release-channel
+          done
 
       - name: Build release site pages
         env:
           CAPSEM_RELEASE_CHANNEL_DIST: ${{ github.workspace }}/target/release-channel
         run: cd release-site && pnpm run build:channel
 
-      - name: Check binary-updated release channel
+      - name: Check binary-updated release channels
         run: |
-          cargo run -p capsem-admin -- assets channel check \
-            --channel stable \
-            --dist target/release-channel
+          set -euo pipefail
+          for channel in $BINARY_RELEASE_CHANNELS; do
+            cargo run -p capsem-admin -- assets channel check \
+              --channel "$channel" \
+              --dist target/release-channel
+          done
 
       - uses: actions/upload-artifact@v7
         with:

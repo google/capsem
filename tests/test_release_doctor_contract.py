@@ -764,6 +764,20 @@ def test_cdxgen_release_tool_prerequisite_is_documented() -> None:
         assert "check-release-workflow.sh" in source
 
 
+def test_linux_doctor_installs_musl_c_toolchain_before_building_assets() -> None:
+    doctor = _source_text("scripts/doctor-common.sh")
+    linux = _source_text("scripts/doctor-linux.sh")
+
+    assert '_reg linux-musl-tools "_doctor_install_linux_musl_tools"' in doctor
+    assert doctor.index("_reg linux-musl-tools") < doctor.index("_reg build-assets")
+    assert "check_linux_musl_toolchain" in doctor
+    assert "section \"C Toolchain\"" in linux
+    assert "command -v musl-gcc" in linux
+    assert "command -v x86_64-linux-musl-gcc" in linux
+    assert "apt-get install -y musl-tools" in linux
+    assert "dnf install -y musl-gcc" in linux
+
+
 def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     cli = _source_text("crates/capsem/src/update.rs")
     cli_status = _source_text("crates/capsem/src/main.rs")
@@ -885,6 +899,7 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "pull_request:" not in trigger
     assert "branches:" not in trigger
     assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json" in workflow
+    assert "BINARY_RELEASE_CHANNELS: stable nightly" in workflow
     assert "  build-assets:" not in workflow
     assert "vm-assets-" not in workflow
     assert "assets/current" not in workflow
@@ -926,15 +941,20 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "release-artifacts/capsem-sbom.spdx.json" in create_release
     assert "gh release create ${{ github.ref_name }}" in create_release
     assert '[ -f "$deb" ] && gh release upload ${{ github.ref_name }} "$deb"' in create_release
-    assert "target/binary-channel/manifest.json" in assemble_channel
-    assert assemble_channel.index("Fetch current asset channel manifest") < assemble_channel.index(
-        "Record binary release metadata in channel manifest"
+    assert "target/binary-channel/$channel/manifest.json" in assemble_channel
+    assert "target/binary-channel/$channel/manifest.before.json" in assemble_channel
+    assert "https://release.capsem.org/assets/$channel/manifest.json" in assemble_channel
+    assert "for channel in $BINARY_RELEASE_CHANNELS" in assemble_channel
+    assert "Prove binary lane did not change VM assets" in assemble_channel
+    assert "binary release changed VM asset metadata" in assemble_channel
+    assert assemble_channel.index("Fetch current asset channel manifests") < assemble_channel.index(
+        "Record binary release metadata in channel manifests"
     )
-    assert assemble_channel.index("Record binary release metadata in channel manifest") < (
-        assemble_channel.index("Build release channel with existing VM assets")
+    assert assemble_channel.index("Record binary release metadata in channel manifests") < (
+        assemble_channel.index("Build release channels with existing VM assets")
     )
-    assert assemble_channel.index("Build release channel with existing VM assets") < (
-        assemble_channel.index("Check binary-updated release channel")
+    assert assemble_channel.index("Build release channels with existing VM assets") < (
+        assemble_channel.index("Check binary-updated release channels")
     )
 
 
@@ -948,10 +968,10 @@ def test_binary_release_channel_assembly_preflights_canonical_artifacts() -> Non
     assert "release-artifacts/*.deb" in assemble_channel
     assert "::error::no installable host package artifact found" in assemble_channel
     assert assemble_channel.index("Verify binary channel artifacts") < assemble_channel.index(
-        "Fetch current asset channel manifest"
+        "Fetch current asset channel manifests"
     )
     assert assemble_channel.index("Verify binary channel artifacts") < assemble_channel.index(
-        "Record binary release metadata in channel manifest"
+        "Record binary release metadata in channel manifests"
     )
 
 
@@ -1029,6 +1049,21 @@ def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:
     assert "`latest.json`; binary freshness comes from the selected manifest in the release graph" in docs_text
     assert "`latest.json` is absent in the current release rail" in release_skill
     assert "Do not make release creation depend on `latest.json`" in release_skill
+
+
+def test_binary_release_channel_policy_supports_fast_nightly_and_weekly_stable() -> None:
+    workflow = _workflow_text("release.yaml")
+    docs = _source_text("docs/src/content/docs/development/ci.md")
+    release_skill = _source_text("skills/release-process/SKILL.md")
+
+    assert "BINARY_RELEASE_CHANNELS: stable nightly" in workflow
+    assert "for channel in $BINARY_RELEASE_CHANNELS" in workflow
+    assert "Prove binary lane did not change VM assets" in workflow
+    docs_text = " ".join(docs.split())
+    release_skill_text = " ".join(release_skill.split())
+    assert "nightly can move daily while stable is promoted on the weekly cadence" in docs_text
+    assert "nightly is the daily binary iteration channel" in release_skill_text
+    assert "stable is promoted on the weekly cadence" in release_skill_text
 
 
 def test_self_update_docs_match_verified_package_execution() -> None:
@@ -3116,7 +3151,12 @@ def test_doctor_session_validation_starts_mock_server() -> None:
 
     assert "from mock_server import start_mock_server, stop_process" in source
     assert "CAPSEM_MOCK_SERVER_BASE_URL" in source
-    assert '[binary, "run", "capsem-doctor"]' in source
+    assert '"create",' in source
+    assert '"exec",' in source
+    assert '"-e",' in source
+    assert 'f"{MOCK_SERVER_ENV}={mock_base_url}"' in source
+    assert "PERSISTENT_DIR" in source
+    assert '"capsem-doctor"' in source
 
 
 def test_release_scripts_use_shared_mock_server_helper() -> None:
@@ -3970,6 +4010,46 @@ def test_guest_init_repairs_overlay_root_traversal_for_unprivileged_tools() -> N
     assert chroot_chmod_pos < launch_pos
 
 
+def test_guest_init_console_redirection_cannot_kill_pid_one() -> None:
+    init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+
+    mknod_pos = init.find("mknod -m 600 /dev/console c 5 1")
+    probe_pos = init.find('( : <"$candidate" >"$candidate" )')
+    guarded_exec_pos = init.find('if [ -n "$CONSOLE_DEV" ]; then')
+    fatal_exec = "exec 0</dev/console 1>/dev/console 2>/dev/console"
+
+    assert mknod_pos != -1, "init must create /dev/console when devtmpfs omits it"
+    assert probe_pos != -1, "init must preflight console opens before redirecting PID 1"
+    assert guarded_exec_pos != -1, "init must guard console redirection with a usable device check"
+    assert fatal_exec not in init, "hard /dev/console redirection exits PID 1 on KVM boot races"
+    assert mknod_pos < probe_pos < guarded_exec_pos
+
+
+def test_guest_init_persists_boot_diagnostics_before_agent_launch() -> None:
+    init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+
+    helper_pos = init.find("init_log()")
+    workspace_log_pos = init.find("/mnt/shared/workspace/.capsem-boot.log")
+    agent_stdio_pos = init.find("/mnt/shared/workspace/.capsem-agent-stdio.log")
+    backtrace_pos = init.find("export RUST_BACKTRACE=1")
+    kmsg_pos = init.find("> /dev/kmsg")
+    launch_log_pos = init.find('init_log "starting PTY agent (vsock mode): $AGENT_PATH"')
+    chroot_pos = init.find('chroot /newroot "$AGENT_PATH" >> "$AGENT_STDIO_LOG" 2>&1')
+    launch_pos = init.find('chroot /newroot "$AGENT_PATH"')
+    exit_status_pos = init.find('init_log "PTY agent exited with status $AGENT_STATUS"')
+
+    assert helper_pos != -1, "init must centralize durable boot diagnostics"
+    assert workspace_log_pos != -1, "init diagnostics must survive in host-preserved workspace"
+    assert agent_stdio_pos != -1, "agent stderr must survive when it exits before opening its log"
+    assert backtrace_pos != -1, "early agent panics must include enough context to fix"
+    assert kmsg_pos != -1, "init diagnostics must reach serial-visible kernel log on quiet boots"
+    assert launch_log_pos != -1, "init must mark the exact agent launch boundary"
+    assert chroot_pos != -1
+    assert launch_pos != -1
+    assert exit_status_pos != -1, "init must report early agent exits instead of silently idling PID 1"
+    assert helper_pos < workspace_log_pos < agent_stdio_pos < launch_log_pos < launch_pos < exit_status_pos
+
+
 def test_guest_init_publishes_rootfs_binaries_into_run_contract() -> None:
     init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
 
@@ -4016,6 +4096,94 @@ def test_guest_runtime_doctor_package_probes_are_hermetic() -> None:
     assert "--python /root/.venv/bin/python" in source
 
 
+def test_capsem_init_keeps_default_venv_out_of_workspace() -> None:
+    """The boot venv must not become forked /root workspace state."""
+    init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+
+    assert "ln -sfn /run/capsem-venv /newroot/root/.venv" in init
+    assert "uv venv --system-site-packages /run/capsem-venv" in init
+    assert "python3 -m venv --system-site-packages /run/capsem-venv" in init
+    assert "uv venv --system-site-packages /root/.venv" not in init
+    assert "python3 -m venv --system-site-packages /root/.venv" not in init
+
+
+def test_capsem_agent_repairs_missing_default_venv() -> None:
+    """The guest agent must not leave VIRTUAL_ENV unset if init venv races."""
+    source = (PROJECT_ROOT / "crates" / "capsem-agent" / "src" / "main.rs").read_text()
+
+    assert 'const VENV_TARGET: &str = "/run/capsem-venv"' in source
+    assert "std::thread::spawn(move ||" in source
+    assert "std::fs::remove_dir_all(VENV_TARGET)" in source
+    assert '.args(["venv", "--system-site-packages", VENV_TARGET])' in source
+    assert '.args(["-m", "venv", "--system-site-packages", VENV_TARGET])' in source
+    assert 'boot_env.push(("VIRTUAL_ENV".into(), VENV_DIR.into()))' in source
+    assert "venv missing after init wait; creating fallback" in source
+    assert "venv activated in boot_env" not in source
+
+
+def test_fork_route_flushes_without_thaw_before_clone() -> None:
+    """Pre-fork quiescence must not pay fsfreeze cost and thaw before clone."""
+    source = (PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs").read_text()
+    fork_block = source.split("async fn handle_fork", maxsplit=1)[1].split(
+        "Ok(Json(ForkResponse", maxsplit=1
+    )[0]
+
+    assert 'command: "sync; true".to_string()' in fork_block
+    assert 'command: "fsfreeze' not in fork_block
+
+
+def test_linux_vm_launch_preformats_system_overlay_before_boot() -> None:
+    """Doctor boot must not pay first-boot mke2fs cost inside the guest."""
+    core = (PROJECT_ROOT / "crates" / "capsem-core" / "src" / "lib.rs").read_text()
+    process = (PROJECT_ROOT / "crates" / "capsem-process" / "src" / "main.rs").read_text()
+    service = (PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs").read_text()
+    init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+
+    assert "pub fn preformat_system_overlay_image_if_needed" in core
+    assert "pub fn ensure_preformatted_system_overlay_template" in core
+    assert "pub fn preformat_system_overlay_image_from_template_if_needed" in core
+    assert "auto_snapshot::clone_file(template_path, &tmp_path)" in core
+    assert "system_overlay_has_ext4_magic(path)?" in core
+    assert "lazy_itable_init=1,lazy_journal_init=1" in core
+    assert '.arg("size=4")' in core
+    assert "preformat_system_overlay_image_from_template_if_needed" in process
+    assert "system_overlay_template_path_for_session" in process
+    assert "session_dir, scratch_disk_size_gb" in process
+    assert "fn prewarm_system_overlay_templates" in service
+    assert "ensure_preformatted_system_overlay_template(&template_path, size_gb)" in service
+    assert "prewarm_system_overlay_templates(&run_dir, &profile_cache)" in service
+    assert "fn prewarm_vm_asset_hash_cache" in service
+    assert "capsem_core::VmConfig::verify_hash(path, hash)" in service
+    assert "prewarm_vm_asset_hash_cache(&assets_base_dir, manifest.as_deref(), &current_version)" in service
+    assert "mke2fs unavailable; guest will format system overlay at first boot" in process
+    assert "lazy_itable_init=1,lazy_journal_init=1" in init
+    assert "-J size=4" in init
+
+
+def test_raw_guest_vsock_probes_resolve_kvm_port_offset() -> None:
+    """Raw guest vsock probes must connect to logical ports on KVM."""
+    source = (PROJECT_ROOT / "tests" / "capsem-e2e" / "test_framed_mcp_mitm.py").read_text()
+
+    assert "def capsem_vsock_port(logical_port):" in source
+    assert "capsem.vsock_port_offset=" in source
+    assert "VMADDR_CID_HOST, capsem_vsock_port(5002)" in source
+    assert "VMADDR_CID_HOST, capsem_vsock_port(5003)" in source
+    assert "VMADDR_CID_HOST, 5002" not in source
+    assert "VMADDR_CID_HOST, 5003" not in source
+
+
+def test_create_route_does_not_wait_for_full_guest_readiness() -> None:
+    """Create catches immediate boot crashes; exec/file routes own readiness waits."""
+    source = (PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs").read_text()
+    provision_attempt = source.split("async fn provision_attempt", maxsplit=1)[1].split(
+        "\n#[cfg(unix)]", maxsplit=1
+    )[0]
+
+    assert "std::time::Duration::from_millis(500)" in provision_attempt
+    assert "exec/file routes own the full readiness wait" in provision_attempt
+    assert "std::time::Duration::from_secs(5)" not in provision_attempt
+
+
 def test_guest_runtime_doctor_remote_apt_https_probe_is_release_gate() -> None:
     """Doctor must catch runtime apt HTTPS/CA breakage, not just local .deb installs."""
     source = (PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_runtimes.py").read_text()
@@ -4035,6 +4203,8 @@ def test_capsem_init_recreates_user_local_ai_cli_shims() -> None:
     init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
 
     assert "for cli in claude agy; do" in init
+    assert 'ln -sf "/opt/ai-clis/bin/$cli" "/newroot/usr/local/bin/$cli"' in init
+    assert 'rm -f "/newroot/root/.local/bin/$cli"' in init
     assert 'ln -sf "/usr/local/bin/$cli" "/newroot/root/.local/bin/$cli"' in init
     assert 'chroot /newroot /bin/chmod 555 "/root/.local/bin/$cli"' in init
 

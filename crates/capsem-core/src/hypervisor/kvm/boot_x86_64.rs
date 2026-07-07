@@ -108,8 +108,8 @@ pub(super) fn load_kernel(mem: &GuestMemory, kernel_path: &Path) -> Result<Kerne
     };
 
     Ok(KernelLoadInfo {
-        // 64-bit entry point: startup_64 is at offset 0x200 from the
-        // protected-mode kernel start (Linux boot protocol >= 2.06).
+        // 64-bit boot protocol entry: startup_64 is at offset 0x200 from the
+        // protected-mode kernel start for bzImage kernels.
         entry_addr: KERNEL_LOAD_ADDR + 0x200,
         kernel_end: KERNEL_LOAD_ADDR + kernel_size,
         setup_header,
@@ -326,12 +326,13 @@ fn fill_checksum(bytes: &mut [u8], checksum_offset: usize) {
 // GDT and page tables
 // ---------------------------------------------------------------------------
 
-/// Write a minimal GDT (null + code64 + data) into guest memory.
+/// Write a minimal long-mode GDT using Linux boot selectors.
 pub(super) fn write_gdt(mem: &GuestMemory) -> Result<()> {
-    let gdt: [u64; 3] = [
+    let gdt: [u64; 4] = [
         0x0000_0000_0000_0000, // null descriptor
-        0x00209A00_00000000,   // 64-bit code: L=1, execute/read, present
-        0x00009200_00000000,   // data: read/write, present
+        0x0000_0000_0000_0000, // unused: Linux boot protocol uses CS=0x10
+        0x0020_9A00_0000_0000, // 64-bit flat code: execute/read, present
+        0x0000_9200_0000_0000, // data: read/write, present
     ];
     let bytes: Vec<u8> = gdt.iter().flat_map(|v| v.to_le_bytes()).collect();
     mem.write_at(GDT_ADDR - RAM_BASE, &bytes)?;
@@ -375,17 +376,17 @@ pub(super) fn write_page_tables(mem: &GuestMemory, ram_size: u64) -> Result<()> 
 // vCPU register setup
 // ---------------------------------------------------------------------------
 
-/// Configure vCPU registers for 64-bit long mode boot.
+/// Configure vCPU registers for the Linux bzImage 64-bit boot protocol.
 pub(super) fn setup_boot_regs(
     vcpu: &sys::VcpuFd,
     entry_addr: u64,
     boot_params_addr: u64,
 ) -> Result<()> {
-    // Code segment: selector 0x08 (GDT entry 1)
+    // Linux x86 boot protocol uses __BOOT_CS=0x10 and __BOOT_DS=0x18.
     let code_seg = sys::KvmSegment {
         base: 0,
         limit: 0xFFFF_FFFF,
-        selector: 0x08,
+        selector: 0x10,
         type_: 11, // execute/read, accessed
         present: 1,
         dpl: 0,
@@ -398,11 +399,11 @@ pub(super) fn setup_boot_regs(
         padding: 0,
     };
 
-    // Data segment: selector 0x10 (GDT entry 2)
+    // Data segment: selector 0x18 (GDT entry 3)
     let data_seg = sys::KvmSegment {
         base: 0,
         limit: 0xFFFF_FFFF,
-        selector: 0x10,
+        selector: 0x18,
         type_: 3, // read/write, accessed
         present: 1,
         dpl: 0,
@@ -425,17 +426,15 @@ pub(super) fn setup_boot_regs(
 
     sregs.gdt = sys::KvmDtable {
         base: GDT_ADDR,
-        limit: 23, // 3 entries * 8 bytes - 1
+        limit: 31, // 4 entries * 8 bytes - 1
         padding: [0; 3],
     };
 
-    // Control registers for 64-bit paging
+    // 64-bit boot protocol expects long mode with identity paging enabled.
     sregs.cr0 = 0x8000_0001; // PG (paging) + PE (protected mode)
     sregs.cr3 = PML4_ADDR; // page table base
     sregs.cr4 = 0x20; // PAE (physical address extension)
-
-    // EFER: LME (long mode enable) + LMA (long mode active)
-    sregs.efer = 0x500;
+    sregs.efer = 0x500; // LME + LMA
 
     vcpu.set_sregs(&sregs)?;
 
@@ -526,15 +525,17 @@ mod tests {
 
     #[test]
     fn gdt_entries_correct_size() {
-        // 3 entries * 8 bytes = 24 bytes
+        // 4 entries * 8 bytes = 32 bytes
         let mem = GuestMemory::new(4096 * 16).unwrap();
         write_gdt(&mem).unwrap();
-        let mut buf = [0u8; 24];
+        let mut buf = [0u8; 32];
         mem.read_at(GDT_ADDR - RAM_BASE, &mut buf).unwrap();
         // Null entry should be zero
         assert_eq!(&buf[..8], &[0u8; 8]);
-        // Code64 entry should be non-zero
-        assert_ne!(&buf[8..16], &[0u8; 8]);
+        // Entry 1 intentionally unused so Linux boot CS can be 0x10.
+        assert_eq!(&buf[8..16], &[0u8; 8]);
+        assert_ne!(&buf[16..24], &[0u8; 8]);
+        assert_ne!(&buf[24..32], &[0u8; 8]);
     }
 
     #[test]
@@ -809,7 +810,7 @@ mod tests {
     }
 
     #[test]
-    fn load_kernel_returns_correct_entry_offset() {
+    fn load_kernel_returns_64_bit_entry_offset() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("vmlinuz");
 
@@ -819,7 +820,6 @@ mod tests {
         let mem = GuestMemory::new(16 * 1024 * 1024).unwrap();
         let info = load_kernel(&mem, &path).unwrap();
 
-        // 64-bit entry point MUST be at exactly KERNEL_LOAD_ADDR + 0x200
         assert_eq!(info.entry_addr, KERNEL_LOAD_ADDR + 0x200);
 
         // setup_header should be extracted (0x1F1..0x2B9 = 200 bytes)

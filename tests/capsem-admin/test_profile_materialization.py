@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import tomllib
@@ -14,6 +15,10 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ADMIN = PROJECT_ROOT / "target" / "debug" / "capsem-admin"
 SOURCE_PROFILE = PROJECT_ROOT / "config" / "profiles" / "code" / "profile.toml"
 SOURCE_PROFILE_DIR = SOURCE_PROFILE.parent
+
+
+def _host_arch() -> str:
+    return "arm64" if os.uname().machine == "arm64" else "x86_64"
 
 
 def _ensure_admin_binary() -> None:
@@ -122,6 +127,7 @@ url = "{(root / "assets" / "arm64" / "rootfs.erofs").resolve().as_uri()}"
 
 def test_profile_materialize_generates_pins_without_mutating_source(tmp_path: Path) -> None:
     _ensure_admin_binary()
+    arch = _host_arch()
     output_root = tmp_path / "target-config"
     result = subprocess.run(
         [
@@ -139,7 +145,7 @@ def test_profile_materialize_generates_pins_without_mutating_source(tmp_path: Pa
             "--output-root",
             str(output_root),
             "--arch",
-            "arm64",
+            arch,
             "--clean",
             "--json",
         ],
@@ -163,7 +169,7 @@ def test_profile_materialize_generates_pins_without_mutating_source(tmp_path: Pa
         "initrd.img",
         "rootfs.erofs",
     }
-    assert {asset["arch"] for asset in report["materialized_assets"]} == {"arm64"}
+    assert {asset["arch"] for asset in report["materialized_assets"]} == {arch}
     assert len(report["materialized_obom"]) == 1
     assert report["materialized_obom"][0]["scope"] == "base_image"
 
@@ -176,11 +182,11 @@ def test_profile_materialize_generates_pins_without_mutating_source(tmp_path: Pa
     assert generated["id"] == source["id"]
     assert generated["name"] == source["name"]
     assert generated["description"] == source["description"]
-    assert set(generated["assets"]["arch"]) == {"arm64"}
+    assert set(generated["assets"]["arch"]) == {arch}
 
-    arm64_assets = generated["assets"]["arch"]["arm64"]
+    arch_assets = generated["assets"]["arch"][arch]
     for key in ("kernel", "initrd", "rootfs"):
-        descriptor = arm64_assets[key]
+        descriptor = arch_assets[key]
         assert descriptor["url"].startswith("file://")
         assert re.fullmatch(r"blake3:[0-9a-f]{64}", descriptor["hash"])
         assert descriptor["size"] > 0

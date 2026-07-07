@@ -224,6 +224,7 @@ def _binary_update_health(base_url: str, installer_name: str, payload: bytes) ->
                         "name": installer_name,
                         "url": f"{base_url}/{installer_name}",
                         "sha256": hashlib.sha256(payload).hexdigest(),
+                        "blake3": blake3(payload).hexdigest(),
                         "size": len(payload),
                     }
                 ],

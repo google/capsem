@@ -168,6 +168,52 @@ _REQUIRED_ARTIFACTS = {
     "target/linux-agent/<arch>": _PROJECT_ROOT / "target" / "linux-agent" / _ARCH,
 }
 
+_DEFAULT_TEST_NOFILE_LIMIT = 8192
+
+
+def _desired_open_file_limit(env: "os._Environ[str] | dict[str, str]") -> int:
+    """Return the pytest soft RLIMIT_NOFILE target.
+
+    Full integration runs spawn multiple services, VM processes, KVM devices,
+    sockets, log files, and artifact-copy walkers. Linux shells commonly start
+    with a 1024 soft fd limit even when the hard limit is much higher, which
+    turns otherwise unrelated fixture setup into EMFILE cascades under xdist.
+    """
+    raw = env.get("CAPSEM_TEST_NOFILE_LIMIT", "").strip()
+    if not raw:
+        return _DEFAULT_TEST_NOFILE_LIMIT
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return _DEFAULT_TEST_NOFILE_LIMIT
+    return max(parsed, 0)
+
+
+def _raise_open_file_limit(
+    env: "os._Environ[str] | dict[str, str]" = os.environ,
+    resource_module=None,
+) -> tuple[int, int, int] | None:
+    """Raise pytest's soft open-file limit when the OS hard limit allows it.
+
+    Returns `(old_soft, new_soft, hard)` on Unix, or `None` when the platform
+    lacks `resource`. A target of 0 disables the adjustment for debugging.
+    """
+    if resource_module is None:
+        try:
+            import resource as resource_module
+        except ImportError:
+            return None
+
+    desired = _desired_open_file_limit(env)
+    soft, hard = resource_module.getrlimit(resource_module.RLIMIT_NOFILE)
+    if desired <= 0:
+        return (soft, soft, hard)
+
+    target = min(max(soft, desired), hard)
+    if target > soft:
+        resource_module.setrlimit(resource_module.RLIMIT_NOFILE, (target, hard))
+    return (soft, target, hard)
+
 
 def _missing_required_artifacts(
     env: "os._Environ[str] | dict[str, str]",
@@ -191,6 +237,7 @@ def pytest_sessionstart(session):
     rather than surfacing as a pile of individually-skipped tests whose
     absence goes unnoticed.
     """
+    _raise_open_file_limit()
     missing = _missing_required_artifacts(os.environ, _REQUIRED_ARTIFACTS)
     if missing:
         pytest.exit(

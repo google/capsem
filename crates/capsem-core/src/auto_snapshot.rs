@@ -638,7 +638,7 @@ impl SnapshotBackend for ApfsSnapshot {
 /// Walks the source directory and attempts `ioctl(dst_fd, FICLONE, src_fd)`
 /// for each file. On CoW filesystems (Btrfs, XFS) this is instant and
 /// zero-copy. On filesystems that don't support reflinks (ext4), falls back
-/// to a standard byte copy per file.
+/// to a sparse-preserving copy per file.
 #[cfg(target_os = "linux")]
 pub struct ReflinkSnapshot;
 
@@ -731,19 +731,19 @@ impl SnapshotBackend for ReflinkSnapshot {
                         if !reflink_failed_logged {
                             info!(
                                 path = %entry.path().display(),
-                                "FICLONE not supported on this filesystem, falling back to byte copy"
+                                "FICLONE not supported on this filesystem, falling back to sparse copy"
                             );
                             reflink_failed_logged = true;
                         }
-                        std::fs::copy(entry.path(), &target)?;
+                        copy_file_sparse(entry.path(), &target)?;
                     }
                     Err(e) => {
                         warn!(
                             path = %entry.path().display(),
                             error = %e,
-                            "FICLONE ioctl failed unexpectedly, falling back to byte copy"
+                            "FICLONE ioctl failed unexpectedly, falling back to sparse copy"
                         );
-                        std::fs::copy(entry.path(), &target)?;
+                        copy_file_sparse(entry.path(), &target)?;
                     }
                 }
             }
@@ -752,7 +752,7 @@ impl SnapshotBackend for ReflinkSnapshot {
         if reflink_supported.load(Ordering::Relaxed) {
             debug!("snapshot completed using reflinks (FICLONE)");
         } else {
-            debug!("snapshot completed using byte copy (FICLONE not available)");
+            debug!("snapshot completed using sparse copy (FICLONE not available)");
         }
 
         Ok(())
@@ -779,7 +779,7 @@ pub fn clone_directory(src: &Path, dst: &Path) -> anyhow::Result<()> {
 /// Clone a single file using platform-appropriate copy-on-write.
 ///
 /// On macOS: uses `cp -c` (APFS clonefile) with fallback to regular copy.
-/// On Linux: uses FICLONE ioctl with fallback to `std::fs::copy`.
+/// On Linux: uses FICLONE ioctl with fallback to sparse-preserving copy.
 pub fn clone_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
     #[cfg(target_os = "macos")]
     {
@@ -802,10 +802,10 @@ pub fn clone_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     {
         match ReflinkSnapshot::try_reflink(src, dst) {
-            Ok(true) => return Ok(()),
+            Ok(true) => Ok(()),
             Ok(false) | Err(_) => {
-                std::fs::copy(src, dst)?;
-                return Ok(());
+                copy_file_sparse(src, dst)?;
+                Ok(())
             }
         }
     }
@@ -813,6 +813,152 @@ pub fn clone_file(src: &Path, dst: &Path) -> anyhow::Result<()> {
     {
         std::fs::copy(src, dst)?;
         Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn copy_file_sparse(src: &Path, dst: &Path) -> std::io::Result<()> {
+    let mut input = std::fs::File::open(src)?;
+    let metadata = input.metadata()?;
+    let mut output = std::fs::File::create(dst)?;
+
+    match copy_sparse_extents(&mut input, &mut output, metadata.len()) {
+        Ok(()) => {}
+        Err(err) if seek_data_unsupported(&err) => {
+            copy_sparse_by_scanning(&mut input, &mut output)?;
+        }
+        Err(err) => return Err(err),
+    }
+
+    output.set_len(metadata.len())?;
+    output.set_permissions(metadata.permissions())?;
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn copy_sparse_extents(
+    input: &mut std::fs::File,
+    output: &mut std::fs::File,
+    logical_len: u64,
+) -> std::io::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::os::unix::io::AsRawFd;
+
+    const CHUNK_SIZE: usize = 1024 * 1024;
+
+    let mut offset = 0_u64;
+    let mut buffer = vec![0_u8; CHUNK_SIZE];
+    let zero_buffer = vec![0_u8; CHUNK_SIZE];
+
+    while offset < logical_len {
+        let data = match lseek_extent(input.as_raw_fd(), offset, libc::SEEK_DATA) {
+            Ok(data) => data,
+            Err(err) if err.raw_os_error() == Some(libc::ENXIO) => break,
+            Err(err) => return Err(err),
+        };
+        if data >= logical_len {
+            break;
+        }
+
+        let hole = match lseek_extent(input.as_raw_fd(), data, libc::SEEK_HOLE) {
+            Ok(hole) => hole.min(logical_len),
+            Err(err) if err.raw_os_error() == Some(libc::ENXIO) => logical_len,
+            Err(err) => return Err(err),
+        };
+        if hole <= data {
+            offset = data + 1;
+            continue;
+        }
+
+        input.seek(SeekFrom::Start(data))?;
+        output.seek(SeekFrom::Start(data))?;
+        let mut remaining = hole - data;
+        while remaining > 0 {
+            let read_len = (remaining as usize).min(buffer.len());
+            let read = input.read(&mut buffer[..read_len])?;
+            if read == 0 {
+                break;
+            }
+            let chunk = &buffer[..read];
+            if chunk_is_zero(chunk, &zero_buffer) {
+                output.seek(SeekFrom::Current(read as i64))?;
+            } else {
+                output.write_all(chunk)?;
+            }
+            remaining -= read as u64;
+        }
+
+        offset = hole;
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn lseek_extent(
+    fd: std::os::unix::io::RawFd,
+    offset: u64,
+    whence: libc::c_int,
+) -> std::io::Result<u64> {
+    let result = unsafe { libc::lseek(fd, offset as libc::off_t, whence) };
+    if result < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(result as u64)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn seek_data_unsupported(err: &std::io::Error) -> bool {
+    matches!(
+        err.raw_os_error(),
+        Some(libc::EINVAL | libc::ENOSYS | libc::ENOTTY)
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn copy_sparse_by_scanning(
+    input: &mut std::fs::File,
+    output: &mut std::fs::File,
+) -> std::io::Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
+
+    const CHUNK_SIZE: usize = 1024 * 1024;
+
+    input.seek(SeekFrom::Start(0))?;
+    output.set_len(0)?;
+    output.seek(SeekFrom::Start(0))?;
+
+    let mut buffer = vec![0_u8; CHUNK_SIZE];
+    let zero_buffer = vec![0_u8; CHUNK_SIZE];
+    loop {
+        let read = input.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        let chunk = &buffer[..read];
+        if chunk_is_zero(chunk, &zero_buffer) {
+            output.seek(SeekFrom::Current(read as i64))?;
+        } else {
+            output.write_all(chunk)?;
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn chunk_is_zero(chunk: &[u8], zero_buffer: &[u8]) -> bool {
+    debug_assert!(chunk.len() <= zero_buffer.len());
+    if chunk.is_empty() {
+        return true;
+    }
+    unsafe {
+        libc::memcmp(
+            chunk.as_ptr().cast(),
+            zero_buffer.as_ptr().cast(),
+            chunk.len(),
+        ) == 0
     }
 }
 
@@ -882,6 +1028,8 @@ pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> an
         clone_directory(&ws_src, &ws_dst).context("failed to clone workspace dir")?;
     }
 
+    log_rootfs_clone_usage(&rootfs_path, &sys_dst.join("rootfs.img"));
+
     // Compat symlinks so code using session_dir/system still works
     for name in &["system", "workspace"] {
         let link = dst_session_dir.join(name);
@@ -905,6 +1053,25 @@ pub fn clone_sandbox_state(src_session_dir: &Path, dst_session_dir: &Path) -> an
     }
 
     Ok(crate::session::disk_usage_bytes(dst_session_dir))
+}
+
+fn log_rootfs_clone_usage(src: &Path, dst: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+
+        let src_meta = std::fs::metadata(src).ok();
+        let dst_meta = std::fs::metadata(dst).ok();
+        if let (Some(src_meta), Some(dst_meta)) = (src_meta, dst_meta) {
+            info!(
+                src_logical_bytes = src_meta.len(),
+                src_allocated_bytes = src_meta.blocks() * 512,
+                dst_logical_bytes = dst_meta.len(),
+                dst_allocated_bytes = dst_meta.blocks() * 512,
+                "sandbox clone rootfs disk usage"
+            );
+        }
+    }
 }
 
 fn clone_session_db_snapshot(src: &Path, dst: &Path) -> anyhow::Result<()> {

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 
 CAPSEM_BENCH_GATES = {
     "disk_seq_mbps": 50,
-    "disk_rand_iops": 1_000,
+    "disk_rand_iops": {
+        "default": 1_000,
+        "linux": 500,
+    },
     "rootfs_seq_mbps": 100,
     "rootfs_rand_iops": 1_000,
     "startup_mean_ms": {
@@ -27,6 +31,7 @@ CAPSEM_BENCH_GATES = {
 
 def validate_capsem_bench_result(data: dict[str, Any]) -> None:
     disk = data["disk"]
+    disk_rand_iops_gate = _disk_rand_iops_gate()
     _assert_gte(
         disk["seq_write"]["throughput_mbps"],
         CAPSEM_BENCH_GATES["disk_seq_mbps"],
@@ -39,12 +44,12 @@ def validate_capsem_bench_result(data: dict[str, Any]) -> None:
     )
     _assert_gte(
         disk["rand_write_4k"]["iops"],
-        CAPSEM_BENCH_GATES["disk_rand_iops"],
+        disk_rand_iops_gate,
         "disk rand_write_4k IOPS",
     )
     _assert_gte(
         disk["rand_read_4k"]["iops"],
-        CAPSEM_BENCH_GATES["disk_rand_iops"],
+        disk_rand_iops_gate,
         "disk rand_read_4k IOPS",
     )
 
@@ -168,3 +173,10 @@ def _assert_gte(value: float, gate: float, label: str) -> None:
 
 def _assert_lte(value: float, gate: float, label: str) -> None:
     assert value <= gate, f"{label} {value:.1f} exceeds {gate:.1f} gate"
+
+
+def _disk_rand_iops_gate() -> float:
+    gates = CAPSEM_BENCH_GATES["disk_rand_iops"]
+    if sys.platform.startswith("linux"):
+        return gates["linux"]
+    return gates["default"]

@@ -5,6 +5,7 @@ Build execution tests mock run_cmd (single subprocess seam) -- no Docker needed.
 """
 
 import json
+import os
 import re
 import shutil
 import tomllib
@@ -1044,6 +1045,17 @@ class TestCreateErofs:
         assert "tar xf /assets/rootfs.tar -C /rootfs" in cmd_str
         assert " /assets/out/rootfs.erofs /rootfs" in cmd_str
 
+    @patch("capsem.builder.docker.run_cmd")
+    def test_chowns_output_to_invoking_user(self, mock_run):
+        create_erofs(
+            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/out/rootfs.erofs"),
+            "lz4hc", None, "12",
+        )
+
+        cmd_str = " ".join(mock_run.call_args[0][0])
+
+        assert f"chown {os.getuid()}:{os.getgid()} /assets/out/rootfs.erofs" in cmd_str
+
 
 class TestBuildLedger:
     def test_file_ledger_entry_uses_blake3_and_relative_path(self, tmp_path):
@@ -1371,6 +1383,13 @@ class TestKernelConfig:
         assert "CONFIG_EROFS_FS_ZIP_ZSTD=y" in content
 
     @pytest.mark.parametrize("name", ["defconfig.arm64", "defconfig.x86_64"])
+    def test_kvm_virtio_mmio_transport_enabled(self, name):
+        content = (PROJECT_ROOT / "config" / "docker" / "image" / "kernel" / name).read_text()
+        assert "CONFIG_VIRTIO_MMIO=y" in content
+        if name == "defconfig.x86_64":
+            assert "CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y" in content
+
+    @pytest.mark.parametrize("name", ["defconfig.arm64", "defconfig.x86_64"])
     def test_iptables_nft_nat_redirect_enabled(self, name):
         content = (PROJECT_ROOT / "config" / "docker" / "image" / "kernel" / name).read_text()
         required = [
@@ -1631,6 +1650,31 @@ class TestGenerateChecksums:
         arm64_entries = manifest["assets"]["releases"][asset_version]["arches"]["arm64"]
         assert "obom.cdx.json" in arm64_entries
         assert "build-ledger.log" not in arm64_entries
+
+    def test_manifest_regen_restores_canonical_software_inventory_from_alias(self, tmp_path):
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
+        (arm64 / "software-inventory.json").write_text(
+            json.dumps({"schema": "capsem.profile_software_inventory.v1", "packages": []})
+        )
+        generate_checksums(tmp_path, "0.13.0")
+        manifest = json.loads((tmp_path / "manifest.json").read_text())
+        asset_version = manifest["assets"]["current"]
+        digest = manifest["assets"]["releases"][asset_version]["arches"]["arm64"][
+            "software-inventory.json"
+        ]["hash"]
+        alias = arm64 / f"software-inventory-{digest[:16]}.json"
+        shutil.copy2(arm64 / "software-inventory.json", alias)
+        (arm64 / "software-inventory.json").unlink()
+
+        generate_checksums(tmp_path, "0.13.0")
+
+        assert (arm64 / "software-inventory.json").read_bytes() == alias.read_bytes()
+        b3sums = (tmp_path / "B3SUMS").read_text()
+        assert "arm64/software-inventory.json" in b3sums
 
     def test_manifest_flat_fallback(self, tmp_path):
         """Flat layout (no arch subdirs) still populates an arches entry."""
@@ -2071,3 +2115,30 @@ class TestCrossCompileAgent:
         assert len(cargo_calls) == 1
         assert "build" in cargo_calls[0][0][0]
         assert "--target" in cargo_calls[0][0][0]
+
+    @patch("capsem.builder.docker.container_compile_agent")
+    @patch("capsem.builder.docker.sys")
+    @patch("capsem.builder.docker.run_cmd")
+    def test_native_on_linux_replaces_existing_readonly_outputs(
+        self, mock_run, mock_sys, mock_container, tmp_path,
+    ):
+        mock_sys.platform = "linux"
+        mock_run.return_value = MagicMock(stdout="aarch64-unknown-linux-musl")
+
+        release_dir = tmp_path / "target" / "aarch64-unknown-linux-musl" / "release"
+        release_dir.mkdir(parents=True)
+        output_dir = tmp_path / "out"
+        output_dir.mkdir()
+        for binary in GUEST_BINARIES:
+            (release_dir / binary).write_bytes(f"new-{binary}".encode())
+            old = output_dir / binary
+            old.write_bytes(b"old")
+            old.chmod(0o555)
+
+        cross_compile_agent("aarch64-unknown-linux-musl", tmp_path, output_dir)
+
+        mock_container.assert_not_called()
+        for binary in GUEST_BINARIES:
+            dst = output_dir / binary
+            assert dst.read_bytes() == f"new-{binary}".encode()
+            assert dst.stat().st_mode & 0o777 == 0o555

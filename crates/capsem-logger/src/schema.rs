@@ -585,20 +585,53 @@ pub fn flush_memory_tables_to_disk<'a>(
         };
         let last_flushed_id = *watermarks.get(table).unwrap_or(&0);
         let max_memory_id = max_table_id(conn, MEMORY_SCHEMA, table)?;
-        if max_memory_id <= last_flushed_id {
-            continue;
+        if table == "exec_events" {
+            flush_existing_exec_event_updates(conn)?;
         }
-        conn.execute(
-            &format!(
-                "INSERT OR REPLACE INTO main.{table}
-                 SELECT * FROM {MEMORY_SCHEMA}.{table}
-                 WHERE id > ?1;"
-            ),
-            [last_flushed_id],
-        )?;
-        advanced.insert(table, max_memory_id);
+        if max_memory_id > last_flushed_id {
+            conn.execute(
+                &format!(
+                    "INSERT OR REPLACE INTO main.{table}
+                     SELECT * FROM {MEMORY_SCHEMA}.{table}
+                     WHERE id > ?1;"
+                ),
+                [last_flushed_id],
+            )?;
+            advanced.insert(table, max_memory_id);
+        }
     }
     Ok(advanced)
+}
+
+fn flush_existing_exec_event_updates(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(&format!(
+        "UPDATE main.exec_events AS disk
+         SET
+            exit_code = (
+                SELECT mem.exit_code FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
+            ),
+            duration_ms = (
+                SELECT mem.duration_ms FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
+            ),
+            stdout_preview = (
+                SELECT mem.stdout_preview FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
+            ),
+            stderr_preview = (
+                SELECT mem.stderr_preview FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
+            ),
+            stdout_bytes = (
+                SELECT mem.stdout_bytes FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
+            ),
+            stderr_bytes = (
+                SELECT mem.stderr_bytes FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
+            ),
+            pid = (
+                SELECT mem.pid FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
+            )
+         WHERE EXISTS (
+            SELECT 1 FROM {MEMORY_SCHEMA}.exec_events AS mem WHERE mem.id = disk.id
+         );"
+    ))
 }
 
 pub fn rehydrate_memory_tables_from_disk_once<'a>(

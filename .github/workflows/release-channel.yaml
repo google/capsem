@@ -70,6 +70,16 @@ jobs:
           cargo run -p capsem-admin -- assets channel check \
             --channel "$CHANNEL" \
             --dist "$DIST_DIR"
+          python - "$DIST_DIR/health.json" <<'PY'
+          import json
+          import sys
+
+          health = json.load(open(sys.argv[1], encoding="utf-8"))
+          evidence = health.get("evidence", {})
+          for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations"):
+              if key not in evidence:
+                  raise SystemExit(f"missing release evidence key: {key}")
+          PY
 
       - name: Require Cloudflare credentials
         run: |

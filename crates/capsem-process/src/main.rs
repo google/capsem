@@ -50,6 +50,17 @@ impl Shutdown {
     }
 }
 
+fn process_kernel_cmdline() -> &'static str {
+    #[cfg(target_arch = "x86_64")]
+    {
+        "console=ttyS0 root=/dev/vda ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1"
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        "console=hvc0 root=/dev/vda ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1"
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -120,7 +131,36 @@ fn aggregator_log_path(session_dir: &Path) -> PathBuf {
 
 fn prepare_session_layout(session_dir: &Path, scratch_disk_size_gb: u32) -> Result<PathBuf> {
     capsem_core::create_virtiofs_session(session_dir, scratch_disk_size_gb)?;
-    Ok(capsem_core::guest_share_dir(session_dir))
+    let guest_dir = capsem_core::guest_share_dir(session_dir);
+
+    #[cfg(not(test))]
+    {
+        let rootfs_img = guest_dir.join("system/rootfs.img");
+        let template_img = capsem_core::system_overlay_template_path_for_session(
+            session_dir,
+            scratch_disk_size_gb,
+        );
+        match capsem_core::preformat_system_overlay_image_from_template_if_needed(
+            &rootfs_img,
+            &template_img,
+            scratch_disk_size_gb,
+        ) {
+            Ok(true) => info!(
+                path = %rootfs_img.display(),
+                template = %template_img.display(),
+                "cloned preformatted system overlay image"
+            ),
+            Ok(false) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => warn!(
+                path = %rootfs_img.display(),
+                error = %e,
+                "mke2fs unavailable; guest will format system overlay at first boot"
+            ),
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    Ok(guest_dir)
 }
 
 fn main() -> Result<()> {
@@ -172,15 +212,18 @@ fn main() -> Result<()> {
         kernel_override: args.kernel.as_deref(),
         initrd_override: args.initrd.as_deref(),
         rootfs_override: Some(&args.rootfs),
-        cmdline: "console=hvc0 ro loglevel=1 quiet init_on_alloc=1 slab_nomerge page_alloc.shuffle=1 random.trust_cpu=1",
+        cmdline: process_kernel_cmdline(),
         system_overlay_disk: Some(&system_img),
         virtiofs_shares: &virtiofs_shares,
         cpu_count: args.cpus,
         ram_bytes: args.ram_mb * 1024 * 1024,
-        checkpoint_path: args
-            .checkpoint_path
-            .clone()
-            .map(|p| if p.is_absolute() { p } else { session_dir.join(p) }),
+        checkpoint_path: args.checkpoint_path.clone().map(|p| {
+            if p.is_absolute() {
+                p
+            } else {
+                session_dir.join(p)
+            }
+        }),
         machine_identifier_path: Some(&machine_identifier_path),
         serial_log_path: Some(&serial_log_path),
     })?;
@@ -213,6 +256,7 @@ fn main() -> Result<()> {
     let trace_id_for_loop = trace_id.clone();
     let session_dir_for_loop = session_dir.clone();
     let shutdown_for_loop = Arc::clone(&shutdown);
+    let vm_for_signal = Arc::clone(&vm_arc);
     rt.spawn(async move {
         if let Err(e) = run_async_main_loop(
             args,
@@ -231,10 +275,10 @@ fn main() -> Result<()> {
     });
 
     // Signal-driven explicit cleanup. On SIGTERM/SIGINT, synchronously
-    // drain the background-thread owners in the `Shutdown` struct
-    // (FsMonitor -> DbWriter) BEFORE stopping the main run loop. Without
-    // this, teardown relies on tokio-runtime-drop ordering and can miss
-    // the service's 1s SIGKILL budget mid-checkpoint, leaving a dirty
+    // stop the VM and drain the background-thread owners in the `Shutdown`
+    // struct (FsMonitor -> DbWriter) BEFORE stopping the main run loop.
+    // Without this, teardown relies on tokio-runtime-drop ordering and can
+    // miss the service's 1s SIGKILL budget mid-checkpoint, leaving a dirty
     // `session.db-wal`. See /dev-rust-patterns "Signal-driven explicit
     // cleanup for background-thread owners".
     let shutdown_for_sig = Arc::clone(&shutdown);
@@ -250,6 +294,11 @@ fn main() -> Result<()> {
             signal = signal_name,
             "capsem-process received signal, draining background owners"
         );
+
+        match vm_for_signal.lock().await.stop() {
+            Ok(()) => tracing::info!(signal = signal_name, "VM stop requested for signal teardown"),
+            Err(e) => tracing::warn!(signal = signal_name, error = %e, "VM stop failed during signal teardown"),
+        }
 
         // Take the Shutdown struct out from under the async mutex so we
         // can hand it to `spawn_blocking` for the synchronous join. The
@@ -274,6 +323,8 @@ fn main() -> Result<()> {
                 core_foundation_sys::runloop::CFRunLoopGetMain(),
             );
         }
+        #[cfg(not(target_os = "macos"))]
+        std::process::exit(0);
     });
 
     #[cfg(target_os = "macos")]
@@ -1255,6 +1306,21 @@ mod tests {
         let session = PathBuf::from("/tmp/some-session");
         let log = aggregator_log_path(&session);
         assert_eq!(log, session.join("mcp-aggregator.stderr.log"));
+    }
+
+    #[test]
+    fn process_kernel_cmdline_uses_arch_console_and_root_device() {
+        let cmdline = process_kernel_cmdline();
+        assert!(cmdline.contains("root=/dev/vda"));
+        #[cfg(target_arch = "x86_64")]
+        {
+            assert!(cmdline.contains("console=ttyS0"));
+            assert!(!cmdline.contains("console=hvc0"));
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            assert!(cmdline.contains("console=hvc0"));
+        }
     }
 
     #[test]

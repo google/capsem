@@ -76,8 +76,12 @@ pub fn metadata_to_fuse_attr(ino: u64, meta: &std::fs::Metadata) -> FuseAttr {
         ctimensec: meta.ctime_nsec() as u32,
         mode: meta.mode(),
         nlink: meta.nlink() as u32,
-        uid: meta.uid(),
-        gid: meta.gid(),
+        // The backing workspace is owned by the host user, but the guest runs
+        // the exported tree as root. Reporting host ids into the guest makes
+        // standard tools reject their own files, e.g. git's safe.directory
+        // ownership check.
+        uid: 0,
+        gid: 0,
         rdev: meta.rdev() as u32,
         blksize: meta.blksize() as u32,
         flags: 0,
@@ -266,6 +270,8 @@ mod tests {
         assert_eq!(attr.ino, 42);
         assert_eq!(attr.size, 11);
         assert_ne!(attr.mode & S_IFREG, 0);
+        assert_eq!(attr.uid, 0);
+        assert_eq!(attr.gid, 0);
     }
 
     #[test]

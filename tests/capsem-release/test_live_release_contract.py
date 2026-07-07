@@ -110,7 +110,14 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
         ("nightly", "co-work"): nightly_co_work,
         ("nightly", "code"): nightly_code,
     }
-    versions = {"stable": "1.4.0", "nightly": "1.5.0-nightly.20260702"}
+    versions = {
+        channel: next(
+            record["version"]
+            for record in graph["channels"][channel]["manifests"]
+            if record["status"] == "current"
+        )
+        for channel in ("stable", "nightly")
+    }
     for (channel, profile_id), page in pages.items():
         profile = graph["manifests"][channel][versions[channel]]["profiles"][profile_id]
         assert "HMAC" not in page

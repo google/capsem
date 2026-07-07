@@ -89,10 +89,10 @@ fn env_nonempty(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    // Env mutation races across #[test] fns; serialize.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    fn lock_env() -> tokio::sync::MutexGuard<'static, ()> {
+        crate::credential_broker::TEST_ENV_LOCK.blocking_lock()
+    }
 
     struct EnvGuard {
         key: &'static str,
@@ -121,14 +121,14 @@ mod tests {
 
     #[test]
     fn capsem_home_uses_env_var_when_set() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = lock_env();
         let _g = EnvGuard::set("CAPSEM_HOME", "/tmp/test-capsem-home");
         assert_eq!(capsem_home(), PathBuf::from("/tmp/test-capsem-home"));
     }
 
     #[test]
     fn capsem_home_ignores_empty_env_var() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = lock_env();
         let _g = EnvGuard::set("CAPSEM_HOME", "");
         let _h = EnvGuard::set("HOME", "/home/alice");
         assert_eq!(capsem_home(), PathBuf::from("/home/alice/.capsem"));
@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn capsem_home_falls_back_to_home() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = lock_env();
         let _g = EnvGuard::unset("CAPSEM_HOME");
         let _h = EnvGuard::set("HOME", "/home/bob");
         assert_eq!(capsem_home(), PathBuf::from("/home/bob/.capsem"));
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn run_dir_honors_env_override_over_home() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = lock_env();
         let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
         let _r = EnvGuard::set("CAPSEM_RUN_DIR", "/tmp/custom-run");
         assert_eq!(capsem_run_dir(), PathBuf::from("/tmp/custom-run"));
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn run_dir_under_isolated_home() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = lock_env();
         let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
         let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
         assert_eq!(capsem_run_dir(), PathBuf::from("/tmp/isolated/run"));
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn assets_dir_honors_env_override_over_home() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = lock_env();
         let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
         let _a = EnvGuard::set("CAPSEM_ASSETS_DIR", "/repo/assets");
         assert_eq!(capsem_assets_dir(), PathBuf::from("/repo/assets"));
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn assets_dir_under_isolated_home() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = lock_env();
         let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
         let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
         assert_eq!(capsem_assets_dir(), PathBuf::from("/tmp/isolated/assets"));
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn sessions_dir_under_isolated_home() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = lock_env();
         let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
         assert_eq!(
             capsem_sessions_dir(),
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn service_socket_and_pidfile_under_run_dir() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = lock_env();
         let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
         let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
         assert_eq!(

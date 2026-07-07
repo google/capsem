@@ -204,6 +204,20 @@ def _write_minimal_pkg(path: Path, version: str, members: dict[str, bytes]) -> N
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(contents)
         destination.chmod(0o755)
+    if sys.platform != "darwin":
+        payload_dir = path.parent / f"{path.stem}.expanded" / "capsem.pkg" / "Payload"
+        expanded_root = payload_dir.parent.parent
+        if expanded_root.exists():
+            shutil.rmtree(expanded_root)
+        for member_path, contents in members.items():
+            destination = payload_dir / member_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(contents)
+            destination.chmod(0o755)
+        with tarfile.open(path, mode="w:gz") as tar:
+            tar.add(expanded_root, arcname=expanded_root.name)
+        shutil.rmtree(expanded_root)
+        return
     _run(
         [
             "pkgbuild",
@@ -442,7 +456,7 @@ def test_release_channel_contract_rejects_swapped_manifest(
     manifest = json.loads(manifest_path.read_text())
     profile = next(iter(manifest["profiles"].values()))
     image = profile["architectures"][0]
-    asset_version = manifest["version"].split("+assets.", 1)[1]
+    asset_version = image["image_revision"]
     image["images"][0]["url"] = image["images"][0]["url"].replace(
         f"/assets/releases/{asset_version}/",
         "/assets/releases/2030.0101.1/",
@@ -453,8 +467,8 @@ def test_release_channel_contract_rejects_swapped_manifest(
         exit_code, _stdout, stderr = _validator_exit_code(url, capsys=capsys)
 
     assert exit_code == 1
-    assert "manifest asset version" in stderr
-    assert "does not match profile" in stderr
+    assert "channel manifest SHA-256 mismatch" in stderr
+    assert "channel manifest BLAKE3 mismatch" in stderr
 
 
 def test_release_channel_contract_ignores_stale_health_summary(

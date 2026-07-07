@@ -29,15 +29,25 @@ if [ -f /conf/modules ]; then
     done < /conf/modules
 fi
 
-# Wait for virtio_console/hvc0 to enumerate (typically <50ms in Apple VZ).
-# Poll instead of fixed sleep to avoid wasting ~950ms on every boot.
-_i=0
-while [ ! -e /dev/console ] && [ "$_i" -lt 200 ]; do
-    _i=$((_i + 1))
+# Send early init diagnostics to the active console when one is usable. Some
+# minimal initramfs/devtmpfs combinations do not create /dev/console before PID
+# 1 starts; a hard `exec ... /dev/console` failure exits the shell and kills
+# init before it can report the real boot problem.
+if [ ! -e /dev/console ]; then
+    mknod -m 600 /dev/console c 5 1 2>/dev/null || true
+fi
+
+CONSOLE_DEV=""
+for candidate in /dev/console /dev/ttyS0 /dev/hvc0; do
+    if [ -c "$candidate" ] && ( : <"$candidate" >"$candidate" ) 2>/dev/null; then
+        CONSOLE_DEV="$candidate"
+        break
+    fi
 done
 
-# Send all output to console so we can see what happens
-exec 0</dev/console 1>/dev/console 2>/dev/console
+if [ -n "$CONSOLE_DEV" ]; then
+    exec 0<"$CONSOLE_DEV" 1>"$CONSOLE_DEV" 2>"$CONSOLE_DEV"
+fi
 
 # Boot timing: record stage durations as JSONL for the PTY agent to send via vsock.
 TIMING_FILE=/tmp/capsem-boot-timing
@@ -49,7 +59,15 @@ boot_mark() {
     _LAST_MARK=$now
 }
 
-echo "[capsem-init] listing block devices..."
+init_log() {
+    echo "[capsem-init] $*"
+    printf '<1>[capsem-init] %s\n' "$*" > /dev/kmsg 2>/dev/null || true
+    if [ -d /mnt/shared/workspace ]; then
+        printf '[capsem-init] %s\n' "$*" >> /mnt/shared/workspace/.capsem-boot.log 2>/dev/null || true
+    fi
+}
+
+init_log "listing block devices..."
 ls /dev/vda* 2>&1 || echo "[capsem-init] no /dev/vda found"
 
 # Mount immutable lower rootfs.
@@ -61,7 +79,7 @@ if grep -qw 'capsem.rootfs=erofs-dax' /proc/cmdline; then
     ROOTFS_MOUNT_OPTS=ro,dax
 fi
 mkdir -p /mnt/a
-echo "[capsem-init] mounting /dev/vda ($ROOTFS_LABEL, opts=$ROOTFS_MOUNT_OPTS)..."
+init_log "mounting /dev/vda ($ROOTFS_LABEL, opts=$ROOTFS_MOUNT_OPTS)..."
 if ! mount -t "$ROOTFS_TYPE" -o "$ROOTFS_MOUNT_OPTS" /dev/vda /mnt/a; then
     echo "[capsem-init] FATAL: cannot mount /dev/vda as $ROOTFS_LABEL"
     exit 1
@@ -78,7 +96,7 @@ STORAGE_MODE="block"
 if grep -q 'capsem.storage=virtiofs' /proc/cmdline; then
     STORAGE_MODE="virtiofs"
 fi
-echo "[capsem-init] storage mode: $STORAGE_MODE"
+init_log "storage mode: $STORAGE_MODE"
 
 mkdir -p /newroot
 if [ "$STORAGE_MODE" = "virtiofs" ]; then
@@ -97,7 +115,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
         echo "[capsem-init] FATAL: cannot mount virtiofs 'capsem' -- aborting"
         exit 1
     }
-    echo "[capsem-init] VirtioFS share mounted"
+    init_log "VirtioFS share mounted"
     boot_mark "virtiofs"
 
     # The system-overlay rootfs.img is attached as a virtio-blk device
@@ -118,17 +136,18 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
     # since busybox doesn't include it. Check ext4 magic (0xEF53) at offset
     # 0x438 to detect formatted images.
     #
-    # Journal: ENABLED (default has_journal). Apple VZ may hold writes in
+    # Journal: ENABLED. Apple VZ may hold writes in
     # cache across save_state/restore_state, leaving cached metadata in the
     # resumed kernel out of sync with the on-disk file. The journal lets
     # EXT4 replay in-flight metadata changes on the next mount instead of
     # emitting "failed to convert unwritten extents" + I/O errors on dirent
-    # blocks. Costs ~5-10% IOPS.
+    # blocks. Use a small journal to preserve recovery without bloating fork
+    # image disk usage.
     if ! dd if="$SYSTEM_DEV" bs=1 skip=1080 count=2 2>/dev/null | od -A n -t x1 | grep -q '53 ef'; then
         echo "[capsem-init] formatting system image (ext4 with journal)..."
         mount --bind /dev /mnt/a/dev
         chroot /mnt/a /usr/sbin/mke2fs -F -t ext4 -m 0 \
-            -E lazy_itable_init=1 -L system -q "$SYSTEM_DEV" 2>&1
+            -E lazy_itable_init=1,lazy_journal_init=1 -J size=4 -L system -q "$SYSTEM_DEV" 2>&1
         umount /mnt/a/dev
         echo "[capsem-init] system image formatted"
     fi
@@ -153,7 +172,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
         echo "[capsem-init] FATAL: overlayfs mount failed -- aborting"
         exit 1
     }
-    echo "[capsem-init] overlayfs mounted (virtio-blk upper /dev/vdb)"
+    init_log "overlayfs mounted (virtio-blk upper /dev/vdb)"
     boot_mark "overlayfs"
 else
     # === Block mode (legacy) ===
@@ -205,7 +224,7 @@ if [ "$STORAGE_MODE" = "virtiofs" ]; then
         echo "[capsem-init] FATAL: cannot bind-mount workspace to /root"
         exit 1
     }
-    echo "[capsem-init] /root bind-mounted from VirtioFS workspace"
+    init_log "/root bind-mounted from VirtioFS workspace"
     boot_mark "workspace"
 else
     # Block mode: scratch disk provides ~8GB of workspace.
@@ -246,6 +265,13 @@ fi
 # Must happen after /root is mounted (scratch disk or tmpfs).
 mkdir -p /newroot/root/.local/bin
 
+# Keep the default Python venv out of the host-backed workspace.  The public
+# contract remains /root/.venv, but the mutable interpreter environment lives
+# on guest tmpfs so VM forks do not clone Python package-manager churn.
+rm -rf /newroot/run/capsem-venv /newroot/run/capsem-venv-ready
+rm -rf /newroot/root/.venv
+ln -sfn /run/capsem-venv /newroot/root/.venv
+
 # Project profile-owned seed files into the writable runtime root.
 # The image stores them under /usr/local/share/capsem/profile-root because
 # rootfs /root is hidden by the runtime workspace mount above.
@@ -266,9 +292,16 @@ chmod 755 /newroot/etc
 # because /root is mounted fresh at runtime. Recreate the user-local shims that
 # their own doctor/config checks expect after the runtime /root mount exists.
 for cli in claude agy; do
+    mkdir -p /newroot/usr/local/bin /newroot/root/.local/bin
+    if [ ! -e "/newroot/usr/local/bin/$cli" ] && [ -x "/newroot/opt/ai-clis/bin/$cli" ]; then
+        ln -sf "/opt/ai-clis/bin/$cli" "/newroot/usr/local/bin/$cli"
+    fi
+    rm -f "/newroot/root/.local/bin/$cli"
+    ln -sf "/usr/local/bin/$cli" "/newroot/root/.local/bin/$cli"
     if [ -x "/newroot/usr/local/bin/$cli" ]; then
-        ln -sf "/usr/local/bin/$cli" "/newroot/root/.local/bin/$cli"
-        chroot /newroot /bin/chmod 555 "/root/.local/bin/$cli"
+        chroot /newroot /bin/chmod 555 "/root/.local/bin/$cli" 2>/dev/null || true
+    else
+        init_log "WARNING: /usr/local/bin/$cli missing; created expected user-local shim"
     fi
 done
 
@@ -334,7 +367,7 @@ iptables_add -t nat -A OUTPUT -p tcp --dport 3713  -j REDIRECT --to-port 10080
 iptables_add -t nat -A OUTPUT -p tcp --dport 8080  -j REDIRECT --to-port 10080
 iptables_add -t nat -A OUTPUT -p tcp --dport 11434 -j REDIRECT --to-port 10080
 iptables_add -t nat -S OUTPUT
-echo "[capsem-init] network ready"
+init_log "network ready"
 boot_mark "network"
 
 # Launch net proxy (TCP->vsock bridge) as background process.
@@ -350,20 +383,27 @@ elif [ -x /newroot/usr/local/bin/capsem-net-proxy ]; then
     NET_PROXY_PATH=/run/capsem-net-proxy
 fi
 if [ -n "$NET_PROXY_PATH" ]; then
-    chroot /newroot "$NET_PROXY_PATH" &
+    chroot /newroot /bin/sh -c "$NET_PROXY_PATH </dev/null >>/run/capsem-net-proxy.log 2>&1 &"
     # Poll for net-proxy readiness on BOTH the HTTPS (10443) and
     # plain-HTTP (10080) listen ports. T2.2 added the second.
     _i=0
-    while [ "$_i" -lt 20 ]; do
+    while [ "$_i" -lt 100 ]; do
         if chroot /newroot sh -c 'ss -ltn 2>/dev/null | grep -q ":10443 "' \
             && chroot /newroot sh -c 'ss -ltn 2>/dev/null | grep -q ":10080 "'; then
             break
         fi
         _i=$((_i + 1))
+        sleep 0.05
     done
-    echo "[capsem-init] net-proxy started"
+    if [ "$_i" -ge 100 ]; then
+        echo "[capsem-init] FATAL: capsem-net-proxy did not open 10443/10080"
+        cat /newroot/run/capsem-net-proxy.log 2>/dev/null || true
+        exit 1
+    fi
+    init_log "net-proxy started"
 else
-    echo "[capsem-init] WARNING: capsem-net-proxy not found, no proxy"
+    echo "[capsem-init] FATAL: capsem-net-proxy not found"
+    exit 1
 fi
 boot_mark "net_proxy"
 
@@ -381,7 +421,7 @@ elif [ -x /newroot/usr/local/bin/capsem-dns-proxy ]; then
     DNS_PROXY_PATH=/run/capsem-dns-proxy
 fi
 if [ -n "$DNS_PROXY_PATH" ]; then
-    chroot /newroot "$DNS_PROXY_PATH" &
+    chroot /newroot /bin/sh -c "$DNS_PROXY_PATH </dev/null >>/run/capsem-dns-proxy.log 2>&1 &"
     # Poll for dns-proxy readiness on UDP + TCP :1053. ss(8) shows
     # UDP listeners with `-lu` and TCP with `-ltn`; check both.
     _i=0
@@ -391,10 +431,17 @@ if [ -n "$DNS_PROXY_PATH" ]; then
             break
         fi
         _i=$((_i + 1))
+        sleep 0.05
     done
-    echo "[capsem-init] dns-proxy started"
+    if [ "$_i" -ge 40 ]; then
+        echo "[capsem-init] FATAL: capsem-dns-proxy did not open UDP/TCP 1053"
+        cat /newroot/run/capsem-dns-proxy.log 2>/dev/null || true
+        exit 1
+    fi
+    init_log "dns-proxy started"
 else
-    echo "[capsem-init] WARNING: capsem-dns-proxy not found, DNS will fail"
+    echo "[capsem-init] FATAL: capsem-dns-proxy not found"
+    exit 1
 fi
 boot_mark "dns_proxy"
 
@@ -505,9 +552,13 @@ export PIP_DISABLE_PIP_VERSION_CHECK=1
 # Create Python virtualenv in the background so it doesn't block the PTY agent.
 # The venv is only needed when the user runs Python, not for the initial shell prompt.
 # uv venv is ~100ms; fall back to stdlib venv if uv is missing.
-(chroot /newroot uv venv --system-site-packages /root/.venv 2>/dev/null || \
-    chroot /newroot python3 -m venv --system-site-packages /root/.venv 2>/dev/null || true
- touch /newroot/run/capsem-venv-ready) &
+(chroot /newroot uv venv --system-site-packages /run/capsem-venv 2>/dev/null || \
+    chroot /newroot python3 -m venv --system-site-packages /run/capsem-venv 2>/dev/null || true
+ if [ -x /newroot/run/capsem-venv/bin/python ]; then
+     touch /newroot/run/capsem-venv-ready
+ else
+     echo "[capsem-init] WARNING: failed to create /run/capsem-venv"
+ fi) &
 boot_mark "venv"
 
 # Ensure PATH and venv survive login shells (tmux panes).
@@ -540,7 +591,7 @@ PROFILE
 boot_mark "agent_start"
 cp "$TIMING_FILE" /newroot/run/capsem-boot-timing 2>/dev/null || true
 
-echo "[capsem-init] about to chroot..."
+init_log "about to chroot..."
 
 # Launch the PTY agent for vsock-based terminal I/O.
 # The agent creates a PTY pair, forks bash, and bridges via vsock to the host.
@@ -555,12 +606,12 @@ if [ -x /capsem-pty-agent ]; then
     cp /capsem-pty-agent /newroot/run/capsem-pty-agent
     chmod 555 /newroot/run/capsem-pty-agent
     AGENT_PATH=/run/capsem-pty-agent
-    echo "[capsem-init] using initrd-bundled agent"
+    init_log "using initrd-bundled agent"
 elif [ -x /newroot/usr/local/bin/capsem-pty-agent ]; then
     cp /newroot/usr/local/bin/capsem-pty-agent /newroot/run/capsem-pty-agent
     chmod 555 /newroot/run/capsem-pty-agent
     AGENT_PATH=/run/capsem-pty-agent
-    echo "[capsem-init] using rootfs agent"
+    init_log "using rootfs agent"
 else
     echo "[capsem-init] FATAL: capsem-pty-agent not found"
     echo "[capsem-init] Rebuild with 'just build' or 'just repack'"
@@ -568,8 +619,15 @@ else
     while true; do sleep 60; done
 fi
 
-echo "[capsem-init] starting PTY agent (vsock mode)"
-chroot /newroot "$AGENT_PATH"
+AGENT_STDIO_LOG=/tmp/capsem-agent-stdio.log
+if [ -d /mnt/shared/workspace ]; then
+    AGENT_STDIO_LOG=/mnt/shared/workspace/.capsem-agent-stdio.log
+fi
+export RUST_BACKTRACE=1
+init_log "starting PTY agent (vsock mode): $AGENT_PATH"
+chroot /newroot "$AGENT_PATH" >> "$AGENT_STDIO_LOG" 2>&1
+AGENT_STATUS=$?
+init_log "PTY agent exited with status $AGENT_STATUS"
 
 # If bash exits (e.g. user types 'exit'), keep PID 1 alive to prevent kernel panic.
 while true; do sleep 1; done

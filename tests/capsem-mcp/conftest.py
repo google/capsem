@@ -9,9 +9,9 @@ without touching the dev service or requiring HOME hacking.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
-import tempfile
 import time
 import uuid
 
@@ -23,7 +23,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers.constants import EXEC_READY_TIMEOUT
 from helpers.mcp import kill_mcp_proc, wait_exec_ready as mcp_wait_exec_ready
-from helpers.service import materialize_test_profiles, preserve_tmp_dir_on_failure
+from helpers.service import (
+    make_capsem_tmp_dir,
+    materialize_test_profiles,
+    preserve_tmp_dir_on_failure,
+)
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"
@@ -129,7 +133,7 @@ def _start_capsem_service():
     sign_binary(PROCESS_BINARY)
     sign_binary(SERVICE_BINARY)
 
-    tmp_dir = Path(tempfile.mkdtemp(prefix="capsem-test-"))
+    tmp_dir = make_capsem_tmp_dir("capsem-test-")
     print(f"\n@@@ WORKER {os.environ.get('PYTEST_XDIST_WORKER', 'master')} TMP_DIR: {tmp_dir}", file=sys.stderr)
     uds_path = tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
 
@@ -201,6 +205,7 @@ def _start_capsem_service():
             print(f"\n--- SERVICE STDERR ---\n{stderr_path.read_text()}\n---", file=sys.stderr)
 
         preserve_tmp_dir_on_failure(tmp_dir)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return uds_path, teardown
 

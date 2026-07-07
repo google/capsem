@@ -28,8 +28,10 @@ use nix::sys::signal::{signal, SigHandler, Signal};
 use nix::unistd::{close, dup2, execvp, fork, setsid, ForkResult, Pid};
 
 use vsock_io::{read_exact_fd, vsock_connect, vsock_connect_retry, write_all_fd, VSOCK_HOST_CID};
-/// Boot log persisted so it can be inspected after boot (`cat /var/log/capsem-boot.log`).
-const BOOT_LOG_PATH: &str = "/var/log/capsem-boot.log";
+/// Boot log persisted on the host-visible workspace mount for post-boot diagnosis.
+const BOOT_LOG_PATH: &str = "/root/.capsem-agent-boot.log";
+/// Fallback boot log inside the guest overlay when /root is not mounted yet.
+const FALLBACK_BOOT_LOG_PATH: &str = "/var/log/capsem-boot.log";
 /// Reconnect timeout before giving up (seconds).
 const RECONNECT_TIMEOUT_SECS: u64 = 30;
 
@@ -114,21 +116,28 @@ fn set_winsize(master_fd: RawFd, cols: u16, rows: u16) {
 // ---------------------------------------------------------------------------
 
 fn open_boot_log() -> std::fs::File {
-    // Ensure /var/log exists (may be tmpfs).
-    let _ = std::fs::create_dir_all("/var/log");
+    let _ = std::fs::create_dir_all("/root");
     std::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(true)
         .open(BOOT_LOG_PATH)
         .unwrap_or_else(|_| {
-            // Fallback: /tmp is always writable.
+            let _ = std::fs::create_dir_all("/var/log");
             std::fs::OpenOptions::new()
                 .create(true)
                 .write(true)
                 .truncate(true)
-                .open("/tmp/capsem-boot.log")
-                .expect("cannot open boot log")
+                .open(FALLBACK_BOOT_LOG_PATH)
+                .unwrap_or_else(|_| {
+                    // Fallback: /tmp is always writable.
+                    std::fs::OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open("/tmp/capsem-boot.log")
+                        .expect("cannot open boot log")
+                })
         })
 }
 
@@ -364,33 +373,48 @@ fn main() {
         }
     }
 
-    // Step 4b: Activate Python venv if capsem-init created one.
-    // capsem-init creates the venv in the background and touches a ready flag when done.
-    // Wait briefly for it to finish before checking.
+    // Step 4b: Publish the default Python venv path without blocking boot.
+    // capsem-init creates the venv in the background and touches a ready flag
+    // when done. The shell environment should point at the stable /root/.venv
+    // contract immediately, but BootReady must not wait for Python packaging
+    // setup when the first command is often a simple readiness probe.
     const VENV_DIR: &str = "/root/.venv";
+    const VENV_TARGET: &str = "/run/capsem-venv";
     const VENV_READY: &str = "/run/capsem-venv-ready";
-    let venv_activate = std::path::Path::new(VENV_DIR).join("bin/activate");
-    if !venv_activate.exists() && !std::path::Path::new(VENV_READY).exists() {
+    boot_env.push(("VIRTUAL_ENV".into(), VENV_DIR.into()));
+    if let Some((_, path_val)) = boot_env.iter_mut().find(|(k, _)| k == "PATH") {
+        *path_val = format!("{VENV_DIR}/bin:{path_val}");
+    }
+    blog_line(&mut blog, "venv path activated in boot_env");
+    std::thread::spawn(move || {
+        let venv_activate = std::path::Path::new(VENV_DIR).join("bin/activate");
         for _ in 0..30 {
-            std::thread::sleep(std::time::Duration::from_millis(100));
             if std::path::Path::new(VENV_READY).exists() || venv_activate.exists() {
-                break;
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        if !venv_activate.exists() {
+            eprintln!("[capsem-agent] venv missing after init wait; creating fallback");
+            let _ = std::fs::remove_file(VENV_TARGET);
+            let _ = std::fs::remove_dir_all(VENV_TARGET);
+            let _ = std::fs::remove_file(VENV_DIR);
+            let _ = std::os::unix::fs::symlink(VENV_TARGET, VENV_DIR);
+            let created = std::process::Command::new("uv")
+                .args(["venv", "--system-site-packages", VENV_TARGET])
+                .status()
+                .map(|status| status.success())
+                .unwrap_or(false)
+                || std::process::Command::new("python3")
+                    .args(["-m", "venv", "--system-site-packages", VENV_TARGET])
+                    .status()
+                    .map(|status| status.success())
+                    .unwrap_or(false);
+            if created {
+                let _ = std::fs::write(VENV_READY, b"");
             }
         }
-    }
-    if venv_activate.exists() {
-        boot_env.push(("VIRTUAL_ENV".into(), VENV_DIR.into()));
-        // Prepend venv bin to PATH if PATH exists in boot_env.
-        if let Some((_, path_val)) = boot_env.iter_mut().find(|(k, _)| k == "PATH") {
-            *path_val = format!("{VENV_DIR}/bin:{path_val}");
-        }
-        blog_line(&mut blog, "venv activated in boot_env");
-    } else {
-        blog_line(
-            &mut blog,
-            "WARNING: venv not found after waiting, skipping activation",
-        );
-    }
+    });
 
     // Step 4c: Set hostname from CAPSEM_VM_NAME if present.
     if let Some((_, name)) = boot_env.iter().find(|(k, _)| k == "CAPSEM_VM_NAME") {
@@ -2253,6 +2277,12 @@ mod tests {
         } else {
             assert_eq!(default_exec_cwd(), "/");
         }
+    }
+
+    #[test]
+    fn boot_log_defaults_to_host_visible_workspace() {
+        assert_eq!(BOOT_LOG_PATH, "/root/.capsem-agent-boot.log");
+        assert_eq!(FALLBACK_BOOT_LOG_PATH, "/var/log/capsem-boot.log");
     }
 
     #[test]

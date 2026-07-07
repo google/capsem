@@ -313,6 +313,8 @@ fn vcpu_loop(
     #[cfg(target_arch = "x86_64")] pio_bus: &PioBus,
     control: &VcpuControl,
 ) -> Result<()> {
+    #[cfg(target_arch = "x86_64")]
+    let mut exit_trace = KvmExitTrace::from_env(vcpu.id());
     loop {
         if control.is_stopped() {
             #[cfg(target_arch = "x86_64")]
@@ -330,6 +332,9 @@ fn vcpu_loop(
         }
 
         let exit = vcpu.run()?;
+
+        #[cfg(target_arch = "x86_64")]
+        exit_trace.record(vcpu, &exit);
 
         match exit {
             VcpuExit::Mmio {
@@ -432,6 +437,48 @@ fn vcpu_loop(
 
             VcpuExit::Unknown(reason) => {
                 warn!(vcpu_id = vcpu.id(), reason, "unexpected KVM exit");
+            }
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+struct KvmExitTrace {
+    enabled: bool,
+    vcpu_id: u32,
+    count: u64,
+    next_summary: u64,
+}
+
+#[cfg(target_arch = "x86_64")]
+impl KvmExitTrace {
+    fn from_env(vcpu_id: u32) -> Self {
+        let enabled = std::env::var_os("CAPSEM_KVM_TRACE_EXITS").is_some();
+        Self {
+            enabled,
+            vcpu_id,
+            count: 0,
+            next_summary: 10_000,
+        }
+    }
+
+    fn record(&mut self, vcpu: &VcpuFd, exit: &VcpuExit) {
+        if !self.enabled {
+            return;
+        }
+        self.count = self.count.saturating_add(1);
+        if self.count <= 64 || self.count >= self.next_summary {
+            let rip = vcpu.get_regs().ok().map(|regs| regs.rip);
+            warn!(
+                event_name = "kvm.vcpu.exit_trace",
+                vcpu_id = self.vcpu_id,
+                exits = self.count,
+                rip = rip.map(|value| format!("{value:#x}")).as_deref().unwrap_or("unknown"),
+                exit = ?exit,
+                "KVM vCPU exit trace"
+            );
+            if self.count >= self.next_summary {
+                self.next_summary = self.next_summary.saturating_add(10_000);
             }
         }
     }

@@ -29,7 +29,7 @@
 #   test-install     -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
 #   install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd + _materialize-config
 #                       (release build + frontend + Tauri bundle + .pkg/.deb installer)
-#   cut-release      -> test + _stamp-version (commits changelog, tags, pushes, waits for CI)
+#   cut-release      -> test + _stamp-version (commits changelog, creates local tag)
 #   release [tag]    -> (waits for CI on a pushed tag)
 #
 # First-time dev readiness:
@@ -40,7 +40,7 @@
 #                     just ui            (service + Tauri GUI with hot-reload)
 #                     just exec "<cmd>"  (one-shot command in a temp VM)
 # Local install:      just install       (build .pkg/.deb + install it)
-# Releases:           just cut-release   (test + bump, tag, push, CI)
+# Releases:           just cut-release   (test + bump, local tag; then push main + tag)
 # Dep maintenance:    just update-deps   (cargo update + pnpm update)
 #                     just update-prices (refresh genai-prices.json)
 #                     just update-fixture <src> (rebuild test.db fixture)
@@ -60,7 +60,7 @@ host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/c
 assets_dir := "assets"
 entitlements := "entitlements.plist"
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
-release_minor := "4"
+release_minor := "5"
 
 # Stamp version as 1.{release_minor}.{unix_timestamp} in Cargo.toml,
 # tauri.conf.json, and pyproject.toml.
@@ -75,9 +75,13 @@ _stamp-version:
     fi
     NEW="1.${RELEASE_MINOR}.$(date +%s)"
     echo "Stamping version: ${CURRENT} -> ${NEW}"
-    sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
-    sed -i '' "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
-    sed -i '' "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" pyproject.toml
+    sed_in_place() {
+        sed -i.bak "$1" "$2"
+        rm -f "$2.bak"
+    }
+    sed_in_place "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
+    sed_in_place "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
+    sed_in_place "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" pyproject.toml
 
 # Compile all host binaries
 _build-host:
@@ -648,18 +652,30 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     fi
     echo "=== Building Linux deb ($TARGET_ARCH via docker, target=$RUST_TARGET) ==="
     mkdir -p "$ROOT/dist"
-    # KVM boot test: pass /dev/kvm if available (Linux host); macOS runs without it.
-    KVM_FLAG=""
+    HOST_UID=$(id -u)
+    HOST_GID=$(id -g)
+    # KVM boot test: pass KVM/vsock devices if available (Linux host);
+    # macOS runs without them. Docker's default seccomp profile blocks
+    # AF_VSOCK, so the native Linux boot test needs seccomp relaxed.
+    DOCKER_KVM_ARGS=()
     if [ -e /dev/kvm ]; then
-        KVM_FLAG="--device /dev/kvm"
+        DOCKER_KVM_ARGS+=(--security-opt seccomp=unconfined --device /dev/kvm)
+        if [ -e /dev/vhost-vsock ]; then
+            DOCKER_KVM_ARGS+=(--device /dev/vhost-vsock)
+        fi
+        if [ -e /dev/vsock ]; then
+            DOCKER_KVM_ARGS+=(--device /dev/vsock)
+        fi
     fi
     docker run --rm \
-        $KVM_FLAG \
+        "${DOCKER_KVM_ARGS[@]}" \
         ${SIGNING_ARGS[@]+"${SIGNING_ARGS[@]}"} \
         -e "TARGET_ARCH=$TARGET_ARCH" \
         -e "RUST_TARGET=$RUST_TARGET" \
         -e "DPKG_ARCH=$DPKG_ARCH" \
         -e "PKG_CONFIG_PATH=$PKG_CONFIG_PATH_CROSS" \
+        -e "HOST_UID=$HOST_UID" \
+        -e "HOST_GID=$HOST_GID" \
         -v "$ROOT:/src" \
         -v "capsem-cargo-registry:/usr/local/cargo/registry" \
         -v "capsem-cargo-git:/usr/local/cargo/git" \
@@ -667,11 +683,14 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         -v "capsem-rustup:/usr/local/rustup" \
         -w /src \
         capsem-host-builder:latest \
-        bash -c "swap-dev-libs \$DPKG_ARCH && \
+        bash -c "trap 'chown -R \"\$HOST_UID:\$HOST_GID\" /src/dist /src/frontend/node_modules /src/frontend/dist 2>/dev/null || true' EXIT && \
+               swap-dev-libs \$DPKG_ARCH && \
                echo '--- Build agent binaries ---' && \
                cargo build --release --target \$RUST_TARGET -p capsem-agent && \
                mkdir -p /cargo-target/linux-agent/\$TARGET_ARCH && \
                cp /cargo-target/\$RUST_TARGET/release/capsem-pty-agent /cargo-target/\$RUST_TARGET/release/capsem-mcp-server /cargo-target/\$RUST_TARGET/release/capsem-net-proxy /cargo-target/\$RUST_TARGET/release/capsem-dns-proxy /cargo-target/\$RUST_TARGET/release/capsem-sysutil /cargo-target/linux-agent/\$TARGET_ARCH/ && \
+               echo '--- Build companion host binaries ---' && \
+               cargo build --release --target \$RUST_TARGET -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin && \
                echo '--- Build frontend ---' && \
                cd frontend && CI=true pnpm install && pnpm build && cd .. && \
                echo '--- Resolve Tauri signing key ---' && \
@@ -691,16 +710,25 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                echo '--- Build Tauri app ---' && \
                rm -rf /cargo-target/\$RUST_TARGET/release/bundle/deb && \
                cd crates/capsem-app && cargo tauri build --target \$RUST_TARGET --bundles deb && cd ../.. && \
-               echo '--- Validate artifacts ---' && \
+               echo '--- Repack Debian package ---' && \
                DEB=\$(ls -t /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb | head -n1) && \
+               bash scripts/repack-deb.sh --manifest \"file://\$PWD/assets/manifest.json\" \"\$DEB\" \"/cargo-target/\$RUST_TARGET/release\" \"target/config\" \"assets\" && \
+               echo '--- Validate artifacts ---' && \
                dpkg-deb --info \"\$DEB\" && \
+               dpkg-deb --contents \"\$DEB\" | grep -E 'usr/bin/(capsem|capsem-service|capsem-process|capsem-tui|capsem-mcp|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin)\$' && \
                cp \"\$DEB\" /src/dist/ && \
                cp /cargo-target/linux-agent/\$TARGET_ARCH/* /src/dist/ && \
                echo '--- Boot test ---' && \
                if [ -e /dev/kvm ] && [ \"\$TARGET_ARCH\" = \"\$(uname -m | sed 's/aarch64/arm64/')\" ]; then \
                    echo 'KVM available + native arch: running boot test' && \
-                   dpkg -i /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb 2>/dev/null || apt-get install -f -y && \
-                   timeout 120 python3 scripts/doctor_session_test.py --binary capsem --assets assets; \
+                   dpkg -i \"\$DEB\" 2>/dev/null || apt-get install -f -y && \
+                   BOOT_USER=\"\${SUDO_USER:-\${USER:-}}\" && \
+                   if [ -z \"\$BOOT_USER\" ] || [ \"\$BOOT_USER\" = \"root\" ]; then BOOT_USER=\$(getent passwd 1000 | cut -d: -f1 || true); fi && \
+                   if [ -z \"\$BOOT_USER\" ]; then echo 'ERROR: cannot determine installed package user for boot test' >&2; exit 1; fi && \
+                   BOOT_HOME=\$(eval echo \"~\$BOOT_USER\") && \
+                   BOOT_CAPSEM_HOME=\"\$BOOT_HOME/.capsem\" && \
+                   test -x /usr/bin/capsem && command -v capsem >/dev/null && \
+                   CAPSEM_HOME=\"\$BOOT_CAPSEM_HOME\" CAPSEM_RUN_DIR=\"\$BOOT_CAPSEM_HOME/run\" timeout 120 python3 scripts/doctor_session_test.py --binary /usr/bin/capsem --assets \"\$BOOT_CAPSEM_HOME/assets\"; \
                else \
                    echo 'Skipping boot test (no KVM or cross-arch -- CI will test)'; \
                fi"
@@ -1036,9 +1064,16 @@ test-install:
     # by a previous run that aborted before reaching cleanup (e.g. cargo
     # SIGTERM under Colima OOM). The EXIT trap below guarantees cleanup on
     # any exit path of *this* run so the leak can't start over.
+    HOST_UID=$(id -u)
+    HOST_GID=$(id -g)
     CONTAINER="capsem-install-test"
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-    trap 'docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; just _docker-gc >/dev/null 2>&1 || true' EXIT
+    cleanup() {
+        docker exec "$CONTAINER" bash -c "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" >/dev/null 2>&1 || true
+        docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+        just _docker-gc >/dev/null 2>&1 || true
+    }
+    trap cleanup EXIT
     echo "Starting systemd container..."
     docker run -d --name "$CONTAINER" \
         --privileged --cgroupns=host \
@@ -1138,8 +1173,8 @@ release tag="":
     echo "=== Release $TAG published ==="
     echo "https://github.com/google/capsem/releases/tag/$TAG"
 
-# Stamp version, commit, tag, push, and wait for CI to publish.
-# Runs test first (all validation gates) to avoid burning tags on issues only CI would catch.
+# Stamp version, commit, and create a local release tag.
+# Runs test first (all validation gates) before a tag can leave the machine.
 cut-release: test _stamp-version
     #!/usr/bin/env bash
     set -euo pipefail
@@ -1148,16 +1183,26 @@ cut-release: test _stamp-version
     TODAY=$(date +%Y-%m-%d)
     echo "=== Cutting release $TAG ==="
     # Stamp changelog: [Unreleased] -> [NEW] - TODAY
-    sed -i '' "s/^## \[Unreleased\]/## [Unreleased]\n\n## [${NEW}] - ${TODAY}/" CHANGELOG.md
+    awk -v new="$NEW" -v today="$TODAY" '
+        { print }
+        $0 == "## [Unreleased]" {
+            print ""
+            print "## [" new "] - " today
+        }
+    ' CHANGELOG.md > CHANGELOG.md.tmp
+    mv CHANGELOG.md.tmp CHANGELOG.md
     # Extract latest release notes for the frontend boot screen
     uv run python3 scripts/extract-release-notes.py
-    # Commit, tag, push
+    # Commit and tag locally. Push only after checking the local commit/tag.
     git add Cargo.toml crates/capsem-app/tauri.conf.json pyproject.toml CHANGELOG.md LATEST_RELEASE.md
     git commit -m "release: v${NEW}"
     git tag "$TAG"
-    git push origin main "$TAG"
-    echo "Tag $TAG pushed. Waiting for CI..."
-    just release "$TAG"
+    echo "Prepared $TAG locally."
+    echo "Publish with:"
+    echo "  git ls-remote origin refs/tags/$TAG"
+    echo "  git push origin HEAD:main"
+    echo "  git push origin $TAG"
+    echo "  just release $TAG"
 
 # Check dev tools and dependencies. Pass "fix" to auto-fix.
 doctor fix="": _pnpm-install
@@ -1428,7 +1473,12 @@ _pnpm-install:
     # when the store layout drifts from the lockfile. Matches the
     # `CI=true pnpm install` already used in cross-compile and
     # test-install below.
-    cd frontend && CI=true pnpm install --frozen-lockfile
+    # Install every Node workspace used by local gates. CI has separate
+    # jobs for docs/site/release-site, but `just test` and `just docs`
+    # exercise those surfaces in this checkout too.
+    for dir in frontend docs site release-site; do \
+        (cd "$dir" && CI=true pnpm install --frozen-lockfile); \
+    done
 
 _frontend: _pnpm-install
     cd frontend && pnpm build
@@ -1473,9 +1523,15 @@ _pack-initrd:
             break
         fi
     done
-    # Also rebuild if any agent source is newer than the binaries
+    # Also rebuild if any guest binary source is newer than its staged binary.
     if [ "$NEED_BUILD" = "false" ] && [ -f "$RELEASE_DIR/capsem-pty-agent" ]; then
         NEWEST_SRC=$(find "$ROOT/crates/capsem-agent" "$ROOT/crates/capsem-proto" -name '*.rs' -newer "$RELEASE_DIR/capsem-pty-agent" 2>/dev/null | head -1)
+        if [ -n "$NEWEST_SRC" ]; then
+            NEED_BUILD=true
+        fi
+    fi
+    if [ "$NEED_BUILD" = "false" ] && [ -f "$RELEASE_DIR/capsem-bench-rs" ]; then
+        NEWEST_SRC=$(find "$ROOT/crates/capsem-bench" -name '*.rs' -newer "$RELEASE_DIR/capsem-bench-rs" 2>/dev/null | head -1)
         if [ -n "$NEWEST_SRC" ]; then
             NEED_BUILD=true
         fi

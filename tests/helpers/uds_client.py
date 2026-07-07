@@ -49,9 +49,17 @@ class UdsHttpClient:
             "--max-time", str(timeout),
             f"http://localhost{path}",
         ]
+        input_text = None
         if body is not None:
-            cmd += ["-d", json.dumps(body)]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout + 5)
+            cmd += ["--data-binary", "@-"]
+            input_text = json.dumps(body)
+        result = subprocess.run(
+            cmd,
+            input=input_text,
+            capture_output=True,
+            text=True,
+            timeout=timeout + 5,
+        )
         if result.returncode != 0:
             raise ConnectionError(f"curl failed: {result.stderr}")
         if not result.stdout.strip():

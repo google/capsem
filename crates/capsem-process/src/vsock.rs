@@ -1355,17 +1355,20 @@ async fn handle_guest_msg(
                     tokio::time::timeout(std::time::Duration::from_millis(100), n.notified()).await;
             }
             let active_exec = js.active_exec.lock().unwrap().take().filter(|a| a.id == id);
-            let event_id = active_exec
-                .as_ref()
-                .and_then(|active| active.event_id.clone());
-            let stdout = active_exec
-                .map(|active| active.captured)
-                .unwrap_or_default();
+            let (event_id, duration_ms, stdout) = active_exec
+                .map(|active| {
+                    (
+                        active.event_id,
+                        active.started_at.elapsed().as_millis() as u64,
+                        active.captured,
+                    )
+                })
+                .unwrap_or((None, 0, Vec::new()));
 
             let complete = capsem_logger::ExecEventComplete {
                 exec_id: id,
                 exit_code,
-                duration_ms: 0,
+                duration_ms,
                 stdout_preview: Some(
                     String::from_utf8_lossy(&stdout[..stdout.len().min(1024)]).into(),
                 ),

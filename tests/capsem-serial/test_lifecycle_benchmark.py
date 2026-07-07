@@ -3,7 +3,8 @@
 Profiles individual operations: provision, exec-ready wait, exec, delete,
 fork, boot-from-image. Reports per-operation timings as a Rich table + JSON.
 
-Fork gates: fork < 500ms, image size <= 16MB, boot-from-image verifies data.
+Fork gates: fork < 500ms, image size <= 18MB after the package-survival probe,
+boot-from-image verifies data.
 """
 
 import json
@@ -48,7 +49,7 @@ def _save_benchmark(category, data):
 RUNS = 3
 OP_GATE_MS = 1200  # every individual operation must complete under this
 FORK_GATE_MS = 500
-IMAGE_SIZE_GATE_MB = 16
+IMAGE_SIZE_GATE_MB = 18
 
 
 def _percentile(values, pct):

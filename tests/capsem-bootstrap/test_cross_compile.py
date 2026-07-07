@@ -68,7 +68,11 @@ class TestGuestBinaries:
             if not binary.exists():
                 continue
             result = subprocess.run(["file", str(binary)], capture_output=True, text=True)
-            assert "statically linked" in result.stdout, (
+            output = result.stdout.lower()
+            assert (
+                "statically linked" in output
+                or "static-pie linked" in output
+            ) and "dynamically linked" not in output and "interpreter" not in output, (
                 f"{name} should be statically linked (musl): {result.stdout}"
             )
 

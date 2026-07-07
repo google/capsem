@@ -1256,6 +1256,91 @@ fn exec_event_insert_then_update_roundtrip() {
 }
 
 #[test]
+fn exec_event_completion_updates_disk_after_start_was_flushed() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("exec-flushed-start.db");
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+
+    let writer = DbWriter::open(&db_path, 64).unwrap();
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ExecEvent(crate::events::ExecEvent {
+                event_id: None,
+                timestamp: std::time::SystemTime::now(),
+                exec_id: 7,
+                command: "bash /root/package-probe.sh".into(),
+                source: "api".into(),
+                trace_id: Some("trace-package".into()),
+                process_name: None,
+                credential_ref: None,
+            }))
+            .await;
+        writer.flush().await;
+    });
+
+    {
+        let conn = rusqlite::Connection::open(&db_path).unwrap();
+        let exit_code: Option<i64> = conn
+            .query_row(
+                "SELECT exit_code FROM exec_events WHERE exec_id = 7",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(exit_code.is_none());
+    }
+
+    rt.block_on(async {
+        writer
+            .write(WriteOp::ExecEventComplete(
+                crate::events::ExecEventComplete {
+                    exec_id: 7,
+                    exit_code: 0,
+                    duration_ms: 7_650,
+                    stdout_preview: Some("APT_OK\nNPM_OK\nUV_OK\n".into()),
+                    stderr_preview: None,
+                    stdout_bytes: 21,
+                    stderr_bytes: 0,
+                    pid: Some(4321),
+                },
+            ))
+            .await;
+        writer.flush().await;
+    });
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let (exit_code, duration_ms, stdout_preview, stdout_bytes, pid): (
+        i64,
+        i64,
+        Option<String>,
+        i64,
+        Option<i64>,
+    ) = conn
+        .query_row(
+            "SELECT exit_code, duration_ms, stdout_preview, stdout_bytes, pid
+             FROM exec_events WHERE exec_id = 7",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(exit_code, 0);
+    assert_eq!(duration_ms, 7_650);
+    assert_eq!(stdout_preview.as_deref(), Some("APT_OK\nNPM_OK\nUV_OK\n"));
+    assert_eq!(stdout_bytes, 21);
+    assert_eq!(pid, Some(4321));
+}
+
+#[test]
 fn mcp_call_insert_populates_row() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("mcp.db");

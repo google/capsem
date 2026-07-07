@@ -57,7 +57,49 @@ tool_hint() {
                 dnf) echo "sudo dnf install docker-buildx-plugin" ;;
                 *)   echo "install docker-buildx-plugin" ;;
             esac ;;
+        musl-tools)
+            case "$pkg" in
+                apt) echo "sudo apt install musl-tools" ;;
+                dnf) echo "sudo dnf install musl-gcc" ;;
+                *)   echo "install musl-gcc / musl-tools" ;;
+            esac ;;
     esac
+}
+
+_doctor_sudo() {
+    if [[ "$(id -u)" -eq 0 ]]; then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
+
+_doctor_install_linux_musl_tools() {
+    if command -v apt-get &>/dev/null; then
+        _doctor_sudo env DEBIAN_FRONTEND=noninteractive apt-get update
+        _doctor_sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y musl-tools
+    elif command -v dnf &>/dev/null; then
+        _doctor_sudo dnf install -y musl-gcc
+    else
+        echo "No supported package manager found. Install musl-gcc / musl-tools manually." >&2
+        return 1
+    fi
+}
+
+check_linux_musl_toolchain() {
+    section "C Toolchain"
+
+    if command -v musl-gcc &>/dev/null; then
+        pass "musl-gcc"
+    else
+        fixable linux-musl-tools "musl-gcc missing -- install: $(tool_hint musl-tools)"
+    fi
+
+    if command -v x86_64-linux-musl-gcc &>/dev/null; then
+        pass "x86_64-linux-musl-gcc"
+    else
+        fixable linux-musl-tools "x86_64-linux-musl-gcc missing -- install: $(tool_hint musl-tools)"
+    fi
 }
 
 check_platform() {

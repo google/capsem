@@ -112,6 +112,7 @@ const packageGroups = Array.from(
                 <th class="py-2 pr-4 font-medium">Bytes</th>
                 <th class="py-2 pr-4 font-medium">SHA-256</th>
                 <th class="py-2 pr-4 font-medium">BLAKE3</th>
+                <th class="py-2 pr-4 font-medium">Executables</th>
                 <th class="py-2 pr-4 font-medium">SBOM</th>
               </tr>
             </thead>
@@ -127,6 +128,15 @@ const packageGroups = Array.from(
                   <td class="py-3 pr-4">{byteLabel(pkg.bytes ?? pkg.size)}</td>
                   <td class="py-3 pr-4"><code class="break-all">{hashLabel(pkg.digest?.sha256)}</code></td>
                   <td class="py-3 pr-4"><code class="break-all">{hashLabel(pkg.digest?.blake3)}</code></td>
+                  <td class="py-3 pr-4">
+                    {Array.isArray(pkg.binaries) && pkg.binaries.length > 0 ? pkg.binaries.map((binary) => (
+                      <div class="mb-2 last:mb-0">
+                        <div>{binary.name}</div>
+                        <div class="text-zinc-500">SHA-256 <code>{hashLabel(binary.digest?.sha256)}</code></div>
+                        <div class="text-zinc-500">BLAKE3 <code>{hashLabel(binary.digest?.blake3)}</code></div>
+                      </div>
+                    )) : <span class="text-zinc-500">not published</span>}
+                  </td>
                   <td class="py-3 pr-4">
                     {Array.isArray(pkg.evidence) && pkg.evidence.length > 0 ? pkg.evidence.map((item) => (
                       <div>

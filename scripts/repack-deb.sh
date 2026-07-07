@@ -150,6 +150,46 @@ else:
 PY
 }
 
+is_elf_binary() {
+    local path="${1:?is_elf_binary <path>}"
+    local magic
+    magic="$(LC_ALL=C head -c 4 "$path" 2>/dev/null || true)"
+    [ "$magic" = $'\177ELF' ]
+}
+
+strip_packaged_binaries() {
+    if [ "${CAPSEM_REPACK_STRIP:-1}" = "0" ]; then
+        echo "  Skipping ELF strip: CAPSEM_REPACK_STRIP=0"
+        return
+    fi
+    if ! command -v strip >/dev/null 2>&1; then
+        echo "  WARNING: strip not found; packaging ELF binaries with debug symbols" >&2
+        return
+    fi
+
+    local stripped=0
+    local failed=0
+    local path
+    while IFS= read -r -d '' path; do
+        if ! is_elf_binary "$path"; then
+            continue
+        fi
+        if strip --strip-unneeded "$path" 2>/dev/null; then
+            stripped=$((stripped + 1))
+        else
+            echo "  WARNING: unable to strip debug symbols from $path" >&2
+            failed=$((failed + 1))
+        fi
+    done < <(find "$WORK_DIR/deb/usr/bin" -maxdepth 1 -type f -print0)
+
+    if [ "$stripped" -gt 0 ]; then
+        echo "  Stripped ELF binaries: $stripped"
+    fi
+    if [ "$failed" -gt 0 ]; then
+        echo "  WARNING: $failed ELF binaries could not be stripped" >&2
+    fi
+}
+
 echo "=== Extracting .deb ==="
 dpkg-deb -R "$INPUT_DEB" "$WORK_DIR/deb"
 
@@ -166,6 +206,7 @@ for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp
         exit 1
     fi
 done
+strip_packaged_binaries
 
 echo "=== Adding maintainer scripts ==="
 cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"

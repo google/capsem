@@ -60,6 +60,46 @@ def test_just_install_invokes_package_without_gui_installer_block() -> None:
     assert '"$HOME/.capsem/bin/capsem" debug' in install_body
 
 
+def test_cross_compile_repacks_deb_before_boot_test() -> None:
+    block = _just_recipe_block("cross-compile")
+
+    companion_pos = block.find("--- Build companion host binaries ---")
+    tauri_pos = block.find("cargo tauri build --target")
+    repack_pos = block.find("scripts/repack-deb.sh")
+    validate_pos = block.find("dpkg-deb --contents")
+    install_pos = block.find('dpkg -i \\"\\$DEB\\"')
+    capsem_home_pos = block.find('CAPSEM_HOME=\\"\\$BOOT_CAPSEM_HOME\\"')
+    doctor_pos = block.find("--binary /usr/bin/capsem")
+
+    assert companion_pos != -1
+    assert tauri_pos != -1
+    assert repack_pos != -1
+    assert validate_pos != -1
+    assert install_pos != -1
+    assert capsem_home_pos != -1
+    assert doctor_pos != -1
+    assert companion_pos < tauri_pos < repack_pos < validate_pos < install_pos < capsem_home_pos < doctor_pos
+    assert "--security-opt seccomp=unconfined --device /dev/kvm" in block
+    assert "--device /dev/vhost-vsock" in block
+    assert "--device /dev/vsock" in block
+    assert "capsem-admin)\\$'" in block
+    assert "-e \"HOST_UID=$HOST_UID\"" in block
+    assert "-e \"HOST_GID=$HOST_GID\"" in block
+    assert "trap 'chown -R \\\"\\$HOST_UID:\\$HOST_GID\\\"" in block
+    assert "/src/frontend/node_modules /src/frontend/dist" in block
+    assert 'dpkg -i /cargo-target/$RUST_TARGET/release/bundle/deb/*.deb' not in block
+
+
+def test_install_test_restores_host_workspace_ownership() -> None:
+    block = _just_recipe_block("test-install")
+
+    assert "HOST_UID=$(id -u)" in block
+    assert "HOST_GID=$(id -g)" in block
+    assert 'chown -R $HOST_UID:$HOST_GID /src' in block
+    assert "trap cleanup EXIT" in block
+    assert "docker rm -f \"$CONTAINER\"" in block
+
+
 def test_dev_service_does_not_replace_installed_assets_with_worktree_symlink() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
     ensure_body = justfile.split("_ensure-service: _sign", 1)[1].split(
@@ -184,6 +224,9 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "CAPSEM_DEB_ASSET_MODE" not in repack_deb
     assert "ASSET_MODE=" not in repack_deb
     assert "export COPYFILE_DISABLE=1" in repack_deb
+    assert "strip_packaged_binaries" in repack_deb
+    assert 'CAPSEM_REPACK_STRIP:-1' in repack_deb
+    assert 'strip --strip-unneeded "$path"' in repack_deb
     assert 'CONFIG_ROOT="${POSITIONAL[2]}"' in repack_deb
     assert "--manifest" in repack_deb
     assert "materialize_manifest_input" in repack_deb

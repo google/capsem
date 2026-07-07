@@ -296,7 +296,14 @@ pub(crate) async fn handle_ipc_connection(
                             stderr,
                             exit_code,
                         }) => {
-                            db.flush_after_quiescence(std::time::Duration::from_millis(5))
+                            // The guest may close the command process before
+                            // host-side MITM/audit socket handlers enqueue
+                            // their terminal telemetry. Keep /exec a bounded
+                            // visibility barrier for callers that inspect
+                            // session.db immediately after a command returns,
+                            // without blocking the control bridge's ExecDone
+                            // path on large benchmark flushes.
+                            db.flush_after_quiescence(std::time::Duration::from_millis(50))
                                 .await;
                             info!(id, exit_code, "Sending ExecResult back via IPC");
                             capsem_core::try_send!(
@@ -312,7 +319,7 @@ pub(crate) async fn handle_ipc_connection(
                             );
                         }
                         Ok(JobResult::Error { message }) => {
-                            db.flush_after_quiescence(std::time::Duration::from_millis(5))
+                            db.flush_after_quiescence(std::time::Duration::from_millis(50))
                                 .await;
                             error!(id, message, "Sending Exec error back via IPC");
                             capsem_core::try_send!(

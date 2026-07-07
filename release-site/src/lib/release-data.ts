@@ -31,6 +31,8 @@ export interface ChannelRow {
   description: string;
   manifestCount: number;
   manifestRevision: string;
+  binaryLabel: string;
+  assetLabel: string;
   currentStatus: string;
   statuses: string[];
   updatedAt: string;
@@ -120,6 +122,8 @@ export function channelRows(data: ReleaseData): ChannelRow[] {
         description: String(channel.description ?? ''),
         manifestCount: manifests.length,
         manifestRevision: String(selected.revision ?? selected.version ?? 'not published'),
+        binaryLabel: summary.binaryLabel,
+        assetLabel: summary.assetLabel,
         currentStatus: String(selected.status ?? 'not published'),
         statuses: Array.from(new Set(manifests.map((manifest: JsonObject) => String(manifest.status ?? 'unknown')))),
         updatedAt: String(selected.updated_at ?? channel.updated_at ?? data.channels.generated_at ?? ''),
@@ -135,7 +139,7 @@ function selectedManifestSummary(
   data: ReleaseData,
   channelId: string,
   manifestRecord: JsonObject,
-): { coverageLabel: string } {
+): { coverageLabel: string; binaryLabel: string; assetLabel: string } {
   const manifest =
     data.sourceMode === 'graph'
       ? data.graph?.manifests?.[channelId]?.[manifestRecord.version]
@@ -143,7 +147,7 @@ function selectedManifestSummary(
         ? data.manifest
         : undefined;
   if (!manifest) {
-    return { coverageLabel: 'not published' };
+    return { coverageLabel: 'not published', binaryLabel: 'not published', assetLabel: 'not published' };
   }
   const packages = Array.isArray(manifest.packages) ? manifest.packages : [];
   const profiles = Object.values(manifest.profiles ?? {}) as JsonObject[];
@@ -153,9 +157,30 @@ function selectedManifestSummary(
     ),
   ).sort();
   const archLabel = architectures.length > 0 ? architectures.join(', ') : 'no architectures';
+  const binaryLabel = packages.length > 0 ? String(packages[0].version ?? 'not published') : 'not published';
+  const assetLabel = firstProfileImageRevision(profiles) ?? 'not published';
   return {
+    binaryLabel,
+    assetLabel,
     coverageLabel: `${packages.length} packages / ${profiles.length} profiles / ${archLabel}`,
   };
+}
+
+function firstProfileImageRevision(profiles: JsonObject[]): string | undefined {
+  for (const profile of profiles) {
+    for (const architecture of profileArchitectures(profile)) {
+      const revision = architecture.image_revision ?? architecture.package_inventory_revision;
+      if (revision) {
+        return String(revision);
+      }
+      const imageUrl = architecture.images?.[0]?.url;
+      const match = typeof imageUrl === 'string' ? imageUrl.match(/\/assets\/releases\/([^/]+)\//) : undefined;
+      if (match?.[1]) {
+        return match[1];
+      }
+    }
+  }
+  return undefined;
 }
 
 export function dataForChannel(data: ReleaseData, channel: string): ReleaseData {
@@ -228,6 +253,8 @@ export function profileArchitectures(profile: JsonObject): JsonObject[] {
   if (Array.isArray(profile.architectures)) {
     return profile.architectures.map((architecture: JsonObject) => ({
       architecture: architecture.architecture,
+      image_revision: architecture.image_revision,
+      package_inventory_revision: architecture.package_inventory_revision,
       software: Array.isArray(architecture.software) ? architecture.software : [],
       config: Array.isArray(architecture.config) ? architecture.config : [],
       images: Array.isArray(architecture.images) ? architecture.images : [],

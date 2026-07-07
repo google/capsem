@@ -126,6 +126,9 @@ VM assets (kernel, initrd, rootfs) are verified via BLAKE3 hashes at every stage
 from build to boot. The checked-in profile is materialized into
 `target/config/` before runtime, so the service boots from a generated profile
 whose asset URLs, hashes, and sizes come directly from `assets/manifest.json`.
+Published GitHub Release blob names are arch-prefixed, for example
+`arm64-rootfs.erofs`; inside the manifest they remain bare names such as
+`rootfs.erofs` under the owning architecture.
 
 `assets/manifest.json` is generated through `capsem-admin manifest generate
 <assets_dir>`. Release automation, local packaging, and corp custom builds use
@@ -149,7 +152,7 @@ The public update graph starts at `https://release.capsem.org/channels.json`.
 It lists channels such as stable and nightly. Each channel contains versioned
 manifest records, and every record has exactly one `status` enum value:
 `current`, `supported`, `deprecated`, or `revoked`. Manifest records carry
-`version`, URL, SHA-256, BLAKE3, and HMAC metadata. They remain present for
+`version`, URL, SHA-256, BLAKE3, HMAC metadata. They remain present for
 auditability; absence from the channel list is removal.
 
 The selected manifest is the compatibility and hash authority for one channel.

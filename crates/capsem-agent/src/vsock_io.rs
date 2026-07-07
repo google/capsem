@@ -8,6 +8,7 @@
 
 use std::io;
 use std::os::unix::io::RawFd;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use nix::libc;
@@ -16,6 +17,8 @@ use nix::libc;
 pub const VSOCK_HOST_CID: u32 = 2;
 /// AF_VSOCK address family.
 pub const AF_VSOCK: i32 = 40;
+
+static VSOCK_PORT_OFFSET: OnceLock<u32> = OnceLock::new();
 
 #[repr(C)]
 pub struct SockaddrVm {
@@ -42,11 +45,12 @@ pub fn vsock_connect(cid: u32, port: u32) -> io::Result<RawFd> {
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
+    let physical_port = physical_vsock_port(port, guest_vsock_port_offset())?;
 
     let addr = SockaddrVm {
         svm_family: AF_VSOCK as libc::sa_family_t,
         svm_reserved1: 0,
-        svm_port: port,
+        svm_port: physical_port,
         svm_cid: cid,
         svm_flags: 0,
         svm_zero: [0; 3],
@@ -72,6 +76,31 @@ pub fn vsock_connect(cid: u32, port: u32) -> io::Result<RawFd> {
     set_io_timeouts(fd);
 
     Ok(fd)
+}
+
+fn guest_vsock_port_offset() -> u32 {
+    *VSOCK_PORT_OFFSET.get_or_init(|| {
+        std::fs::read_to_string("/proc/cmdline")
+            .ok()
+            .and_then(|cmdline| parse_vsock_port_offset(&cmdline))
+            .unwrap_or(0)
+    })
+}
+
+fn parse_vsock_port_offset(cmdline: &str) -> Option<u32> {
+    cmdline.split_whitespace().find_map(|arg| {
+        arg.strip_prefix("capsem.vsock_port_offset=")
+            .and_then(|value| value.parse::<u32>().ok())
+    })
+}
+
+fn physical_vsock_port(logical_port: u32, offset: u32) -> io::Result<u32> {
+    logical_port.checked_add(offset).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("vsock port overflow: logical={logical_port} offset={offset}"),
+        )
+    })
 }
 
 /// Apply send and receive timeouts to a socket fd.
@@ -113,7 +142,15 @@ pub fn vsock_connect_retry(cid: u32, port: u32, label: &str) -> RawFd {
         || vsock_connect(cid, port).ok(),
     ) {
         Ok(fd) => {
-            eprintln!("[capsem-agent] {label} connected (port {port})");
+            let physical_port =
+                physical_vsock_port(port, guest_vsock_port_offset()).unwrap_or(port);
+            if physical_port == port {
+                eprintln!("[capsem-agent] {label} connected (port {port})");
+            } else {
+                eprintln!(
+                    "[capsem-agent] {label} connected (logical port {port}, physical port {physical_port})"
+                );
+            }
             fd
         }
         Err(e) => {
@@ -358,6 +395,32 @@ mod tests {
         let opts = capsem_proto::poll::RetryOpts::default();
         assert_eq!(opts.initial_delay, Duration::from_millis(50));
         assert_eq!(opts.max_delay, Duration::from_millis(500));
+    }
+
+    #[test]
+    fn parse_vsock_port_offset_from_kernel_cmdline() {
+        let cmdline = "console=ttyS0 root=/dev/vda capsem.vsock_port_offset=15480 quiet";
+        assert_eq!(parse_vsock_port_offset(cmdline), Some(15480));
+    }
+
+    #[test]
+    fn parse_vsock_port_offset_ignores_missing_or_invalid_value() {
+        assert_eq!(parse_vsock_port_offset("console=ttyS0 root=/dev/vda"), None);
+        assert_eq!(
+            parse_vsock_port_offset("capsem.vsock_port_offset=not-a-number"),
+            None
+        );
+    }
+
+    #[test]
+    fn physical_vsock_port_adds_kvm_offset() {
+        assert_eq!(physical_vsock_port(5001, 15480).unwrap(), 20481);
+    }
+
+    #[test]
+    fn physical_vsock_port_rejects_overflow() {
+        let err = physical_vsock_port(u32::MAX, 1).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]

@@ -9,7 +9,10 @@ subsequent builds, re-pointing them to unrelated inodes.
 """
 
 import json
+import errno
+import importlib.util
 import subprocess
+import sys
 
 import pytest
 
@@ -26,6 +29,15 @@ def _run(assets_dir: Path) -> subprocess.CompletedProcess:
         ["python3", str(SCRIPT), str(assets_dir)],
         capture_output=True, text=True, check=True,
     )
+
+
+def _load_script_module():
+    spec = importlib.util.spec_from_file_location("create_hash_assets_under_test", SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _arch_hashed_files(arch_dir: Path) -> set[str]:
@@ -124,3 +136,42 @@ def test_preserves_non_hash_tagged_files(tmp_path):
     assert (arch_dir / "README").exists()
     assert (arch_dir / "config.toml").exists()
     assert (arch_dir / "initrd.img").exists()
+
+
+def test_copies_alias_when_hardlinks_are_blocked(tmp_path, monkeypatch, capsys):
+    """Linux protected_hardlinks can reject root-owned Docker outputs."""
+    arch_dir = tmp_path / "arm64"
+    arch_dir.mkdir()
+    (arch_dir / "initrd.img").write_bytes(b"new-content")
+    initrd_hash = "0000000000000000" + "f" * 48
+    _write_manifest(tmp_path, initrd_hash)
+    script = _load_script_module()
+
+    def protected_hardlink(_src, _dst):
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(script.os, "link", protected_hardlink)
+    monkeypatch.setattr(sys, "argv", [str(SCRIPT), str(tmp_path)])
+
+    script.main()
+
+    expected = arch_dir / f"initrd-{initrd_hash[:16]}.img"
+    assert expected.read_bytes() == b"new-content"
+    assert expected.stat().st_ino != (arch_dir / "initrd.img").stat().st_ino
+    assert "copied 1 asset alias(es)" in capsys.readouterr().out
+
+
+def test_restores_missing_canonical_asset_from_hash_tagged_alias(tmp_path):
+    """B3SUMS names canonical files, so aliases must repair missing logical files."""
+    arch_dir = tmp_path / "arm64"
+    arch_dir.mkdir()
+    initrd_hash = "aaaaaaaaaaaaaaaa" + "0" * 48
+    alias = arch_dir / f"initrd-{initrd_hash[:16]}.img"
+    alias.write_bytes(b"current-content")
+    _write_manifest(tmp_path, initrd_hash)
+
+    _run(tmp_path)
+
+    canonical = arch_dir / "initrd.img"
+    assert canonical.read_bytes() == b"current-content"
+    assert canonical.stat().st_ino == alias.stat().st_ino

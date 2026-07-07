@@ -28,16 +28,17 @@ class TestGuestNetwork:
         client, name = guest_env
         resp = client.post(f"/vms/{name}/exec", {"command": "iptables-nft -t nat -S 2>/dev/null || true"})
         stdout = resp.get("stdout", "") if resp else ""
-        # Should have REDIRECT rules for HTTPS interception
-        assert "REDIRECT" in stdout or "redirect" in stdout or len(stdout) > 0
+        assert "--dport 443 -j REDIRECT --to-ports 10443" in stdout
+        assert "--dport 80 -j REDIRECT --to-ports 10080" in stdout
+        assert "--dport 3713 -j REDIRECT --to-ports 10080" in stdout
 
     def test_net_proxy_listening(self, guest_env):
         """capsem-net-proxy is listening on the expected port."""
         client, name = guest_env
-        resp = client.post(f"/vms/{name}/exec", {"command": "ss -tlnp 2>/dev/null | grep -E '10443|capsem' || true"})
+        resp = client.post(f"/vms/{name}/exec", {"command": "ss -tlnp 2>/dev/null || true"})
         stdout = resp.get("stdout", "") if resp else ""
-        # Net proxy should be listening
-        assert "10443" in stdout or "capsem" in stdout or len(stdout) >= 0
+        assert ":10443 " in stdout, stdout
+        assert ":10080 " in stdout, stdout
 
     def test_resolv_conf_localhost(self, guest_env):
         """resolv.conf points to localhost (dnsmasq)."""

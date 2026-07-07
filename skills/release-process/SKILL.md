@@ -36,8 +36,8 @@ The public graph is hierarchical and signed by reference:
 1. `channels.json` lists every channel, such as `stable` and `nightly`.
 2. Each channel lists versioned manifest records with exactly one `status`
    enum value: `current`, `supported`, `deprecated`, or `revoked`.
-3. Each manifest record carries `version`, `url`, SHA-256, and BLAKE3
-   digests. The only public manifest URL for a channel is
+3. Each manifest record carries `version`, `url`, SHA-256, BLAKE3, HMAC
+   metadata. The only public manifest URL for a channel is
    `/assets/<channel>/manifest.json`. Manifest records are retained for
    auditability; retained manifest records are audit rows, not alternate fetch
    URLs. Removal means the record is absent from the channel list, not marked
@@ -164,7 +164,10 @@ Keep the lanes disjoint:
 
 - The binary lane is the tag-triggered `release.yaml` path. It may add or
   update packages, per-binary inventory, host SBOM, and host attestations for
-  one channel. It must not rebuild profile images or mutate unrelated profiles.
+  the configured binary channel set. It must not rebuild profile images or
+  mutate profile image metadata. The first 1.5 binary release seeds both
+  `stable` and `nightly`; after that, nightly is the daily binary iteration
+  channel and stable is promoted on the weekly cadence.
 - The profile lane is the manual `release-assets.yaml` path. It may update one
   channel/profile image set, profile config files, ABOM/OBOM evidence, profile
   catalog metadata, and matching manifest digests. It must not mutate packages,
@@ -185,7 +188,7 @@ graph complete.
 
 ## Live release activation order
 
-Use this order when turning the 1.4 release rails on. Do not skip ahead because
+Use this order when turning the 1.5 release rails on. Do not skip ahead because
 later steps depend on earlier public state being true.
 
 1. Publish or merge the release-rail commits to `main`.
@@ -214,7 +217,9 @@ later steps depend on earlier public state being true.
    VM asset metadata was not changed. This is the safe binary dry-run path; do
    not add `workflow_dispatch` to the real tag-triggered `release.yaml`.
 9. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
-   tag after confirming the tag does not already exist remotely.
+   tag after confirming the tag does not already exist remotely. For the first
+   1.5 release, the binary lane records the same package/SBOM metadata into
+   both `stable` and `nightly` and proves profile image metadata is unchanged.
 10. Run the manual VM asset workflow live only after reviewing
    `asset-release-plan` when `asset_blobs_changed` is true, or reviewing the
    metadata-only delta and channel preview when only release-channel metadata

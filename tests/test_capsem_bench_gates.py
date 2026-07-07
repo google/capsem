@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from helpers import benchmark_gates
 from helpers.benchmark_gates import validate_capsem_bench_result
 
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -169,6 +170,14 @@ def _valid_result():
 
 def test_validate_capsem_bench_result_accepts_healthy_result():
     validate_capsem_bench_result(_valid_result())
+
+
+def test_validate_capsem_bench_result_accepts_linux_virtiofs_sync_write_floor(monkeypatch):
+    data = _valid_result()
+    data["disk"]["rand_write_4k"]["iops"] = 550
+    monkeypatch.setattr(benchmark_gates.sys, "platform", "linux")
+
+    validate_capsem_bench_result(data)
 
 
 def test_release_protocol_benchmark_uses_release_scale():

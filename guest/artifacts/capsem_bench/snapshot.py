@@ -47,7 +47,9 @@ def snapshot_cleanup_workspace():
     if os.path.isdir(SNAPSHOT_WORKSPACE):
         for entry in os.listdir(SNAPSHOT_WORKSPACE):
             p = os.path.join(SNAPSHOT_WORKSPACE, entry)
-            if os.path.isdir(p):
+            if os.path.islink(p):
+                os.unlink(p)
+            elif os.path.isdir(p):
                 shutil.rmtree(p)
             else:
                 os.remove(p)
