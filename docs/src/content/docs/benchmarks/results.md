@@ -5,158 +5,148 @@ sidebar:
   order: 1
 ---
 
-This page tracks the two release-relevant platforms:
+This page tracks the two release-relevant platforms. macOS arm64 remains the
+performance baseline. Linux KVM x86_64 is now fully green in the release gate:
+the numbers are acceptable for 1.5, with storage and cold lifecycle readiness
+still the main gaps.
 
-- **macOS arm64** is still the performance baseline.
-- **Linux KVM x86_64** is now fully green in the release gate. The numbers are
-  acceptable, but lifecycle readiness, EROFS reads, scratch I/O, CLI startup,
-  and 10 MiB transfer throughput still trail macOS.
+Linux release validation from the same run: main Python `1618 passed`, `78
+skipped`, coverage `90.09%`; release-site shared dist `112 passed`; serial
+timing and benchmark gates `17 passed`; build-chain/release serial suite `198
+passed`, `2 skipped`, with the benchmark page contract fixed after the one
+documentation failure; integration `95` guest diagnostics and `45` ledger
+checks; cross-compiled Linux `.deb` `43 MB`; package boot `327` guest
+diagnostics and `28` doctor checks; install E2E `81 passed`, `23 skipped`, `6
+xfailed`.
 
-## Headline
+### Compared Runs
 
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem;margin:1rem 0 1.5rem">
-  <div style="border:1px solid var(--sl-color-gray-5);border-radius:8px;padding:1rem">
-    <div style="font-size:0.85rem;color:var(--sl-color-gray-3)">macOS arm64 baseline</div>
-    <div style="font-size:1.8rem;font-weight:700">1.27s</div>
-    <div>Total VM lifecycle loop</div>
-    <div style="font-size:0.85rem;color:var(--sl-color-gray-3)">1.3.1782571508</div>
-  </div>
-  <div style="border:1px solid var(--sl-color-gray-5);border-radius:8px;padding:1rem">
-    <div style="font-size:0.85rem;color:var(--sl-color-gray-3)">Linux KVM x86_64</div>
-    <div style="font-size:1.8rem;font-weight:700">1.94s</div>
-    <div>Total VM lifecycle loop</div>
-    <div style="font-size:0.85rem;color:var(--sl-color-gray-3)">1.4.1783187504</div>
-  </div>
-  <div style="border:1px solid var(--sl-color-gray-5);border-radius:8px;padding:1rem">
-    <div style="font-size:0.85rem;color:var(--sl-color-gray-3)">Linux release gate</div>
-    <div style="font-size:1.8rem;font-weight:700">pass</div>
-    <div>Full `just test`, cross-compile, install E2E</div>
-    <div style="font-size:0.85rem;color:var(--sl-color-gray-3)">July 7, 2026</div>
-  </div>
-</div>
+- macOS arm64: `1.3.1782571508`
+- Linux KVM x86_64: `1.4.1783187504`, July 7, 2026
+- Linux artifacts: `benchmarks/capsem-bench/data_1.4.1783187504_x86_64.json`,
+  `benchmarks/mock-server-protocol/data_1.4.1783187504_x86_64.json`,
+  `benchmarks/lifecycle/data_1.4.1783187504.json`,
+  `benchmarks/fork/data_1.4.1783187504.json`,
+  `benchmarks/parallel/data_1.0.json`,
+  `benchmarks/route-latency/data_1.4.1783187504.json`
+- macOS artifacts: `benchmarks/capsem-bench/data_1.3.1782571508_arm64.json`,
+  `benchmarks/lifecycle/data_1.3.1782571508.json`,
+  `benchmarks/fork/data_1.3.1782571508.json`,
+  `benchmarks/route-latency/data_1.3.1782571508.json`
 
-## Readout
+## VM lifecycle
 
-- **Linux is functionally ready.** The full Linux run passed unit, integration,
-  Ironbank, benchmark, cross-compile, package boot, and install E2E gates.
-- **Network protocol overhead is reasonable.** Linux guest model protocol is
-  slightly above the macOS baseline (`2563.7` vs `2477.2` rps), while credential
-  protocol is lower (`2288.5` vs `3092.8` rps).
-- **Storage is the main Linux gap.** Scratch writes are `120.5 MB/s` on Linux
-  versus `1792.8 MB/s` on macOS. Rootfs sequential reads are `310.3 MB/s`
-  versus `2541.9 MB/s`.
-- **Control-plane latency is still comfortably inside budget.** Linux `/stats`
-  under profile writes has p95 `1.336ms` against a `15ms` gate.
-- **Large transfer throughput is acceptable but lower.** Linux `/bytes/10mb`
-  is `32.9 MB/s`; macOS is `64.7 MB/s`.
+Linux is slower than macOS, but remains well inside the release budgets. The
+gap is concentrated in provision and exec-ready time; running exec latency and
+forking are closer.
 
-## Platform Comparison
+<svg viewBox="0 0 620 130" role="img" aria-label="VM lifecycle total loop benchmark" style="width:100%;max-width:760px;height:auto">
+  <text x="0" y="18" font-size="14" font-weight="700" fill="currentColor">Total lifecycle loop, lower is better</text>
+  <text x="0" y="48" font-size="12" fill="currentColor">macOS arm64 1272.6ms</text>
+  <rect x="160" y="35" width="262" height="18" fill="#2563eb" rx="3" />
+  <text x="0" y="84" font-size="12" fill="currentColor">Linux KVM x86_64 1944.3ms</text>
+  <rect x="160" y="71" width="400" height="18" fill="#0f766e" rx="3" />
+</svg>
 
-Lower is better for latency. Higher is better for throughput and IOPS.
+<svg viewBox="0 0 620 130" role="img" aria-label="VM fork benchmark" style="width:100%;max-width:760px;height:auto">
+  <text x="0" y="18" font-size="14" font-weight="700" fill="currentColor">Fork mean, lower is better</text>
+  <text x="0" y="48" font-size="12" fill="currentColor">macOS arm64 55.9ms, 15.1 MB image</text>
+  <rect x="210" y="35" width="137" height="18" fill="#2563eb" rx="3" />
+  <text x="0" y="84" font-size="12" fill="currentColor">Linux KVM x86_64 163.3ms, 17.5 MB image</text>
+  <rect x="210" y="71" width="400" height="18" fill="#0f766e" rx="3" />
+</svg>
 
-| Metric | macOS arm64 | Linux KVM x86_64 | Linux vs macOS |
-|---|---:|---:|---:|
-| Lifecycle loop mean | 1272.6ms | 1944.3ms | 1.53x slower |
-| Exec-ready mean | 30.2ms | 857.5ms | 28.4x slower |
-| Running exec mean | 28.5ms | 106.7ms | 3.74x slower |
-| Fork mean | 55.9ms | 163.3ms | 2.92x slower |
-| `/stats` contention p95 | 0.449ms | 1.336ms | 2.98x slower |
+Key numbers: Linux provision `792.7ms`, exec-ready `857.5ms`, running exec
+`106.7ms`, delete `187.4ms`; macOS provision `1132.2ms`, exec-ready `30.2ms`,
+running exec `28.5ms`, delete `81.7ms`. Linux 4-VM parallel benchmark completed
+successfully in `132.18s`.
 
-| Storage metric | macOS arm64 | Linux KVM x86_64 | Linux vs macOS |
-|---|---:|---:|---:|
-| Scratch sequential write | 1792.8 MB/s | 120.5 MB/s | 6.7% |
-| Scratch sequential read | 3715.8 MB/s | 586.7 MB/s | 15.8% |
-| Scratch random 4K write | 6959.0 IOPS | 625.8 IOPS | 9.0% |
-| Scratch random 4K read | 43921.1 IOPS | 6904.0 IOPS | 15.7% |
-| Rootfs sequential read | 2541.9 MB/s | 310.3 MB/s | 12.2% |
-| Rootfs random 4K read | 29045.2 IOPS | 7277.6 IOPS | 25.1% |
-| Large binary warm read | 19876.3 MB/s | 5790.9 MB/s | 29.1% |
-| Metadata stat walk | 125012.6 stats/s | 32121.7 stats/s | 25.7% |
+## Disk
 
-| Network metric | macOS arm64 | Linux KVM x86_64 | Linux vs macOS |
-|---|---:|---:|---:|
-| Local HTTP `/tiny` | 3098.3 rps | 2617.6 rps | 84.5% |
-| Local HTTP p95 | 35.2ms | 35.6ms | roughly equal |
-| Guest model protocol | 2477.2 rps | 2563.7 rps | 103.5% |
-| Guest model p95 | 40.7ms | 36.0ms | faster |
-| Guest credential protocol | 3092.8 rps | 2288.5 rps | 74.0% |
-| Guest credential p95 | 35.9ms | 41.3ms | 1.15x slower |
-| 10 MiB HTTP transfer | 64.7 MB/s | 32.9 MB/s | 50.9% |
+Storage is the largest Linux performance gap. The 1.5 Linux image uses EROFS
+with LZ4HC; the release result is correct and stable, but the KVM path is still
+well behind macOS on scratch writes, rootfs reads, and metadata walking.
 
-## Linux Detail
+<svg viewBox="0 0 640 150" role="img" aria-label="Scratch sequential throughput benchmark" style="width:100%;max-width:780px;height:auto">
+  <text x="0" y="18" font-size="14" font-weight="700" fill="currentColor">Scratch sequential throughput, higher is better</text>
+  <text x="0" y="50" font-size="12" fill="currentColor">macOS write/read 1792.8 / 3715.8 MB/s</text>
+  <rect x="240" y="37" width="174" height="16" fill="#2563eb" rx="3" />
+  <rect x="420" y="37" width="180" height="16" fill="#60a5fa" rx="3" />
+  <text x="0" y="92" font-size="12" fill="currentColor">Linux write/read 120.5 / 586.7 MB/s</text>
+  <rect x="240" y="79" width="12" height="16" fill="#0f766e" rx="3" />
+  <rect x="258" y="79" width="57" height="16" fill="#2dd4bf" rx="3" />
+</svg>
 
-Linux KVM x86_64 run: `1.4.1783187504`, July 7, 2026.
+<svg viewBox="0 0 640 150" role="img" aria-label="Root filesystem read benchmark" style="width:100%;max-width:780px;height:auto">
+  <text x="0" y="18" font-size="14" font-weight="700" fill="currentColor">Rootfs and metadata reads, higher is better</text>
+  <text x="0" y="50" font-size="12" fill="currentColor">macOS rootfs 2541.9 MB/s, metadata 125012.6 stats/s</text>
+  <rect x="280" y="37" width="195" height="16" fill="#2563eb" rx="3" />
+  <rect x="480" y="37" width="120" height="16" fill="#60a5fa" rx="3" />
+  <text x="0" y="92" font-size="12" fill="currentColor">Linux rootfs 310.3 MB/s, metadata 32121.7 stats/s</text>
+  <rect x="280" y="79" width="24" height="16" fill="#0f766e" rx="3" />
+  <rect x="310" y="79" width="31" height="16" fill="#2dd4bf" rx="3" />
+</svg>
 
-**Lifecycle:** provision `792.7ms`, exec-ready `857.5ms`, running exec
-`106.7ms`, delete `187.4ms`, total loop `1944.3ms`. Fork mean is `163.3ms`;
-forked image size is `17.5 MB`.
+Linux rootfs random 4K read is `7277.6 IOPS`; macOS is `29045.2 IOPS`. Linux
+scratch random 4K write/read is `625.8 / 6904.0 IOPS`; macOS is `6959.0 /
+43921.1 IOPS`. Linux large binary cold/warm reads are `377.9 / 5790.9 MB/s`;
+macOS is `2804.6 / 19876.3 MB/s`.
 
-**EROFS/rootfs:** rootfs sequential read `310.3 MB/s`, random 4K read
-`7277.6 IOPS`, large binary cold/warm reads `377.9 / 5790.9 MB/s`, small
-JS/package reads `226137.5 ops/s`, metadata stat walk `32121.7 stats/s`.
+## App
 
-**Scratch storage:** sequential write/read `120.5 / 586.7 MB/s`; random 4K
-write/read `625.8 / 6904.0 IOPS`.
+CLI startup on Linux is acceptable for the release, but consistently slower
+than macOS. The slowest path is Gemini startup; AGY and other model client
+ledger paths passed in Ironbank.
 
-**CLI startup mean:** Python `18.9ms`, Node `136.8ms`, Claude `777.8ms`,
-Gemini `2451.4ms`, Codex `398.7ms`.
+<svg viewBox="0 0 660 170" role="img" aria-label="CLI startup benchmark" style="width:100%;max-width:800px;height:auto">
+  <text x="0" y="18" font-size="14" font-weight="700" fill="currentColor">CLI startup mean, lower is better</text>
+  <text x="0" y="48" font-size="12" fill="currentColor">Python: macOS 3.8ms, Linux 18.9ms</text>
+  <rect x="250" y="35" width="6" height="14" fill="#2563eb" rx="3" />
+  <rect x="262" y="35" width="31" height="14" fill="#0f766e" rx="3" />
+  <text x="0" y="78" font-size="12" fill="currentColor">Node: macOS 28.1ms, Linux 136.8ms</text>
+  <rect x="250" y="65" width="23" height="14" fill="#2563eb" rx="3" />
+  <rect x="278" y="65" width="113" height="14" fill="#0f766e" rx="3" />
+  <text x="0" y="108" font-size="12" fill="currentColor">Claude: macOS 137.0ms, Linux 777.8ms</text>
+  <rect x="250" y="95" width="23" height="14" fill="#2563eb" rx="3" />
+  <rect x="278" y="95" width="127" height="14" fill="#0f766e" rx="3" />
+  <text x="0" y="138" font-size="12" fill="currentColor">Gemini: macOS 802.3ms, Linux 2451.4ms</text>
+  <rect x="250" y="125" width="131" height="14" fill="#2563eb" rx="3" />
+  <rect x="386" y="125" width="200" height="14" fill="#0f766e" rx="3" />
+</svg>
 
-**Network:** local HTTP `/tiny` `2617.6 rps` with p95 `35.6ms`; 10 MiB transfer
-`32.9 MB/s`; guest model protocol `2563.7 rps`; guest credential protocol
-`2288.5 rps`; all reported `0` failures.
+Additional app-side data: Linux Codex startup mean `398.7ms`; macOS Codex
+startup mean `116.9ms`. Snapshot operations on Linux remain release-usable:
+10-file create/list/changes/revert/delete is `2223.7 / 902.5 / 875.7 / 892.5 /
+925.2ms`; 500-file path is `1114.7 / 920.8 / 979.7 / 886.5 / 904.8ms`.
 
-**Snapshots:** 10-file create/list/changes/revert/delete:
-`2223.7 / 902.5 / 875.7 / 892.5 / 925.2ms`. 500-file path:
-`1114.7 / 920.8 / 979.7 / 886.5 / 904.8ms`.
+## Network
 
-**Parallel VM benchmark:** 4 VMs completed successfully in `132.18s`.
+Network protocol overhead is healthy enough for 1.5. Linux local HTTP is close
+to macOS on small responses, Model protocol throughput is slightly higher, and
+MCP plus DNS ledger checks passed through Ironbank. The large transfer path is
+the main network gap.
 
-## macOS Detail
+<svg viewBox="0 0 660 160" role="img" aria-label="HTTP throughput benchmark" style="width:100%;max-width:800px;height:auto">
+  <text x="0" y="18" font-size="14" font-weight="700" fill="currentColor">HTTP throughput, higher is better</text>
+  <text x="0" y="50" font-size="12" fill="currentColor">Local HTTP /tiny: macOS 3098.3 rps, Linux 2617.6 rps</text>
+  <rect x="330" y="37" width="240" height="16" fill="#2563eb" rx="3" />
+  <rect x="330" y="65" width="203" height="16" fill="#0f766e" rx="3" />
+  <text x="0" y="110" font-size="12" fill="currentColor">10 MiB HTTP transfer: macOS 64.7 MB/s, Linux 32.9 MB/s</text>
+  <rect x="330" y="97" width="240" height="16" fill="#60a5fa" rx="3" />
+  <rect x="330" y="125" width="122" height="16" fill="#2dd4bf" rx="3" />
+</svg>
 
-macOS arm64 baseline: `1.3.1782571508`.
+<svg viewBox="0 0 660 150" role="img" aria-label="Model and credential protocol benchmark" style="width:100%;max-width:800px;height:auto">
+  <text x="0" y="18" font-size="14" font-weight="700" fill="currentColor">Model, credential, DNS, and MCP paths</text>
+  <text x="0" y="50" font-size="12" fill="currentColor">Model protocol: macOS 2477.2 rps, Linux 2563.7 rps</text>
+  <rect x="330" y="37" width="232" height="16" fill="#2563eb" rx="3" />
+  <rect x="330" y="65" width="240" height="16" fill="#0f766e" rx="3" />
+  <text x="0" y="110" font-size="12" fill="currentColor">Credential protocol: macOS 3092.8 rps, Linux 2288.5 rps</text>
+  <rect x="330" y="97" width="240" height="16" fill="#60a5fa" rx="3" />
+  <rect x="330" y="125" width="178" height="16" fill="#2dd4bf" rx="3" />
+</svg>
 
-**Lifecycle:** provision `1132.2ms`, exec-ready `30.2ms`, running exec
-`28.5ms`, delete `81.7ms`, total loop `1272.6ms`. Fork mean is `55.9ms`;
-forked image size is `15.1 MB`.
-
-**Rootfs/storage:** rootfs sequential read `2541.9 MB/s`, random 4K read
-`29045.2 IOPS`, large binary cold/warm reads `2804.6 / 19876.3 MB/s`, small
-JS/package reads `572625.7 ops/s`, metadata stat walk `125012.6 stats/s`.
-Scratch sequential write/read is `1792.8 / 3715.8 MB/s`; random 4K write/read
-is `6959.0 / 43921.1 IOPS`.
-
-**CLI startup mean:** Python `3.8ms`, Node `28.1ms`, Claude `137.0ms`,
-Gemini `802.3ms`, Codex `116.9ms`.
-
-**Network:** local HTTP `/tiny` `3098.3 rps` with p95 `35.2ms`; 10 MiB transfer
-`64.7 MB/s`; guest model protocol `2477.2 rps`; guest credential protocol
-`3092.8 rps`; all reported `0` failures.
-
-## Release Gate Proof
-
-Linux release validation from the same run:
-
-- Main Python matrix: `1617 passed`, `78 skipped`, coverage `90.09%`.
-- Release-site shared dist: `112 passed`.
-- Serial timing and benchmark gates: `17 passed`.
-- Build-chain and release serial suite: `199 passed`, `2 skipped`.
-- Integration: `95` guest diagnostics and `45` ledger checks passed.
-- Cross-compiled Linux `.deb`: `43 MB`, full `/usr/bin` binary cohort, package
-  boot test passed `327` guest diagnostics and `28` doctor session checks.
-- Install E2E: `81 passed`, `23 skipped`, `6 xfailed`.
-- Workspace ownership after Docker cleanup: clean.
-
-## Artifacts
-
-| Platform | Artifact | Path |
-|---|---|---|
-| Linux x86_64 | Guest benchmark | `benchmarks/capsem-bench/data_1.4.1783187504_x86_64.json` |
-| Linux x86_64 | Host protocol baseline | `benchmarks/mock-server-protocol/data_1.4.1783187504_x86_64.json` |
-| Linux x86_64 | Lifecycle | `benchmarks/lifecycle/data_1.4.1783187504.json` |
-| Linux x86_64 | Fork | `benchmarks/fork/data_1.4.1783187504.json` |
-| Linux x86_64 | Parallel VMs | `benchmarks/parallel/data_1.0.json` |
-| Linux x86_64 | Route latency | `benchmarks/route-latency/data_1.4.1783187504.json` |
-| macOS arm64 | Guest benchmark | `benchmarks/capsem-bench/data_1.3.1782571508_arm64.json` |
-| macOS arm64 | Lifecycle | `benchmarks/lifecycle/data_1.3.1782571508.json` |
-| macOS arm64 | Fork | `benchmarks/fork/data_1.3.1782571508.json` |
-| macOS arm64 | Route latency | `benchmarks/route-latency/data_1.3.1782571508.json` |
+Linux local HTTP p95 is `35.6ms`; macOS is `35.2ms`. Linux Model p95 is
+`36.0ms`; macOS is `40.7ms`. Linux credential p95 is `41.3ms`; macOS is
+`35.9ms`. Linux route contention remains comfortably under budget:
+`/stats` p95 under profile writes is `1.336ms` against the `15ms` gate.
