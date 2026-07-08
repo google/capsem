@@ -1,14 +1,15 @@
-version: 1.5.1783543478
+version: 1.5.1783547869
 ---
 ### Fixed
-- Made public install and download entrypoints resolve stable release-channel
-  packages instead of GitHub's asset tag page, keeping `.pkg` and `.deb`
-  downloads on the binary release rail.
-- Split binary package publication from VM image/profile asset publication so
-  stable and nightly binaries can move independently while continuing to use
-  the current EROFS/lz4hc image assets.
-- Made runtime asset updates and package-build profile materialization accept
-  release-channel profile manifests, preserve their exact image artifact URLs,
-  and write validated raw v2 asset manifests for downstream compatibility.
-- Cleared denied-warning release build failures in settings export, MCP SSE
-  setup, Linux-only overlay helpers, and platform-specific `statvfs` counters.
+- Made the binary release lane update graph-shaped stable and nightly channel
+  manifests directly, preserving profile image metadata while replacing package
+  and host SBOM evidence.
+- Made `capsem-admin assets channel build` accept graph manifests as input so
+  tag-triggered binary releases can rebuild channel catalog, health, and site
+  output without raw VM asset manifests or image rebuilds.
+- Added Linux-side macOS `.pkg` executable inventory extraction for
+  productbuild XAR/CPIO payloads, keeping Ubuntu release-channel assembly able
+  to publish package-owned binary hashes.
+- Regenerated release SBOM evidence from packaged host artifacts before
+  attestation so `capsem-sbom.spdx.json` carries SHA-256 checksums for the
+  shipped `.pkg` and `.deb` executables.
