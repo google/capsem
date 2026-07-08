@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1783550716] - 2026-07-08
+
+### Fixed
+- Removed the stale macOS `cargo sbom` handoff from release artifacts and made
+  channel assembly regenerate packaged host SBOM evidence from the downloaded
+  `.pkg` and `.deb` files before validating stable/nightly manifests.
+
 ## [1.5.1783547869] - 2026-07-08
 
 ### Fixed
