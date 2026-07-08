@@ -799,6 +799,11 @@ jobs:
           CAPSEM_RELEASE_CHANNEL_DIST: ${{ github.workspace }}/target/release-channel
         run: cd release-site && pnpm run build:channel
 
+      - name: Materialize preserved profile artifacts
+        run: |
+          uv run python3 scripts/materialize-graph-profile-artifacts.py \
+            --dist target/release-channel
+
       - name: Check binary-updated release channels
         run: |
           set -euo pipefail
