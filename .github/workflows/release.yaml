@@ -273,7 +273,6 @@ jobs:
 
           install_cargo_tool tauri-cli
           install_cargo_tool cargo-auditable
-          install_cargo_tool cargo-sbom
 
       - name: Import Apple certificate
         env:
@@ -374,9 +373,6 @@ jobs:
           xcrun stapler staple "packages/Capsem-$VERSION.pkg"
           xcrun stapler validate "packages/Capsem-$VERSION.pkg"
 
-      - name: Generate SBOM
-        run: cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
-
       - name: Collect macOS artifacts
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
@@ -386,7 +382,6 @@ jobs:
             exit 1
           fi
           cp "packages/Capsem-$VERSION.pkg" release-artifacts/
-          cp capsem-sbom.spdx.json release-artifacts/
           ls -lh release-artifacts/
 
       - uses: actions/upload-artifact@v7
@@ -696,6 +691,21 @@ jobs:
           name: release-linux-x86_64
           path: release-artifacts/
         continue-on-error: true
+
+      - name: Generate packaged host SBOM
+        run: |
+          set -euo pipefail
+          ARTIFACTS=()
+          for file in release-artifacts/*.pkg release-artifacts/*.deb; do
+            [ -f "$file" ] && ARTIFACTS+=("$file")
+          done
+          if [ "${#ARTIFACTS[@]}" -eq 0 ]; then
+            echo "::error::no package artifacts available for host SBOM"
+            exit 1
+          fi
+          python3 scripts/generate-host-binary-sbom.py \
+            --output release-artifacts/capsem-sbom.spdx.json \
+            "${ARTIFACTS[@]}"
 
       - name: Verify binary channel artifacts
         run: |
