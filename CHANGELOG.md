@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Made service storage diagnostics accept platform-specific `statvfs` block
+  counter widths so denied-warning release builds compile on macOS and Linux.
+
 ## [1.5.1783540422] - 2026-07-08
 
 ### Fixed
