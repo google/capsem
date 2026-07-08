@@ -87,14 +87,28 @@ jobs:
           root = Path("target/binary-channel-dry-run")
           before = json.loads((root / "manifest.before.json").read_text())
           after = json.loads((root / "manifest.json").read_text())
-          if after["assets"] != before["assets"]:
-              raise SystemExit("binary dry-run changed VM asset metadata")
+          if "profiles" in before and "profiles" in after:
+              if after["profiles"] != before["profiles"]:
+                  raise SystemExit("binary dry-run changed profile image metadata")
+              binary_version = next(
+                  iter({pkg.get("version") for pkg in after.get("packages", []) if pkg.get("version")}),
+                  "not_published",
+              )
+              asset_version = next(
+                  iter({profile.get("revision") for profile in after["profiles"].values() if profile.get("revision")}),
+                  "mixed",
+              )
+          else:
+              if after["assets"] != before["assets"]:
+                  raise SystemExit("binary dry-run changed VM asset metadata")
+              binary_version = after["binaries"]["current"]
+              asset_version = after["assets"]["current"]
           proof = {
               "schema": "capsem.binary_channel_dry_run.v1",
               "vm_asset_jobs": "not_run",
               "vm_assets_unchanged": True,
-              "binary_version": after["binaries"]["current"],
-              "asset_version": after["assets"]["current"],
+              "binary_version": binary_version,
+              "asset_version": asset_version,
               "manifest_before": "manifest.before.json",
               "manifest_after": "manifest.json",
               "record_binary_report": "record-binary.json",

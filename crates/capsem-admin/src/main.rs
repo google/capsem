@@ -1236,6 +1236,17 @@ fn build_assets_channel(
     let manifest_bytes = read_manifest_url(manifest_url)?;
     let manifest_content = std::str::from_utf8(&manifest_bytes)
         .with_context(|| format!("manifest URL did not return UTF-8 JSON: {manifest_url}"))?;
+    let manifest_value: serde_json::Value = serde_json::from_str(manifest_content)
+        .with_context(|| format!("parse manifest from {manifest_url}"))?;
+    if is_release_graph_manifest_value(&manifest_value) {
+        return build_assets_channel_from_graph(
+            manifest_value,
+            channel,
+            manifest_version,
+            out_dir,
+            generated_at,
+        );
+    }
     let manifest = ManifestV2::from_json(manifest_content)
         .with_context(|| format!("parse manifest from {manifest_url}"))?;
     let asset_base_override = asset_source_base;
@@ -1365,7 +1376,21 @@ fn record_binary_release_metadata(
     }
     validate_binary_version(version)?;
     validate_release_date(date)?;
-    let mut manifest = load_manifest(manifest_path)?;
+    let manifest_content = fs::read_to_string(manifest_path)
+        .with_context(|| format!("read {}", manifest_path.display()))?;
+    let manifest_value: serde_json::Value = serde_json::from_str(&manifest_content)
+        .with_context(|| format!("parse manifest {}", manifest_path.display()))?;
+    if is_release_graph_manifest_value(&manifest_value) {
+        return record_graph_binary_release_metadata(
+            manifest_path,
+            manifest_value,
+            version,
+            min_assets,
+            artifacts,
+        );
+    }
+    let mut manifest = ManifestV2::from_json(&manifest_content)
+        .with_context(|| format!("parse manifest {}", manifest_path.display()))?;
     let min_assets = min_assets
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| manifest.assets.current.clone());
@@ -1375,29 +1400,7 @@ fn record_binary_release_metadata(
         ));
     }
     let files = binary_files_from_artifacts(artifacts)?;
-    if !files.iter().any(|file| is_host_sbom_file(&file.name)) {
-        return Err(anyhow!(
-            "binary release metadata must include capsem-sbom.spdx.json"
-        ));
-    }
-    if !files.iter().any(|file| !is_host_sbom_file(&file.name)) {
-        return Err(anyhow!(
-            "binary release metadata must include a host package artifact"
-        ));
-    }
-    if !files.iter().any(|file| is_host_package_file(&file.name)) {
-        return Err(anyhow!(
-            "binary release metadata must include a .pkg or .deb artifact"
-        ));
-    }
-    if let Some(file) = files.iter().find(|file| {
-        is_host_package_file(&file.name) && !host_package_name_matches_version(&file.name, version)
-    }) {
-        return Err(anyhow!(
-            "binary release package artifact name must match version {version}: {}",
-            file.name
-        ));
-    }
+    validate_binary_release_files(version, &files)?;
     manifest.binaries.current = version.to_string();
     manifest.binaries.releases.insert(
         version.to_string(),
@@ -1421,6 +1424,255 @@ fn record_binary_release_metadata(
         min_assets,
         files,
     })
+}
+
+fn build_assets_channel_from_graph(
+    mut graph_manifest: serde_json::Value,
+    channel: &str,
+    manifest_version: &str,
+    out_dir: &Path,
+    generated_at: &str,
+) -> Result<AssetsChannelBuildReport> {
+    validate_assets_channel_graph_manifest(&graph_manifest, channel)?;
+    graph_manifest["version"] = serde_json::Value::String(manifest_version.to_string());
+    graph_manifest["channel"] = serde_json::Value::String(channel.to_string());
+    graph_manifest["status"] = serde_json::Value::String("current".to_string());
+    let channel_dir = out_dir.join("assets").join(channel);
+    fs::create_dir_all(out_dir).with_context(|| format!("create {}", out_dir.display()))?;
+    if channel_dir.exists() {
+        fs::remove_dir_all(&channel_dir)
+            .with_context(|| format!("remove {}", channel_dir.display()))?;
+    }
+    fs::create_dir_all(&channel_dir)
+        .with_context(|| format!("create {}", channel_dir.display()))?;
+    let graph_manifest = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&graph_manifest).context("serialize graph manifest")?
+    );
+    let channel_manifest = channel_dir.join("manifest.json");
+    fs::write(&channel_manifest, &graph_manifest)
+        .with_context(|| format!("write {}", channel_manifest.display()))?;
+    let graph_manifest_sha256 = format!("{:x}", Sha256::digest(graph_manifest.as_bytes()));
+    let graph_manifest_blake3 = blake3::hash(graph_manifest.as_bytes()).to_hex().to_string();
+    let graph_value: serde_json::Value =
+        serde_json::from_str(&graph_manifest).context("parse rendered graph manifest")?;
+    let index = assets_channel_index_from_graph(
+        &graph_value,
+        channel,
+        generated_at,
+        &graph_manifest_blake3,
+    )?;
+    let graph_manifest_url = format!("/assets/{channel}/manifest.json");
+    fs::write(
+        out_dir.join("channels.json"),
+        render_assets_channels_catalog(
+            &out_dir.join("channels.json"),
+            &index,
+            manifest_version,
+            &graph_manifest_url,
+            &graph_manifest_sha256,
+            &graph_manifest_blake3,
+        )?,
+    )
+    .with_context(|| format!("write {}", out_dir.join("channels.json").display()))?;
+    let health_json = render_assets_channel_health(&index)?;
+    fs::write(out_dir.join("health.json"), &health_json)
+        .with_context(|| format!("write {}", out_dir.join("health.json").display()))?;
+    fs::write(channel_dir.join("health.json"), &health_json)
+        .with_context(|| format!("write {}", channel_dir.join("health.json").display()))?;
+    fs::write(
+        out_dir.join("_headers"),
+        render_assets_channel_headers_for_dist(out_dir, channel)?,
+    )
+    .with_context(|| format!("write {}", out_dir.join("_headers").display()))?;
+    fs::write(out_dir.join("robots.txt"), "User-agent: *\nDisallow:\n")
+        .with_context(|| format!("write {}", out_dir.join("robots.txt").display()))?;
+    Ok(AssetsChannelBuildReport {
+        schema: "capsem.admin.assets_channel_build.v1",
+        channel: channel.to_string(),
+        generated_at: generated_at.to_string(),
+        out_dir: out_dir.display().to_string(),
+        human_site_source: "release-site",
+        channels_json: out_dir.join("channels.json").display().to_string(),
+        manifest: channel_manifest.display().to_string(),
+        health_json: out_dir.join("health.json").display().to_string(),
+        copied_assets: 0,
+    })
+}
+
+fn record_graph_binary_release_metadata(
+    manifest_path: &Path,
+    mut manifest: serde_json::Value,
+    version: &str,
+    min_assets: Option<&str>,
+    artifacts: &[PathBuf],
+) -> Result<AssetsChannelRecordBinaryReport> {
+    let profiles = manifest
+        .get("profiles")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| anyhow!("graph manifest profiles must be an object"))?;
+    if profiles.is_empty() {
+        return Err(anyhow!("graph manifest profiles must not be empty"));
+    }
+    let min_assets = min_assets
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| graph_profile_revision_summary(profiles));
+    let files = binary_files_from_artifacts(artifacts)?;
+    validate_binary_release_files(version, &files)?;
+    let packages = graph_packages_from_binary_files(version, &files)?;
+    manifest["packages"] = serde_json::Value::Array(packages);
+    let mut bytes = serde_json::to_vec_pretty(&manifest).context("serialize updated manifest")?;
+    bytes.push(b'\n');
+    fs::write(manifest_path, &bytes)
+        .with_context(|| format!("write {}", manifest_path.display()))?;
+    Ok(AssetsChannelRecordBinaryReport {
+        schema: "capsem.admin.assets_channel_record_binary.v1",
+        manifest: manifest_path.display().to_string(),
+        version: version.to_string(),
+        min_assets,
+        files,
+    })
+}
+
+fn validate_binary_release_files(version: &str, files: &[BinaryFile]) -> Result<()> {
+    if !files.iter().any(|file| is_host_sbom_file(&file.name)) {
+        return Err(anyhow!(
+            "binary release metadata must include capsem-sbom.spdx.json"
+        ));
+    }
+    if !files.iter().any(|file| !is_host_sbom_file(&file.name)) {
+        return Err(anyhow!(
+            "binary release metadata must include a host package artifact"
+        ));
+    }
+    if !files.iter().any(|file| is_host_package_file(&file.name)) {
+        return Err(anyhow!(
+            "binary release metadata must include a .pkg or .deb artifact"
+        ));
+    }
+    if let Some(file) = files.iter().find(|file| {
+        is_host_package_file(&file.name) && !host_package_name_matches_version(&file.name, version)
+    }) {
+        return Err(anyhow!(
+            "binary release package artifact name must match version {version}: {}",
+            file.name
+        ));
+    }
+    Ok(())
+}
+
+fn graph_packages_from_binary_files(
+    version: &str,
+    files: &[BinaryFile],
+) -> Result<Vec<serde_json::Value>> {
+    let host_sbom = files
+        .iter()
+        .find(|file| is_host_sbom_file(&file.name))
+        .ok_or_else(|| anyhow!("binary release metadata must include capsem-sbom.spdx.json"))?;
+    let mut packages = files
+        .iter()
+        .filter(|file| is_host_package_file(&file.name))
+        .map(|file| graph_package_from_binary_file(version, file, host_sbom))
+        .collect::<Result<Vec<_>>>()?;
+    packages.sort_by(|left, right| {
+        let left_name = left
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        let right_name = right
+            .get("name")
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        left_name.cmp(right_name)
+    });
+    Ok(packages)
+}
+
+fn graph_package_from_binary_file(
+    version: &str,
+    file: &BinaryFile,
+    host_sbom: &BinaryFile,
+) -> Result<serde_json::Value> {
+    let package_kind = package_kind_for_name(&file.name);
+    let platform = package_platform_for_kind(package_kind);
+    let architecture = package_architecture_for_name(&file.name);
+    let package_id = release_graph_id(&file.name);
+    let package_url = capsem_core::asset_manager::release_url(version);
+    let package_url = format!("{}/{}", package_url.trim_end_matches('/'), file.name);
+    let host_sbom_url = capsem_core::asset_manager::release_url(version);
+    let host_sbom_url = format!("{}/{}", host_sbom_url.trim_end_matches('/'), host_sbom.name);
+    let binaries = file
+        .binaries
+        .iter()
+        .map(|binary| {
+            serde_json::json!({
+                "name": binary.name,
+                "description": binary.description,
+                "version": version,
+                "installed_path": binary.installed_path,
+                "platform": platform,
+                "architecture": architecture,
+                "bytes": binary.size,
+                "digest": {
+                    "sha256": binary.sha256,
+                    "blake3": binary.blake3,
+                },
+                "status": "current",
+                "sbom_component_ref": binary.sbom_component_ref,
+            })
+        })
+        .collect::<Vec<_>>();
+    if binaries.is_empty() {
+        return Err(anyhow!(
+            "binary release package artifact must contain executable inventory: {}",
+            file.name
+        ));
+    }
+    Ok(serde_json::json!({
+        "id": package_id,
+        "kind": package_kind,
+        "name": file.name,
+        "version": version,
+        "platform": platform,
+        "architecture": architecture,
+        "url": package_url,
+        "bytes": file.size,
+        "digest": {
+            "sha256": file.sha256,
+            "blake3": file.blake3,
+        },
+        "binaries": binaries,
+        "evidence": [
+            {
+                "kind": "sbom",
+                "name": host_sbom.name,
+                "url": host_sbom_url,
+                "bytes": host_sbom.size,
+                "digest": {
+                    "sha256": host_sbom.sha256,
+                    "blake3": host_sbom.blake3,
+                },
+                "status": "current",
+            }
+        ],
+        "status": "current",
+    }))
+}
+
+fn graph_profile_revision_summary(profiles: &serde_json::Map<String, serde_json::Value>) -> String {
+    let revisions = profiles
+        .values()
+        .filter_map(|profile| profile.get("revision").and_then(|value| value.as_str()))
+        .collect::<BTreeSet<_>>();
+    if revisions.len() == 1 {
+        revisions
+            .into_iter()
+            .next()
+            .unwrap_or("unknown")
+            .to_string()
+    } else {
+        "mixed".to_string()
+    }
 }
 
 fn binary_files_from_artifacts(artifacts: &[PathBuf]) -> Result<Vec<BinaryFile>> {
@@ -1502,7 +1754,8 @@ fn pkg_executable_inventory(path: &Path) -> Result<Vec<BinaryExecutable>> {
     {
         Ok(output) => output,
         Err(error) if error.kind() == ErrorKind::NotFound => {
-            return pkg_payload_tar_executable_inventory(path)
+            return pkg_xar_payload_executable_inventory(path)
+                .or_else(|_| pkg_payload_tar_executable_inventory(path))
         }
         Err(error) => return Err(error).context("run pkgutil --expand-full"),
     };
@@ -1514,6 +1767,208 @@ fn pkg_executable_inventory(path: &Path) -> Result<Vec<BinaryExecutable>> {
     let result = collect_pkg_payload_executables(&temp);
     let _ = fs::remove_dir_all(&temp);
     result
+}
+
+fn pkg_xar_payload_executable_inventory(path: &Path) -> Result<Vec<BinaryExecutable>> {
+    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    if bytes.len() < 28 || &bytes[..4] != b"xar!" {
+        return Err(anyhow!("{} is not a xar pkg archive", path.display()));
+    }
+    let header_size = u16::from_be_bytes([bytes[4], bytes[5]]) as usize;
+    if header_size < 28 {
+        return Err(anyhow!("{} has an invalid xar header", path.display()));
+    }
+    let compressed_toc_size = u64::from_be_bytes(
+        bytes[8..16]
+            .try_into()
+            .expect("xar compressed TOC size width"),
+    ) as usize;
+    let toc_end = header_size
+        .checked_add(compressed_toc_size)
+        .ok_or_else(|| anyhow!("{} xar TOC size overflow", path.display()))?;
+    if toc_end > bytes.len() {
+        return Err(anyhow!(
+            "{} xar TOC extends past end of file",
+            path.display()
+        ));
+    }
+    let mut toc_decoder = flate2::read::ZlibDecoder::new(&bytes[header_size..toc_end]);
+    let mut toc = String::new();
+    toc_decoder
+        .read_to_string(&mut toc)
+        .with_context(|| format!("decompress xar TOC {}", path.display()))?;
+    let mut binaries = Vec::new();
+    let mut search_from = 0;
+    while let Some(relative_name) = toc[search_from..].find("<name>Payload</name>") {
+        let name_index = search_from + relative_name;
+        let block_start = toc[..name_index]
+            .rfind("<file")
+            .ok_or_else(|| anyhow!("{} xar Payload entry missing file start", path.display()))?;
+        let block_end = name_index
+            + toc[name_index..]
+                .find("</file>")
+                .ok_or_else(|| anyhow!("{} xar Payload entry missing file end", path.display()))?
+            + "</file>".len();
+        let block = &toc[block_start..block_end];
+        let offset = xml_tag_u64(block, "offset")? as usize;
+        let length = xml_tag_u64(block, "length")? as usize;
+        let payload_start = toc_end
+            .checked_add(offset)
+            .ok_or_else(|| anyhow!("{} xar Payload offset overflow", path.display()))?;
+        let payload_end = payload_start
+            .checked_add(length)
+            .ok_or_else(|| anyhow!("{} xar Payload length overflow", path.display()))?;
+        if payload_end > bytes.len() {
+            return Err(anyhow!(
+                "{} xar Payload extends past end of file",
+                path.display()
+            ));
+        }
+        let mut payload = Vec::new();
+        if block.contains("application/x-gzip")
+            || bytes[payload_start..payload_end].starts_with(&[0x1f, 0x8b])
+        {
+            let mut decoder = flate2::read::GzDecoder::new(&bytes[payload_start..payload_end]);
+            decoder
+                .read_to_end(&mut payload)
+                .with_context(|| format!("decompress xar Payload {}", path.display()))?;
+        } else {
+            payload.extend_from_slice(&bytes[payload_start..payload_end]);
+        }
+        collect_newc_cpio_executables(&payload, &mut binaries)
+            .with_context(|| format!("read xar Payload cpio {}", path.display()))?;
+        search_from = block_end;
+    }
+    if binaries.is_empty() {
+        return Err(anyhow!(
+            "{} xar Payload contained no Capsem executables",
+            path.display()
+        ));
+    }
+    binaries.sort_by(|left, right| left.installed_path.cmp(&right.installed_path));
+    Ok(binaries)
+}
+
+fn xml_tag_u64(block: &str, tag: &str) -> Result<u64> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = block
+        .find(&open)
+        .ok_or_else(|| anyhow!("xar XML missing <{tag}>"))?
+        + open.len();
+    let end = start
+        + block[start..]
+            .find(&close)
+            .ok_or_else(|| anyhow!("xar XML missing </{tag}>"))?;
+    block[start..end]
+        .trim()
+        .parse::<u64>()
+        .with_context(|| format!("parse xar XML <{tag}>"))
+}
+
+fn collect_newc_cpio_executables(bytes: &[u8], binaries: &mut Vec<BinaryExecutable>) -> Result<()> {
+    if bytes.starts_with(b"070707") {
+        return collect_odc_cpio_executables(bytes, binaries);
+    }
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+        if offset + 110 > bytes.len() {
+            return Err(anyhow!("newc cpio header truncated"));
+        }
+        let header = &bytes[offset..offset + 110];
+        if &header[..6] != b"070701" && &header[..6] != b"070702" {
+            return Err(anyhow!("newc cpio header magic mismatch"));
+        }
+        let mode = cpio_hex_field(header, 14)?;
+        let file_size = cpio_hex_field(header, 54)? as usize;
+        let name_size = cpio_hex_field(header, 94)? as usize;
+        let name_start = offset + 110;
+        let name_end = name_start
+            .checked_add(name_size)
+            .ok_or_else(|| anyhow!("newc cpio name size overflow"))?;
+        if name_end > bytes.len() || name_size == 0 {
+            return Err(anyhow!("newc cpio name truncated"));
+        }
+        let name_bytes = &bytes[name_start..name_end - 1];
+        let name = std::str::from_utf8(name_bytes).context("newc cpio path is not UTF-8")?;
+        let data_start = align4(name_end);
+        let data_end = data_start
+            .checked_add(file_size)
+            .ok_or_else(|| anyhow!("newc cpio file size overflow"))?;
+        if data_end > bytes.len() {
+            return Err(anyhow!("newc cpio file data truncated"));
+        }
+        if name == "TRAILER!!!" {
+            break;
+        }
+        let normalized = name.trim_start_matches("./");
+        let is_regular = mode & 0o170000 == 0o100000;
+        if is_regular && mode & 0o111 != 0 {
+            let mut contents = &bytes[data_start..data_end];
+            push_pkg_payload_executable(normalized, &mut contents, binaries)?;
+        }
+        offset = align4(data_end);
+    }
+    Ok(())
+}
+
+fn collect_odc_cpio_executables(bytes: &[u8], binaries: &mut Vec<BinaryExecutable>) -> Result<()> {
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+        if offset + 76 > bytes.len() {
+            return Err(anyhow!("odc cpio header truncated"));
+        }
+        let header = &bytes[offset..offset + 76];
+        if &header[..6] != b"070707" {
+            return Err(anyhow!("odc cpio header magic mismatch"));
+        }
+        let mode = cpio_octal_field(header, 18, 6)?;
+        let file_size = cpio_octal_field(header, 65, 11)? as usize;
+        let name_size = cpio_octal_field(header, 59, 6)? as usize;
+        let name_start = offset + 76;
+        let name_end = name_start
+            .checked_add(name_size)
+            .ok_or_else(|| anyhow!("odc cpio name size overflow"))?;
+        if name_end > bytes.len() || name_size == 0 {
+            return Err(anyhow!("odc cpio name truncated"));
+        }
+        let name_bytes = &bytes[name_start..name_end - 1];
+        let name = std::str::from_utf8(name_bytes).context("odc cpio path is not UTF-8")?;
+        let data_start = name_end;
+        let data_end = data_start
+            .checked_add(file_size)
+            .ok_or_else(|| anyhow!("odc cpio file size overflow"))?;
+        if data_end > bytes.len() {
+            return Err(anyhow!("odc cpio file data truncated"));
+        }
+        if name == "TRAILER!!!" {
+            break;
+        }
+        let normalized = name.trim_start_matches("./");
+        let is_regular = mode & 0o170000 == 0o100000;
+        if is_regular && mode & 0o111 != 0 {
+            let mut contents = &bytes[data_start..data_end];
+            push_pkg_payload_executable(normalized, &mut contents, binaries)?;
+        }
+        offset = data_end;
+    }
+    Ok(())
+}
+
+fn cpio_hex_field(header: &[u8], start: usize) -> Result<u64> {
+    let end = start + 8;
+    let value = std::str::from_utf8(&header[start..end]).context("newc cpio hex field UTF-8")?;
+    u64::from_str_radix(value, 16).with_context(|| format!("parse newc cpio field {value}"))
+}
+
+fn cpio_octal_field(header: &[u8], start: usize, width: usize) -> Result<u64> {
+    let end = start + width;
+    let value = std::str::from_utf8(&header[start..end]).context("odc cpio octal field UTF-8")?;
+    u64::from_str_radix(value, 8).with_context(|| format!("parse odc cpio field {value}"))
+}
+
+fn align4(value: usize) -> usize {
+    (value + 3) & !3
 }
 
 fn pkg_payload_tar_executable_inventory(path: &Path) -> Result<Vec<BinaryExecutable>> {
@@ -3381,6 +3836,240 @@ fn assets_channel_index(
         profiles,
         image_update_state: "not_published".to_string(),
     }
+}
+
+fn assets_channel_index_from_graph(
+    manifest: &serde_json::Value,
+    channel: &str,
+    generated_at: &str,
+    manifest_blake3: &str,
+) -> Result<AssetsChannelIndex> {
+    let packages = manifest
+        .get("packages")
+        .and_then(|value| value.as_array())
+        .ok_or_else(|| anyhow!("graph manifest packages must be an array"))?;
+    let profiles = manifest
+        .get("profiles")
+        .and_then(|value| value.as_object())
+        .ok_or_else(|| anyhow!("graph manifest profiles must be an object"))?;
+    let binary_version = graph_binary_version(packages);
+    let profiles_summary = graph_profiles_summary(profiles)?;
+    let current_asset_files = graph_asset_files(profiles)?;
+    let vm_oboms = current_asset_files
+        .iter()
+        .filter(|file| is_vm_obom_asset_file(file))
+        .cloned()
+        .collect::<Vec<_>>();
+    let binary_files = graph_binary_files(packages)?;
+    let host_sboms = binary_files
+        .iter()
+        .filter(|file| is_host_sbom_file(&file.name))
+        .cloned()
+        .collect();
+    let mut attestations = binary_package_attestations(&binary_files);
+    attestations.extend(current_asset_attestations(&current_asset_files));
+    let arches = current_asset_files
+        .iter()
+        .map(|file| file.arch.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    Ok(AssetsChannelIndex {
+        schema_version: 1,
+        channel: channel.to_string(),
+        state: "published".to_string(),
+        generated_at: generated_at.to_string(),
+        release_site: "https://release.capsem.org/".to_string(),
+        summary: "Capsem asset channel generated from release graph manifest.".to_string(),
+        manifest: format!("/assets/{channel}/manifest.json"),
+        asset_base: "/profiles/releases".to_string(),
+        manifest_blake3: manifest_blake3.to_string(),
+        binary_version,
+        asset_version: profiles_summary.revision.clone(),
+        asset_state: "current".to_string(),
+        asset_min_binary: Some(profiles_summary.min_binary.clone()),
+        binary_state: if packages.is_empty() {
+            "missing"
+        } else {
+            "current"
+        }
+        .to_string(),
+        asset_releases: 1,
+        asset_release_history: vec![AssetsChannelAssetRelease {
+            version: profiles_summary.revision.clone(),
+            date: generated_at.get(..10).unwrap_or(generated_at).to_string(),
+            state: "current".to_string(),
+            deprecated: false,
+            deprecated_date: None,
+            min_binary: profiles_summary.min_binary.clone(),
+            arches,
+        }],
+        binary_releases: if packages.is_empty() { 0 } else { 1 },
+        arches: current_asset_files
+            .iter()
+            .map(|file| file.arch.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        current_asset_files,
+        binary_files,
+        host_sboms,
+        attestations,
+        vm_oboms,
+        profiles: profiles_summary,
+        image_update_state: "not_published".to_string(),
+    })
+}
+
+fn graph_binary_version(packages: &[serde_json::Value]) -> String {
+    packages
+        .iter()
+        .filter_map(|package| package.get("version").and_then(|value| value.as_str()))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .next()
+        .unwrap_or("not_published")
+        .to_string()
+}
+
+fn graph_profiles_summary(
+    profiles: &serde_json::Map<String, serde_json::Value>,
+) -> Result<AssetsChannelProfilesSummary> {
+    let profile_ids = profiles.keys().cloned().collect::<Vec<_>>();
+    let revision = graph_profile_revision_summary(profiles);
+    let min_binary = profiles
+        .values()
+        .filter_map(|profile| {
+            profile
+                .get("min_capsem_version")
+                .and_then(|value| value.as_str())
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .next()
+        .unwrap_or("")
+        .to_string();
+    Ok(AssetsChannelProfilesSummary {
+        revision,
+        profile_count: profiles.len(),
+        profile_ids,
+        refresh_policy: "graph".to_string(),
+        min_binary,
+        requires_newer_binary: false,
+    })
+}
+
+fn graph_asset_files(
+    profiles: &serde_json::Map<String, serde_json::Value>,
+) -> Result<Vec<AssetsChannelAssetFile>> {
+    let mut files = Vec::new();
+    for profile in profiles.values() {
+        let architectures = profile
+            .get("architectures")
+            .and_then(|value| value.as_array())
+            .ok_or_else(|| anyhow!("graph profile architectures must be an array"))?;
+        for arch_doc in architectures {
+            let arch = require_json_string(arch_doc, &["architecture"])?;
+            for field in ["images", "evidence"] {
+                for item in arch_doc
+                    .get(field)
+                    .and_then(|value| value.as_array())
+                    .into_iter()
+                    .flatten()
+                {
+                    let url = require_json_string(item, &["url"])?;
+                    let digest = require_json_string(item, &["digest", "blake3"])?;
+                    let size = item
+                        .get("bytes")
+                        .and_then(|value| value.as_u64())
+                        .ok_or_else(|| anyhow!("graph asset file bytes missing"))?;
+                    let logical_name = item
+                        .get("name")
+                        .and_then(|value| value.as_str())
+                        .or_else(|| item.get("kind").and_then(|value| value.as_str()))
+                        .unwrap_or("asset")
+                        .to_string();
+                    files.push(AssetsChannelAssetFile {
+                        arch: arch.clone(),
+                        logical_name,
+                        url,
+                        hash: digest,
+                        size,
+                    });
+                }
+            }
+        }
+    }
+    files.sort_by(|left, right| left.url.cmp(&right.url));
+    files.dedup_by(|left, right| left.url == right.url);
+    Ok(files)
+}
+
+fn graph_binary_files(packages: &[serde_json::Value]) -> Result<Vec<AssetsChannelBinaryFile>> {
+    let mut files = Vec::new();
+    for package in packages {
+        files.push(graph_binary_file(package)?);
+        for evidence in package
+            .get("evidence")
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flatten()
+        {
+            files.push(graph_binary_file(evidence)?);
+        }
+    }
+    files.sort_by(|left, right| left.url.cmp(&right.url));
+    files.dedup_by(|left, right| left.url == right.url);
+    Ok(files)
+}
+
+fn graph_binary_file(value: &serde_json::Value) -> Result<AssetsChannelBinaryFile> {
+    let name = require_json_string(value, &["name"])?;
+    let url = require_json_string(value, &["url"])?;
+    let sha256 = require_json_string(value, &["digest", "sha256"])?;
+    let blake3 = require_json_string(value, &["digest", "blake3"])?;
+    let size = value
+        .get("bytes")
+        .and_then(|item| item.as_u64())
+        .ok_or_else(|| anyhow!("graph binary file bytes missing"))?;
+    let binaries = value
+        .get("binaries")
+        .and_then(|item| item.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .map(graph_binary_executable)
+                .collect::<Result<Vec<_>>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    Ok(AssetsChannelBinaryFile {
+        name,
+        url,
+        sha256,
+        blake3,
+        size,
+        binaries,
+    })
+}
+
+fn graph_binary_executable(value: &serde_json::Value) -> Result<BinaryExecutable> {
+    Ok(BinaryExecutable {
+        name: require_json_string(value, &["name"])?,
+        description: value
+            .get("description")
+            .and_then(|item| item.as_str())
+            .unwrap_or("")
+            .to_string(),
+        installed_path: require_json_string(value, &["installed_path"])?,
+        size: value
+            .get("bytes")
+            .and_then(|item| item.as_u64())
+            .ok_or_else(|| anyhow!("graph binary bytes missing"))?,
+        sha256: require_json_string(value, &["digest", "sha256"])?,
+        blake3: require_json_string(value, &["digest", "blake3"])?,
+        sbom_component_ref: require_json_string(value, &["sbom_component_ref"])?,
+    })
 }
 
 fn summarize_asset_releases(manifest: &ManifestV2) -> Vec<AssetsChannelAssetRelease> {
@@ -9120,6 +9809,78 @@ decision = "block"
     }
 
     #[test]
+    fn assets_channel_record_binary_updates_graph_manifest_without_changing_profiles() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_release_graph_manifest(temp.path());
+        let original: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
+                .expect("json");
+        let artifacts_dir = temp.path().join("release-artifacts");
+        fs::create_dir_all(&artifacts_dir).expect("artifacts dir");
+        let pkg_path = artifacts_dir.join("Capsem-1.4.1234567890.pkg");
+        let deb_path = artifacts_dir.join("Capsem_1.4.1234567890_arm64.deb");
+        let sbom_path = artifacts_dir.join("capsem-sbom.spdx.json");
+        write_minimal_pkg_with_file(
+            &pkg_path,
+            "Applications/Capsem.app/Contents/MacOS/capsem-app",
+            b"pkg executable bytes",
+        );
+        write_minimal_deb_with_file(&deb_path, "usr/bin/capsem-app", b"deb executable bytes");
+        fs::write(&sbom_path, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("sbom");
+
+        let report = record_binary_release_metadata(
+            &manifest_path,
+            "1.4.1234567890",
+            None,
+            &[pkg_path.clone(), deb_path.clone(), sbom_path.clone()],
+            "2030-02-03",
+        )
+        .expect("record graph binary release");
+
+        assert_eq!(report.version, "1.4.1234567890");
+        assert_eq!(report.min_assets, "2030.0101.1");
+        let updated: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
+                .expect("json");
+        assert_eq!(updated["profiles"], original["profiles"]);
+        assert!(updated.get("assets").is_none());
+        assert!(updated.get("binaries").is_none());
+        assert_eq!(updated["packages"].as_array().expect("packages").len(), 2);
+        assert_eq!(updated["packages"][0]["name"], "Capsem-1.4.1234567890.pkg");
+        assert_eq!(updated["packages"][0]["version"], "1.4.1234567890");
+        assert_eq!(updated["packages"][0]["status"], "current");
+        assert_eq!(updated["packages"][0]["platform"], "macos");
+        assert_eq!(updated["packages"][0]["architecture"], "arm64");
+        assert_eq!(
+            updated["packages"][0]["digest"]["sha256"],
+            format!(
+                "{:x}",
+                Sha256::digest(fs::read(&pkg_path).expect("pkg bytes"))
+            )
+        );
+        assert_eq!(
+            updated["packages"][0]["binaries"][0]["installed_path"].as_str(),
+            Some("/Applications/Capsem.app/Contents/MacOS/capsem-app")
+        );
+        assert_eq!(
+            updated["packages"][0]["evidence"][0]["name"].as_str(),
+            Some("capsem-sbom.spdx.json")
+        );
+        assert_eq!(
+            updated["packages"][0]["evidence"][0]["url"].as_str(),
+            Some("https://github.com/google/capsem/releases/download/v1.4.1234567890/capsem-sbom.spdx.json")
+        );
+        assert_eq!(
+            updated["packages"][1]["binaries"][0]["installed_path"].as_str(),
+            Some("/usr/bin/capsem-app")
+        );
+        assert_eq!(
+            updated["packages"][1]["name"],
+            "Capsem_1.4.1234567890_arm64.deb"
+        );
+    }
+
+    #[test]
     fn assets_channel_record_binary_rejects_sbom_without_host_package() {
         let temp = tempfile::tempdir().expect("tempdir");
         let manifest_path = write_test_assets_manifest(temp.path(), "arm64");
@@ -9290,12 +10051,28 @@ decision = "block"
 
         #[cfg(not(target_os = "macos"))]
         {
-            let mut bytes = Vec::new();
-            bytes.extend_from_slice(b"synthetic pkg fixture\n");
-            bytes.extend_from_slice(file_path.as_bytes());
-            bytes.push(b'\n');
-            bytes.extend_from_slice(contents);
-            fs::write(path, bytes).expect("write synthetic pkg");
+            use flate2::{write::GzEncoder, Compression};
+            use tar::{Builder, Header};
+
+            let mut pkg = Vec::new();
+            {
+                let encoder = GzEncoder::new(&mut pkg, Compression::default());
+                let mut builder = Builder::new(encoder);
+                let mut header = Header::new_gnu();
+                header.set_size(contents.len() as u64);
+                header.set_mode(0o755);
+                header.set_cksum();
+                builder
+                    .append_data(
+                        &mut header,
+                        format!("capsem.pkg/Payload/{file_path}"),
+                        contents,
+                    )
+                    .expect("append pkg executable");
+                let encoder = builder.into_inner().expect("finish tar");
+                encoder.finish().expect("finish gzip");
+            }
+            fs::write(path, pkg).expect("write synthetic pkg");
         }
     }
 
@@ -10204,6 +10981,102 @@ decision = "block"
                     "3333333333333333333333333333333333333333333333333333333333333333",
                 binary_blake3 =
                     "4444444444444444444444444444444444444444444444444444444444444444",
+            ),
+        )
+        .expect("manifest");
+        manifest_path
+    }
+
+    fn write_test_release_graph_manifest(root: &Path) -> PathBuf {
+        let manifest_path = root.join("graph-manifest.json");
+        fs::write(
+            &manifest_path,
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "version": "1.0.2",
+                    "channel": "stable",
+                    "status": "current",
+                    "packages": [
+                        {
+                            "id": "old-capsem-pkg",
+                            "kind": "macos_pkg",
+                            "name": "Capsem-1.0.0.pkg",
+                            "version": "1.0.0",
+                            "platform": "macos",
+                            "architecture": "arm64",
+                            "url": "https://github.com/google/capsem/releases/download/v1.0.0/Capsem-1.0.0.pkg",
+                            "bytes": 123,
+                            "digest": {
+                                "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                                "blake3": "1111111111111111111111111111111111111111111111111111111111111111",
+                            },
+                            "binaries": [
+                                {
+                                    "name": "capsem-app",
+                                    "description": "",
+                                    "version": "1.0.0",
+                                    "installed_path": "/Applications/Capsem.app/Contents/MacOS/capsem-app",
+                                    "platform": "macos",
+                                    "architecture": "arm64",
+                                    "bytes": 17,
+                                    "digest": {
+                                        "sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+                                        "blake3": "3333333333333333333333333333333333333333333333333333333333333333",
+                                    },
+                                    "status": "current",
+                                    "sbom_component_ref": "SPDXRef-File-capsem-app",
+                                }
+                            ],
+                            "evidence": [],
+                            "status": "current",
+                        }
+                    ],
+                    "profiles": {
+                        "co-work": {
+                            "version": "1.0.0",
+                            "id": "co-work",
+                            "name": "Co-work",
+                            "revision": "2030.0101.1",
+                            "status": "current",
+                            "min_capsem_version": "1.0.0",
+                            "architectures": [
+                                {
+                                    "architecture": "arm64",
+                                    "software": [],
+                                    "config": [
+                                        {
+                                            "kind": "profile",
+                                            "path": "profiles/co-work/profile.toml",
+                                            "url": "/profiles/releases/2030.0101.1/co-work/arm64/profile.toml",
+                                            "bytes": 42,
+                                            "digest": {
+                                                "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+                                                "blake3": "5555555555555555555555555555555555555555555555555555555555555555",
+                                            },
+                                            "status": "current",
+                                        }
+                                    ],
+                                    "images": [
+                                        {
+                                            "kind": "rootfs",
+                                            "name": "rootfs.erofs",
+                                            "url": "https://github.com/google/capsem/releases/download/assets-v2030.0101.1/arm64-rootfs.erofs",
+                                            "bytes": 777,
+                                            "digest": {
+                                                "sha256": "6666666666666666666666666666666666666666666666666666666666666666",
+                                                "blake3": "7777777777777777777777777777777777777777777777777777777777777777",
+                                            },
+                                            "status": "current",
+                                        }
+                                    ],
+                                    "evidence": [],
+                                }
+                            ],
+                        }
+                    },
+                }))
+                .expect("graph manifest")
             ),
         )
         .expect("manifest");

@@ -561,6 +561,21 @@ jobs:
           path: release-artifacts/
         continue-on-error: true
 
+      - name: Generate packaged host SBOM
+        run: |
+          set -euo pipefail
+          ARTIFACTS=()
+          for file in release-artifacts/*.pkg release-artifacts/*.deb; do
+            [ -f "$file" ] && ARTIFACTS+=("$file")
+          done
+          if [ "${#ARTIFACTS[@]}" -eq 0 ]; then
+            echo "::error::no package artifacts available for host SBOM"
+            exit 1
+          fi
+          python3 scripts/generate-host-binary-sbom.py \
+            --output release-artifacts/capsem-sbom.spdx.json \
+            "${ARTIFACTS[@]}"
+
       - name: Attest build provenance (pkg + deb)
         uses: actions/attest-build-provenance@v4
         with:
@@ -741,8 +756,12 @@ jobs:
           root = Path("target/binary-channel") / channel
           before = json.loads((root / "manifest.before.json").read_text())
           after = json.loads((root / "manifest.json").read_text())
-          if after["assets"] != before["assets"]:
-              raise SystemExit(f"{channel} binary release changed VM asset metadata")
+          if "profiles" in before and "profiles" in after:
+              if after["profiles"] != before["profiles"]:
+                  raise SystemExit(f"{channel} binary release changed profile image metadata")
+          else:
+              if after["assets"] != before["assets"]:
+                  raise SystemExit(f"{channel} binary release changed VM asset metadata")
           PY
           done
 

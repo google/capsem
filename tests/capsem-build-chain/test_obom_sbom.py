@@ -47,8 +47,9 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
         in channel_workflow
     )
 
-    assert "Generate SBOM" in binary_workflow
-    assert "cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json" in binary_workflow
+    assert "Generate packaged host SBOM" in binary_workflow
+    assert "scripts/generate-host-binary-sbom.py" in binary_workflow
+    assert "--output release-artifacts/capsem-sbom.spdx.json" in binary_workflow
     assert "Attest SBOM" in binary_workflow
     sbom_attestation = binary_workflow.split("- name: Attest SBOM", maxsplit=1)[1].split(
         "- name: Build summary", maxsplit=1
