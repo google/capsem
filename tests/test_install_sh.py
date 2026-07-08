@@ -1,6 +1,3 @@
-# TODO(WB7): update for native installer -- .pkg (macOS) + tar.gz (Linux) paths,
-# find_asset_url() patterns, install_linux() tar.gz extraction, and swap
-# simulate-install.sh for the real install.sh in conftest fixtures.
 """Tests for site/public/install.sh -- OS/arch detection and asset URL selection.
 
 Sources the install script with __INSTALL_SH_SOURCED=1 to access functions
@@ -133,21 +130,39 @@ class TestDetectArch:
 # find_asset_url
 # ---------------------------------------------------------------------------
 
-# Minimal release JSON snippet matching real GitHub API format.
-FAKE_RELEASE_JSON = r"""
+# Minimal stable release-channel manifest snippet matching release.capsem.org.
+FAKE_RELEASE_MANIFEST = r"""
 {
-  "assets": [
+  "packages": [
     {
-      "name": "Capsem_1.0.0_aarch64.pkg",
-      "browser_download_url": "https://github.com/google/capsem/releases/download/v1.0.0/Capsem_1.0.0_aarch64.pkg"
+      "architecture": "arm64",
+      "binaries": [],
+      "kind": "macos_pkg",
+      "name": "Capsem-1.5.0.pkg",
+      "platform": "macos",
+      "status": "current",
+      "url": "https://github.com/google/capsem/releases/download/v1.5.0/Capsem-1.5.0.pkg",
+      "version": "1.5.0"
     },
     {
-      "name": "Capsem_1.0.0_amd64.deb",
-      "browser_download_url": "https://github.com/google/capsem/releases/download/v1.0.0/Capsem_1.0.0_amd64.deb"
+      "architecture": "x86_64",
+      "binaries": [],
+      "kind": "debian_package",
+      "name": "Capsem_1.5.0_amd64.deb",
+      "platform": "linux",
+      "status": "current",
+      "url": "https://github.com/google/capsem/releases/download/v1.5.0/Capsem_1.5.0_amd64.deb",
+      "version": "1.5.0"
     },
     {
-      "name": "Capsem_1.0.0_arm64.deb",
-      "browser_download_url": "https://github.com/google/capsem/releases/download/v1.0.0/Capsem_1.0.0_arm64.deb"
+      "architecture": "arm64",
+      "binaries": [],
+      "kind": "debian_package",
+      "name": "Capsem_1.5.0_arm64.deb",
+      "platform": "linux",
+      "status": "current",
+      "url": "https://github.com/google/capsem/releases/download/v1.5.0/Capsem_1.5.0_arm64.deb",
+      "version": "1.5.0"
     }
   ]
 }
@@ -160,12 +175,12 @@ class TestFindAssetURL:
         script = textwrap.dedent(f"""\
             __INSTALL_SH_SOURCED=1
             . "{INSTALL_SH}"
-            RELEASE_JSON=$(cat <<'ENDJSON'
-{FAKE_RELEASE_JSON}
+            RELEASE_MANIFEST=$(cat <<'ENDJSON'
+{FAKE_RELEASE_MANIFEST}
 ENDJSON
             )
-            find_asset_url "$RELEASE_JSON" "{os_val}" "{arch_val}"
-            echo "$ASSET_URL"
+            find_asset_url "$RELEASE_MANIFEST" "{os_val}" "{arch_val}"
+            printf '%s\n%s\n' "$ASSET_URL" "$ASSET_VERSION"
         """)
         return _run_shell(script)
 
@@ -173,19 +188,34 @@ ENDJSON
         """macOS installer downloads the signed/notarized .pkg (DMG dropped)."""
         r = self._run("darwin", "arm64")
         assert r.returncode == 0
-        assert r.stdout.strip().endswith("_aarch64.pkg")
+        url, version = r.stdout.strip().splitlines()
+        assert url.endswith("/Capsem-1.5.0.pkg")
+        assert version == "1.5.0"
 
     def test_linux_amd64_deb(self):
         r = self._run("linux", "amd64")
         assert r.returncode == 0
-        assert r.stdout.strip().endswith("_amd64.deb")
+        url, version = r.stdout.strip().splitlines()
+        assert url.endswith("/Capsem_1.5.0_amd64.deb")
+        assert version == "1.5.0"
 
     def test_linux_arm64_deb(self):
         r = self._run("linux", "arm64")
         assert r.returncode == 0
-        assert r.stdout.strip().endswith("_arm64.deb")
+        url, version = r.stdout.strip().splitlines()
+        assert url.endswith("/Capsem_1.5.0_arm64.deb")
+        assert version == "1.5.0"
 
     def test_missing_asset_errors(self):
         r = self._run("linux", "s390x")
         assert r.returncode != 0
         assert "no matching asset" in r.stderr
+
+
+def test_installer_uses_release_channel_manifest_not_github_latest() -> None:
+    script = INSTALL_SH.read_text(encoding="utf-8")
+
+    assert "https://release.capsem.org" in script
+    assert "/assets/${CAPSEM_CHANNEL}/manifest.json" in script
+    assert "api.github.com/repos/${REPO}/releases/latest" not in script
+    assert "releases/latest" not in script

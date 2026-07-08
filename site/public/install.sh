@@ -1,11 +1,13 @@
 #!/bin/sh
-# Capsem installer -- downloads the latest release and installs it.
+# Capsem installer -- downloads the stable binary package and installs it.
 #   macOS: downloads .pkg, opens the native installer GUI
 #   Linux: downloads .deb, installs via apt
 # Usage: curl -fsSL https://capsem.org/install.sh | sh
 set -eu
 
-REPO="google/capsem"
+CAPSEM_CHANNEL="${CAPSEM_CHANNEL:-stable}"
+CAPSEM_RELEASE_BASE_URL="${CAPSEM_RELEASE_BASE_URL:-https://release.capsem.org}"
+CAPSEM_MANIFEST_URL="${CAPSEM_MANIFEST_URL:-${CAPSEM_RELEASE_BASE_URL}/assets/${CAPSEM_CHANNEL}/manifest.json}"
 
 # -- Testable functions ------------------------------------------------------
 # These functions can be unit-tested by sourcing this script with
@@ -49,22 +51,110 @@ detect_arch() {
 }
 
 find_asset_url() {
-    _release_json="$1"
+    _manifest_json="$1"
     _os="$2"
     _arch="$3"
     case "$_os" in
         darwin)
-            _pattern='\.pkg"'
+            _platform="macos"
+            _kind="macos_pkg"
+            _manifest_arch="arm64"
+            _name_suffix=".pkg"
             ;;
         linux)
-            _pattern="_${_arch}\.deb\""
+            _platform="linux"
+            _kind="debian_package"
+            case "$_arch" in
+                amd64)
+                    _manifest_arch="x86_64"
+                    _name_suffix="_amd64.deb"
+                    ;;
+                arm64)
+                    _manifest_arch="arm64"
+                    _name_suffix="_arm64.deb"
+                    ;;
+                *)
+                    echo "Error: no matching asset found for $_os/$_arch in the ${CAPSEM_CHANNEL} release channel." >&2
+                    return 1
+                    ;;
+            esac
             ;;
     esac
-    ASSET_URL="$(echo "$_release_json" | grep '"browser_download_url"' | grep "$_pattern" | head -1 | sed 's/.*"browser_download_url": *"//;s/".*//')"
-    if [ -z "$ASSET_URL" ]; then
-        echo "Error: no matching asset found for $_os/$_arch in this release." >&2
+
+    _asset_record="$(printf '%s\n' "$_manifest_json" | awk \
+        -v platform="$_platform" \
+        -v kind="$_kind" \
+        -v arch="$_manifest_arch" '
+        function count_char(text, char, i, n) {
+            n = 0
+            for (i = 1; i <= length(text); i++) {
+                if (substr(text, i, 1) == char) {
+                    n++
+                }
+            }
+            return n
+        }
+        BEGIN {
+            platform_re = "\"" "platform" "\"" "[[:space:]]*:[[:space:]]*\"" platform "\""
+            kind_re = "\"" "kind" "\"" "[[:space:]]*:[[:space:]]*\"" kind "\""
+            arch_re = "\"" "architecture" "\"" "[[:space:]]*:[[:space:]]*\"" arch "\""
+            status_re = "\"" "status" "\"" "[[:space:]]*:[[:space:]]*\"current\""
+        }
+        /"packages"[[:space:]]*:/ {
+            in_packages = 1
+            next
+        }
+        in_packages {
+            if (!in_package && $0 ~ /^[[:space:]]*\{/) {
+                in_package = 1
+                depth = 0
+                block = ""
+            }
+            if (in_package) {
+                block = block $0 "\n"
+                depth += count_char($0, "{") - count_char($0, "}")
+                if (depth == 0) {
+                    if (block ~ platform_re && block ~ kind_re && block ~ arch_re && block ~ status_re) {
+                        printf "%s", block
+                        exit
+                    }
+                    in_package = 0
+                    block = ""
+                }
+            }
+        }
+    ')"
+
+    ASSET_URL="$(printf '%s\n' "$_asset_record" | awk -F'"' '/"url"[[:space:]]*:/ { value = $4 } END { print value }')"
+    ASSET_VERSION="$(printf '%s\n' "$_asset_record" | awk -F'"' '/"version"[[:space:]]*:/ { value = $4 } END { print value }')"
+    ASSET_NAME="$(printf '%s\n' "$_asset_record" | awk -F'"' '/"name"[[:space:]]*:/ { value = $4 } END { print value }')"
+
+    if [ -z "$ASSET_URL" ] || [ -z "$ASSET_VERSION" ] || [ -z "$ASSET_NAME" ]; then
+        echo "Error: no matching asset found for $_os/$_arch in the ${CAPSEM_CHANNEL} release channel." >&2
         return 1
     fi
+    case "$ASSET_NAME" in
+        *"$_name_suffix") ;;
+        *)
+            echo "Error: release channel selected unexpected package $ASSET_NAME for $_os/$_arch." >&2
+            return 1
+            ;;
+    esac
+    case "$ASSET_URL" in
+        http://*|https://*) ;;
+        *)
+            echo "Error: release channel package $ASSET_NAME has an invalid URL: $ASSET_URL" >&2
+            return 1
+            ;;
+    esac
+}
+
+fetch_release_manifest() {
+    if [ -z "$CAPSEM_MANIFEST_URL" ]; then
+        echo "Error: CAPSEM_MANIFEST_URL is empty." >&2
+        return 1
+    fi
+    curl -fsSL "$CAPSEM_MANIFEST_URL"
 }
 
 install_macos() {
@@ -148,21 +238,15 @@ case "$OS" in
         ;;
 esac
 
-# Fetch latest release
-echo "Fetching latest Capsem release..."
-RELEASE_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest")"
-
-TAG="$(echo "$RELEASE_JSON" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')"
-if [ -z "$TAG" ]; then
-    echo "Error: could not determine latest release tag." >&2
-    exit 1
-fi
-
-VERSION="${TAG#v}"
-echo "Installing Capsem $VERSION..."
+# Fetch stable release-channel manifest. The asset lane may be newer than the
+# binary lane, so do not use GitHub's "latest release" endpoint here.
+echo "Fetching Capsem ${CAPSEM_CHANNEL} release channel..."
+RELEASE_MANIFEST="$(fetch_release_manifest)"
 
 # Find the right asset
-find_asset_url "$RELEASE_JSON" "$OS" "$ARCH"
+find_asset_url "$RELEASE_MANIFEST" "$OS" "$ARCH"
+VERSION="$ASSET_VERSION"
+echo "Installing Capsem $VERSION from ${CAPSEM_CHANNEL}..."
 
 # Install
 case "$OS" in

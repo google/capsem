@@ -29,9 +29,9 @@ through the service asset contract.
 
 ### Manual download
 
-1. Go to the [latest release](https://github.com/google/capsem/releases/latest) on GitHub.
-2. Download the `.dmg` (macOS) or `.deb` (Linux) file for your architecture.
-3. macOS: open the DMG and drag **Capsem.app** to `/Applications`.
+1. Go to the [stable release channel](https://release.capsem.org/channels/stable/).
+2. Download the `.pkg` (macOS) or `.deb` (Linux) file for your architecture.
+3. macOS: open the package installer and follow the prompts.
 4. Linux: `sudo apt install ./capsem_*.deb`
 
 ### Building from source

@@ -8,11 +8,11 @@ export const SITE = {
   installCmd: "curl -fsSL https://capsem.org/install.sh | sh",
   github: "https://github.com/google/capsem",
   docs: "https://docs.capsem.org",
-  releases: "https://github.com/google/capsem/releases/latest",
+  releases: "https://release.capsem.org/channels/stable/",
   issues: "https://github.com/google/capsem/issues",
   copyright: "Elie Bursztein",
   license: "MIT",
-  platform: "macOS 14+ on Apple Silicon",
+  platform: "macOS 14+ on Apple Silicon or Debian/Ubuntu Linux with KVM",
 } as const;
 
 export const NAV_LINKS = [
@@ -146,7 +146,7 @@ export const FOOTER_COLUMNS = [
       { label: "Documentation", href: SITE.docs },
       { label: "GitHub", href: SITE.github },
       { label: "Issues", href: SITE.issues },
-      { label: "Releases", href: SITE.releases },
+      { label: "Release Channel", href: SITE.releases },
     ],
   },
 ] as const;
