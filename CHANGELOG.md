@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1783554373] - 2026-07-08
+
+### Fixed
+- Made binary-lane channel assembly materialize preserved profile config
+  artifacts from the asset release source tag and verify their hashes before
+  deploy, keeping stable/nightly package updates from corrupting immutable
+  profile release paths.
+
 ## [1.5.1783550716] - 2026-07-08
 
 ### Fixed

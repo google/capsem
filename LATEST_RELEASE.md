@@ -1,6 +1,7 @@
-version: 1.5.1783550716
+version: 1.5.1783554373
 ---
 ### Fixed
-- Removed the stale macOS `cargo sbom` handoff from release artifacts and made
-  channel assembly regenerate packaged host SBOM evidence from the downloaded
-  `.pkg` and `.deb` files before validating stable/nightly manifests.
+- Made binary-lane channel assembly materialize preserved profile config
+  artifacts from the asset release source tag and verify their hashes before
+  deploy, keeping stable/nightly package updates from corrupting immutable
+  profile release paths.
