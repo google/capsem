@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs,
     io::{ErrorKind, Read},
     path::{Path, PathBuf},
@@ -5140,23 +5140,6 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
         copy_dir_recursive(&args.config_root, &args.output_root)?;
     }
 
-    let manifest_bytes = read_manifest_url(&args.manifest)?;
-    let manifest_content = std::str::from_utf8(&manifest_bytes)
-        .with_context(|| format!("manifest URL did not return UTF-8 JSON: {}", args.manifest))?;
-    let manifest = ManifestV2::from_json(manifest_content)
-        .with_context(|| format!("parse manifest from {}", args.manifest))?;
-    let current_release = manifest
-        .assets
-        .releases
-        .get(&manifest.assets.current)
-        .ok_or_else(|| {
-            anyhow!(
-                "manifest {} current asset release {} is missing",
-                args.manifest,
-                manifest.assets.current
-            )
-        })?;
-
     let mut profile = load_profile(&args.profile)?;
     profile
         .validate()
@@ -5169,6 +5152,31 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
             .arch
             .retain(|arch, _| selected_arches.iter().any(|selected| selected == arch));
     }
+
+    let manifest_bytes = read_manifest_url(&args.manifest)?;
+    let manifest_content = std::str::from_utf8(&manifest_bytes)
+        .with_context(|| format!("manifest URL did not return UTF-8 JSON: {}", args.manifest))?;
+    let materialize_manifest = load_profile_materialize_manifest(
+        &args.manifest,
+        manifest_content,
+        &manifest_bytes,
+        &profile.id,
+        &selected_arches,
+    )
+    .with_context(|| format!("parse manifest from {}", args.manifest))?;
+    let manifest = materialize_manifest.manifest;
+    let current_release = manifest
+        .assets
+        .releases
+        .get(&manifest.assets.current)
+        .ok_or_else(|| {
+            anyhow!(
+                "manifest {} current asset release {} is missing",
+                args.manifest,
+                manifest.assets.current
+            )
+        })?;
+
     copy_profile_descriptor_files(&profile, &args.config_root, &args.output_root)?;
     materialize_profile_file_descriptors(&mut profile, &args.output_root)?;
 
@@ -5195,6 +5203,7 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
                 &arch,
                 &mut profile_assets.kernel,
                 manifest_assets,
+                &materialize_manifest.asset_urls,
                 &mut materialized_assets,
             )?;
             materialize_profile_asset_descriptor(
@@ -5204,6 +5213,7 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
                 &arch,
                 &mut profile_assets.initrd,
                 manifest_assets,
+                &materialize_manifest.asset_urls,
                 &mut materialized_assets,
             )?;
             materialize_profile_asset_descriptor(
@@ -5213,6 +5223,7 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
                 &arch,
                 &mut profile_assets.rootfs,
                 manifest_assets,
+                &materialize_manifest.asset_urls,
                 &mut materialized_assets,
             )?;
             profile_assets
@@ -5228,6 +5239,7 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
                 asset_version: &manifest.assets.current,
                 arch: &arch,
                 manifest_assets,
+                asset_urls: &materialize_manifest.asset_urls,
             },
             rootfs_hash,
             &mut profile,
@@ -5259,7 +5271,7 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
             .ok_or_else(|| anyhow!("materialized manifest path has no parent"))?,
     )
     .with_context(|| format!("create parent for {}", manifest_output.display()))?;
-    fs::write(&manifest_output, &manifest_bytes)
+    fs::write(&manifest_output, &materialize_manifest.manifest_bytes)
         .with_context(|| format!("write {}", manifest_output.display()))?;
 
     let copied_validation =
@@ -5287,6 +5299,249 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
     })
 }
 
+struct ProfileMaterializeManifest {
+    manifest: ManifestV2,
+    manifest_bytes: Vec<u8>,
+    asset_urls: HashMap<(String, String), String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseChannelProfileManifest {
+    profiles: BTreeMap<String, ReleaseChannelProfileDocument>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseChannelProfileDocument {
+    revision: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    architectures: Vec<ReleaseChannelProfileArchitecture>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseChannelProfileArchitecture {
+    architecture: String,
+    #[serde(default)]
+    images: Vec<ReleaseChannelProfileArtifact>,
+    #[serde(default)]
+    evidence: Vec<ReleaseChannelProfileArtifact>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseChannelProfileArtifact {
+    kind: String,
+    #[serde(default)]
+    name: String,
+    url: String,
+    #[serde(rename = "bytes")]
+    size: u64,
+    digest: ReleaseChannelProfileDigest,
+    #[serde(default)]
+    status: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseChannelProfileDigest {
+    sha256: String,
+    blake3: String,
+}
+
+fn load_profile_materialize_manifest(
+    manifest_url: &str,
+    manifest_content: &str,
+    manifest_bytes: &[u8],
+    profile_id: &str,
+    selected_arches: &[String],
+) -> Result<ProfileMaterializeManifest> {
+    if let Ok(manifest) = ManifestV2::from_json(manifest_content) {
+        return Ok(ProfileMaterializeManifest {
+            manifest,
+            manifest_bytes: manifest_bytes.to_vec(),
+            asset_urls: HashMap::new(),
+        });
+    }
+
+    profile_materialize_manifest_from_release_channel(
+        manifest_url,
+        manifest_content,
+        profile_id,
+        selected_arches,
+    )
+}
+
+fn profile_materialize_manifest_from_release_channel(
+    manifest_url: &str,
+    manifest_content: &str,
+    profile_id: &str,
+    selected_arches: &[String],
+) -> Result<ProfileMaterializeManifest> {
+    let document: ReleaseChannelProfileManifest = serde_json::from_str(manifest_content)
+        .context("failed to parse release channel profile manifest JSON")?;
+    let profile = document
+        .profiles
+        .get(profile_id)
+        .ok_or_else(|| anyhow!("release channel manifest does not contain profile {profile_id}"))?;
+    if release_channel_status_is_revoked(&profile.status) {
+        anyhow::bail!("release channel profile {profile_id} is revoked");
+    }
+
+    let mut arch_entries: HashMap<String, HashMap<String, capsem_core::asset_manager::AssetEntry>> =
+        HashMap::new();
+    let mut asset_urls = HashMap::new();
+    for arch in selected_arches {
+        let architecture = profile
+            .architectures
+            .iter()
+            .find(|candidate| candidate.architecture == *arch)
+            .ok_or_else(|| {
+                anyhow!("release channel profile {profile_id} does not contain architecture {arch}")
+            })?;
+        let mut assets = HashMap::new();
+        for artifact in architecture
+            .images
+            .iter()
+            .chain(architecture.evidence.iter())
+        {
+            if release_channel_status_is_revoked(&artifact.status) {
+                continue;
+            }
+            let Some(logical_name) = release_channel_profile_artifact_logical_name(artifact) else {
+                continue;
+            };
+            validate_release_channel_digest(&artifact.digest)
+                .with_context(|| format!("validate {arch} {logical_name} digest"))?;
+            assets.insert(
+                logical_name.to_string(),
+                capsem_core::asset_manager::AssetEntry {
+                    hash: artifact.digest.blake3.clone(),
+                    sha256: artifact.digest.sha256.clone(),
+                    size: artifact.size,
+                },
+            );
+            asset_urls.insert(
+                (arch.clone(), logical_name.to_string()),
+                resolve_release_channel_artifact_url(manifest_url, &artifact.url)?,
+            );
+        }
+        for required in ["vmlinuz", "initrd.img", "rootfs.erofs"] {
+            if !assets.contains_key(required) {
+                anyhow::bail!(
+                    "release channel profile {profile_id} revision {} architecture {arch} missing {required} image",
+                    profile.revision
+                );
+            }
+        }
+        arch_entries.insert(arch.clone(), assets);
+    }
+
+    let binary_version = env!("CARGO_PKG_VERSION").to_string();
+    let manifest = ManifestV2 {
+        format: 2,
+        refresh_policy: "24h".to_string(),
+        asset_base: None,
+        assets: capsem_core::asset_manager::AssetsSection {
+            current: profile.revision.clone(),
+            releases: HashMap::from([(
+                profile.revision.clone(),
+                capsem_core::asset_manager::AssetRelease {
+                    date: String::new(),
+                    deprecated: false,
+                    deprecated_date: None,
+                    min_binary: String::new(),
+                    arches: arch_entries,
+                },
+            )]),
+        },
+        binaries: capsem_core::asset_manager::BinariesSection {
+            current: binary_version.clone(),
+            releases: HashMap::from([(
+                binary_version.clone(),
+                capsem_core::asset_manager::BinaryRelease {
+                    date: String::new(),
+                    deprecated: false,
+                    deprecated_date: None,
+                    min_assets: profile.revision.clone(),
+                    version: binary_version,
+                    files: Vec::new(),
+                },
+            )]),
+        },
+    };
+    let manifest_bytes =
+        serde_json::to_vec_pretty(&manifest).context("serialize converted asset manifest")?;
+    let manifest_json =
+        std::str::from_utf8(&manifest_bytes).context("converted manifest JSON is UTF-8")?;
+    ManifestV2::from_json(manifest_json).context("validate converted asset manifest")?;
+
+    Ok(ProfileMaterializeManifest {
+        manifest,
+        manifest_bytes,
+        asset_urls,
+    })
+}
+
+fn release_channel_profile_artifact_logical_name(
+    artifact: &ReleaseChannelProfileArtifact,
+) -> Option<&'static str> {
+    match artifact.kind.as_str() {
+        "kernel" => Some("vmlinuz"),
+        "initrd" => Some("initrd.img"),
+        "rootfs" => Some("rootfs.erofs"),
+        "obom" => Some("obom.cdx.json"),
+        _ if artifact.name == "obom.cdx.json" => Some("obom.cdx.json"),
+        _ => None,
+    }
+}
+
+fn release_channel_status_is_revoked(status: &str) -> bool {
+    status.eq_ignore_ascii_case("revoked")
+}
+
+fn validate_release_channel_digest(digest: &ReleaseChannelProfileDigest) -> Result<()> {
+    if !is_64_hex(&digest.blake3) {
+        anyhow::bail!("profile image blake3 must be a 64-character hex digest");
+    }
+    if !is_64_hex(&digest.sha256) {
+        anyhow::bail!("profile image sha256 must be a 64-character hex digest");
+    }
+    Ok(())
+}
+
+fn is_64_hex(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn resolve_release_channel_artifact_url(channel_source: &str, artifact: &str) -> Result<String> {
+    let trimmed = artifact.trim();
+    if trimmed.is_empty() {
+        anyhow::bail!("release channel artifact URL is empty");
+    }
+    if trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("file://")
+    {
+        let parsed = reqwest::Url::parse(trimmed)
+            .with_context(|| format!("parse release channel artifact URL {trimmed}"))?;
+        return Ok(parsed.to_string());
+    }
+
+    let base = reqwest::Url::parse(channel_source)
+        .with_context(|| format!("parse release channel URL {channel_source}"))?;
+    if trimmed.starts_with('/') {
+        let mut root = base;
+        root.set_path(trimmed);
+        root.set_query(None);
+        root.set_fragment(None);
+        return Ok(root.to_string());
+    }
+    base.join(trimmed)
+        .with_context(|| {
+            format!("resolve release channel artifact {trimmed} against {channel_source}")
+        })
+        .map(|url| url.to_string())
+}
+
 fn materialize_profile_asset_descriptor(
     assets_dir: &Path,
     manifest_url: &str,
@@ -5294,6 +5549,7 @@ fn materialize_profile_asset_descriptor(
     arch: &str,
     descriptor: &mut capsem_core::net::policy_config::ProfileAssetDescriptor,
     manifest_assets: &std::collections::HashMap<String, capsem_core::asset_manager::AssetEntry>,
+    asset_urls: &HashMap<(String, String), String>,
     reports: &mut Vec<ProfileMaterializedAssetReport>,
 ) -> Result<()> {
     let entry = manifest_assets.get(&descriptor.name).ok_or_else(|| {
@@ -5302,7 +5558,7 @@ fn materialize_profile_asset_descriptor(
             descriptor.name
         )
     })?;
-    descriptor.url = materialized_asset_url(
+    descriptor.url = materialized_profile_asset_url(
         assets_dir,
         manifest_url,
         asset_version,
@@ -5310,6 +5566,7 @@ fn materialize_profile_asset_descriptor(
         &descriptor.name,
         &entry.hash,
         entry.size,
+        asset_urls,
     )?;
     descriptor.hash = Some(format!("blake3:{}", entry.hash));
     descriptor.size = Some(entry.size);
@@ -5374,6 +5631,7 @@ struct ProfileObomMaterializeInputs<'a> {
     asset_version: &'a str,
     arch: &'a str,
     manifest_assets: &'a std::collections::HashMap<String, capsem_core::asset_manager::AssetEntry>,
+    asset_urls: &'a HashMap<(String, String), String>,
 }
 
 fn materialize_profile_obom_descriptor(
@@ -5385,7 +5643,7 @@ fn materialize_profile_obom_descriptor(
     let Some(entry) = inputs.manifest_assets.get("obom.cdx.json") else {
         return Ok(());
     };
-    let obom_url = materialized_asset_url(
+    let obom_url = materialized_profile_asset_url(
         inputs.assets_dir,
         inputs.manifest_url,
         inputs.asset_version,
@@ -5393,6 +5651,7 @@ fn materialize_profile_obom_descriptor(
         "obom.cdx.json",
         &entry.hash,
         entry.size,
+        inputs.asset_urls,
     )?;
     let (generator, generator_version) = if obom_url.starts_with("file://") {
         let obom_path = inputs.assets_dir.join(inputs.arch).join("obom.cdx.json");
@@ -5430,6 +5689,30 @@ fn materialize_profile_obom_descriptor(
         scope: "base_image",
     });
     Ok(())
+}
+
+fn materialized_profile_asset_url(
+    assets_dir: &Path,
+    manifest_url: &str,
+    asset_version: &str,
+    arch: &str,
+    logical_name: &str,
+    hash: &str,
+    size: u64,
+    asset_urls: &HashMap<(String, String), String>,
+) -> Result<String> {
+    if let Some(url) = asset_urls.get(&(arch.to_string(), logical_name.to_string())) {
+        return Ok(url.clone());
+    }
+    materialized_asset_url(
+        assets_dir,
+        manifest_url,
+        asset_version,
+        arch,
+        logical_name,
+        hash,
+        size,
+    )
 }
 
 fn materialized_asset_url(
@@ -7991,6 +8274,144 @@ decision = "block"
         assert_eq!(obom.url, format!("{expected_base}/arm64-obom.cdx.json"));
         assert_eq!(obom.generator, "remote");
         assert_eq!(obom.generator_version, "unknown");
+    }
+
+    #[test]
+    fn profile_materialize_release_channel_manifest_uses_profile_image_urls() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let output_root = temp.path().join("target/config");
+        let digest = |bytes: &[u8]| {
+            serde_json::json!({
+                "sha256": format!("{:x}", Sha256::digest(bytes)),
+                "blake3": blake3::hash(bytes).to_hex().to_string(),
+            })
+        };
+        let manifest_json = serde_json::to_string_pretty(&serde_json::json!({
+            "version": "1.5.0+assets.2030.0101.1",
+            "status": "current",
+            "packages": [],
+            "profiles": {
+                "code": {
+                    "version": "2030.0101.1",
+                    "id": "code",
+                    "name": "Code",
+                    "revision": "2030.0101.1",
+                    "status": "current",
+                    "min_capsem_version": "1.5.0",
+                    "architectures": [
+                        {
+                            "architecture": "arm64",
+                            "images": [
+                                {
+                                    "kind": "kernel",
+                                    "name": "vmlinuz",
+                                    "url": "/profiles/releases/2030.0101.1/code/arm64/vmlinuz",
+                                    "bytes": b"kernel-arm64".len(),
+                                    "digest": digest(b"kernel-arm64"),
+                                    "status": "current"
+                                },
+                                {
+                                    "kind": "initrd",
+                                    "name": "initrd.img",
+                                    "url": "https://cdn.example.test/initrd.img",
+                                    "bytes": b"initrd-arm64".len(),
+                                    "digest": digest(b"initrd-arm64"),
+                                    "status": "current"
+                                },
+                                {
+                                    "kind": "rootfs",
+                                    "name": "rootfs.erofs",
+                                    "url": "/profiles/releases/2030.0101.1/code/arm64/rootfs.erofs",
+                                    "bytes": b"rootfs-arm64".len(),
+                                    "digest": digest(b"rootfs-arm64"),
+                                    "status": "current"
+                                }
+                            ],
+                            "evidence": [
+                                {
+                                    "kind": "obom",
+                                    "name": "obom.cdx.json",
+                                    "url": "/profiles/releases/2030.0101.1/code/arm64/obom.cdx.json",
+                                    "bytes": b"obom-arm64".len(),
+                                    "digest": digest(b"obom-arm64"),
+                                    "status": "current"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        }))
+        .expect("release channel manifest");
+        let manifest_url = serve_manifest_once(manifest_json);
+
+        materialize_profile_config(&ProfileMaterializeArgs {
+            profile: repo_root.join("config/profiles/code/profile.toml"),
+            config_root: repo_root.join("config"),
+            manifest: manifest_url.clone(),
+            assets_dir: temp.path().join("no-local-assets"),
+            output_root: output_root.clone(),
+            arch: Some("arm64".to_string()),
+            clean: true,
+            json: true,
+        })
+        .expect("release channel manifest materializes without local asset blobs");
+
+        let generated_profile_path = output_root.join("profiles/code/profile.toml");
+        let generated: ProfileConfigFile =
+            toml::from_str(&fs::read_to_string(&generated_profile_path).expect("read generated"))
+                .expect("parse generated profile");
+        let arm64 = generated.assets.arch.get("arm64").expect("arm64 assets");
+        let expected_origin = manifest_url.replace("/assets/stable/manifest.json", "");
+        assert_eq!(
+            arm64.kernel.url,
+            format!("{expected_origin}/profiles/releases/2030.0101.1/code/arm64/vmlinuz")
+        );
+        assert_eq!(arm64.initrd.url, "https://cdn.example.test/initrd.img");
+        assert_eq!(
+            arm64.rootfs.url,
+            format!("{expected_origin}/profiles/releases/2030.0101.1/code/arm64/rootfs.erofs")
+        );
+        assert_eq!(
+            arm64.rootfs.hash,
+            Some(format!("blake3:{}", blake3::hash(b"rootfs-arm64").to_hex()))
+        );
+
+        let obom = generated
+            .obom
+            .as_ref()
+            .expect("release channel OBOM descriptor")
+            .arch
+            .get("arm64")
+            .expect("arm64 OBOM");
+        assert_eq!(
+            obom.url,
+            format!("{expected_origin}/profiles/releases/2030.0101.1/code/arm64/obom.cdx.json")
+        );
+        assert_eq!(obom.generator, "remote");
+        assert_eq!(obom.generator_version, "unknown");
+
+        let converted_manifest_path = output_root.join("assets/manifest.json");
+        let converted = ManifestV2::from_json(
+            &fs::read_to_string(&converted_manifest_path).expect("read converted manifest"),
+        )
+        .expect("converted release channel manifest is raw v2");
+        assert_eq!(converted.format, 2);
+        assert_eq!(converted.assets.current, "2030.0101.1");
+        let converted_assets = converted.assets.releases["2030.0101.1"]
+            .arches
+            .get("arm64")
+            .expect("converted arm64 assets");
+        assert!(converted_assets.contains_key("obom.cdx.json"));
+        assert_eq!(
+            converted_assets["initrd.img"].sha256,
+            format!("{:x}", Sha256::digest(b"initrd-arm64"))
+        );
     }
 
     #[test]
