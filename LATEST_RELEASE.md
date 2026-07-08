@@ -1,5 +1,6 @@
-version: 1.5.1783539702
+version: 1.5.1783540422
 ---
 ### Fixed
-- Made the settings generator print `target/build.log` when release CI fails
-  during MCP catalog export, and package-qualified the export binary selection.
+- Kept the MCP HTTP client on the current SSE stream constructor and scoped
+  Linux-only overlay helpers so release builds pass denied-warning checks on
+  both macOS and Linux.
