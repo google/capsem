@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Kept the MCP HTTP client on the current SSE stream constructor and scoped
+  Linux-only overlay helpers so release builds pass denied-warning checks on
+  both macOS and Linux.
+
 ## [1.5.1783539702] - 2026-07-08
 
 ### Fixed

@@ -124,6 +124,7 @@ pub fn system_overlay_has_ext4_magic(path: &Path) -> std::io::Result<bool> {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn system_overlay_matches(path: &Path, size_gb: u32) -> std::io::Result<bool> {
     match std::fs::metadata(path) {
         Ok(metadata) if metadata.len() == system_overlay_image_len(size_gb) => {
