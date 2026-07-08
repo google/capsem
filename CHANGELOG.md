@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made `capsem update --assets` accept split-lane release-channel profile
   manifests, hydrate their exact VM image artifact URLs, and install a
   validated local v2 asset manifest for runtime compatibility.
+- Made the tray gateway client report corrupt gateway tokens as ordinary
+  request errors instead of panicking its background poller.
 
 ## [1.5.1783439394] - 2026-07-07
 

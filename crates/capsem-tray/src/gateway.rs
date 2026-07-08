@@ -148,16 +148,16 @@ impl GatewayClient {
         self.base_url.clone()
     }
 
-    fn auth_header(&self) -> HeaderValue {
+    fn auth_header(&self) -> Result<HeaderValue> {
         HeaderValue::from_str(&format!("Bearer {}", self.token))
-            .expect("token contains invalid header chars")
+            .context("gateway token contains invalid header characters")
     }
 
     async fn get(&self, path: &str) -> Result<reqwest::Response> {
         let resp = self
             .client
             .get(format!("{}{path}", self.base_url()))
-            .header(AUTHORIZATION, self.auth_header())
+            .header(AUTHORIZATION, self.auth_header()?)
             .send()
             .await
             .context("gateway request failed")?;
@@ -172,7 +172,7 @@ impl GatewayClient {
         let resp = self
             .client
             .post(format!("{}{path}", self.base_url()))
-            .header(AUTHORIZATION, self.auth_header())
+            .header(AUTHORIZATION, self.auth_header()?)
             .send()
             .await
             .context("gateway request failed")?;
@@ -187,7 +187,7 @@ impl GatewayClient {
         let resp = self
             .client
             .delete(format!("{}{path}", self.base_url()))
-            .header(AUTHORIZATION, self.auth_header())
+            .header(AUTHORIZATION, self.auth_header()?)
             .send()
             .await
             .context("gateway request failed")?;
@@ -247,7 +247,7 @@ impl GatewayClient {
         let resp = self
             .client
             .post(format!("{}/vms/create", self.base_url()))
-            .header(AUTHORIZATION, self.auth_header())
+            .header(AUTHORIZATION, self.auth_header()?)
             .json(&serde_json::json!({ "profile_id": "code" }))
             .send()
             .await
@@ -332,7 +332,19 @@ mod tests {
     #[test]
     fn auth_header_format() {
         let client = GatewayClient::new(8080, "my-secret".into());
-        assert_eq!(client.auth_header().to_str().unwrap(), "Bearer my-secret");
+        assert_eq!(
+            client.auth_header().unwrap().to_str().unwrap(),
+            "Bearer my-secret"
+        );
+    }
+
+    #[test]
+    fn auth_header_rejects_invalid_token_without_panic() {
+        let client = GatewayClient::new(8080, "bad\ntoken".into());
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| client.auth_header()))
+                .expect("invalid token must be returned as an error, not a panic");
+        assert!(result.is_err(), "invalid token should be rejected");
     }
 
     // -----------------------------------------------------------------------
