@@ -1,11 +1,5 @@
-version: 1.5.1783538942
+version: 1.5.1783539702
 ---
 ### Fixed
-- Made the public installer resolve `.pkg` and `.deb` packages from the
-  stable release-channel manifest instead of GitHub's latest release pointer,
-  and updated the marketing/docs download links to use the stable channel.
-- Made `capsem update --assets` accept split-lane release-channel profile
-  manifests, hydrate their exact VM image artifact URLs, and install a
-  validated local v2 asset manifest for runtime compatibility.
-- Made the tray gateway client report corrupt gateway tokens as ordinary
-  request errors instead of panicking its background poller.
+- Made the settings generator print `target/build.log` when release CI fails
+  during MCP catalog export, and package-qualified the export binary selection.

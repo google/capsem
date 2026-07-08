@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1783539702] - 2026-07-08
+
 ### Fixed
 - Made the settings generator print `target/build.log` when release CI fails
   during MCP catalog export, and package-qualified the export binary selection.
