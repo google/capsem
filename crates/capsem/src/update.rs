@@ -5,10 +5,8 @@
 //! publishes one; the privileged installer apply step is intentionally separate
 //! from VM asset hydration.
 
-#[cfg(test)]
-use std::collections::BTreeMap;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet, HashMap},
     path::{Path, PathBuf},
 };
 
@@ -231,6 +229,57 @@ struct PublishedProfileCatalogDocument {
     #[allow(dead_code)]
     state: Option<String>,
     profiles: Vec<ProfileConfigFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseChannelProfileManifest {
+    #[allow(dead_code)]
+    version: String,
+    #[serde(default)]
+    profiles: BTreeMap<String, ReleaseChannelProfileDocument>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseChannelProfileDocument {
+    revision: String,
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    architectures: Vec<ReleaseChannelProfileArchitecture>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseChannelProfileArchitecture {
+    architecture: String,
+    #[serde(default, rename = "images")]
+    artifacts: Vec<ReleaseChannelProfileImage>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseChannelProfileImage {
+    kind: String,
+    name: String,
+    url: String,
+    #[serde(rename = "bytes")]
+    size: u64,
+    digest: ReleaseChannelProfileDigest,
+    #[serde(default)]
+    status: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ReleaseChannelProfileDigest {
+    sha256: String,
+    blake3: String,
+}
+
+#[derive(Debug, Clone)]
+struct ReleaseChannelAssetDownload {
+    logical_name: String,
+    url: String,
+    size: u64,
+    sha256: String,
+    blake3: String,
 }
 
 #[cfg(test)]
@@ -1957,17 +2006,458 @@ async fn provision_corp_config(source: &str) -> Result<()> {
     Ok(())
 }
 
+fn manifest_from_release_channel_profile_graph(
+    body: &str,
+    arch: &str,
+) -> Result<(
+    capsem_core::asset_manager::ManifestV2,
+    Vec<ReleaseChannelAssetDownload>,
+)> {
+    let document: ReleaseChannelProfileManifest = serde_json::from_str(body)
+        .context("failed to parse release channel profile manifest JSON")?;
+    if document.profiles.is_empty() {
+        anyhow::bail!("release channel profile manifest contains no profiles");
+    }
+
+    let mut primary: Option<(
+        String,
+        HashMap<String, capsem_core::asset_manager::AssetEntry>,
+    )> = None;
+    let mut downloads = Vec::new();
+
+    for (profile_id, profile) in &document.profiles {
+        if release_channel_status_is_revoked(&profile.status) {
+            continue;
+        }
+        let Some(arch_images) = profile
+            .architectures
+            .iter()
+            .find(|candidate| candidate.architecture == arch)
+        else {
+            continue;
+        };
+        let assets = profile_assets_from_release_channel_images(
+            profile_id,
+            &profile.revision,
+            arch,
+            &arch_images.artifacts,
+        )?;
+        let is_default = profile_id == "default";
+        if primary.is_none() || is_default {
+            primary = Some((profile.revision.clone(), assets.clone()));
+        }
+        for artifact in &arch_images.artifacts {
+            if release_channel_status_is_revoked(&artifact.status) {
+                continue;
+            }
+            if let Some(logical_name) = release_channel_image_logical_name(&artifact.kind) {
+                validate_release_channel_digest(&artifact.digest)?;
+                downloads.push(ReleaseChannelAssetDownload {
+                    logical_name: logical_name.to_string(),
+                    url: artifact.url.clone(),
+                    size: artifact.size,
+                    sha256: artifact.digest.sha256.clone(),
+                    blake3: artifact.digest.blake3.clone(),
+                });
+            }
+        }
+    }
+
+    let Some((asset_version, arch_assets)) = primary else {
+        anyhow::bail!("release channel profile manifest contains no complete {arch} image set");
+    };
+    let binary_version = env!("CARGO_PKG_VERSION").to_string();
+    let manifest = capsem_core::asset_manager::ManifestV2 {
+        format: 2,
+        refresh_policy: "24h".to_string(),
+        asset_base: None,
+        assets: capsem_core::asset_manager::AssetsSection {
+            current: asset_version.clone(),
+            releases: HashMap::from([(
+                asset_version.clone(),
+                capsem_core::asset_manager::AssetRelease {
+                    date: String::new(),
+                    deprecated: false,
+                    deprecated_date: None,
+                    min_binary: String::new(),
+                    arches: HashMap::from([(arch.to_string(), arch_assets)]),
+                },
+            )]),
+        },
+        binaries: capsem_core::asset_manager::BinariesSection {
+            current: binary_version.clone(),
+            releases: HashMap::from([(
+                binary_version.clone(),
+                capsem_core::asset_manager::BinaryRelease {
+                    date: String::new(),
+                    deprecated: false,
+                    deprecated_date: None,
+                    min_assets: asset_version,
+                    version: binary_version,
+                    files: Vec::new(),
+                },
+            )]),
+        },
+    };
+    let json = serde_json::to_string(&manifest).context("serialize converted asset manifest")?;
+    capsem_core::asset_manager::ManifestV2::from_json(&json)
+        .context("validate converted asset manifest")?;
+    Ok((manifest, dedupe_release_channel_downloads(downloads)))
+}
+
+fn profile_assets_from_release_channel_images(
+    profile_id: &str,
+    revision: &str,
+    arch: &str,
+    artifacts: &[ReleaseChannelProfileImage],
+) -> Result<HashMap<String, capsem_core::asset_manager::AssetEntry>> {
+    let mut assets = HashMap::new();
+    for artifact in artifacts {
+        if release_channel_status_is_revoked(&artifact.status) {
+            continue;
+        }
+        if artifact.name.trim().is_empty() {
+            anyhow::bail!(
+                "release channel profile {profile_id} revision {revision} architecture {arch} has an unnamed {} image",
+                artifact.kind
+            );
+        }
+        let Some(logical_name) = release_channel_image_logical_name(&artifact.kind) else {
+            continue;
+        };
+        validate_release_channel_digest(&artifact.digest)?;
+        assets.insert(
+            logical_name.to_string(),
+            capsem_core::asset_manager::AssetEntry {
+                hash: artifact.digest.blake3.clone(),
+                sha256: artifact.digest.sha256.clone(),
+                size: artifact.size,
+            },
+        );
+    }
+    for required in ["vmlinuz", "initrd.img", "rootfs.erofs"] {
+        if !assets.contains_key(required) {
+            anyhow::bail!(
+                "release channel profile {profile_id} revision {revision} architecture {arch} missing {required} image"
+            );
+        }
+    }
+    Ok(assets)
+}
+
+fn release_channel_image_logical_name(kind: &str) -> Option<&'static str> {
+    match kind {
+        "kernel" => Some("vmlinuz"),
+        "initrd" => Some("initrd.img"),
+        "rootfs" => Some("rootfs.erofs"),
+        _ => None,
+    }
+}
+
+fn release_channel_status_is_revoked(status: &str) -> bool {
+    status.eq_ignore_ascii_case("revoked")
+}
+
+fn validate_release_channel_digest(digest: &ReleaseChannelProfileDigest) -> Result<()> {
+    validate_blake3_hex("profile image blake3", &digest.blake3)?;
+    if digest.sha256.len() != 64 || !digest.sha256.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        anyhow::bail!("profile image sha256 must be a 64-character hex digest");
+    }
+    Ok(())
+}
+
+fn dedupe_release_channel_downloads(
+    downloads: Vec<ReleaseChannelAssetDownload>,
+) -> Vec<ReleaseChannelAssetDownload> {
+    let mut seen = BTreeSet::new();
+    let mut unique = Vec::new();
+    for download in downloads {
+        let key = (download.logical_name.clone(), download.blake3.clone());
+        if seen.insert(key) {
+            unique.push(download);
+        }
+    }
+    unique.sort_by(|left, right| {
+        left.logical_name
+            .cmp(&right.logical_name)
+            .then_with(|| left.url.cmp(&right.url))
+    });
+    unique
+}
+
+async fn install_release_channel_profile_manifest(
+    assets_dir: &Path,
+    source: &str,
+    body: &str,
+) -> Result<()> {
+    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let (manifest, downloads) = manifest_from_release_channel_profile_graph(body, arch)?;
+    hydrate_release_channel_profile_assets(assets_dir, source, &downloads).await?;
+
+    std::fs::create_dir_all(assets_dir)
+        .with_context(|| format!("cannot create {}", assets_dir.display()))?;
+    let manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
+    atomic_write(&assets_dir.join("manifest.json"), &manifest_bytes)?;
+    write_manifest_origin(assets_dir, source)?;
+    println!("Installed asset manifest from {source}.");
+    Ok(())
+}
+
+async fn hydrate_release_channel_profile_assets(
+    assets_dir: &Path,
+    source: &str,
+    downloads: &[ReleaseChannelAssetDownload],
+) -> Result<()> {
+    if downloads.is_empty() {
+        anyhow::bail!("release channel profile manifest contains no image artifacts");
+    }
+    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let arch_dir = assets_dir.join(arch);
+    std::fs::create_dir_all(&arch_dir).with_context(|| format!("create {}", arch_dir.display()))?;
+
+    for download in downloads {
+        download_release_channel_profile_asset(&arch_dir, source, download).await?;
+    }
+    Ok(())
+}
+
+async fn download_release_channel_profile_asset(
+    arch_dir: &Path,
+    manifest_source: &str,
+    download: &ReleaseChannelAssetDownload,
+) -> Result<()> {
+    validate_blake3_hex("profile image blake3", &download.blake3)?;
+    let target = arch_dir.join(capsem_core::asset_manager::hash_filename(
+        &download.logical_name,
+        &download.blake3,
+    ));
+    if target.exists() {
+        if verify_release_channel_asset_file(&target, download)
+            .with_context(|| format!("verify existing profile image asset {}", target.display()))?
+        {
+            return Ok(());
+        }
+        let _ = std::fs::remove_file(&target);
+    }
+
+    let url = resolve_release_channel_artifact_url(manifest_source, &download.url)?;
+    let parsed = reqwest::Url::parse(&url)
+        .with_context(|| format!("parse release channel profile image URL {url}"))?;
+    match parsed.scheme() {
+        "file" => download_release_channel_profile_asset_from_file(&target, &parsed, download)
+            .with_context(|| format!("copy profile image {}", download.url))?,
+        "http" | "https" => {
+            download_release_channel_profile_asset_from_http(&target, &url, download).await?
+        }
+        scheme => anyhow::bail!(
+            "unsupported profile image URL scheme {scheme}: use https://, http://, or file://"
+        ),
+    }
+    Ok(())
+}
+
+fn verify_release_channel_asset_file(
+    path: &Path,
+    download: &ReleaseChannelAssetDownload,
+) -> Result<bool> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut blake3_hasher = blake3::Hasher::new();
+    let mut sha256_hasher = Sha256::new();
+    let mut bytes_done = 0u64;
+    let mut buffer = [0u8; 1024 * 1024];
+    loop {
+        let n = file
+            .read(&mut buffer)
+            .with_context(|| format!("read {}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        blake3_hasher.update(&buffer[..n]);
+        sha256_hasher.update(&buffer[..n]);
+        bytes_done += n as u64;
+    }
+    let actual_blake3 = blake3_hasher.finalize().to_hex().to_string();
+    let actual_sha256 = format!("{:x}", sha256_hasher.finalize());
+    Ok(bytes_done == download.size
+        && actual_blake3 == download.blake3
+        && actual_sha256.eq_ignore_ascii_case(&download.sha256))
+}
+
+fn download_release_channel_profile_asset_from_file(
+    target: &Path,
+    url: &reqwest::Url,
+    download: &ReleaseChannelAssetDownload,
+) -> Result<()> {
+    use std::io::{Read, Write};
+
+    let source_path = url.to_file_path().map_err(|_| {
+        anyhow::anyhow!("profile image file URL must be absolute: {}", url.as_str())
+    })?;
+    let tmp = target.with_extension("tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut source = std::fs::File::open(&source_path)
+        .with_context(|| format!("open {}", source_path.display()))?;
+    let mut dest =
+        std::fs::File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
+    let mut blake3_hasher = blake3::Hasher::new();
+    let mut sha256_hasher = Sha256::new();
+    let mut bytes_done = 0u64;
+    let mut buffer = [0u8; 1024 * 1024];
+    loop {
+        let n = source
+            .read(&mut buffer)
+            .with_context(|| format!("read {}", source_path.display()))?;
+        if n == 0 {
+            break;
+        }
+        dest.write_all(&buffer[..n])
+            .with_context(|| format!("write {}", tmp.display()))?;
+        blake3_hasher.update(&buffer[..n]);
+        sha256_hasher.update(&buffer[..n]);
+        bytes_done += n as u64;
+    }
+    dest.flush()
+        .with_context(|| format!("flush {}", tmp.display()))?;
+    drop(dest);
+    finish_release_channel_asset_download(
+        target,
+        &tmp,
+        download,
+        bytes_done,
+        blake3_hasher.finalize().to_hex().to_string(),
+        format!("{:x}", sha256_hasher.finalize()),
+    )
+}
+
+async fn download_release_channel_profile_asset_from_http(
+    target: &Path,
+    url: &str,
+    download: &ReleaseChannelAssetDownload,
+) -> Result<()> {
+    use tokio::io::AsyncWriteExt;
+
+    let mut resp = reqwest::Client::new()
+        .get(url)
+        .header("User-Agent", "capsem")
+        .send()
+        .await
+        .with_context(|| format!("GET {url}"))?;
+    if !resp.status().is_success() {
+        anyhow::bail!("GET {} returned {}", url, resp.status());
+    }
+
+    let tmp = target.with_extension("tmp");
+    let _ = std::fs::remove_file(&tmp);
+    let mut file = tokio::fs::File::create(&tmp)
+        .await
+        .with_context(|| format!("create {}", tmp.display()))?;
+    let mut blake3_hasher = blake3::Hasher::new();
+    let mut sha256_hasher = Sha256::new();
+    let mut bytes_done = 0u64;
+
+    loop {
+        let Some(chunk) = resp
+            .chunk()
+            .await
+            .with_context(|| format!("stream {url}"))?
+        else {
+            break;
+        };
+        if let Err(error) = file.write_all(&chunk).await {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(anyhow::Error::new(error).context(format!("write {}", tmp.display())));
+        }
+        blake3_hasher.update(&chunk);
+        sha256_hasher.update(&chunk);
+        bytes_done += chunk.len() as u64;
+    }
+    if let Err(error) = file.flush().await {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(anyhow::Error::new(error).context(format!("flush {}", tmp.display())));
+    }
+    drop(file);
+
+    finish_release_channel_asset_download(
+        target,
+        &tmp,
+        download,
+        bytes_done,
+        blake3_hasher.finalize().to_hex().to_string(),
+        format!("{:x}", sha256_hasher.finalize()),
+    )
+}
+
+fn finish_release_channel_asset_download(
+    target: &Path,
+    tmp: &Path,
+    download: &ReleaseChannelAssetDownload,
+    bytes_done: u64,
+    actual_blake3: String,
+    actual_sha256: String,
+) -> Result<()> {
+    if bytes_done != download.size {
+        let _ = std::fs::remove_file(tmp);
+        anyhow::bail!(
+            "{}: size mismatch (expected {}, got {})",
+            download.logical_name,
+            download.size,
+            bytes_done
+        );
+    }
+    if actual_blake3 != download.blake3 {
+        let _ = std::fs::remove_file(tmp);
+        anyhow::bail!(
+            "{}: hash mismatch (expected {}, got {})",
+            download.logical_name,
+            download.blake3,
+            actual_blake3
+        );
+    }
+    if !actual_sha256.eq_ignore_ascii_case(&download.sha256) {
+        let _ = std::fs::remove_file(tmp);
+        anyhow::bail!(
+            "{}: sha256 mismatch (expected {}, got {})",
+            download.logical_name,
+            download.sha256,
+            actual_sha256
+        );
+    }
+    std::fs::rename(tmp, target)
+        .with_context(|| format!("rename {} -> {}", tmp.display(), target.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(target, std::fs::Permissions::from_mode(0o444));
+    }
+    Ok(())
+}
+
 async fn install_manifest_source(assets_dir: &std::path::Path, source: &str) -> Result<()> {
     let bytes = read_manifest_source(source).await?;
     let body = std::str::from_utf8(&bytes)
         .with_context(|| format!("manifest URL did not return UTF-8 JSON: {source}"))?;
-    capsem_core::asset_manager::ManifestV2::from_json(body)
-        .with_context(|| format!("parse manifest from {source}"))?;
+    if let Err(error) = capsem_core::asset_manager::ManifestV2::from_json(body) {
+        install_release_channel_profile_manifest(assets_dir, source, body)
+            .await
+            .with_context(|| {
+                format!(
+                    "parse manifest from {source} as v2 ({error:#}) or release channel profile graph"
+                )
+            })?;
+        return Ok(());
+    }
 
     std::fs::create_dir_all(assets_dir)
         .with_context(|| format!("cannot create {}", assets_dir.display()))?;
     atomic_write(&assets_dir.join("manifest.json"), &bytes)?;
+    write_manifest_origin(assets_dir, source)?;
+    println!("Installed asset manifest from {source}.");
+    Ok(())
+}
 
+fn write_manifest_origin(assets_dir: &Path, source: &str) -> Result<()> {
     let origin = serde_json::json!({
         "schema": "capsem.manifest_origin.v1",
         "origin": "update",
@@ -1975,7 +2465,6 @@ async fn install_manifest_source(assets_dir: &std::path::Path, source: &str) -> 
     });
     let origin_bytes = serde_json::to_vec_pretty(&origin)?;
     atomic_write(&assets_dir.join("manifest-origin.json"), &origin_bytes)?;
-    println!("Installed asset manifest from {source}.");
     Ok(())
 }
 

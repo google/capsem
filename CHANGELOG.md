@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Made `capsem update --assets` accept split-lane release-channel profile
+  manifests, hydrate their exact VM image artifact URLs, and install a
+  validated local v2 asset manifest for runtime compatibility.
+
 ## [1.5.1783439394] - 2026-07-07
 
 ### Fixed
