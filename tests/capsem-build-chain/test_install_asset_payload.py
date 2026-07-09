@@ -354,7 +354,7 @@ def test_release_workflow_retries_app_cargo_tool_installs() -> None:
     assert "cargo install tauri-cli cargo-auditable --locked" not in workflow
 
     for block, required_tools in (
-        (build_app_macos, ("tauri-cli", "cargo-auditable", "cargo-sbom")),
+        (build_app_macos, ("tauri-cli", "cargo-auditable")),
         (build_app_linux, ("tauri-cli", "cargo-auditable")),
     ):
         assert "CARGO_NET_RETRY: 10" in block
@@ -364,6 +364,9 @@ def test_release_workflow_retries_app_cargo_tool_installs() -> None:
         assert 'echo "cargo install $tool failed on attempt $attempt/3"' in block
         for tool in required_tools:
             assert f"install_cargo_tool {tool}" in block
+    assert "cargo install cargo-sbom --locked" in build_app_macos
+    assert "cargo install cargo-sbom --locked" not in build_app_linux
+    assert "install_cargo_tool cargo-sbom" not in workflow
     assert "-p capsem-tui" in workflow
     assert "-p capsem-mcp-aggregator" in workflow
     assert "-p capsem-mcp-builtin" in workflow

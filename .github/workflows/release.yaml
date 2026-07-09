@@ -273,7 +273,16 @@ jobs:
 
           install_cargo_tool tauri-cli
           install_cargo_tool cargo-auditable
-          install_cargo_tool cargo-sbom
+          for attempt in 1 2 3; do
+            if cargo install cargo-sbom --locked; then
+              break
+            fi
+            if [ "$attempt" = "3" ]; then
+              exit 1
+            fi
+            echo "cargo install cargo-sbom failed on attempt $attempt/3"
+            sleep $((attempt * 15))
+          done
 
       - name: Import Apple certificate
         env:

@@ -20,8 +20,8 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 | `site.yaml` | Push to main | Deploy capsem.org on each main merge, then smoke the live marketing site |
 | `release-channel.yaml` | Called by binary or asset release | Deploy release.capsem.org from the generated release-channel site artifact |
 
-Installers carry host binaries, materialized profiles, and the selected
-manifest URL provenance, not a manifest snapshot or VM image blobs.
+Installers carry host binaries and the selected manifest URL provenance, plus
+materialized profiles. They do not carry a manifest snapshot or VM image blobs.
 The manual VM asset workflow publishes changed image/evidence blobs to the
 immutable GitHub Release tag `assets-v<asset-version>` using arch-prefixed
 artifact names. The logical manifest names stay `vmlinuz`, `initrd.img`,
