@@ -21,10 +21,13 @@ pub(crate) fn lock_test_env() -> std::sync::MutexGuard<'static, ()> {
 use anyhow::{anyhow, Context, Result};
 use clap::builder::styling::{AnsiColor, Color, Style, Styles};
 use clap::{Parser, Subcommand};
+use nix::fcntl::{Flock, FlockArg};
 use std::{
+    fs::OpenOptions,
     io::BufRead,
     path::PathBuf,
     process::{Child, Command as StdCommand, Stdio},
+    time::{Duration, Instant},
 };
 use tokio::io::AsyncWriteExt;
 
@@ -37,8 +40,47 @@ use client::{
 
 const DEFAULT_PROFILE_ID: &str = "code";
 const DOCTOR_MOCK_SERVER_ADDR: &str = "127.0.0.1:3713";
+const DOCTOR_MOCK_SERVER_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
+
+struct DoctorMockServerLock {
+    _flock: Flock<std::fs::File>,
+}
+
+impl DoctorMockServerLock {
+    fn path_for_addr(addr: &str) -> PathBuf {
+        let safe_addr = addr.replace([':', '.'], "-");
+        std::env::temp_dir().join(format!("capsem-mock-server-{safe_addr}.lock"))
+    }
+
+    fn acquire(addr: &str, timeout: Duration) -> Result<Self> {
+        let path = Self::path_for_addr(addr);
+        let deadline = Instant::now() + timeout;
+        loop {
+            let file = OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .truncate(false)
+                .open(&path)
+                .with_context(|| format!("open mock-server lock {}", path.display()))?;
+            match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+                Ok(flock) => return Ok(Self { _flock: flock }),
+                Err((_file, nix::errno::Errno::EWOULDBLOCK)) => {
+                    if Instant::now() >= deadline {
+                        anyhow::bail!("timed out waiting for mock-server lock {}", path.display());
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+                Err((_file, err)) => {
+                    anyhow::bail!("flock failed on {}: {err}", path.display());
+                }
+            }
+        }
+    }
+}
 
 struct DoctorMockServer {
+    _lock: DoctorMockServerLock,
     child: Child,
     base_url: String,
 }
@@ -82,6 +124,8 @@ fn mock_server_binary_path() -> Result<PathBuf> {
 }
 
 fn spawn_doctor_mock_server() -> Result<DoctorMockServer> {
+    let lock =
+        DoctorMockServerLock::acquire(DOCTOR_MOCK_SERVER_ADDR, DOCTOR_MOCK_SERVER_LOCK_TIMEOUT)?;
     let binary = mock_server_binary_path()?;
     let mut child = StdCommand::new(&binary)
         .arg("--addr")
@@ -119,7 +163,11 @@ fn spawn_doctor_mock_server() -> Result<DoctorMockServer> {
         .context("mock server ready JSON missing base_url")?
         .to_string();
 
-    Ok(DoctorMockServer { child, base_url })
+    Ok(DoctorMockServer {
+        _lock: lock,
+        child,
+        base_url,
+    })
 }
 
 const fn cli_styles() -> Styles {
@@ -3122,6 +3170,14 @@ mod tests {
     #[test]
     fn doctor_mock_server_addr_is_iptables_redirect_target() {
         assert_eq!(DOCTOR_MOCK_SERVER_ADDR, "127.0.0.1:3713");
+    }
+
+    #[test]
+    fn doctor_mock_server_lock_path_matches_shared_python_launcher() {
+        assert_eq!(
+            DoctorMockServerLock::path_for_addr(DOCTOR_MOCK_SERVER_ADDR),
+            std::env::temp_dir().join("capsem-mock-server-127-0-0-1-3713.lock")
+        );
     }
 
     #[test]
