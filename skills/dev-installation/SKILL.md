@@ -12,7 +12,7 @@ description: Capsem native package installer -- package install, service registr
   bin/capsem, capsem-service, capsem-process, capsem-tui,
       capsem-mcp, capsem-mcp-aggregator, capsem-mcp-builtin,
       capsem-gateway, capsem-tray, capsem-admin
-  assets/manifest.json, {asset-name}-{hash16}.{ext}
+  assets/manifest.json, manifest-origin.json, {asset-name}-{hash16}.{ext}
   run/service.sock, service.pid, instances/, persistent/
   update-checks/{manifest-url-hash}.json
   corp.toml               (CLI-provisioned corp config)
@@ -40,7 +40,8 @@ These commands dispatch before UdsClient creation -- they work without the servi
    `capsem-mcp`, `capsem-mcp-aggregator`, `capsem-mcp-builtin`,
    `capsem-gateway`, `capsem-tray`, `capsem-admin`
 2. Assets: `~/.capsem/assets/` (the only installed layout -- packages install
-   a manifest and assets are resolved from that manifest)
+   manifest URL provenance, then postinstall hydrates the live manifest and
+   assets through `capsem update --assets --manifest <URL>`)
 
 ## Auto-launch (main.rs UdsClient)
 
@@ -67,11 +68,13 @@ Side-effecting:
 
 ## Package install
 
-The package is the install unit. It may accept a manifest override for corp and
-development installs, copies that manifest into the installed asset directory,
-records manifest origin/hash in service status, installs/restarts service
-files, and writes timestamped install logs. It does not run an AI-provider setup
-wizard and it does not create a user policy file.
+The package is the install unit. It may accept a manifest URL override for corp
+and development installs, records that URL in packaged
+`manifest-origin.json`, hydrates the live manifest through
+`capsem update --assets --manifest <URL>` during postinstall, installs/restarts
+service files, and writes timestamped install logs. Packages do not carry an
+`assets/manifest.json` payload. They do not run an AI-provider setup wizard and
+they do not create a user policy file.
 
 ## Package maintainer scripts
 

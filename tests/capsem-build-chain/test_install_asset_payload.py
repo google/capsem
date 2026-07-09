@@ -170,26 +170,24 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "export COPYFILE_DISABLE=1" in build_pkg
     assert "--manifest" in build_pkg
     assert 'MANIFEST_PATH="${2:?--manifest requires a URL}"' in build_pkg
-    assert "materialize_manifest_input" in build_pkg
-    assert 'parsed.scheme in ("http", "https")' in build_pkg
-    assert "urllib.request.Request(" in build_pkg
-    assert 'headers={"User-Agent": "CapsemReleaseValidator/1.0"}' in build_pkg
-    assert "urllib.request.urlopen(request, timeout=60)" in build_pkg
-    assert "unsupported manifest URL scheme" in build_pkg
+    assert "materialize_manifest_input" not in build_pkg
+    assert "materialize-package-manifest.py" not in build_pkg
+    assert 'parsed.scheme not in ("http", "https", "file")' in build_pkg
+    assert "urllib.request.Request(" not in build_pkg
+    assert "CapsemReleaseValidator/1.0" not in build_pkg
+    assert "urllib.request.urlopen" not in build_pkg
     assert "manifest must be a URL" in build_pkg
     assert "pathlib.Path(source).read_bytes()" not in build_pkg
     assert '--version "$VERSION"' in build_pkg
     assert "PKG_VERSION" not in build_pkg
-    assert 'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in build_pkg
-    assert (
-        'install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"'
-        in build_pkg
-    )
+    assert 'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' not in build_pkg
+    assert 'install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"' not in build_pkg
     assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in build_pkg
     assert (
-        'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$SHARE_DIR/assets/manifest.json" "$VERSION" "$SHARE_DIR/assets/manifest-origin.json"'
+        'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$VERSION" "$SHARE_DIR/assets/manifest-origin.json"'
         in build_pkg
     )
+    assert "snapshot_sha256" not in build_pkg
     assert "materialize_manifest_assets" not in build_pkg
     assert "Added asset:" not in build_pkg
     assert "rootfs-" not in build_pkg
@@ -229,26 +227,24 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert 'strip --strip-unneeded "$path"' in repack_deb
     assert 'CONFIG_ROOT="${POSITIONAL[2]}"' in repack_deb
     assert "--manifest" in repack_deb
-    assert "materialize_manifest_input" in repack_deb
-    assert 'parsed.scheme in ("http", "https")' in repack_deb
-    assert "urllib.request.Request(" in repack_deb
-    assert 'headers={"User-Agent": "CapsemReleaseValidator/1.0"}' in repack_deb
-    assert "urllib.request.urlopen(request, timeout=60)" in repack_deb
-    assert "unsupported manifest URL scheme" in repack_deb
+    assert "materialize_manifest_input" not in repack_deb
+    assert "materialize-package-manifest.py" not in repack_deb
+    assert 'parsed.scheme not in ("http", "https", "file")' in repack_deb
+    assert "urllib.request.Request(" not in repack_deb
+    assert "CapsemReleaseValidator/1.0" not in repack_deb
+    assert "urllib.request.urlopen" not in repack_deb
     assert "manifest must be a URL" in repack_deb
     assert "pathlib.Path(source).read_bytes()" not in repack_deb
     assert "BUILD_TS=" not in repack_deb
-    assert 'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' in repack_deb
-    assert (
-        'cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"'
-        in repack_deb
-    )
+    assert 'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' not in repack_deb
+    assert 'cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"' not in repack_deb
     assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in repack_deb
     assert 'PACKAGE_VERSION="$(dpkg-deb -f "$INPUT_DEB" Version)"' in repack_deb
     assert (
-        'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json" "$PACKAGE_VERSION" "$WORK_DIR/deb/usr/share/capsem/assets/manifest-origin.json"'
+        'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$PACKAGE_VERSION" "$WORK_DIR/deb/usr/share/capsem/assets/manifest-origin.json"'
         in repack_deb
     )
+    assert "snapshot_sha256" not in repack_deb
     assert "materialize_manifest_assets" not in repack_deb
     assert "Added asset:" not in repack_deb
     assert "rootfs-" not in repack_deb
@@ -263,24 +259,20 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "capsem-tui" in repack_deb
     assert "/usr/share/capsem/assets" in deb_postinst
     assert "/usr/share/capsem/profiles" in deb_postinst
-    assert (
-        'install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"'
-        in deb_postinst
-    )
+    assert 'install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"' not in deb_postinst
     assert (
         'install -m 0644 /usr/share/capsem/assets/manifest-origin.json "$CAPSEM_DIR/assets/manifest-origin.json"'
         in deb_postinst
     )
-    assert "event=manifest_copied" in deb_postinst
-    assert (
-        'MANIFEST_REPORT=$(/usr/bin/capsem-admin manifest check --json "$CAPSEM_DIR/assets/manifest.json" | tr'
-        in deb_postinst
-    )
-    assert "event=manifest_report" in deb_postinst
+    assert "event=manifest_copied" not in deb_postinst
+    assert "manifest check" not in deb_postinst
+    assert "event=manifest_report" not in deb_postinst
     assert "MANIFEST_ORIGIN=$(tr" in deb_postinst
     assert "event=manifest_origin" in deb_postinst
+    assert 'MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"' in deb_postinst
+    assert "event=manifest_source" in deb_postinst
     assert (
-        'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets'
+        'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets --manifest \\"$MANIFEST_SOURCE\\"'
         in deb_postinst
     )
     assert "event=assets_hydrated" in deb_postinst
@@ -296,24 +288,20 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "capsem-admin" in deb_postinst
     assert "capsem-tui" in deb_postinst
 
-    assert (
-        'install -m 0644 "$PKG_SHARE/assets/manifest.json" "$CAPSEM_DIR/assets/manifest.json"'
-        in pkg_postinstall
-    )
+    assert 'install -m 0644 "$PKG_SHARE/assets/manifest.json" "$CAPSEM_DIR/assets/manifest.json"' not in pkg_postinstall
     assert (
         'install -m 0644 "$PKG_SHARE/assets/manifest-origin.json" "$CAPSEM_DIR/assets/manifest-origin.json"'
         in pkg_postinstall
     )
-    assert "event=manifest_copied" in pkg_postinstall
-    assert (
-        'MANIFEST_REPORT=$("$CAPSEM_DIR/bin/capsem-admin" manifest check --json "$CAPSEM_DIR/assets/manifest.json" | tr'
-        in pkg_postinstall
-    )
-    assert "event=manifest_report" in pkg_postinstall
+    assert "event=manifest_copied" not in pkg_postinstall
+    assert "manifest check" not in pkg_postinstall
+    assert "event=manifest_report" not in pkg_postinstall
     assert "MANIFEST_ORIGIN=$(tr" in pkg_postinstall
     assert "event=manifest_origin" in pkg_postinstall
+    assert 'MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"' in pkg_postinstall
+    assert "event=manifest_source" in pkg_postinstall
     assert (
-        'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets'
+        'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets --manifest \\"$MANIFEST_SOURCE\\"'
         in pkg_postinstall
     )
     assert "event=assets_hydrated" in pkg_postinstall

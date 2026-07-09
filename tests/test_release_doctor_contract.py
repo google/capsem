@@ -1649,26 +1649,18 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     assert "::error::$url blake3 mismatch" in verify_downloads
     assert "asset URLs are unreachable or hash-mismatched" in verify_downloads
     assert 'code=$(curl -sIL -o /dev/null -w "%{http_code}" "$url")' in verify_downloads
-    assert 'gh release download "${{ github.ref_name }}"' in verify_downloads
-    assert '--pattern "Capsem_*_${deb_arch}.deb" -D /tmp/deb' in verify_downloads
+    assert "scripts/check-public-binary-release.py" in verify_downloads
+    assert "--channel stable" in verify_downloads
+    assert '--manifest-url "$ASSET_MANIFEST_URL"' in verify_downloads
+    assert "--install-script-url https://capsem.org/install.sh" in verify_downloads
+    assert "--docker-linux-install" in verify_downloads
+    assert "--docker-channel-switch" in verify_downloads
+    assert "--docker-upgrade" in verify_downloads
+    assert "Glow-up verify public install, channel switch, and upgrade" in verify_downloads
+    assert "curl -fsSL https://capsem.org/install.sh | sh" in verify_downloads
     assert "skipping binary e2e" not in verify_downloads
     assert "::warning::no .deb" not in verify_downloads
     assert "::warning::no 'capsem' CLI" not in verify_downloads
-    assert 'ar x "$deb"' in verify_downloads
-    assert "::error::no .deb for ${deb_arch} on this release" in verify_downloads
-    assert "::error::no 'capsem' CLI inside .deb" in verify_downloads
-    assert "CAPSEM_HOME=/tmp/capsem-home" in verify_downloads
-    assert (
-        'cp ./usr/share/capsem/assets/manifest.json "$CAPSEM_HOME/assets/manifest.json"'
-        in verify_downloads
-    )
-    assert (
-        'cp ./usr/share/capsem/assets/manifest-origin.json "$CAPSEM_HOME/assets/manifest-origin.json"'
-        in verify_downloads
-    )
-    assert '"$CAPSEM_BIN" update --assets' in verify_downloads
-    assert 'find "$CAPSEM_HOME/assets/$host_arch" -name "${f%.*}-*"' in verify_downloads
-    assert "End-to-end download verified against release.capsem.org." in verify_downloads
 
 
 def test_manifest_source_inputs_are_url_only() -> None:
@@ -1959,7 +1951,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
 
     assert (
-        "| `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the current public asset manifest, create GitHub release, then update release.capsem.org binary metadata |"
+        "| `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the selected public asset manifest URL, create GitHub release, update release.capsem.org binary metadata, then run glow-up install/switch/upgrade checks |"
         in docs
     )
     assert (

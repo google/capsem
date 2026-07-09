@@ -44,21 +44,17 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=retired_config_r
 rm -rf "$CAPSEM_DIR/bin/capsem-admin-python"
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=retired_python_admin_bundle_removed"
 
-# Copy the package-selected manifest and provenance. VM asset payloads are
-# external to the package and are reconciled by the service from this manifest.
-if [ -f "/usr/share/capsem/assets/manifest.json" ]; then
-    install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"
-    if [ -f "/usr/share/capsem/assets/manifest-origin.json" ]; then
-        install -m 0644 /usr/share/capsem/assets/manifest-origin.json "$CAPSEM_DIR/assets/manifest-origin.json"
-    fi
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_copied"
-    MANIFEST_REPORT=$(/usr/bin/capsem-admin manifest check --json "$CAPSEM_DIR/assets/manifest.json" | tr '\n' ' ')
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_report $MANIFEST_REPORT"
-    if [ -f "$CAPSEM_DIR/assets/manifest-origin.json" ]; then
-        MANIFEST_ORIGIN=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-origin.json")
-        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_origin $MANIFEST_ORIGIN"
+MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"
+if [ -f "/usr/share/capsem/assets/manifest-origin.json" ]; then
+    install -m 0644 /usr/share/capsem/assets/manifest-origin.json "$CAPSEM_DIR/assets/manifest-origin.json"
+    MANIFEST_ORIGIN=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-origin.json")
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_origin $MANIFEST_ORIGIN"
+    ORIGIN_SOURCE=$(sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CAPSEM_DIR/assets/manifest-origin.json" | head -n 1)
+    if [ -n "$ORIGIN_SOURCE" ]; then
+        MANIFEST_SOURCE="$ORIGIN_SOURCE"
     fi
 fi
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_source source=$MANIFEST_SOURCE"
 
 if [ -d "/usr/share/capsem/profiles" ]; then
     rm -rf "$CAPSEM_DIR/profiles"
@@ -80,8 +76,8 @@ done
 # Fix ownership
 chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR"
 
-if [ -f "$CAPSEM_DIR/assets/manifest.json" ] && [ -x "$CAPSEM_DIR/bin/capsem" ]; then
-    if ! su "$TARGET_USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets"; then
+if [ -x "$CAPSEM_DIR/bin/capsem" ]; then
+    if ! su "$TARGET_USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets --manifest \"$MANIFEST_SOURCE\""; then
         echo "capsem: asset hydration failed" >&2
         echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=asset_hydration_failed"
         exit 1

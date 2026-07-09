@@ -5879,6 +5879,14 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
                 manifest.assets.current
             )
         })?;
+        let asset_inputs = ProfileAssetMaterializeInputs {
+            assets_dir: &args.assets_dir,
+            manifest_url: &args.manifest,
+            asset_version: &manifest.assets.current,
+            arch: &arch,
+            manifest_assets,
+            asset_urls: &materialize_manifest.asset_urls,
+        };
         let rootfs_hash = {
             let profile_assets = profile
                 .assets
@@ -5886,33 +5894,18 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
                 .get_mut(&arch)
                 .expect("arch came from selected_profile_arches");
             materialize_profile_asset_descriptor(
-                &args.assets_dir,
-                &args.manifest,
-                &manifest.assets.current,
-                &arch,
+                asset_inputs,
                 &mut profile_assets.kernel,
-                manifest_assets,
-                &materialize_manifest.asset_urls,
                 &mut materialized_assets,
             )?;
             materialize_profile_asset_descriptor(
-                &args.assets_dir,
-                &args.manifest,
-                &manifest.assets.current,
-                &arch,
+                asset_inputs,
                 &mut profile_assets.initrd,
-                manifest_assets,
-                &materialize_manifest.asset_urls,
                 &mut materialized_assets,
             )?;
             materialize_profile_asset_descriptor(
-                &args.assets_dir,
-                &args.manifest,
-                &manifest.assets.current,
-                &arch,
+                asset_inputs,
                 &mut profile_assets.rootfs,
-                manifest_assets,
-                &materialize_manifest.asset_urls,
                 &mut materialized_assets,
             )?;
             profile_assets
@@ -5922,14 +5915,7 @@ fn materialize_profile_config(args: &ProfileMaterializeArgs) -> Result<ProfileMa
                 .ok_or_else(|| anyhow!("materialized {arch} rootfs hash is unresolved"))?
         };
         materialize_profile_obom_descriptor(
-            ProfileObomMaterializeInputs {
-                assets_dir: &args.assets_dir,
-                manifest_url: &args.manifest,
-                asset_version: &manifest.assets.current,
-                arch: &arch,
-                manifest_assets,
-                asset_urls: &materialize_manifest.asset_urls,
-            },
+            asset_inputs,
             rootfs_hash,
             &mut profile,
             &mut materialized_obom,
@@ -6232,35 +6218,26 @@ fn resolve_release_channel_artifact_url(channel_source: &str, artifact: &str) ->
 }
 
 fn materialize_profile_asset_descriptor(
-    assets_dir: &Path,
-    manifest_url: &str,
-    asset_version: &str,
-    arch: &str,
+    inputs: ProfileAssetMaterializeInputs<'_>,
     descriptor: &mut capsem_core::net::policy_config::ProfileAssetDescriptor,
-    manifest_assets: &std::collections::HashMap<String, capsem_core::asset_manager::AssetEntry>,
-    asset_urls: &HashMap<(String, String), String>,
     reports: &mut Vec<ProfileMaterializedAssetReport>,
 ) -> Result<()> {
-    let entry = manifest_assets.get(&descriptor.name).ok_or_else(|| {
-        anyhow!(
-            "manifest current release arch {arch} is missing {}",
-            descriptor.name
-        )
-    })?;
-    descriptor.url = materialized_profile_asset_url(
-        assets_dir,
-        manifest_url,
-        asset_version,
-        arch,
-        &descriptor.name,
-        &entry.hash,
-        entry.size,
-        asset_urls,
-    )?;
+    let entry = inputs
+        .manifest_assets
+        .get(&descriptor.name)
+        .ok_or_else(|| {
+            anyhow!(
+                "manifest current release arch {} is missing {}",
+                inputs.arch,
+                descriptor.name
+            )
+        })?;
+    descriptor.url =
+        materialized_profile_asset_url(inputs, &descriptor.name, &entry.hash, entry.size)?;
     descriptor.hash = Some(format!("blake3:{}", entry.hash));
     descriptor.size = Some(entry.size);
     reports.push(ProfileMaterializedAssetReport {
-        arch: arch.to_string(),
+        arch: inputs.arch.to_string(),
         logical_name: descriptor.name.clone(),
         url: descriptor.url.clone(),
         hash: descriptor
@@ -6314,7 +6291,8 @@ fn materialize_profile_file_descriptors(
     Ok(())
 }
 
-struct ProfileObomMaterializeInputs<'a> {
+#[derive(Clone, Copy)]
+struct ProfileAssetMaterializeInputs<'a> {
     assets_dir: &'a Path,
     manifest_url: &'a str,
     asset_version: &'a str,
@@ -6324,7 +6302,7 @@ struct ProfileObomMaterializeInputs<'a> {
 }
 
 fn materialize_profile_obom_descriptor(
-    inputs: ProfileObomMaterializeInputs<'_>,
+    inputs: ProfileAssetMaterializeInputs<'_>,
     rootfs_hash: String,
     profile: &mut ProfileConfigFile,
     reports: &mut Vec<ProfileMaterializedObomReport>,
@@ -6332,16 +6310,8 @@ fn materialize_profile_obom_descriptor(
     let Some(entry) = inputs.manifest_assets.get("obom.cdx.json") else {
         return Ok(());
     };
-    let obom_url = materialized_profile_asset_url(
-        inputs.assets_dir,
-        inputs.manifest_url,
-        inputs.asset_version,
-        inputs.arch,
-        "obom.cdx.json",
-        &entry.hash,
-        entry.size,
-        inputs.asset_urls,
-    )?;
+    let obom_url =
+        materialized_profile_asset_url(inputs, "obom.cdx.json", &entry.hash, entry.size)?;
     let (generator, generator_version) = if obom_url.starts_with("file://") {
         let obom_path = inputs.assets_dir.join(inputs.arch).join("obom.cdx.json");
         let obom_path = obom_path
@@ -6381,23 +6351,22 @@ fn materialize_profile_obom_descriptor(
 }
 
 fn materialized_profile_asset_url(
-    assets_dir: &Path,
-    manifest_url: &str,
-    asset_version: &str,
-    arch: &str,
+    inputs: ProfileAssetMaterializeInputs<'_>,
     logical_name: &str,
     hash: &str,
     size: u64,
-    asset_urls: &HashMap<(String, String), String>,
 ) -> Result<String> {
-    if let Some(url) = asset_urls.get(&(arch.to_string(), logical_name.to_string())) {
+    if let Some(url) = inputs
+        .asset_urls
+        .get(&(inputs.arch.to_string(), logical_name.to_string()))
+    {
         return Ok(url.clone());
     }
     materialized_asset_url(
-        assets_dir,
-        manifest_url,
-        asset_version,
-        arch,
+        inputs.assets_dir,
+        inputs.manifest_url,
+        inputs.asset_version,
+        inputs.arch,
         logical_name,
         hash,
         size,

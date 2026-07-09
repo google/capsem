@@ -277,16 +277,17 @@ cleanup protects referenced profile assets.
 
 Release packages are the primary install entry point. Local development uses
 the same package rail as CI: build the package, pass a manifest override, and
-let the package install service files plus manifest metadata.
+let the package install service files plus manifest URL provenance.
 
-Package install handles service registration and manifest placement. Profile
-configuration handles security rules, plugins, MCP, assets, and packaged root
-content; credentials are brokered at runtime.
+Package install handles service registration, records manifest origin metadata,
+and hydrates the live manifest through `capsem update --assets --manifest
+<URL>`. Profile configuration handles security rules, plugins, MCP, assets, and
+packaged root content; credentials are brokered at runtime.
 
 **Install layout** (`~/.capsem/`):
 - `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
-- `assets/` -- manifest.json and profile-selected VM assets such as `vmlinuz`,
-  `initrd.img`, and EROFS rootfs images
+- `assets/` -- manifest.json, manifest-origin.json, and profile-selected VM
+  assets such as `vmlinuz`, `initrd.img`, and EROFS rootfs images
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/{id}.sock
 
 **Service registration**: LaunchAgent `com.capsem.service` (macOS) or systemd user unit `capsem.service` (Linux). KeepAlive/Restart=always. Service auto-launches gateway and tray as companion processes, passing `--parent-pid` so companions self-exit when the service dies (see capsem-guard, `/dev-rust-patterns` lesson 18).

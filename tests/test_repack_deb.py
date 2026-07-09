@@ -15,7 +15,6 @@ executed in Linux CI and inside the capsem-install-test container.
 
 import contextlib
 import functools
-import hashlib
 import http.server
 import json
 import shutil
@@ -353,8 +352,8 @@ def test_version_is_preserved_for_downgrade_and_same_version_reinstall(tmp_path)
     assert version_line == "Version: 0.0.1"
 
 
-def test_explicit_manifest_is_packaged_without_current_arch_assets(tmp_path):
-    """Manifest-only packages can use a local, CI, or corp-provided manifest explicitly."""
+def test_explicit_manifest_url_is_packaged_without_manifest_payload(tmp_path):
+    """Packages record the selected manifest URL but do not freeze a manifest copy."""
     fixture = _build_fixture_deb(tmp_path)
     bin_dir = tmp_path / "bin"
     config_dir = tmp_path / "target-config"
@@ -394,8 +393,7 @@ def test_explicit_manifest_is_packaged_without_current_arch_assets(tmp_path):
 
     extracted = _deb_contents(output, tmp_path / "extracted")
     assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
-    packaged_manifest = assets_dir / "manifest.json"
-    assert packaged_manifest.read_text() == manifest.read_text()
+    assert not (assets_dir / "manifest.json").exists()
     assert (assets_dir / "manifest-origin.json").is_file()
     origin = json.loads((assets_dir / "manifest-origin.json").read_text())
     assert origin["schema"] == "capsem.manifest_origin.v1"
@@ -404,15 +402,12 @@ def test_explicit_manifest_is_packaged_without_current_arch_assets(tmp_path):
     assert "fetched_at" in origin
     assert "packaged_at" in origin
     assert origin["package_version"] == "0.0.1"
-    assert origin["snapshot_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
-    assert sorted(path.name for path in assets_dir.iterdir()) == [
-        "manifest-origin.json",
-        "manifest.json",
-    ]
+    assert "snapshot_sha256" not in origin
+    assert sorted(path.name for path in assets_dir.iterdir()) == ["manifest-origin.json"]
 
 
-def test_explicit_remote_manifest_is_packaged_with_origin_provenance(tmp_path):
-    """Remote corp/release manifest URLs are fetched and recorded in provenance."""
+def test_explicit_remote_manifest_url_is_packaged_with_origin_provenance(tmp_path):
+    """Remote corp/release manifest URLs are recorded without package-time fetching."""
     fixture = _build_fixture_deb(tmp_path)
     bin_dir = tmp_path / "bin"
     config_dir = tmp_path / "target-config"
@@ -435,10 +430,7 @@ def test_explicit_remote_manifest_is_packaged_with_origin_provenance(tmp_path):
     )
     output = tmp_path / "out.deb"
 
-    with _serve_directory_requiring_release_user_agent(manifest_root) as (
-        base_url,
-        seen_user_agents,
-    ):
+    with _serve_directory_requiring_release_user_agent(manifest_root) as (base_url, seen_user_agents):
         manifest_url = f"{base_url}/corp-manifest.json"
         res = subprocess.run(
             [
@@ -456,15 +448,12 @@ def test_explicit_remote_manifest_is_packaged_with_origin_provenance(tmp_path):
             timeout=30,
         )
     assert res.returncode == 0, f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
-    assert seen_user_agents == ["CapsemReleaseValidator/1.0"]
+    assert seen_user_agents == []
 
     extracted = _deb_contents(output, tmp_path / "extracted-remote")
     assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
-    assert sorted(path.name for path in assets_dir.iterdir()) == [
-        "manifest-origin.json",
-        "manifest.json",
-    ]
-    assert (assets_dir / "manifest.json").read_text() == manifest.read_text()
+    assert sorted(path.name for path in assets_dir.iterdir()) == ["manifest-origin.json"]
+    assert not (assets_dir / "manifest.json").exists()
     origin = json.loads((assets_dir / "manifest-origin.json").read_text())
     assert origin["schema"] == "capsem.manifest_origin.v1"
     assert origin["origin"] == "package"
@@ -472,7 +461,65 @@ def test_explicit_remote_manifest_is_packaged_with_origin_provenance(tmp_path):
     assert "fetched_at" in origin
     assert "packaged_at" in origin
     assert origin["package_version"] == "0.0.1"
-    assert origin["snapshot_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
+    assert "snapshot_sha256" not in origin
+
+
+def test_release_graph_manifest_url_is_recorded_without_conversion(tmp_path):
+    """The package does not convert release graph manifests; install fetches the live URL."""
+    fixture = _build_fixture_deb(tmp_path, version="1.5.0")
+    bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
+    graph_root = tmp_path / "remote"
+    graph = graph_root / "manifest.json"
+    _seed_binaries(bin_dir)
+    _seed_config(config_dir)
+    graph_root.mkdir()
+    graph.write_text(
+        json.dumps(
+            {
+                "schema": "capsem.release_graph.v1",
+                "version": "1.5.0+assets.2030.0101.1",
+                "status": "current",
+                "packages": [],
+                "profiles": {},
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    )
+    output = tmp_path / "out.deb"
+
+    with _serve_directory_requiring_release_user_agent(graph_root) as (
+        base_url,
+        seen_user_agents,
+    ):
+        manifest_url = f"{base_url}/manifest.json"
+        res = subprocess.run(
+            [
+                str(SCRIPT),
+                "--manifest",
+                manifest_url,
+                str(fixture),
+                str(bin_dir),
+                str(config_dir),
+                "",
+                str(output),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+    assert res.returncode == 0, f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
+    assert seen_user_agents == []
+
+    extracted = _deb_contents(output, tmp_path / "extracted-graph")
+    assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
+    assert sorted(path.name for path in assets_dir.iterdir()) == ["manifest-origin.json"]
+    assert not (assets_dir / "manifest.json").exists()
+    origin = json.loads((assets_dir / "manifest-origin.json").read_text())
+    assert origin["source"] == manifest_url
+    assert "snapshot_sha256" not in origin
 
 
 def test_repacked_deb_payload_is_closed_and_manifest_only_for_assets(tmp_path):
@@ -506,10 +553,7 @@ def test_repacked_deb_payload_is_closed_and_manifest_only_for_assets(tmp_path):
 
     extracted = _deb_contents(output, tmp_path / "extracted")
     assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
-    assert sorted(path.name for path in assets_dir.iterdir()) == [
-        "manifest-origin.json",
-        "manifest.json",
-    ]
+    assert sorted(path.name for path in assets_dir.iterdir()) == ["manifest-origin.json"]
 
     unexpected = []
     for path in extracted.rglob("*"):
@@ -520,10 +564,7 @@ def test_repacked_deb_payload_is_closed_and_manifest_only_for_assets(tmp_path):
             continue
         if rel.startswith("usr/bin/") and rel.removeprefix("usr/bin/") in REQUIRED_BINARIES:
             continue
-        if rel in {
-            "usr/share/capsem/assets/manifest.json",
-            "usr/share/capsem/assets/manifest-origin.json",
-        }:
+        if rel == "usr/share/capsem/assets/manifest-origin.json":
             continue
         if rel.startswith("usr/share/capsem/profiles/"):
             continue

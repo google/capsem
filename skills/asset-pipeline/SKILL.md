@@ -140,6 +140,9 @@ or `http://...` for hosted corporate channels.
 The root channel catalog makes stable/nightly switching a manifest URL choice.
 Stable can point at `https://release.capsem.org/assets/stable/manifest.json`
 while nightly points at `https://release.capsem.org/assets/nightly/manifest.json`.
+Package postinstall and glow-up tests must use those URL-shaped inputs directly;
+do not add package-time manifest converters or compatibility adapters for old
+manifest shapes.
 Updating the co-work nightly profile image/config must change only the nightly
 channel/profile records and matching digests; stable, packages, per-binary
 inventory, and other profiles must stay byte-for-byte unchanged. Use
@@ -273,10 +276,16 @@ assets/manifest.json
 **Installed** (`~/.capsem/assets/` -- flat, hash-based filenames):
 ```
 manifest.json
+manifest-origin.json
 vmlinuz-2c0bd752db929642
 initrd-e5e910e9ab38b873.img
 rootfs-89eb92b83534d9d0.erofs
 ```
+
+Native packages do not carry `assets/manifest.json`. They carry
+`manifest-origin.json` with the selected channel or corp manifest URL, and
+postinstall runs `capsem update --assets --manifest <URL>` to write the live
+installed manifest plus any missing profile image assets.
 
 Hash-based naming: `{stem}-{hash[..16]}{ext}`. Same hash = same file across versions = natural dedup.
 

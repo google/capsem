@@ -259,9 +259,10 @@ capsem-admin manifest check /path/to/assets/manifest.json --json
 bash scripts/build-pkg.sh --manifest file:///path/to/assets/manifest.json ...
 ```
 
-The installer moves that manifest into the installed service asset directory,
-and status reports the installed manifest hash plus package provenance.
-`--manifest` is URL-only so custom local manifests use `file://` and hosted
+The installer records that manifest URL in packaged `manifest-origin.json`, then
+postinstall runs `capsem update --assets --manifest <URL>` to hydrate the live
+installed manifest and assets. Status reports the installed manifest hash plus
+origin provenance. `--manifest` is URL-only so custom local manifests use `file://` and hosted
 corporate channels use `https://` or `http://`.
 
 ## Supply chain controls

@@ -12,7 +12,7 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 | Workflow | Trigger | What it does |
 |----------|---------|-------------|
 | `ci.yaml` | Pull requests and push to main | PR quality gate: Rust unit/integration, frontend, Python contracts, install checks, and explicit runner substitutions |
-| `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the current public asset manifest, create GitHub release, then update release.capsem.org binary metadata |
+| `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the selected public asset manifest URL, create GitHub release, update release.capsem.org binary metadata, then run glow-up install/switch/upgrade checks |
 | `release-assets.yaml` | Manual | Build profile images/config/evidence, generate `assets/manifest.json`, and optionally deploy the asset channel |
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
 | `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove profile image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |
@@ -20,7 +20,8 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 | `site.yaml` | Push to main | Deploy capsem.org on each main merge, then smoke the live marketing site |
 | `release-channel.yaml` | Called by binary or asset release | Deploy release.capsem.org from the generated release-channel site artifact |
 
-Installers carry host binaries and the selected manifest, not VM image blobs.
+Installers carry host binaries, materialized profiles, and the selected
+manifest URL provenance, not a manifest snapshot or VM image blobs.
 The manual VM asset workflow publishes changed image/evidence blobs to the
 immutable GitHub Release tag `assets-v<asset-version>` using arch-prefixed
 artifact names. The logical manifest names stay `vmlinuz`, `initrd.img`,
@@ -60,8 +61,8 @@ Hosted-runner quality suite on macOS:
 ### test-install (ubuntu-24.04-arm)
 
 Installer/update package contract tests run in Docker with systemd. This proves
-the `.deb` install layout, service unit, manifest/provenance payload, and update
-path stay valid before a PR can merge.
+the `.deb` install layout, service unit, manifest URL provenance, channel
+switching, and update path stay valid before a PR can merge.
 
 ### pr-gate (ubuntu-latest)
 
@@ -257,11 +258,13 @@ Each release publishes:
 - `capsem-sbom.spdx.json` -- host SBOM
 
 Installers carry host binaries, materialized profiles, the selected manifest
-URL, and `manifest-origin.json` provenance. Heavy profile image files are
-downloaded on first use through `capsem update --assets` and verified against
-the profile-owned file metadata before boot. Tag releases do not rebuild or
-upload profile images, and they do not publish `latest.json`; binary freshness
-comes from the selected manifest in the release graph.
+URL, and `manifest-origin.json` provenance. They do not carry
+`assets/manifest.json`; postinstall hydrates the live channel with
+`capsem update --assets --manifest <URL>`. Heavy profile image files are
+downloaded through that same path and verified against the profile-owned file
+metadata before boot. Tag releases do not rebuild or upload profile images, and
+they do not publish `latest.json`; binary freshness comes from the selected
+manifest in the release graph.
 
 The binary rail is optimized for fast package iteration. The first 1.5 release
 records the same package/SBOM metadata into both `stable` and `nightly` so both
@@ -269,6 +272,12 @@ channels start from the same binary baseline. After that, nightly can move
 daily while stable is promoted on the weekly cadence. In every case the binary
 job compares each channel manifest before and after `record-binary` and fails
 if profile image metadata changes.
+
+After `release.capsem.org` deploys, the glow-up gate downloads the public
+install script and packages, verifies package-owned binary hashes, rejects any
+packaged `assets/manifest.json`, checks `manifest-origin.json` points at the
+selected stable manifest URL, then runs Docker install, stable/nightly asset
+switching, and the binary updater path against the public channel.
 
 Release packaging materializes runtime profiles through the same profile-derived build rail as
 local development: `capsem-admin profile materialize` copies checked-in config

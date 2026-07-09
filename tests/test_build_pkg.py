@@ -2,7 +2,6 @@
 
 import contextlib
 import functools
-import hashlib
 import http.server
 import json
 import plistlib
@@ -210,10 +209,8 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
         assert app_info["CFBundleShortVersionString"] == version
 
         assets = share / "assets"
-        assert sorted(path.name for path in assets.iterdir()) == [
-            "manifest-origin.json",
-            "manifest.json",
-        ]
+        assert sorted(path.name for path in assets.iterdir()) == ["manifest-origin.json"]
+        assert not (assets / "manifest.json").exists()
         origin = json.loads((assets / "manifest-origin.json").read_text())
         assert origin["schema"] == "capsem.manifest_origin.v1"
         assert origin["origin"] == "package"
@@ -221,7 +218,7 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
         assert "fetched_at" in origin
         assert "packaged_at" in origin
         assert origin["package_version"] == version
-        assert origin["snapshot_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
+        assert "snapshot_sha256" not in origin
 
         for name in REQUIRED_BINARIES:
             assert (share / "bin" / name).is_file()
@@ -234,7 +231,7 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
                 continue
             if rel.startswith("bin/") and rel.removeprefix("bin/") in REQUIRED_BINARIES:
                 continue
-            if rel in {"assets/manifest.json", "assets/manifest-origin.json"}:
+            if rel == "assets/manifest-origin.json":
                 continue
             if rel.startswith("profiles/"):
                 continue
@@ -362,7 +359,7 @@ def test_macos_pkg_rejects_app_version_mismatch(tmp_path: Path) -> None:
     assert "Capsem.app CFBundleShortVersionString mismatch" in result.stderr
 
 
-def test_macos_pkg_remote_manifest_override_records_source_and_payload(tmp_path: Path) -> None:
+def test_macos_pkg_remote_manifest_override_records_source_only(tmp_path: Path) -> None:
     app = tmp_path / "Capsem.app"
     bin_dir = tmp_path / "bin"
     assets_dir = tmp_path / "assets"
@@ -416,7 +413,7 @@ def test_macos_pkg_remote_manifest_override_records_source_and_payload(tmp_path:
         assert res.returncode == 0, (
             f"build-pkg.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
         )
-        assert seen_user_agents == ["CapsemReleaseValidator/1.0"]
+        assert seen_user_agents == []
         assert output_pkg.is_file()
 
         expanded = tmp_path / "expanded-remote"
@@ -427,11 +424,8 @@ def test_macos_pkg_remote_manifest_override_records_source_and_payload(tmp_path:
             text=True,
         )
         assets = _find_capsem_share(expanded) / "assets"
-        assert sorted(path.name for path in assets.iterdir()) == [
-            "manifest-origin.json",
-            "manifest.json",
-        ]
-        assert (assets / "manifest.json").read_text() == manifest.read_text()
+        assert sorted(path.name for path in assets.iterdir()) == ["manifest-origin.json"]
+        assert not (assets / "manifest.json").exists()
         origin = json.loads((assets / "manifest-origin.json").read_text())
         assert origin["schema"] == "capsem.manifest_origin.v1"
         assert origin["origin"] == "package"
@@ -439,6 +433,6 @@ def test_macos_pkg_remote_manifest_override_records_source_and_payload(tmp_path:
         assert "fetched_at" in origin
         assert "packaged_at" in origin
         assert origin["package_version"] == version
-        assert origin["snapshot_sha256"] == hashlib.sha256(manifest.read_bytes()).hexdigest()
+        assert "snapshot_sha256" not in origin
     finally:
         output_pkg.unlink(missing_ok=True)

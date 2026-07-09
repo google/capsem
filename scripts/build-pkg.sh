@@ -10,14 +10,14 @@
 #   config_root       Materialized runtime config root (usually target/config)
 #   version           Version string (e.g. "0.16.1")
 #   signing_identity  Optional: Developer ID Installer identity for productsign
-#   --manifest        Optional manifest URL to package instead of <assets_dir>/manifest.json.
+#   --manifest        Optional manifest URL to record for postinstall hydration.
 #
 # Output: Capsem-<version>.pkg in the current directory
 #
 # The .pkg installs:
 #   /Applications/Capsem.app           -- Tauri GUI
 #   /usr/local/share/capsem/bin/       -- 6 companion binaries
-#   /usr/local/share/capsem/assets/    -- selected manifest.json
+#   /usr/local/share/capsem/assets/    -- selected manifest URL provenance
 #   /usr/local/share/capsem/profiles/  -- materialized profile catalog + rule files
 #   /usr/local/share/capsem/entitlements.plist
 #
@@ -96,27 +96,22 @@ copy_tree_clean() {
 }
 
 write_manifest_origin() {
-    local manifest_source="${1:?write_manifest_origin <manifest_source> <manifest_path> <package_version> <dst>}"
-    local manifest_path="${2:?write_manifest_origin <manifest_source> <manifest_path> <package_version> <dst>}"
-    local package_version="${3:?write_manifest_origin <manifest_source> <manifest_path> <package_version> <dst>}"
-    local dst="${4:?write_manifest_origin <manifest_source> <manifest_path> <package_version> <dst>}"
-    python3 - "$manifest_source" "$manifest_path" "$package_version" "$dst" <<'PY'
+    local manifest_source="${1:?write_manifest_origin <manifest_source> <package_version> <dst>}"
+    local package_version="${2:?write_manifest_origin <manifest_source> <package_version> <dst>}"
+    local dst="${3:?write_manifest_origin <manifest_source> <package_version> <dst>}"
+    python3 - "$manifest_source" "$package_version" "$dst" <<'PY'
 import datetime
-import hashlib
 import json
 import pathlib
 import sys
 import urllib.parse
-import urllib.request
 
 raw_source = sys.argv[1]
-manifest_path = pathlib.Path(sys.argv[2])
-package_version = sys.argv[3]
-dst = pathlib.Path(sys.argv[4])
+package_version = sys.argv[2]
+dst = pathlib.Path(sys.argv[3])
 parsed = urllib.parse.urlparse(raw_source)
 if parsed.scheme not in ("http", "https", "file"):
-    raise SystemExit(f"manifest source must be a URL: {raw_source}")
-manifest_bytes = manifest_path.read_bytes()
+    raise SystemExit(f"manifest must be a URL: {raw_source}")
 fetched_at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 dst.write_text(json.dumps({
     "schema": "capsem.manifest_origin.v1",
@@ -125,7 +120,6 @@ dst.write_text(json.dumps({
     "fetched_at": fetched_at,
     "packaged_at": fetched_at,
     "package_version": package_version,
-    "snapshot_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
 }, sort_keys=True) + "\n")
 PY
 }
@@ -181,35 +175,6 @@ reject_retired_credential_store_markers() {
     done
 }
 
-materialize_manifest_input() {
-    local manifest_source="${1:?materialize_manifest_input <manifest_source> <dst>}"
-    local dst="${2:?materialize_manifest_input <manifest_source> <dst>}"
-    python3 - "$manifest_source" "$dst" <<'PY'
-import pathlib
-import sys
-import urllib.parse
-import urllib.request
-
-source = sys.argv[1]
-dst = pathlib.Path(sys.argv[2])
-parsed = urllib.parse.urlparse(source)
-
-if parsed.scheme in ("http", "https"):
-    request = urllib.request.Request(
-        source,
-        headers={"User-Agent": "CapsemReleaseValidator/1.0"},
-    )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        dst.write_bytes(response.read())
-elif parsed.scheme == "file":
-    dst.write_bytes(pathlib.Path(urllib.request.url2pathname(parsed.path)).read_bytes())
-elif parsed.scheme:
-    raise SystemExit(f"unsupported manifest URL scheme: {parsed.scheme}")
-else:
-    raise SystemExit(f"manifest must be a URL: use https://..., http://..., or file:///absolute/path, got {source}")
-PY
-}
-
 echo "=== Assembling .pkg payload ==="
 
 # Application bundle
@@ -237,25 +202,19 @@ if [ -f "$SCRIPT_DIR/../entitlements.plist" ]; then
     cp "$SCRIPT_DIR/../entitlements.plist" "$SHARE_DIR/"
 fi
 
-# VM manifest. The package carries only the selected manifest and provenance.
-# VM asset payloads stay external and are resolved by the daemon from the
-# installed manifest, whether the URLs are local file:// dev assets or remote
-# corp/release assets.
+# VM manifest source. The package carries only the selected manifest URL and
+# provenance. Postinstall hydrates assets from that live channel URL.
 mkdir -p "$SHARE_DIR/assets"
-ASSETS_VIEW="$ASSETS_DIR"
-SELECTED_MANIFEST_SOURCE="$(file_url "$ASSETS_DIR/manifest.json")"
 if [ -n "$MANIFEST_PATH" ]; then
     SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"
-    ASSETS_VIEW="$WORK_DIR/assets-view"
-    mkdir -p "$ASSETS_VIEW"
-    materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"
+else
+    if [ -z "$ASSETS_DIR" ] || [ ! -f "$ASSETS_DIR/manifest.json" ]; then
+        echo "ERROR: manifest not found: $ASSETS_DIR/manifest.json" >&2
+        exit 1
+    fi
+    SELECTED_MANIFEST_SOURCE="$(file_url "$ASSETS_DIR/manifest.json")"
 fi
-if [ ! -f "$ASSETS_VIEW/manifest.json" ]; then
-    echo "ERROR: manifest not found: $ASSETS_VIEW/manifest.json" >&2
-    exit 1
-fi
-install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"
-write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$SHARE_DIR/assets/manifest.json" "$VERSION" "$SHARE_DIR/assets/manifest-origin.json"
+write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$VERSION" "$SHARE_DIR/assets/manifest-origin.json"
 
 # Materialized profile catalog. Profiles pin the asset hashes the daemon boots;
 # the package installs the profile ledger and the manifest ledger together, but

@@ -273,6 +273,7 @@ jobs:
 
           install_cargo_tool tauri-cli
           install_cargo_tool cargo-auditable
+          install_cargo_tool cargo-sbom
 
       - name: Import Apple certificate
         env:
@@ -913,46 +914,15 @@ jobs:
           ")
           [ "$fail" = 0 ] || { echo '::error::one or more asset URLs are unreachable or hash-mismatched'; exit 1; }
 
-      - name: Verify capsem update --assets succeeds against release.capsem.org
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Glow-up verify public install, channel switch, and upgrade
         run: |
           set -euo pipefail
-          # Pull the just-released .deb for this runner's arch.
-          arch=$(uname -m)
-          [ "$arch" = "aarch64" ] && deb_arch=arm64 || deb_arch=amd64
-          mkdir -p /tmp/deb
-          if ! gh release download "${{ github.ref_name }}" \
-               --pattern "Capsem_*_${deb_arch}.deb" -D /tmp/deb; then
-            echo "::error::no .deb for ${deb_arch} on this release"
-            exit 1
-          fi
-          deb=$(ls /tmp/deb/Capsem_*_${deb_arch}.deb | head -1)
-          # Extract the bundled capsem binary; we don't need to dpkg -i for this.
-          mkdir -p /tmp/extract && cd /tmp/extract
-          ar x "$deb"
-          for d in data.tar.zst data.tar.xz data.tar.gz; do
-            [ -f "$d" ] && tar xf "$d" && break
-          done
-          # Tauri .deb installs the umbrella binary as capsem-app; the CLI is
-          # bundled separately under /usr/share/capsem/bin or similar. Find it.
-          CAPSEM_BIN=$(find . -type f -name capsem -perm -u+x | head -1)
-          if [ -z "$CAPSEM_BIN" ]; then
-            echo "::error::no 'capsem' CLI inside .deb"
-            exit 1
-          fi
-          echo "Using $CAPSEM_BIN ($("$CAPSEM_BIN" --version 2>&1 | head -1))"
-
-          # Stand up a clean CAPSEM_HOME with the packaged manifest/provenance.
-          export CAPSEM_HOME=/tmp/capsem-home
-          mkdir -p "$CAPSEM_HOME/assets"
-          cp ./usr/share/capsem/assets/manifest.json "$CAPSEM_HOME/assets/manifest.json"
-          cp ./usr/share/capsem/assets/manifest-origin.json "$CAPSEM_HOME/assets/manifest-origin.json"
-          "$CAPSEM_BIN" update --assets
-          # Sanity: at least the host arch's three canonical files must now exist.
-          host_arch=$( [ "$arch" = "aarch64" ] && echo arm64 || echo x86_64 )
-          for f in vmlinuz initrd.img rootfs.erofs; do
-            count=$(find "$CAPSEM_HOME/assets/$host_arch" -name "${f%.*}-*" 2>/dev/null | wc -l)
-            [ "$count" -ge 1 ] || { echo "::error::no downloaded file for $f"; exit 1; }
-          done
-          echo "End-to-end download verified against release.capsem.org."
+          echo "Docker smoke: curl -fsSL https://capsem.org/install.sh | sh"
+          uv run python3 scripts/check-public-binary-release.py \
+            --channel stable \
+            --manifest-url "$ASSET_MANIFEST_URL" \
+            --install-script-url https://capsem.org/install.sh \
+            --work-dir /tmp/public-binary-release \
+            --docker-linux-install \
+            --docker-channel-switch \
+            --docker-upgrade
