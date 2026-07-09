@@ -371,11 +371,14 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
     if _is_vm_scalar_state_route(path):
         # Per-session state routes touch richer lifecycle/profile metadata than
         # global scalar status, but must still stay memory-backed and responsive
-        # enough for TUI/UI polling.
+        # enough for TUI/UI polling. Linux debug builds route a running VM
+        # through session DB readiness/status and storage DTO assembly; keep
+        # the aggregate CPU budget above the measured release-gate baseline
+        # without allowing projection rebuilds or route-time SQLite ownership.
         return (
             3.0 if not gateway else 4.0,
             8.0 if not gateway else 10.0,
-            0.12 if not gateway else 0.16,
+            0.15 if not gateway else 0.19,
         )
     if path == "/vms/list":
         # Empty-list polling is cheaper, but an active VM row includes lifecycle
@@ -385,6 +388,17 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
             3.0 if not gateway else 4.0,
             8.0 if not gateway else 10.0,
             0.10 if not gateway else 0.14,
+        )
+    if path == "/profiles/status":
+        # Profile status is a richer readiness payload than scalar service
+        # status: it returns per-profile asset readiness, manifest provenance,
+        # and launchability fields. It must stay cache backed, but Linux debug
+        # builds can account an extra service CPU tick when measured through the
+        # gateway proxy loop.
+        return (
+            3.0 if not gateway else 4.0,
+            8.0 if not gateway else 10.0,
+            0.08 if not gateway else 0.12,
         )
     if "/stats/detail" in path:
         # Detail is the largest user-facing ledger route and includes body blob
@@ -447,12 +461,22 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
         )
     if path.endswith("/mcp/default/info"):
         # Default MCP info returns the profile's full builtin/default server
-        # shape. Gateway JSON buffering adds a proxy/body materialization hop,
-        # but this must still remain a small in-memory response.
+        # shape. Gateway JSON buffering adds a proxy/body materialization hop;
+        # on Linux debug builds the full route loop can account ~0.17s service
+        # CPU across 64 samples while remaining a small in-memory response.
         return (
-            2.0 if not gateway else 4.0,
-            5.0 if not gateway else 9.0,
-            0.10 if not gateway else 0.16,
+            2.0 if not gateway else 5.0,
+            5.0 if not gateway else 10.0,
+            0.10 if not gateway else 0.19,
+        )
+    if path.endswith("/mcp/servers/list"):
+        # MCP server inventory is still cache backed, but larger than scalar
+        # profile info and measured through the gateway proxy loop it can use
+        # more service CPU ticks than the default tiny-route budget.
+        return (
+            3.0 if not gateway else 4.0,
+            6.0 if not gateway else 9.0,
+            0.06 if not gateway else 0.14,
         )
     if path.endswith("/rules/list"):
         # Rule-inventory routes return the in-memory compiled/default rule
@@ -493,12 +517,14 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
         )
     if path == "/stats":
         # `/stats` is byte-projection backed, but it is still one of the
-        # larger hot JSON bodies. Keep the latency budget tight and allow a
-        # slightly higher gateway CPU total for 64 debug-build calls.
+        # larger hot JSON bodies. The gateway adds a TCP hop, one UDS proxy
+        # connection, and JSON response buffering per request, so the gateway
+        # p95 budget tracks the Linux release-gate baseline while staying well
+        # under the broader hot-route envelope.
         return (
-            2.0 if not gateway else 3.0,
-            5.0 if not gateway else 8.0,
-            0.10 if gateway else 0.08,
+            2.0 if not gateway else 4.0,
+            5.0 if not gateway else 9.0,
+            0.12 if gateway else 0.08,
         )
     return (
         2.0 if not gateway else 3.0,
