@@ -9993,6 +9993,9 @@ async fn handle_profile_credential_broker_credentials_reload(
             "credential store retry failed"
         ),
     }
+    for (vm_id, _) in profile_session_dirs(&state, &profile_id) {
+        state.unregister_session_db_handle(&vm_id);
+    }
     handle_profile_credential_broker_credentials_info(State(state), Path(profile_id)).await
 }
 

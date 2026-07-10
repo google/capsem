@@ -5034,6 +5034,9 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
     );
     let session_db = session_dir.join("session.db");
     let writer = capsem_logger::DbWriter::open(&session_db, 16).unwrap();
+    let stale_reader = state
+        .register_session_db_handle("broker-reload-vm", &session_dir)
+        .expect("pre-register session DB reader");
     writer
         .write(capsem_logger::WriteOp::SecurityRuleEvent(
             capsem_logger::SecurityRuleEvent::new(
@@ -5082,6 +5085,13 @@ async fn credential_broker_reload_route_rehydrates_store_and_returns_same_contra
     assert!(after["store"]["last_hydrated_unix_ms"].as_u64().is_some());
     assert_eq!(after["inventory"][0]["credential_ref"], credential_ref);
     assert_eq!(after["inventory"][0]["replay_available"], true);
+    let refreshed_reader = state
+        .session_db_handle("broker-reload-vm")
+        .expect("reload response re-registers session DB reader");
+    assert!(
+        !Arc::ptr_eq(&stale_reader, &refreshed_reader),
+        "credential broker reload must rebuild profile session DB readers before reporting inventory"
+    );
 }
 
 #[tokio::test]
