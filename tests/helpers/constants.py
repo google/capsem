@@ -10,7 +10,7 @@ DEFAULT_CPUS = 2
 CODE_PROFILE_ID = "code"
 
 # Timeouts (seconds)
-EXEC_READY_TIMEOUT = 30    # Max seconds to wait for a VM to become exec-ready
+EXEC_READY_TIMEOUT = 60    # Max seconds to wait for a VM to become exec-ready
 EXEC_TIMEOUT_SECS = 60     # Per-command execution timeout passed to the server
 HTTP_TIMEOUT = 90           # HTTP request timeout for long-running operations (e.g. boot)
 

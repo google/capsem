@@ -5,6 +5,11 @@ from pathlib import Path
 import pytest
 
 from tests.helpers import service as service_helper
+from tests.helpers.constants import EXEC_READY_TIMEOUT
+
+
+def test_exec_ready_timeout_covers_parallel_kvm_boot_pressure() -> None:
+    assert EXEC_READY_TIMEOUT >= 60
 
 
 def test_materialize_test_profiles_rejects_empty_generated_catalog(
