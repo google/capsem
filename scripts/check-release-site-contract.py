@@ -88,6 +88,7 @@ def validate_release_channels(
     channels = channels or ["stable"]
     last_failures: list[tuple[str, Any]] = []
     for attempt in range(1, attempts + 1):
+        clear_checker_fetch_cache(checker)
         failures: list[tuple[str, Any]] = []
         if urlparse(release_site).scheme != "file":
             dns = checker.check_release_site_dns(release_site)
@@ -120,6 +121,12 @@ def validate_release_channels(
     for channel, failure in last_failures:
         print(f"FAIL: {channel}: {failure.name}: {failure.detail}", file=sys.stderr)
     return 1
+
+
+def clear_checker_fetch_cache(checker: Any) -> None:
+    cache = getattr(checker, "_FETCH_BYTES_CACHE", None)
+    if hasattr(cache, "clear"):
+        cache.clear()
 
 
 def normalize_release_site(release_site: str) -> str:

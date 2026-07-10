@@ -653,6 +653,72 @@ def test_release_site_contract_cli_retries_requested_channels_as_a_set(
     assert "nightly release-channel contract passed" in captured.out
 
 
+def test_release_site_contract_retries_clear_cached_remote_fetches(
+    monkeypatch, capsys
+) -> None:
+    validator = _release_site_contract_module()
+    cache_clears = 0
+    checks: list[tuple[int, str]] = []
+    sleep_calls: list[float] = []
+
+    class CountingCache(dict):
+        def clear(self) -> None:
+            nonlocal cache_clears
+            cache_clears += 1
+            super().clear()
+
+    class FakeChecker:
+        BLAKE3_IMPORT_ERROR = None
+        _FETCH_BYTES_CACHE = CountingCache({"stale-nightly-manifest": b"old"})
+
+        @staticmethod
+        def check_release_site_dns(release_site: str):
+            assert release_site == "https://release.capsem.org"
+            return SimpleNamespace(ok=True, name="release.capsem.org DNS", detail="ok")
+
+        @staticmethod
+        def check_release_site_contract(release_site: str, channel: str):
+            assert release_site == "https://release.capsem.org"
+            checks.append((cache_clears, channel))
+            if channel == "nightly" and cache_clears == 1:
+                FakeChecker._FETCH_BYTES_CACHE["nightly-manifest"] = b"stale"
+                return SimpleNamespace(
+                    ok=False,
+                    name="release.capsem.org contract",
+                    detail="channel manifest SHA-256 mismatch",
+                )
+            assert "nightly-manifest" not in FakeChecker._FETCH_BYTES_CACHE
+            return SimpleNamespace(
+                ok=True,
+                name="release.capsem.org contract",
+                detail=f"{channel} ok",
+            )
+
+    monkeypatch.setattr(validator.time, "sleep", sleep_calls.append)
+
+    exit_code = validator.validate_release_channels(
+        release_site="https://release.capsem.org",
+        channels=["stable", "nightly"],
+        attempts=2,
+        delay_seconds=3,
+        checker=FakeChecker,
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert cache_clears == 2
+    assert checks == [
+        (1, "stable"),
+        (1, "nightly"),
+        (2, "stable"),
+        (2, "nightly"),
+    ]
+    assert sleep_calls == [3]
+    assert "attempt 1/2: nightly" in captured.err
+    assert "stable release-channel contract passed" in captured.out
+    assert "nightly release-channel contract passed" in captured.out
+
+
 def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
     workflow = _workflow_text("release-channel.yaml")
     release_assets = _workflow_text("release-assets.yaml")
