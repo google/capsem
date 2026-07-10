@@ -13,7 +13,8 @@ use tokio::net::UdpSocket;
 
 const VERSION: &str = "0.4.0-rust";
 const SECRET_SHAPED_MARKER: &str = "capsem_test_";
-const HTTP_REQUEST_ATTEMPTS: usize = 3;
+const HTTP_REQUEST_ATTEMPTS: usize = 5;
+const HTTP_RETRY_BACKOFF_BASE_MS: u64 = 2;
 
 #[derive(Parser, Debug)]
 #[command(about = "Capsem benchmark harness")]
@@ -102,6 +103,38 @@ struct Scenario {
     body_kind: &'static str,
     required_text: Option<&'static str>,
     secret_shaped_fixture: bool,
+}
+
+#[derive(Clone)]
+struct HttpClients {
+    primary: Client,
+    retry: Client,
+}
+
+impl HttpClients {
+    fn build(concurrency: usize, timeout: Duration) -> Result<Self> {
+        let primary = Client::builder()
+            .danger_accept_invalid_certs(true)
+            .pool_max_idle_per_host(concurrency)
+            .timeout(timeout)
+            .build()
+            .context("build pooled HTTP benchmark client")?;
+        let retry = Client::builder()
+            .danger_accept_invalid_certs(true)
+            .pool_max_idle_per_host(0)
+            .timeout(timeout)
+            .build()
+            .context("build isolated HTTP benchmark retry client")?;
+        Ok(Self { primary, retry })
+    }
+
+    fn for_attempt(&self, attempt: usize) -> &Client {
+        if attempt == 1 {
+            &self.primary
+        } else {
+            &self.retry
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -435,19 +468,14 @@ async fn run_protocol(args: ProtocolArgs) -> Result<Artifact> {
         .map(str::parse::<SocketAddr>)
         .transpose()
         .context("parse --dns-udp-addr")?;
-    let client = Client::builder()
-        .danger_accept_invalid_certs(true)
-        .pool_max_idle_per_host(args.concurrency)
-        .timeout(Duration::from_millis(args.timeout_ms))
-        .build()
-        .context("build HTTP client")?;
+    let clients = HttpClients::build(args.concurrency, Duration::from_millis(args.timeout_ms))?;
 
     let mut scenario_results = Vec::with_capacity(selected.len());
     for scenario in &selected {
         let result = match scenario.transport {
             ScenarioTransport::Http => {
                 run_http_scenario(
-                    client.clone(),
+                    clients.clone(),
                     &base_url,
                     *scenario,
                     args.requests,
@@ -573,7 +601,7 @@ async fn run_protocol_delta(args: ProtocolDeltaArgs) -> Result<ProtocolDeltaArti
 }
 
 async fn run_http_scenario(
-    client: Client,
+    clients: HttpClients,
     base_url: &str,
     scenario: Scenario,
     total_requests: usize,
@@ -586,13 +614,13 @@ async fn run_http_scenario(
     let remainder = total_requests % workers;
     let started = Instant::now();
     let tasks = (0..workers).map(|idx| {
-        let client = client.clone();
+        let clients = clients.clone();
         let url = url.clone();
         let count = per_worker + usize::from(idx < remainder);
         tokio::spawn(async move {
             let mut out = Vec::with_capacity(count);
             for _ in 0..count {
-                out.push(run_one_request(&client, &url, scenario, timeout).await);
+                out.push(run_one_request(&clients, &url, scenario, timeout).await);
             }
             out
         })
@@ -745,7 +773,7 @@ async fn run_one_dns_query(
 }
 
 async fn run_one_request(
-    client: &Client,
+    clients: &HttpClients,
     url: &str,
     scenario: Scenario,
     timeout: Duration,
@@ -753,6 +781,7 @@ async fn run_one_request(
     let started = Instant::now();
     let mut last_request_error = None;
     for attempt in 1..=HTTP_REQUEST_ATTEMPTS {
+        let client = clients.for_attempt(attempt);
         let request = match scenario.method {
             HttpMethod::Get => client.request(Method::GET, url),
             HttpMethod::PostJson => {
@@ -779,21 +808,28 @@ async fn run_one_request(
                             secret_shaped_fixture_seen: secret_fixture_seen(&body, scenario),
                         }
                     }
-                    Err(error) => RequestSample {
-                        status,
-                        size: 0,
-                        latency_ms: started.elapsed().as_secs_f64() * 1000.0,
-                        attempts: attempt,
-                        error: Some(format!("body: {error}")),
-                        required_text_present: false,
-                        secret_shaped_fixture_seen: false,
-                    },
+                    Err(error) => {
+                        last_request_error = Some(format!("body: {error}"));
+                        if attempt < HTTP_REQUEST_ATTEMPTS {
+                            sleep_before_http_retry(attempt).await;
+                            continue;
+                        }
+                        RequestSample {
+                            status,
+                            size: 0,
+                            latency_ms: started.elapsed().as_secs_f64() * 1000.0,
+                            attempts: attempt,
+                            error: last_request_error,
+                            required_text_present: false,
+                            secret_shaped_fixture_seen: false,
+                        }
+                    }
                 };
             }
             Ok(Err(error)) => {
                 last_request_error = Some(format!("request: {error}"));
                 if attempt < HTTP_REQUEST_ATTEMPTS {
-                    tokio::task::yield_now().await;
+                    sleep_before_http_retry(attempt).await;
                     continue;
                 }
             }
@@ -819,6 +855,11 @@ async fn run_one_request(
         required_text_present: false,
         secret_shaped_fixture_seen: false,
     }
+}
+
+async fn sleep_before_http_retry(attempt: usize) {
+    let delay_ms = HTTP_RETRY_BACKOFF_BASE_MS.saturating_mul(1_u64 << attempt.saturating_sub(1));
+    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
 }
 
 fn summarize(
@@ -1261,6 +1302,12 @@ fn round3(value: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
 
     #[test]
     fn selected_scenarios_are_strict() {
@@ -1417,6 +1464,56 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("poisoned numbers"), "{message}");
         assert!(message.contains("tiny_http failed=100/100"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn http_transport_retries_reconnect_until_bounded_budget_is_exhausted() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let accepted_for_server = Arc::clone(&accepted);
+        let server = tokio::spawn(async move {
+            loop {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let attempt = accepted_for_server.fetch_add(1, Ordering::SeqCst) + 1;
+                if attempt < HTTP_REQUEST_ATTEMPTS {
+                    drop(stream);
+                    continue;
+                }
+                let mut buf = [0_u8; 1024];
+                let _ = stream.read(&mut buf).await.unwrap();
+                let body =
+                    br#"{"output":[{"content":[{"type":"output_text","text":"tool_calls"}]}]}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    std::str::from_utf8(body).unwrap()
+                );
+                stream.write_all(response.as_bytes()).await.unwrap();
+                break;
+            }
+        });
+
+        let scenario = SCENARIOS
+            .iter()
+            .copied()
+            .find(|scenario| scenario.name == "model_json_response")
+            .unwrap();
+        let clients = HttpClients::build(1, Duration::from_secs(1)).unwrap();
+        let sample = run_one_request(
+            &clients,
+            &format!("http://{addr}{}", scenario.path),
+            scenario,
+            Duration::from_secs(1),
+        )
+        .await;
+        server.await.unwrap();
+
+        assert_eq!(sample.status, 200);
+        assert_eq!(sample.attempts, HTTP_REQUEST_ATTEMPTS);
+        assert!(sample.error.is_none(), "{sample:?}");
+        assert!(sample.required_text_present);
+        assert_eq!(accepted.load(Ordering::SeqCst), HTTP_REQUEST_ATTEMPTS);
     }
 
     #[test]
