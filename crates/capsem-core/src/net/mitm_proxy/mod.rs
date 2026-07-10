@@ -81,6 +81,21 @@ const AI_BODY_CAPTURE_LIMIT: usize = HTTP_BODY_CAPTURE_LIMIT;
 const MCP_BODY_CAPTURE_LIMIT: usize = HTTP_BODY_CAPTURE_LIMIT;
 const CREDENTIAL_BODY_CAPTURE_LIMIT: usize = HTTP_BODY_CAPTURE_LIMIT;
 
+fn request_can_replay_empty_body(method: &http::Method, headers: &http::HeaderMap) -> bool {
+    let no_declared_length = headers
+        .get(http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.trim() == "0")
+        .unwrap_or(true);
+    let no_chunked_body = !headers.contains_key(http::header::TRANSFER_ENCODING);
+    no_declared_length
+        && no_chunked_body
+        && matches!(
+            *method,
+            http::Method::GET | http::Method::HEAD | http::Method::OPTIONS | http::Method::DELETE
+        )
+}
+
 static FIRST_NETWORK_READY_EMITTED: AtomicBool = AtomicBool::new(false);
 
 /// Configuration for the MITM proxy.
@@ -1898,7 +1913,23 @@ async fn handle_request(
 
     let should_evaluate_model_request = sniffed_model_request
         || effective_ai_protocol.is_some_and(|protocol| is_llm_api_path(protocol, &path));
-    let upstream_req_body: ProxyBoxBody = if should_evaluate_model_request {
+    enum UpstreamRequestBody {
+        Replayable(Bytes),
+        Streaming(ProxyBoxBody),
+    }
+
+    impl UpstreamRequestBody {
+        fn into_body(self) -> ProxyBoxBody {
+            match self {
+                UpstreamRequestBody::Replayable(body) => Full::new(body)
+                    .map_err(|never| -> anyhow::Error { match never {} })
+                    .boxed(),
+                UpstreamRequestBody::Streaming(body) => body,
+            }
+        }
+    }
+
+    let upstream_req_body: UpstreamRequestBody = if should_evaluate_model_request {
         let model_request_span = tracing::debug_span!(
             target: "capsem.mitm",
             spans::MITM_SECURITY_ACTIONS,
@@ -2064,9 +2095,7 @@ async fn handle_request(
             }
         }
 
-        Full::new(body_for_upstream)
-            .map_err(|never| -> anyhow::Error { match never {} })
-            .boxed()
+        UpstreamRequestBody::Replayable(body_for_upstream)
     } else {
         match request_body_source {
             RequestBodySource::Collected(body_bytes) => {
@@ -2076,12 +2105,16 @@ async fn handle_request(
                     let to_copy = st.max_body_capture.min(body_bytes.len());
                     st.preview.extend_from_slice(&body_bytes[..to_copy]);
                 }
-                Full::new(body_bytes)
-                    .map_err(|never| -> anyhow::Error { match never {} })
-                    .boxed()
+                UpstreamRequestBody::Replayable(body_bytes)
             }
             RequestBodySource::Incoming(body) => {
-                TrackedBody::new(body, Arc::clone(&req_stats), 100 * 1024 * 1024).boxed()
+                if request_can_replay_empty_body(&original_method, &original_headers) {
+                    UpstreamRequestBody::Replayable(Bytes::new())
+                } else {
+                    UpstreamRequestBody::Streaming(
+                        TrackedBody::new(body, Arc::clone(&req_stats), 100 * 1024 * 1024).boxed(),
+                    )
+                }
             }
         }
     };
@@ -2320,33 +2353,42 @@ async fn handle_request(
         "upstream sender prepared"
     );
 
-    // Build upstream request with original headers.
     let full_path = match upstream_query {
         Some(q) => format!("{path}?{q}"),
         None => path.clone(),
     };
-    let mut builder = hyper::Request::builder()
-        .method(original_method)
-        .uri(&full_path);
-    for (name, value) in original_headers.iter() {
-        // TLS: drop inbound `host` -- the SNI-derived `domain` is
-        //      authoritative and we re-add it below.
-        // HTTP: preserve inbound `host` -- the guest sent it,
-        //       and parse_http_host_target already drove our
-        //       upstream selection from it.
-        let drop_host = matches!(protocol, Protocol::Tls) && name == "host";
-        if drop_host || name == "accept-encoding" {
-            continue;
-        }
-        builder = builder.header(name.clone(), value.clone());
-    }
-    if matches!(protocol, Protocol::Tls) {
-        builder = builder.header("host", domain);
-    }
-    // Only accept gzip -- we can decompress it; brotli/zstd we cannot.
-    builder = builder.header("accept-encoding", "gzip");
+    let replayable_upstream_body = match &upstream_req_body {
+        UpstreamRequestBody::Replayable(body) => Some(body.clone()),
+        UpstreamRequestBody::Streaming(_) => None,
+    };
+    let build_upstream_request =
+        |body: ProxyBoxBody| -> anyhow::Result<hyper::Request<ProxyBoxBody>> {
+            let mut builder = hyper::Request::builder()
+                .method(original_method.clone())
+                .uri(&full_path);
+            for (name, value) in original_headers.iter() {
+                // TLS: drop inbound `host` -- the SNI-derived `domain` is
+                //      authoritative and we re-add it below.
+                // HTTP: preserve inbound `host` -- the guest sent it,
+                //       and parse_http_host_target already drove our
+                //       upstream selection from it.
+                let drop_host = matches!(protocol, Protocol::Tls) && name == "host";
+                if drop_host || name == "accept-encoding" {
+                    continue;
+                }
+                builder = builder.header(name.clone(), value.clone());
+            }
+            if matches!(protocol, Protocol::Tls) {
+                builder = builder.header("host", domain);
+            }
+            // Only accept gzip -- we can decompress it; brotli/zstd we cannot.
+            builder = builder.header("accept-encoding", "gzip");
+            builder.body(body).map_err(|error| {
+                anyhow::anyhow!("build upstream request for MITM forwarding: {error}")
+            })
+        };
 
-    let upstream_req = builder.body(upstream_req_body)?;
+    let upstream_req = build_upstream_request(upstream_req_body.into_body())?;
 
     let upstream_send_span = tracing::debug_span!(
         target: "capsem.mitm",
@@ -2367,15 +2409,148 @@ async fn handle_request(
             upstream_send_span.record("decision", "error");
             upstream_send_span.record("status", "error");
             upstream_send_span.record("error_kind", "send_request");
-            return Ok(make_502(
-                &e,
-                &method,
-                &path,
-                &query,
-                &req_hdrs,
-                start_time,
-                &request_security_decision,
-            ));
+            if !reused {
+                return Ok(make_502(
+                    &e,
+                    &method,
+                    &path,
+                    &query,
+                    &req_hdrs,
+                    start_time,
+                    &request_security_decision,
+                ));
+            }
+            let Some(retry_body) = replayable_upstream_body.clone() else {
+                return Ok(make_502(
+                    &e,
+                    &method,
+                    &path,
+                    &query,
+                    &req_hdrs,
+                    start_time,
+                    &request_security_decision,
+                ));
+            };
+            tracing::debug!(
+                target: "mitm.transport.upstream",
+                domain, port = upstream_port, dial_target = %dial_target,
+                error = %e,
+                "cached upstream sender failed on send; reconnecting replayable request"
+            );
+            let upstream_tcp = match tokio::net::TcpStream::connect(&dial_target)
+                .instrument(upstream_send_span.clone())
+                .await
+            {
+                Ok(tcp) => {
+                    let _ = tcp.set_nodelay(true);
+                    tcp
+                }
+                Err(retry_error) => {
+                    upstream_send_span.record("error_kind", "retry_tcp_connect");
+                    return Ok(make_502(
+                        &retry_error,
+                        &method,
+                        &path,
+                        &query,
+                        &req_hdrs,
+                        start_time,
+                        &request_security_decision,
+                    ));
+                }
+            };
+            let upstream_io: TokioIo<Box<dyn TokioReadWrite + Unpin + Send>> =
+                match upstream_protocol {
+                    Protocol::Tls => {
+                        let connector = tokio_rustls::TlsConnector::from(Arc::clone(upstream_tls));
+                        let server_name =
+                            match rustls::pki_types::ServerName::try_from(domain.to_string()) {
+                                Ok(server_name) => server_name,
+                                Err(retry_error) => {
+                                    upstream_send_span.record("error_kind", "retry_server_name");
+                                    return Ok(make_502(
+                                        &retry_error,
+                                        &method,
+                                        &path,
+                                        &query,
+                                        &req_hdrs,
+                                        start_time,
+                                        &request_security_decision,
+                                    ));
+                                }
+                            };
+                        match connector.connect(server_name, upstream_tcp).await {
+                            Ok(tls) => {
+                                TokioIo::new(Box::new(tls) as Box<dyn TokioReadWrite + Unpin + Send>)
+                            }
+                            Err(retry_error) => {
+                                upstream_send_span.record("error_kind", "retry_tls_handshake");
+                                return Ok(make_502(
+                                    &retry_error,
+                                    &method,
+                                    &path,
+                                    &query,
+                                    &req_hdrs,
+                                    start_time,
+                                    &request_security_decision,
+                                ));
+                            }
+                        }
+                    }
+                    Protocol::Http => TokioIo::new(
+                        Box::new(upstream_tcp) as Box<dyn TokioReadWrite + Unpin + Send>
+                    ),
+                    Protocol::McpFrame => unreachable!("framed MCP bypasses HTTP upstream dial"),
+                    Protocol::Unknown => unreachable!("handle_inner gates Unknown earlier"),
+                };
+            let (mut retry_sender, retry_conn) =
+                match hyper::client::conn::http1::handshake(upstream_io)
+                    .instrument(upstream_send_span.clone())
+                    .await
+                {
+                    Ok(pair) => pair,
+                    Err(retry_error) => {
+                        upstream_send_span.record("error_kind", "retry_http_handshake");
+                        return Ok(make_502(
+                            &retry_error,
+                            &method,
+                            &path,
+                            &query,
+                            &req_hdrs,
+                            start_time,
+                            &request_security_decision,
+                        ));
+                    }
+                };
+            tokio::spawn(async move {
+                let _ = retry_conn.await;
+            });
+            let retry_req = build_upstream_request(
+                Full::new(retry_body)
+                    .map_err(|never| -> anyhow::Error { match never {} })
+                    .boxed(),
+            )?;
+            match retry_sender
+                .send_request(retry_req)
+                .instrument(upstream_send_span.clone())
+                .await
+            {
+                Ok(response) => {
+                    sender = retry_sender;
+                    response
+                }
+                Err(retry_error) => {
+                    upstream_send_span.record("error_kind", "retry_send_request");
+                    return Ok(make_502(
+                        &retry_error,
+                        &method,
+                        &path,
+                        &query,
+                        &req_hdrs,
+                        start_time,
+                        &request_security_decision,
+                    ));
+                }
+            }
         }
     };
     upstream_send_span.record("decision", "allow");
@@ -2874,6 +3049,34 @@ match = 'http.host == "127.0.0.1"'
         );
         assert_eq!(ai_protocol_for_body_preview(&oversized), None);
         assert_eq!(ai_protocol_for_body_preview(br#"{"hello":"world"}"#), None);
+    }
+
+    #[test]
+    fn retry_replayability_is_limited_to_empty_idempotent_requests() {
+        let headers = http::HeaderMap::new();
+        assert!(request_can_replay_empty_body(&http::Method::GET, &headers));
+        assert!(request_can_replay_empty_body(&http::Method::HEAD, &headers));
+        assert!(!request_can_replay_empty_body(
+            &http::Method::POST,
+            &headers
+        ));
+
+        let mut with_body = http::HeaderMap::new();
+        with_body.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_static("12"),
+        );
+        assert!(!request_can_replay_empty_body(
+            &http::Method::GET,
+            &with_body
+        ));
+
+        let mut chunked = http::HeaderMap::new();
+        chunked.insert(
+            http::header::TRANSFER_ENCODING,
+            http::HeaderValue::from_static("chunked"),
+        );
+        assert!(!request_can_replay_empty_body(&http::Method::GET, &chunked));
     }
 
     #[test]

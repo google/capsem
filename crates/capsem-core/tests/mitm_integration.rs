@@ -585,6 +585,71 @@ async fn mitm_proxy_plain_http_port_mechanics_do_not_deny_outside_security_rail(
         .contains("http-port-not-allowlisted"));
 }
 
+/// Release-scale local protocol benchmarks reuse one guest->MITM HTTP/1.1
+/// connection for thousands of requests. If the upstream closes a cached
+/// keep-alive socket without first advertising `Connection: close`, the proxy
+/// must reconnect upstream instead of turning one benchmark request into a 502.
+#[tokio::test]
+async fn mitm_proxy_plain_http_reconnects_stale_cached_upstream_sender() {
+    let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_port = upstream_listener.local_addr().unwrap().port();
+    let upstream_task = tokio::spawn(async move {
+        for body in [b"first".as_slice(), b"second".as_slice()] {
+            let (mut sock, _) = upstream_listener.accept().await.unwrap();
+            let _ = read_http11_request(&mut sock).await;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n",
+                body.len()
+            );
+            sock.write_all(resp.as_bytes()).await.unwrap();
+            sock.write_all(body).await.unwrap();
+            sock.flush().await.unwrap();
+            let _ = sock.shutdown().await;
+        }
+    });
+
+    let (config, db) = make_proxy_config_full(&["127.0.0.1"], &[], false, &[80, upstream_port]);
+    let (proxy_task, proxy_addr) = spawn_proxy(config).await;
+
+    let tcp = tokio::net::TcpStream::connect(proxy_addr).await.unwrap();
+    let io = TokioIo::new(tcp);
+    let (mut sender, conn) = hyper::client::conn::http1::handshake(io).await.unwrap();
+    let conn_task = tokio::spawn(conn);
+
+    for expected in ["first", "second"] {
+        let req = hyper::Request::builder()
+            .method("GET")
+            .uri("/model/response")
+            .header("host", format!("127.0.0.1:{upstream_port}"))
+            .body(Full::new(Bytes::new()))
+            .unwrap();
+        let resp = sender.send_request(req).await.unwrap();
+        assert_eq!(resp.status(), http::StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body.as_ref(), expected.as_bytes());
+    }
+
+    drop(sender);
+    conn_task.await.unwrap().unwrap();
+    proxy_task.await.unwrap();
+    upstream_task.await.unwrap();
+    db.flush().await;
+
+    let events = db.reader().unwrap().recent_net_events(10).unwrap();
+    assert!(
+        events
+            .iter()
+            .filter(|event| event.status_code == Some(200))
+            .count()
+            >= 2,
+        "both requests should be logged as successful net events: {events:?}"
+    );
+    assert!(
+        events.iter().all(|event| event.status_code != Some(502)),
+        "stale cached upstream sender must not leak a 502: {events:?}"
+    );
+}
+
 /// T2.3: Ollama-shaped end-to-end. A fake plain-HTTP upstream binds
 /// on `127.0.0.1:0`; the proxy is configured with that port on its
 /// `http_upstream_ports` allowlist and `127.0.0.1` on the domain
