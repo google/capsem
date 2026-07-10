@@ -28,22 +28,30 @@ class MockWsProcess:
         self._loop = None
         self._thread = None
         self._shutdown = None
+        self._ready = threading.Event()
+        self._startup_error = None
 
     def start(self):
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
-        # Wait for server to bind
-        for _ in range(50):
-            if os.path.exists(self.sock_path):
-                return
-            time.sleep(0.1)
+        # Wait until the worker has both bound the socket and installed the
+        # shutdown event. The socket can appear before _shutdown is assigned,
+        # and stop() must never race that tiny window.
+        if self._ready.wait(timeout=5) and os.path.exists(self.sock_path):
+            return
+        if self._startup_error is not None:
+            raise RuntimeError("Mock WS server failed to start") from self._startup_error
         raise RuntimeError("Mock WS server didn't start")
 
     def _run(self):
         asyncio.set_event_loop(self._loop)
         try:
             self._loop.run_until_complete(self._serve())
+        except BaseException as exc:
+            self._startup_error = exc
+            self._ready.set()
+            raise
         finally:
             self._loop.close()
 
@@ -54,6 +62,7 @@ class MockWsProcess:
         # Park on an Event instead of serve_forever(): serve_forever() only
         # returns on task cancellation, which complicates cross-thread shutdown.
         self._shutdown = asyncio.Event()
+        self._ready.set()
         try:
             await self._shutdown.wait()
         finally:
