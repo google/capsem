@@ -183,6 +183,68 @@ def test_public_binary_release_gate_rejects_packaged_binary_version_drift(
     )
 
 
+def test_public_binary_release_gate_does_not_execute_gui_payload_without_deps(
+    tmp_path: Path,
+) -> None:
+    package_dir = tmp_path / "packages"
+    package_dir.mkdir()
+    package = package_dir / "Capsem_9.9.9_amd64.deb"
+    capsem = b"#!/bin/sh\necho capsem 9.9.9\n"
+    app = b"#!/bin/sh\necho missing libwebkit2gtk >&2\nexit 127\n"
+    tray = b"#!/bin/sh\necho missing libxdo >&2\nexit 127\n"
+    manifest_url = (tmp_path / "manifest.json").resolve().as_uri()
+    _write_minimal_deb(
+        package,
+        {
+            "usr/bin/capsem": capsem,
+            "usr/bin/capsem-app": app,
+            "usr/bin/capsem-tray": tray,
+        },
+        manifest_url=manifest_url,
+    )
+
+    manifest = _write_manifest(
+        tmp_path,
+        [
+            _package_record(
+                "x86_64",
+                package.name,
+                package,
+                [
+                    _binary_record("capsem", "/usr/bin/capsem", capsem),
+                    _binary_record("capsem-app", "/usr/bin/capsem-app", app),
+                    _binary_record("capsem-tray", "/usr/bin/capsem-tray", tray),
+                ],
+            )
+        ],
+    )
+    install_sh = _write_install_sh(tmp_path)
+
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            str(SCRIPT),
+            "--manifest-url",
+            manifest.resolve().as_uri(),
+            "--install-script-url",
+            str(install_sh),
+            "--package-dir",
+            str(package_dir),
+            "--required-package",
+            "linux:x86_64:debian_package",
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "validated 1 package and 3 packaged binaries" in result.stdout
+
+
 def test_public_binary_release_gate_rejects_frozen_manifest_payload(tmp_path: Path) -> None:
     package_dir = tmp_path / "packages"
     package_dir.mkdir()
@@ -312,6 +374,7 @@ def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> N
     assert "update --assets --manifest" in source
     assert "CAPSEM_RELEASE_MANIFEST_URL=" in source
     assert 'update --yes' in source
+    assert '.capsem/bin/$bin\\\\" --version' in source
     assert "manifest-origin.json" in source
     assert "snapshot_sha256" in source
     assert "freezes {frozen_manifest_path}" in source

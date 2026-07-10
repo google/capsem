@@ -352,6 +352,28 @@ def test_version_is_preserved_for_downgrade_and_same_version_reinstall(tmp_path)
     assert version_line == "Version: 0.0.1"
 
 
+def test_repacked_deb_declares_tray_runtime_dependency(tmp_path):
+    """The package must install libxdo3 before capsem-tray can execute."""
+    fixture = _build_fixture_deb(tmp_path)
+    bin_dir = tmp_path / "bin"
+    config_dir = tmp_path / "target-config"
+    _seed_binaries(bin_dir)
+    _seed_config(config_dir)
+    output = tmp_path / "out.deb"
+
+    res = _run_repack(fixture, bin_dir, config_dir, output)
+    assert res.returncode == 0, f"repack-deb.sh failed: stdout={res.stdout!r} stderr={res.stderr!r}"
+
+    extracted = _deb_contents(output, tmp_path / "extracted")
+    control = (extracted / "DEBIAN" / "control").read_text()
+    depends = " ".join(
+        line.strip()
+        for line in control.splitlines()
+        if line.startswith("Depends:") or line.startswith(" ")
+    )
+    assert "libxdo3" in depends
+
+
 def test_explicit_manifest_url_is_packaged_without_manifest_payload(tmp_path):
     """Packages record the selected manifest URL but do not freeze a manifest copy."""
     fixture = _build_fixture_deb(tmp_path)

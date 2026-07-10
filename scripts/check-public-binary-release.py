@@ -638,6 +638,8 @@ def should_execute_packaged_binary(package: dict[str, Any], installed_path: str)
         return False
     if package.get("kind") != "debian_package":
         return False
+    if Path(installed_path).name in {"capsem-app", "capsem-tray"}:
+        return False
     return platform.system() == "Linux" and platform.machine().lower() in {"x86_64", "amd64"}
 
 
@@ -740,6 +742,7 @@ su capsemtest -c 'test -f "$HOME/.capsem/assets/manifest.json"'
 su capsemtest -c 'grep -F {shlex.quote(stable_manifest_url)} "$HOME/.capsem/assets/manifest-origin.json"'
 for bin in {helper_checks}; do
   su capsemtest -c "test -x \\"\\$HOME/.capsem/bin/$bin\\""
+  su capsemtest -c "\\"\\$HOME/.capsem/bin/$bin\\" --version"
 done
 """
     if channel_switch:

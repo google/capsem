@@ -156,8 +156,41 @@ strip_packaged_binaries() {
     fi
 }
 
+ensure_deb_dependency() {
+    local control="${1:?ensure_deb_dependency <control> <dependency>}"
+    local dependency="${2:?ensure_deb_dependency <control> <dependency>}"
+    python3 - "$control" "$dependency" <<'PY'
+import pathlib
+import re
+import sys
+
+control = pathlib.Path(sys.argv[1])
+dependency = sys.argv[2]
+text = control.read_text()
+match = re.search(r"(?ms)^Depends:\s*(.*?)(?=^[^ \t]|\Z)", text)
+if match is None:
+    insert_at = len(text)
+    if not text.endswith("\n"):
+        text += "\n"
+        insert_at += 1
+    text = text[:insert_at] + f"Depends: {dependency}\n" + text[insert_at:]
+else:
+    raw = match.group(1)
+    deps = [item.strip() for item in raw.replace("\n", " ").split(",") if item.strip()]
+    names = {re.split(r"\s*[ (]", item, maxsplit=1)[0] for item in deps}
+    if dependency not in names:
+        deps.append(dependency)
+        replacement = "Depends: " + ", ".join(deps) + "\n"
+        text = text[: match.start()] + replacement + text[match.end():]
+control.write_text(text)
+PY
+}
+
 echo "=== Extracting .deb ==="
 dpkg-deb -R "$INPUT_DEB" "$WORK_DIR/deb"
+
+echo "=== Ensuring Debian package dependencies ==="
+ensure_deb_dependency "$WORK_DIR/deb/DEBIAN/control" "libxdo3"
 
 echo "=== Adding companion binaries ==="
 mkdir -p "$WORK_DIR/deb/usr/bin"
