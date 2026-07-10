@@ -439,8 +439,8 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "--base-url \"$RELEASE_SITE_URL\"" in workflow
     assert "--channel stable" in workflow
     assert "--channel nightly" in workflow
-    assert "--attempts 6" in workflow
-    assert "--delay-seconds 10" in workflow
+    assert "--attempts 30" in workflow
+    assert "--delay-seconds 20" in workflow
     assert workflow.index("cloudflare/wrangler-action@v3") < workflow.index(
         "Validate deployed asset channel content"
     )
@@ -458,8 +458,8 @@ def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_
     assert "--channel stable" in validator_step
     assert "--channel nightly" in validator_step
     assert "--channel \"$CHANNEL\"" not in validator_step
-    assert "--attempts 6" in validator_step
-    assert "--delay-seconds 10" in validator_step
+    assert "--attempts 30" in validator_step
+    assert "--delay-seconds 20" in validator_step
     assert workflow.index("cloudflare/wrangler-action@v3") < workflow.index(
         "Validate deployed asset channel content"
     )

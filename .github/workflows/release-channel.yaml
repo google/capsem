@@ -117,5 +117,5 @@ jobs:
             --base-url "$RELEASE_SITE_URL" \
             --channel stable \
             --channel nightly \
-            --attempts 6 \
-            --delay-seconds 10
+            --attempts 30 \
+            --delay-seconds 20
