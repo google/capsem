@@ -1,6 +1,6 @@
 {
   "version": "0.4.0-rust",
-  "timestamp": 1783624078.9524205,
+  "timestamp": 1783682692.5243602,
   "hostname": "unknown",
   "benchmark": "capsem-bench-rs",
   "mock_server_protocol": {
@@ -23,18 +23,18 @@
         "concurrency": 64,
         "successful": 50000,
         "failed": 0,
-        "transport_retries": 16,
-        "total_duration_ms": 20208.0,
-        "requests_per_sec": 2474.3,
+        "transport_retries": 19,
+        "total_duration_ms": 20062.3,
+        "requests_per_sec": 2492.2,
         "transfer_bytes": 32000000,
-        "bytes_per_sec": 1583534.0,
+        "bytes_per_sec": 1595032.0,
         "latency_ms": {
-          "min": 2.6,
-          "max": 309.4,
-          "mean": 25.7,
-          "p50": 25.1,
-          "p95": 37.0,
-          "p99": 42.9
+          "min": 2.8,
+          "max": 289.0,
+          "mean": 25.5,
+          "p50": 24.9,
+          "p95": 36.9,
+          "p99": 43.0
         },
         "errors": {}
       },
@@ -47,17 +47,17 @@
         "successful": 50000,
         "failed": 0,
         "transport_retries": 0,
-        "total_duration_ms": 22596.9,
-        "requests_per_sec": 2212.7,
+        "total_duration_ms": 22328.9,
+        "requests_per_sec": 2239.2,
         "transfer_bytes": 11050000,
-        "bytes_per_sec": 489004.5,
+        "bytes_per_sec": 494874.2,
         "latency_ms": {
-          "min": 2.6,
-          "max": 65.6,
-          "mean": 28.7,
-          "p50": 28.3,
-          "p95": 42.5,
-          "p99": 48.6
+          "min": 2.9,
+          "max": 70.0,
+          "mean": 28.4,
+          "p50": 28.0,
+          "p95": 42.0,
+          "p99": 48.5
         },
         "errors": {},
         "secret_shaped_fixture_seen": true,
@@ -65,7 +65,7 @@
       }
     ]
   },
-  "host_recorded_at": 1783624128.578912,
+  "host_recorded_at": 1783682741.5074341,
   "arch": "x86_64",
   "mock_server_base_url": "http://127.0.0.1:3713"
 }
