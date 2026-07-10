@@ -231,7 +231,7 @@ uv run pytest tests/capsem-serial/test_route_latency_benchmark.py -q -s
 |-------|----------------|--------------|
 | service_hot | `/status`, `/vms/list`, `/stats`, profile assets/plugins/enforcement/detection/MCP/security routes | route-specific p95 <= 2-3ms, max <= 5-8ms |
 | gateway_hot | Gateway proxy for the same hot control routes | route-specific p95 <= 3-4ms, max <= 8-10ms |
-| db_contention | `/stats` reads while `PATCH /profiles/code/mcp/default/edit` writes profile mutation ledger rows | p95 <= 15ms, max <= 40ms |
+| db_contention | `/stats` reads while `PATCH /profiles/code/mcp/default/edit` writes profile mutation ledger rows | Ironbank gate: p95 <= 15ms, max <= 40ms. Release artifact gate: p95 <= 15ms, p99 <= 40ms, max archived for visibility |
 
 ### When to run
 
