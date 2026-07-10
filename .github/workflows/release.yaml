@@ -566,6 +566,11 @@ jobs:
           path: release-artifacts/
         continue-on-error: true
 
+      - name: Install host SBOM archive deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zstd
+
       - name: Generate packaged host SBOM
         run: |
           set -euo pipefail
@@ -701,6 +706,11 @@ jobs:
           name: release-linux-x86_64
           path: release-artifacts/
         continue-on-error: true
+
+      - name: Install host SBOM archive deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zstd
 
       - name: Generate packaged host SBOM
         run: |
@@ -931,6 +941,7 @@ jobs:
             --channel stable \
             --manifest-url "$ASSET_MANIFEST_URL" \
             --install-script-url https://capsem.org/install.sh \
+            --site-url https://capsem.org/ \
             --work-dir /tmp/public-binary-release \
             --docker-linux-install \
             --docker-channel-switch \

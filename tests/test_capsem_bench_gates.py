@@ -174,10 +174,19 @@ def test_validate_capsem_bench_result_accepts_healthy_result():
 
 def test_validate_capsem_bench_result_accepts_linux_virtiofs_sync_write_floor(monkeypatch):
     data = _valid_result()
-    data["disk"]["rand_write_4k"]["iops"] = 550
+    data["disk"]["rand_write_4k"]["iops"] = 425
     monkeypatch.setattr(benchmark_gates.sys, "platform", "linux")
 
     validate_capsem_bench_result(data)
+
+
+def test_validate_capsem_bench_result_rejects_linux_virtiofs_sync_write_regression(monkeypatch):
+    data = _valid_result()
+    data["disk"]["rand_write_4k"]["iops"] = 350
+    monkeypatch.setattr(benchmark_gates.sys, "platform", "linux")
+
+    with pytest.raises(AssertionError, match="disk rand_write_4k"):
+        validate_capsem_bench_result(data)
 
 
 def test_release_protocol_benchmark_uses_release_scale():

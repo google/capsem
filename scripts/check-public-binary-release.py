@@ -7,6 +7,8 @@ import argparse
 import gzip
 import hashlib
 import json
+import os
+import platform
 import shutil
 import shlex
 import subprocess
@@ -64,6 +66,7 @@ def main() -> int:
     parser.add_argument("--release-base-url", default="https://release.capsem.org")
     parser.add_argument("--manifest-url")
     parser.add_argument("--install-script-url", default="https://capsem.org/install.sh")
+    parser.add_argument("--site-url")
     parser.add_argument("--package-dir", type=Path)
     parser.add_argument("--work-dir", type=Path)
     parser.add_argument(
@@ -113,6 +116,15 @@ def main() -> int:
                 release_base_url=args.release_base_url,
             )
         )
+        if args.site_url:
+            failures.extend(
+                check_public_site_download_links(
+                    fetch_text(args.site_url),
+                    site_url=args.site_url,
+                    channel=args.channel,
+                    release_base_url=args.release_base_url,
+                )
+            )
 
         manifest = json.loads(fetch_bytes(manifest_url).decode("utf-8"))
         packages = current_packages_by_requirement(manifest, required, failures)
@@ -188,6 +200,28 @@ def check_install_script_defaults(
         failures.append("install.sh still depends on GitHub latest release metadata")
     if "releases/tag/assets-" in script or "assets-v" in script:
         failures.append("install.sh contains an asset-release tag URL")
+    return failures
+
+
+def check_public_site_download_links(
+    html: str,
+    *,
+    site_url: str,
+    channel: str,
+    release_base_url: str,
+) -> list[str]:
+    failures: list[str] = []
+    if "releases/tag/assets-" in html or "assets-v" in html:
+        failures.append(f"{site_url} contains an asset-release tag download URL")
+    channel_manifest = (
+        f"{release_base_url.rstrip('/')}/assets/{channel}/manifest.json"
+    )
+    has_install_entrypoint = "https://capsem.org/install.sh" in html or "install.sh" in html
+    has_channel_entrypoint = channel_manifest in html or f"/assets/{channel}/manifest.json" in html
+    if not has_install_entrypoint and not has_channel_entrypoint:
+        failures.append(
+            f"{site_url} does not expose the {channel} release-channel install entrypoint"
+        )
     return failures
 
 
@@ -330,6 +364,11 @@ def check_package_manifest_origin(
         failures.append(
             f"{package_path.name} manifest-origin source {origin.get('source')!r} "
             f"does not match {expected_manifest_url}"
+        )
+    if origin.get("package_version") != package.get("version"):
+        failures.append(
+            f"{package_path.name} manifest-origin package_version "
+            f"{origin.get('package_version')!r} does not match {package.get('version')}"
         )
     if "snapshot_sha256" in origin:
         failures.append(f"{package_path.name} manifest-origin still records snapshot_sha256")
@@ -552,6 +591,7 @@ def check_package_binaries(
 
     failures: list[str] = []
     count = 0
+    payload: dict[str, bytes] | None = None
     for binary in binaries:
         if not isinstance(binary, dict):
             failures.append(f"package {package_path.name} contains non-object binary entry")
@@ -570,8 +610,68 @@ def check_package_binaries(
                 f"binary {installed_path} SHA-256 not found inside {package_path.name}"
             )
             continue
+        if should_execute_packaged_binary(package, installed_path):
+            if payload is None:
+                try:
+                    payload = package_payload_files(package_path)
+                except (OSError, ValueError, subprocess.CalledProcessError) as error:
+                    failures.append(f"could not extract {package_path.name}: {error}")
+                    payload = {}
+            failures.extend(
+                check_packaged_binary_version(
+                    package,
+                    binary,
+                    installed_path,
+                    payload,
+                    work_dir,
+                    package_path.name,
+                )
+            )
         count += 1
     return count, failures
+
+
+def should_execute_packaged_binary(package: dict[str, Any], installed_path: str) -> bool:
+    if os.environ.get("CAPSEM_SKIP_PACKAGE_EXECUTION") == "1":
+        return False
+    if package.get("platform") != "linux" or package.get("architecture") != "x86_64":
+        return False
+    if package.get("kind") != "debian_package":
+        return False
+    return platform.system() == "Linux" and platform.machine().lower() in {"x86_64", "amd64"}
+
+
+def check_packaged_binary_version(
+    package: dict[str, Any],
+    binary: dict[str, Any],
+    installed_path: str,
+    payload: dict[str, bytes],
+    work_dir: Path,
+    package_name: str,
+) -> list[str]:
+    contents = payload.get(installed_path)
+    if contents is None:
+        return [f"binary {installed_path} missing from {package_name} payload"]
+    expected_version = binary.get("version") or package.get("version")
+    if not isinstance(expected_version, str) or not expected_version:
+        return [f"binary {installed_path} version missing"]
+
+    executable = work_dir / "exec" / package_name / installed_path.removeprefix("/")
+    executable.parent.mkdir(parents=True, exist_ok=True)
+    executable.write_bytes(contents)
+    executable.chmod(0o755)
+    command = [str(executable), "version"] if executable.name == "capsem" else [str(executable), "--version"]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    output = f"{result.stdout}\n{result.stderr}".strip()
+    if result.returncode != 0:
+        return [
+            f"binary {installed_path} version command failed with {result.returncode}: {output}"
+        ]
+    if expected_version not in output:
+        return [
+            f"binary {installed_path} version output does not contain {expected_version}: {output}"
+        ]
+    return []
 
 
 def sbom_file_hashes(sbom: dict[str, Any]) -> set[tuple[str, str]]:

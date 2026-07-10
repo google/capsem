@@ -737,7 +737,7 @@ pub struct McpServerInfoResponse {
 }
 
 /// Response for GET /profiles/{profile_id}/mcp/default/info.
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct McpDefaultPermissionResponse {
     pub action: capsem_core::net::policy_config::SecurityRuleAction,
     pub source: String,

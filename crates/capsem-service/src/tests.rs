@@ -671,6 +671,13 @@ fn test_profile_rule_cache() -> Mutex<BTreeMap<String, Vec<api::EnforcementRuleI
     Mutex::new(build_profile_rule_cache(None).expect("test profile rule cache should build"))
 }
 
+fn test_profile_mcp_default_cache(
+) -> Mutex<BTreeMap<String, Result<api::McpDefaultPermissionResponse, String>>> {
+    Mutex::new(
+        build_profile_mcp_default_cache(None).expect("test profile MCP default cache should build"),
+    )
+}
+
 fn test_profile_plugin_policy_cache(
 ) -> Mutex<BTreeMap<String, BTreeMap<String, SecurityPluginConfig>>> {
     Mutex::new(
@@ -706,6 +713,7 @@ fn make_test_state() -> Arc<ServiceState> {
         profile_cache: Mutex::new(test_profile_cache()),
         profile_status_cache: Mutex::new(None),
         profile_rule_cache: test_profile_rule_cache(),
+        profile_mcp_default_cache: test_profile_mcp_default_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         profile_mutation_db: test_profile_mutation_db(&run_dir),
@@ -718,6 +726,7 @@ fn make_test_state() -> Arc<ServiceState> {
         profile_rule_response_cache: Mutex::new(HashMap::new()),
         profile_plugin_response_cache: Mutex::new(HashMap::new()),
         evaluate_response_cache: Mutex::new(HashMap::new()),
+        list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -992,6 +1001,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         profile_cache: Mutex::new(test_profile_cache()),
         profile_status_cache: Mutex::new(None),
         profile_rule_cache: test_profile_rule_cache(),
+        profile_mcp_default_cache: test_profile_mcp_default_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         profile_mutation_db: test_profile_mutation_db(&run_dir),
@@ -1004,6 +1014,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         profile_rule_response_cache: Mutex::new(HashMap::new()),
         profile_plugin_response_cache: Mutex::new(HashMap::new()),
         evaluate_response_cache: Mutex::new(HashMap::new()),
+        list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -1687,6 +1698,18 @@ async fn profile_mcp_default_edit_writes_default_rule_and_mutation_ledger() {
         default.action,
         capsem_core::net::policy_config::SecurityRuleAction::Ask
     );
+
+    let (status, refreshed) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/profiles/code/mcp/default/info",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{refreshed}");
+    assert_eq!(refreshed["action"], "ask");
+    assert_eq!(refreshed["source"], "default");
+    assert_eq!(refreshed["rule_id"], "default.mcp");
 
     let profile: ProfileConfigFile = toml::from_str(
         &std::fs::read_to_string(config_root.join("profiles/code/profile.toml")).unwrap(),
@@ -6766,6 +6789,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         profile_cache: Mutex::new(test_profile_cache()),
         profile_status_cache: Mutex::new(None),
         profile_rule_cache: test_profile_rule_cache(),
+        profile_mcp_default_cache: test_profile_mcp_default_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         profile_mutation_db: test_profile_mutation_db(&run_dir),
@@ -6778,6 +6802,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         profile_rule_response_cache: Mutex::new(HashMap::new()),
         profile_plugin_response_cache: Mutex::new(HashMap::new()),
         evaluate_response_cache: Mutex::new(HashMap::new()),
+        list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -7311,6 +7336,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         profile_cache: Mutex::new(test_profile_cache()),
         profile_status_cache: Mutex::new(None),
         profile_rule_cache: test_profile_rule_cache(),
+        profile_mcp_default_cache: test_profile_mcp_default_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         profile_mutation_db: test_profile_mutation_db(&run_dir),
@@ -7323,6 +7349,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         profile_rule_response_cache: Mutex::new(HashMap::new()),
         profile_plugin_response_cache: Mutex::new(HashMap::new()),
         evaluate_response_cache: Mutex::new(HashMap::new()),
+        list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
@@ -7856,7 +7883,7 @@ async fn handle_list_shows_suspended_status() {
         );
     }
 
-    let Json(list) = handle_list(State(state)).await;
+    let list: ListResponse = decode_response_json(handle_list(State(state)).await).await;
 
     let susp = list
         .sandboxes
@@ -8018,7 +8045,7 @@ async fn handle_list_marks_profile_payload_drift_incompatible() {
         );
     }
 
-    let Json(list) = handle_list(State(state)).await;
+    let list: ListResponse = decode_response_json(handle_list(State(state)).await).await;
     let vm = list
         .sandboxes
         .iter()
@@ -8111,7 +8138,7 @@ async fn handle_list_marks_profile_rootfs_size_drift_incompatible() {
         );
     }
 
-    let Json(list) = handle_list(State(state.clone())).await;
+    let list: ListResponse = decode_response_json(handle_list(State(state.clone())).await).await;
     let vm = list
         .sandboxes
         .iter()
@@ -8567,7 +8594,8 @@ async fn vm_list_and_info_are_in_memory_only() {
     .unwrap();
     insert_fake_instance_with_session_dir(&state, "list-hot-vm", 4242, session_dir);
 
-    let Json(list) = handle_list(State(Arc::clone(&state))).await;
+    let list: ListResponse =
+        decode_response_json(handle_list(State(Arc::clone(&state))).await).await;
     let listed = list
         .sandboxes
         .iter()
@@ -8727,8 +8755,7 @@ fn stats_response_serializes() {
 async fn handle_list_includes_uptime_for_running_vms() {
     let state = make_test_state();
     insert_fake_instance(&state, "vm-1", 100);
-    let resp = handle_list(State(state)).await;
-    let list = resp.0;
+    let list: ListResponse = decode_response_json(handle_list(State(state)).await).await;
     assert_eq!(list.sandboxes.len(), 1);
     assert!(list.sandboxes[0].uptime_secs.is_some());
 }
@@ -9131,7 +9158,8 @@ async fn persistent_session_routes_keep_uuid_id_separate_from_display_name() {
         .vms
         .insert("co-work1".to_string(), entry);
 
-    let listing = handle_list(State(Arc::clone(&state))).await.0;
+    let listing: ListResponse =
+        decode_response_json(handle_list(State(Arc::clone(&state))).await).await;
     let row = listing
         .sandboxes
         .iter()
@@ -10011,6 +10039,7 @@ fn make_test_state_with_tempdir_at(
         profile_cache: Mutex::new(test_profile_cache()),
         profile_status_cache: Mutex::new(None),
         profile_rule_cache: test_profile_rule_cache(),
+        profile_mcp_default_cache: test_profile_mcp_default_cache(),
         profile_plugin_policy_cache: test_profile_plugin_policy_cache(),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         profile_mutation_db: test_profile_mutation_db(&run_dir),
@@ -10023,6 +10052,7 @@ fn make_test_state_with_tempdir_at(
         profile_rule_response_cache: Mutex::new(HashMap::new()),
         profile_plugin_response_cache: Mutex::new(HashMap::new()),
         evaluate_response_cache: Mutex::new(HashMap::new()),
+        list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),

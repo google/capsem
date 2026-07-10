@@ -621,6 +621,73 @@ fn telemetry_completion_must_not_block_on_security_ledger_writes() {
     }
 }
 
+#[tokio::test(flavor = "current_thread")]
+async fn hook_accepts_primary_net_event_before_returning() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 64).expect("test db"));
+    let deps = Arc::new(TelemetryDeps {
+        db: Arc::clone(&db),
+        pricing: Arc::new(PricingTable::load()),
+        trace_state: Arc::new(Mutex::new(TraceState::new())),
+        security_rules: empty_security_rules(),
+        plugin_policy: Arc::new(std::sync::RwLock::new(BTreeMap::new())),
+    });
+    let hook = TelemetryHook::new(deps);
+
+    let mut req_ctx = anthropic_req_ctx();
+    req_ctx.domain = "127.0.0.1".to_string();
+    req_ctx.ai_provider = None;
+    req_ctx.ai_protocol = None;
+    req_ctx.model_traffic = false;
+    req_ctx.method = "GET".to_string();
+    req_ctx.path = "/bytes/10mb".to_string();
+    req_ctx.status_code = Some(200);
+    req_ctx.decision = Decision::Allowed;
+    req_ctx.process_name = Some("curl".to_string());
+
+    let mut state = HookState::default();
+    let conn = ConnMeta {
+        domain: "127.0.0.1".to_string(),
+        port: 443,
+        process_name: Some("curl".to_string()),
+        ..Default::default()
+    };
+    {
+        let mut c = ctx_for(&mut state, &conn);
+        *c.state::<Option<TelemetryRequestContext>>(|| None) = Some(req_ctx);
+        *c.state::<TelemetryResponseStats>(TelemetryResponseStats::default) =
+            TelemetryResponseStats {
+                bytes: 10 * 1024 * 1024,
+                preview: Vec::new(),
+                max_body_capture: 0,
+            };
+    }
+
+    {
+        let mut c = ctx_for(&mut state, &conn);
+        hook.on_response_end(&mut c);
+    }
+
+    db.shutdown_blocking();
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let row: (String, String, u64) = conn
+        .query_row(
+            "SELECT domain, path, bytes_received FROM net_events WHERE process_name = 'curl'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("primary net event must be accepted before hook returns");
+    assert_eq!(
+        row,
+        (
+            "127.0.0.1".to_string(),
+            "/bytes/10mb".to_string(),
+            10 * 1024 * 1024
+        )
+    );
+}
+
 /// With a seeded request context, the hook tallies bytes + preview
 /// across chunks.
 #[tokio::test]

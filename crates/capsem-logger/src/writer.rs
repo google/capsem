@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime};
 
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection, ErrorCode, OpenFlags};
 use tracing::warn;
 use uuid::Uuid;
 
@@ -268,11 +268,30 @@ impl DbWriter {
             let _ = std::fs::create_dir_all(parent);
         }
 
+        let mut last_busy = None;
+        for _ in 0..50 {
+            match Self::open_once(path, capacity) {
+                Ok(writer) => return Ok(writer),
+                Err(error) if is_sqlite_busy(&error) => {
+                    last_busy = Some(error);
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(last_busy.unwrap_or(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(ErrorCode::DatabaseBusy as i32),
+            Some("database remained busy while opening writer".to_string()),
+        )))
+    }
+
+    fn open_once(path: &Path, capacity: usize) -> rusqlite::Result<Self> {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
             | OpenFlags::SQLITE_OPEN_URI;
         let conn = Connection::open_with_flags(path, flags)?;
+        conn.busy_timeout(Duration::from_secs(5))?;
         schema::apply_pragmas(&conn)?;
         schema::record_sqlite_mmap_telemetry(&conn, path, "writer", "open");
         schema::create_tables(&conn)?;
@@ -543,6 +562,14 @@ impl Drop for DbWriter {
     fn drop(&mut self) {
         self.shutdown_blocking();
     }
+}
+
+fn is_sqlite_busy(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(inner, _)
+            if matches!(inner.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+    )
 }
 
 fn take_buffer_batch(buffer: &mut Vec<WriteOp>, capacity: usize) -> Vec<WriteOp> {

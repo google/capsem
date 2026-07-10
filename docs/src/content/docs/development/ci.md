@@ -62,7 +62,13 @@ Hosted-runner quality suite on macOS:
 
 Installer/update package contract tests run in Docker with systemd. This proves
 the `.deb` install layout, service unit, manifest URL provenance, channel
-switching, and update path stay valid before a PR can merge.
+switching, and update path stay valid before a PR can merge. The same job also
+runs the local glow-up gate: it builds a real `.deb`, generates the asset
+manifest with `capsem-admin manifest generate`, records package metadata with
+`capsem-admin assets channel record-binary`, builds local stable/nightly release
+channels with `capsem-admin assets channel build`, serves them over a local HTTP
+release site, then installs, switches channels, and upgrades from that hermetic
+release.
 
 ### pr-gate (ubuntu-latest)
 
@@ -235,7 +241,7 @@ preflight (30s) --> build-app-macos (15 min) --+
 |-----|--------|-----------------|
 | `preflight` | macos-14 | Validates Apple cert, Tauri signing key, notarization creds |
 | `test` | macos-14 | Unit tests + coverage + audit (gates release) |
-| `test-install` | ubuntu arm64 | Installer/update smoke for package payload contracts |
+| `test-install` | ubuntu arm64 | Installer/update smoke plus hermetic local release glow-up |
 | `build-app-macos` | macos-14 | `.pkg` installer, notarized + stapled |
 | `build-app-linux` | ubuntu arm64 + x86_64 | `.deb` packages for both arches |
 | `create-release` | ubuntu | Publishes packages and host SBOM |
@@ -278,6 +284,12 @@ install script and packages, verifies package-owned binary hashes, rejects any
 packaged `assets/manifest.json`, checks `manifest-origin.json` points at the
 selected stable manifest URL, then runs Docker install, stable/nightly asset
 switching, and the binary updater path against the public channel.
+
+Before deployment, `just test` runs the same class of glow-up locally through
+`just test-install`: the gate serves generated stable and nightly release
+channels from the package and manifest artifacts just built in Docker, then
+proves `install.sh`, `capsem update --assets --manifest`, and
+`capsem update --yes` against that local release.
 
 Release packaging materializes runtime profiles through the same profile-derived build rail as
 local development: `capsem-admin profile materialize` copies checked-in config

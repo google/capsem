@@ -7,6 +7,8 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
+    fs::OpenOptions,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -251,6 +253,8 @@ struct ReleaseChannelProfileDocument {
 #[derive(Debug, Deserialize)]
 struct ReleaseChannelProfileArchitecture {
     architecture: String,
+    #[serde(default)]
+    image_revision: Option<String>,
     #[serde(default, rename = "images")]
     artifacts: Vec<ReleaseChannelProfileImage>,
 }
@@ -269,6 +273,35 @@ struct ReleaseChannelProfileImage {
 
 #[derive(Debug, Clone, Deserialize)]
 struct ReleaseChannelProfileDigest {
+    sha256: String,
+    blake3: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseGraphManifest {
+    #[serde(default)]
+    packages: Vec<ReleaseGraphPackage>,
+    #[serde(default)]
+    profiles: BTreeMap<String, ReleaseChannelProfileDocument>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseGraphPackage {
+    name: String,
+    url: String,
+    version: String,
+    kind: String,
+    platform: String,
+    architecture: String,
+    #[serde(default)]
+    status: String,
+    #[serde(rename = "bytes")]
+    size: u64,
+    digest: ReleaseGraphDigest,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseGraphDigest {
     sha256: String,
     blake3: String,
 }
@@ -998,6 +1031,170 @@ fn update_check_from_release_manifest(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
+fn update_check_from_release_graph_manifest(
+    manifest: &ReleaseGraphManifest,
+    checked_at: u64,
+    current_binary: &str,
+    current_assets: Option<&str>,
+    current_profiles: Option<&str>,
+    install_layout: &InstallLayout,
+    source: &str,
+    channel_hash: Option<String>,
+) -> Result<UpdateCheck> {
+    let latest_version = graph_current_binary_version(&manifest.packages)?;
+    let update_available = latest_version
+        .as_deref()
+        .is_some_and(|latest| is_newer(latest, current_binary));
+    let binary_installer = if update_available {
+        graph_binary_installer_for_layout(&manifest.packages, install_layout, source)
+    } else {
+        None
+    };
+    let latest_assets = graph_current_image_revision(manifest);
+    let assets_differ = match (latest_assets.as_deref(), current_assets) {
+        (Some(latest), Some(current)) => latest != current,
+        _ => false,
+    };
+    Ok(UpdateCheck {
+        checked_at,
+        latest_version,
+        update_available,
+        binary_installer,
+        latest_assets: latest_assets.clone(),
+        current_assets: current_assets.map(ToOwned::to_owned),
+        assets_update_available: assets_differ,
+        assets_state: latest_assets.as_ref().map(|_| "current".to_string()),
+        assets_blocked_reason: None,
+        latest_profiles: graph_current_profile_revision(manifest),
+        current_profiles: current_profiles.map(ToOwned::to_owned),
+        profiles_update_available: false,
+        profiles_state: None,
+        profiles_blocked_reason: None,
+        profile_catalog_source: None,
+        profile_catalog_hash: None,
+        latest_images: latest_assets,
+        images_update_available: false,
+        images_state: None,
+        images_blocked_reason: None,
+        source: Some(source.to_string()),
+        channel_hash,
+        validation_status: Some("valid".to_string()),
+        validation_error: None,
+    })
+}
+
+fn graph_current_binary_version(packages: &[ReleaseGraphPackage]) -> Result<Option<String>> {
+    let versions: BTreeSet<String> = packages
+        .iter()
+        .filter(|package| graph_package_is_current(package))
+        .map(|package| package.version.clone())
+        .collect();
+    match versions.len() {
+        0 => Ok(None),
+        1 => Ok(versions.into_iter().next()),
+        _ => anyhow::bail!(
+            "release graph current package versions disagree: {}",
+            versions.into_iter().collect::<Vec<_>>().join(", ")
+        ),
+    }
+}
+
+fn graph_current_image_revision(manifest: &ReleaseGraphManifest) -> Option<String> {
+    let revisions: BTreeSet<String> = manifest
+        .profiles
+        .values()
+        .flat_map(|profile| profile.architectures.iter())
+        .filter_map(|architecture| architecture.image_revision.clone())
+        .collect();
+    if revisions.len() == 1 {
+        revisions.into_iter().next()
+    } else {
+        None
+    }
+}
+
+fn graph_current_profile_revision(manifest: &ReleaseGraphManifest) -> Option<String> {
+    let revisions: BTreeSet<String> = manifest
+        .profiles
+        .values()
+        .filter(|profile| profile.status.is_empty() || profile.status == "current")
+        .map(|profile| profile.revision.clone())
+        .collect();
+    if revisions.len() == 1 {
+        revisions.into_iter().next()
+    } else {
+        None
+    }
+}
+
+fn graph_binary_installer_for_layout(
+    packages: &[ReleaseGraphPackage],
+    install_layout: &InstallLayout,
+    source: &str,
+) -> Option<BinaryInstaller> {
+    packages
+        .iter()
+        .filter(|package| graph_package_is_current(package))
+        .filter(|package| graph_package_matches_layout(package, install_layout))
+        .filter_map(|package| {
+            let installer = BinaryInstaller {
+                name: package.name.clone(),
+                url: graph_package_url(source, &package.url).ok()?,
+                sha256: package.digest.sha256.clone(),
+                size: package.size,
+                install_layout: graph_install_layout_name(install_layout)?.to_string(),
+            };
+            let graph_digest_valid = package.digest.blake3.len() == 64
+                && package.digest.blake3.chars().all(|c| c.is_ascii_hexdigit());
+            if graph_digest_valid && validate_binary_installer_metadata(&installer).is_ok() {
+                Some(installer)
+            } else {
+                None
+            }
+        })
+        .min_by(|left, right| left.name.cmp(&right.name))
+}
+
+fn graph_package_is_current(package: &ReleaseGraphPackage) -> bool {
+    package.status == "current"
+}
+
+fn graph_package_matches_layout(
+    package: &ReleaseGraphPackage,
+    install_layout: &InstallLayout,
+) -> bool {
+    match install_layout {
+        InstallLayout::MacosPkg => {
+            package.kind == "macos_pkg"
+                && package.platform == "macos"
+                && package.name.ends_with(".pkg")
+        }
+        InstallLayout::LinuxDeb => {
+            package.kind == "debian_package"
+                && package.platform == "linux"
+                && package.architecture == deb_graph_arch()
+                && package.name.ends_with(&format!("_{}.deb", deb_arch()))
+        }
+        InstallLayout::UserDir | InstallLayout::Development => false,
+    }
+}
+
+fn graph_install_layout_name(install_layout: &InstallLayout) -> Option<&'static str> {
+    match install_layout {
+        InstallLayout::MacosPkg => Some("macos_pkg"),
+        InstallLayout::LinuxDeb => Some("linux_deb"),
+        InstallLayout::UserDir | InstallLayout::Development => None,
+    }
+}
+
+fn graph_package_url(source: &str, raw: &str) -> Result<String> {
+    reqwest::Url::parse(raw)
+        .or_else(|_| reqwest::Url::parse(source)?.join(raw))
+        .map(|url| url.to_string())
+        .with_context(|| format!("resolve package URL {raw} against {source}"))
+}
+
 fn binary_release_files_from_manifest(
     manifest: &capsem_core::asset_manager::ManifestV2,
     release: Option<&capsem_core::asset_manager::BinaryRelease>,
@@ -1247,6 +1444,14 @@ fn deb_arch() -> &'static str {
     }
 }
 
+fn deb_graph_arch() -> &'static str {
+    if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x86_64"
+    }
+}
+
 async fn fetch_release_update_check(layout: &InstallLayout) -> Result<UpdateCheck> {
     let manifest_url = release_manifest_url()?;
     let resp = reqwest::Client::new()
@@ -1264,10 +1469,24 @@ async fn fetch_release_update_check(layout: &InstallLayout) -> Result<UpdateChec
         .await
         .with_context(|| format!("read release manifest from {manifest_url}"))?;
     let channel_hash = channel_payload_hash(&body);
-    let body: capsem_core::asset_manager::ManifestV2 = serde_json::from_slice(&body)
+    if let Ok(graph) = serde_json::from_slice::<ReleaseGraphManifest>(&body) {
+        if !graph.packages.is_empty() {
+            return update_check_from_release_graph_manifest(
+                &graph,
+                now_secs(),
+                env!("CARGO_PKG_VERSION"),
+                local_current_asset_version().as_deref(),
+                local_current_profile_catalog_revision().as_deref(),
+                layout,
+                &manifest_url,
+                Some(channel_hash),
+            );
+        }
+    }
+    let manifest: capsem_core::asset_manager::ManifestV2 = serde_json::from_slice(&body)
         .with_context(|| format!("parse release manifest from {manifest_url}"))?;
     update_check_from_release_manifest(
-        &body,
+        &manifest,
         now_secs(),
         env!("CARGO_PKG_VERSION"),
         local_current_asset_version().as_deref(),
@@ -1512,16 +1731,77 @@ pub async fn run_update(
                 println!("Package:   {} ({mb:.1} MB)", installer.name);
                 println!("SHA-256:   {}", installer.sha256);
                 if yes {
-                    let path = download_binary_installer(installer).await?;
-                    println!("Verified installer: {}", path.display());
-                    let plan = binary_installer_apply_plan(installer, &path)?;
-                    println!("Apply command:");
-                    for command in plan.command_lines() {
-                        println!("  {command}");
+                    append_update_audit(serde_json::json!({
+                        "event": "binary_update_start",
+                        "action": "binary_update",
+                        "outcome": "started",
+                        "source": check.source.as_deref(),
+                        "channel": check.source.as_deref().and_then(channel_from_source),
+                        "old_version": current,
+                        "new_version": latest,
+                        "package": {
+                            "name": &installer.name,
+                            "url": &installer.url,
+                            "sha256": &installer.sha256,
+                            "size": installer.size,
+                            "layout": &installer.install_layout
+                        }
+                    }));
+                    let update_result: Result<()> = async {
+                        let path = download_binary_installer(installer).await?;
+                        println!("Verified installer: {}", path.display());
+                        let plan = binary_installer_apply_plan(installer, &path)?;
+                        println!("Apply command:");
+                        for command in plan.command_lines() {
+                            println!("  {command}");
+                        }
+                        apply_binary_installer_plan(&plan).await?;
+                        append_update_audit(serde_json::json!({
+                            "event": "binary_update_complete",
+                            "action": "binary_update",
+                            "outcome": "success",
+                            "source": check.source.as_deref(),
+                            "channel": check.source.as_deref().and_then(channel_from_source),
+                            "old_version": current,
+                            "new_version": latest,
+                            "package": {
+                                "name": &installer.name,
+                                "url": &installer.url,
+                                "sha256": &installer.sha256,
+                                "size": installer.size,
+                                "layout": &installer.install_layout,
+                                "path": path.display().to_string()
+                            }
+                        }));
+                        Ok(())
                     }
-                    apply_binary_installer_plan(&plan).await?;
-                    println!("Binary update applied. Restart Capsem to use {latest}.");
-                    did_update = true;
+                    .await;
+                    match update_result {
+                        Ok(()) => {
+                            println!("Binary update applied. Restart Capsem to use {latest}.");
+                            did_update = true;
+                        }
+                        Err(error) => {
+                            append_update_audit(serde_json::json!({
+                                "event": "binary_update_failed",
+                                "action": "binary_update",
+                                "outcome": "failure",
+                                "source": check.source.as_deref(),
+                                "channel": check.source.as_deref().and_then(channel_from_source),
+                                "old_version": current,
+                                "new_version": latest,
+                                "package": {
+                                    "name": &installer.name,
+                                    "url": &installer.url,
+                                    "sha256": &installer.sha256,
+                                    "size": installer.size,
+                                    "layout": &installer.install_layout
+                                },
+                                "error": format!("{error:#}")
+                            }));
+                            return Err(error);
+                        }
+                    }
                 } else {
                     println!("Re-run with --yes to download and verify the installer package.");
                 }
@@ -1899,16 +2179,151 @@ async fn refresh_assets(manifest_source: Option<&str>) -> Result<()> {
     };
     if let Some(source) = refresh_source {
         let previous = InstalledManifestSnapshot::capture(&assets_dir)?;
-        install_manifest_source(&assets_dir, &source).await?;
-        if let Err(error) = hydrate_installed_assets(&assets_dir).await {
-            previous.restore(&assets_dir)?;
+        let previous_state = installed_asset_audit_state(&assets_dir);
+        append_update_audit(serde_json::json!({
+            "event": "asset_update_start",
+            "action": "asset_update",
+            "outcome": "started",
+            "source": source,
+            "channel": channel_from_source(&source),
+            "previous": previous_state
+        }));
+        let refresh_result: Result<()> = async {
+            install_manifest_source(&assets_dir, &source).await?;
+            hydrate_installed_assets(&assets_dir).await?;
+            Ok(())
+        }
+        .await;
+        if let Err(error) = refresh_result {
+            let _ = previous.restore(&assets_dir);
+            append_update_audit(serde_json::json!({
+                "event": "asset_update_failed",
+                "action": "asset_update",
+                "outcome": "failure",
+                "source": source,
+                "channel": channel_from_source(&source),
+                "previous": previous_state,
+                "current": installed_asset_audit_state(&assets_dir),
+                "error": format!("{error:#}")
+            }));
             return Err(error)
                 .context("asset refresh failed; restored previous installed manifest");
         }
+        let current_state = installed_asset_audit_state(&assets_dir);
+        append_update_audit(serde_json::json!({
+            "event": "asset_update_complete",
+            "action": "asset_update",
+            "outcome": "success",
+            "source": source,
+            "channel": channel_from_source(&source),
+            "previous": previous_state,
+            "current": current_state,
+            "changed_fields": changed_asset_audit_fields(&previous_state, &current_state)
+        }));
         return Ok(());
     }
 
     hydrate_installed_assets(&assets_dir).await
+}
+
+fn append_update_audit(mut event: serde_json::Value) {
+    let now = now_secs();
+    if let Some(object) = event.as_object_mut() {
+        object.insert(
+            "schema".to_string(),
+            serde_json::Value::String("capsem.update_audit.v1".to_string()),
+        );
+        object.insert("timestamp".to_string(), serde_json::Value::from(now));
+    }
+    if let Err(error) = append_update_audit_inner(&event) {
+        warn!("failed to write update audit log: {error:#}");
+    }
+}
+
+fn append_update_audit_inner(event: &serde_json::Value) -> Result<()> {
+    let home = crate::paths::capsem_home()?;
+    let log_dir = home.join("logs");
+    std::fs::create_dir_all(&log_dir).with_context(|| format!("create {}", log_dir.display()))?;
+    let path = log_dir.join("update.log");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .with_context(|| format!("open {}", path.display()))?;
+    serde_json::to_writer(&mut file, event).context("serialize update audit event")?;
+    file.write_all(b"\n")
+        .with_context(|| format!("write {}", path.display()))?;
+    Ok(())
+}
+
+fn installed_asset_audit_state(assets_dir: &Path) -> serde_json::Value {
+    let manifest_path = assets_dir.join("manifest.json");
+    let origin_path = assets_dir.join("manifest-origin.json");
+    let manifest_bytes = read_optional_file(&manifest_path).ok().flatten();
+    let origin = read_optional_file(&origin_path)
+        .ok()
+        .flatten()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok());
+    let manifest = manifest_bytes
+        .as_deref()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok());
+    let manifest_sha256 = manifest_bytes.as_deref().map(sha256_hex);
+    serde_json::json!({
+        "source": origin.as_ref().and_then(|value| value.get("source")).and_then(|value| value.as_str()),
+        "origin": origin.as_ref().and_then(|value| value.get("origin")).and_then(|value| value.as_str()),
+        "package_version": origin.as_ref().and_then(|value| value.get("package_version")).and_then(|value| value.as_str()),
+        "manifest_sha256": manifest_sha256,
+        "asset_version": manifest.as_ref()
+            .and_then(|value| value.get("assets"))
+            .and_then(|value| value.get("current"))
+            .and_then(|value| value.as_str()),
+        "binary_version": manifest.as_ref()
+            .and_then(|value| value.get("binaries"))
+            .and_then(|value| value.get("current"))
+            .and_then(|value| value.as_str())
+    })
+}
+
+fn changed_asset_audit_fields(
+    previous: &serde_json::Value,
+    current: &serde_json::Value,
+) -> Vec<&'static str> {
+    [
+        "source",
+        "origin",
+        "package_version",
+        "manifest_sha256",
+        "asset_version",
+        "binary_version",
+    ]
+    .into_iter()
+    .filter(|field| previous.get(field) != current.get(field))
+    .collect()
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn channel_from_source(source: &str) -> Option<String> {
+    let url = reqwest::Url::parse(source).ok()?;
+    let segments: Vec<&str> = url
+        .path_segments()?
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    for window in segments.windows(3) {
+        if window[0] == "assets" && window[2] == "manifest.json" {
+            return Some(window[1].to_string());
+        }
+    }
+    if segments.last() == Some(&"manifest.json") {
+        return segments
+            .get(segments.len().saturating_sub(2))
+            .map(|segment| (*segment).to_string());
+    }
+    None
 }
 
 async fn hydrate_installed_assets(assets_dir: &Path) -> Result<()> {
@@ -2196,7 +2611,7 @@ async fn install_release_channel_profile_manifest(
 
     std::fs::create_dir_all(assets_dir)
         .with_context(|| format!("cannot create {}", assets_dir.display()))?;
-    let manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
+    let manifest_bytes = canonical_json_pretty(&manifest)?;
     atomic_write(&assets_dir.join("manifest.json"), &manifest_bytes)?;
     write_manifest_origin(assets_dir, source)?;
     println!("Installed asset manifest from {source}.");
@@ -2458,14 +2873,50 @@ async fn install_manifest_source(assets_dir: &std::path::Path, source: &str) -> 
 }
 
 fn write_manifest_origin(assets_dir: &Path, source: &str) -> Result<()> {
-    let origin = serde_json::json!({
+    let mut origin = serde_json::json!({
         "schema": "capsem.manifest_origin.v1",
         "origin": "update",
         "source": source
     });
+    let origin_path = assets_dir.join("manifest-origin.json");
+    if let Ok(previous_bytes) = std::fs::read(&origin_path) {
+        if let Ok(previous) = serde_json::from_slice::<serde_json::Value>(&previous_bytes) {
+            for key in ["package_version", "packaged_at"] {
+                if let Some(value) = previous.get(key) {
+                    origin[key] = value.clone();
+                }
+            }
+        }
+    }
     let origin_bytes = serde_json::to_vec_pretty(&origin)?;
-    atomic_write(&assets_dir.join("manifest-origin.json"), &origin_bytes)?;
+    atomic_write(&origin_path, &origin_bytes)?;
     Ok(())
+}
+
+fn canonical_json_pretty<T: Serialize>(value: &T) -> Result<Vec<u8>> {
+    let value = serde_json::to_value(value).context("convert value to canonical JSON")?;
+    let sorted = sort_json_value(value);
+    let mut bytes = serde_json::to_vec_pretty(&sorted).context("serialize canonical JSON")?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+fn sort_json_value(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(sort_json_value).collect())
+        }
+        serde_json::Value::Object(map) => {
+            let mut entries: Vec<_> = map.into_iter().collect();
+            entries.sort_by(|left, right| left.0.cmp(&right.0));
+            let mut sorted = serde_json::Map::new();
+            for (key, value) in entries {
+                sorted.insert(key, sort_json_value(value));
+            }
+            serde_json::Value::Object(sorted)
+        }
+        other => other,
+    }
 }
 
 async fn read_manifest_source(source: &str) -> Result<Vec<u8>> {
@@ -2635,6 +3086,26 @@ mod tests {
     fn is_newer_prerelease() {
         assert!(!is_newer("0.17.0-beta.1", "0.17.0"));
         assert!(is_newer("0.18.0-beta.1", "0.17.0"));
+    }
+
+    #[test]
+    fn canonical_json_pretty_sorts_nested_objects() {
+        let left = serde_json::json!({
+            "outer": {"b": 1, "a": 2},
+            "list": [{"z": 0, "a": 1}]
+        });
+        let right = serde_json::json!({
+            "list": [{"a": 1, "z": 0}],
+            "outer": {"a": 2, "b": 1}
+        });
+
+        let left_bytes = canonical_json_pretty(&left).unwrap();
+        let right_bytes = canonical_json_pretty(&right).unwrap();
+
+        assert_eq!(left_bytes, right_bytes);
+        let rendered = String::from_utf8(left_bytes).unwrap();
+        assert!(rendered.find("\"a\"").unwrap() < rendered.find("\"b\"").unwrap());
+        assert!(rendered.ends_with('\n'));
     }
 
     #[test]
@@ -3253,6 +3724,268 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn release_graph_update_check_selects_linux_deb_package() {
+        let package_name = format!("Capsem_2.0.0_{}.deb", deb_arch());
+        let graph: ReleaseGraphManifest = serde_json::from_value(serde_json::json!({
+            "version": "1.0.0",
+            "channel": "nightly",
+            "packages": [
+                {
+                    "name": "Capsem_2.0.0_wrong.deb",
+                    "url": "/releases/download/v2.0.0/Capsem_2.0.0_wrong.deb",
+                    "version": "2.0.0",
+                    "kind": "debian_package",
+                    "platform": "linux",
+                    "architecture": "wrong",
+                    "status": "current",
+                    "bytes": 111,
+                    "digest": {"sha256": "1".repeat(64), "blake3": "a".repeat(64)}
+                },
+                {
+                    "name": package_name,
+                    "url": format!("/releases/download/v2.0.0/{package_name}"),
+                    "version": "2.0.0",
+                    "kind": "debian_package",
+                    "platform": "linux",
+                    "architecture": deb_graph_arch(),
+                    "status": "current",
+                    "bytes": 222,
+                    "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
+                },
+                {
+                    "name": "Capsem-2.0.0.pkg",
+                    "url": "https://github.com/google/capsem/releases/download/v2.0.0/Capsem-2.0.0.pkg",
+                    "version": "2.0.0",
+                    "kind": "macos_pkg",
+                    "platform": "macos",
+                    "architecture": "arm64",
+                    "status": "current",
+                    "bytes": 333,
+                    "digest": {"sha256": "3".repeat(64), "blake3": "c".repeat(64)}
+                }
+            ],
+            "profiles": {
+                "code": {
+                    "revision": "profiles-2026.0709.7",
+                    "status": "current",
+                    "architectures": [
+                        {
+                            "architecture": deb_graph_arch(),
+                            "image_revision": "2026.0709.7",
+                            "images": []
+                        }
+                    ]
+                }
+            }
+        }))
+        .unwrap();
+
+        let check = update_check_from_release_graph_manifest(
+            &graph,
+            1718444400,
+            "1.5.0",
+            Some("2026.0709.6"),
+            Some("profiles-2026.0709.6"),
+            &InstallLayout::LinuxDeb,
+            "http://127.0.0.1:33773/assets/nightly/manifest.json",
+            Some("f".repeat(64)),
+        )
+        .unwrap();
+
+        assert_eq!(check.latest_version, Some("2.0.0".to_string()));
+        assert!(check.update_available);
+        let installer = check.binary_installer.as_ref().unwrap();
+        assert_eq!(installer.name, package_name);
+        assert_eq!(
+            installer.url,
+            format!("http://127.0.0.1:33773/releases/download/v2.0.0/{package_name}")
+        );
+        assert_eq!(installer.sha256, "2".repeat(64));
+        assert_eq!(installer.size, 222);
+        assert_eq!(installer.install_layout, "linux_deb");
+        assert_eq!(check.latest_assets, Some("2026.0709.7".to_string()));
+        assert!(check.assets_update_available);
+        assert_eq!(
+            check.latest_profiles,
+            Some("profiles-2026.0709.7".to_string())
+        );
+        assert_eq!(check.channel_hash, Some("f".repeat(64)));
+        assert_eq!(check.validation_status, Some("valid".to_string()));
+    }
+
+    #[test]
+    fn release_graph_update_check_selects_macos_pkg_package() {
+        let graph: ReleaseGraphManifest = serde_json::from_value(serde_json::json!({
+            "version": "1.0.0",
+            "channel": "stable",
+            "packages": [
+                {
+                    "name": "Capsem-2.0.0.pkg",
+                    "url": "https://github.com/google/capsem/releases/download/v2.0.0/Capsem-2.0.0.pkg",
+                    "version": "2.0.0",
+                    "kind": "macos_pkg",
+                    "platform": "macos",
+                    "architecture": "arm64",
+                    "status": "current",
+                    "bytes": 333,
+                    "digest": {"sha256": "3".repeat(64), "blake3": "c".repeat(64)}
+                },
+                {
+                    "name": format!("Capsem_2.0.0_{}.deb", deb_arch()),
+                    "url": format!(
+                        "https://github.com/google/capsem/releases/download/v2.0.0/Capsem_2.0.0_{}.deb",
+                        deb_arch()
+                    ),
+                    "version": "2.0.0",
+                    "kind": "debian_package",
+                    "platform": "linux",
+                    "architecture": deb_graph_arch(),
+                    "status": "current",
+                    "bytes": 222,
+                    "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
+                }
+            ],
+            "profiles": {}
+        }))
+        .unwrap();
+
+        let check = update_check_from_release_graph_manifest(
+            &graph,
+            1718444400,
+            "1.5.0",
+            None,
+            None,
+            &InstallLayout::MacosPkg,
+            "https://release.capsem.org/assets/stable/manifest.json",
+            None,
+        )
+        .unwrap();
+
+        let installer = check.binary_installer.as_ref().unwrap();
+        assert_eq!(installer.name, "Capsem-2.0.0.pkg");
+        assert_eq!(installer.install_layout, "macos_pkg");
+        assert_eq!(installer.sha256, "3".repeat(64));
+    }
+
+    #[test]
+    fn release_graph_update_check_does_not_select_installer_when_current() {
+        let package_name = format!("Capsem_1.5.0_{}.deb", deb_arch());
+        let graph: ReleaseGraphManifest = serde_json::from_value(serde_json::json!({
+            "packages": [
+                {
+                    "name": package_name,
+                    "url": format!("https://github.com/google/capsem/releases/download/v1.5.0/{package_name}"),
+                    "version": "1.5.0",
+                    "kind": "debian_package",
+                    "platform": "linux",
+                    "architecture": deb_graph_arch(),
+                    "status": "current",
+                    "bytes": 222,
+                    "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
+                }
+            ],
+            "profiles": {}
+        }))
+        .unwrap();
+
+        let check = update_check_from_release_graph_manifest(
+            &graph,
+            1718444400,
+            "1.5.0",
+            None,
+            None,
+            &InstallLayout::LinuxDeb,
+            "https://release.capsem.org/assets/stable/manifest.json",
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(check.latest_version, Some("1.5.0".to_string()));
+        assert!(!check.update_available);
+        assert_eq!(check.binary_installer, None);
+    }
+
+    #[test]
+    fn release_graph_update_check_does_not_downgrade_lower_nightly_package() {
+        let package_name = format!("Capsem_1.5.99_{}.deb", deb_arch());
+        let graph: ReleaseGraphManifest = serde_json::from_value(serde_json::json!({
+            "version": "1.0.0",
+            "channel": "nightly",
+            "packages": [
+                {
+                    "name": package_name,
+                    "url": format!("https://github.com/google/capsem/releases/download/v1.5.99/{package_name}"),
+                    "version": "1.5.99",
+                    "kind": "debian_package",
+                    "platform": "linux",
+                    "architecture": deb_graph_arch(),
+                    "status": "current",
+                    "bytes": 222,
+                    "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
+                }
+            ],
+            "profiles": {}
+        }))
+        .unwrap();
+
+        let check = update_check_from_release_graph_manifest(
+            &graph,
+            1718444400,
+            "1.5.100",
+            None,
+            None,
+            &InstallLayout::LinuxDeb,
+            "https://release.capsem.org/assets/nightly/manifest.json",
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(check.latest_version, Some("1.5.99".to_string()));
+        assert!(!check.update_available);
+        assert_eq!(check.binary_installer, None);
+    }
+
+    #[test]
+    fn release_graph_update_check_does_not_update_non_comparable_nightly_package() {
+        let package_name = format!("Capsem_nightly-20260710_{}.deb", deb_arch());
+        let graph: ReleaseGraphManifest = serde_json::from_value(serde_json::json!({
+            "version": "1.0.0",
+            "channel": "nightly",
+            "packages": [
+                {
+                    "name": package_name,
+                    "url": format!("https://github.com/google/capsem/releases/download/nightly-20260710/{package_name}"),
+                    "version": "nightly-20260710",
+                    "kind": "debian_package",
+                    "platform": "linux",
+                    "architecture": deb_graph_arch(),
+                    "status": "current",
+                    "bytes": 222,
+                    "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
+                }
+            ],
+            "profiles": {}
+        }))
+        .unwrap();
+
+        let check = update_check_from_release_graph_manifest(
+            &graph,
+            1718444400,
+            "1.5.100",
+            None,
+            None,
+            &InstallLayout::LinuxDeb,
+            "https://release.capsem.org/assets/nightly/manifest.json",
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(check.latest_version, Some("nightly-20260710".to_string()));
+        assert!(!check.update_available);
+        assert_eq!(check.binary_installer, None);
     }
 
     #[test]
@@ -3880,6 +4613,44 @@ mod tests {
             format!("{err:#}").contains("release channel legacy schema mismatch"),
             "{err:#}"
         );
+    }
+
+    #[test]
+    fn write_manifest_origin_preserves_package_provenance() {
+        let dir = tempfile::tempdir().unwrap();
+        let assets_dir = dir.path().join("installed-assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        std::fs::write(
+            assets_dir.join("manifest-origin.json"),
+            serde_json::json!({
+                "schema": "capsem.manifest_origin.v1",
+                "origin": "package",
+                "source": "https://release.capsem.org/assets/stable/manifest.json",
+                "package_version": "1.5.1783554373",
+                "packaged_at": "2026-07-10T07:20:51Z"
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        write_manifest_origin(
+            &assets_dir,
+            "https://release.capsem.org/assets/nightly/manifest.json",
+        )
+        .unwrap();
+
+        let origin: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(assets_dir.join("manifest-origin.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(origin["schema"], "capsem.manifest_origin.v1");
+        assert_eq!(origin["origin"], "update");
+        assert_eq!(
+            origin["source"],
+            "https://release.capsem.org/assets/nightly/manifest.json"
+        );
+        assert_eq!(origin["package_version"], "1.5.1783554373");
+        assert_eq!(origin["packaged_at"], "2026-07-10T07:20:51Z");
     }
 
     #[test]

@@ -330,6 +330,45 @@ pub async fn emit_security_write(db: &DbWriter, op: WriteOp) -> Option<SecurityE
     event_id
 }
 
+pub fn emit_security_write_try(db: &DbWriter, op: WriteOp) -> Option<SecurityEventId> {
+    let event = RuntimeSecurityEvent::from_logger_write(op);
+    let event_type = event.event_type.as_str();
+    let event_family = event.event_family.as_str();
+    let span = tracing::debug_span!(
+        target: "capsem.security_event",
+        SECURITY_EVENT_EMIT_SPAN,
+        event_type,
+        event_family,
+        status = tracing::field::Empty,
+        queue_result = tracing::field::Empty,
+    );
+    let started = Instant::now();
+    span.in_scope(|| trace_runtime_security_event(&event));
+    let event_id = event.event_id.clone();
+    let accepted = span.in_scope(|| db.try_write(event.into_logger_write()));
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let status = if accepted { "ok" } else { "dropped" };
+    let queue_result = if accepted { "queued" } else { "closed" };
+    ::metrics::counter!(SECURITY_EVENT_EMIT_TOTAL,
+        "event_type" => event_type,
+        "event_family" => event_family,
+        "status" => status,
+        "queue_result" => queue_result)
+    .increment(1);
+    ::metrics::histogram!(SECURITY_EVENT_EMIT_DURATION_MS,
+        "event_type" => event_type,
+        "event_family" => event_family)
+    .record(elapsed_ms);
+    span.record("status", status);
+    span.record("queue_result", queue_result);
+    if accepted {
+        event_id
+    } else {
+        tracing::warn!("db writer channel closed, dropping nonblocking security event");
+        None
+    }
+}
+
 pub fn emit_security_write_blocking(db: &DbWriter, op: WriteOp) -> Option<SecurityEventId> {
     let event = RuntimeSecurityEvent::from_logger_write(op);
     let event_type = event.event_type.as_str();

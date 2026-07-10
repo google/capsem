@@ -72,6 +72,11 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _read_update_log(capsem_home: Path) -> list[dict]:
+    path = capsem_home / "logs" / "update.log"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
 def _make_manifest(arch: str, files: dict[str, bytes], asset_version: str = ASSET_VERSION) -> dict:
     """Build a minimal v2 manifest for the given arch + byte blobs."""
     return {
@@ -225,6 +230,42 @@ def _run(env: dict, *args: str) -> subprocess.CompletedProcess:
     )
     return subprocess.run(
         [str(CAPSEM_BIN), *args],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, **env},
+    )
+
+
+def _fresh_capsem_binary() -> Path:
+    bin_src = Path(os.environ.get("CAPSEM_BIN_SRC", REPO_ROOT / "target" / "debug"))
+    binary = bin_src / "capsem"
+    source_paths = [
+        REPO_ROOT / "crates" / "capsem" / "src" / "update.rs",
+        REPO_ROOT / "crates" / "capsem" / "src" / "main.rs",
+    ]
+    if binary.is_file() and all(
+        binary.stat().st_mtime >= path.stat().st_mtime for path in source_paths
+    ):
+        return binary
+    result = subprocess.run(
+        ["cargo", "build", "-p", "capsem"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={**os.environ, "CARGO_TARGET_DIR": str(bin_src.parent)},
+    )
+    assert result.returncode == 0, (
+        f"cargo build -p capsem failed\nstdout={result.stdout}\nstderr={result.stderr}"
+    )
+    assert binary.is_file()
+    return binary
+
+
+def _run_binary(binary: Path, env: dict, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [str(binary), *args],
         capture_output=True,
         text=True,
         timeout=30,
@@ -407,6 +448,84 @@ def test_update_assets_refreshes_remote_channel_manifest_before_download(
         target = assets / arch / hashed
         assert target.exists(), f"{target} not downloaded. stdout={result.stdout}"
         assert target.read_bytes() == blob
+
+
+def test_update_assets_records_channel_change_audit_log(
+    tmp_path: Path,
+    http_fixture,
+    installed_layout,
+):
+    base_url, serve_dir, _requested_paths = http_fixture
+    arch = _arch()
+
+    old_files = {
+        "vmlinuz": b"audit-old-kernel",
+        "initrd.img": b"audit-old-initrd",
+        "rootfs.erofs": b"audit-old-rootfs",
+    }
+    new_files = {
+        "vmlinuz": b"audit-new-kernel-" + os.urandom(32),
+        "initrd.img": b"audit-new-initrd-" + os.urandom(32),
+        "rootfs.erofs": b"audit-new-rootfs-" + os.urandom(32),
+    }
+
+    channel_manifest_url = f"{base_url}/assets/nightly/manifest.json"
+    channel_manifest = _make_manifest(arch, new_files, NEW_ASSET_VERSION)
+    channel_manifest_path = serve_dir / "assets" / "nightly" / "manifest.json"
+    channel_manifest_path.parent.mkdir(parents=True)
+    channel_manifest_path.write_text(json.dumps(channel_manifest), encoding="utf-8")
+
+    release_dir = serve_dir / "assets" / "releases" / NEW_ASSET_VERSION
+    release_dir.mkdir(parents=True)
+    for name, blob in new_files.items():
+        (release_dir / f"{arch}-{name}").write_bytes(blob)
+
+    capsem_home = tmp_path / ".capsem"
+    assets = capsem_home / "assets"
+    _write_installed_manifest_and_assets(
+        assets,
+        arch,
+        old_files,
+        asset_version=ASSET_VERSION,
+        origin={
+            "schema": "capsem.manifest_origin.v1",
+            "origin": "package",
+            "source": f"{base_url}/assets/stable/manifest.json",
+            "package_version": "1.5.100",
+            "packaged_at": "2026-06-16T00:00:00Z",
+        },
+    )
+    previous_sha = hashlib.sha256((assets / "manifest.json").read_bytes()).hexdigest()
+
+    result = _run_binary(
+        _fresh_capsem_binary(),
+        {"CAPSEM_HOME": str(capsem_home)},
+        "update",
+        "--assets",
+        "--manifest",
+        channel_manifest_url,
+    )
+
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    events = _read_update_log(capsem_home)
+    complete = events[-1]
+    assert complete["schema"] == "capsem.update_audit.v1"
+    assert complete["event"] == "asset_update_complete"
+    assert complete["action"] == "asset_update"
+    assert complete["outcome"] == "success"
+    assert complete["source"] == channel_manifest_url
+    assert complete["channel"] == "nightly"
+    assert complete["previous"]["source"].endswith("/assets/stable/manifest.json")
+    assert complete["previous"]["manifest_sha256"] == previous_sha
+    assert complete["previous"]["asset_version"] == ASSET_VERSION
+    assert complete["previous"]["package_version"] == "1.5.100"
+    assert complete["current"]["source"] == channel_manifest_url
+    assert complete["current"]["asset_version"] == NEW_ASSET_VERSION
+    assert complete["current"]["package_version"] == "1.5.100"
+    assert {"source", "manifest_sha256", "asset_version"}.issubset(
+        set(complete["changed_fields"])
+    )
+    assert "package_version" not in complete["changed_fields"]
 
 
 def test_update_assets_accepts_release_channel_profile_manifest(

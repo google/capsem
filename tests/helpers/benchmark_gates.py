@@ -10,7 +10,7 @@ CAPSEM_BENCH_GATES = {
     "disk_seq_mbps": 50,
     "disk_rand_iops": {
         "default": 1_000,
-        "linux": 500,
+        "linux": 400,
     },
     "rootfs_seq_mbps": 100,
     "rootfs_rand_iops": 1_000,

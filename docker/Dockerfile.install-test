@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     dbus \
     dbus-user-session \
     sudo \
+    zstd \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 

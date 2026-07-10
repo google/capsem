@@ -207,6 +207,11 @@ def _write_fake_sudo(bin_dir: Path, log_path: Path) -> None:
     log_path.write_text("", encoding="utf-8")
 
 
+def _read_update_log(capsem_home: Path) -> list[dict]:
+    path = capsem_home / "logs" / "update.log"
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
 def _deb_arch() -> str:
     machine = platform.machine().lower()
     return "arm64" if machine in {"aarch64", "arm64"} else "amd64"
@@ -1385,6 +1390,88 @@ def test_linux_update_yes_applies_verified_deb_with_package_manager(
     assert cached.read_bytes() == payload
     assert f"apt-get install --yes {cached}\n" == sudo_log.read_text(encoding="utf-8")
     assert "Binary update applied." in result.stdout
+    events = _read_update_log(capsem_home)
+    assert [event["event"] for event in events[-2:]] == [
+        "binary_update_start",
+        "binary_update_complete",
+    ]
+    complete = events[-1]
+    assert complete["schema"] == "capsem.update_audit.v1"
+    assert complete["action"] == "binary_update"
+    assert complete["outcome"] == "success"
+    assert complete["old_version"]
+    assert complete["new_version"] == "99.99.99"
+    assert complete["package"]["name"] == installer_name
+    assert complete["package"]["sha256"] == hashlib.sha256(payload).hexdigest()
+    assert complete["package"]["path"] == str(cached)
+
+
+def test_linux_update_yes_records_failed_installer_verification(
+    tmp_path: Path,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    fresh_capsem = _fresh_capsem_binary()
+    assert fresh_capsem is not None
+    capsem = _copy_layout_capsem(fresh_capsem, tmp_path, "linux_deb")
+    fake_bin = tmp_path / "fake-bin"
+    sudo_log = tmp_path / "sudo.log"
+    _write_fake_sudo(fake_bin, sudo_log)
+    installer_name = f"Capsem_99.99.99_{_deb_arch()}.deb"
+    declared_payload = b"declared linux package payload"
+    served_payload = b"corrupt linux package payload"
+    health = {
+        "schema": "capsem.assets_channel.health.v1",
+        "updates": {
+            "binary": {
+                "latest": "99.99.99",
+                "current": "0.0.0",
+                "files": [
+                    {
+                        "name": installer_name,
+                        "url": f"/{installer_name}",
+                        "sha256": hashlib.sha256(declared_payload).hexdigest(),
+                        "blake3": blake3(declared_payload).hexdigest(),
+                        "size": len(declared_payload),
+                    }
+                ],
+            },
+            "assets": {
+                "latest": "2030.0101.1",
+                "current": "2030.0101.1",
+            },
+        },
+    }
+
+    with _serve_release(health, {f"/{installer_name}": served_payload}) as (_, health_url):
+        result = subprocess.run(
+            [str(capsem), "update", "--yes"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_HEALTH_URL": health_url,
+                "CAPSEM_FAKE_SUDO_LOG": str(sudo_log),
+                "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+            },
+        )
+
+    assert result.returncode != 0
+    assert "mismatch" in (result.stdout + result.stderr).lower()
+    assert sudo_log.read_text(encoding="utf-8") == ""
+    events = _read_update_log(capsem_home)
+    assert [event["event"] for event in events[-2:]] == [
+        "binary_update_start",
+        "binary_update_failed",
+    ]
+    failed = events[-1]
+    assert failed["schema"] == "capsem.update_audit.v1"
+    assert failed["outcome"] == "failure"
+    assert failed["package"]["name"] == installer_name
+    assert failed["package"]["sha256"] == hashlib.sha256(declared_payload).hexdigest()
+    assert "mismatch" in failed["error"].lower()
 
 
 @pytest.mark.live_system

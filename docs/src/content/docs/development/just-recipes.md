@@ -30,7 +30,7 @@ quick checks. After frontend changes intended for the desktop app, use
 | `just test` | Full gate: unit, coverage, cross-compile, frontend, Python, injection, integration, benchmarks, install E2E | Yes |
 | `just test-gateway` | Gateway unit and mock-UDS tests | No |
 | `just test-gateway-e2e` | Gateway E2E tests with real service and VMs | Yes |
-| `just test-install` | Installer E2E in Docker/systemd | No host VM |
+| `just test-install` | Installer E2E plus local release glow-up in Docker/systemd | No host VM |
 | `just bench` | In-VM and host lifecycle benchmarks | Yes |
 
 `just test` is the source of truth. Targeted commands are for iteration, not
@@ -155,7 +155,7 @@ build-ui         -> _pnpm-install + frontend build + cargo build -p capsem-app
 smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _ensure-service
 test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings + _check-assets + _pack-initrd
 build-assets     -> _install-tools + _clean-stale + doctor + capsem-admin image build
-test-install     -> _build-host
+test-install     -> Docker package install + generated local stable/nightly glow-up
 cut-release      -> test + _stamp-version
 ```
 

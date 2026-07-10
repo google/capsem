@@ -46,8 +46,9 @@ use crate::net::ai_traffic::provider::{
 use crate::net::ai_traffic::{request_parser, TraceState};
 use crate::net::policy_config::SecurityRuleSet;
 use crate::security_engine::{
-    delegate_matching_security_rules_for_evaluated_event, emit_security_write, HttpSecurityEvent,
-    IpSecurityEvent, ModelSecurityEvent, RuntimeSecurityEventType, SecurityEvent, TcpSecurityEvent,
+    delegate_matching_security_rules_for_evaluated_event, emit_security_write_try,
+    HttpSecurityEvent, IpSecurityEvent, ModelSecurityEvent, RuntimeSecurityEventType,
+    SecurityEvent, TcpSecurityEvent,
 };
 
 /// Per-request snapshot of the request-side fields that the response
@@ -265,54 +266,55 @@ impl ChunkHook for TelemetryHook {
         let rules = self.deps.security_rules.read().unwrap().clone();
         let plugin_policy = self.deps.plugin_policy.read().unwrap().clone();
         let credential_injections = req_ctx.credential_injections.clone();
+        record_telemetry_stage(stage_started, "ledger_deps_clone");
+
+        let stage_started = Instant::now();
+        let net_security_event = security_event_from_net_event(&net_event)
+            .with_credential_observations(credential_observations.clone())
+            .with_credential_injections(credential_injections.clone());
+        record_telemetry_stage(stage_started, "security_event_build");
+
+        let stage_started = Instant::now();
+        let has_model_call = model_call.is_some();
+        if let Some(event_id) = emit_security_write_try(&db, WriteOp::NetEvent(net_event)) {
+            delegate_matching_security_rules_for_evaluated_event(
+                Arc::clone(&db),
+                event_id,
+                RuntimeSecurityEventType::HttpRequest,
+                Arc::clone(&rules),
+                plugin_policy.clone(),
+                net_security_event,
+                current_unix_ms(),
+                "http",
+            );
+        }
+        if let Some(mc) = model_call {
+            let model_security_event = security_event_from_model_call(&mc);
+            if let Some(event_id) = emit_security_write_try(&db, WriteOp::ModelCall(mc)) {
+                delegate_matching_security_rules_for_evaluated_event(
+                    Arc::clone(&db),
+                    event_id,
+                    RuntimeSecurityEventType::ModelCall,
+                    Arc::clone(&rules),
+                    plugin_policy,
+                    model_security_event,
+                    current_unix_ms(),
+                    "model",
+                );
+            }
+        }
+        record_telemetry_stage(stage_started, "ledger_enqueue");
+
+        let stage_started = Instant::now();
         let broker_db = Arc::clone(&db);
         let broker_rules = rules.clone();
-        let broker_observations = credential_observations.clone();
-        let broker_injections = credential_injections.clone();
+        let broker_observations = credential_observations;
+        let broker_injections = credential_injections;
         tokio::spawn(async move {
             log_brokered_injections(&broker_db, &broker_rules, broker_injections).await;
             broker_and_log_observations(&broker_db, &broker_rules, broker_observations).await;
         });
         record_telemetry_stage(stage_started, "broker_task_spawn");
-
-        let stage_started = Instant::now();
-        let net_security_event = security_event_from_net_event(&net_event)
-            .with_credential_observations(credential_observations)
-            .with_credential_injections(credential_injections);
-        record_telemetry_stage(stage_started, "security_event_build");
-
-        let stage_started = Instant::now();
-        let has_model_call = model_call.is_some();
-        tokio::spawn(async move {
-            if let Some(event_id) = emit_security_write(&db, WriteOp::NetEvent(net_event)).await {
-                delegate_matching_security_rules_for_evaluated_event(
-                    Arc::clone(&db),
-                    event_id,
-                    RuntimeSecurityEventType::HttpRequest,
-                    Arc::clone(&rules),
-                    plugin_policy.clone(),
-                    net_security_event,
-                    current_unix_ms(),
-                    "http",
-                );
-            }
-            if let Some(mc) = model_call {
-                let model_security_event = security_event_from_model_call(&mc);
-                if let Some(event_id) = emit_security_write(&db, WriteOp::ModelCall(mc)).await {
-                    delegate_matching_security_rules_for_evaluated_event(
-                        Arc::clone(&db),
-                        event_id,
-                        RuntimeSecurityEventType::ModelCall,
-                        rules,
-                        plugin_policy,
-                        model_security_event,
-                        current_unix_ms(),
-                        "model",
-                    );
-                }
-            }
-        });
-        record_telemetry_stage(stage_started, "ledger_task_spawn");
         record_telemetry_response_end(response_end_started, has_model_call);
     }
 }

@@ -25,7 +25,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just test` | ALL tests: unit (warnings-as-errors) + cov + cross-compile + frontend + python + injection + integration + bench + install e2e |
 | `just test-gateway` | Gateway unit + mock-UDS tests (no VM needed) |
 | `just test-gateway-e2e` | Gateway E2E tests (real service + VMs) |
-| `just test-install` | Install e2e in Docker + systemd (real .deb, dpkg -i, pytest) |
+| `just test-install` | Install e2e in Docker + systemd, then hermetic local release glow-up from generated stable/nightly channels |
 | `just coverage` | HTML coverage report across all Rust crates (opens `target/llvm-cov/html/index.html`) |
 | `just cross-compile [arch]` | Full Linux build in container (agent + deb) |
 | `just benchmark` | Standard artifact-recording benchmark suite across host-native, in-VM, lifecycle/fork/parallel, and Security Engine lanes |
@@ -60,7 +60,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | Telemetry pipelines | `just exec "<cmd>"` then `just inspect-session` |
 | Gateway code | `just test-gateway` (unit) or `just test-gateway-e2e` (real VMs) |
 | Service HTTP API / CLI / MCP | `just smoke` (parallel pytest groups cover all three) |
-| Install / postinst / systemd flow | `just test-install` |
+| Install / postinst / systemd / release glow-up flow | `just test-install` |
 | Pre-release | `just test` |
 | Ship | `just cut-release`, then manually push `main` and the tag |
 
@@ -78,7 +78,7 @@ test             -> _install-tools + _clean-stale + _frontend-dist + _generate-s
                     + _check-assets + _pack-initrd
 bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
 test-gateway-e2e -> _check-assets + _pack-initrd + _sign
-test-install     -> _build-host
+test-install     -> Docker package install + generated local stable/nightly glow-up
 install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd
 cut-release      -> test + _stamp-version
 ```

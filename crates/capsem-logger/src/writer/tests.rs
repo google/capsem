@@ -224,6 +224,200 @@ fn net_event_stores_bounded_body_blobs_and_small_previews() {
 }
 
 #[test]
+fn multi_writer_net_events_keep_rows_and_body_blobs_consistent() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("multi-writer-net.db");
+    let process_event_id = "111111aaaaaa".to_string();
+    let builtin_event_id = "222222bbbbbb".to_string();
+
+    let process_ready = dir.path().join("process.ready");
+    let process_go = dir.path().join("process.go");
+    let builtin_ready = dir.path().join("builtin.ready");
+    let builtin_go = dir.path().join("builtin.go");
+    let mut process_child = spawn_net_event_writer_child(ChildNetEvent {
+        db_path: &db_path,
+        event_id: &process_event_id,
+        process_name: "curl",
+        path: "/deny-target",
+        decision: "denied",
+        response_body: "capsem: HTTP request blocked by security rule",
+        ready_path: &process_ready,
+        go_path: &process_go,
+    });
+    let mut builtin_child = spawn_net_event_writer_child(ChildNetEvent {
+        db_path: &db_path,
+        event_id: &builtin_event_id,
+        process_name: "mcp_builtin",
+        path: "/tiny",
+        decision: "allowed",
+        response_body: "tiny fixture",
+        ready_path: &builtin_ready,
+        go_path: &builtin_go,
+    });
+    wait_for_child_ready(&process_ready);
+    wait_for_child_ready(&builtin_ready);
+    std::fs::write(&process_go, b"go").unwrap();
+    let process_status = process_child.wait().expect("wait process child");
+    assert!(
+        process_status.success(),
+        "process writer failed: {process_status}"
+    );
+    std::fs::write(&builtin_go, b"go").unwrap();
+    let builtin_status = builtin_child.wait().expect("wait builtin child");
+    assert!(
+        builtin_status.success(),
+        "builtin writer failed: {builtin_status}"
+    );
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let rows: Vec<(String, String, String)> = conn
+        .prepare("SELECT event_id, process_name, path FROM net_events ORDER BY event_id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                process_event_id.clone(),
+                "curl".to_string(),
+                "/deny-target".to_string()
+            ),
+            (
+                builtin_event_id.clone(),
+                "mcp_builtin".to_string(),
+                "/tiny".to_string()
+            ),
+        ]
+    );
+
+    let dangling_blobs: i64 = conn
+        .query_row(
+            "SELECT COUNT(*)
+             FROM event_body_blobs AS blob
+             LEFT JOIN net_events AS event ON event.event_id = blob.event_id
+             WHERE blob.source_table = 'net_events' AND event.event_id IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(dangling_blobs, 0);
+}
+
+struct ChildNetEvent<'a> {
+    db_path: &'a std::path::Path,
+    event_id: &'a str,
+    process_name: &'a str,
+    path: &'a str,
+    decision: &'a str,
+    response_body: &'a str,
+    ready_path: &'a std::path::Path,
+    go_path: &'a std::path::Path,
+}
+
+fn spawn_net_event_writer_child(event: ChildNetEvent<'_>) -> std::process::Child {
+    std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact")
+        .arg("writer::tests::multi_writer_net_event_child_process")
+        .arg("--nocapture")
+        .env("CAPSEM_LOGGER_CHILD_NET_EVENT_DB", event.db_path)
+        .env("CAPSEM_LOGGER_CHILD_NET_EVENT_ID", event.event_id)
+        .env("CAPSEM_LOGGER_CHILD_NET_EVENT_PROCESS", event.process_name)
+        .env("CAPSEM_LOGGER_CHILD_NET_EVENT_PATH", event.path)
+        .env("CAPSEM_LOGGER_CHILD_NET_EVENT_DECISION", event.decision)
+        .env(
+            "CAPSEM_LOGGER_CHILD_NET_EVENT_RESPONSE",
+            event.response_body,
+        )
+        .env("CAPSEM_LOGGER_CHILD_READY", event.ready_path)
+        .env("CAPSEM_LOGGER_CHILD_GO", event.go_path)
+        .spawn()
+        .expect("spawn child writer test process")
+}
+
+fn wait_for_child_ready(path: &std::path::Path) {
+    for _ in 0..200 {
+        if path.exists() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("child did not become ready: {}", path.display());
+}
+
+#[test]
+fn multi_writer_net_event_child_process() {
+    let Ok(db_path) = std::env::var("CAPSEM_LOGGER_CHILD_NET_EVENT_DB") else {
+        return;
+    };
+    let event_id = std::env::var("CAPSEM_LOGGER_CHILD_NET_EVENT_ID").unwrap();
+    let process_name = std::env::var("CAPSEM_LOGGER_CHILD_NET_EVENT_PROCESS").unwrap();
+    let path = std::env::var("CAPSEM_LOGGER_CHILD_NET_EVENT_PATH").unwrap();
+    let decision = std::env::var("CAPSEM_LOGGER_CHILD_NET_EVENT_DECISION").unwrap();
+    let response_body = std::env::var("CAPSEM_LOGGER_CHILD_NET_EVENT_RESPONSE").unwrap();
+    let decision = match decision.as_str() {
+        "allowed" => crate::events::Decision::Allowed,
+        "denied" => crate::events::Decision::Denied,
+        other => panic!("unsupported child decision {other}"),
+    };
+    let writer = DbWriter::open(std::path::Path::new(&db_path), 64).unwrap();
+    if let Ok(ready) = std::env::var("CAPSEM_LOGGER_CHILD_READY") {
+        std::fs::write(ready, b"ready").unwrap();
+    }
+    if let Ok(go) = std::env::var("CAPSEM_LOGGER_CHILD_GO") {
+        let go = std::path::PathBuf::from(go);
+        for _ in 0..1000 {
+            if go.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(go.exists(), "child go file never appeared");
+    }
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    rt.block_on(async {
+        writer
+            .write(WriteOp::NetEvent(crate::events::NetEvent {
+                event_id: Some(event_id.clone()),
+                timestamp: std::time::SystemTime::now(),
+                domain: "127.0.0.1".into(),
+                port: 3713,
+                decision,
+                process_name: Some(process_name),
+                pid: None,
+                method: Some("GET".into()),
+                path: Some(path),
+                query: None,
+                status_code: Some(200),
+                bytes_sent: 0,
+                bytes_received: response_body.len() as u64,
+                duration_ms: 1,
+                matched_rule: None,
+                request_headers: Some("host: 127.0.0.1".into()),
+                response_headers: Some("content-type: text/plain".into()),
+                request_body_preview: None,
+                response_body_preview: Some(response_body.clone()),
+                request_body_full: None,
+                response_body_full: Some(response_body),
+                conn_type: Some("http-mitm".into()),
+                policy_mode: None,
+                policy_action: None,
+                policy_rule: None,
+                policy_reason: None,
+                trace_id: None,
+                credential_ref: None,
+            }))
+            .await;
+        writer.flush().await;
+    });
+    writer.shutdown_blocking();
+}
+
+#[test]
 fn db_writer_checkpoints_wal_on_drop() {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("test.db");

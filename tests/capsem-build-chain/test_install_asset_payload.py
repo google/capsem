@@ -1,5 +1,7 @@
 """Install package asset-payload contract tests."""
 
+import importlib.util
+from types import ModuleType
 from pathlib import Path
 
 
@@ -30,6 +32,16 @@ def _workflow_job_blocks(workflow: str) -> dict[str, str]:
         end = starts[offset + 1][1] if offset + 1 < len(starts) else len(lines)
         blocks[name] = "\n".join(lines[start:end])
     return blocks
+
+
+def _load_local_release_glowup() -> ModuleType:
+    path = PROJECT_ROOT / "scripts" / "local-release-glowup.py"
+    spec = importlib.util.spec_from_file_location("local_release_glowup", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_just_install_does_not_sync_assets_after_installer() -> None:
@@ -98,6 +110,254 @@ def test_install_test_restores_host_workspace_ownership() -> None:
     assert 'chown -R $HOST_UID:$HOST_GID /src' in block
     assert "trap cleanup EXIT" in block
     assert "docker rm -f \"$CONTAINER\"" in block
+
+
+def test_install_test_runs_local_release_glowup_from_real_package() -> None:
+    block = _just_recipe_block("test-install")
+
+    assert "Running local release glow-up" in block
+    assert "scripts/local-release-glowup.py" in block
+    assert '--input-deb "$DEB"' in block
+    assert "--bin-dir /cargo-target/debug" in block
+    assert "--assets-dir assets" in block
+    assert "--config-root target/config" in block
+    assert "just test-install" in _just_recipe_block("test:")
+
+
+def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> None:
+    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+
+    assert "scripts/repack-deb.sh" in script
+    assert "scripts/generate-host-binary-sbom.py" in script
+    assert "record-binary" in script
+    assert "assets" in script and "channel" in script and "build" in script
+    assert "json.dumps({" not in script or "capsem.local_release_glowup.v1" in script
+    assert "stable-assets-manifest.json" in script
+    assert "nightly-assets-manifest.json" in script
+    assert "shutil.copy2(args.assets_dir / \"manifest.json\"" in script
+    assert "CAPSEM_RELEASE_URL" in script
+    assert "CAPSEM_RELEASE_MANIFEST_URL=" in script
+    assert "update --assets --manifest" in script
+    assert "update --yes" in script
+    assert "SimpleHTTPRequestHandler" in script
+    assert "--network=host" not in script
+
+
+def test_local_release_glowup_has_zstd_extraction_support_in_install_image() -> None:
+    dockerfile = (PROJECT_ROOT / "docker" / "Dockerfile.install-test").read_text()
+
+    assert "zstd" in dockerfile
+
+
+def test_binary_release_sbom_jobs_install_zstd_for_deb_payloads() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
+
+    for job_name in ("create-release", "assemble-release-channel"):
+        job = _workflow_job_blocks(workflow)[job_name]
+        assert "Install host SBOM archive deps" in job
+        assert "zstd" in job
+        assert job.index("Install host SBOM archive deps") < job.index(
+            "Generate packaged host SBOM"
+        )
+
+
+def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:
+    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    build_channel = script.split("def build_channel(", maxsplit=1)[1].split(
+        "\ndef copy_artifact_tree", maxsplit=1
+    )[0]
+
+    assert "CAPSEM_RELEASE_URL" in build_channel
+    assert 'f"{base_url}/releases/download"' in build_channel
+    assert "--asset-source-base" not in build_channel
+    assert 'f"{base_url}/assets/releases"' not in build_channel
+
+
+def test_local_release_glowup_validates_vm_asset_blobs_are_served() -> None:
+    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+
+    assert "release_asset_urls" in script
+    assert "release is missing VM asset blob" in script
+    assert '"/assets/releases/"' in script
+
+
+def test_local_release_glowup_preflights_stable_and_nightly_manifests() -> None:
+    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+
+    assert "check_generated_release(base_url, stable_manifest_url, stable_deb, dist, \"stable\")" in script
+    assert "check_generated_release(base_url, nightly_manifest_url, nightly_deb, dist, \"nightly\")" in script
+
+
+def test_local_release_glowup_generated_release_checker_rejects_missing_asset_blob(
+    tmp_path: Path,
+) -> None:
+    glowup = _load_local_release_glowup()
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    deb = tmp_path / "Capsem_1.5.1_amd64.deb"
+
+    with glowup.local_release_server(dist) as base_url:
+        manifest_path = dist / "assets" / "stable" / "manifest.json"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text(
+            """{
+  "packages": [
+    {
+      "name": "Capsem_1.5.1_amd64.deb",
+      "url": "%s/releases/download/v1.5.1/Capsem_1.5.1_amd64.deb"
+    }
+  ],
+  "profiles": {
+    "co-work": {
+      "architectures": [
+        {
+          "images": [
+            {"url": "%s/assets/releases/2026.0709.13/x86_64-rootfs.erofs"}
+          ],
+          "evidence": [
+            {"url": "%s/assets/releases/2026.0709.13/obom.cdx.json"}
+          ]
+        }
+      ]
+    }
+  }
+}
+"""
+            % (base_url, base_url, base_url),
+            encoding="utf-8",
+        )
+
+        try:
+            glowup.check_generated_release(
+                base_url,
+                f"{base_url}/assets/stable/manifest.json",
+                deb,
+                dist,
+                "stable",
+            )
+        except SystemExit as error:
+            assert "generated stable release is missing VM asset blob" in str(error)
+            assert "x86_64-rootfs.erofs" in str(error)
+        else:
+            raise AssertionError("missing VM asset blob was accepted")
+
+
+def test_local_release_glowup_generated_release_checker_accepts_local_assets(
+    tmp_path: Path,
+) -> None:
+    glowup = _load_local_release_glowup()
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    deb = tmp_path / "Capsem_1.5.1_amd64.deb"
+
+    with glowup.local_release_server(dist) as base_url:
+        for relative in (
+            "assets/releases/2026.0709.13/x86_64-rootfs.erofs",
+            "assets/releases/2026.0709.13/obom.cdx.json",
+        ):
+            target = dist / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"fixture")
+        manifest_path = dist / "assets" / "nightly" / "manifest.json"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text(
+            """{
+  "packages": [
+    {
+      "name": "Capsem_1.5.1_amd64.deb",
+      "url": "%s/releases/download/v1.5.1/Capsem_1.5.1_amd64.deb"
+    }
+  ],
+  "profiles": {
+    "co-work": {
+      "architectures": [
+        {
+          "images": [
+            {"url": "%s/assets/releases/2026.0709.13/x86_64-rootfs.erofs"}
+          ],
+          "evidence": [
+            {"url": "/assets/releases/2026.0709.13/obom.cdx.json"}
+          ]
+        }
+      ]
+    }
+  }
+}
+"""
+            % (base_url, base_url),
+            encoding="utf-8",
+        )
+
+        glowup.check_generated_release(
+            base_url,
+            f"{base_url}/assets/nightly/manifest.json",
+            deb,
+            dist,
+            "nightly",
+        )
+
+
+def test_local_release_glowup_installed_path_asserts_channel_round_trip_and_provenance(
+    monkeypatch,
+) -> None:
+    glowup = _load_local_release_glowup()
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(glowup, "run", lambda cmd, **_kwargs: calls.append(cmd))
+
+    glowup.run_installed_glowup(
+        install_script_url="http://127.0.0.1:1234/install.sh",
+        release_base_url="http://127.0.0.1:1234",
+        stable_manifest_url="http://127.0.0.1:1234/assets/stable/manifest.json",
+        nightly_manifest_url="http://127.0.0.1:1234/assets/nightly/manifest.json",
+        corp_manifest_url="file:///tmp/capsem-corp/manifest.json",
+        nightly_deb=Path("/tmp/capsem-release/Capsem_1.5.101_amd64.deb"),
+        stable_version="1.5.100",
+        nightly_version="1.5.101",
+        arch="amd64",
+    )
+
+    assert len(calls) == 1
+    script = calls[0][-1]
+    assert 'grep -F \'"package_version": "1.5.100"\'' in script
+    assert 'stable_manifest_sha=$(sha256sum "$HOME/.capsem/assets/manifest.json"' in script
+    assert 'test "$stable_manifest_sha" = "$stable_manifest_sha_after_switch"' in script
+    assert "check_update_log asset_update_complete http://127.0.0.1:1234/assets/nightly/manifest.json" in script
+    assert "printf 'corrupt nightly package'" in script
+    assert "check_update_log binary_update_failed http://127.0.0.1:1234/assets/nightly/manifest.json" in script
+    assert 'CAPSEM_RELEASE_MANIFEST_URL=http://127.0.0.1:1234/assets/nightly/manifest.json' in script
+    assert "check_update_log binary_update_complete http://127.0.0.1:1234/assets/nightly/manifest.json" in script
+    assert 'grep -F \'"package_version": "1.5.101"\'' in script
+    assert "check_service_installed" in script
+    assert '"$HOME/.capsem/bin/capsem" status' in script
+    assert "service status" not in script
+    assert "compiled_binary_version=1.5.100" in script
+    assert "check_binary_versions 1.5.100" in script
+    assert 'check_binary_versions "$compiled_binary_version"' in script
+    assert "CAPSEM_CHANNEL=nightly" in script
+    assert "file:///tmp/capsem-corp/manifest.json" in script
+    assert "check_update_log asset_update_complete file:///tmp/capsem-corp/manifest.json" in script
+
+
+def test_local_release_glowup_asserts_channel_isolation_and_corp_manifest() -> None:
+    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+
+    assert "stable_channel_sha_before_nightly" in script
+    assert "nightly channel build mutated stable manifest" in script
+    assert "nightly channel build mutated stable package records" in script
+    assert "corp_manifest_url = corp_manifest.resolve().as_uri()" in script
+    assert "CAPSEM_HOME=\"$HOME/.capsem\" CAPSEM_RUN_DIR=\"$HOME/.capsem/run\" \"$HOME/.capsem/bin/capsem\" update --assets" in script
+
+
+def test_local_release_glowup_reversion_updates_package_provenance() -> None:
+    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    reversion = script.split("def rewrite_deb_version(", maxsplit=1)[1].split(
+        "\ndef generate_sbom", maxsplit=1
+    )[0]
+
+    assert "manifest-origin.json" in reversion
+    assert 'origin["package_version"] = version' in reversion
+    assert 'origin["packaged_at"] = stamped_at' in reversion
 
 
 def test_dev_service_does_not_replace_installed_assets_with_worktree_symlink() -> None:

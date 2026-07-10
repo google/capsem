@@ -5,14 +5,27 @@ from __future__ import annotations
 import gzip
 import hashlib
 import io
+import importlib.util
 import json
 import subprocess
+import sys
 import tarfile
+from types import ModuleType
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "check-public-binary-release.py"
+
+
+def _load_release_gate() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("check_public_binary_release", SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_public_binary_release_gate_reads_package_contents(tmp_path: Path) -> None:
@@ -120,6 +133,56 @@ def test_public_binary_release_gate_rejects_manifest_binary_hash_drift(
     )
 
 
+def test_public_binary_release_gate_rejects_packaged_binary_version_drift(
+    tmp_path: Path,
+) -> None:
+    package_dir = tmp_path / "packages"
+    package_dir.mkdir()
+    package = package_dir / "Capsem_9.9.9_amd64.deb"
+    capsem = b"#!/bin/sh\necho capsem 9.9.8\n"
+    manifest_url = (tmp_path / "manifest.json").resolve().as_uri()
+    _write_minimal_deb(package, {"usr/bin/capsem": capsem}, manifest_url=manifest_url)
+
+    manifest = _write_manifest(
+        tmp_path,
+        [
+            _package_record(
+                "x86_64",
+                package.name,
+                package,
+                [_binary_record("capsem", "/usr/bin/capsem", capsem)],
+            )
+        ],
+    )
+    install_sh = _write_install_sh(tmp_path)
+
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            str(SCRIPT),
+            "--manifest-url",
+            manifest.resolve().as_uri(),
+            "--install-script-url",
+            str(install_sh),
+            "--package-dir",
+            str(package_dir),
+            "--required-package",
+            "linux:x86_64:debian_package",
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode != 0
+    assert "binary /usr/bin/capsem version output does not contain 9.9.9" in (
+        result.stderr + result.stdout
+    )
+
+
 def test_public_binary_release_gate_rejects_frozen_manifest_payload(tmp_path: Path) -> None:
     package_dir = tmp_path / "packages"
     package_dir.mkdir()
@@ -172,6 +235,60 @@ def test_public_binary_release_gate_rejects_frozen_manifest_payload(tmp_path: Pa
     assert "freezes /usr/share/capsem/assets/manifest.json" in (result.stderr + result.stdout)
 
 
+def test_public_binary_release_gate_rejects_manifest_origin_package_version_drift(
+    tmp_path: Path,
+) -> None:
+    package_dir = tmp_path / "packages"
+    package_dir.mkdir()
+    package = package_dir / "Capsem_9.9.9_amd64.deb"
+    capsem = b"#!/bin/sh\necho capsem 9.9.9\n"
+    manifest_url = (tmp_path / "manifest.json").resolve().as_uri()
+    _write_minimal_deb(
+        package,
+        {"usr/bin/capsem": capsem},
+        manifest_url=manifest_url,
+        package_version="9.9.8",
+    )
+    manifest = _write_manifest(
+        tmp_path,
+        [
+            _package_record(
+                "x86_64",
+                package.name,
+                package,
+                [_binary_record("capsem", "/usr/bin/capsem", capsem)],
+            )
+        ],
+    )
+    install_sh = _write_install_sh(tmp_path)
+
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            str(SCRIPT),
+            "--manifest-url",
+            manifest.resolve().as_uri(),
+            "--install-script-url",
+            str(install_sh),
+            "--package-dir",
+            str(package_dir),
+            "--required-package",
+            "linux:x86_64:debian_package",
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode != 0
+    assert "manifest-origin package_version '9.9.8' does not match 9.9.9" in (
+        result.stderr + result.stdout
+    )
+
+
 def test_release_workflow_runs_public_package_gate_and_docker_install() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8")
     verify_downloads = workflow.split("  verify-release-downloads:", maxsplit=1)[1]
@@ -180,6 +297,7 @@ def test_release_workflow_runs_public_package_gate_and_docker_install() -> None:
     assert "--channel stable" in verify_downloads
     assert "--manifest-url \"$ASSET_MANIFEST_URL\"" in verify_downloads
     assert "--install-script-url https://capsem.org/install.sh" in verify_downloads
+    assert "--site-url https://capsem.org/" in verify_downloads
     assert "--docker-linux-install" in verify_downloads
     assert "--docker-channel-switch" in verify_downloads
     assert "--docker-upgrade" in verify_downloads
@@ -197,6 +315,43 @@ def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> N
     assert "manifest-origin.json" in source
     assert "snapshot_sha256" in source
     assert "freezes {frozen_manifest_path}" in source
+    assert "should_execute_packaged_binary" in source
+    assert "check_packaged_binary_version" in source
+    assert "--site-url" in source
+    assert "check_public_site_download_links" in source
+
+
+def test_public_binary_release_gate_accepts_stable_site_download_entrypoint() -> None:
+    gate = _load_release_gate()
+
+    failures = gate.check_public_site_download_links(
+        """
+        <a href="https://capsem.org/install.sh">Install</a>
+        <code>https://release.capsem.org/assets/stable/manifest.json</code>
+        """,
+        site_url="file:///site.html",
+        channel="stable",
+        release_base_url="https://release.capsem.org",
+    )
+
+    assert failures == []
+
+
+def test_public_binary_release_gate_rejects_asset_tag_site_download_url() -> None:
+    gate = _load_release_gate()
+
+    failures = gate.check_public_site_download_links(
+        """
+        <a href="https://github.com/google/capsem/releases/tag/assets-v2026.0703.2">
+          Download DMG
+        </a>
+        """,
+        site_url="file:///site.html",
+        channel="stable",
+        release_base_url="https://release.capsem.org",
+    )
+
+    assert any("asset-release tag" in failure for failure in failures)
 
 
 def _write_manifest(tmp_path: Path, packages: list[dict[str, object]]) -> Path:
@@ -256,13 +411,19 @@ def _binary_record(name: str, installed_path: str, contents: bytes) -> dict[str,
     }
 
 
-def _write_minimal_deb(path: Path, members: dict[str, bytes], *, manifest_url: str) -> None:
+def _write_minimal_deb(
+    path: Path,
+    members: dict[str, bytes],
+    *,
+    manifest_url: str,
+    package_version: str = "9.9.9",
+) -> None:
     origin = json.dumps(
         {
             "schema": "capsem.manifest_origin.v1",
             "origin": "package",
             "source": manifest_url,
-            "package_version": "9.9.9",
+            "package_version": package_version,
         },
         sort_keys=True,
     ).encode()

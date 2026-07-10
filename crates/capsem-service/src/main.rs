@@ -185,6 +185,10 @@ struct ServiceState {
     /// refreshed by profile/corp mutation routes. Polling UI/TUI routes must
     /// not parse profile TOML or compile CEL on every request.
     profile_rule_cache: Mutex<BTreeMap<String, Vec<api::EnforcementRuleInfo>>>,
+    /// Route-owned default MCP permission readbacks loaded with the profile
+    /// rule cache. Hot MCP routes must not reload and verify enforcement files.
+    profile_mcp_default_cache:
+        Mutex<BTreeMap<String, Result<api::McpDefaultPermissionResponse, String>>>,
     /// Route-owned profile plugin configs loaded once at service startup and
     /// refreshed by profile/corp mutation routes. Hot plugin/profile routes
     /// must not re-read profile TOML just to list effective plugin modes.
@@ -230,6 +234,10 @@ struct ServiceState {
     /// body. Plugin policy refresh clears this cache so repeated UI/TUI probes
     /// do not re-run plugin simulation or serialize identical payloads.
     evaluate_response_cache: Mutex<HashMap<Vec<u8>, Bytes>>,
+    /// Final `/vms/list` JSON bytes keyed by the in-memory lifecycle snapshot.
+    /// The fingerprint includes running VM uptime seconds, so repeated polling
+    /// reuses bytes within the same visible state without freezing the counter.
+    list_response_cache: Mutex<Option<CachedListResponse>>,
     /// One-entry hot evaluate cache for repeated probes with the same exact
     /// body. Checked before allocating the multi-entry cache key.
     evaluate_last_response_cache: Mutex<Option<CachedEvaluateResponse>>,
@@ -277,6 +285,12 @@ struct CachedEvaluateResponse {
     profile_id: String,
     request_body: Bytes,
     response_body: Bytes,
+}
+
+#[derive(Clone)]
+struct CachedListResponse {
+    fingerprint: String,
+    bytes: Bytes,
 }
 
 fn session_db_path_for_session_dir(session_dir: &StdPath) -> PathBuf {
@@ -2154,12 +2168,26 @@ impl ServiceState {
     fn refresh_profile_rule_cache(&self, profile_filter: Option<&str>) -> Result<()> {
         let updates = build_profile_rule_cache(profile_filter)
             .map_err(|error| anyhow!("refresh profile rule cache: {}", error.1))?;
-        let mut cache = self.profile_rule_cache.lock().unwrap();
-        if profile_filter.is_none() {
-            *cache = updates;
-        } else {
-            for (profile_id, rules) in updates {
-                cache.insert(profile_id, rules);
+        let mcp_default_updates = build_profile_mcp_default_cache(profile_filter)
+            .map_err(|error| anyhow!("refresh profile MCP default cache: {}", error.1))?;
+        {
+            let mut cache = self.profile_rule_cache.lock().unwrap();
+            if profile_filter.is_none() {
+                *cache = updates;
+            } else {
+                for (profile_id, rules) in updates {
+                    cache.insert(profile_id, rules);
+                }
+            }
+        }
+        {
+            let mut cache = self.profile_mcp_default_cache.lock().unwrap();
+            if profile_filter.is_none() {
+                *cache = mcp_default_updates;
+            } else {
+                for (profile_id, permission) in mcp_default_updates {
+                    cache.insert(profile_id, permission);
+                }
             }
         }
         self.profile_rule_response_cache.lock().unwrap().clear();
@@ -3617,8 +3645,72 @@ fn storage_diagnostics(session_dir: &StdPath) -> Option<api::StorageDiagnostics>
     })
 }
 
-async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListResponse> {
-    state.reconcile_persistent_defunct_from_logs();
+fn append_fingerprint_field(out: &mut String, value: &str) {
+    use std::fmt::Write as _;
+
+    let _ = write!(out, "{}:", value.len());
+    out.push_str(value);
+    out.push('|');
+}
+
+fn list_response_fingerprint(state: &ServiceState) -> String {
+    use std::fmt::Write as _;
+
+    let mut fingerprint = String::new();
+    {
+        let instances = state.instances.lock().unwrap();
+        let _ = write!(fingerprint, "running={};", instances.len());
+        for i in instances.values() {
+            append_fingerprint_field(&mut fingerprint, &i.id);
+            append_fingerprint_field(&mut fingerprint, &i.profile_id);
+            append_fingerprint_field(&mut fingerprint, &i.name);
+            let _ = write!(
+                fingerprint,
+                "{}:{}:{}:{}:{};",
+                i.pid,
+                i.persistent,
+                i.ram_mb,
+                i.cpus,
+                i.start_time.elapsed().as_secs()
+            );
+            append_fingerprint_field(&mut fingerprint, &i.base_version);
+            append_fingerprint_field(&mut fingerprint, i.forked_from.as_deref().unwrap_or(""));
+        }
+    }
+    {
+        let registry = state.persistent_registry.lock().unwrap();
+        let instances = state.instances.lock().unwrap();
+        let inactive_entries: Vec<&PersistentVmEntry> = registry
+            .list()
+            .filter(|entry| !instances.contains_key(&persistent_entry_vm_id(entry)))
+            .collect();
+        let _ = write!(fingerprint, "inactive={};", inactive_entries.len());
+        for entry in inactive_entries {
+            append_fingerprint_field(&mut fingerprint, &persistent_entry_vm_id(entry));
+            append_fingerprint_field(&mut fingerprint, &entry.name);
+            append_fingerprint_field(&mut fingerprint, &entry.profile_id);
+            append_fingerprint_field(&mut fingerprint, &entry.profile_revision);
+            append_fingerprint_field(&mut fingerprint, &entry.profile_payload_hash);
+            append_fingerprint_field(&mut fingerprint, &entry.base_version);
+            append_fingerprint_field(&mut fingerprint, entry.forked_from.as_deref().unwrap_or(""));
+            append_fingerprint_field(&mut fingerprint, entry.description.as_deref().unwrap_or(""));
+            append_fingerprint_field(&mut fingerprint, entry.last_error.as_deref().unwrap_or(""));
+            let _ = write!(
+                fingerprint,
+                "{}:{}:{}:{}:{}:{};",
+                entry.ram_mb,
+                entry.cpus,
+                entry.suspended,
+                entry.defunct,
+                entry.session_dir.display(),
+                persistent_resume_state_fingerprint(entry)
+            );
+        }
+    }
+    fingerprint
+}
+
+fn build_list_response(state: &ServiceState) -> ListResponse {
     let mut sandboxes: Vec<SandboxInfo> = Vec::new();
 
     // Running instances. Keep this list route in-memory only; callers that
@@ -3682,7 +3774,25 @@ async fn handle_list(State(state): State<Arc<ServiceState>>) -> Json<ListRespons
         sandboxes.push(info);
     }
 
-    Json(ListResponse { sandboxes })
+    ListResponse { sandboxes }
+}
+
+async fn handle_list(State(state): State<Arc<ServiceState>>) -> axum::response::Response {
+    state.reconcile_persistent_defunct_from_logs();
+    let fingerprint = list_response_fingerprint(&state);
+    if let Some(cached) = state.list_response_cache.lock().unwrap().clone() {
+        if cached.fingerprint == fingerprint {
+            return json_bytes_response(cached.bytes);
+        }
+    }
+
+    let response = build_list_response(&state);
+    let bytes = Bytes::from(serde_json::to_vec(&response).unwrap_or_default());
+    *state.list_response_cache.lock().unwrap() = Some(CachedListResponse {
+        fingerprint,
+        bytes: bytes.clone(),
+    });
+    json_bytes_response(bytes)
 }
 
 async fn handle_info(
@@ -6473,6 +6583,7 @@ fn refresh_profile_route_caches(state: &ServiceState) -> Result<(), AppError> {
     let profile_summary_cache = build_profile_summary_cache()?;
     let profile_cache = build_profile_cache()?;
     let profile_rule_cache = build_profile_rule_cache(None)?;
+    let profile_mcp_default_cache = build_profile_mcp_default_cache(None)?;
     let profile_plugin_policy_cache = build_profile_plugin_policy_cache(None)?;
     let status_cache = {
         let catalog = load_profile_catalog_for_service()?;
@@ -6497,6 +6608,12 @@ fn refresh_profile_route_caches(state: &ServiceState) -> Result<(), AppError> {
             format!("profile rule cache lock poisoned: {error}"),
         )
     })? = profile_rule_cache;
+    *state.profile_mcp_default_cache.lock().map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("profile MCP default cache lock poisoned: {error}"),
+        )
+    })? = profile_mcp_default_cache;
     *state.profile_plugin_policy_cache.lock().map_err(|error| {
         AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -6534,6 +6651,50 @@ fn build_profile_rule_cache(
         output.insert(
             manifest.id.clone(),
             list_enforcement_rules_for_profile_config(&profile, &corp)?,
+        );
+    }
+    Ok(output)
+}
+
+fn build_profile_mcp_default_cache(
+    profile_filter: Option<&str>,
+) -> Result<BTreeMap<String, Result<api::McpDefaultPermissionResponse, String>>, AppError> {
+    let catalog = load_profile_catalog_for_service()?;
+    let mut output = BTreeMap::new();
+    for manifest in catalog.profiles() {
+        if profile_filter
+            .map(|profile_id| profile_id != manifest.id)
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        let profile = match profile_from_catalog_entry(manifest, catalog.source()) {
+            Ok(profile) => profile,
+            Err(AppError(_, error)) => {
+                output.insert(manifest.id.clone(), Err(error));
+                continue;
+            }
+        };
+        let permission = match profile.mcp_default_permission() {
+            Ok(permission) => permission,
+            Err(error) => {
+                output.insert(
+                    manifest.id.clone(),
+                    Err(format!(
+                        "resolve MCP default permission for profile {}: {error}",
+                        manifest.id
+                    )),
+                );
+                continue;
+            }
+        };
+        output.insert(
+            manifest.id.clone(),
+            Ok(api::McpDefaultPermissionResponse {
+                action: permission.action,
+                source: permission.source,
+                rule_id: permission.rule_id,
+            }),
         );
     }
     Ok(output)
@@ -7357,18 +7518,31 @@ async fn handle_profile_mcp_default_info(
     State(state): State<Arc<ServiceState>>,
     Path(profile_id): Path<String>,
 ) -> Result<Json<api::McpDefaultPermissionResponse>, AppError> {
-    let profile = cached_profile_for_route(&state, profile_id)?;
-    let permission = profile.mcp_default_permission().map_err(|error| {
-        AppError(
+    if profile_id.is_empty() {
+        return Err(AppError(
             StatusCode::BAD_REQUEST,
-            format!("resolve MCP default permission: {error}"),
-        )
-    })?;
-    Ok(Json(api::McpDefaultPermissionResponse {
-        action: permission.action,
-        source: permission.source,
-        rule_id: permission.rule_id,
-    }))
+            "profile id must not be empty".to_string(),
+        ));
+    }
+    let permission = state
+        .profile_mcp_default_cache
+        .lock()
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("profile MCP default cache lock poisoned: {error}"),
+            )
+        })?
+        .get(&profile_id)
+        .cloned()
+        .ok_or_else(|| {
+            AppError(
+                StatusCode::NOT_FOUND,
+                format!("profile not found: {profile_id}"),
+            )
+        })?
+        .map_err(|error| AppError(StatusCode::BAD_REQUEST, error))?;
+    Ok(Json(permission))
 }
 
 fn latest_mcp_tool_cache(state: &ServiceState) -> Vec<ToolCacheEntry> {
@@ -7506,6 +7680,9 @@ async fn handle_profile_mcp_default_edit(
             AppError(StatusCode::BAD_REQUEST, error)
         })?;
     let event = write_profile_mutation_event(&state, summary).await?;
+    state
+        .refresh_profile_rule_cache(Some(&profile_id))
+        .map_err(|error| AppError(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()))?;
     log_profile_mutation_applied("profile_mcp_default_edit", &event);
     Ok(Json(json!({
         "profile_id": event.profile_id,
@@ -12487,6 +12664,10 @@ async fn main() -> Result<()> {
     prewarm_vm_asset_hash_cache(&assets_base_dir, manifest.as_deref(), &current_version);
     let profile_rule_cache = build_profile_rule_cache(None)
         .map_err(|AppError(_, message)| anyhow!("failed to build profile rule cache: {message}"))?;
+    let profile_mcp_default_cache =
+        build_profile_mcp_default_cache(None).map_err(|AppError(_, message)| {
+            anyhow!("failed to build profile MCP default cache: {message}")
+        })?;
     let profile_plugin_policy_cache =
         build_profile_plugin_policy_cache(None).map_err(|AppError(_, message)| {
             anyhow!("failed to build profile plugin cache: {message}")
@@ -12511,6 +12692,7 @@ async fn main() -> Result<()> {
         profile_cache: Mutex::new(profile_cache),
         profile_status_cache: Mutex::new(None),
         profile_rule_cache: Mutex::new(profile_rule_cache),
+        profile_mcp_default_cache: Mutex::new(profile_mcp_default_cache),
         profile_plugin_policy_cache: Mutex::new(profile_plugin_policy_cache),
         mcp_tool_cache: Mutex::new(capsem_core::mcp::load_tool_cache()),
         profile_mutation_db,
@@ -12523,6 +12705,7 @@ async fn main() -> Result<()> {
         profile_rule_response_cache: Mutex::new(HashMap::new()),
         profile_plugin_response_cache: Mutex::new(HashMap::new()),
         evaluate_response_cache: Mutex::new(HashMap::new()),
+        list_response_cache: Mutex::new(None),
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),

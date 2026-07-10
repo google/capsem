@@ -589,18 +589,48 @@ pub fn flush_memory_tables_to_disk<'a>(
             flush_existing_exec_event_updates(conn)?;
         }
         if max_memory_id > last_flushed_id {
-            conn.execute(
-                &format!(
-                    "INSERT OR REPLACE INTO main.{table}
-                     SELECT * FROM {MEMORY_SCHEMA}.{table}
-                     WHERE id > ?1;"
-                ),
-                [last_flushed_id],
-            )?;
+            if table == "net_events" {
+                let columns = non_id_table_columns(conn, "main", table)?;
+                let column_list = columns.join(", ");
+                conn.execute(
+                    &format!(
+                        "INSERT INTO main.{table} ({column_list})
+                         SELECT {column_list} FROM {MEMORY_SCHEMA}.{table}
+                         WHERE id > ?1;"
+                    ),
+                    [last_flushed_id],
+                )?;
+            } else {
+                conn.execute(
+                    &format!(
+                        "INSERT OR REPLACE INTO main.{table}
+                         SELECT * FROM {MEMORY_SCHEMA}.{table}
+                         WHERE id > ?1;"
+                    ),
+                    [last_flushed_id],
+                )?;
+            }
             advanced.insert(table, max_memory_id);
         }
     }
     Ok(advanced)
+}
+
+fn non_id_table_columns(
+    conn: &Connection,
+    schema: &str,
+    table: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA {schema}.table_info({table})"))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|result| match result {
+            Ok(column) if column != "id" => Some(Ok(column)),
+            Ok(_) => None,
+            Err(error) => Some(Err(error)),
+        })
+        .collect();
+    columns
 }
 
 fn flush_existing_exec_event_updates(conn: &Connection) -> rusqlite::Result<()> {
