@@ -591,6 +591,68 @@ def test_release_site_contract_cli_validates_each_requested_channel(
     assert "nightly release-channel contract passed" in captured.out
 
 
+def test_release_site_contract_cli_retries_requested_channels_as_a_set(
+    monkeypatch, capsys
+) -> None:
+    validator = _release_site_contract_module()
+    checks: list[str] = []
+    sleep_calls: list[float] = []
+
+    class FakeChecker:
+        BLAKE3_IMPORT_ERROR = None
+
+        @staticmethod
+        def check_release_site_dns(release_site: str):
+            assert release_site == "https://release.capsem.org"
+            return SimpleNamespace(ok=True, name="release.capsem.org DNS", detail="ok")
+
+        @staticmethod
+        def check_release_site_contract(release_site: str, channel: str):
+            assert release_site == "https://release.capsem.org"
+            checks.append(channel)
+            if checks == ["stable"]:
+                return SimpleNamespace(
+                    ok=False,
+                    name="release.capsem.org contract",
+                    detail="stable package page still serving previous deploy",
+                )
+            return SimpleNamespace(
+                ok=True,
+                name="release.capsem.org contract",
+                detail=f"{channel} ok",
+            )
+
+    monkeypatch.setattr(validator, "load_readiness_checker", lambda: FakeChecker)
+    monkeypatch.setattr(validator.time, "sleep", sleep_calls.append)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "check-release-site-contract.py",
+            "--base-url",
+            "https://release.capsem.org",
+            "--channel",
+            "stable",
+            "--channel",
+            "nightly",
+            "--attempts",
+            "2",
+            "--delay-seconds",
+            "7",
+        ],
+    )
+
+    exit_code = validator.main()
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert checks == ["stable", "nightly", "stable", "nightly"]
+    assert sleep_calls == [7]
+    assert "attempt 1/2: stable" in captured.err
+    assert "stable release-channel contract passed" in captured.out
+    assert "nightly release-channel contract passed" in captured.out
+
+
 def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
     workflow = _workflow_text("release-channel.yaml")
     release_assets = _workflow_text("release-assets.yaml")

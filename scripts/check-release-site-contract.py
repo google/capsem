@@ -42,23 +42,35 @@ def main() -> int:
         help="Delay between failed validation attempts.",
     )
     args = parser.parse_args()
-    exit_code = 0
-    for channel in args.channels or ["stable"]:
-        channel_exit_code = validate_release_site(
-            release_site=args.release_site,
-            channel=channel,
-            attempts=args.attempts,
-            delay_seconds=args.delay_seconds,
-        )
-        if channel_exit_code != 0:
-            exit_code = channel_exit_code
-    return exit_code
+    return validate_release_channels(
+        release_site=args.release_site,
+        channels=args.channels or ["stable"],
+        attempts=args.attempts,
+        delay_seconds=args.delay_seconds,
+    )
 
 
 def validate_release_site(
     *,
     release_site: str,
     channel: str,
+    attempts: int,
+    delay_seconds: float,
+    checker: Any | None = None,
+) -> int:
+    return validate_release_channels(
+        release_site=release_site,
+        channels=[channel],
+        attempts=attempts,
+        delay_seconds=delay_seconds,
+        checker=checker,
+    )
+
+
+def validate_release_channels(
+    *,
+    release_site: str,
+    channels: list[str],
     attempts: int,
     delay_seconds: float,
     checker: Any | None = None,
@@ -73,33 +85,40 @@ def validate_release_site(
         return 2
 
     attempts = max(attempts, 1)
-    last_failures: list[Any] = []
+    channels = channels or ["stable"]
+    last_failures: list[tuple[str, Any]] = []
     for attempt in range(1, attempts + 1):
-        checks = []
+        failures: list[tuple[str, Any]] = []
         if urlparse(release_site).scheme != "file":
-            checks.append(checker.check_release_site_dns(release_site))
-        checks.append(checker.check_release_site_contract(release_site, channel))
-        failures = [check for check in checks if not check.ok]
+            dns = checker.check_release_site_dns(release_site)
+            if not dns.ok:
+                failures.append(("dns", dns))
         if not failures:
-            print(
-                f"{release_site.rstrip('/')} {channel} release-channel contract passed."
-            )
+            for channel in channels:
+                contract = checker.check_release_site_contract(release_site, channel)
+                if not contract.ok:
+                    failures.append((channel, contract))
+        if not failures:
+            for channel in channels:
+                print(
+                    f"{release_site.rstrip('/')} {channel} release-channel contract passed."
+                )
             return 0
         last_failures = failures
-        for failure in failures:
+        for channel, failure in failures:
             print(
-                f"attempt {attempt}/{attempts}: {failure.name}: {failure.detail}",
+                f"attempt {attempt}/{attempts}: {channel}: {failure.name}: {failure.detail}",
                 file=sys.stderr,
             )
         if attempt != attempts:
             time.sleep(delay_seconds)
 
     print(
-        f"{release_site.rstrip('/')} {channel} release-channel contract failed.",
+        f"{release_site.rstrip('/')} release-channel contract failed.",
         file=sys.stderr,
     )
-    for failure in last_failures:
-        print(f"FAIL: {failure.name}: {failure.detail}", file=sys.stderr)
+    for channel, failure in last_failures:
+        print(f"FAIL: {channel}: {failure.name}: {failure.detail}", file=sys.stderr)
     return 1
 
 
