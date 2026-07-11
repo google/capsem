@@ -27,6 +27,17 @@
 set -euo pipefail
 export COPYFILE_DISABLE=1
 
+embed_install_diagnostics() {
+    local maintainer_script="$1"
+    local combined="${maintainer_script}.with-install-diagnostics"
+    {
+        head -n 1 "$maintainer_script"
+        sed -n '2,$p' "$SCRIPT_DIR/pkg-scripts/install-diagnostics"
+        sed -n '2,$p' "$maintainer_script"
+    } > "$combined"
+    mv "$combined" "$maintainer_script"
+}
+
 usage() {
     echo "usage: repack-deb.sh [--manifest file://...|http://...|https://...] <input.deb> <bin_dir> <config_root> [assets_dir] [output.deb]" >&2
 }
@@ -209,8 +220,10 @@ strip_packaged_binaries
 
 echo "=== Adding maintainer scripts ==="
 cp "$SCRIPT_DIR/deb-preinst.sh" "$WORK_DIR/deb/DEBIAN/preinst"
+embed_install_diagnostics "$WORK_DIR/deb/DEBIAN/preinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/preinst"
 cp "$SCRIPT_DIR/deb-postinst.sh" "$WORK_DIR/deb/DEBIAN/postinst"
+embed_install_diagnostics "$WORK_DIR/deb/DEBIAN/postinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/postinst"
 
 if [ ! -d "$CONFIG_ROOT/profiles" ]; then

@@ -7,6 +7,9 @@
 # The .deb installs companion binaries to /usr/bin/. This script
 # symlinks them into ~/.capsem/bin/ for the user who installed.
 set -euo pipefail
+if ! declare -F capsem_install_enable_failure_trap >/dev/null; then
+    source "$(dirname "$0")/pkg-scripts/install-diagnostics"
+fi
 
 # Determine the real user (not root from sudo)
 if [ -n "${SUDO_USER:-}" ]; then
@@ -31,6 +34,13 @@ INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"
 INSTALL_RUN_FILE="$CAPSEM_DIR/logs/install-current-run"
 
 # Create user-level directory layout
+CAPSEM_INSTALL_PHASE="initialize_log"
+CAPSEM_INSTALL_RUN_LOG="$INSTALL_RUN_LOG"
+CAPSEM_INSTALL_FAILURE_FILE="$CAPSEM_DIR/logs/install-failure.txt"
+CAPSEM_INSTALL_USER="$TARGET_USER"
+CAPSEM_INSTALL_PRESENT_FAILURE=0
+capsem_install_enable_failure_trap
+rm -f "$CAPSEM_INSTALL_FAILURE_FILE"
 mkdir -p "$CAPSEM_DIR/bin" "$CAPSEM_DIR/assets" "$CAPSEM_DIR/run" "$CAPSEM_DIR/logs"
 touch "$INSTALL_LOG" "$INSTALL_RUN_LOG"
 printf '%s\n' "$INSTALL_RUN_ID" > "$INSTALL_RUN_FILE"
@@ -38,6 +48,7 @@ ln -sf "$(basename "$INSTALL_RUN_LOG")" "$CAPSEM_DIR/logs/install-latest.log"
 chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR/logs"
 exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=start user=$TARGET_USER install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
+CAPSEM_INSTALL_PHASE="prepare_layout"
 retired_user_config="user"".toml"
 rm -f "$CAPSEM_DIR/$retired_user_config" "$CAPSEM_DIR/service.toml"
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=retired_config_removed"
@@ -45,6 +56,7 @@ rm -rf "$CAPSEM_DIR/bin/capsem-admin-python"
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=retired_python_admin_bundle_removed"
 
 MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"
+CAPSEM_INSTALL_PHASE="install_manifest_provenance"
 if [ -f "/usr/share/capsem/assets/manifest-origin.json" ]; then
     install -m 0644 /usr/share/capsem/assets/manifest-origin.json "$CAPSEM_DIR/assets/manifest-origin.json"
     MANIFEST_ORIGIN=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-origin.json")
@@ -56,6 +68,7 @@ if [ -f "/usr/share/capsem/assets/manifest-origin.json" ]; then
 fi
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_source source=$MANIFEST_SOURCE"
 
+CAPSEM_INSTALL_PHASE="install_profiles"
 if [ -d "/usr/share/capsem/profiles" ]; then
     rm -rf "$CAPSEM_DIR/profiles"
     mkdir -p "$CAPSEM_DIR/profiles"
@@ -64,6 +77,7 @@ if [ -d "/usr/share/capsem/profiles" ]; then
 fi
 
 # Symlink system binaries into user dir
+CAPSEM_INSTALL_PHASE="link_binaries"
 for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     if [ ! -f "/usr/bin/$bin" ]; then
         echo "capsem: packaged binary missing: /usr/bin/$bin" >&2
@@ -76,6 +90,7 @@ done
 # Fix ownership
 chown -R "$TARGET_USER:$(id -gn "$TARGET_USER")" "$CAPSEM_DIR"
 
+CAPSEM_INSTALL_PHASE="hydrate_assets"
 if [ -x "$CAPSEM_DIR/bin/capsem" ]; then
     if ! su "$TARGET_USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets --manifest \"$MANIFEST_SOURCE\""; then
         echo "capsem: asset hydration failed" >&2
@@ -87,6 +102,7 @@ fi
 
 # Register systemd user unit as the target user.
 # XDG_RUNTIME_DIR is required for systemctl --user; su drops it.
+CAPSEM_INSTALL_PHASE="register_service"
 TARGET_UID=$(id -u "$TARGET_USER")
 XDG_DIR="/run/user/$TARGET_UID"
 if command -v systemctl >/dev/null 2>&1; then
@@ -95,4 +111,5 @@ if command -v systemctl >/dev/null 2>&1; then
 fi
 
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=complete"
+CAPSEM_INSTALL_PHASE="complete"
 exit 0

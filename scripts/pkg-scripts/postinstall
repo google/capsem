@@ -9,6 +9,7 @@
 # installing user. When called via `sudo installer -pkg`, $USER may be
 # root -- fall back to SUDO_USER, then the console owner.
 set -euo pipefail
+source "$(dirname "$0")/install-diagnostics"
 
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
     USER="$SUDO_USER"
@@ -29,6 +30,12 @@ mkdir -p "$CAPSEM_DIR/logs"
 INSTALL_RUN_FILE="$CAPSEM_DIR/logs/install-current-run"
 INSTALL_RUN_ID=$(cat "$INSTALL_RUN_FILE" 2>/dev/null || date -u '+%Y%m%dT%H%M%SZ')
 INSTALL_RUN_LOG="$CAPSEM_DIR/logs/install-$INSTALL_RUN_ID.log"
+CAPSEM_INSTALL_PHASE="initialize_log"
+CAPSEM_INSTALL_RUN_LOG="$INSTALL_RUN_LOG"
+CAPSEM_INSTALL_FAILURE_FILE="$CAPSEM_DIR/logs/install-failure.txt"
+CAPSEM_INSTALL_USER="$USER"
+capsem_install_enable_failure_trap
+rm -f "$CAPSEM_INSTALL_FAILURE_FILE"
 touch "$INSTALL_LOG" "$INSTALL_RUN_LOG"
 ln -sf "$(basename "$INSTALL_RUN_LOG")" "$CAPSEM_DIR/logs/install-latest.log"
 chown -R "$USER" "$CAPSEM_DIR/logs"
@@ -37,6 +44,7 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=start user=$USER 
 
 # Create user-level directory layout. Remove stale asset symlinks from dev
 # installs so this package never writes through to an old worktree.
+CAPSEM_INSTALL_PHASE="prepare_layout"
 rm -rf "$CAPSEM_DIR"/bin.backup*
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=retired_binary_backups_removed"
 retired_user_config="user"".toml"
@@ -55,6 +63,7 @@ chown -R "$USER" "$CAPSEM_DIR"
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=layout_ready capsem_dir=$CAPSEM_DIR"
 
 # Copy companion binaries from pkg payload
+CAPSEM_INSTALL_PHASE="copy_binaries"
 for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
     src="$PKG_SHARE/bin/$bin"
     if [ ! -f "$src" ]; then
@@ -84,6 +93,7 @@ codesign_identifier_for_bin() {
 }
 
 # Codesign all binaries with virtualization entitlements
+CAPSEM_INSTALL_PHASE="codesign_binaries"
 if [ -f "$PKG_SHARE/entitlements.plist" ]; then
     for bin in "$CAPSEM_DIR/bin"/capsem*; do
         identifier=$(codesign_identifier_for_bin "$bin" || true)
@@ -95,6 +105,7 @@ if [ -f "$PKG_SHARE/entitlements.plist" ]; then
 fi
 
 MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"
+CAPSEM_INSTALL_PHASE="install_manifest_provenance"
 if [ -f "$PKG_SHARE/assets/manifest-origin.json" ]; then
     install -m 0644 "$PKG_SHARE/assets/manifest-origin.json" "$CAPSEM_DIR/assets/manifest-origin.json"
     MANIFEST_ORIGIN=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-origin.json")
@@ -109,6 +120,7 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_source s
 # Copy the materialized profile catalog and its rule files. Profiles pin the
 # asset hashes the service boots, so they must be installed atomically with the
 # package assets instead of falling back to compiled source defaults.
+CAPSEM_INSTALL_PHASE="install_profiles"
 if [ -d "$PKG_SHARE/profiles" ]; then
     rm -rf "$CAPSEM_DIR/profiles"
     mkdir -p "$CAPSEM_DIR/profiles"
@@ -119,6 +131,7 @@ fi
 # Fix ownership (we ran as root)
 chown -R "$USER" "$CAPSEM_DIR"
 
+CAPSEM_INSTALL_PHASE="hydrate_assets"
 if [ -x "$CAPSEM_DIR/bin/capsem" ]; then
     if ! su "$USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --assets --manifest \"$MANIFEST_SOURCE\""; then
         echo "capsem: asset hydration failed" >&2
@@ -129,6 +142,7 @@ if [ -x "$CAPSEM_DIR/bin/capsem" ]; then
 fi
 
 # Add ~/.capsem/bin to PATH in shell profile
+CAPSEM_INSTALL_PHASE="configure_shell"
 CAPSEM_BIN="$CAPSEM_DIR/bin"
 for PROFILE in "$USER_HOME/.zshrc" "$USER_HOME/.bash_profile" "$USER_HOME/.bashrc"; do
     if [ -f "$PROFILE" ]; then
@@ -151,6 +165,7 @@ chown -R "$USER" "$USER_HOME/.config/fish"
 # Register LaunchAgent as the installing user. Do not hide readiness: the GUI
 # should only launch after the service and gateway are ready. Asset readiness is
 # exposed through the service/UI rather than a setup side effect.
+CAPSEM_INSTALL_PHASE="register_service"
 if ! su "$USER" -c "$CAPSEM_DIR/bin/capsem install" 2>/dev/null; then
     echo "capsem: service registration failed" >&2
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=service_registration_failed"
@@ -160,6 +175,7 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=service_registere
 
 READY=0
 STATUS_OUTPUT=""
+CAPSEM_INSTALL_PHASE="wait_for_service"
 for attempt in $(seq 1 30); do
     STATUS_OUTPUT=$(su "$USER" -c "$CAPSEM_DIR/bin/capsem status" 2>/dev/null || true)
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=readiness_poll attempt=$attempt"
@@ -174,6 +190,7 @@ done
 # --- GUI detection and app launch ---
 # Open the desktop app only when the daemon and gateway are up. Assets may
 # still be downloading; the UI can show that state once it has a live service.
+CAPSEM_INSTALL_PHASE="launch_app"
 if [ "$READY" -eq 1 ] && [ "$(uname)" = "Darwin" ] && [ -d "/Applications/Capsem.app" ]; then
     # Kill stale pre-install GUI instances so Installer.app cannot leave a
     # skipped or cached frontend talking to the freshly installed daemon.
@@ -195,4 +212,5 @@ elif [ "$READY" -ne 1 ]; then
 fi
 
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=complete"
+CAPSEM_INSTALL_PHASE="complete"
 exit 0

@@ -3,6 +3,7 @@
 # installing the new one. Downgrades and same-version reinstalls are valid:
 # PackageKit version ordering must not decide whether the app is replaced.
 set -euo pipefail
+source "$(dirname "$0")/install-diagnostics"
 
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
     USER="$SUDO_USER"
@@ -14,6 +15,7 @@ fi
 INSTALL_RUN_ID=$(date -u '+%Y%m%dT%H%M%SZ')
 INSTALL_LOG="/tmp/capsem-install.log"
 INSTALL_RUN_LOG="/tmp/capsem-install-$INSTALL_RUN_ID.log"
+CAPSEM_DIR="/tmp"
 if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
     USER_HOME=$(eval echo "~$USER")
     CAPSEM_DIR="$USER_HOME/.capsem"
@@ -26,9 +28,16 @@ if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
     ln -sf "$(basename "$INSTALL_RUN_LOG")" "$CAPSEM_DIR/logs/install-latest.log"
     chown "$USER" "$INSTALL_LOG" "$INSTALL_RUN_LOG" "$INSTALL_RUN_FILE" "$CAPSEM_DIR/logs" 2>/dev/null || true
 fi
+CAPSEM_INSTALL_PHASE="initialize_log"
+CAPSEM_INSTALL_RUN_LOG="$INSTALL_RUN_LOG"
+CAPSEM_INSTALL_FAILURE_FILE="$CAPSEM_DIR/logs/install-failure.txt"
+CAPSEM_INSTALL_USER="${USER:-}"
+capsem_install_enable_failure_trap
+rm -f "$CAPSEM_INSTALL_FAILURE_FILE"
 exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=start user=${USER:-unknown} install_run_id=$INSTALL_RUN_ID install_run_log=$INSTALL_RUN_LOG"
 
+CAPSEM_INSTALL_PHASE="stop_existing_install"
 if [ -n "${USER:-}" ] && [ "$USER" != "root" ]; then
     PLIST="$USER_HOME/Library/LaunchAgents/com.capsem.service.plist"
     if [ -f "$PLIST" ]; then
@@ -45,14 +54,17 @@ fi
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=kill_gui"
 pkill -9 -x capsem-app 2>/dev/null || true
 
+CAPSEM_INSTALL_PHASE="remove_app_payload"
 if [ -n "${USER_HOME:-}" ] && [ "$USER_HOME" != "/" ]; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=remove_user_app_payload path=$USER_HOME/Applications/Capsem.app"
     rm -rf "$USER_HOME/Applications/Capsem.app"
 fi
 
+CAPSEM_INSTALL_PHASE="remove_package_payload"
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=remove_old_payload"
 rm -rf /Applications/Capsem.app
 rm -rf /usr/local/share/capsem
 
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=preinstall event=complete"
+CAPSEM_INSTALL_PHASE="complete"
 exit 0

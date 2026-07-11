@@ -1,0 +1,50 @@
+#!/bin/bash
+# Shared failure reporting for macOS package maintainer scripts.
+
+capsem_install_report_failure() {
+    local status="$1"
+    local phase="${CAPSEM_INSTALL_PHASE:-unknown}"
+    local run_log="${CAPSEM_INSTALL_RUN_LOG:-/tmp/capsem-install.log}"
+    local failure_file="${CAPSEM_INSTALL_FAILURE_FILE:-/tmp/capsem-install-failure.txt}"
+    local install_user="${CAPSEM_INSTALL_USER:-}"
+    local report
+
+    report=$(printf '%s\n' \
+        "Capsem installation failed." \
+        "Failed phase: $phase" \
+        "Exit code: $status" \
+        "Detailed log: $run_log" \
+        "" \
+        "Tester action: copy the output of this command into the bug report:" \
+        "  cat \"$run_log\"")
+
+    mkdir -p "$(dirname "$failure_file")" 2>/dev/null || true
+    if printf '%s\n' "$report" > "$failure_file" 2>/dev/null; then
+        chmod 0600 "$failure_file" 2>/dev/null || true
+        if [ -n "$install_user" ] && [ "$install_user" != "root" ]; then
+            chown "$install_user" "$failure_file" 2>/dev/null || true
+        fi
+    fi
+    printf '%s\n' "$report" >&2
+
+    if [ "${CAPSEM_INSTALL_PRESENT_FAILURE:-1}" != "0" ] \
+        && [ "$(uname -s 2>/dev/null || true)" = "Darwin" ] \
+        && [ -n "$install_user" ] \
+        && [ "$install_user" != "root" ] \
+        && [ -x /usr/bin/open ]; then
+        su "$install_user" -c "/usr/bin/open -a TextEdit \"$failure_file\"" 2>/dev/null || true
+    fi
+}
+
+capsem_install_on_exit() {
+    local status=$?
+    trap - EXIT
+    if [ "$status" -ne 0 ]; then
+        capsem_install_report_failure "$status" || true
+    fi
+    exit "$status"
+}
+
+capsem_install_enable_failure_trap() {
+    trap capsem_install_on_exit EXIT
+}

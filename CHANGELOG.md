@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Made macOS and Linux package-script failures write an actionable tester
+  report with the failed install phase, detailed log path, and exact command to
+  copy into a bug report; macOS also opens the report visibly.
+
 ## [1.5.1783742640] - 2026-07-11
 
 ### Fixed

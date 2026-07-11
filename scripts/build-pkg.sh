@@ -233,6 +233,7 @@ PKG_SCRIPTS="$WORK_DIR/pkg-scripts"
 mkdir -p "$PKG_SCRIPTS"
 install -m 0755 "$SCRIPT_DIR/pkg-scripts/preinstall" "$PKG_SCRIPTS/preinstall"
 install -m 0755 "$SCRIPT_DIR/pkg-scripts/postinstall" "$PKG_SCRIPTS/postinstall"
+install -m 0755 "$SCRIPT_DIR/pkg-scripts/install-diagnostics" "$PKG_SCRIPTS/install-diagnostics"
 
 # Strip macOS extended attributes in the temporary staging area. Otherwise
 # pkgbuild serializes AppleDouble `._*` sidecars into Payload/Scripts.

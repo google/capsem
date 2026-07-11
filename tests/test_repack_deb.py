@@ -254,6 +254,9 @@ def test_postinst_script_is_included(tmp_path):
     assert postinst.read_text().startswith(expected_head), (
         "postinst doesn't look like scripts/deb-postinst.sh"
     )
+    assert "Tester action: copy the output of this command into the bug report:" in (
+        postinst.read_text()
+    )
 
 
 def test_preinst_script_is_included(tmp_path):
@@ -277,6 +280,9 @@ def test_preinst_script_is_included(tmp_path):
     expected_head = PREINST.read_text().splitlines()[0]
     assert preinst.read_text().startswith(expected_head), (
         "preinst doesn't look like scripts/deb-preinst.sh"
+    )
+    assert "Tester action: copy the output of this command into the bug report:" in (
+        preinst.read_text()
     )
 
 
