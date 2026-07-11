@@ -124,8 +124,8 @@ jobs:
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --locked
 
-      - name: Warnings-as-errors (all crates)
-        run: cargo check --workspace
+      - name: Clippy warnings-as-errors (workspace and all targets)
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Create stub v2 asset manifest for unit tests
         run: |
