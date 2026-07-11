@@ -322,6 +322,49 @@ def _serve_interrupted_asset_channel(
         server.server_close()
 
 
+@contextmanager
+def _serve_flaky_asset_channel(manifest: dict, blobs: dict[str, bytes], flaky_path: str):
+    payloads = {
+        "/assets/stable/manifest.json": json.dumps(manifest).encode("utf-8"),
+        **blobs,
+    }
+    requested_paths: list[str] = []
+    failures_left = {flaky_path: 1}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            path = self.path.split("?", maxsplit=1)[0]
+            requested_paths.append(path)
+            if failures_left.get(path, 0) > 0:
+                failures_left[path] -= 1
+                self.close_connection = True
+                return
+            payload = payloads.get(path)
+            if payload is None:
+                self.send_error(404)
+                return
+            content_type = (
+                "application/json" if path.endswith(".json") else "application/octet-stream"
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format, *args):
+            return
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}", requested_paths
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_update_assets_downloads_missing(tmp_path: Path, http_fixture, installed_layout):
     base_url, serve_dir, _requested_paths = http_fixture
     arch = _arch()
@@ -446,6 +489,61 @@ def test_update_assets_refreshes_remote_channel_manifest_before_download(
         else:
             hashed = f"{name}-{prefix}"
         target = assets / arch / hashed
+        assert target.exists(), f"{target} not downloaded. stdout={result.stdout}"
+        assert target.read_bytes() == blob
+
+
+def test_update_assets_retries_transient_remote_channel_manifest_fetch(
+    tmp_path: Path,
+    installed_layout,
+):
+    binary = _fresh_capsem_binary()
+    arch = _arch()
+    old_files = {
+        "vmlinuz": b"old-flaky-manifest-kernel",
+        "initrd.img": b"old-flaky-manifest-initrd",
+        "rootfs.erofs": b"old-flaky-manifest-rootfs",
+    }
+    new_files = {
+        "vmlinuz": b"new-flaky-manifest-kernel" * 128,
+        "initrd.img": b"new-flaky-manifest-initrd" * 128,
+        "rootfs.erofs": b"new-flaky-manifest-rootfs" * 128,
+    }
+    channel_manifest = _make_manifest(arch, new_files, NEW_ASSET_VERSION)
+    blobs = {
+        f"/assets/releases/{NEW_ASSET_VERSION}/{arch}-{name}": blob
+        for name, blob in new_files.items()
+    }
+
+    with _serve_flaky_asset_channel(
+        channel_manifest, blobs, "/assets/stable/manifest.json"
+    ) as (base_url, requested_paths):
+        channel_manifest_url = f"{base_url}/assets/stable/manifest.json"
+        capsem_home = tmp_path / ".capsem"
+        assets = capsem_home / "assets"
+        old_origin = {
+            "schema": "capsem.manifest_origin.v1",
+            "origin": "package",
+            "source": channel_manifest_url,
+            "packaged_at": "2026-06-16T00:00:00Z",
+        }
+        _write_installed_manifest_and_assets(
+            assets,
+            arch,
+            old_files,
+            asset_version=ASSET_VERSION,
+            origin=old_origin,
+        )
+
+        result = _run_binary(binary, {"CAPSEM_HOME": str(capsem_home)}, "update", "--assets")
+
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    assert requested_paths.count("/assets/stable/manifest.json") >= 2
+    assert f"Installed asset manifest from {channel_manifest_url}" in result.stdout
+    installed_manifest = json.loads((assets / "manifest.json").read_text())
+    assert installed_manifest["assets"]["current"] == NEW_ASSET_VERSION
+    for name, blob in new_files.items():
+        target = assets / arch / _hashed_asset_name(name, blob)
         assert target.exists(), f"{target} not downloaded. stdout={result.stdout}"
         assert target.read_bytes() == blob
 

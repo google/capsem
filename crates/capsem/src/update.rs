@@ -10,6 +10,7 @@ use std::{
     fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
@@ -19,6 +20,9 @@ use tracing::{info, warn};
 
 use crate::platform::{self, InstallLayout};
 use capsem_core::net::policy_config::{ProfileCatalog, ProfileConfigFile};
+
+const RELEASE_HTTP_ATTEMPTS: usize = 4;
+const RELEASE_HTTP_INITIAL_BACKOFF_MS: u64 = 250;
 
 /// Cached update check result.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1454,18 +1458,9 @@ fn deb_graph_arch() -> &'static str {
 
 async fn fetch_release_update_check(layout: &InstallLayout) -> Result<UpdateCheck> {
     let manifest_url = release_manifest_url()?;
-    let resp = reqwest::Client::new()
-        .get(&manifest_url)
-        .header("Accept", "application/json")
-        .header("User-Agent", "capsem")
-        .send()
-        .await
-        .with_context(|| format!("GET {manifest_url}"))?;
-    if !resp.status().is_success() {
-        anyhow::bail!("GET {} returned {}", manifest_url, resp.status());
-    }
-    let body = resp
-        .bytes()
+    let url = reqwest::Url::parse(&manifest_url)
+        .with_context(|| format!("parse release manifest URL {manifest_url}"))?;
+    let body = release_http_get_bytes(url, Some("application/json"), &manifest_url)
         .await
         .with_context(|| format!("read release manifest from {manifest_url}"))?;
     let channel_hash = channel_payload_hash(&body);
@@ -1505,17 +1500,9 @@ async fn download_binary_installer(installer: &BinaryInstaller) -> Result<PathBu
         return Ok(target);
     }
 
-    let resp = reqwest::Client::new()
-        .get(&installer.url)
-        .header("User-Agent", "capsem")
-        .send()
-        .await
-        .with_context(|| format!("GET {}", installer.url))?;
-    if !resp.status().is_success() {
-        anyhow::bail!("GET {} returned {}", installer.url, resp.status());
-    }
-    let bytes = resp
-        .bytes()
+    let url = reqwest::Url::parse(&installer.url)
+        .with_context(|| format!("parse installer URL {}", installer.url))?;
+    let bytes = release_http_get_bytes(url, None, &installer.url)
         .await
         .with_context(|| format!("read installer body from {}", installer.url))?;
     verify_binary_installer_bytes(&bytes, installer)?;
@@ -2011,21 +1998,9 @@ async fn read_profile_catalog_source(source: &str) -> Result<Vec<u8>> {
                     "profile catalog source must use https://, http://, or file:// URLs, got {source}"
                 );
             }
-            let resp = reqwest::Client::new()
-                .get(url.clone())
-                .header("Accept", "application/json")
-                .header("User-Agent", "capsem")
-                .send()
+            release_http_get_bytes(url.clone(), Some("application/json"), source)
                 .await
-                .with_context(|| format!("GET {source}"))?;
-            if !resp.status().is_success() {
-                anyhow::bail!("GET {} returned {}", source, resp.status());
-            }
-            Ok(resp
-                .bytes()
-                .await
-                .with_context(|| format!("read profile catalog body from {source}"))?
-                .to_vec())
+                .with_context(|| format!("read profile catalog body from {source}"))
         }
         scheme => anyhow::bail!(
             "unsupported profile catalog URL scheme {scheme}: use https://, http://, or file://"
@@ -2751,56 +2726,29 @@ async fn download_release_channel_profile_asset_from_http(
     url: &str,
     download: &ReleaseChannelAssetDownload,
 ) -> Result<()> {
-    use tokio::io::AsyncWriteExt;
-
-    let mut resp = reqwest::Client::new()
-        .get(url)
-        .header("User-Agent", "capsem")
-        .send()
+    let parsed =
+        reqwest::Url::parse(url).with_context(|| format!("parse profile image URL {url}"))?;
+    let bytes = release_http_get_bytes(parsed, None, url)
         .await
-        .with_context(|| format!("GET {url}"))?;
-    if !resp.status().is_success() {
-        anyhow::bail!("GET {} returned {}", url, resp.status());
-    }
+        .with_context(|| format!("read profile image body from {url}"))?;
 
     let tmp = target.with_extension("tmp");
     let _ = std::fs::remove_file(&tmp);
-    let mut file = tokio::fs::File::create(&tmp)
-        .await
-        .with_context(|| format!("create {}", tmp.display()))?;
-    let mut blake3_hasher = blake3::Hasher::new();
-    let mut sha256_hasher = Sha256::new();
-    let mut bytes_done = 0u64;
-
-    loop {
-        let Some(chunk) = resp
-            .chunk()
-            .await
-            .with_context(|| format!("stream {url}"))?
-        else {
-            break;
-        };
-        if let Err(error) = file.write_all(&chunk).await {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(anyhow::Error::new(error).context(format!("write {}", tmp.display())));
-        }
-        blake3_hasher.update(&chunk);
-        sha256_hasher.update(&chunk);
-        bytes_done += chunk.len() as u64;
-    }
-    if let Err(error) = file.flush().await {
+    let bytes_done = bytes.len() as u64;
+    let actual_blake3 = blake3::hash(&bytes).to_hex().to_string();
+    let actual_sha256 = sha256_hex(&bytes);
+    if let Err(error) = std::fs::write(&tmp, &bytes) {
         let _ = std::fs::remove_file(&tmp);
-        return Err(anyhow::Error::new(error).context(format!("flush {}", tmp.display())));
+        return Err(anyhow::Error::new(error).context(format!("write {}", tmp.display())));
     }
-    drop(file);
 
     finish_release_channel_asset_download(
         target,
         &tmp,
         download,
         bytes_done,
-        blake3_hasher.finalize().to_hex().to_string(),
-        format!("{:x}", sha256_hasher.finalize()),
+        actual_blake3,
+        actual_sha256,
     )
 }
 
@@ -2893,6 +2841,97 @@ fn write_manifest_origin(assets_dir: &Path, source: &str) -> Result<()> {
     Ok(())
 }
 
+async fn release_http_get_bytes(
+    url: reqwest::Url,
+    accept: Option<&'static str>,
+    display_url: &str,
+) -> Result<Vec<u8>> {
+    let client = reqwest::Client::builder()
+        .user_agent("capsem")
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(120))
+        .build()
+        .context("build release HTTP client")?;
+
+    let mut last_error: Option<anyhow::Error> = None;
+    for attempt in 1..=RELEASE_HTTP_ATTEMPTS {
+        let mut request = client.get(url.clone());
+        if let Some(accept) = accept {
+            request = request.header("Accept", accept);
+        }
+
+        match request.send().await {
+            Ok(response) => {
+                let status = response.status();
+                if status.is_success() {
+                    match response.bytes().await {
+                        Ok(bytes) => return Ok(bytes.to_vec()),
+                        Err(error) => {
+                            let error =
+                                anyhow::Error::new(error).context(format!("read {display_url}"));
+                            if attempt == RELEASE_HTTP_ATTEMPTS {
+                                return Err(error);
+                            }
+                            warn!(
+                                attempt,
+                                max_attempts = RELEASE_HTTP_ATTEMPTS,
+                                url = %display_url,
+                                error = %error,
+                                "release HTTP body read failed; retrying"
+                            );
+                            last_error = Some(error);
+                        }
+                    }
+                } else if release_http_status_is_retryable(status) {
+                    let error = anyhow::anyhow!("GET {} returned {}", display_url, status);
+                    if attempt == RELEASE_HTTP_ATTEMPTS {
+                        return Err(error);
+                    }
+                    warn!(
+                        attempt,
+                        max_attempts = RELEASE_HTTP_ATTEMPTS,
+                        url = %display_url,
+                        status = %status,
+                        "release HTTP status is retryable"
+                    );
+                    last_error = Some(error);
+                } else {
+                    anyhow::bail!("GET {} returned {}", display_url, status);
+                }
+            }
+            Err(error) => {
+                let error = anyhow::Error::new(error).context(format!("GET {display_url}"));
+                if attempt == RELEASE_HTTP_ATTEMPTS {
+                    return Err(error);
+                }
+                warn!(
+                    attempt,
+                    max_attempts = RELEASE_HTTP_ATTEMPTS,
+                    url = %display_url,
+                    error = %error,
+                    "release HTTP request failed; retrying"
+                );
+                last_error = Some(error);
+            }
+        }
+
+        tokio::time::sleep(release_http_retry_backoff(attempt)).await;
+    }
+
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("GET {display_url} failed")))
+}
+
+fn release_http_status_is_retryable(status: reqwest::StatusCode) -> bool {
+    status == reqwest::StatusCode::REQUEST_TIMEOUT
+        || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        || status.is_server_error()
+}
+
+fn release_http_retry_backoff(attempt: usize) -> Duration {
+    let multiplier = 1u64 << attempt.saturating_sub(1).min(4);
+    Duration::from_millis(RELEASE_HTTP_INITIAL_BACKOFF_MS * multiplier)
+}
+
 fn canonical_json_pretty<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     let value = serde_json::to_value(value).context("convert value to canonical JSON")?;
     let sorted = sort_json_value(value);
@@ -2939,21 +2978,9 @@ async fn read_manifest_source(source: &str) -> Result<Vec<u8>> {
                     "--manifest must use https://, http://, or file:// URLs, got {source}"
                 );
             }
-            let resp = reqwest::Client::new()
-                .get(url.clone())
-                .header("Accept", "application/json")
-                .header("User-Agent", "capsem")
-                .send()
+            release_http_get_bytes(url.clone(), Some("application/json"), source)
                 .await
-                .with_context(|| format!("GET {source}"))?;
-            if !resp.status().is_success() {
-                anyhow::bail!("GET {} returned {}", source, resp.status());
-            }
-            Ok(resp
-                .bytes()
-                .await
-                .with_context(|| format!("read manifest body from {source}"))?
-                .to_vec())
+                .with_context(|| format!("read manifest body from {source}"))
         }
         scheme => anyhow::bail!(
             "unsupported --manifest URL scheme {scheme}: use https://, http://, or file://"

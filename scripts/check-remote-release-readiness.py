@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -1842,7 +1844,7 @@ def fetch_bytes(url: str) -> FetchBytes:
         _FETCH_BYTES_CACHE[url] = result
         return result
     try:
-        with urllib.request.urlopen(release_site_request(url), timeout=20) as response:
+        with urlopen_release_site(release_site_request(url), timeout=20) as response:
             result = FetchBytes(response.read())
     except urllib.error.HTTPError as error:
         error.close()
@@ -1856,7 +1858,7 @@ def fetch_bytes(url: str) -> FetchBytes:
 def fetch_headers(url: str) -> FetchHeaders:
     try:
         request = release_site_request(url, method="HEAD")
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urlopen_release_site(request, timeout=20) as response:
             return FetchHeaders({key.lower(): value for key, value in response.headers.items()})
     except urllib.error.HTTPError as error:
         error.close()
@@ -1871,6 +1873,47 @@ def release_site_request(url: str, *, method: str | None = None) -> urllib.reque
         headers={"User-Agent": RELEASE_VALIDATOR_USER_AGENT},
         method=method,
     )
+
+
+def urlopen_release_site(request: urllib.request.Request, *, timeout: int):
+    try:
+        return urllib.request.urlopen(request, timeout=timeout)
+    except (OSError, urllib.error.URLError) as error:
+        if not is_network_unreachable(error):
+            raise
+        with ipv4_only_getaddrinfo():
+            return urllib.request.urlopen(request, timeout=timeout)
+
+
+def is_network_unreachable(error: BaseException) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, OSError) and current.errno == errno.ENETUNREACH:
+            return True
+        reason = getattr(current, "reason", None)
+        if isinstance(reason, BaseException) and id(reason) not in seen:
+            current = reason
+            continue
+        cause = current.__cause__ or current.__context__
+        current = cause if isinstance(cause, BaseException) else None
+    return False
+
+
+@contextlib.contextmanager
+def ipv4_only_getaddrinfo():
+    original = socket.getaddrinfo
+
+    def getaddrinfo_ipv4(host, port, family=0, type=0, proto=0, flags=0):
+        requested_family = socket.AF_INET if family in (0, socket.AF_UNSPEC) else family
+        return original(host, port, requested_family, type, proto, flags)
+
+    socket.getaddrinfo = getaddrinfo_ipv4
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = original
 
 
 def fetch_json(url: str) -> FetchJson:

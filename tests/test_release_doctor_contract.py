@@ -2250,6 +2250,49 @@ def test_remote_release_readiness_fetches_with_validator_user_agent(monkeypatch)
     assert requests[1].get_method() == "HEAD"
 
 
+def test_remote_release_readiness_fetch_retries_ipv4_on_network_unreachable(monkeypatch) -> None:
+    checker = _readiness_checker_module()
+    calls: list[tuple[str, str]] = []
+    failures_left = {
+        ("GET", "https://release.capsem.org/ipv6-body"): 1,
+        ("HEAD", "https://release.capsem.org/ipv6-headers"): 1,
+    }
+
+    class FakeResponse:
+        headers = {"Cache-Control": "no-cache, must-revalidate"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return b"ok"
+
+    def fake_urlopen(request, *, timeout: int):
+        method = request.get_method()
+        key = (method, request.full_url)
+        calls.append(key)
+        assert timeout == 20
+        if failures_left.get(key, 0) > 0:
+            failures_left[key] -= 1
+            raise checker.urllib.error.URLError(
+                OSError(checker.errno.ENETUNREACH, "Network is unreachable")
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr(checker.urllib.request, "urlopen", fake_urlopen)
+
+    body = checker.fetch_bytes("https://release.capsem.org/ipv6-body")
+    headers = checker.fetch_headers("https://release.capsem.org/ipv6-headers")
+
+    assert body == checker.FetchBytes(b"ok")
+    assert headers == checker.FetchHeaders({"cache-control": "no-cache, must-revalidate"})
+    assert calls.count(("GET", "https://release.capsem.org/ipv6-body")) == 2
+    assert calls.count(("HEAD", "https://release.capsem.org/ipv6-headers")) == 2
+
+
 def test_live_release_activation_order_is_documented() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()

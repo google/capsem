@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Retried transient release-channel HTTP failures during asset hydration,
+  binary update checks, installer downloads, and post-release validators so
+  installs survive dropped connections and IPv6 no-route hosts.
+
 ## [1.5.1783732620] - 2026-07-11
 
 ## [1.5.1783712334] - 2026-07-10

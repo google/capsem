@@ -28,6 +28,40 @@ def _load_release_gate() -> ModuleType:
     return module
 
 
+def test_public_binary_release_gate_fetch_retries_ipv4_on_network_unreachable(
+    monkeypatch,
+) -> None:
+    gate = _load_release_gate()
+    calls: list[str] = []
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self) -> bytes:
+            return b"ok"
+
+    def fake_urlopen(request, *, timeout: int):
+        calls.append(request.full_url)
+        assert timeout == 120
+        if len(calls) == 1:
+            raise gate.urllib.error.URLError(
+                OSError(gate.errno.ENETUNREACH, "Network is unreachable")
+            )
+        return FakeResponse()
+
+    monkeypatch.setattr(gate.urllib.request, "urlopen", fake_urlopen)
+
+    assert gate.fetch_bytes("https://release.capsem.org/assets/stable/manifest.json") == b"ok"
+    assert calls == [
+        "https://release.capsem.org/assets/stable/manifest.json",
+        "https://release.capsem.org/assets/stable/manifest.json",
+    ]
+
+
 def test_public_binary_release_gate_reads_package_contents(tmp_path: Path) -> None:
     package_dir = tmp_path / "packages"
     package_dir.mkdir()
