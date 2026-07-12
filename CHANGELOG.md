@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Added a Stage 0 clean-container install-harness preflight to `just test`,
+  before audits/builds/VMs, plus ordering contracts and agent/skill policy. It
+  proves the container-owned uv environment can launch pytest early while the
+  complete Docker/systemd package install E2E remains mandatory later.
+
 ## [1.5.1783890062] - 2026-07-12
 
 ### Fixed

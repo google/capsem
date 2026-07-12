@@ -34,6 +34,12 @@ installs, and verifies the exact `.pkg` before publication.
   integration, benchmarks, cross-compilation, and Docker/systemd install tests.
 - Run the complete `just test` gate exactly once in each release workflow. Do
   not duplicate it after packaging.
+- Keep cheap clean-environment bootstrap proofs at the start of `just test` for
+  every expensive release harness. In particular, prove the Docker install
+  image can create its container-owned Python environment and launch pytest
+  before Rust/frontend/VM/package work. This fail-fast proof supplements the
+  later complete install E2E; it never replaces or skips it. Guard the ordering
+  with contract tests so harness drift fails before a multi-hour release run.
 - Exact publishable packages must still be installed on macOS and Linux so the
   native installers and their post-install scripts are proven before
   publication. The public install/channel-switch/upgrade glow-up is then the

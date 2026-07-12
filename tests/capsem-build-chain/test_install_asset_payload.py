@@ -171,6 +171,24 @@ def test_install_recipe_invokes_pytest_as_a_module_inside_container() -> None:
     assert "uv run pytest tests/capsem-install/" not in recipe
 
 
+def test_full_gate_preflights_clean_install_harness_before_expensive_stages() -> None:
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+    full_gate = justfile.split("test: _bootstrap _install-tools", maxsplit=1)[1].split(
+        "\n# Build the capsem-host-builder", maxsplit=1
+    )[0]
+    preflight = justfile.split("_test-install-harness-preflight:", maxsplit=1)[1].split(
+        "\ntest-install:", maxsplit=1
+    )[0]
+
+    assert "just _test-install-harness-preflight" in full_gate
+    assert full_gate.index("just _test-install-harness-preflight") < full_gate.index(
+        "cargo clippy --workspace --all-targets"
+    )
+    assert "docker/Dockerfile.install-test" in preflight
+    assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in preflight
+    assert "uv run python -m pytest --version" in preflight
+
+
 def test_binary_release_sbom_jobs_install_zstd_for_deb_payloads() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
 

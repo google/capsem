@@ -40,6 +40,14 @@ the public stable-to-nightly switch/upgrade glow-up remain mandatory afterward
 as the end-to-end deployed-release test. Do not duplicate `just test` after
 packaging.
 
+Expensive harnesses need a cheap clean-environment bootstrap proof at the start
+of `just test`. The Linux install rail must build the real install-test image,
+use a container-owned `UV_PROJECT_ENVIRONMENT`, and prove `python -m pytest`
+launches before audits, builds, VMs, or package assembly consume hours. Keep an
+ordering contract for this Stage 0 proof. It is fail-fast infrastructure
+validation only: the later Docker/systemd install E2E remains mandatory and
+must still exercise the installed package and post-install behavior.
+
 ## TDD workflow
 
 Write tests first:

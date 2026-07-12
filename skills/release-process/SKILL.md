@@ -38,6 +38,14 @@ channel-switch/upgrade glow-up verification remain additional requirements and
 provide the end-to-end deployed-release proof. Never replace the full gate
 with doctor, Winterfell, smoke, or another selected subset.
 
+Keep release-harness bootstrap checks fail-fast inside that canonical recipe.
+Before expensive audits/builds/VMs/package assembly, Stage 0 must build the
+clean Linux install image and prove its container-owned uv environment can run
+`python -m pytest --version`. Contract-test that ordering. This catches host
+virtualenv leakage and missing runner dependencies in seconds while retaining
+the complete Docker/systemd install suite later in `just test`; the bootstrap
+proof is never accepted as a substitute for install E2E.
+
 Release asset manifests are generated through `capsem-admin manifest generate`.
 Do not publish or document alternate manifest writers. Runtime VM asset
 integrity is BLAKE3 hash verification plus manifest origin/hash reporting; do

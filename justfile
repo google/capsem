@@ -423,6 +423,14 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     }
     trap cleanup_test_capsem_home_service EXIT
 
+    # ---- Stage 0: release harness bootstrap --------------------------------
+    # Prove the clean Linux install container can resolve and launch its test
+    # runner before spending ~2 hours on builds, VMs, and package assembly.
+    # Stage 7 still runs the complete real install suite; this is only the
+    # cheap fail-fast proof of the harness itself.
+    echo "=== Install harness preflight (clean container) ==="
+    just _test-install-harness-preflight
+
     # ---- Stage 1: fast-fail (audits + lint + frontend) ---------------------
     # Cheap, independent, most-common failure class. Clippy (not cargo check)
     # is the Rust lint gate per CLAUDE.md -- it's a strict superset of check
@@ -1019,6 +1027,20 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
 # Run install e2e tests in Docker (Linux + systemd).
 # Builds the real .deb (Tauri + repack), installs with dpkg -i (exercises
 # deb-postinst.sh), then runs the pytest suite against the installed layout.
+_test-install-harness-preflight:
+    #!/bin/bash
+    set -euo pipefail
+    if ! docker image inspect capsem-host-builder:latest >/dev/null 2>&1; then
+        just build-host-image
+    fi
+    docker build -t capsem-install-test -f docker/Dockerfile.install-test .
+    docker run --rm \
+        -u capsem \
+        -e UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test \
+        -v "$PWD":/src:ro \
+        capsem-install-test \
+        bash -lc 'cd /src && uv run python -m pytest --version'
+
 test-install:
     #!/bin/bash
     # No _build-host dep: the container does its own `cargo build` (line ~847)
