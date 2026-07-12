@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1783890062] - 2026-07-12
+
+### Fixed
+- Made the Linux install E2E harness use a container-owned uv environment and
+  launch pytest through `python -m pytest`, so a bind-mounted host `.venv`
+  cannot supply an invalid host-only shebang or prevent the real post-install
+  suite from running in the clean systemd container.
+
 ## [1.5.1783882370] - 2026-07-12
 
 ### Fixed

@@ -90,16 +90,24 @@ def test_cross_compile_repacks_deb_before_boot_test() -> None:
     assert install_pos != -1
     assert capsem_home_pos != -1
     assert doctor_pos != -1
-    assert companion_pos < tauri_pos < repack_pos < validate_pos < install_pos < capsem_home_pos < doctor_pos
+    assert (
+        companion_pos
+        < tauri_pos
+        < repack_pos
+        < validate_pos
+        < install_pos
+        < capsem_home_pos
+        < doctor_pos
+    )
     assert "--security-opt seccomp=unconfined --device /dev/kvm" in block
     assert "--device /dev/vhost-vsock" in block
     assert "--device /dev/vsock" in block
     assert "capsem-admin)\\$'" in block
-    assert "-e \"HOST_UID=$HOST_UID\"" in block
-    assert "-e \"HOST_GID=$HOST_GID\"" in block
-    assert "trap 'chown -R \\\"\\$HOST_UID:\\$HOST_GID\\\"" in block
+    assert '-e "HOST_UID=$HOST_UID"' in block
+    assert '-e "HOST_GID=$HOST_GID"' in block
+    assert 'trap \'chown -R \\"\\$HOST_UID:\\$HOST_GID\\"' in block
     assert "/src/frontend/node_modules /src/frontend/dist" in block
-    assert 'dpkg -i /cargo-target/$RUST_TARGET/release/bundle/deb/*.deb' not in block
+    assert "dpkg -i /cargo-target/$RUST_TARGET/release/bundle/deb/*.deb" not in block
 
 
 def test_install_test_restores_host_workspace_ownership() -> None:
@@ -107,9 +115,9 @@ def test_install_test_restores_host_workspace_ownership() -> None:
 
     assert "HOST_UID=$(id -u)" in block
     assert "HOST_GID=$(id -g)" in block
-    assert 'chown -R $HOST_UID:$HOST_GID /src' in block
+    assert "chown -R $HOST_UID:$HOST_GID /src" in block
     assert "trap cleanup EXIT" in block
-    assert "docker rm -f \"$CONTAINER\"" in block
+    assert 'docker rm -f "$CONTAINER"' in block
 
 
 def test_install_test_runs_local_release_glowup_from_real_package() -> None:
@@ -134,7 +142,7 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     assert "json.dumps({" not in script or "capsem.local_release_glowup.v1" in script
     assert "stable-assets-manifest.json" in script
     assert "nightly-assets-manifest.json" in script
-    assert "shutil.copy2(args.assets_dir / \"manifest.json\"" in script
+    assert 'shutil.copy2(args.assets_dir / "manifest.json"' in script
     assert "CAPSEM_RELEASE_URL" in script
     assert "CAPSEM_RELEASE_MANIFEST_URL=" in script
     assert "update --assets --manifest" in script
@@ -147,6 +155,20 @@ def test_local_release_glowup_has_zstd_extraction_support_in_install_image() -> 
     dockerfile = (PROJECT_ROOT / "docker" / "Dockerfile.install-test").read_text()
 
     assert "zstd" in dockerfile
+
+
+def test_install_recipe_invokes_pytest_as_a_module_inside_container() -> None:
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+    recipe = justfile.split("test-install:", maxsplit=1)[1].split(
+        "\n# Dispatch one serialized release workflow", maxsplit=1
+    )[0]
+
+    # /src is bind-mounted and may contain a host .venv whose console-script
+    # shebang cannot exist in the Linux container. Launch via Python so uv's
+    # selected interpreter owns module resolution instead.
+    assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in recipe
+    assert "uv run python -m pytest tests/capsem-install/" in recipe
+    assert "uv run pytest tests/capsem-install/" not in recipe
 
 
 def test_binary_release_sbom_jobs_install_zstd_for_deb_payloads() -> None:
@@ -184,8 +206,14 @@ def test_local_release_glowup_validates_vm_asset_blobs_are_served() -> None:
 def test_local_release_glowup_preflights_stable_and_nightly_manifests() -> None:
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
 
-    assert "check_generated_release(base_url, stable_manifest_url, stable_deb, dist, \"stable\")" in script
-    assert "check_generated_release(base_url, nightly_manifest_url, nightly_deb, dist, \"nightly\")" in script
+    assert (
+        'check_generated_release(base_url, stable_manifest_url, stable_deb, dist, "stable")'
+        in script
+    )
+    assert (
+        'check_generated_release(base_url, nightly_manifest_url, nightly_deb, dist, "nightly")'
+        in script
+    )
 
 
 def test_local_release_glowup_generated_release_checker_rejects_missing_asset_blob(
@@ -322,11 +350,22 @@ def test_local_release_glowup_installed_path_asserts_channel_round_trip_and_prov
     assert 'grep -F \'"package_version": "1.5.100"\'' in script
     assert 'stable_manifest_sha=$(sha256sum "$HOME/.capsem/assets/manifest.json"' in script
     assert 'test "$stable_manifest_sha" = "$stable_manifest_sha_after_switch"' in script
-    assert "check_update_log asset_update_complete http://127.0.0.1:1234/assets/nightly/manifest.json" in script
+    assert (
+        "check_update_log asset_update_complete http://127.0.0.1:1234/assets/nightly/manifest.json"
+        in script
+    )
     assert "printf 'corrupt nightly package'" in script
-    assert "check_update_log binary_update_failed http://127.0.0.1:1234/assets/nightly/manifest.json" in script
-    assert 'CAPSEM_RELEASE_MANIFEST_URL=http://127.0.0.1:1234/assets/nightly/manifest.json' in script
-    assert "check_update_log binary_update_complete http://127.0.0.1:1234/assets/nightly/manifest.json" in script
+    assert (
+        "check_update_log binary_update_failed http://127.0.0.1:1234/assets/nightly/manifest.json"
+        in script
+    )
+    assert (
+        "CAPSEM_RELEASE_MANIFEST_URL=http://127.0.0.1:1234/assets/nightly/manifest.json" in script
+    )
+    assert (
+        "check_update_log binary_update_complete http://127.0.0.1:1234/assets/nightly/manifest.json"
+        in script
+    )
     assert 'grep -F \'"package_version": "1.5.101"\'' in script
     assert "check_service_installed" in script
     assert '"$HOME/.capsem/bin/capsem" status' in script
@@ -346,7 +385,10 @@ def test_local_release_glowup_asserts_channel_isolation_and_corp_manifest() -> N
     assert "nightly channel build mutated stable manifest" in script
     assert "nightly channel build mutated stable package records" in script
     assert "corp_manifest_url = corp_manifest.resolve().as_uri()" in script
-    assert "CAPSEM_HOME=\"$HOME/.capsem\" CAPSEM_RUN_DIR=\"$HOME/.capsem/run\" \"$HOME/.capsem/bin/capsem\" update --assets" in script
+    assert (
+        'CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" "$HOME/.capsem/bin/capsem" update --assets'
+        in script
+    )
 
 
 def test_local_release_glowup_reversion_updates_package_provenance() -> None:
@@ -440,8 +482,13 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "pathlib.Path(source).read_bytes()" not in build_pkg
     assert '--version "$VERSION"' in build_pkg
     assert "PKG_VERSION" not in build_pkg
-    assert 'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' not in build_pkg
-    assert 'install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"' not in build_pkg
+    assert (
+        'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' not in build_pkg
+    )
+    assert (
+        'install -m 0644 "$ASSETS_VIEW/manifest.json" "$SHARE_DIR/assets/manifest.json"'
+        not in build_pkg
+    )
     assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in build_pkg
     assert (
         'write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$VERSION" "$SHARE_DIR/assets/manifest-origin.json"'
@@ -483,7 +530,7 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "ASSET_MODE=" not in repack_deb
     assert "export COPYFILE_DISABLE=1" in repack_deb
     assert "strip_packaged_binaries" in repack_deb
-    assert 'CAPSEM_REPACK_STRIP:-1' in repack_deb
+    assert "CAPSEM_REPACK_STRIP:-1" in repack_deb
     assert 'strip --strip-unneeded "$path"' in repack_deb
     assert 'CONFIG_ROOT="${POSITIONAL[2]}"' in repack_deb
     assert "--manifest" in repack_deb
@@ -496,8 +543,13 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "manifest must be a URL" in repack_deb
     assert "pathlib.Path(source).read_bytes()" not in repack_deb
     assert "BUILD_TS=" not in repack_deb
-    assert 'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' not in repack_deb
-    assert 'cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"' not in repack_deb
+    assert (
+        'materialize_manifest_input "$MANIFEST_PATH" "$ASSETS_VIEW/manifest.json"' not in repack_deb
+    )
+    assert (
+        'cp "$ASSETS_VIEW/manifest.json" "$WORK_DIR/deb/usr/share/capsem/assets/manifest.json"'
+        not in repack_deb
+    )
     assert 'SELECTED_MANIFEST_SOURCE="$MANIFEST_PATH"' in repack_deb
     assert 'PACKAGE_VERSION="$(dpkg-deb -f "$INPUT_DEB" Version)"' in repack_deb
     assert (
@@ -519,7 +571,10 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "capsem-tui" in repack_deb
     assert "/usr/share/capsem/assets" in deb_postinst
     assert "/usr/share/capsem/profiles" in deb_postinst
-    assert 'install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"' not in deb_postinst
+    assert (
+        'install -m 0644 /usr/share/capsem/assets/manifest.json "$CAPSEM_DIR/assets/manifest.json"'
+        not in deb_postinst
+    )
     assert (
         'install -m 0644 /usr/share/capsem/assets/manifest-origin.json "$CAPSEM_DIR/assets/manifest-origin.json"'
         in deb_postinst
@@ -529,7 +584,9 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "event=manifest_report" not in deb_postinst
     assert "MANIFEST_ORIGIN=$(tr" in deb_postinst
     assert "event=manifest_origin" in deb_postinst
-    assert 'MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"' in deb_postinst
+    assert (
+        'MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"' in deb_postinst
+    )
     assert "event=manifest_source" in deb_postinst
     assert (
         'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets --manifest \\"$MANIFEST_SOURCE\\"'
@@ -548,7 +605,10 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "capsem-admin" in deb_postinst
     assert "capsem-tui" in deb_postinst
 
-    assert 'install -m 0644 "$PKG_SHARE/assets/manifest.json" "$CAPSEM_DIR/assets/manifest.json"' not in pkg_postinstall
+    assert (
+        'install -m 0644 "$PKG_SHARE/assets/manifest.json" "$CAPSEM_DIR/assets/manifest.json"'
+        not in pkg_postinstall
+    )
     assert (
         'install -m 0644 "$PKG_SHARE/assets/manifest-origin.json" "$CAPSEM_DIR/assets/manifest-origin.json"'
         in pkg_postinstall
@@ -558,7 +618,10 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "event=manifest_report" not in pkg_postinstall
     assert "MANIFEST_ORIGIN=$(tr" in pkg_postinstall
     assert "event=manifest_origin" in pkg_postinstall
-    assert 'MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"' in pkg_postinstall
+    assert (
+        'MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"'
+        in pkg_postinstall
+    )
     assert "event=manifest_source" in pkg_postinstall
     assert (
         'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets --manifest \\"$MANIFEST_SOURCE\\"'
@@ -601,7 +664,10 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
     assert "just build-kernel" not in workflow
     assert "just build-rootfs" not in workflow
     assert "RELEASE_CHANNEL: ${{ inputs.channel }}" in workflow
-    assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json" in workflow
+    assert (
+        "ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json"
+        in workflow
+    )
     assert '--manifest "$ASSET_MANIFEST_URL"' in workflow
     assert "-p capsem-admin" in workflow
 

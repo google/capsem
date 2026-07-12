@@ -1133,7 +1133,7 @@ test-install:
         "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"
     echo "Running install e2e tests..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_BIN_SRC=/cargo-target/debug "$CONTAINER" bash -c \
-        "mkdir -p /home/capsem/tmp && cd /src && TMPDIR=/home/capsem/tmp uv run pytest tests/capsem-install/ -v --tb=short"
+        "mkdir -p /home/capsem/tmp && cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test TMPDIR=/home/capsem/tmp uv run python -m pytest tests/capsem-install/ -v --tb=short"
     echo "Running local release glow-up (install, channel switch, upgrade)..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
         'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && python3 scripts/local-release-glowup.py --input-deb "$DEB" --bin-dir /cargo-target/debug --assets-dir assets --config-root target/config --work-dir target/local-release-glowup'
