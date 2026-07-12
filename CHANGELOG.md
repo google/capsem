@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1783877670] - 2026-07-12
+
+### Fixed
+- Removed stale gateway runtime markers before spawning a replacement gateway,
+  so rapid fixed-port service restarts cannot mistake the previous process's
+  `gateway.port` file for readiness; restart-test teardown now also reaps every
+  child on assertion failure and uses only isolated fixture profiles.
+- Made the cleanup budget regression portable across filesystems by deriving
+  its limit from allocated blocks while retaining allocated-size semantics.
+- Kept the IronBank `npx` proof exact when newer npm versions print notices,
+  and made the profile-mutation ledger proof cross the logger-owned graceful
+  shutdown flush barrier before reading `main.db`.
+
 ## [1.5.1783872793] - 2026-07-12
 
 ### Fixed

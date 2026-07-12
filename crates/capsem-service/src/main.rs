@@ -13122,6 +13122,18 @@ async fn spawn_companions(
     let _ = std::fs::create_dir_all(&log_dir);
 
     // 1. Spawn capsem-gateway (TCP reverse proxy -> UDS)
+    // A previous service may have exited before its gateway removed runtime
+    // markers. Never let those stale files satisfy our readiness poll for the
+    // replacement gateway.
+    for name in ["gateway.token", "gateway.port", "gateway.pid"] {
+        let path = run_dir.join(name);
+        if let Err(error) = std::fs::remove_file(&path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                warn!(path = %path.display(), %error, "failed to remove stale gateway runtime file");
+            }
+        }
+    }
+
     let gateway_bin = gateway_bin.unwrap_or_else(|| find_sibling_binary("capsem-gateway"));
     let (gw_out, gw_err) = companion_stdio(&log_dir.join("gateway.log"));
     info!(binary = %gateway_bin.display(), "spawning capsem-gateway");

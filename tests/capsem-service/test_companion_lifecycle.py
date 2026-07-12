@@ -94,7 +94,7 @@ def _spawn_under_parent(
         f'echo "$$" > "{parent_pid_file}"\n'
         f'"{binary}" --parent-pid "$$" {args_q} &\n'
         f'echo "$!" > "{child_pid_file}"\n'
-        f'exec sleep 600\n'
+        f"exec sleep 600\n"
     )
     env = os.environ.copy()
     env.setdefault("RUST_LOG", "info")
@@ -183,8 +183,10 @@ class TestCompanionRefusesStandalone:
             env = {"CAPSEM_RUN_DIR": td}
             proc = _spawn(
                 GATEWAY_BIN,
-                "--port", "0",
-                "--parent-pid", str(wrong_pid),
+                "--port",
+                "0",
+                "--parent-pid",
+                str(wrong_pid),
                 env_extra=env,
             )
             rc = _wait_exit(proc, WATCH_DEADLINE_SECS)
@@ -255,13 +257,15 @@ class TestCompanionSingleton:
             for i in range(20):
                 child_pid_file = Path(td) / f"child.{i}.pid"
                 child_pid_files.append(child_pid_file)
-                parents.append(_spawn_under_parent(
-                    TRAY_BIN,
-                    Path(td) / f"parent.{i}.pid",
-                    child_pid_file,
-                    ["--lock-path", str(lock)],
-                    env_extra={"CAPSEM_RUN_DIR": td},
-                ))
+                parents.append(
+                    _spawn_under_parent(
+                        TRAY_BIN,
+                        Path(td) / f"parent.{i}.pid",
+                        child_pid_file,
+                        ["--lock-path", str(lock)],
+                        env_extra={"CAPSEM_RUN_DIR": td},
+                    )
+                )
 
             try:
                 # Wait for all child PIDs to be written.
@@ -354,9 +358,7 @@ class TestCompanionDiesWithParent:
                 assert _pid_alive(child_pid), (
                     f"tray {child_pid} must be running prior to parent kill"
                 )
-                assert _pid_alive(parent_pid), (
-                    f"parent shell {parent_pid} must be running"
-                )
+                assert _pid_alive(parent_pid), f"parent shell {parent_pid} must be running"
 
                 os.kill(parent_pid, signal.SIGKILL)
 
@@ -426,9 +428,7 @@ class TestServiceSigkillReapsAllCompanions:
             # Collect companion PIDs as direct children of the service.
             children = _list_direct_children(service_pid)
             # Service always spawns at least gateway; on macOS also tray.
-            assert children, (
-                f"service {service_pid} must have spawned companion children; got none"
-            )
+            assert children, f"service {service_pid} must have spawned companion children; got none"
 
             # SIGKILL the service (no graceful shutdown path runs).
             os.kill(service_pid, signal.SIGKILL)
@@ -479,9 +479,7 @@ class TestServiceSigtermReapsCompanionsPromptly:
             time.sleep(1.0)
 
             children = _list_direct_children(service_pid)
-            assert children, (
-                f"service {service_pid} must have spawned companion children; got none"
-            )
+            assert children, f"service {service_pid} must have spawned companion children; got none"
 
             # SIGTERM the service (default pkill signal -- exactly what
             # `_ensure-service` sends via `pkill -f capsem-service.*--foreground`).
@@ -540,9 +538,7 @@ class TestCompanionsDieFastAfterServiceSigkill:
         try:
             time.sleep(1.0)  # let companions spawn + register guards
             children = _list_direct_children(service_pid)
-            assert children, (
-                f"service {service_pid} must have spawned companion children"
-            )
+            assert children, f"service {service_pid} must have spawned companion children"
 
             # SIGKILL: no graceful_shutdown runs, companions rely entirely
             # on parent-watch in capsem-guard.
@@ -686,9 +682,7 @@ class TestServiceRestartSequenceKeepsGatewayHealthy:
         try:
             time.sleep(1.0)
             children_b = _list_direct_children(svc_b.proc.pid)
-            assert children_b, (
-                "svc_b must have spawned companion children on restart"
-            )
+            assert children_b, "svc_b must have spawned companion children on restart"
             for child_pid in children_b:
                 assert child_pid not in children_a, (
                     f"svc_b appears to have inherited orphan {child_pid} "
@@ -768,9 +762,7 @@ class TestRapidServiceRestartIsRobust:
                     "service startup; new gateway did not bind."
                 )
                 children = _list_direct_children(proc.pid)
-                assert children, (
-                    f"iteration {i}: service has no companion children"
-                )
+                assert children, f"iteration {i}: service has no companion children"
                 prev_proc = proc
                 prev_children = children
 
@@ -779,10 +771,17 @@ class TestRapidServiceRestartIsRobust:
                 os.kill(prev_proc.pid, signal.SIGTERM)
                 prev_proc.wait(timeout=5)
         finally:
-            # Close every spawned service's log-file handle -- Popen does
-            # not close file objects passed as stdout; filterwarnings=error
-            # promotes the leak to a hard failure.
+            # An assertion may interrupt an iteration before its service is
+            # assigned to prev_proc. Reap every survivor so this stress test
+            # cannot leak a service into unrelated tests.
             for proc in spawned:
+                if proc.poll() is None:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        proc.wait(timeout=5)
                 log_file = getattr(proc, "_log_file", None)
                 if log_file is not None and not log_file.closed:
                     log_file.close()
@@ -790,7 +789,8 @@ class TestRapidServiceRestartIsRobust:
 
 
 def _spawn_service_on_fixed_port(
-    tmp_dir: Path, gateway_port: int,
+    tmp_dir: Path,
+    gateway_port: int,
 ) -> subprocess.Popen:
     """Spawn a capsem-service with a pinned gateway port and shared run_dir.
 
@@ -804,8 +804,14 @@ def _spawn_service_on_fixed_port(
     filterwarnings=error promotes the leaked fd to a hard failure.
     """
     from helpers.service import (
-        SERVICE_BINARY, PROCESS_BINARY, GATEWAY_BINARY, TRAY_BINARY, ASSETS_DIR,
+        SERVICE_BINARY,
+        PROCESS_BINARY,
+        GATEWAY_BINARY,
+        TRAY_BINARY,
+        ASSETS_DIR,
+        materialize_test_profiles,
     )
+
     arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
     assets_dir = ASSETS_DIR / arch
     uds_path = tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
@@ -813,17 +819,26 @@ def _spawn_service_on_fixed_port(
     env = os.environ.copy()
     env["RUST_LOG"] = "info"
     env["CAPSEM_RUN_DIR"] = str(tmp_dir)
+    env["CAPSEM_HOME"] = str(tmp_dir)
+    env["CAPSEM_PROFILES_DIR"] = str(materialize_test_profiles(tmp_dir))
+    env["HOME"] = str(tmp_dir)
     env["CAPSEM_TRAY_HEADLESS"] = "1"
     log_file = open(log_path, "w")
     proc = subprocess.Popen(
         [
             str(SERVICE_BINARY),
-            "--uds-path", str(uds_path),
-            "--assets-dir", str(assets_dir),
-            "--process-binary", str(PROCESS_BINARY),
-            "--gateway-binary", str(GATEWAY_BINARY),
-            "--gateway-port", str(gateway_port),
-            "--tray-binary", str(TRAY_BINARY),
+            "--uds-path",
+            str(uds_path),
+            "--assets-dir",
+            str(assets_dir),
+            "--process-binary",
+            str(PROCESS_BINARY),
+            "--gateway-binary",
+            str(GATEWAY_BINARY),
+            "--gateway-port",
+            str(gateway_port),
+            "--tray-binary",
+            str(TRAY_BINARY),
             "--foreground",
         ],
         env=env,
@@ -837,9 +852,17 @@ def _spawn_service_on_fixed_port(
         if uds_path.exists():
             try:
                 r = subprocess.run(
-                    ["curl", "-s", "--unix-socket", str(uds_path),
-                     "--max-time", "2", "http://localhost/vms/list"],
-                    capture_output=True, timeout=5,
+                    [
+                        "curl",
+                        "-s",
+                        "--unix-socket",
+                        str(uds_path),
+                        "--max-time",
+                        "2",
+                        "http://localhost/vms/list",
+                    ],
+                    capture_output=True,
+                    timeout=5,
                 )
                 if r.returncode == 0:
                     return proc
@@ -848,9 +871,9 @@ def _spawn_service_on_fixed_port(
         time.sleep(0.1)
     proc.kill()
     proc.wait(timeout=5)
+    log_file.close()
     if log_path.exists():
-        print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---",
-              file=sys.stderr)
+        print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
     raise RuntimeError("service never accepted UDS connections")
 
 
@@ -877,6 +900,7 @@ def _wait_for_gateway_port_file(run_dir: Path, expected_port: int, timeout: floa
 def _port_is_listening(port: int) -> bool:
     """Check whether anything is listening on 127.0.0.1:<port>."""
     import socket
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.5)
         try:

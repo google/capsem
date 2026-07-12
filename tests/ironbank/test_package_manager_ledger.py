@@ -143,8 +143,10 @@ def _package_probe_script() -> str:
         chmod 755 "$work/npm/bin/cli.js"
         npm install -g "file:$work/npm" >/tmp/ironbank-npm.log 2>&1
         ironbank-npm-pkg
-        printf 'IRONBANK:npx:'
-        npx --yes --package "file:$work/npm" ironbank-npm-pkg | sed 's/^IRONBANK:npm://'
+        npx_output="$(npx --yes --package "file:$work/npm" ironbank-npm-pkg)"
+        npx_marker="$(printf '%s\n' "$npx_output" | sed -n 's/^IRONBANK:npm://p')"
+        test -n "$npx_marker"
+        printf 'IRONBANK:npx:%s\n' "$npx_marker"
 
         cat > "$work/deb/DEBIAN/control" <<'EOF'
         Package: ironbank-apt-tool

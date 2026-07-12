@@ -239,7 +239,6 @@ def test_tmp_fixture_budget_evicts_oldest_recent_fixture(
     tmp = tmp_path / "T"
     tmp.mkdir()
     monkeypatch.delenv("CAPSEM_TEST_TMP_BUDGET_GB", raising=False)
-    monkeypatch.setattr(clean_stale, "TEST_TMP_BUDGET_GB", 0.000_01)  # ~10 KB
 
     oldest = tmp / "capsem-test-old"
     newest = tmp / "capsem-test-new"
@@ -249,6 +248,22 @@ def test_tmp_fixture_budget_evicts_oldest_recent_fixture(
         (path / "blob").write_bytes(b"\x00" * 8192)
         t = time.time() - age_days * 86400
         os.utime(path, (t, t))
+
+    # The cleanup contract intentionally uses allocated disk blocks, including
+    # directory blocks. Their size varies by CI filesystem, so derive a budget
+    # that fits exactly the newest fixture instead of assuming ~10 KB does.
+    with os.scandir(tmp) as entries:
+        eligible_sizes = {
+            entry.name: clean_stale._entry_disk_usage_bytes(entry)
+            for entry in entries
+            if entry.name.startswith("capsem-test-")
+        }
+    newest_size = eligible_sizes[newest.name]
+    monkeypatch.setattr(
+        clean_stale,
+        "TEST_TMP_BUDGET_GB",
+        newest_size / (1024**3),
+    )
 
     result = clean_stale.clean_tmp_fixtures_to_budget(tmp, dry_run=False, verbose=False)
 
@@ -278,9 +293,7 @@ def test_tmp_fixture_budget_uses_allocated_size_for_sparse_images(
     assert sparse.exists(), "sparse logical size alone must not trigger pruning"
 
 
-def test_tmp_fixture_budget_can_be_disabled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_tmp_fixture_budget_can_be_disabled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     tmp = tmp_path / "T"
     tmp.mkdir()
     monkeypatch.setenv("CAPSEM_TEST_TMP_BUDGET_GB", "0")
@@ -375,9 +388,7 @@ def test_cargo_budget_evicts_oldest_incremental_over_cap(
     # Budget pass must have evicted oldest (s-0, then s-1) until under 10 KB cap.
     # Newest s-2 (8 KB) must survive -- it's the warm cache we want to keep.
     assert "s-2" in remaining, f"newest session dir must survive, got {remaining}"
-    assert "s-0" not in remaining, (
-        f"oldest session dir must be evicted by budget, got {remaining}"
-    )
+    assert "s-0" not in remaining, f"oldest session dir must be evicted by budget, got {remaining}"
     # Detail string should mention the budget pass fired.
     assert "budget=" in result.detail, (
         f"StageResult.detail should report budget evictions, got: {result.detail!r}"
@@ -395,9 +406,7 @@ def test_cargo_budget_no_op_when_under_cap(tmp_path: Path, monkeypatch: pytest.M
 
     result = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
     assert sess.exists(), "entry under budget must be kept"
-    assert "budget=" not in result.detail, (
-        f"no budget evictions expected, got: {result.detail!r}"
-    )
+    assert "budget=" not in result.detail, f"no budget evictions expected, got: {result.detail!r}"
 
 
 def test_cargo_budget_deps_only_counts_cargo_extensions(

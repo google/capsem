@@ -99,7 +99,9 @@ def _mutation_rows(service: ServiceInstance) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-def _assert_applied(row: dict[str, Any], *, category: str, target_kind: str, target_key: str, operation: str) -> None:
+def _assert_applied(
+    row: dict[str, Any], *, category: str, target_kind: str, target_key: str, operation: str
+) -> None:
     assert row["profile_id"] == CODE_PROFILE_ID
     assert row["actor"] == "service-api"
     assert row["category"] == category
@@ -211,6 +213,18 @@ def test_profile_mutation_routes_persist_profile_files_hashes_and_ledger() -> No
         assert deleted == {"rule_id": "ironbank_http_block", "deleted": True}
         assert "ironbank_http_block" not in _profile_enforcement_text(service)
 
+        status, rejected = _status(
+            client,
+            "PATCH",
+            f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_pre_eicar/edit",
+            {"mode": "rewrite", "fallback": True},
+        )
+        assert status == 422
+        assert "unknown field" in rejected
+
+        # write(event).await accepts into the logger-owned buffer. Graceful
+        # service shutdown is the visibility barrier before opening main.db.
+        service.stop()
         rows = _mutation_rows(service)
         observed = {
             (row["category"], row["target_kind"], row["target_key"], row["operation"])
@@ -237,19 +251,14 @@ def test_profile_mutation_routes_persist_profile_files_hashes_and_ledger() -> No
             target_key="dummy_pre_eicar",
             operation="edit",
         )
-        assert rows_by_key[("plugin", "plugin", "dummy_pre_eicar", "edit")]["filename"] == "profile.toml"
+        assert (
+            rows_by_key[("plugin", "plugin", "dummy_pre_eicar", "edit")]["filename"]
+            == "profile.toml"
+        )
         assert (
             rows_by_key[("plugin", "plugin", "dummy_pre_eicar", "edit")]["affected_path"]
             == "profiles/code/profile.toml"
         )
 
-        status, rejected = _status(
-            client,
-            "PATCH",
-            f"/profiles/{CODE_PROFILE_ID}/plugins/dummy_pre_eicar/edit",
-            {"mode": "rewrite", "fallback": True},
-        )
-        assert status == 422
-        assert "unknown field" in rejected
     finally:
         service.stop()
