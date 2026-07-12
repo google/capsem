@@ -1077,13 +1077,7 @@ fn audit_reader_loop() {
                 builder.exe = extract_field(line, " exe=").map(|s| s.trim_matches('"').to_string());
                 builder.comm =
                     extract_field(line, " comm=").map(|s| s.trim_matches('"').to_string());
-                builder.tty = extract_field(line, " tty=").and_then(|s| {
-                    if s == "(none)" {
-                        None
-                    } else {
-                        Some(s)
-                    }
-                });
+                builder.tty = extract_field(line, " tty=").filter(|s| s != "(none)");
                 builder.timestamp_us = extract_audit_timestamp_us(line);
                 builder.has_syscall = true;
             }

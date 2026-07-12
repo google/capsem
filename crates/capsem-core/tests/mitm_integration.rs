@@ -1713,7 +1713,7 @@ async fn mitm_proxy_plain_http_body_larger_than_preview_cap_forwards_full_but_ca
     // max_body_capture. First 4096 bytes are 'A', then 'B', then
     // 'C', then 'D'. Easy to assert preview cap.
     let mut req_body = Vec::with_capacity(16 * 1024);
-    for b in [b'A', b'B', b'C', b'D'] {
+    for b in *b"ABCD" {
         req_body.extend(std::iter::repeat_n(b, 4096));
     }
     let req_body_len = req_body.len();
