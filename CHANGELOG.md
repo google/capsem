@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1783857731] - 2026-07-12
+
 ### Fixed
 - Kept the integration release gate hermetic in long checkout paths by using a
   short process-scoped runtime root for Unix sockets, sessions, and the logger
