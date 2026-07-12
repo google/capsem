@@ -600,7 +600,8 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
     assert "Create stub v2 asset manifest for unit tests" in workflow
     assert "just build-kernel" not in workflow
     assert "just build-rootfs" not in workflow
-    assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json" in workflow
+    assert "RELEASE_CHANNEL: ${{ inputs.channel }}" in workflow
+    assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json" in workflow
     assert '--manifest "$ASSET_MANIFEST_URL"' in workflow
     assert "-p capsem-admin" in workflow
 

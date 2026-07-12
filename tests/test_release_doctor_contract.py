@@ -149,11 +149,12 @@ def test_ci_python_schema_pytest_paths_exist() -> None:
 
 def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    trigger = workflow.split("permissions:", maxsplit=1)[0]
     gate = _workflow_job_block("pr-gate")
     release_site_job = _workflow_job_block("release-site-build")
 
     assert "pull_request:" in workflow
-    assert "push:" in workflow
+    assert "push:" not in trigger
     assert (
         "needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]"
         in gate
@@ -171,9 +172,11 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     assert 'test "$DOCS_BUILD_RESULT" = success' in gate
     assert 'test "$SITE_BUILD_RESULT" = success' in gate
     assert 'test "$RELEASE_SITE_BUILD_RESULT" = success' in gate
-    assert "python3 scripts/write-release-site-ci-fixture.py target/release-site-fixture" in release_site_job
+    assert "astral-sh/setup-uv@v5" in release_site_job
+    assert "uv sync --frozen" in release_site_job
+    assert "uv run python scripts/write-release-site-ci-fixture.py target/release-site-fixture" in release_site_job
     assert release_site_job.index(
-        "python3 scripts/write-release-site-ci-fixture.py target/release-site-fixture"
+        "uv run python scripts/write-release-site-ci-fixture.py target/release-site-fixture"
     ) < release_site_job.index(
         "cargo run -p capsem-admin -- assets channel build"
     )
@@ -274,8 +277,11 @@ def test_release_workflows_run_disjoint_lane_policy_gates() -> None:
     deploy_workflow = _workflow_text("release-channel.yaml")
     ci_workflow = _workflow_job_block("test")
 
-    assert "push:" in binary_workflow
-    assert "tags: ['v*']" in binary_workflow
+    binary_trigger = binary_workflow.split("\npermissions:", maxsplit=1)[0]
+    assert "workflow_dispatch:" in binary_trigger
+    assert "push:" not in binary_trigger
+    assert "tag:" in binary_trigger
+    assert "channel:" in binary_trigger
     assert "Verify binary release lane policy" in binary_workflow
     assert "tests/capsem-release/test_binary_lane_gate.py" in binary_workflow
     assert "tests/capsem-release/test_release_lane_diff_policy.py" in binary_workflow
@@ -1020,14 +1026,27 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assemble_channel = _workflow_job_block("assemble-release-channel", "release.yaml")
     trigger = workflow.split("\npermissions:", maxsplit=1)[0]
 
-    assert "push:" in trigger
-    assert "tags: ['v*']" in trigger
+    assert "workflow_dispatch:" in trigger
+    assert "tag:" in trigger
+    assert "channel:" in trigger
+    assert "type: choice" in trigger
+    assert "options:" in trigger
+    assert "- stable" in trigger
+    assert "- nightly" in trigger
+    assert "run-name: Release ${{ inputs.channel }} ${{ inputs.tag }}" in workflow
     assert "deployments: write" in workflow
-    assert "workflow_dispatch:" not in trigger
+    assert "push:" not in trigger
     assert "pull_request:" not in trigger
     assert "branches:" not in trigger
-    assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json" in workflow
-    assert "BINARY_RELEASE_CHANNELS: stable nightly" in workflow
+    assert "group: binary-release-channel" in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert "RELEASE_TAG: ${{ inputs.tag }}" in workflow
+    assert "RELEASE_CHANNEL: ${{ inputs.channel }}" in workflow
+    assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json" in workflow
+    assert "Verify immutable dispatch tag and channel" in workflow
+    assert 'test "$GITHUB_REF_TYPE" = tag' in workflow
+    assert 'test "$GITHUB_REF_NAME" = "$RELEASE_TAG"' in workflow
+    assert "BINARY_RELEASE_CHANNELS" not in workflow
     assert "  build-assets:" not in workflow
     assert "vm-assets-" not in workflow
     assert "assets/current" not in workflow
@@ -1067,26 +1086,31 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "release-artifacts/*.pkg" in create_release
     assert "release-artifacts/*.deb" in create_release
     assert "release-artifacts/capsem-sbom.spdx.json" in create_release
-    assert "gh release create ${{ github.ref_name }}" in create_release
-    assert '[ -f "$deb" ] && gh release upload ${{ github.ref_name }} "$deb"' in create_release
-    assert "target/binary-channel/$channel/manifest.json" in assemble_channel
-    assert "target/binary-channel/$channel/manifest.before.json" in assemble_channel
+    assert 'gh release create "$RELEASE_TAG"' in create_release
+    assert '[ -f "$deb" ] && gh release upload "$RELEASE_TAG" "$deb"' in create_release
+    assert "target/binary-channel/$RELEASE_CHANNEL/manifest.json" in assemble_channel
+    assert "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json" in assemble_channel
     assert "https://release.capsem.org/assets/$channel/manifest.json" in assemble_channel
-    assert "for channel in $BINARY_RELEASE_CHANNELS" in assemble_channel
+    assert "for channel in stable nightly" in assemble_channel
+    record_step = assemble_channel.split(
+        "- name: Record binary release metadata in selected channel manifest", maxsplit=1
+    )[1].split("- name: Prove binary lane did not change VM assets", maxsplit=1)[0]
+    assert 'target/binary-channel/$RELEASE_CHANNEL/manifest.json' in record_step
+    assert "for channel in" not in record_step
     build_channels = assemble_channel.split(
         "- name: Build release channels with existing VM assets", maxsplit=1
     )[1].split("- name: Build release site pages", maxsplit=1)[0]
     assert 'generated_at="$(date -u +\'%Y-%m-%dT%H:%M:%SZ\')"' in build_channels
     assert '--generated-at "$generated_at"' in build_channels
     assert build_channels.index('generated_at="$(date -u') < build_channels.index(
-        "for channel in $BINARY_RELEASE_CHANNELS"
+        "for channel in stable nightly"
     )
     assert "Prove binary lane did not change VM assets" in assemble_channel
     assert "binary release changed VM asset metadata" in assemble_channel
     assert assemble_channel.index("Fetch current asset channel manifests") < assemble_channel.index(
-        "Record binary release metadata in channel manifests"
+        "Record binary release metadata in selected channel manifest"
     )
-    assert assemble_channel.index("Record binary release metadata in channel manifests") < (
+    assert assemble_channel.index("Record binary release metadata in selected channel manifest") < (
         assemble_channel.index("Build release channels with existing VM assets")
     )
     assert assemble_channel.index("Build release channels with existing VM assets") < (
@@ -1107,7 +1131,7 @@ def test_binary_release_channel_assembly_preflights_canonical_artifacts() -> Non
         "Fetch current asset channel manifests"
     )
     assert assemble_channel.index("Verify binary channel artifacts") < assemble_channel.index(
-        "Record binary release metadata in channel manifests"
+        "Record binary release metadata in selected channel manifest"
     )
 
 
@@ -1120,8 +1144,10 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     )
 
     real_trigger = real_release.split("\npermissions:", maxsplit=1)[0]
-    assert "workflow_dispatch:" not in real_trigger
-    assert "tags: ['v*']" in real_trigger
+    assert "workflow_dispatch:" in real_trigger
+    assert "push:" not in real_trigger
+    assert "tag:" in real_trigger
+    assert "channel:" in real_trigger
 
     assert "workflow_dispatch:" in workflow
     assert "push:" not in workflow
@@ -1192,14 +1218,61 @@ def test_binary_release_channel_policy_supports_fast_nightly_and_weekly_stable()
     docs = _source_text("docs/src/content/docs/development/ci.md")
     release_skill = _source_text("skills/release-process/SKILL.md")
 
-    assert "BINARY_RELEASE_CHANNELS: stable nightly" in workflow
-    assert "for channel in $BINARY_RELEASE_CHANNELS" in workflow
+    trigger = workflow.split("\npermissions:", maxsplit=1)[0]
+    assert "workflow_dispatch:" in trigger
+    assert "- stable" in trigger
+    assert "- nightly" in trigger
+    assert "RELEASE_CHANNEL: ${{ inputs.channel }}" in workflow
+    assert "group: binary-release-channel" in workflow
     assert "Prove binary lane did not change VM assets" in workflow
     docs_text = " ".join(docs.split())
     release_skill_text = " ".join(release_skill.split())
     assert "nightly can move daily while stable is promoted on the weekly cadence" in docs_text
-    assert "nightly is the daily binary iteration channel" in release_skill_text
+    assert "nightly is the daily binary iteration channel" in release_skill_text.lower()
     assert "stable is promoted on the weekly cadence" in release_skill_text
+
+
+def test_binary_release_installs_exact_artifacts_before_publication() -> None:
+    workflow = _workflow_text("release.yaml")
+    macos = _workflow_job_block("build-app-macos", "release.yaml")
+    linux = _workflow_job_block("build-app-linux", "release.yaml")
+    create_release = _workflow_job_block("create-release", "release.yaml")
+
+    assert "  test-install:" not in workflow
+    assert "needs: [preflight, test]" in macos
+    assert "needs: [preflight, test]" in linux
+    assert "continue-on-error: true" not in linux
+    assert "Install exact notarized package" in macos
+    assert 'sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /' in macos
+    assert 'test -x "$HOME/.capsem/bin/capsem"' in macos
+    assert '"$HOME/.capsem/bin/capsem" --version' in macos
+    assert macos.index("Notarize and staple .pkg") < macos.index(
+        "Install exact notarized package"
+    ) < macos.index("Collect macOS artifacts")
+    assert "Install exact release deb" in linux
+    assert "sudo dpkg -i target/release/bundle/deb/*.deb" in linux
+    assert "test -x /usr/bin/capsem" in linux
+    assert "/usr/bin/capsem --version" in linux
+    assert linux.index("Repack .deb with companion binaries") < linux.index(
+        "Install exact release deb"
+    ) < linux.index("Collect Linux artifacts")
+    assert "needs: [test, build-app-macos, build-app-linux]" in create_release
+    assert "test-install" not in create_release
+    assert "continue-on-error: true" not in create_release
+
+
+def test_release_recipe_dispatches_one_parameterized_workflow() -> None:
+    recipe = _recipe_block("release")
+
+    assert 'release tag="" channel="stable":' in recipe
+    assert 'case "$CHANNEL" in' in recipe
+    assert "stable|nightly" in recipe
+    assert 'gh workflow run release.yaml --ref "$TAG"' in recipe
+    assert '-f "tag=$TAG"' in recipe
+    assert '-f "channel=$CHANNEL"' in recipe
+    assert 'RUN_TITLE="Release $CHANNEL $TAG"' in recipe
+    assert "displayTitle" in recipe
+    assert "headBranch" not in recipe
 
 
 def test_self_update_docs_match_verified_package_execution() -> None:
@@ -1820,10 +1893,8 @@ def test_manifest_source_inputs_are_url_only() -> None:
             if "profile materialize" in line:
                 continue
             if "$ASSET_MANIFEST_URL" in line:
-                assert (
-                    "ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json"
-                    in workflow
-                )
+                assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/" in workflow
+                assert "/manifest.json" in workflow
             else:
                 assert "file://" in line or "https://" in line or "http://" in line
             assert "--manifest assets/manifest.json" not in line
@@ -1929,7 +2000,7 @@ def test_release_process_skill_documents_multi_channel_graph() -> None:
         "SHA-256, BLAKE3, HMAC",
         "Profiles own their config files, profile images, ABOM/OBOM evidence",
         "`min_capsem_version`",
-        "Binary releases remain tag-triggered",
+        "Binary releases are explicitly dispatched",
         "Manual VM asset releases",
         "`release-assets.yaml`",
         "`release-channel.yaml`",
@@ -2087,7 +2158,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
 
     assert (
-        "| `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the selected public asset manifest URL, create GitHub release, update release.capsem.org binary metadata, then run glow-up install/switch/upgrade checks |"
+        "| `release.yaml` | Manual `{tag, channel}` dispatch | Run one globally serialized stable or nightly release: build apps, install-test the exact packages, publish them, update only the selected channel, and run public glow-up checks |"
         in docs
     )
     assert (
@@ -2310,8 +2381,8 @@ def test_live_release_activation_order_is_documented() -> None:
         normalized = " ".join(text.split())
         normalized_lower = normalized.lower()
         assert "Live release activation order" in text
-        assert "publish or merge the release-rail commits to `main`" in normalized_lower
-        assert "wait for the expanded `pr-gate` to pass on `main`" in normalized_lower
+        assert "merge the release-rail commits to `main` only after" in normalized_lower
+        assert "expanded `pr-gate` passes" in normalized_lower
         assert "require only `pr-gate` in branch protection or active rulesets" in normalized_lower
         assert "fail-closed `pr-gate` shape" in normalized_lower
         assert (
@@ -2335,11 +2406,9 @@ def test_live_release_activation_order_is_documented() -> None:
             or "profile image metadata was not changed" in normalized_lower
             or "profile image metadata did not change" in normalized_lower
         )
-        assert "do not add `workflow_dispatch` to the real tag-triggered `release.yaml`" in normalized_lower
-        assert (
-            "run the tag-triggered binary release rail only from an immutable `vx.y.z` tag"
-            in normalized_lower
-        )
+        assert "explicitly dispatch" in normalized_lower
+        assert "exactly one `stable` or `nightly` channel" in normalized_lower
+        assert "globally serialized" in normalized_lower
         assert (
             "run the manual vm asset workflow live only after reviewing `asset-release-plan`"
             in normalized_lower
@@ -2348,7 +2417,7 @@ def test_live_release_activation_order_is_documented() -> None:
         )
         assert "installed update smokes" in normalized
         assert normalized_lower.index(
-            "publish or merge the release-rail commits to `main`"
+            "merge the release-rail commits to `main` only after"
         ) < normalized_lower.index(
             "require only `pr-gate` in branch protection or active rulesets"
         )
@@ -2363,7 +2432,7 @@ def test_live_release_activation_order_is_documented() -> None:
             if index >= 0
         )
         assert normalized.index("release-binary-staging.yaml") < normalized_lower.index(
-            "run the tag-triggered binary release rail only from an immutable `vx.y.z` tag"
+            "push a new immutable `vx.y.z` tag"
         )
 
 

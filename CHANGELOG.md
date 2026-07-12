@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Stopped duplicate full CI runs when a release commit lands on `main`; pull
+  requests remain merge-gated and one explicitly dispatched, globally
+  serialized workflow now releases a single requested stable or nightly
+  channel.
+- Installed the locked Python environment before generating release-site CI
+  fixtures so declared dependencies such as `blake3` are available.
+- Made release publication wait for the exact notarized macOS package and both
+  release Linux packages to install successfully instead of testing a separate
+  pre-release debug package.
+
 ## [1.5.1783836598] - 2026-07-12
 
 ### Fixed

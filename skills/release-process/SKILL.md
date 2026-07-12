@@ -67,7 +67,8 @@ manifest. VM asset releases must deploy `release.capsem.org` after producing the
 asset manifest/evidence. The public contract is `release.capsem.org`; the large
 immutable VM blobs may live in GitHub Releases or another blob store, but the
 manifest must carry instantiated URLs and every public index/profile reference
-must resolve through the graph. Binary releases remain tag-triggered, update
+must resolve through the graph. Binary releases are explicitly dispatched for
+one immutable tag and one selected channel, update
 only package metadata, per-binary metadata, host SBOM, and host attestations in
 the selected channel manifest, preserve already-published profile images
 instead of copying image blobs into the Pages dist, and deploy the channel
@@ -93,7 +94,7 @@ preserves the live channel's `binaries` metadata in the generated asset
 manifest so VM asset releases do not erase package hashes, host SBOM evidence,
 or binary attestation state from `release.capsem.org`. Manual VM asset releases
 do not accept or publish a binary-version override; binary release metadata is
-owned by the tag-triggered binary rail. Live asset releases must publish GitHub build
+owned by the parameterized binary rail. Live asset releases must publish GitHub build
 provenance attestations for those five arch-prefixed VM asset subjects. In
 dry-run mode the workflow must print the exact `gh release` commands it would
 execute without publishing or attesting, and upload `asset-release-plan` with
@@ -112,7 +113,7 @@ first channel publication may continue when the
 previous `release.capsem.org/assets/<channel>/manifest.json` is unavailable;
 the asset delta gate records `previous_manifest_unavailable` as changed so the
 initial site can bootstrap. The first channel bootstrap may have no host binary
-evidence yet because the tag-triggered binary rail has not recorded package
+evidence yet because the binary rail has not recorded package
 files, the canonical `capsem-sbom.spdx.json` host SBOM reference, or host
 binary attestations; once binary files are published, missing host SBOM
 evidence is release-blocking.
@@ -162,12 +163,13 @@ must not depend on release tags or VM asset publication.
 
 Keep the lanes disjoint:
 
-- The binary lane is the tag-triggered `release.yaml` path. It may add or
-  update packages, per-binary inventory, host SBOM, and host attestations for
-  the configured binary channel set. It must not rebuild profile images or
-  mutate profile image metadata. The first 1.5 binary release seeds both
-  `stable` and `nightly`; after that, nightly is the daily binary iteration
-  channel and stable is promoted on the weekly cadence.
+- The binary lane is the manually dispatched, globally serialized
+  `release.yaml` path. It accepts one immutable tag and one `stable` or
+  `nightly` channel. It may update packages, per-binary inventory, host SBOM,
+  and host attestations for only the selected channel. It must not rebuild
+  profile images, mutate profile image metadata, or update the other binary
+  channel. Nightly is the daily binary iteration channel and stable is
+  promoted on the weekly cadence.
 - The profile lane is the manual `release-assets.yaml` path. It may update one
   channel/profile image set, profile config files, ABOM/OBOM evidence, profile
   catalog metadata, and matching manifest digests. It must not mutate packages,
@@ -191,41 +193,41 @@ graph complete.
 Use this order when turning the 1.5 release rails on. Do not skip ahead because
 later steps depend on earlier public state being true.
 
-1. Publish or merge the release-rail commits to `main`.
-2. Wait for the expanded `pr-gate` to pass on `main`.
-3. Require only `pr-gate` in branch protection or active rulesets.
-4. Provision the `release.capsem.org` Cloudflare Pages project and DNS for the
+1. Merge the release-rail commits to `main` only after the pull request's
+   expanded `pr-gate` passes.
+2. Require only `pr-gate` in branch protection or active rulesets.
+3. Provision the `release.capsem.org` Cloudflare Pages project and DNS for the
    generated `target/release-channel/` artifact.
-5. Run `uv run python scripts/check-remote-release-readiness.py`; continue only
+4. Run `uv run python scripts/check-remote-release-readiness.py`; continue only
    after unpublished commits, remote fail-closed `pr-gate` shape, branch
    protection, `release.capsem.org` DNS, public cache headers, and
    release-channel content all pass.
-6. Run `.github/workflows/release-channel-staging.yaml` against the Cloudflare
+5. Run `.github/workflows/release-channel-staging.yaml` against the Cloudflare
    Pages staging branch. It builds the deterministic release-channel fixture,
    deploys the generated dist through `.github/workflows/release-channel.yaml`
    with a non-main branch and preview URL, and proves the release-channel deploy
    path without invoking VM asset builds or binary package builds.
-7. Run the manual VM asset workflow as a dry run and review the
+6. Run the manual VM asset workflow as a dry run and review the
    `asset-release-plan`, `asset-release-delta`, and `asset-channel-preview`
    artifacts. For metadata-only asset release changes, review
    `asset-release-delta` and `asset-channel-preview`; no `asset-release-plan`
    is expected because there are no immutable VM blobs to republish.
-8. Run `.github/workflows/release-binary-staging.yaml` and review the
+7. Run `.github/workflows/release-binary-staging.yaml` and review the
    `binary-channel-dry-run-bundle` artifact. It records deterministic fake host
    package and `capsem-sbom.spdx.json` metadata into a copy of the live asset
    manifest, builds the release-site preview, and writes `proof.json` showing
-   VM asset metadata was not changed. This is the safe binary dry-run path; do
-   not add `workflow_dispatch` to the real tag-triggered `release.yaml`.
-9. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
-   tag after confirming the tag does not already exist remotely. For the first
-   1.5 release, the binary lane records the same package/SBOM metadata into
-   both `stable` and `nightly` and proves profile image metadata is unchanged.
-10. Run the manual VM asset workflow live only after reviewing
+   VM asset metadata was not changed. This is the safe binary dry-run path.
+8. Push a new immutable `vX.Y.Z` tag, then explicitly dispatch the binary
+   release rail with that tag and exactly one `stable` or `nightly` channel.
+   The global concurrency group prevents channel deployment races. The binary
+   lane updates only the selected channel and proves profile image metadata is
+   unchanged.
+9. Run the manual VM asset workflow live only after reviewing
    `asset-release-plan` when `asset_blobs_changed` is true, or reviewing the
    metadata-only delta and channel preview when only release-channel metadata
    changed; it must publish changed VM blobs, attest them, and deploy
    `release.capsem.org`.
-11. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
+10. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
    asset refresh, profile update path, and staged cross-surface update state.
 
 ## Cutting a release
@@ -264,7 +266,7 @@ after checking the local commit/tag.
    `git ls-remote origin "refs/tags/vX.Y.Z"`
 2. Push the release commit to `main`: `git push origin HEAD:main`
 3. Push the immutable tag: `git push origin vX.Y.Z`
-4. Watch the tag workflow: `just release vX.Y.Z`
+4. Dispatch and watch one channel workflow: `just release vX.Y.Z stable`
 
 Never reuse or move a tag. Always increment the version number, and always tag
 forward.
@@ -286,30 +288,29 @@ gh release view vX.Y.Z --json name,tagName,isDraft,isPrerelease,assets,url
 ```
 
 Before pushing a tag, confirm the tag does not already exist remotely. After
-pushing, watch the release workflow to completion. If CI fails, use
+pushing, dispatch the selected channel and watch the release workflow to
+completion. If CI fails, use
 `gh run view --log-failed` to diagnose, make a forward fix, and cut the next tag.
 
 ## CI pipeline (release.yaml)
 
-Triggered by `vX.Y.Z` tag push. Parallelized pipeline:
+Explicitly dispatched with `{tag, channel}` and globally serialized:
 
 ```
-preflight (30s) ──> build-app-macos ──┐
-                └──> test ────────────├──> create-release
-                └──> test-install ────┤
-                └──> build-app-linux ─┘
+preflight ──> test ──> build-app-macos (exact .pkg install) ──┐
+                  └──> build-app-linux (exact .deb installs) ─┴──> create-release
 ```
 
 | Job | Runner | Needs | Purpose |
 |-----|--------|-------|---------|
 | `preflight` | macos-14 | -- | Fail-fast: Apple cert, Tauri key, notarization |
 | `test` | macos-14 | preflight | Unit tests + coverage, frontend, audit |
-| `test-install` | ubuntu arm64 | preflight | Installer/update package contract smoke |
-| `build-app-macos` | macos-14 | preflight, test, test-install | Tauri `.app` build, companion binaries, `scripts/build-pkg.sh`, notarize + staple `.pkg` |
-| `build-app-linux` | ubuntu arm64 + x86_64 | preflight, test, test-install | Tauri build, `.deb` packages |
-| `create-release` | ubuntu-latest | test, test-install, build-app-macos, build-app-linux | Publish `.pkg`, `.deb`, and host SBOM |
+| `build-app-macos` | macos-14 | preflight, test | Build, sign, notarize, and staple `.pkg`, then install and verify that exact package |
+| `build-app-linux` | ubuntu arm64 + x86_64 | preflight, test | Build `.deb` packages, then install and verify each exact matrix artifact |
+| `create-release` | ubuntu-latest | test, build-app-macos, build-app-linux | Publish the install-tested `.pkg`, mandatory `.deb` files, and host SBOM |
 
-Test runs in parallel with builds. A test failure blocks `create-release` but doesn't delay compilation.
+The qualification job completes once, then the platform builds and exact
+artifact install gates fan out. Publication cannot start unless all are green.
 
 ### CI invariants (hard-won lessons)
 
@@ -319,13 +320,13 @@ Test runs in parallel with builds. A test failure blocks `create-release` but do
   in GitHub Actions. The frontend `mock-settings.generated.ts` file is an example:
   `mock-settings.ts` imports it, so it must exist in a clean checkout or be
   generated by the workflow.
-- **Install E2E owns package payload contracts, not tag-time VM asset builds.**
-  The release `test-install` job proves packages carry host binaries,
-  materialized profiles, manifest URL provenance, and no frozen
-  `assets/manifest.json` payload. Postinstall hydrates through
-  `capsem update --assets --manifest <URL>`. Tag releases consume
-  `https://release.capsem.org/assets/stable/manifest.json`; VM payload rebuilds
-  live in the manual asset workflow.
+- **PR install E2E owns broad package contracts; release builds own exact
+  artifact acceptance.** `ci.yaml` runs hermetic `test-install` before merge.
+  The release workflow does not rebuild another debug package: each platform
+  build installs and verifies the exact signed/notarized `.pkg` or release
+  `.deb` it uploads. Postinstall hydrates through
+  `capsem update --assets --manifest <URL>` for the selected channel; VM
+  payload rebuilds live in the manual asset workflow.
 - **Linux `.deb` self-updates stop stale helpers before replacement.**
   `scripts/repack-deb.sh` must include `scripts/deb-preinst.sh` as
   `DEBIAN/preinst`. That preinstall script runs

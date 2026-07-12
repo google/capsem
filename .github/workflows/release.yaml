@@ -1,7 +1,23 @@
 name: Release
+run-name: Release ${{ inputs.channel }} ${{ inputs.tag }}
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Immutable v* tag to release
+        required: true
+        type: string
+      channel:
+        description: Binary channel to advance
+        required: true
+        type: choice
+        options:
+          - stable
+          - nightly
+
+concurrency:
+  group: binary-release-channel
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -10,14 +26,24 @@ permissions:
   id-token: write
 
 env:
-  ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json
-  BINARY_RELEASE_CHANNELS: stable nightly
+  RELEASE_TAG: ${{ inputs.tag }}
+  RELEASE_CHANNEL: ${{ inputs.channel }}
+  ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json
 
 jobs:
   preflight:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
+
+      - name: Verify immutable dispatch tag and channel
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF_TYPE" = tag
+          test "$GITHUB_REF_NAME" = "$RELEASE_TAG"
+          case "$RELEASE_TAG" in v*) ;; *) exit 1 ;; esac
+          case "$RELEASE_CHANNEL" in stable|nightly) ;; *) exit 1 ;; esac
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Select Xcode 16.2
         run: sudo xcode-select -s /Applications/Xcode_16.2.app
@@ -189,35 +215,8 @@ jobs:
           | Audit | cargo audit + pnpm audit |
           EOF
 
-  test-install:
-    needs: preflight
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: extractions/setup-just@v3
-
-      - name: Install Linux host-build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libssl-dev \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libxdo-dev \
-            pkg-config \
-            build-essential
-
-      - name: Build host builder Docker image
-        run: just build-host-image
-
-      - name: Run install e2e tests
-        run: just test-install
-
   build-app-macos:
-    needs: [preflight, test, test-install]
+    needs: [preflight, test]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
@@ -358,7 +357,7 @@ jobs:
 
       - name: Build .pkg installer
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           bash scripts/build-pkg.sh \
             --manifest "$ASSET_MANIFEST_URL" \
             "target/release/bundle/macos/Capsem.app" \
@@ -374,7 +373,7 @@ jobs:
           APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
           APPLE_API_KEY_PATH: ${{ runner.temp }}/private_keys/AuthKey_${{ secrets.APPLE_API_KEY }}.p8
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           xcrun notarytool submit "packages/Capsem-$VERSION.pkg" \
             --key "$APPLE_API_KEY_PATH" \
             --key-id "$APPLE_API_KEY" \
@@ -383,9 +382,18 @@ jobs:
           xcrun stapler staple "packages/Capsem-$VERSION.pkg"
           xcrun stapler validate "packages/Capsem-$VERSION.pkg"
 
+      - name: Install exact notarized package
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /
+          test -x "$HOME/.capsem/bin/capsem"
+          "$HOME/.capsem/bin/capsem" --version
+          "$HOME/.capsem/bin/capsem" status
+
       - name: Collect macOS artifacts
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           mkdir -p release-artifacts
           if [ ! -f "packages/Capsem-$VERSION.pkg" ]; then
             echo "::error::Capsem-$VERSION.pkg not produced by build-pkg.sh"
@@ -400,10 +408,7 @@ jobs:
           path: release-artifacts/
 
   build-app-linux:
-    needs: [preflight, test, test-install]
-    # Linux release is best-effort for now. See sprints/linux/tracker.md --
-    # macOS .pkg is the shipping artifact until Linux is verified end-to-end.
-    continue-on-error: true
+    needs: [preflight, test]
     strategy:
       fail-fast: false
       matrix:
@@ -503,6 +508,14 @@ jobs:
           echo "=== Verify companion binaries in deb ==="
           dpkg-deb --contents target/release/bundle/deb/*.deb | grep -E "capsem-service|capsem-tui|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin"
 
+      - name: Install exact release deb
+        run: |
+          set -euo pipefail
+          sudo dpkg -i target/release/bundle/deb/*.deb || sudo apt-get install -f -y
+          test -x /usr/bin/capsem
+          /usr/bin/capsem --version
+          /usr/bin/capsem status
+
       - name: Boot test (x86_64)
         if: matrix.arch == 'x86_64'
         run: |
@@ -527,7 +540,6 @@ jobs:
           finally:
               os.close(vm); os.close(kvm)
           "; then
-            sudo dpkg -i target/release/bundle/deb/*.deb || sudo apt-get install -f -y
             xvfb-run timeout 120 capsem run "capsem-doctor"
           else
             echo "::warning::Skipping x86_64 boot test -- KVM on this runner lacks full VM support"
@@ -545,12 +557,12 @@ jobs:
           path: release-artifacts/
 
   create-release:
-    needs: [test, test-install, build-app-macos, build-app-linux]
+    needs: [test, build-app-macos, build-app-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
-      # Download all platform artifacts. macOS is required; Linux is best-effort.
+      # Download the exact platform artifacts that passed their install gates.
       - uses: actions/download-artifact@v8
         with:
           name: release-macos
@@ -559,12 +571,10 @@ jobs:
         with:
           name: release-linux-arm64
           path: release-artifacts/
-        continue-on-error: true
       - uses: actions/download-artifact@v8
         with:
           name: release-linux-x86_64
           path: release-artifacts/
-        continue-on-error: true
 
       - name: Install host SBOM archive deps
         run: |
@@ -604,13 +614,13 @@ jobs:
 
       - name: Build summary
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           PKG=$(ls -1 release-artifacts/*.pkg 2>/dev/null | head -1)
           PKG_NAME=$(basename "$PKG" 2>/dev/null || echo "N/A")
           PKG_SIZE=$(du -h "$PKG" 2>/dev/null | cut -f1 || echo "N/A")
           SBOM_PKGS=$(python3 -c "import json; d=json.load(open('release-artifacts/capsem-sbom.spdx.json')); print(len(d.get('packages',[])))" 2>/dev/null || echo "?")
 
-          # Build artifact table rows for all debs (may be absent if Linux best-effort failed)
+          # Build artifact table rows for all mandatory debs.
           LINUX_ROWS=""
           for f in release-artifacts/*.deb; do
             [ -f "$f" ] || continue
@@ -619,8 +629,7 @@ jobs:
             LINUX_ROWS="${LINUX_ROWS}| ${NAME} | ${SIZE} |
           "
           done
-          [ -z "$LINUX_ROWS" ] && LINUX_ROWS="| (no .deb produced -- Linux best-effort) | -- |
-          "
+          [ -n "$LINUX_ROWS" ]
 
           cat >> "$GITHUB_STEP_SUMMARY" << EOF
           ## Release $VERSION
@@ -653,16 +662,14 @@ jobs:
           VM assets are released independently at ${ASSET_MANIFEST_URL}.
           "
 
-          # Create release with the .pkg, then upload optional .deb
-          # files if Linux build succeeded (best-effort until sprints/linux lands).
-          gh release create ${{ github.ref_name }} \
+          gh release create "$RELEASE_TAG" \
             release-artifacts/*.pkg \
             release-artifacts/capsem-sbom.spdx.json \
-            --title "Capsem ${{ github.ref_name }}" \
+            --title "Capsem $RELEASE_TAG" \
             --notes "$NOTES"
 
           for deb in release-artifacts/*.deb; do
-            [ -f "$deb" ] && gh release upload ${{ github.ref_name }} "$deb"
+            [ -f "$deb" ] && gh release upload "$RELEASE_TAG" "$deb"
           done
 
   assemble-release-channel:
@@ -700,12 +707,10 @@ jobs:
         with:
           name: release-linux-arm64
           path: release-artifacts/
-        continue-on-error: true
       - uses: actions/download-artifact@v8
         with:
           name: release-linux-x86_64
           path: release-artifacts/
-        continue-on-error: true
 
       - name: Install host SBOM archive deps
         run: |
@@ -750,7 +755,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p target/binary-channel
-          for channel in $BINARY_RELEASE_CHANNELS; do
+          for channel in stable nightly; do
             mkdir -p "target/binary-channel/$channel"
             curl -fsSL "https://release.capsem.org/assets/$channel/manifest.json" \
               -o "target/binary-channel/$channel/manifest.json"
@@ -758,25 +763,24 @@ jobs:
               "target/binary-channel/$channel/manifest.before.json"
           done
 
-      - name: Record binary release metadata in channel manifests
+      - name: Record binary release metadata in selected channel manifest
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           ARTIFACT_ARGS=()
           for file in release-artifacts/*.pkg release-artifacts/*.deb release-artifacts/capsem-sbom.spdx.json; do
             [ -f "$file" ] && ARTIFACT_ARGS+=(--artifact "$file")
           done
-          for channel in $BINARY_RELEASE_CHANNELS; do
-            cargo run -p capsem-admin -- assets channel record-binary \
-              --manifest-path "target/binary-channel/$channel/manifest.json" \
-              --version "$VERSION" \
-              "${ARTIFACT_ARGS[@]}"
-          done
+          cargo run -p capsem-admin -- assets channel record-binary \
+            --manifest-path "target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
+            --version "$VERSION" \
+            "${ARTIFACT_ARGS[@]}"
+          test -f "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
 
       - name: Prove binary lane did not change VM assets
         run: |
           set -euo pipefail
-          for channel in $BINARY_RELEASE_CHANNELS; do
+          for channel in stable nightly; do
             python3 - "$channel" <<'PY'
           import json
           import sys
@@ -806,7 +810,7 @@ jobs:
           set -euo pipefail
           rm -rf target/release-channel
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          for channel in $BINARY_RELEASE_CHANNELS; do
+          for channel in stable nightly; do
             cargo run -p capsem-admin -- assets channel build \
               --manifest "file://$PWD/target/binary-channel/$channel/manifest.json" \
               --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
@@ -829,7 +833,7 @@ jobs:
       - name: Check binary-updated release channels
         run: |
           set -euo pipefail
-          for channel in $BINARY_RELEASE_CHANNELS; do
+          for channel in stable nightly; do
             cargo run -p capsem-admin -- assets channel check \
               --channel "$channel" \
               --dist target/release-channel
@@ -844,7 +848,7 @@ jobs:
     needs: [assemble-release-channel]
     uses: ./.github/workflows/release-channel.yaml
     with:
-      channel: stable
+      channel: ${{ inputs.channel }}
       dist_artifact: binary-channel-preview
     secrets: inherit
 
@@ -864,7 +868,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           for i in $(seq 1 30); do
-            if gh release view "${{ github.ref_name }}" --json assets --jq '.assets | length' >/dev/null 2>&1; then
+            if gh release view "$RELEASE_TAG" --json assets --jq '.assets | length' >/dev/null 2>&1; then
               break
             fi
             sleep 2

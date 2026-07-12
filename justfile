@@ -1138,12 +1138,21 @@ test-install:
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
         'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && python3 scripts/local-release-glowup.py --input-deb "$DEB" --bin-dir /cargo-target/debug --assets-dir assets --config-root target/config --work-dir target/local-release-glowup'
 
-# Wait for CI to build and publish a tag.
-# Usage: just release          (uses latest vX.Y.Z tag on HEAD)
-#        just release v0.9.13  (explicit tag)
-release tag="":
+# Dispatch one serialized release workflow and wait for publication.
+# Usage: just release                       (latest tag on HEAD, stable)
+#        just release v0.9.13 stable        (explicit stable release)
+#        just release v0.9.14-nightly nightly
+release tag="" channel="stable":
     #!/usr/bin/env bash
     set -euo pipefail
+    CHANNEL="{{channel}}"
+    case "$CHANNEL" in
+        stable|nightly) ;;
+        *)
+            echo "Error: channel must be stable or nightly (got: $CHANNEL)"
+            exit 1
+            ;;
+    esac
     if [ -n "{{tag}}" ]; then
         TAG="{{tag}}"
     else
@@ -1153,12 +1162,50 @@ release tag="":
             exit 1
         fi
     fi
-    echo "=== Release $TAG ==="
-    RUN_ID=$(gh run list --workflow=release.yaml --json databaseId,headBranch,status \
-        --jq ".[] | select(.headBranch==\"$TAG\") | .databaseId" | head -1)
+    case "$TAG" in
+        v*) ;;
+        *)
+            echo "Error: release tag must start with v (got: $TAG)"
+            exit 1
+            ;;
+    esac
+    if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+        echo "Error: tag $TAG is not published to origin"
+        echo "Push it first: git push origin $TAG"
+        exit 1
+    fi
+
+    RUN_TITLE="Release $CHANNEL $TAG"
+    echo "=== $RUN_TITLE ==="
+    RUN_ID=$(gh run list --workflow=release.yaml --event workflow_dispatch --limit 50 \
+        --json databaseId,displayTitle,status,conclusion \
+        --jq ".[] | select(.displayTitle==\"$RUN_TITLE\") | .databaseId" | head -1)
+    if [ -n "$RUN_ID" ]; then
+        STATUS=$(gh run view "$RUN_ID" --json status --jq .status)
+        CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq .conclusion)
+        if [ "$STATUS" = "completed" ] && [ "$CONCLUSION" = "success" ]; then
+            echo "=== $RUN_TITLE already published ==="
+            echo "https://github.com/google/capsem/releases/tag/$TAG"
+            exit 0
+        fi
+        if [ "$STATUS" = "completed" ]; then
+            RUN_ID=""
+        fi
+    fi
     if [ -z "$RUN_ID" ]; then
-        echo "Error: no release workflow run found for tag $TAG"
-        echo "Push the tag first: git push origin $TAG"
+        gh workflow run release.yaml --ref "$TAG" \
+            -f "tag=$TAG" \
+            -f "channel=$CHANNEL"
+        for _ in $(seq 1 30); do
+            RUN_ID=$(gh run list --workflow=release.yaml --event workflow_dispatch --limit 50 \
+                --json databaseId,displayTitle \
+                --jq ".[] | select(.displayTitle==\"$RUN_TITLE\") | .databaseId" | head -1)
+            [ -n "$RUN_ID" ] && break
+            sleep 2
+        done
+    fi
+    if [ -z "$RUN_ID" ]; then
+        echo "Error: dispatched workflow did not appear for $RUN_TITLE"
         exit 1
     fi
     echo "CI run: $RUN_ID"
@@ -1173,7 +1220,7 @@ release tag="":
         echo "Check: gh run view $RUN_ID --log-failed"
         exit 1
     fi
-    echo "=== Release $TAG published ==="
+    echo "=== $RUN_TITLE published ==="
     echo "https://github.com/google/capsem/releases/tag/$TAG"
 
 # Stamp version, commit, and create a local release tag.
@@ -1205,7 +1252,7 @@ cut-release: test _stamp-version
     echo "  git ls-remote origin refs/tags/$TAG"
     echo "  git push origin HEAD:main"
     echo "  git push origin $TAG"
-    echo "  just release $TAG"
+    echo "  just release $TAG stable"
 
 # Check dev tools and dependencies. Pass "fix" to auto-fix.
 doctor fix="": _pnpm-install

@@ -11,8 +11,8 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 
 | Workflow | Trigger | What it does |
 |----------|---------|-------------|
-| `ci.yaml` | Pull requests and push to main | PR quality gate: Rust unit/integration, frontend, Python contracts, install checks, and explicit runner substitutions |
-| `release.yaml` | Tag push (`v*`) | Build apps (macOS + Linux), package with the selected public asset manifest URL, create GitHub release, update release.capsem.org binary metadata, then run glow-up install/switch/upgrade checks |
+| `ci.yaml` | Pull requests | PR quality gate: Rust unit/integration, frontend, Python contracts, install checks, and explicit runner substitutions |
+| `release.yaml` | Manual `{tag, channel}` dispatch | Run one globally serialized stable or nightly release: build apps, install-test the exact packages, publish them, update only the selected channel, and run public glow-up checks |
 | `release-assets.yaml` | Manual | Build profile images/config/evidence, generate `assets/manifest.json`, and optionally deploy the asset channel |
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
 | `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove profile image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |
@@ -33,8 +33,9 @@ the verified manifest URLs and hashes.
 
 ## CI workflow (`ci.yaml`)
 
-Runs on every pull request and push to `main`. Pull requests should require the
-stable `pr-gate` status before merge.
+Runs on every pull request. Pull requests should require the stable `pr-gate`
+status before merge. A merge to `main` does not start a second copy of full CI;
+docs and marketing retain their independent deployment workflows.
 
 ### test-linux (ubuntu-24.04-arm)
 
@@ -122,38 +123,38 @@ tags, edit rulesets, or mutate Cloudflare.
 Use this order when turning the 1.4 release rails on. Do not skip ahead because
 later steps depend on earlier public state being true.
 
-1. Publish or merge the release-rail commits to `main`.
-2. Wait for the expanded `pr-gate` to pass on `main`.
-3. Require only `pr-gate` in branch protection or active rulesets.
-4. Provision the `release.capsem.org` Cloudflare Pages project and DNS for the
+1. Merge the release-rail commits to `main` only after the pull request's
+   expanded `pr-gate` passes.
+2. Require only `pr-gate` in branch protection or active rulesets.
+3. Provision the `release.capsem.org` Cloudflare Pages project and DNS for the
    generated `target/release-channel/` artifact.
-5. Run `uv run python scripts/check-remote-release-readiness.py`; continue only
+4. Run `uv run python scripts/check-remote-release-readiness.py`; continue only
    after unpublished commits, remote fail-closed `pr-gate` shape, branch
    protection, `release.capsem.org` DNS, public cache headers, and
    release-channel content all pass.
-6. Run `release-channel-staging.yaml` against the Cloudflare Pages staging
+5. Run `release-channel-staging.yaml` against the Cloudflare Pages staging
    branch and verify it passes the same release-channel contract without
    invoking `build-assets`, `build-app-macos`, or `build-app-linux`.
-7. Run the manual profile image workflow as a dry run and review the
+6. Run the manual profile image workflow as a dry run and review the
    `asset-release-plan`, `asset-release-delta`, and `asset-channel-preview`
    artifacts. For metadata-only asset release changes, review
    `asset-release-delta` and `asset-channel-preview`; no `asset-release-plan`
    is expected because there are no immutable profile image blobs to republish.
-8. Run `release-binary-staging.yaml` and review the
+7. Run `release-binary-staging.yaml` and review the
    `binary-channel-dry-run-bundle` artifact. It must contain package metadata,
    `capsem-sbom.spdx.json`, `manifest.before.json`, the updated manifest,
    `record-binary.json`, `proof.json`, and the release-site preview, while
    proving profile image metadata did not change. This is the safe binary dry-run
-   path; do not add `workflow_dispatch` to the real tag-triggered
-   `release.yaml`.
-9. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
-   tag after confirming the tag does not already exist remotely.
-10. Run the manual profile image workflow live only after reviewing
+   path.
+8. Push a new immutable `vX.Y.Z` tag, then explicitly dispatch `release.yaml`
+   with that tag and exactly one `stable` or `nightly` channel. The workflow is
+   globally serialized so channel deployments cannot race.
+9. Run the manual profile image workflow live only after reviewing
    `asset-release-plan` when `asset_blobs_changed` is true, or reviewing the
    metadata-only delta and channel preview when only release-channel metadata
    changed; it must publish changed profile image blobs, attest them, and deploy
    `release.capsem.org`.
-11. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
+10. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
    asset refresh, profile update path, and staged cross-surface update state.
 
 ## PR gate compared with `just test`
@@ -228,22 +229,21 @@ Codecov component map.
 
 ## Release workflow (`release.yaml`)
 
-Triggered by pushing a `vX.Y.Z` tag. Parallelized pipeline:
+Explicitly dispatched with an immutable `vX.Y.Z` tag and one `stable` or
+`nightly` channel. A global concurrency group permits only one binary release
+to assemble and deploy the shared release site at a time:
 
 ```
-preflight (30s) --> build-app-macos (15 min) --+
-                +-> test (8 min) ---------------+--> create-release
-                +-> test-install ---------------+
-                +-> build-app-linux ------------+
+preflight --> test --> build-app-macos (build, notarize, install exact .pkg) --+
+                   +-> build-app-linux (build and install exact .deb matrix) -+--> create-release --> selected-channel deploy
 ```
 
 | Job | Runner | What it produces |
 |-----|--------|-----------------|
 | `preflight` | macos-14 | Validates Apple cert, Tauri signing key, notarization creds |
 | `test` | macos-14 | Unit tests + coverage + audit (gates release) |
-| `test-install` | ubuntu arm64 | Installer/update smoke plus hermetic local release glow-up |
-| `build-app-macos` | macos-14 | `.pkg` installer, notarized + stapled |
-| `build-app-linux` | ubuntu arm64 + x86_64 | `.deb` packages for both arches |
+| `build-app-macos` | macos-14 | `.pkg` installer, notarized + stapled, then installed from that exact file |
+| `build-app-linux` | ubuntu arm64 + x86_64 | `.deb` packages installed from the exact matrix outputs |
 | `create-release` | ubuntu | Publishes packages and host SBOM |
 | `assemble-release-channel` | ubuntu | Records package/SBOM metadata into binary channel manifests without changing profile image metadata |
 | `deploy-release-channel` | ubuntu | Deploys the generated release graph through `release-channel.yaml` |
@@ -272,17 +272,17 @@ metadata before boot. Tag releases do not rebuild or upload profile images, and
 they do not publish `latest.json`; binary freshness comes from the selected
 manifest in the release graph.
 
-The binary rail is optimized for fast package iteration. The first 1.5 release
-records the same package/SBOM metadata into both `stable` and `nightly` so both
-channels start from the same binary baseline. After that, nightly can move
-daily while stable is promoted on the weekly cadence. In every case the binary
-job compares each channel manifest before and after `record-binary` and fails
-if profile image metadata changes.
+The binary rail is parameterized by channel. Each run records package/SBOM
+metadata into exactly one selected channel; nightly can move daily while stable
+is promoted on the weekly cadence. It fetches both current channel manifests to
+rebuild a complete release-site snapshot, but only the selected manifest is
+mutated. The workflow compares channel manifests and fails if profile image
+metadata changes.
 
 After `release.capsem.org` deploys, the glow-up gate downloads the public
 install script and packages, verifies package-owned binary hashes, rejects any
 packaged `assets/manifest.json`, checks `manifest-origin.json` points at the
-selected stable manifest URL, then runs Docker install, stable/nightly asset
+selected channel manifest URL, then runs Docker install, stable/nightly asset
 switching, and the binary updater path against the public channel.
 
 Before deployment, `just test` runs the same class of glow-up locally through
@@ -295,10 +295,9 @@ Release packaging materializes runtime profiles through the same profile-derived
 local development: `capsem-admin profile materialize` copies checked-in config
 into `target/config/` and pins profile asset descriptors to the current public
 asset channel manifest at
-`https://release.capsem.org/assets/stable/manifest.json`. CI must not hand-edit
-profiles or bypass that step. Nightly binary channel updates still package
-against the stable profile image baseline unless the manual profile image rail
-has intentionally published a newer nightly image.
+`https://release.capsem.org/assets/<selected-channel>/manifest.json`. CI must not
+hand-edit profiles or bypass that step. Channel-specific profile image changes
+remain owned by the manual profile image rail.
 
 ## Asset channel workflow (`release-channel.yaml`)
 
@@ -364,7 +363,7 @@ attestations.
 
 The release discipline is that binary releases and profile image releases both
 call the channel workflow after updating only their own part of the release
-graph. A tag-triggered binary release records package artifacts, host SBOM,
+graph. A manually dispatched binary release records package artifacts, host SBOM,
 host attestations, and the per-binary inventory for one channel without
 touching profiles, profile images, or other channels. Every executable inside
 each package must be listed with SHA-256, BLAKE3, package provenance, and
@@ -391,11 +390,11 @@ to stable.
 
 The first channel publication can still bootstrap when the previous manifest is
 unavailable. The first channel bootstrap may have no host binary evidence yet
-because the tag-triggered binary rail has not recorded package files, host SBOM
+because the binary rail has not recorded package files, host SBOM
 references, or host binary attestations; once binary files are published,
 missing host SBOM evidence is release-blocking. Manual profile image releases
 do not accept or publish a binary-version override; binary release metadata is
-owned by the tag-triggered binary rail.
+owned by the parameterized binary rail.
 For `dry_run=false`, the workflow first verifies that the configured Cloudflare
 account/token can see the Pages project serving `release.capsem.org`, so a bad release-site
 binding fails before profile image builds or immutable GitHub asset publication.

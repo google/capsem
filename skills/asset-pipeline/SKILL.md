@@ -168,13 +168,13 @@ channel's `binaries` metadata in the generated asset manifest so VM asset
 releases do not erase package hashes, host SBOM evidence, or binary attestation
 state from `release.capsem.org`. Manual VM asset releases do not accept or
 publish a binary-version override; binary release metadata is owned by the
-tag-triggered binary rail.
+parameterized binary rail.
 The delta emits both `asset_changed` and `asset_blobs_changed`: metadata-only
 asset release changes, such as deprecating an older VM asset release, still
 deploy the release channel without republishing immutable VM blobs. The
 `asset-release-plan`, GitHub Release upload, and provenance attestation steps
 run only when `asset_blobs_changed` is true. The first channel bootstrap may
-have no host binary evidence yet because the tag-triggered binary rail has not
+have no host binary evidence yet because the binary rail has not
 recorded package files, the canonical `capsem-sbom.spdx.json` host SBOM
 reference, or host binary attestations; once binary files are published,
 missing host SBOM evidence is release-blocking.
@@ -223,39 +223,39 @@ the expensive asset build matrix starts.
 Use this order when turning the 1.4 release rails on. Do not skip ahead because
 later steps depend on earlier public state being true.
 
-1. Publish or merge the release-rail commits to `main`.
-2. Wait for the expanded `pr-gate` to pass on `main`.
-3. Require only `pr-gate` in branch protection or active rulesets.
-4. Provision the `release.capsem.org` Cloudflare Pages project and DNS for the
+1. Merge the release-rail commits to `main` only after the pull request's
+   expanded `pr-gate` passes.
+2. Require only `pr-gate` in branch protection or active rulesets.
+3. Provision the `release.capsem.org` Cloudflare Pages project and DNS for the
    generated `target/release-channel/` artifact.
-5. Run `uv run python scripts/check-remote-release-readiness.py`; continue only
+4. Run `uv run python scripts/check-remote-release-readiness.py`; continue only
    after unpublished commits, remote fail-closed `pr-gate` shape, branch
    protection, `release.capsem.org` DNS, public cache headers, and
    release-channel content all pass.
-6. Run `.github/workflows/release-channel-staging.yaml` against the Cloudflare
+5. Run `.github/workflows/release-channel-staging.yaml` against the Cloudflare
    Pages staging branch. It builds a deterministic fixture, deploys the
    generated channel through `.github/workflows/release-channel.yaml`, and
    validates the same release-channel contract without invoking `build-assets`
    or binary package builds.
-7. Run the manual VM asset workflow as a dry run and review the
+6. Run the manual VM asset workflow as a dry run and review the
    `asset-release-plan`, `asset-release-delta`, and `asset-channel-preview`
    artifacts. For metadata-only asset release changes, review
    `asset-release-delta` and `asset-channel-preview`; no `asset-release-plan`
    is expected because there are no immutable VM blobs to republish.
-8. Run `.github/workflows/release-binary-staging.yaml` and review the
+7. Run `.github/workflows/release-binary-staging.yaml` and review the
    `binary-channel-dry-run-bundle` artifact. It records deterministic fake host
    package and `capsem-sbom.spdx.json` metadata into a copy of the live asset
    manifest, builds the release-site preview, and writes `proof.json` showing
-   VM asset metadata was not changed. This is the safe binary dry-run path; do
-   not add `workflow_dispatch` to the real tag-triggered `release.yaml`.
-9. Run the tag-triggered binary release rail only from an immutable `vX.Y.Z`
-   tag after confirming the tag does not already exist remotely.
-10. Run the manual VM asset workflow live only after reviewing
+   VM asset metadata was not changed. This is the safe binary dry-run path.
+8. Push a new immutable `vX.Y.Z` tag, then explicitly dispatch `release.yaml`
+   with that tag and exactly one `stable` or `nightly` channel. The workflow is
+   globally serialized so channel deployments cannot race.
+9. Run the manual VM asset workflow live only after reviewing
    `asset-release-plan` when `asset_blobs_changed` is true, or reviewing the
    metadata-only delta and channel preview when only release-channel metadata
    changed; it must publish changed VM blobs, attest them, and deploy
    `release.capsem.org`.
-11. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
+10. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
    asset refresh, profile update path, and staged cross-surface update state.
 
 Asset-channel blobs are arch-prefixed (`arm64-vmlinuz`,

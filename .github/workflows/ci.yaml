@@ -1,8 +1,6 @@
 name: CI
 on:
   pull_request:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -399,6 +397,11 @@ jobs:
         with:
           key: release-site-build
 
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install Python dependencies
+        run: uv sync --frozen
+
       - name: Install release site dependencies
         run: cd release-site && pnpm install --frozen-lockfile
 
@@ -415,7 +418,7 @@ jobs:
           fail_ci_if_error: false
 
       - name: Write release channel fixture
-        run: python3 scripts/write-release-site-ci-fixture.py target/release-site-fixture
+        run: uv run python scripts/write-release-site-ci-fixture.py target/release-site-fixture
 
       - name: Generate release channel data
         run: |
