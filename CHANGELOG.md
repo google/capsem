@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1783820797] - 2026-07-12
+
 ### Fixed
 - Hardened tag-triggered release CI to run Clippy across the full workspace and
   all targets with every warning treated as a release-blocking error.
