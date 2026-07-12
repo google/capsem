@@ -110,9 +110,20 @@ jobs:
           rm -rf "$RUNNER_TEMP/private_keys"
   test:
     needs: preflight
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos
+            runner: macos-14
+          - os: linux
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v5
+
+      - uses: extractions/setup-just@v3
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -120,7 +131,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: test
+          key: full-release-gate-${{ matrix.os }}
 
       - uses: pnpm/action-setup@v5
         with:
@@ -131,89 +142,37 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync
-      - run: bash scripts/generate-settings.sh
-      - run: cd frontend && pnpm install --frozen-lockfile
 
-      - name: Dependency audit
+      - name: Start Docker on macOS
+        if: matrix.os == 'macos'
         run: |
-          cargo install cargo-audit --locked
-          cargo audit
-          # pnpm audit: block on high/critical only. Moderate findings in
-          # dev-only transitive deps (e.g. postcss via vite) keep appearing
-          # between releases and don't reflect runtime exposure for Capsem.
-          cd frontend && pnpm audit --audit-level=high
+          command -v docker >/dev/null 2>&1 || brew install docker
+          command -v colima >/dev/null 2>&1 || brew install colima
+          colima start --cpu 4 --memory 8 --disk 80
+          docker info
 
-      - name: Frontend type-check, test, and build
-        run: cd frontend && pnpm run check && pnpm run test && pnpm run build
-
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
-
-      - name: Clippy warnings-as-errors (workspace and all targets)
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Create stub v2 asset manifest for unit tests
+      - name: Enable KVM
+        if: matrix.os == 'linux'
         run: |
-          mkdir -p assets/arm64 assets/x86_64
-          cat > assets/manifest.json <<'JSON'
-          {
-            "format": 2,
-            "assets": {
-              "current": "ci-stub",
-              "releases": {
-                "ci-stub": {
-                  "date": "1970-01-01",
-                  "deprecated": false,
-                  "min_binary": "0.0.0",
-                  "arches": {
-                    "arm64": {},
-                    "x86_64": {}
-                  }
-                }
-              }
-            },
-            "binaries": {
-              "current": "0.0.0",
-              "releases": {
-                "0.0.0": {
-                  "date": "1970-01-01",
-                  "deprecated": false,
-                  "min_assets": "ci-stub"
-                }
-              }
-            }
-          }
-          JSON
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm -a -w /dev/kvm
 
-      - name: Unit tests with coverage
-        run: |
-          cargo llvm-cov --workspace --bins --no-cfg-coverage --codecov --output-path codecov.json 2>&1 | tee test-output.txt
+      - name: Complete canonical release gate (just test)
+        run: just test
 
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
+      - name: Upload full-gate artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
         with:
-          files: codecov.json
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
-
-      - name: Test summary
-        if: always()
-        run: |
-          # Parse "test result: ok. X passed; Y failed" lines from cargo output
-          TESTS=$(grep -o '[0-9]* passed' test-output.txt 2>/dev/null | awk '{s+=$1} END {print s+0}')
-          FAILED=$(grep -o '[0-9]* failed' test-output.txt 2>/dev/null | awk '{s+=$1} END {print s+0}')
-
-          cat >> "$GITHUB_STEP_SUMMARY" << EOF
-          ## Test Results
-
-          | Metric | Result |
-          |--------|--------|
-          | Rust tests passed | $TESTS |
-          | Rust tests failed | $FAILED |
-          | Frontend tests | vitest |
-          | Audit | cargo audit + pnpm audit |
-          EOF
+          name: full-release-gate-${{ matrix.os }}-${{ github.run_attempt }}
+          path: |
+            test-artifacts/
+            frontend/test-artifacts/
+            target/build.log
+          retention-days: 14
+          if-no-files-found: ignore
 
   build-app-macos:
     needs: [preflight, test]
@@ -388,7 +347,7 @@ jobs:
           VERSION="${RELEASE_TAG#v}"
           sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /
           test -x "$HOME/.capsem/bin/capsem"
-          "$HOME/.capsem/bin/capsem" --version
+          "$HOME/.capsem/bin/capsem" --version | grep -F "$VERSION"
           "$HOME/.capsem/bin/capsem" status
 
       - name: Collect macOS artifacts
@@ -511,39 +470,11 @@ jobs:
       - name: Install exact release deb
         run: |
           set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
           sudo dpkg -i target/release/bundle/deb/*.deb || sudo apt-get install -f -y
           test -x /usr/bin/capsem
-          /usr/bin/capsem --version
+          /usr/bin/capsem --version | grep -F "$VERSION"
           /usr/bin/capsem status
-
-      - name: Boot test (x86_64)
-        if: matrix.arch == 'x86_64'
-        run: |
-          ls -l /dev/kvm || echo "KVM MISSING (pre-udev)"
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          ls -l /dev/kvm
-          # Probe KVM capability: nested/restricted KVM may lack CPUID support
-          # which makes full VM boot impossible. Skip gracefully.
-          if python3 -c "
-          import fcntl, os, struct, array
-          kvm = os.open('/dev/kvm', os.O_RDWR)
-          vm = fcntl.ioctl(kvm, 0xAE01)  # KVM_CREATE_VM
-          buf = struct.pack('II', 256, 0) + b'\x00' * (256 * 40)
-          try:
-              fcntl.ioctl(vm, 0xC008AE05, buf, True)  # KVM_GET_SUPPORTED_CPUID
-              print('KVM supports CPUID -- boot test will run')
-          except OSError as e:
-              print(f'KVM lacks CPUID support ({e}) -- skipping boot test')
-              os._exit(1)
-          finally:
-              os.close(vm); os.close(kvm)
-          "; then
-            xvfb-run timeout 120 capsem run "capsem-doctor"
-          else
-            echo "::warning::Skipping x86_64 boot test -- KVM on this runner lacks full VM support"
-          fi
 
       - name: Collect Linux artifacts
         run: |

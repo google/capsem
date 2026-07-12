@@ -19,6 +19,24 @@ Three tiers, fast to thorough. Every change must pass all three before it ships.
 
 `just test` is the single source of truth. There is no "fast" tier that skips integration tests -- that's how the "Connection refused" bug shipped while tests said green. Individual `test-*` recipes exist for targeted debugging but `just test` is the gate.
 
+## Release CI invariant
+
+Every stable and nightly release must execute `just test` in CI on both macOS
+and Linux, in parallel, for that exact immutable release tag. A local gate, a
+prior commit/tag's green workflow, or a release-specific subset is not evidence
+and must never unblock publication. All package-build and publication jobs must
+depend on both current-release OS gates. Do not inline a selected list of stages
+into the workflow: call `just test` so additions to the canonical gate
+automatically become mandatory for every release.
+
+Run `just test` exactly once per operating system in the release workflow; do
+not duplicate the canonical gate after packaging. Both macOS and Linux must
+then install their exact publishable native packages, including their real
+post-install scripts, before publication. Notarization and the public
+stable-to-nightly switch/upgrade glow-up remain mandatory afterward as the
+end-to-end deployed-release test. The install and glow-up checks are additional
+proof, not substitutes for the one complete two-OS gate.
+
 ## TDD workflow
 
 Write tests first:

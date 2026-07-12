@@ -73,8 +73,10 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
 
 def test_tag_release_uses_fail_closed_workspace_clippy_gate() -> None:
     workflow = _read(".github/workflows/release.yaml")
+    just = _read("justfile")
 
-    assert "cargo clippy --workspace --all-targets -- -D warnings" in workflow
+    assert "run: just test" in workflow
+    assert "cargo clippy --workspace --all-targets -- -D warnings" in just
     assert "run: cargo check --workspace" not in workflow
 
 

@@ -10,6 +10,31 @@ Before code changes, load the relevant project skill from `skills/`. For tests
 and release gates, load `/dev-testing` and `/ironbank`. For debugging, load
 `/dev-debugging`. For architecture changes, load `/site-architecture`.
 
+## Release CI Is the Authority
+
+Every stable and nightly binary release must run the complete `just test` gate
+on both macOS and Linux, in parallel inside the same globally serialized
+release workflow, before any package build, GitHub Release creation, channel
+assembly, or deployment may proceed.
+
+- Never replace `just test` with a hand-picked subset, a coverage-only job, or
+  a faster release-specific approximation.
+- Never treat a local run, a prior tag/commit's green run, or an agent's claim
+  that tests passed as release evidence. Only the current immutable release
+  tag's CI gate counts.
+- The gate includes audits, lint, frontend, Rust coverage, four-VM parallel
+  Python tests, Winterfell/MCP lifecycle tests, IronBank, injection,
+  integration, benchmarks, cross-compilation, and Docker/systemd install tests.
+- Run the complete `just test` gate exactly once per operating system in each
+  release workflow. Do not duplicate it after packaging.
+- Exact publishable packages must still be installed on macOS and Linux so the
+  native installers and their post-install scripts are proven before
+  publication. The public install/channel-switch/upgrade glow-up is then the
+  end-to-end test of the deployed release. None of these gates substitutes for
+  another.
+- Stable and nightly use the same parameterized workflow and the same two-OS
+  gate. Only the selected channel may be updated.
+
 ## Logger DB Boundary
 
 Telemetry and security ledgers are database-owned.

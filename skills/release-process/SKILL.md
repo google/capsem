@@ -13,6 +13,25 @@ scripts/preflight.sh           # Validate Apple certs for CI
 just test                      # ALL tests: unit + integration + cross-compile + bench
 ```
 
+The checklist is developer feedback only. It is never release authorization.
+For every stable and nightly tag, the globally serialized `release.yaml`
+workflow must run the complete `just test` recipe again in CI on both macOS and
+Linux, in parallel, on that exact tag, and every build/publication/deployment
+job must depend on both OS gates. Never
+substitute a partial Rust/frontend/coverage job, a previous green commit, or a
+local agent-run gate. CI is authoritative because agent-reported local evidence
+is not trusted release proof.
+
+`just test` includes Winterfell/MCP persistence, the four-VM concurrency
+canary, IronBank, integration and injection, benchmarks, cross-compilation, and
+Docker/systemd install tests. Run it exactly once per operating system in the
+release workflow, not again after packaging. The exact final `.pkg`/`.deb` must
+then be installed on macOS and Linux to exercise the real native installer and
+post-install scripts before publication. Notarization and public
+channel-switch/upgrade glow-up verification remain additional requirements and
+provide the end-to-end deployed-release proof. Never replace the full gate
+with doctor, Winterfell, smoke, or another selected subset.
+
 Release asset manifests are generated through `capsem-admin manifest generate`.
 Do not publish or document alternate manifest writers. Runtime VM asset
 integrity is BLAKE3 hash verification plus manifest origin/hash reporting; do

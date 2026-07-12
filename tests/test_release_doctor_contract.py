@@ -1051,7 +1051,7 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "vm-assets-" not in workflow
     assert "assets/current" not in workflow
     assert """echo '{"releases":{}}'""" not in workflow
-    assert "Create stub v2 asset manifest for unit tests" in workflow
+    assert "Complete canonical release gate (just test)" in workflow
     assert "just build-kernel" not in workflow
     assert "just build-rootfs" not in workflow
     assert "cargo run -p capsem-admin -- manifest generate assets" not in workflow
@@ -1232,6 +1232,37 @@ def test_binary_release_channel_policy_supports_fast_nightly_and_weekly_stable()
     assert "stable is promoted on the weekly cadence" in release_skill_text
 
 
+def test_binary_release_runs_complete_canonical_gate_in_ci() -> None:
+    workflow = _workflow_text("release.yaml")
+    gate = _workflow_job_block("test", "release.yaml")
+    agents = _source_text("AGENTS.md")
+    testing_skill = _source_text("skills/dev-testing/SKILL.md")
+    release_skill = _source_text("skills/release-process/SKILL.md")
+
+    assert "matrix.os" in gate
+    assert "os: macos" in gate
+    assert "runner: macos-14" in gate
+    assert "os: linux" in gate
+    assert "runner: ubuntu-24.04" in gate
+    assert "fail-fast: false" in gate
+    assert "extractions/setup-just@v3" in gate
+    assert "Enable KVM" in gate
+    assert "Start Docker on macOS" in gate
+    assert "just test" in gate
+    assert workflow.count("run: just test") == 1
+    assert "cargo llvm-cov --workspace --bins --no-cfg-coverage" not in gate
+    assert "Create stub v2 asset manifest for unit tests" not in gate
+    assert "needs: [preflight, test]" in _workflow_job_block(
+        "build-app-macos", "release.yaml"
+    )
+    assert "needs: [preflight, test]" in _workflow_job_block(
+        "build-app-linux", "release.yaml"
+    )
+    assert "complete `just test` gate" in agents
+    assert "exact immutable release tag" in testing_skill
+    assert "Run it exactly once per operating system" in release_skill
+
+
 def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     workflow = _workflow_text("release.yaml")
     macos = _workflow_job_block("build-app-macos", "release.yaml")
@@ -1245,17 +1276,21 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "Install exact notarized package" in macos
     assert 'sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /' in macos
     assert 'test -x "$HOME/.capsem/bin/capsem"' in macos
-    assert '"$HOME/.capsem/bin/capsem" --version' in macos
+    assert '"$HOME/.capsem/bin/capsem" --version | grep -F "$VERSION"' in macos
     assert macos.index("Notarize and staple .pkg") < macos.index(
         "Install exact notarized package"
     ) < macos.index("Collect macOS artifacts")
+    assert "Post-install full gate (just test)" not in macos
+    assert "run: just test" not in macos
     assert "Install exact release deb" in linux
     assert "sudo dpkg -i target/release/bundle/deb/*.deb" in linux
     assert "test -x /usr/bin/capsem" in linux
-    assert "/usr/bin/capsem --version" in linux
+    assert '/usr/bin/capsem --version | grep -F "$VERSION"' in linux
     assert linux.index("Repack .deb with companion binaries") < linux.index(
         "Install exact release deb"
     ) < linux.index("Collect Linux artifacts")
+    assert "Post-install full gate (just test)" not in linux
+    assert "run: just test" not in linux
     assert "needs: [test, build-app-macos, build-app-linux]" in create_release
     assert "test-install" not in create_release
     assert "continue-on-error: true" not in create_release
@@ -3491,17 +3526,16 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     generate_pos = workflow.find("bash scripts/generate-settings.sh")
     first_frontend_build_pos = workflow.find("cd frontend && pnpm run build")
     frontend_check_pos = workflow.find("pnpm run check")
-    release_generate_pos = release_workflow.find("bash scripts/generate-settings.sh")
-    release_frontend_check_pos = release_workflow.find("pnpm run check")
+    release_gate_pos = release_workflow.find("run: just test")
 
     assert generate_pos != -1
     assert first_frontend_build_pos != -1
     assert frontend_check_pos != -1
-    assert release_generate_pos != -1
-    assert release_frontend_check_pos != -1
+    assert release_gate_pos != -1
+    assert "test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings" in just
+    assert "pnpm run check" in just
     assert generate_pos < first_frontend_build_pos
     assert generate_pos < frontend_check_pos
-    assert release_generate_pos < release_frontend_check_pos
     assert "bash scripts/generate-settings.sh" in just
     assert "dev-frontend: _pnpm-install _generate-settings" in just
     assert 'build-ui profile="debug": _pnpm-install _generate-settings' in just

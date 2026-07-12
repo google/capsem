@@ -597,7 +597,7 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
     assert "vm-assets-" not in workflow
     assert "assets/current" not in workflow
     assert """echo '{"releases":{}}'""" not in workflow
-    assert "Create stub v2 asset manifest for unit tests" in workflow
+    assert "Complete canonical release gate (just test)" in workflow
     assert "just build-kernel" not in workflow
     assert "just build-rootfs" not in workflow
     assert "RELEASE_CHANNEL: ${{ inputs.channel }}" in workflow
