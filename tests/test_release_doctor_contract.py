@@ -1241,9 +1241,11 @@ def test_binary_release_runs_complete_canonical_gate_in_ci() -> None:
 
     assert "matrix.os" in gate
     assert "os: macos" in gate
-    assert "runner: macos-14" in gate
+    assert 'runner: \'["self-hosted","macOS","ARM64","capsem-release"]\'' in gate
+    assert "fromJSON(matrix.runner)" in gate
+    assert "runner: macos-14" not in gate
     assert "os: linux" in gate
-    assert "runner: ubuntu-24.04" in gate
+    assert 'runner: \'["ubuntu-24.04"]\'' in gate
     assert "fail-fast: false" in gate
     assert "extractions/setup-just@v3" in gate
     assert "Enable KVM" in gate

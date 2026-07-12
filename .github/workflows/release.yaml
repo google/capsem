@@ -115,10 +115,13 @@ jobs:
       matrix:
         include:
           - os: macos
-            runner: macos-14
+            # Capsem and Docker both require Virtualization.framework. GitHub-
+            # hosted macOS runners do not support nested virtualization, so a
+            # physical Apple-silicon release runner is mandatory.
+            runner: '["self-hosted","macOS","ARM64","capsem-release"]'
           - os: linux
-            runner: ubuntu-24.04
-    runs-on: ${{ matrix.runner }}
+            runner: '["ubuntu-24.04"]'
+    runs-on: ${{ fromJSON(matrix.runner) }}
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v5

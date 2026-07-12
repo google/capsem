@@ -17,6 +17,12 @@ on both macOS and Linux, in parallel inside the same globally serialized
 release workflow, before any package build, GitHub Release creation, channel
 assembly, or deployment may proceed.
 
+The macOS gate requires a physical Apple-silicon self-hosted runner labeled
+`self-hosted`, `macOS`, `ARM64`, and `capsem-release`. GitHub-hosted macOS
+runners cannot provide the nested Virtualization.framework access required by
+Capsem and Colima. Never change the gate back to a hosted macOS runner or bypass
+the missing physical runner.
+
 - Never replace `just test` with a hand-picked subset, a coverage-only job, or
   a faster release-specific approximation.
 - Never treat a local run, a prior tag/commit's green run, or an agent's claim

@@ -29,6 +29,12 @@ depend on both current-release OS gates. Do not inline a selected list of stages
 into the workflow: call `just test` so additions to the canonical gate
 automatically become mandatory for every release.
 
+The macOS matrix entry must target a physical Apple-silicon self-hosted runner
+labeled `self-hosted`, `macOS`, `ARM64`, and `capsem-release`. GitHub-hosted
+macOS runners do not support the nested Virtualization.framework access needed
+by both Capsem VM tests and Colima. A missing physical runner blocks the release;
+it never authorizes a hosted-runner fallback or a reduced gate.
+
 Run `just test` exactly once per operating system in the release workflow; do
 not duplicate the canonical gate after packaging. Both macOS and Linux must
 then install their exact publishable native packages, including their real

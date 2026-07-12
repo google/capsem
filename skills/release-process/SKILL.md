@@ -22,6 +22,12 @@ substitute a partial Rust/frontend/coverage job, a previous green commit, or a
 local agent-run gate. CI is authoritative because agent-reported local evidence
 is not trusted release proof.
 
+The macOS gate runs on a physical Apple-silicon self-hosted runner carrying the
+labels `self-hosted`, `macOS`, `ARM64`, and `capsem-release`. GitHub-hosted
+macOS runners cannot expose the nested Virtualization.framework support Capsem
+and Colima require. If that runner is unavailable, the release is blocked; do
+not fall back to hosted macOS or reduce the gate.
+
 `just test` includes Winterfell/MCP persistence, the four-VM concurrency
 canary, IronBank, integration and injection, benchmarks, cross-compilation, and
 Docker/systemd install tests. Run it exactly once per operating system in the
