@@ -1,10 +1,8 @@
-version: 1.5.1783867436
+version: 1.5.1783869563
 ---
 ### Fixed
-- Kept one complete canonical `just test` release gate on Linux, then fanned
-  the exact macOS and Linux package build/install jobs out only after it passed.
-- Explicitly documented the temporary absence of macOS full-gate coverage:
-  GitHub-hosted macOS lacks the nested virtualization required by Capsem and
-  Colima, and the repository has no physical macOS runner. The signed,
-  notarized exact `.pkg` install remains release-blocking, and the parallel
-  macOS full gate is restored when physical runner capacity exists.
+- Installed the complete Linux GTK, GLib, WebKit, SSL, musl, pkg-config, X11,
+  and virtual-display prerequisites before the canonical release `just test`
+  gate, so its full-workspace Clippy and application compilation execute on a
+  clean GitHub runner instead of failing after 33 minutes on missing
+  `glib-2.0.pc`.

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1783869563] - 2026-07-12
+
+### Fixed
+- Installed the complete Linux GTK, GLib, WebKit, SSL, musl, pkg-config, X11,
+  and virtual-display prerequisites before the canonical release `just test`
+  gate, so its full-workspace Clippy and application compilation execute on a
+  clean GitHub runner instead of failing after 33 minutes on missing
+  `glib-2.0.pc`.
+
 ## [1.5.1783867436] - 2026-07-12
 
 ### Fixed

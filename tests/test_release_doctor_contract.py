@@ -1247,6 +1247,13 @@ def test_binary_release_runs_complete_canonical_gate_in_ci() -> None:
     assert "runs-on: ubuntu-24.04" in gate
     assert "strategy:" not in gate
     assert "extractions/setup-just@v3" in gate
+    assert "Install Linux full-gate system dependencies" in gate
+    assert "libglib2.0-dev" in gate
+    assert "libwebkit2gtk-4.1-dev" in gate
+    assert "musl-tools" in gate
+    assert gate.index("Install Linux full-gate system dependencies") < gate.index(
+        "Complete canonical release gate (just test)"
+    )
     assert "Enable KVM" in gate
     assert "Start Docker on macOS" not in gate
     assert "just test" in gate
