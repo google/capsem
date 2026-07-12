@@ -1,6 +1,6 @@
-version: 1.5.1783827911
+version: 1.5.1783836598
 ---
 ### Fixed
-- Kept the full-workspace release Clippy gate clean on Rust 1.97 by using a
-  byte string in the large-body MITM integration fixture and `Option::filter`
-  for absent audit TTY values.
+- Reused one generation timestamp across stable and nightly binary-channel
+  assembly so the rendered release index and per-channel health records cannot
+  drift by a second and block an otherwise valid release.
