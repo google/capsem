@@ -30,6 +30,7 @@ import shlex
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -56,6 +57,24 @@ def _integration_home() -> Path:
 
 
 INTEGRATION_HOME = _integration_home()
+
+
+def _integration_runtime_root() -> Path:
+    """Return a short, process-scoped runtime root.
+
+    Unix-domain socket paths are limited to 107 bytes on Linux. Keep the run
+    directory and its sibling session index under a short temporary root while
+    CAPSEM_HOME keeps test config and credentials isolated under the checkout.
+    """
+    if env := os.environ.get("CAPSEM_INTEGRATION_RUNTIME_ROOT"):
+        return Path(env)
+    return Path(tempfile.gettempdir()) / (
+        f"capsem-integration-{os.getuid()}-{os.getpid()}"
+    )
+
+
+INTEGRATION_RUNTIME_ROOT = _integration_runtime_root()
+INTEGRATION_RUN_DIR = INTEGRATION_RUNTIME_ROOT / "run"
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -85,10 +104,10 @@ def _run_dir() -> Path:
 
 
 CAPSEM_HOME = INTEGRATION_HOME
-SESSIONS_DIR = INTEGRATION_HOME / "run" / "sessions"
-MAIN_DB = INTEGRATION_HOME / "sessions" / "main.db"
-SERVICE_SOCKET = INTEGRATION_HOME / "run" / "service.sock"
-SERVICE_PIDFILE = INTEGRATION_HOME / "run" / "service.pid"
+SESSIONS_DIR = INTEGRATION_RUN_DIR / "sessions"
+MAIN_DB = INTEGRATION_RUNTIME_ROOT / "sessions" / "main.db"
+SERVICE_SOCKET = INTEGRATION_RUN_DIR / "service.sock"
+SERVICE_PIDFILE = INTEGRATION_RUN_DIR / "service.pid"
 
 
 def default_materialized_profiles_dir() -> str:
@@ -118,7 +137,7 @@ def _integration_runtime_env() -> dict[str, str]:
     """Pin every integration subprocess to the same home and run directory."""
     return {
         "CAPSEM_HOME": str(INTEGRATION_HOME),
-        "CAPSEM_RUN_DIR": str(INTEGRATION_HOME / "run"),
+        "CAPSEM_RUN_DIR": str(INTEGRATION_RUN_DIR),
     }
 
 
@@ -303,6 +322,7 @@ def _start_service_with_test_config(
     test_home = INTEGRATION_HOME
     test_home.mkdir(parents=True, exist_ok=True)
     SERVICE_PIDFILE.parent.mkdir(parents=True, exist_ok=True)
+    SERVICE_SOCKET.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(project_root / settings_config, test_home / "settings.toml")
 
     env = {
@@ -311,7 +331,9 @@ def _start_service_with_test_config(
         **_test_isolation_env(),
         **_integration_runtime_env(),
         "CAPSEM_CORP_CONFIG": str(project_root / corp_config),
-        "RUST_LOG": "capsem=info",
+        # Include every Capsem crate target (capsem_process, capsem_core, ...)
+        # while retaining the verifier's INFO+ / no DEBUG contract.
+        "RUST_LOG": "info",
     }
 
     log_path = project_root / "target/integration-test-service.log"

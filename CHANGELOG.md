@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Kept the integration release gate hermetic in long checkout paths by using a
+  short process-scoped runtime root for Unix sockets, sessions, and the logger
+  index while preserving isolated config and credential state.
 - Stopped duplicate full CI runs when a release commit lands on `main`; pull
   requests remain merge-gated and one explicitly dispatched, globally
   serialized workflow now releases a single requested stable or nightly

@@ -27,18 +27,23 @@ def test_integration_script_service_paths_use_process_scoped_isolated_home():
         module.PROJECT_ROOT / "target" / f"integration-capsem-home-{os.getpid()}"
     )
     assert module.CAPSEM_HOME == module.INTEGRATION_HOME
-    assert module.SERVICE_SOCKET == module.INTEGRATION_HOME / "run" / "service.sock"
-    assert module.SESSIONS_DIR == module.INTEGRATION_HOME / "run" / "sessions"
-    assert module.MAIN_DB == module.INTEGRATION_HOME / "sessions" / "main.db"
+    assert module.INTEGRATION_RUNTIME_ROOT.name == f"capsem-integration-{os.getuid()}-{os.getpid()}"
+    assert module.INTEGRATION_RUN_DIR == module.INTEGRATION_RUNTIME_ROOT / "run"
+    assert module.SERVICE_SOCKET == module.INTEGRATION_RUN_DIR / "service.sock"
+    assert module.SESSIONS_DIR == module.INTEGRATION_RUN_DIR / "sessions"
+    assert module.MAIN_DB == module.INTEGRATION_RUNTIME_ROOT / "sessions" / "main.db"
+    assert len(os.fsencode(module.SERVICE_SOCKET)) < 108
 
 
 def test_integration_script_honors_explicit_home_override(tmp_path, monkeypatch):
     monkeypatch.setenv("CAPSEM_INTEGRATION_HOME", str(tmp_path / "integration-home"))
+    monkeypatch.setenv("CAPSEM_INTEGRATION_RUNTIME_ROOT", str(tmp_path / "runtime-root"))
 
     module = load_integration_script()
 
     assert module.INTEGRATION_HOME == tmp_path / "integration-home"
-    assert module.SERVICE_SOCKET == module.INTEGRATION_HOME / "run" / "service.sock"
+    assert module.INTEGRATION_RUNTIME_ROOT == tmp_path / "runtime-root"
+    assert module.SERVICE_SOCKET == module.INTEGRATION_RUN_DIR / "service.sock"
 
 
 def test_integration_script_uses_isolated_credential_broker_store():
@@ -157,6 +162,7 @@ def test_start_service_creates_run_dir_before_pidfile(tmp_path, monkeypatch):
 
     assert module.SERVICE_PIDFILE.read_text() == "424242"
     assert captured["env"]["CAPSEM_HOME"] == str(module.INTEGRATION_HOME)
-    assert captured["env"]["CAPSEM_RUN_DIR"] == str(module.INTEGRATION_HOME / "run")
+    assert captured["env"]["CAPSEM_RUN_DIR"] == str(module.INTEGRATION_RUN_DIR)
+    assert captured["env"]["RUST_LOG"] == "info"
     assert "--uds-path" in captured["args"]
     assert captured["args"][captured["args"].index("--uds-path") + 1] == str(module.SERVICE_SOCKET)
