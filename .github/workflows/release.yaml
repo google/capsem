@@ -944,8 +944,10 @@ jobs:
           set -euo pipefail
           echo "Docker smoke: curl -fsSL https://capsem.org/install.sh | sh"
           uv run python3 scripts/check-public-binary-release.py \
-            --channel stable \
+            --channel "$RELEASE_CHANNEL" \
             --manifest-url "$ASSET_MANIFEST_URL" \
+            --stable-manifest-url https://release.capsem.org/assets/stable/manifest.json \
+            --nightly-manifest-url https://release.capsem.org/assets/nightly/manifest.json \
             --install-script-url https://capsem.org/install.sh \
             --site-url https://capsem.org/ \
             --work-dir /tmp/public-binary-release \

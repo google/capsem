@@ -1,5 +1,7 @@
-version: 1.5.1783860519
+version: 1.5.1783863607
 ---
 ### Fixed
-- Published a distinct nightly binary version through the same serialized,
-  channel-parameterized release rail used by stable.
+- Kept the post-deploy binary verifier anchored to the public stable installer
+  while validating the selected stable or nightly package manifest, so nightly
+  releases prove stable-to-nightly-to-stable switching instead of treating the
+  nightly manifest as the initial stable origin.

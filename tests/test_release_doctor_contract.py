@@ -1859,7 +1859,15 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     assert "asset URLs are unreachable or hash-mismatched" in verify_downloads
     assert 'code=$(curl -sIL -o /dev/null -w "%{http_code}" "$url")' in verify_downloads
     assert "scripts/check-public-binary-release.py" in verify_downloads
-    assert "--channel stable" in verify_downloads
+    assert '--channel "$RELEASE_CHANNEL"' in verify_downloads
+    assert (
+        "--stable-manifest-url "
+        "https://release.capsem.org/assets/stable/manifest.json"
+    ) in verify_downloads
+    assert (
+        "--nightly-manifest-url "
+        "https://release.capsem.org/assets/nightly/manifest.json"
+    ) in verify_downloads
     assert '--manifest-url "$ASSET_MANIFEST_URL"' in verify_downloads
     assert "--install-script-url https://capsem.org/install.sh" in verify_downloads
     assert "--docker-linux-install" in verify_downloads

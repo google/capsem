@@ -390,14 +390,77 @@ def test_release_workflow_runs_public_package_gate_and_docker_install() -> None:
     verify_downloads = workflow.split("  verify-release-downloads:", maxsplit=1)[1]
 
     assert "scripts/check-public-binary-release.py" in verify_downloads
-    assert "--channel stable" in verify_downloads
+    assert '--channel "$RELEASE_CHANNEL"' in verify_downloads
     assert "--manifest-url \"$ASSET_MANIFEST_URL\"" in verify_downloads
+    assert (
+        "--stable-manifest-url "
+        "https://release.capsem.org/assets/stable/manifest.json"
+    ) in verify_downloads
+    assert (
+        "--nightly-manifest-url "
+        "https://release.capsem.org/assets/nightly/manifest.json"
+    ) in verify_downloads
     assert "--install-script-url https://capsem.org/install.sh" in verify_downloads
     assert "--site-url https://capsem.org/" in verify_downloads
     assert "--docker-linux-install" in verify_downloads
     assert "--docker-channel-switch" in verify_downloads
     assert "--docker-upgrade" in verify_downloads
     assert "curl -fsSL https://capsem.org/install.sh | sh" in verify_downloads
+
+
+def test_public_binary_release_gate_keeps_public_installer_default_on_stable() -> None:
+    gate = _load_release_gate()
+
+    failures = gate.check_install_script_defaults(
+        '\n'.join(
+            (
+                'CAPSEM_CHANNEL="${CAPSEM_CHANNEL:-stable}"',
+                'CAPSEM_RELEASE_BASE_URL="${CAPSEM_RELEASE_BASE_URL:-https://release.capsem.org}"',
+                '/assets/${CAPSEM_CHANNEL}/manifest.json',
+            )
+        ),
+        release_base_url="https://release.capsem.org",
+    )
+
+    assert failures == []
+
+
+def test_public_binary_release_gate_switches_stable_to_nightly_and_back(
+    monkeypatch,
+) -> None:
+    gate = _load_release_gate()
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(gate.shutil, "which", lambda _name: "/usr/bin/docker")
+
+    def capture_run(args, **_kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0)
+
+    monkeypatch.setattr(gate.subprocess, "run", capture_run)
+    stable = "https://release.capsem.org/assets/stable/manifest.json"
+    nightly = "https://release.capsem.org/assets/nightly/manifest.json"
+
+    gate.run_docker_install_smoke(
+        release_base_url="https://release.capsem.org",
+        install_script_url="https://capsem.org/install.sh",
+        stable_manifest_url=stable,
+        nightly_manifest_url=nightly,
+        channel_switch=True,
+        upgrade=True,
+        docker_image="ubuntu:24.04",
+    )
+
+    script = calls[0][7]
+    assert "CAPSEM_CHANNEL=stable" in script
+    initial_stable = script.index(f"grep -F {stable}")
+    switch_nightly = script.index(f"update --assets --manifest {nightly}")
+    verify_nightly = script.index(f"grep -F {nightly}", switch_nightly)
+    switch_stable = script.index(f"update --assets --manifest {stable}", verify_nightly)
+    verify_stable = script.index(f"grep -F {stable}", switch_stable)
+    upgrade_nightly = script.index(f"CAPSEM_RELEASE_MANIFEST_URL={nightly}")
+    assert initial_stable < switch_nightly < verify_nightly < switch_stable
+    assert switch_stable < verify_stable < upgrade_nightly
 
 
 def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> None:

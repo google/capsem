@@ -98,12 +98,16 @@ def main() -> int:
         action="store_true",
         help="After Docker install, run the binary updater against the nightly manifest URL.",
     )
+    parser.add_argument("--stable-manifest-url")
     parser.add_argument("--nightly-manifest-url")
     parser.add_argument("--docker-image", default="ubuntu:24.04")
     args = parser.parse_args()
 
     manifest_url = args.manifest_url or (
         f"{args.release_base_url.rstrip('/')}/assets/{args.channel}/manifest.json"
+    )
+    stable_manifest_url = args.stable_manifest_url or (
+        f"{args.release_base_url.rstrip('/')}/assets/stable/manifest.json"
     )
     nightly_manifest_url = args.nightly_manifest_url or (
         f"{args.release_base_url.rstrip('/')}/assets/nightly/manifest.json"
@@ -116,7 +120,6 @@ def main() -> int:
         failures.extend(
             check_install_script_defaults(
                 install_script,
-                channel=args.channel,
                 release_base_url=args.release_base_url,
             )
         )
@@ -125,7 +128,7 @@ def main() -> int:
                 check_public_site_download_links(
                     fetch_text(args.site_url),
                     site_url=args.site_url,
-                    channel=args.channel,
+                    channel="stable",
                     release_base_url=args.release_base_url,
                 )
             )
@@ -156,10 +159,9 @@ def main() -> int:
 
             if args.docker_linux_install:
                 run_docker_install_smoke(
-                    channel=args.channel,
                     release_base_url=args.release_base_url,
                     install_script_url=args.install_script_url,
-                    stable_manifest_url=manifest_url,
+                    stable_manifest_url=stable_manifest_url,
                     nightly_manifest_url=nightly_manifest_url,
                     channel_switch=args.docker_channel_switch,
                     upgrade=args.docker_upgrade,
@@ -185,12 +187,11 @@ def main() -> int:
 def check_install_script_defaults(
     script: str,
     *,
-    channel: str,
     release_base_url: str,
 ) -> list[str]:
     failures: list[str] = []
-    if f'CAPSEM_CHANNEL="${{CAPSEM_CHANNEL:-{channel}}}"' not in script:
-        failures.append(f"install.sh does not default CAPSEM_CHANNEL to {channel}")
+    if 'CAPSEM_CHANNEL="${CAPSEM_CHANNEL:-stable}"' not in script:
+        failures.append("install.sh does not default CAPSEM_CHANNEL to stable")
     if (
         f'CAPSEM_RELEASE_BASE_URL="${{CAPSEM_RELEASE_BASE_URL:-{release_base_url}}}"'
         not in script
@@ -700,7 +701,6 @@ def sbom_file_hashes(sbom: dict[str, Any]) -> set[tuple[str, str]]:
 
 def run_docker_install_smoke(
     *,
-    channel: str,
     release_base_url: str,
     install_script_url: str,
     stable_manifest_url: str,
@@ -713,7 +713,7 @@ def run_docker_install_smoke(
         raise OSError("docker is required for --docker-linux-install")
     install_pipeline = (
         f"curl -fsSL {shlex.quote(install_script_url)} | "
-        f"CAPSEM_CHANNEL={shlex.quote(channel)} "
+        "CAPSEM_CHANNEL=stable "
         f"CAPSEM_RELEASE_BASE_URL={shlex.quote(release_base_url)} sh"
     )
     helper_checks = " ".join(
