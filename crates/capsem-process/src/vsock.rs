@@ -915,14 +915,7 @@ fn dispatch_aux_connection(
                 };
                 if let Ok(GuestToHost::ExecStarted { id }) = read_control_msg(&mut file) {
                     info!(id, "exec port: received ExecStarted");
-                    let mut local_buf = Vec::new();
-                    let mut read_buf = [0u8; 8192];
-                    loop {
-                        match std::io::Read::read(&mut file, &mut read_buf) {
-                            Ok(0) | Err(_) => break,
-                            Ok(n) => local_buf.extend_from_slice(&read_buf[..n]),
-                        }
-                    }
+                    let local_buf = read_exec_output(&mut file);
                     // Deposit captured bytes and signal ExecDone it can
                     // proceed. notify_one stores a permit if ExecDone is
                     // not yet parked, so the common "deposit finishes
@@ -1062,6 +1055,25 @@ fn dispatch_aux_connection(
             );
         }
     }
+}
+
+/// Drain one exec-output stream through EOF.
+///
+/// Signals can interrupt a blocking socket read. `Interrupted` is not EOF:
+/// treating it as completion publishes an empty/partial buffer before the
+/// guest's `ExecDone`, while still returning the child's successful exit code.
+fn read_exec_output(reader: &mut impl std::io::Read) -> Vec<u8> {
+    let mut output = Vec::new();
+    let mut read_buf = [0u8; 8192];
+    loop {
+        match reader.read(&mut read_buf) {
+            Ok(0) => break,
+            Ok(n) => output.extend_from_slice(&read_buf[..n]),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+    output
 }
 
 /// Persistent DNS query handler over the vsock DNS port (T3.2).

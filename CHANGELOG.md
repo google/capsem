@@ -13,6 +13,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   proves the container-owned uv environment can launch pytest early while the
   complete Docker/systemd package install E2E remains mandatory later.
 
+### Fixed
+- Made the host exec-output transport retry interrupted socket reads instead
+  of publishing an empty or partial buffer with the guest command's successful
+  exit code. This prevents release replays from losing output emitted at
+  process exit while preserving the real exit status.
+
 ## [1.5.1783890062] - 2026-07-12
 
 ### Fixed

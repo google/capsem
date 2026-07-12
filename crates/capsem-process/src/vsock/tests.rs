@@ -1,5 +1,33 @@
 use super::*;
 
+struct InterruptedThenData {
+    interrupted: bool,
+    data: std::io::Cursor<Vec<u8>>,
+}
+
+impl std::io::Read for InterruptedThenData {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        if !self.interrupted {
+            self.interrupted = true;
+            return Err(std::io::Error::from(std::io::ErrorKind::Interrupted));
+        }
+        self.data.read(buffer)
+    }
+}
+
+#[test]
+fn exec_output_read_retries_interrupted_socket_reads() {
+    let mut reader = InterruptedThenData {
+        interrupted: false,
+        data: std::io::Cursor::new(b"IRONBANK_CLIENT_RESULT={\"ok\":true}\n".to_vec()),
+    };
+
+    assert_eq!(
+        read_exec_output(&mut reader),
+        b"IRONBANK_CLIENT_RESULT={\"ok\":true}\n"
+    );
+}
+
 // -----------------------------------------------------------------------
 // Vsock port classification
 // -----------------------------------------------------------------------
