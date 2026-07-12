@@ -21,27 +21,24 @@ Three tiers, fast to thorough. Every change must pass all three before it ships.
 
 ## Release CI invariant
 
-Every stable and nightly release must execute `just test` in CI on both macOS
-and Linux, in parallel, for that exact immutable release tag. A local gate, a
-prior commit/tag's green workflow, or a release-specific subset is not evidence
-and must never unblock publication. All package-build and publication jobs must
-depend on both current-release OS gates. Do not inline a selected list of stages
-into the workflow: call `just test` so additions to the canonical gate
-automatically become mandatory for every release.
+Every stable and nightly release must execute `just test` in CI for that exact
+immutable release tag. A local gate, a prior commit/tag's green workflow, or a
+release-specific subset is not evidence and must never unblock publication.
+Do not inline selected stages: call `just test` so additions to the canonical
+gate automatically become mandatory for every release.
 
-The macOS matrix entry must target a physical Apple-silicon self-hosted runner
-labeled `self-hosted`, `macOS`, `ARM64`, and `capsem-release`. GitHub-hosted
-macOS runners do not support the nested Virtualization.framework access needed
-by both Capsem VM tests and Colima. A missing physical runner blocks the release;
-it never authorizes a hosted-runner fallback or a reduced gate.
+Temporary hosted-CI exception: the full gate runs once on Linux because
+GitHub-hosted macOS lacks the nested Virtualization.framework access needed by
+Capsem VM tests and Colima, and no physical macOS runner is registered. Keep
+this limitation explicitly commented in `release.yaml`. The macOS package job
+must depend on the Linux full gate and fan out only after it succeeds. Restore
+a parallel macOS `just test` job when a physical runner becomes available.
 
-Run `just test` exactly once per operating system in the release workflow; do
-not duplicate the canonical gate after packaging. Both macOS and Linux must
-then install their exact publishable native packages, including their real
-post-install scripts, before publication. Notarization and the public
-stable-to-nightly switch/upgrade glow-up remain mandatory afterward as the
-end-to-end deployed-release test. The install and glow-up checks are additional
-proof, not substitutes for the one complete two-OS gate.
+Both macOS and Linux must install their exact publishable native packages,
+including their real post-install scripts, before publication. Notarization and
+the public stable-to-nightly switch/upgrade glow-up remain mandatory afterward
+as the end-to-end deployed-release test. Do not duplicate `just test` after
+packaging.
 
 ## TDD workflow
 

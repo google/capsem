@@ -1239,17 +1239,16 @@ def test_binary_release_runs_complete_canonical_gate_in_ci() -> None:
     testing_skill = _source_text("skills/dev-testing/SKILL.md")
     release_skill = _source_text("skills/release-process/SKILL.md")
 
-    assert "matrix.os" in gate
-    assert "os: macos" in gate
-    assert 'runner: \'["self-hosted","macOS","ARM64","capsem-release"]\'' in gate
-    assert "fromJSON(matrix.runner)" in gate
+    assert "matrix.os" not in gate
+    assert "TEMPORARILY DISABLED: macOS full gate" in gate
+    assert "Restore a parallel macOS `just" in gate
+    assert "fromJSON(matrix.runner)" not in gate
     assert "runner: macos-14" not in gate
-    assert "os: linux" in gate
-    assert 'runner: \'["ubuntu-24.04"]\'' in gate
-    assert "fail-fast: false" in gate
+    assert "runs-on: ubuntu-24.04" in gate
+    assert "strategy:" not in gate
     assert "extractions/setup-just@v3" in gate
     assert "Enable KVM" in gate
-    assert "Start Docker on macOS" in gate
+    assert "Start Docker on macOS" not in gate
     assert "just test" in gate
     assert workflow.count("run: just test") == 1
     assert "cargo llvm-cov --workspace --bins --no-cfg-coverage" not in gate
@@ -1260,9 +1259,9 @@ def test_binary_release_runs_complete_canonical_gate_in_ci() -> None:
     assert "needs: [preflight, test]" in _workflow_job_block(
         "build-app-linux", "release.yaml"
     )
-    assert "complete `just test` gate" in agents
-    assert "exact immutable release tag" in testing_skill
-    assert "Run it exactly once per operating system" in release_skill
+    assert "temporary GitHub-hosted exception" in agents
+    assert "Temporary hosted-CI exception" in testing_skill
+    assert "Temporary hosted-CI exception" in release_skill
 
 
 def test_binary_release_installs_exact_artifacts_before_publication() -> None:

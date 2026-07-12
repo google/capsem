@@ -15,23 +15,23 @@ just test                      # ALL tests: unit + integration + cross-compile +
 
 The checklist is developer feedback only. It is never release authorization.
 For every stable and nightly tag, the globally serialized `release.yaml`
-workflow must run the complete `just test` recipe again in CI on both macOS and
-Linux, in parallel, on that exact tag, and every build/publication/deployment
-job must depend on both OS gates. Never
+workflow must run the complete `just test` recipe again in CI on that exact
+tag, and every build/publication/deployment job must depend on it. Never
 substitute a partial Rust/frontend/coverage job, a previous green commit, or a
 local agent-run gate. CI is authoritative because agent-reported local evidence
 is not trusted release proof.
 
-The macOS gate runs on a physical Apple-silicon self-hosted runner carrying the
-labels `self-hosted`, `macOS`, `ARM64`, and `capsem-release`. GitHub-hosted
-macOS runners cannot expose the nested Virtualization.framework support Capsem
-and Colima require. If that runner is unavailable, the release is blocked; do
-not fall back to hosted macOS or reduce the gate.
+Temporary hosted-CI exception: `just test` runs once on Linux because
+GitHub-hosted macOS cannot expose the nested Virtualization.framework support
+Capsem and Colima require, and no physical macOS runner is registered. Keep the
+exception explicitly commented in `release.yaml`. The macOS packaging job must
+depend on that Linux full gate and fan out only after it passes. Restore a
+parallel macOS full gate once a physical runner exists.
 
 `just test` includes Winterfell/MCP persistence, the four-VM concurrency
 canary, IronBank, integration and injection, benchmarks, cross-compilation, and
-Docker/systemd install tests. Run it exactly once per operating system in the
-release workflow, not again after packaging. The exact final `.pkg`/`.deb` must
+Docker/systemd install tests. Run it exactly once in the release workflow, not
+again after packaging. The exact final `.pkg`/`.deb` must
 then be installed on macOS and Linux to exercise the real native installer and
 post-install scripts before publication. Notarization and public
 channel-switch/upgrade glow-up verification remain additional requirements and

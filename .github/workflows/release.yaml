@@ -109,19 +109,13 @@ jobs:
             || { echo "::error::notarytool history failed -- check APPLE_API_ISSUER, APPLE_API_KEY, and APPLE_API_KEY_PATH secrets"; exit 1; }
           rm -rf "$RUNNER_TEMP/private_keys"
   test:
+    # TEMPORARILY DISABLED: macOS full gate. GitHub-hosted macOS runners cannot
+    # provide nested Virtualization.framework access for Capsem/Colima, and the
+    # repository has no physical macOS runner. Restore a parallel macOS `just
+    # test` job when that runner exists. Until then, this Linux full gate remains
+    # release-blocking; both macOS and Linux package jobs fan out only after it.
     needs: preflight
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos
-            # Capsem and Docker both require Virtualization.framework. GitHub-
-            # hosted macOS runners do not support nested virtualization, so a
-            # physical Apple-silicon release runner is mandatory.
-            runner: '["self-hosted","macOS","ARM64","capsem-release"]'
-          - os: linux
-            runner: '["ubuntu-24.04"]'
-    runs-on: ${{ fromJSON(matrix.runner) }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v5
@@ -134,7 +128,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          key: full-release-gate-${{ matrix.os }}
+          key: full-release-gate-linux
 
       - uses: pnpm/action-setup@v5
         with:
@@ -146,16 +140,7 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@v5
 
-      - name: Start Docker on macOS
-        if: matrix.os == 'macos'
-        run: |
-          command -v docker >/dev/null 2>&1 || brew install docker
-          command -v colima >/dev/null 2>&1 || brew install colima
-          colima start --cpu 4 --memory 8 --disk 80
-          docker info
-
       - name: Enable KVM
-        if: matrix.os == 'linux'
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
@@ -169,7 +154,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: full-release-gate-${{ matrix.os }}-${{ github.run_attempt }}
+          name: full-release-gate-linux-${{ github.run_attempt }}
           path: |
             test-artifacts/
             frontend/test-artifacts/

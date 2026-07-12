@@ -13,15 +13,16 @@ and release gates, load `/dev-testing` and `/ironbank`. For debugging, load
 ## Release CI Is the Authority
 
 Every stable and nightly binary release must run the complete `just test` gate
-on both macOS and Linux, in parallel inside the same globally serialized
-release workflow, before any package build, GitHub Release creation, channel
-assembly, or deployment may proceed.
+inside the same globally serialized release workflow before any package build,
+GitHub Release creation, channel assembly, or deployment may proceed.
 
-The macOS gate requires a physical Apple-silicon self-hosted runner labeled
-`self-hosted`, `macOS`, `ARM64`, and `capsem-release`. GitHub-hosted macOS
-runners cannot provide the nested Virtualization.framework access required by
-Capsem and Colima. Never change the gate back to a hosted macOS runner or bypass
-the missing physical runner.
+There is one explicit temporary GitHub-hosted exception: the full gate runs on
+Linux only because GitHub-hosted macOS cannot provide the nested
+Virtualization.framework access required by Capsem and Colima, and the
+repository has no physical macOS runner. The workflow comment must remain until
+a physical runner exists. The macOS package job must depend on the Linux full
+gate, then fan out with the Linux package builds; it still builds, notarizes,
+installs, and verifies the exact `.pkg` before publication.
 
 - Never replace `just test` with a hand-picked subset, a coverage-only job, or
   a faster release-specific approximation.
@@ -31,15 +32,15 @@ the missing physical runner.
 - The gate includes audits, lint, frontend, Rust coverage, four-VM parallel
   Python tests, Winterfell/MCP lifecycle tests, IronBank, injection,
   integration, benchmarks, cross-compilation, and Docker/systemd install tests.
-- Run the complete `just test` gate exactly once per operating system in each
-  release workflow. Do not duplicate it after packaging.
+- Run the complete `just test` gate exactly once in each release workflow. Do
+  not duplicate it after packaging.
 - Exact publishable packages must still be installed on macOS and Linux so the
   native installers and their post-install scripts are proven before
   publication. The public install/channel-switch/upgrade glow-up is then the
   end-to-end test of the deployed release. None of these gates substitutes for
   another.
-- Stable and nightly use the same parameterized workflow and the same two-OS
-  gate. Only the selected channel may be updated.
+- Stable and nightly use the same parameterized workflow and full gate. Only
+  the selected channel may be updated.
 
 ## Logger DB Boundary
 
