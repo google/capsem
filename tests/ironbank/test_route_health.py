@@ -336,18 +336,15 @@ def _assert_timing_budget(
         f"gateway_cpu={timing.gateway_cpu_s if timing.gateway_cpu_s is not None else 'n/a'}"
     )
     assert timing.p95_ms <= p95_ms, (
-        f"{timing.label} p95={timing.p95_ms:.1f}ms > {p95_ms}ms; "
-        f"samples={timing.samples_ms}"
+        f"{timing.label} p95={timing.p95_ms:.1f}ms > {p95_ms}ms; samples={timing.samples_ms}"
     )
     if p99_ms is not None:
         assert timing.p99_ms <= p99_ms, (
-            f"{timing.label} p99={timing.p99_ms:.1f}ms > {p99_ms}ms; "
-            f"samples={timing.samples_ms}"
+            f"{timing.label} p99={timing.p99_ms:.1f}ms > {p99_ms}ms; samples={timing.samples_ms}"
         )
     if max_ms is not None:
         assert timing.max_ms <= max_ms, (
-            f"{timing.label} max={timing.max_ms:.1f}ms > {max_ms}ms; "
-            f"samples={timing.samples_ms}"
+            f"{timing.label} max={timing.max_ms:.1f}ms > {max_ms}ms; samples={timing.samples_ms}"
         )
     # psutil reports process CPU from OS accounting ticks. On Linux that is
     # commonly 10ms, so tiny debug-build budgets need one tick of slack to
@@ -370,9 +367,7 @@ def route_timing_summary(timing: RouteTiming) -> dict[str, Any]:
         "p99_ms": round(timing.p99_ms, 3),
         "max_ms": round(timing.max_ms, 3),
         "service_cpu_s": round(timing.service_cpu_s, 6),
-        "gateway_cpu_s": (
-            None if timing.gateway_cpu_s is None else round(timing.gateway_cpu_s, 6)
-        ),
+        "gateway_cpu_s": (None if timing.gateway_cpu_s is None else round(timing.gateway_cpu_s, 6)),
     }
 
 
@@ -380,9 +375,7 @@ def _is_vm_scalar_state_route(path: str) -> bool:
     if "/vms/" not in path:
         return False
     suffix = path.split("/vms/", 1)[1].split("?", 1)[0]
-    return suffix.count("/") == 1 and (
-        suffix.endswith("/status") or suffix.endswith("/info")
-    )
+    return suffix.count("/") == 1 and (suffix.endswith("/status") or suffix.endswith("/info"))
 
 
 def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float, float]:
@@ -449,8 +442,7 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
         # Gateway measurements include proxy hop jitter, but must stay
         # sub-10ms p95.
         aggregate_security = any(
-            path.endswith(marker)
-            or f"{marker}?" in path
+            path.endswith(marker) or f"{marker}?" in path
             for marker in (
                 "/security/status",
                 "/security/latest",
@@ -706,7 +698,9 @@ def _service_route_contracts() -> list[RouteContract]:
         RouteContract("GET", "/status", None, {"components", "ready", "service", "version"}, dict),
         RouteContract("GET", "/version", None, {"version"}, dict),
         RouteContract("GET", "/vms/list", None, {"sandboxes"}, dict),
-        RouteContract("POST", "/purge", {}, {"purged", "persistent_purged", "ephemeral_purged"}, dict),
+        RouteContract(
+            "POST", "/purge", {}, {"purged", "persistent_purged", "ephemeral_purged"}, dict
+        ),
         RouteContract("GET", "/profiles/list", None, {"profiles"}, dict),
         RouteContract(
             "GET",
@@ -1193,10 +1187,13 @@ def test_concurrent_route_reads_while_writes_are_active() -> None:
     route contract while Capsem is doing real service work.
     """
 
-    result = run_concurrent_route_read_write_benchmark()
-    assert len(result.writer_results) == 12
+    # Keep IronBank identical to the archived route-latency benchmark: one
+    # black-box workload and one release-blocking budget, not two drifting
+    # calibrations for the same public routes.
+    result = run_concurrent_route_read_write_benchmark(samples=160, mutation_repeats=8)
+    assert len(result.writer_results) == 24
     assert {row["action"] for row in result.writer_results} == {"allow", "ask", "block"}
-    # This overlaps 96 `/stats` reads with real profile mutation writes. Gate
+    # This overlaps 160 `/stats` reads with 24 real profile mutation writes. Gate
     # the tail on p99, matching the route-latency benchmark contract, so one
     # scheduler outlier does not fail a run whose p95 and CPU prove the route
     # stayed projection-backed.
@@ -1205,7 +1202,7 @@ def test_concurrent_route_reads_while_writes_are_active() -> None:
         p95_ms=15.0,
         p99_ms=40.0,
         max_ms=None,
-        cpu_s=0.24,
+        cpu_s=0.34,
     )
 
     assert result.final_default_action == result.writer_results[-1]["action"]
@@ -1259,8 +1256,12 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
             ("gateway", gateway_client, gateway_proc),
         ):
             for contract in (
-                RouteContract("GET", f"/vms/{source_id}/status", None, {"id", "name", "status"}, dict),
-                RouteContract("GET", f"/vms/{source_id}/info", None, {"id", "name", "status"}, dict),
+                RouteContract(
+                    "GET", f"/vms/{source_id}/status", None, {"id", "name", "status"}, dict
+                ),
+                RouteContract(
+                    "GET", f"/vms/{source_id}/info", None, {"id", "name", "status"}, dict
+                ),
                 RouteContract(
                     "GET",
                     f"/vms/{source_id}/stats/detail",

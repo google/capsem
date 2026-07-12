@@ -46,9 +46,7 @@ def _save_benchmark(category: str, data: dict) -> Path:
 def _assert_route_contention_benchmark_budget(summary: dict, gates: dict) -> None:
     assert summary["p95_ms"] <= gates["p95_ms_max"]
     assert summary["p99_ms"] <= gates["p99_ms_max"]
-    assert summary["service_cpu_s"] <= (
-        gates["service_cpu_s_max"] + CPU_ACCOUNTING_SLACK_S
-    )
+    assert summary["service_cpu_s"] <= (gates["service_cpu_s_max"] + CPU_ACCOUNTING_SLACK_S)
 
 
 def test_route_read_write_contention_benchmark() -> None:
@@ -81,10 +79,9 @@ def test_route_read_write_contention_benchmark() -> None:
             # health on p99 so one Linux scheduler stall does not hide the
             # actual route and DB contention signal.
             "p99_ms_max": 40.0,
-            # This artifact uses 160 reads plus 24 profile mutation writes,
-            # which is intentionally heavier than the Ironbank route gate
-            # (96 reads plus 12 writes). Keep a tight CPU ceiling, but leave
-            # enough room for Linux process CPU tick/accounting variance.
+            # IronBank runs this exact 160-read/24-write workload and budget so
+            # the release gate and archived benchmark cannot drift apart.
+            # Leave one Linux process CPU tick of accounting slack.
             "service_cpu_s_max": 0.34,
         },
     }

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1783882370] - 2026-07-12
+
+### Fixed
+- Unified the IronBank concurrent route-health gate with the archived
+  route-latency benchmark: both now execute 160 `/stats` reads alongside 24
+  public profile mutations and enforce the same 0.34-second service CPU ceiling.
+  This replaces the stale 96-read/12-write duplicate calibration and adds an
+  explicit proof that a 0.36-second CPU regression is rejected.
+
 ## [1.5.1783877670] - 2026-07-12
 
 ### Fixed
