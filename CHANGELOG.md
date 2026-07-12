@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1783860519] - 2026-07-12
+
+### Fixed
+- Published a distinct nightly binary version through the same serialized,
+  channel-parameterized release rail used by stable.
+
 ## [1.5.1783857731] - 2026-07-12
 
 ### Fixed
