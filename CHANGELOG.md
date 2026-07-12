@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1783872793] - 2026-07-12
+
+### Fixed
+- Loaded `vhost_vsock` and made `/dev/vhost-vsock` accessible before the Linux
+  release gate, so the complete VM and IronBank suites can boot guests on a
+  KVM-capable hosted runner instead of cascading from a root-only vsock device
+  into hundreds of fixture failures.
+
 ## [1.5.1783869563] - 2026-07-12
 
 ### Fixed

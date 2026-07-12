@@ -1,8 +1,7 @@
-version: 1.5.1783869563
+version: 1.5.1783872793
 ---
 ### Fixed
-- Installed the complete Linux GTK, GLib, WebKit, SSL, musl, pkg-config, X11,
-  and virtual-display prerequisites before the canonical release `just test`
-  gate, so its full-workspace Clippy and application compilation execute on a
-  clean GitHub runner instead of failing after 33 minutes on missing
-  `glib-2.0.pc`.
+- Loaded `vhost_vsock` and made `/dev/vhost-vsock` accessible before the Linux
+  release gate, so the complete VM and IronBank suites can boot guests on a
+  KVM-capable hosted runner instead of cascading from a root-only vsock device
+  into hundreds of fixture failures.

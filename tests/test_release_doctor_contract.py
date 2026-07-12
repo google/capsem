@@ -1255,6 +1255,9 @@ def test_binary_release_runs_complete_canonical_gate_in_ci() -> None:
         "Complete canonical release gate (just test)"
     )
     assert "Enable KVM" in gate
+    assert "sudo modprobe vhost_vsock" in gate
+    assert "sudo chmod 0666 /dev/vhost-vsock" in gate
+    assert "test -r /dev/vhost-vsock -a -w /dev/vhost-vsock" in gate
     assert "Start Docker on macOS" not in gate
     assert "just test" in gate
     assert workflow.count("run: just test") == 1

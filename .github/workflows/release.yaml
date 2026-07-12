@@ -162,6 +162,9 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
           test -r /dev/kvm -a -w /dev/kvm
+          sudo modprobe vhost_vsock
+          sudo chmod 0666 /dev/vhost-vsock
+          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
 
       - name: Complete canonical release gate (just test)
         run: just test
