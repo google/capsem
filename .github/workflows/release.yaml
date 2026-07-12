@@ -805,12 +805,14 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf target/release-channel
+          generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           for channel in $BINARY_RELEASE_CHANNELS; do
             cargo run -p capsem-admin -- assets channel build \
               --manifest "file://$PWD/target/binary-channel/$channel/manifest.json" \
               --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
               --channel "$channel" \
               --manifest-version "1.0.${{ github.run_number }}" \
+              --generated-at "$generated_at" \
               --out-dir target/release-channel
           done
 

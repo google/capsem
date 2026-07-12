@@ -1073,6 +1073,14 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "target/binary-channel/$channel/manifest.before.json" in assemble_channel
     assert "https://release.capsem.org/assets/$channel/manifest.json" in assemble_channel
     assert "for channel in $BINARY_RELEASE_CHANNELS" in assemble_channel
+    build_channels = assemble_channel.split(
+        "- name: Build release channels with existing VM assets", maxsplit=1
+    )[1].split("- name: Build release site pages", maxsplit=1)[0]
+    assert 'generated_at="$(date -u +\'%Y-%m-%dT%H:%M:%SZ\')"' in build_channels
+    assert '--generated-at "$generated_at"' in build_channels
+    assert build_channels.index('generated_at="$(date -u') < build_channels.index(
+        "for channel in $BINARY_RELEASE_CHANNELS"
+    )
     assert "Prove binary lane did not change VM assets" in assemble_channel
     assert "binary release changed VM asset metadata" in assemble_channel
     assert assemble_channel.index("Fetch current asset channel manifests") < assemble_channel.index(

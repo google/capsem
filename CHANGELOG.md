@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Reused one generation timestamp across stable and nightly binary-channel
+  assembly so the rendered release index and per-channel health records cannot
+  drift by a second and block an otherwise valid release.
+
 ## [1.5.1783827911] - 2026-07-12
 
 ### Fixed
