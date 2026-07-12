@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1783894498] - 2026-07-12
+
 ### Changed
 - Added a Stage 0 clean-container install-harness preflight to `just test`,
   before audits/builds/VMs, plus ordering contracts and agent/skill policy. It
