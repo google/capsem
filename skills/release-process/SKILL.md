@@ -46,6 +46,59 @@ virtualenv leakage and missing runner dependencies in seconds while retaining
 the complete Docker/systemd install suite later in `just test`; the bootstrap
 proof is never accepted as a substitute for install E2E.
 
+## Installer outcome gate
+
+The installer exists to leave a working Capsem installation, not merely to
+download a package, launch Installer.app, or return exit code zero. Treat the
+following as separate, non-substitutable release gates:
+
+### CI exact-artifact gates
+
+- **macOS CI exact-package proof:** build the exact publishable `.pkg`, sign,
+  notarize, and staple it, then install that same file with
+  `sudo /usr/sbin/installer -pkg <pkg> -target /`. Assert the installed app,
+  complete host-binary cohort, package version, manifest origin, service
+  registration, and launchable public CLI surfaces before uploading it.
+- **Linux CI installed-product proof:** build the exact publishable `.deb` for
+  every supported release architecture, install that same file on a clean
+  native runner, and assert package metadata, the complete installed binary
+  cohort, exact version agreement, service startup, and a functional Capsem
+  command. Where the CI runner exposes KVM, prove `capsem shell` can start a
+  guest and execute a deterministic command inside it.
+- Publication must depend on both platform jobs. A skipped, optional,
+  `continue-on-error`, mocked, source-layout, or inspect-only result does not
+  count as release proof. Signing, notarization, file existence, and package
+  expansion are necessary checks, but none substitutes for installing the
+  artifact.
+
+### Public installer gates
+
+- The public `curl -fsSL https://capsem.org/install.sh | sh` path must select
+  the expected package from the release manifest, verify its declared byte
+  size and SHA-256, synchronously apply it through the native package manager,
+  and return failure when any step fails.
+- After deployment, Linux CI must run that live command in a clean supported
+  environment and repeat installed version, binary-cohort, service, and
+  functional-command assertions. Parser tests and command stubs do not count
+  as this gate.
+
+### Final local macOS installed-product proof
+
+GitHub-hosted macOS cannot prove the VM-backed shell path because nested
+Virtualization.framework is unavailable. After the immutable release and
+public installer are deployed, the agent must download the exact published
+`.pkg` on a real supported Mac, verify its release digest/signature/notarization,
+install it with `sudo /usr/sbin/installer -pkg <pkg> -target /`, verify the
+installed app, binary cohort, exact version, service, and tray, then prove
+`capsem shell` spawns a guest shell and executes a deterministic command.
+
+This is an agent-executed acceptance gate, not a manual GUI click-through or a
+handoff to the user. A manual GUI click-through does not count as release proof.
+Do not call the release complete without the recorded Linux CI installed-product
+evidence and final local macOS installed-product evidence. If either fails,
+fix forward, cut a new immutable version, and run the entire forward-only release
+again; never reuse or move the failed tag.
+
 Release asset manifests are generated through `capsem-admin manifest generate`.
 Do not publish or document alternate manifest writers. Runtime VM asset
 integrity is BLAKE3 hash verification plus manifest origin/hash reporting; do

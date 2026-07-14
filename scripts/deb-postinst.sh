@@ -106,8 +106,32 @@ CAPSEM_INSTALL_PHASE="register_service"
 TARGET_UID=$(id -u "$TARGET_USER")
 XDG_DIR="/run/user/$TARGET_UID"
 if command -v systemctl >/dev/null 2>&1; then
-    su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install" 2>/dev/null || true
+    if ! su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR $CAPSEM_DIR/bin/capsem install" 2>/dev/null; then
+        echo "capsem: service registration failed" >&2
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=service_registration_failed"
+        exit 1
+    fi
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=service_install_invoked"
+
+    READY=0
+    STATUS_OUTPUT=""
+    CAPSEM_INSTALL_PHASE="wait_for_service"
+    for attempt in $(seq 1 30); do
+        STATUS_OUTPUT=$(su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR CAPSEM_HOME=$CAPSEM_DIR CAPSEM_RUN_DIR=$CAPSEM_DIR/run $CAPSEM_DIR/bin/capsem status" 2>/dev/null || true)
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=readiness_poll attempt=$attempt"
+        if echo "$STATUS_OUTPUT" | grep -q "Service:   ok" \
+            && echo "$STATUS_OUTPUT" | grep -q "Gateway:   ok"; then
+            READY=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$READY" -ne 1 ]; then
+        echo "capsem: service is not ready after install" >&2
+        echo "$STATUS_OUTPUT" >&2
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=service_not_ready"
+        exit 1
+    fi
 fi
 
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=complete"

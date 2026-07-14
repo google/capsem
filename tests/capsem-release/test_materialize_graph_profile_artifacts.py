@@ -24,7 +24,7 @@ def test_materializes_profile_config_from_asset_source_tag(tmp_path: Path) -> No
     _git(repo, "config", "user.email", "test@example.com")
     _git(repo, "config", "user.name", "Test")
     _git(repo, "add", "config/profiles/code/apt-packages.txt")
-    _git(repo, "commit", "-m", "asset source")
+    _git(repo, "-c", "commit.gpgsign=false", "commit", "-m", "asset source")
     _git(repo, "tag", "assets-v2030.0101.1")
 
     dist = tmp_path / "dist"

@@ -59,16 +59,42 @@ def executable_entries(artifact: Path) -> list[dict[str, object]]:
 
 
 def deb_entries(artifact: Path) -> list[dict[str, object]]:
+    data_name, data_contents = deb_data_member(artifact)
     with tempfile.TemporaryDirectory() as raw_tmp:
         raw = Path(raw_tmp)
-        subprocess.run(["ar", "x", str(artifact.resolve())], cwd=raw, check=True)
-        data = next(raw.glob("data.tar.*"), None)
-        if data is None:
-            raise SystemExit(f"{artifact} has no data.tar payload")
+        data = raw / data_name
+        data.write_bytes(data_contents)
         payload = raw / "payload"
         payload.mkdir()
         subprocess.run(["tar", "xf", str(data.resolve()), "-C", str(payload)], check=True)
         return entries_from_payload(payload)
+
+
+def deb_data_member(artifact: Path) -> tuple[str, bytes]:
+    """Read a Debian package's data archive without platform-specific `ar`."""
+    contents = artifact.read_bytes()
+    if not contents.startswith(b"!<arch>\n"):
+        raise SystemExit(f"{artifact} is not an ar archive")
+
+    offset = 8
+    while offset + 60 <= len(contents):
+        header = contents[offset : offset + 60]
+        if header[58:60] != b"`\n":
+            raise SystemExit(f"{artifact} has an invalid ar member header")
+        name = header[:16].decode("ascii", errors="replace").strip().rstrip("/")
+        try:
+            size = int(header[48:58].decode("ascii").strip())
+        except ValueError as error:
+            raise SystemExit(f"{artifact} has an invalid ar member size") from error
+        data_start = offset + 60
+        data_end = data_start + size
+        if data_end > len(contents):
+            raise SystemExit(f"{artifact} has a truncated ar member")
+        if name.startswith("data.tar"):
+            return name, contents[data_start:data_end]
+        offset = data_end + (size % 2)
+
+    raise SystemExit(f"{artifact} has no data.tar payload")
 
 
 def pkg_entries(artifact: Path) -> list[dict[str, object]]:

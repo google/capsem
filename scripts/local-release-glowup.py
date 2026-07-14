@@ -416,6 +416,9 @@ export DEBIAN_FRONTEND=noninteractive
 check_service_installed() {{
   "$HOME/.capsem/bin/capsem" status | tee "$HOME/.capsem/service-status.txt"
   grep -F "Installed: true" "$HOME/.capsem/service-status.txt"
+  grep -F "Running:   true" "$HOME/.capsem/service-status.txt"
+  grep -F "Service:   ok" "$HOME/.capsem/service-status.txt"
+  grep -F "Gateway:   ok" "$HOME/.capsem/service-status.txt"
 }}
 check_binary_versions() {{
   expected="$1"

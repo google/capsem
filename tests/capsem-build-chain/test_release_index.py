@@ -8,6 +8,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -101,6 +102,41 @@ def _write_minimal_deb(path: Path, executable_name: str = "capsem-app") -> bytes
     )
     path.write_bytes(deb)
     return deb
+
+
+def _write_minimal_pkg(path: Path) -> bytes:
+    executable = b"#!/bin/sh\nexit 0\n"
+    installed_path = "Applications/Capsem.app/Contents/MacOS/capsem-app"
+    if sys.platform == "darwin":
+        root = path.with_suffix(".root")
+        payload = root / installed_path
+        payload.parent.mkdir(parents=True)
+        payload.write_bytes(executable)
+        payload.chmod(0o755)
+        subprocess.run(
+            [
+                "pkgbuild",
+                "--root",
+                str(root),
+                "--identifier",
+                "org.capsem.test.fixture",
+                "--version",
+                "1.4.2234567890",
+                str(path),
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    else:
+        with tarfile.open(path, mode="w:gz") as tar:
+            info = tarfile.TarInfo(f"capsem.pkg/Payload/{installed_path}")
+            info.mode = 0o755
+            info.size = len(executable)
+            info.mtime = 0
+            tar.addfile(info, io.BytesIO(executable))
+    return path.read_bytes()
 
 
 def _ar_member(name: str, data: bytes) -> bytes:
@@ -1298,7 +1334,7 @@ def test_binary_release_index_records_host_artifacts_without_changing_assets(
     pkg = artifacts / "Capsem-1.4.2234567890.pkg"
     deb = artifacts / "Capsem_1.4.2234567890_arm64.deb"
     sbom = artifacts / "capsem-sbom.spdx.json"
-    pkg.write_bytes(b"pkg bytes v2")
+    pkg_bytes = _write_minimal_pkg(pkg)
     deb_bytes = _write_minimal_deb(deb)
     sbom.write_bytes(b'{"spdxVersion":"SPDX-2.3","name":"capsem"}')
 
@@ -1333,7 +1369,7 @@ def test_binary_release_index_records_host_artifacts_without_changing_assets(
     assert release["version"] == "1.4.2234567890"
     assert release["date"] == "2030-02-03"
     files = {entry["name"]: entry for entry in release["files"]}
-    assert files[pkg.name]["sha256"] == hashlib.sha256(b"pkg bytes v2").hexdigest()
+    assert files[pkg.name]["sha256"] == hashlib.sha256(pkg_bytes).hexdigest()
     assert files[deb.name]["sha256"] == hashlib.sha256(deb_bytes).hexdigest()
     assert files[deb.name]["binaries"]
     assert files[sbom.name]["sha256"] == hashlib.sha256(sbom.read_bytes()).hexdigest()
@@ -1345,7 +1381,7 @@ def test_binary_release_index_rejects_bad_spdx_sbom(tmp_path: Path) -> None:
     artifacts.mkdir()
     pkg = artifacts / "Capsem-1.4.2234567890.pkg"
     sbom = artifacts / "capsem-sbom.spdx.json"
-    pkg.write_bytes(b"pkg bytes v2")
+    _write_minimal_pkg(pkg)
     sbom.write_bytes(b'{"spdxVersion":"SPDX-2.2","name":"capsem"}')
 
     result = _run_admin(
@@ -1465,7 +1501,7 @@ def test_binary_release_index_rejects_package_version_mismatch(tmp_path: Path) -
     artifacts.mkdir()
     pkg = artifacts / "Capsem-1.4.0000000000.pkg"
     sbom = artifacts / "capsem-sbom.spdx.json"
-    pkg.write_bytes(b"pkg bytes")
+    _write_minimal_pkg(pkg)
     sbom.write_bytes(b'{"spdxVersion":"SPDX-2.3","name":"capsem"}')
 
     result = _run_admin(
@@ -1496,7 +1532,7 @@ def test_binary_release_index_rejects_noncanonical_sbom_artifact(tmp_path: Path)
     artifacts.mkdir()
     pkg = artifacts / "Capsem-1.4.2234567890.pkg"
     sbom = artifacts / "host-sbom.spdx.json"
-    pkg.write_bytes(b"pkg bytes")
+    _write_minimal_pkg(pkg)
     sbom.write_bytes(b'{"spdxVersion":"SPDX-2.3","name":"capsem"}')
 
     result = _run_admin(

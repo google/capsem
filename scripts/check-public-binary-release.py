@@ -158,11 +158,21 @@ def main() -> int:
                 validated_binaries += binary_count
 
             if args.docker_linux_install:
+                package_versions = {
+                    package.get("version")
+                    for package in packages.values()
+                    if isinstance(package.get("version"), str)
+                }
+                if len(package_versions) != 1:
+                    raise ValueError(
+                        "public Docker install requires one exact package version"
+                    )
                 run_docker_install_smoke(
                     release_base_url=args.release_base_url,
                     install_script_url=args.install_script_url,
                     stable_manifest_url=stable_manifest_url,
                     nightly_manifest_url=nightly_manifest_url,
+                    expected_version=next(iter(package_versions)),
                     channel_switch=args.docker_channel_switch,
                     upgrade=args.docker_upgrade,
                     docker_image=args.docker_image,
@@ -205,6 +215,16 @@ def check_install_script_defaults(
         failures.append("install.sh still depends on GitHub latest release metadata")
     if "releases/tag/assets-" in script or "assets-v" in script:
         failures.append("install.sh contains an asset-release tag URL")
+    required_outcomes = {
+        "ASSET_BYTES": "manifest package byte-size selection",
+        "ASSET_SHA256": "manifest package SHA-256 selection",
+        "verify_package": "package integrity verification",
+        "sudo /usr/sbin/installer -pkg": "synchronous macOS package installation",
+        "sudo apt install -y": "synchronous Linux package installation",
+    }
+    for token, outcome in required_outcomes.items():
+        if token not in script:
+            failures.append(f"install.sh is missing {outcome}")
     return failures
 
 
@@ -705,6 +725,7 @@ def run_docker_install_smoke(
     install_script_url: str,
     stable_manifest_url: str,
     nightly_manifest_url: str,
+    expected_version: str,
     channel_switch: bool,
     upgrade: bool,
     docker_image: str,
@@ -741,13 +762,19 @@ printf '%s\\n' 'capsemtest ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/capsemtest
 chmod 0440 /etc/sudoers.d/capsemtest
 su capsemtest -c {shlex.quote(install_pipeline)}
 su capsemtest -c 'test -x "$HOME/.capsem/bin/capsem"'
-su capsemtest -c '"$HOME/.capsem/bin/capsem" --version'
+su capsemtest -c '"$HOME/.capsem/bin/capsem" --version' | grep -F {shlex.quote(expected_version)}
 su capsemtest -c 'test -f "$HOME/.capsem/assets/manifest.json"'
 su capsemtest -c 'grep -F {shlex.quote(stable_manifest_url)} "$HOME/.capsem/assets/manifest-origin.json"'
+dpkg-query -W -f='${{Version}}' capsem | grep -Fx {shlex.quote(expected_version)}
 for bin in {helper_checks}; do
   su capsemtest -c "test -x \\"\\$HOME/.capsem/bin/$bin\\""
   su capsemtest -c "\\"\\$HOME/.capsem/bin/$bin\\" --version"
 done
+su capsemtest -c '"$HOME/.capsem/bin/capsem" status' | tee /home/capsemtest/.capsem/service-status.txt
+grep -F "Installed: true" /home/capsemtest/.capsem/service-status.txt
+grep -F "Running:   true" /home/capsemtest/.capsem/service-status.txt
+grep -F "Service:   ok" /home/capsemtest/.capsem/service-status.txt
+grep -F "Gateway:   ok" /home/capsemtest/.capsem/service-status.txt
 """
     if channel_switch:
         container_script += f"""

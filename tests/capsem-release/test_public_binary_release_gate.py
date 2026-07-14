@@ -170,51 +170,20 @@ def test_public_binary_release_gate_rejects_manifest_binary_hash_drift(
 def test_public_binary_release_gate_rejects_packaged_binary_version_drift(
     tmp_path: Path,
 ) -> None:
-    package_dir = tmp_path / "packages"
-    package_dir.mkdir()
-    package = package_dir / "Capsem_9.9.9_amd64.deb"
+    gate = _load_release_gate()
     capsem = b"#!/bin/sh\necho capsem 9.9.8\n"
-    manifest_url = (tmp_path / "manifest.json").resolve().as_uri()
-    _write_minimal_deb(package, {"usr/bin/capsem": capsem}, manifest_url=manifest_url)
-
-    manifest = _write_manifest(
+    failures = gate.check_packaged_binary_version(
+        {"version": "9.9.9"},
+        _binary_record("capsem", "/usr/bin/capsem", capsem),
+        "/usr/bin/capsem",
+        {"/usr/bin/capsem": capsem},
         tmp_path,
-        [
-            _package_record(
-                "x86_64",
-                package.name,
-                package,
-                [_binary_record("capsem", "/usr/bin/capsem", capsem)],
-            )
-        ],
-    )
-    install_sh = _write_install_sh(tmp_path)
-
-    result = subprocess.run(
-        [
-            "uv",
-            "run",
-            "python",
-            str(SCRIPT),
-            "--manifest-url",
-            manifest.resolve().as_uri(),
-            "--install-script-url",
-            str(install_sh),
-            "--package-dir",
-            str(package_dir),
-            "--required-package",
-            "linux:x86_64:debian_package",
-        ],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=60,
+        "Capsem_9.9.9_amd64.deb",
     )
 
-    assert result.returncode != 0
-    assert "binary /usr/bin/capsem version output does not contain 9.9.9" in (
-        result.stderr + result.stdout
-    )
+    assert failures == [
+        "binary /usr/bin/capsem version output does not contain 9.9.9: capsem 9.9.8"
+    ]
 
 
 def test_public_binary_release_gate_does_not_execute_gui_payload_without_deps(
@@ -385,38 +354,44 @@ def test_public_binary_release_gate_rejects_manifest_origin_package_version_drif
     )
 
 
-def test_release_workflow_runs_public_package_gate_and_docker_install() -> None:
+def test_release_workflow_runs_public_package_gate_and_native_install() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8")
     verify_downloads = workflow.split("  verify-release-downloads:", maxsplit=1)[1]
 
     assert "scripts/check-public-binary-release.py" in verify_downloads
     assert '--channel "$RELEASE_CHANNEL"' in verify_downloads
-    assert "--manifest-url \"$ASSET_MANIFEST_URL\"" in verify_downloads
+    assert '--manifest-url "$ASSET_MANIFEST_URL"' in verify_downloads
     assert (
-        "--stable-manifest-url "
-        "https://release.capsem.org/assets/stable/manifest.json"
+        "--stable-manifest-url https://release.capsem.org/assets/stable/manifest.json"
     ) in verify_downloads
     assert (
-        "--nightly-manifest-url "
-        "https://release.capsem.org/assets/nightly/manifest.json"
+        "--nightly-manifest-url https://release.capsem.org/assets/nightly/manifest.json"
     ) in verify_downloads
     assert "--install-script-url https://capsem.org/install.sh" in verify_downloads
     assert "--site-url https://capsem.org/" in verify_downloads
-    assert "--docker-linux-install" in verify_downloads
-    assert "--docker-channel-switch" in verify_downloads
-    assert "--docker-upgrade" in verify_downloads
-    assert "curl -fsSL https://capsem.org/install.sh | sh" in verify_downloads
+    assert "--docker-linux-install" not in verify_downloads
+    assert "Enable KVM for live public-install VM proof" in verify_downloads
+    assert (
+        'curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$RELEASE_CHANNEL" sh'
+        in verify_downloads
+    )
+    assert "scripts/prove-installed-shell.py" in verify_downloads
+    assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in verify_downloads
+    assert '"$HOME/.capsem/bin/capsem" run' not in verify_downloads
 
 
 def test_public_binary_release_gate_keeps_public_installer_default_on_stable() -> None:
     gate = _load_release_gate()
 
     failures = gate.check_install_script_defaults(
-        '\n'.join(
+        "\n".join(
             (
                 'CAPSEM_CHANNEL="${CAPSEM_CHANNEL:-stable}"',
                 'CAPSEM_RELEASE_BASE_URL="${CAPSEM_RELEASE_BASE_URL:-https://release.capsem.org}"',
-                '/assets/${CAPSEM_CHANNEL}/manifest.json',
+                "/assets/${CAPSEM_CHANNEL}/manifest.json",
+                "ASSET_BYTES ASSET_SHA256 verify_package",
+                'sudo /usr/sbin/installer -pkg "$PKG_PATH" -target /',
+                'sudo apt install -y "$DEB_PATH"',
             )
         ),
         release_base_url="https://release.capsem.org",
@@ -446,6 +421,7 @@ def test_public_binary_release_gate_switches_stable_to_nightly_and_back(
         install_script_url="https://capsem.org/install.sh",
         stable_manifest_url=stable,
         nightly_manifest_url=nightly,
+        expected_version="1.5.0",
         channel_switch=True,
         upgrade=True,
         docker_image="ubuntu:24.04",
@@ -461,6 +437,11 @@ def test_public_binary_release_gate_switches_stable_to_nightly_and_back(
     upgrade_nightly = script.index(f"CAPSEM_RELEASE_MANIFEST_URL={nightly}")
     assert initial_stable < switch_nightly < verify_nightly < switch_stable
     assert switch_stable < verify_stable < upgrade_nightly
+    assert "dpkg-query -W -f='${Version}' capsem | grep -Fx 1.5.0" in script
+    assert 'grep -F "Installed: true" /home/capsemtest/.capsem/service-status.txt' in script
+    assert 'grep -F "Running:   true" /home/capsemtest/.capsem/service-status.txt' in script
+    assert 'grep -F "Service:   ok" /home/capsemtest/.capsem/service-status.txt' in script
+    assert 'grep -F "Gateway:   ok" /home/capsemtest/.capsem/service-status.txt' in script
 
 
 def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> None:
@@ -470,7 +451,7 @@ def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> N
     assert "--docker-upgrade" in source
     assert "update --assets --manifest" in source
     assert "CAPSEM_RELEASE_MANIFEST_URL=" in source
-    assert 'update --yes' in source
+    assert "update --yes" in source
     assert '.capsem/bin/$bin\\\\" --version' in source
     assert "manifest-origin.json" in source
     assert "snapshot_sha256" in source
@@ -479,6 +460,26 @@ def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> N
     assert "check_packaged_binary_version" in source
     assert "--site-url" in source
     assert "check_public_site_download_links" in source
+
+
+def test_public_binary_release_gate_requires_fail_closed_installer_integrity() -> None:
+    gate = _load_release_gate()
+    script = (PROJECT_ROOT / "site" / "public" / "install.sh").read_text(encoding="utf-8")
+
+    failures = gate.check_install_script_defaults(
+        script,
+        release_base_url="https://release.capsem.org",
+    )
+
+    assert failures == []
+    for required in (
+        "ASSET_BYTES",
+        "ASSET_SHA256",
+        "verify_package",
+        "sudo /usr/sbin/installer -pkg",
+        "sudo apt install -y",
+    ):
+        assert required in script
 
 
 def test_public_binary_release_gate_accepts_stable_site_download_entrypoint() -> None:
@@ -531,6 +532,11 @@ def _write_install_sh(tmp_path: Path) -> Path:
                 'CAPSEM_CHANNEL="${CAPSEM_CHANNEL:-stable}"',
                 'CAPSEM_RELEASE_BASE_URL="${CAPSEM_RELEASE_BASE_URL:-https://release.capsem.org}"',
                 'CAPSEM_MANIFEST_URL="${CAPSEM_MANIFEST_URL:-${CAPSEM_RELEASE_BASE_URL}/assets/${CAPSEM_CHANNEL}/manifest.json}"',
+                "ASSET_BYTES=1",
+                "ASSET_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "verify_package() { :; }",
+                'sudo /usr/sbin/installer -pkg "$PKG_PATH" -target /',
+                'sudo apt install -y "$DEB_PATH"',
                 "",
             ]
         ),
@@ -614,12 +620,5 @@ def _write_minimal_deb(
 
 
 def _ar_member(name: str, data: bytes) -> bytes:
-    header = (
-        f"{name + '/':<16}"
-        f"{0:<12}"
-        f"{0:<6}"
-        f"{0:<6}"
-        f"{100644:<8}"
-        f"{len(data):<10}`\n"
-    ).encode("ascii")
+    header = (f"{name + '/':<16}{0:<12}{0:<6}{0:<6}{100644:<8}{len(data):<10}`\n").encode("ascii")
     return header + data + (b"\n" if len(data) % 2 else b"")
