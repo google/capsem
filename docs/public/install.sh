@@ -1,11 +1,13 @@
 #!/bin/sh
-# Capsem installer -- downloads the latest release and installs it.
-#   macOS: downloads .pkg, opens the native installer GUI
+# Capsem installer -- downloads the stable binary package and installs it.
+#   macOS: downloads .pkg, installs via the native installer command
 #   Linux: downloads .deb, installs via apt
 # Usage: curl -fsSL https://capsem.org/install.sh | sh
 set -eu
 
-REPO="google/capsem"
+CAPSEM_CHANNEL="${CAPSEM_CHANNEL:-stable}"
+CAPSEM_RELEASE_BASE_URL="${CAPSEM_RELEASE_BASE_URL:-https://release.capsem.org}"
+CAPSEM_MANIFEST_URL="${CAPSEM_MANIFEST_URL:-${CAPSEM_RELEASE_BASE_URL}/assets/${CAPSEM_CHANNEL}/manifest.json}"
 
 # -- Testable functions ------------------------------------------------------
 # These functions can be unit-tested by sourcing this script with
@@ -49,27 +51,210 @@ detect_arch() {
 }
 
 find_asset_url() {
-    _release_json="$1"
+    _manifest_json="$1"
     _os="$2"
     _arch="$3"
     case "$_os" in
         darwin)
-            _pattern='\.pkg"'
+            _platform="macos"
+            _kind="macos_pkg"
+            _manifest_arch="arm64"
+            _name_suffix=".pkg"
             ;;
         linux)
-            _pattern="_${_arch}\.deb\""
+            _platform="linux"
+            _kind="debian_package"
+            case "$_arch" in
+                amd64)
+                    _manifest_arch="x86_64"
+                    _name_suffix="_amd64.deb"
+                    ;;
+                arm64)
+                    _manifest_arch="arm64"
+                    _name_suffix="_arm64.deb"
+                    ;;
+                *)
+                    echo "Error: no matching asset found for $_os/$_arch in the ${CAPSEM_CHANNEL} release channel." >&2
+                    return 1
+                    ;;
+            esac
             ;;
     esac
-    ASSET_URL="$(echo "$_release_json" | grep '"browser_download_url"' | grep "$_pattern" | head -1 | sed 's/.*"browser_download_url": *"//;s/".*//')"
-    if [ -z "$ASSET_URL" ]; then
-        echo "Error: no matching asset found for $_os/$_arch in this release." >&2
+
+    _asset_record="$(printf '%s\n' "$_manifest_json" | awk \
+        -v platform="$_platform" \
+        -v kind="$_kind" \
+        -v arch="$_manifest_arch" '
+        function count_char(text, char, i, n) {
+            n = 0
+            for (i = 1; i <= length(text); i++) {
+                if (substr(text, i, 1) == char) {
+                    n++
+                }
+            }
+            return n
+        }
+        BEGIN {
+            platform_re = "\"" "platform" "\"" "[[:space:]]*:[[:space:]]*\"" platform "\""
+            kind_re = "\"" "kind" "\"" "[[:space:]]*:[[:space:]]*\"" kind "\""
+            arch_re = "\"" "architecture" "\"" "[[:space:]]*:[[:space:]]*\"" arch "\""
+            status_re = "\"" "status" "\"" "[[:space:]]*:[[:space:]]*\"current\""
+        }
+        /"packages"[[:space:]]*:/ {
+            in_packages = 1
+            next
+        }
+        in_packages {
+            if (!in_package && $0 ~ /^[[:space:]]*\{/) {
+                in_package = 1
+                depth = 0
+                block = ""
+            }
+            if (in_package) {
+                block = block $0 "\n"
+                depth += count_char($0, "{") - count_char($0, "}")
+                if (depth == 0) {
+                    if (block ~ platform_re && block ~ kind_re && block ~ arch_re && block ~ status_re) {
+                        printf "%s", block
+                        exit
+                    }
+                    in_package = 0
+                    block = ""
+                }
+            }
+        }
+    ')"
+
+    _asset_fields="$(printf '%s\n' "$_asset_record" | awk '
+        function count_char(text, char, i, n) {
+            n = 0
+            for (i = 1; i <= length(text); i++) {
+                if (substr(text, i, 1) == char) n++
+            }
+            return n
+        }
+        function string_value(text, parts) {
+            split(text, parts, "\"")
+            return parts[4]
+        }
+        function sha256_value(text, value) {
+            value = text
+            sub(/^.*"sha256"[[:space:]]*:[[:space:]]*"/, "", value)
+            sub(/".*$/, "", value)
+            return value
+        }
+        {
+            if (depth == 1 && $0 ~ /"url"[[:space:]]*:/) {
+                url = string_value($0)
+            } else if (depth == 1 && $0 ~ /"version"[[:space:]]*:/) {
+                version = string_value($0)
+            } else if (depth == 1 && $0 ~ /"name"[[:space:]]*:/) {
+                name = string_value($0)
+            } else if (depth == 1 && $0 ~ /"bytes"[[:space:]]*:/) {
+                bytes = $0
+                sub(/^.*"bytes"[[:space:]]*:[[:space:]]*/, "", bytes)
+                sub(/[[:space:],].*$/, "", bytes)
+            } else if (depth == 1 && $0 ~ /"digest"[[:space:]]*:[[:space:]]*\{/) {
+                in_package_digest = 1
+                if ($0 ~ /"sha256"[[:space:]]*:/) sha256 = sha256_value($0)
+            } else if (in_package_digest && depth == 2 && $0 ~ /"sha256"[[:space:]]*:/) {
+                sha256 = sha256_value($0)
+            }
+
+            depth += count_char($0, "{") - count_char($0, "}")
+            if (in_package_digest && depth <= 1) in_package_digest = 0
+        }
+        END { printf "%s|%s|%s|%s|%s", url, version, name, bytes, sha256 }
+    ')"
+    ASSET_URL="${_asset_fields%%|*}"
+    _asset_fields="${_asset_fields#*|}"
+    ASSET_VERSION="${_asset_fields%%|*}"
+    _asset_fields="${_asset_fields#*|}"
+    ASSET_NAME="${_asset_fields%%|*}"
+    _asset_fields="${_asset_fields#*|}"
+    ASSET_BYTES="${_asset_fields%%|*}"
+    ASSET_SHA256="${_asset_fields#*|}"
+
+    if [ -z "$ASSET_URL" ] || [ -z "$ASSET_VERSION" ] || [ -z "$ASSET_NAME" ] \
+        || [ -z "$ASSET_BYTES" ] || [ -z "$ASSET_SHA256" ]; then
+        echo "Error: no matching asset found for $_os/$_arch in the ${CAPSEM_CHANNEL} release channel." >&2
         return 1
     fi
+    case "$ASSET_BYTES" in
+        *[!0-9]*)
+            echo "Error: release channel package $ASSET_NAME has an invalid byte size: $ASSET_BYTES" >&2
+            return 1
+            ;;
+    esac
+    case "$ASSET_SHA256" in
+        *[!0-9a-fA-F]*|"")
+            echo "Error: release channel package $ASSET_NAME has an invalid SHA-256 digest." >&2
+            return 1
+            ;;
+    esac
+    if [ "${#ASSET_SHA256}" -ne 64 ]; then
+        echo "Error: release channel package $ASSET_NAME has an invalid SHA-256 digest." >&2
+        return 1
+    fi
+    case "$ASSET_NAME" in
+        *"$_name_suffix") ;;
+        *)
+            echo "Error: release channel selected unexpected package $ASSET_NAME for $_os/$_arch." >&2
+            return 1
+            ;;
+    esac
+    case "$ASSET_URL" in
+        http://*|https://*) ;;
+        *)
+            echo "Error: release channel package $ASSET_NAME has an invalid URL: $ASSET_URL" >&2
+            return 1
+            ;;
+    esac
+}
+
+verify_package() {
+    _package_path="$1"
+    _package_name="$2"
+    _expected_bytes="$3"
+    _expected_sha256="$4"
+
+    _actual_bytes="$(wc -c < "$_package_path" | tr -d '[:space:]')"
+    if [ "$_actual_bytes" != "$_expected_bytes" ]; then
+        echo "Error: package integrity check failed for $_package_name: expected $_expected_bytes bytes, got $_actual_bytes." >&2
+        return 1
+    fi
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        _actual_sha256="$(sha256sum "$_package_path" | awk '{ print $1 }')"
+    elif command -v shasum >/dev/null 2>&1; then
+        _actual_sha256="$(shasum -a 256 "$_package_path" | awk '{ print $1 }')"
+    else
+        echo "Error: package integrity check failed: sha256sum or shasum is required." >&2
+        return 1
+    fi
+    _actual_sha256="$(printf '%s' "$_actual_sha256" | tr '[:upper:]' '[:lower:]')"
+    _expected_sha256="$(printf '%s' "$_expected_sha256" | tr '[:upper:]' '[:lower:]')"
+    if [ "$_actual_sha256" != "$_expected_sha256" ]; then
+        echo "Error: package integrity check failed for $_package_name: SHA-256 mismatch." >&2
+        return 1
+    fi
+    echo "Verified $_package_name ($_actual_bytes bytes, SHA-256 $_actual_sha256)."
+}
+
+fetch_release_manifest() {
+    if [ -z "$CAPSEM_MANIFEST_URL" ]; then
+        echo "Error: CAPSEM_MANIFEST_URL is empty." >&2
+        return 1
+    fi
+    curl -fsSL "$CAPSEM_MANIFEST_URL"
 }
 
 install_macos() {
     _pkg_url="$1"
     _version="$2"
+    _expected_bytes="$3"
+    _expected_sha256="$4"
+    _package_name="$5"
 
     TMPDIR_INSTALL="$(mktemp -d)"
     PKG_PATH="${TMPDIR_INSTALL}/Capsem.pkg"
@@ -81,19 +266,22 @@ install_macos() {
 
     echo "Downloading $_pkg_url..."
     curl -fSL --progress-bar -o "$PKG_PATH" "$_pkg_url"
+    verify_package "$PKG_PATH" "$_package_name" "$_expected_bytes" "$_expected_sha256"
 
-    echo "Opening installer..."
-    open "$PKG_PATH"
+    echo "Installing .pkg package (may prompt for sudo password)..."
+    sudo /usr/sbin/installer -pkg "$PKG_PATH" -target /
 
     echo ""
-    echo "Capsem $_version installer launched."
-    echo "Follow the installer GUI to complete installation."
-    echo "After install, open a new terminal and run: capsem shell"
+    echo "Capsem $_version installed."
+    echo "Open a new terminal and run: capsem shell"
 }
 
 install_linux() {
     _deb_url="$1"
     _version="$2"
+    _expected_bytes="$3"
+    _expected_sha256="$4"
+    _package_name="$5"
 
     TMPDIR_INSTALL="$(mktemp -d)"
     DEB_PATH="${TMPDIR_INSTALL}/capsem.deb"
@@ -105,6 +293,7 @@ install_linux() {
 
     echo "Downloading $_deb_url..."
     curl -fSL --progress-bar -o "$DEB_PATH" "$_deb_url"
+    verify_package "$DEB_PATH" "$_package_name" "$_expected_bytes" "$_expected_sha256"
 
     echo "Installing .deb package (may prompt for sudo password)..."
     sudo apt install -y "$DEB_PATH"
@@ -148,24 +337,18 @@ case "$OS" in
         ;;
 esac
 
-# Fetch latest release
-echo "Fetching latest Capsem release..."
-RELEASE_JSON="$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest")"
-
-TAG="$(echo "$RELEASE_JSON" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')"
-if [ -z "$TAG" ]; then
-    echo "Error: could not determine latest release tag." >&2
-    exit 1
-fi
-
-VERSION="${TAG#v}"
-echo "Installing Capsem $VERSION..."
+# Fetch stable release-channel manifest. The asset lane may be newer than the
+# binary lane, so do not use GitHub's "latest release" endpoint here.
+echo "Fetching Capsem ${CAPSEM_CHANNEL} release channel..."
+RELEASE_MANIFEST="$(fetch_release_manifest)"
 
 # Find the right asset
-find_asset_url "$RELEASE_JSON" "$OS" "$ARCH"
+find_asset_url "$RELEASE_MANIFEST" "$OS" "$ARCH"
+VERSION="$ASSET_VERSION"
+echo "Installing Capsem $VERSION from ${CAPSEM_CHANNEL}..."
 
 # Install
 case "$OS" in
-    darwin) install_macos "$ASSET_URL" "$VERSION" ;;
-    linux)  install_linux "$ASSET_URL" "$VERSION" ;;
+    darwin) install_macos "$ASSET_URL" "$VERSION" "$ASSET_BYTES" "$ASSET_SHA256" "$ASSET_NAME" ;;
+    linux)  install_linux "$ASSET_URL" "$VERSION" "$ASSET_BYTES" "$ASSET_SHA256" "$ASSET_NAME" ;;
 esac

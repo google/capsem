@@ -676,7 +676,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         fi
     fi
     docker run --rm \
-        "${DOCKER_KVM_ARGS[@]}" \
+        ${DOCKER_KVM_ARGS[@]+"${DOCKER_KVM_ARGS[@]}"} \
         ${SIGNING_ARGS[@]+"${SIGNING_ARGS[@]}"} \
         -e "TARGET_ARCH=$TARGET_ARCH" \
         -e "RUST_TARGET=$RUST_TARGET" \
@@ -1050,6 +1050,13 @@ test-install:
     # masked the asset-URL bug for v1.0.1777065213).
     set -euo pipefail
     IMAGE="capsem-install-test"
+    # The derived install-test image is FROM capsem-host-builder. The cleanup
+    # trap and low-disk recovery may remove both images, so the standalone gate
+    # must restore the base image before attempting to rebuild the derived one.
+    if ! docker image inspect capsem-host-builder:latest >/dev/null 2>&1; then
+        echo "Building missing capsem-host-builder base image..."
+        just build-host-image
+    fi
     # Build the Docker image if needed
     if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
         echo "Building $IMAGE Docker image..."

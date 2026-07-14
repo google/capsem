@@ -353,9 +353,20 @@ jobs:
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
           sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /
+          test -d "/Applications/Capsem.app"
+          test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"
           test -x "$HOME/.capsem/bin/capsem"
           "$HOME/.capsem/bin/capsem" --version | grep -F "$VERSION"
-          "$HOME/.capsem/bin/capsem" status
+          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui; do
+            test -x "$HOME/.capsem/bin/$bin"
+            "$HOME/.capsem/bin/$bin" --version | grep -F "$VERSION"
+          done
+          "$HOME/.capsem/bin/capsem" status | tee /tmp/capsem-status.txt
+          grep -F "Installed: true" /tmp/capsem-status.txt
+          grep -F "Running:   true" /tmp/capsem-status.txt
+          grep -F "Service:   ok" /tmp/capsem-status.txt
+          grep -F "Gateway:   ok" /tmp/capsem-status.txt
+          pgrep -x capsem-tray
 
       - name: Collect macOS artifacts
         run: |
@@ -474,6 +485,16 @@ jobs:
           echo "=== Verify companion binaries in deb ==="
           dpkg-deb --contents target/release/bundle/deb/*.deb | grep -E "capsem-service|capsem-tui|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin"
 
+      - name: Enable KVM for exact-package VM proof
+        if: matrix.arch == 'x86_64'
+        run: |
+          sudo modprobe kvm
+          sudo chmod 0666 /dev/kvm
+          sudo modprobe vhost_vsock
+          sudo chmod 0666 /dev/vhost-vsock
+          test -r /dev/kvm -a -w /dev/kvm
+          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+
       - name: Install exact release deb
         run: |
           set -euo pipefail
@@ -481,7 +502,28 @@ jobs:
           sudo dpkg -i target/release/bundle/deb/*.deb || sudo apt-get install -f -y
           test -x /usr/bin/capsem
           /usr/bin/capsem --version | grep -F "$VERSION"
-          /usr/bin/capsem status
+          dpkg-query -W -f='${Version}' capsem | grep -Fx "$VERSION"
+          for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui; do
+            test -x "/usr/bin/$bin"
+            if [ "$bin" != "capsem-app" ]; then
+              "/usr/bin/$bin" --version | grep -F "$VERSION"
+            fi
+          done
+          /usr/bin/capsem status | tee /tmp/capsem-status.txt
+          grep -F "Installed: true" /tmp/capsem-status.txt
+          grep -F "Running:   true" /tmp/capsem-status.txt
+          grep -F "Service:   ok" /tmp/capsem-status.txt
+          grep -F "Gateway:   ok" /tmp/capsem-status.txt
+
+      - name: Prove exact-package guest shell execution
+        if: matrix.arch == 'x86_64'
+        run: |
+          set -euo pipefail
+          python3 scripts/prove-installed-shell.py \
+            --capsem /usr/bin/capsem \
+            --marker CAPSEM_EXACT_PACKAGE_SHELL_OK \
+            --session-name release-exact-shell-x86_64 \
+            --timeout 300
 
       - name: Collect Linux artifacts
         run: |
@@ -877,10 +919,9 @@ jobs:
           ")
           [ "$fail" = 0 ] || { echo '::error::one or more asset URLs are unreachable or hash-mismatched'; exit 1; }
 
-      - name: Glow-up verify public install, channel switch, and upgrade
+      - name: Verify public release packages and installer contract
         run: |
           set -euo pipefail
-          echo "Docker smoke: curl -fsSL https://capsem.org/install.sh | sh"
           uv run python3 scripts/check-public-binary-release.py \
             --channel "$RELEASE_CHANNEL" \
             --manifest-url "$ASSET_MANIFEST_URL" \
@@ -888,7 +929,53 @@ jobs:
             --nightly-manifest-url https://release.capsem.org/assets/nightly/manifest.json \
             --install-script-url https://capsem.org/install.sh \
             --site-url https://capsem.org/ \
-            --work-dir /tmp/public-binary-release \
-            --docker-linux-install \
-            --docker-channel-switch \
-            --docker-upgrade
+            --work-dir /tmp/public-binary-release
+
+      - name: Enable KVM for live public-install VM proof
+        run: |
+          set -euo pipefail
+          sudo modprobe kvm
+          sudo chmod 0666 /dev/kvm
+          sudo modprobe vhost_vsock
+          sudo chmod 0666 /dev/vhost-vsock
+          test -r /dev/kvm -a -w /dev/kvm
+          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+
+      - name: Install live public Linux release and prove guest shell execution
+        run: |
+          set -euo pipefail
+          EXPECTED_VERSION="$(python3 - <<'PY'
+          import json
+
+          manifest = json.load(open('/tmp/verify/manifest.json'))
+          matches = [
+              package
+              for package in manifest.get('packages', [])
+              if package.get('platform') == 'linux'
+              and package.get('architecture') == 'x86_64'
+          ]
+          if len(matches) != 1 or not isinstance(matches[0].get('version'), str):
+              raise SystemExit('manifest must contain exactly one versioned linux/x86_64 package')
+          print(matches[0]['version'])
+          PY
+          )"
+          curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$RELEASE_CHANNEL" sh
+          test -x "$HOME/.capsem/bin/capsem"
+          test -x /usr/bin/capsem-app
+          "$HOME/.capsem/bin/capsem" --version | grep -F "$EXPECTED_VERSION"
+          dpkg-query -W -f='${Version}' capsem | grep -Fx "$EXPECTED_VERSION"
+          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui; do
+            test -x "$HOME/.capsem/bin/$bin"
+            "$HOME/.capsem/bin/$bin" --version | grep -F "$EXPECTED_VERSION"
+          done
+          grep -F "$ASSET_MANIFEST_URL" "$HOME/.capsem/assets/manifest-origin.json"
+          "$HOME/.capsem/bin/capsem" status | tee /tmp/capsem-live-status.txt
+          grep -F "Installed: true" /tmp/capsem-live-status.txt
+          grep -F "Running:   true" /tmp/capsem-live-status.txt
+          grep -F "Service:   ok" /tmp/capsem-live-status.txt
+          grep -F "Gateway:   ok" /tmp/capsem-live-status.txt
+          python3 scripts/prove-installed-shell.py \
+            --capsem "$HOME/.capsem/bin/capsem" \
+            --marker CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK \
+            --session-name release-live-public-shell-x86_64 \
+            --timeout 300

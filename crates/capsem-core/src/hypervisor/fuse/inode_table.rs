@@ -168,7 +168,7 @@ mod tests {
         let dir = std::env::temp_dir().join("capsem-fuse-test").join(name);
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        dir
+        dir.canonicalize().unwrap()
     }
 
     // Inode table operations

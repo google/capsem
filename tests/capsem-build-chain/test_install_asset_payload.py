@@ -387,6 +387,10 @@ def test_local_release_glowup_installed_path_asserts_channel_round_trip_and_prov
     assert 'grep -F \'"package_version": "1.5.101"\'' in script
     assert "check_service_installed" in script
     assert '"$HOME/.capsem/bin/capsem" status' in script
+    assert 'grep -F "Installed: true"' in script
+    assert 'grep -F "Running:   true"' in script
+    assert 'grep -F "Service:   ok"' in script
+    assert 'grep -F "Gateway:   ok"' in script
     assert "service status" not in script
     assert "compiled_binary_version=1.5.100" in script
     assert "check_binary_versions 1.5.100" in script
@@ -748,6 +752,13 @@ def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
 
     smoke_block = justfile.split("\nsmoke", 1)[1].split("\n# ", 1)[0]
     assert "CAPSEM_SKIP_KVM_CHECK" not in smoke_block
+
+
+def test_cross_compile_guards_empty_kvm_array_under_bash_nounset() -> None:
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+
+    assert '${DOCKER_KVM_ARGS[@]+"${DOCKER_KVM_ARGS[@]}"}' in justfile
+    assert '\n        "${DOCKER_KVM_ARGS[@]}" \\\n' not in justfile
 
 
 def test_security_event_rows_go_through_security_engine_emitter() -> None:

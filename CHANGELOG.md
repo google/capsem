@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Made the public macOS curl installer synchronously apply the downloaded
+  package with `/usr/sbin/installer`, so the command completes a real install
+  instead of handing the package to a generic `open` action.
+- Made both macOS and Linux public installers reject package downloads whose
+  byte size or SHA-256 does not match the release manifest before elevation.
+- Strengthened release CI to verify exact installed package versions, complete
+  binary cohorts, service readiness, and PTY-driven `capsem shell` execution
+  inside a KVM-backed guest on Linux.
+- Made Debian-package SBOM inspection parse the package archive directly, so
+  release acceptance tests work with both BSD and GNU host toolchains.
+
 ## [1.5.1783894498] - 2026-07-12
 
 ### Changed

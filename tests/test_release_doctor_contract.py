@@ -174,13 +174,17 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     assert 'test "$RELEASE_SITE_BUILD_RESULT" = success' in gate
     assert "astral-sh/setup-uv@v5" in release_site_job
     assert "uv sync --frozen" in release_site_job
-    assert "uv run python scripts/write-release-site-ci-fixture.py target/release-site-fixture" in release_site_job
+    assert (
+        "uv run python scripts/write-release-site-ci-fixture.py target/release-site-fixture"
+        in release_site_job
+    )
     assert release_site_job.index(
         "uv run python scripts/write-release-site-ci-fixture.py target/release-site-fixture"
-    ) < release_site_job.index(
-        "cargo run -p capsem-admin -- assets channel build"
+    ) < release_site_job.index("cargo run -p capsem-admin -- assets channel build")
+    assert (
+        '--manifest "file://$PWD/target/release-site-fixture/assets/manifest.json"'
+        in release_site_job
     )
-    assert '--manifest "file://$PWD/target/release-site-fixture/assets/manifest.json"' in release_site_job
     assert "--assets-dir target/release-site-fixture/assets" in release_site_job
 
 
@@ -227,7 +231,9 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
 
     assert "docs-build" in docs_ci
     assert "site-build" in docs_ci
-    assert "`pr-gate` depends on `docs-build`, `site-build`, and `release-site-build`" in docs_ci_text
+    assert (
+        "`pr-gate` depends on `docs-build`, `site-build`, and `release-site-build`" in docs_ci_text
+    )
 
 
 def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
@@ -330,12 +336,10 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "Dry run: skipping Cloudflare Pages project preflight." in workflow
     assert "RELEASE_CHANNEL_PROJECT: release" in workflow
     assert "python scripts/check-cloudflare-pages-project.py" in workflow
-    assert "--project \"$RELEASE_CHANNEL_PROJECT\"" in workflow
+    assert '--project "$RELEASE_CHANNEL_PROJECT"' in workflow
     assert "needs: cloudflare-release-site-preflight" in workflow
     assert workflow.index("cloudflare-release-site-preflight:") < workflow.index("build-assets:")
-    assert workflow.index("Cloudflare release site preflight") < workflow.index(
-        "Build VM assets"
-    )
+    assert workflow.index("Cloudflare release site preflight") < workflow.index("Build VM assets")
     assert "just build-kernel" in workflow
     assert "just build-rootfs" in workflow
     assert "cargo run -p capsem-admin -- manifest generate assets" in workflow
@@ -368,7 +372,10 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "asset_changed: ${{ steps.asset-delta.outputs.changed }}" in workflow
     assert "asset_blobs_changed: ${{ steps.asset-delta.outputs.asset_blobs_changed }}" in workflow
     assert "if: ${{ steps.asset-delta.outputs.asset_blobs_changed == 'true' }}" in workflow
-    assert "if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}" in workflow
+    assert (
+        "if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}"
+        in workflow
+    )
     assert "--json-output target/asset-release-delta/delta.json" in workflow
     assert "name: asset-release-delta" in workflow
     assert "path: target/asset-release-delta/" in workflow
@@ -427,7 +434,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "Verify Cloudflare Pages project" in workflow
     assert "RELEASE_CHANNEL_PROJECT: release" in workflow
     assert "python scripts/check-cloudflare-pages-project.py" in workflow
-    assert "--project \"$RELEASE_CHANNEL_PROJECT\"" in workflow
+    assert '--project "$RELEASE_CHANNEL_PROJECT"' in workflow
     assert workflow.index("Require Cloudflare credentials") < workflow.index(
         "Verify Cloudflare Pages project"
     )
@@ -439,10 +446,13 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
         in workflow
     )
     assert "assets/stable/manifest.json" not in workflow
-    assert "RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}" in workflow
+    assert (
+        "RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}"
+        in workflow
+    )
     assert "Validate deployed asset channel content" in workflow
     assert "uv run python scripts/check-release-site-contract.py" in workflow
-    assert "--base-url \"$RELEASE_SITE_URL\"" in workflow
+    assert '--base-url "$RELEASE_SITE_URL"' in workflow
     assert "--channel stable" in workflow
     assert "--channel nightly" in workflow
     assert "--attempts 30" in workflow
@@ -460,10 +470,10 @@ def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_
 
     assert "Validate deployed asset channel content" in workflow
     assert "uv run python scripts/check-release-site-contract.py" in validator_step
-    assert "--base-url \"$RELEASE_SITE_URL\"" in validator_step
+    assert '--base-url "$RELEASE_SITE_URL"' in validator_step
     assert "--channel stable" in validator_step
     assert "--channel nightly" in validator_step
-    assert "--channel \"$CHANNEL\"" not in validator_step
+    assert '--channel "$CHANNEL"' not in validator_step
     assert "--attempts 30" in validator_step
     assert "--delay-seconds 20" in validator_step
     assert workflow.index("cloudflare/wrangler-action@v3") < workflow.index(
@@ -471,7 +481,9 @@ def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_
     )
 
 
-def test_release_channel_staging_workflow_exercises_reusable_deploy_without_release_builds() -> None:
+def test_release_channel_staging_workflow_exercises_reusable_deploy_without_release_builds() -> (
+    None
+):
     workflow = _workflow_text("release-channel-staging.yaml")
     reusable = _workflow_text("release-channel.yaml")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
@@ -504,7 +516,9 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
 
     for text in (docs, release_skill, asset_skill):
         assert "release-channel-staging.yaml" in text
-        assert "without invoking `build-assets`" in text or "without invoking VM asset builds" in text
+        assert (
+            "without invoking `build-assets`" in text or "without invoking VM asset builds" in text
+        )
 
 
 def test_release_site_contract_script_fails_on_content_drift(capsys) -> None:
@@ -526,8 +540,7 @@ def test_release_site_contract_script_fails_on_content_drift(capsys) -> None:
                 ok=False,
                 name="release.capsem.org contract",
                 detail=(
-                    "health asset hash mismatch for "
-                    "/assets/releases/2030.0101.1/arm64-vmlinuz"
+                    "health asset hash mismatch for /assets/releases/2030.0101.1/arm64-vmlinuz"
                 ),
             )
 
@@ -545,9 +558,7 @@ def test_release_site_contract_script_fails_on_content_drift(capsys) -> None:
     assert "arm64-vmlinuz" in captured.err
 
 
-def test_release_site_contract_cli_validates_each_requested_channel(
-    monkeypatch, capsys
-) -> None:
+def test_release_site_contract_cli_validates_each_requested_channel(monkeypatch, capsys) -> None:
     validator = _release_site_contract_module()
     checked_channels: list[str] = []
 
@@ -597,9 +608,7 @@ def test_release_site_contract_cli_validates_each_requested_channel(
     assert "nightly release-channel contract passed" in captured.out
 
 
-def test_release_site_contract_cli_retries_requested_channels_as_a_set(
-    monkeypatch, capsys
-) -> None:
+def test_release_site_contract_cli_retries_requested_channels_as_a_set(monkeypatch, capsys) -> None:
     validator = _release_site_contract_module()
     checks: list[str] = []
     sleep_calls: list[float] = []
@@ -659,9 +668,7 @@ def test_release_site_contract_cli_retries_requested_channels_as_a_set(
     assert "nightly release-channel contract passed" in captured.out
 
 
-def test_release_site_contract_retries_clear_cached_remote_fetches(
-    monkeypatch, capsys
-) -> None:
+def test_release_site_contract_retries_clear_cached_remote_fetches(monkeypatch, capsys) -> None:
     validator = _release_site_contract_module()
     cache_clears = 0
     checks: list[tuple[int, str]] = []
@@ -905,7 +912,7 @@ def test_linux_doctor_installs_musl_c_toolchain_before_building_assets() -> None
     assert '_reg linux-musl-tools "_doctor_install_linux_musl_tools"' in doctor
     assert doctor.index("_reg linux-musl-tools") < doctor.index("_reg build-assets")
     assert "check_linux_musl_toolchain" in doctor
-    assert "section \"C Toolchain\"" in linux
+    assert 'section "C Toolchain"' in linux
     assert "command -v musl-gcc" in linux
     assert "command -v x86_64-linux-musl-gcc" in linux
     assert "apt-get install -y musl-tools" in linux
@@ -953,11 +960,16 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
 
     assert "summarizes mixed binary and VM asset updates without profile noise" in frontend
     assert "treats profile catalog updates as a first-class available track" in frontend
-    assert "keeps blocked profile dashboard tracks visible beside available asset tracks" in frontend
+    assert (
+        "keeps blocked profile dashboard tracks visible beside available asset tracks" in frontend
+    )
     assert "Binary, VM assets available" in frontend
     assert "VM assets available for future sessions" in frontend
 
-    assert "applies binary/profile and asset update actions through typed confirmed bodies" in frontend_api
+    assert (
+        "applies binary/profile and asset update actions through typed confirmed bodies"
+        in frontend_api
+    )
     assert "plans update actions without confirmation only through dry runs" in frontend_api
     assert "applyUpdateAction('binary_profiles'" in frontend_api
     assert "applyUpdateAction('assets'" in frontend_api
@@ -986,7 +998,15 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         ),
     ]
 
-    for workflow_name, directory, ci_job, project_name, smoke_name, site_url, failure in expectations:
+    for (
+        workflow_name,
+        directory,
+        ci_job,
+        project_name,
+        smoke_name,
+        site_url,
+        failure,
+    ) in expectations:
         workflow = _workflow_text(workflow_name)
         trigger = workflow.split("\njobs:", maxsplit=1)[0]
         push_trigger = trigger.split("  push:", maxsplit=1)[1]
@@ -1042,7 +1062,10 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "cancel-in-progress: false" in workflow
     assert "RELEASE_TAG: ${{ inputs.tag }}" in workflow
     assert "RELEASE_CHANNEL: ${{ inputs.channel }}" in workflow
-    assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json" in workflow
+    assert (
+        "ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json"
+        in workflow
+    )
     assert "Verify immutable dispatch tag and channel" in workflow
     assert 'test "$GITHUB_REF_TYPE" = tag' in workflow
     assert 'test "$GITHUB_REF_NAME" = "$RELEASE_TAG"' in workflow
@@ -1095,12 +1118,12 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     record_step = assemble_channel.split(
         "- name: Record binary release metadata in selected channel manifest", maxsplit=1
     )[1].split("- name: Prove binary lane did not change VM assets", maxsplit=1)[0]
-    assert 'target/binary-channel/$RELEASE_CHANNEL/manifest.json' in record_step
+    assert "target/binary-channel/$RELEASE_CHANNEL/manifest.json" in record_step
     assert "for channel in" not in record_step
     build_channels = assemble_channel.split(
         "- name: Build release channels with existing VM assets", maxsplit=1
     )[1].split("- name: Build release site pages", maxsplit=1)[0]
-    assert 'generated_at="$(date -u +\'%Y-%m-%dT%H:%M:%SZ\')"' in build_channels
+    assert "generated_at=\"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\"" in build_channels
     assert '--generated-at "$generated_at"' in build_channels
     assert build_channels.index('generated_at="$(date -u') < build_channels.index(
         "for channel in stable nightly"
@@ -1208,7 +1231,10 @@ def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:
     docs_text = " ".join(docs.split())
     assert "binary freshness comes from the selected manifest in the release graph" in docs_text
     assert "releases do not rebuild or upload profile images, and they do not publish" in docs_text
-    assert "`latest.json`; binary freshness comes from the selected manifest in the release graph" in docs_text
+    assert (
+        "`latest.json`; binary freshness comes from the selected manifest in the release graph"
+        in docs_text
+    )
     assert "`latest.json` is absent in the current release rail" in release_skill
     assert "Do not make release creation depend on `latest.json`" in release_skill
 
@@ -1263,12 +1289,8 @@ def test_binary_release_runs_complete_canonical_gate_in_ci() -> None:
     assert workflow.count("run: just test") == 1
     assert "cargo llvm-cov --workspace --bins --no-cfg-coverage" not in gate
     assert "Create stub v2 asset manifest for unit tests" not in gate
-    assert "needs: [preflight, test]" in _workflow_job_block(
-        "build-app-macos", "release.yaml"
-    )
-    assert "needs: [preflight, test]" in _workflow_job_block(
-        "build-app-linux", "release.yaml"
-    )
+    assert "needs: [preflight, test]" in _workflow_job_block("build-app-macos", "release.yaml")
+    assert "needs: [preflight, test]" in _workflow_job_block("build-app-linux", "release.yaml")
     assert "temporary GitHub-hosted exception" in agents
     assert "Temporary hosted-CI exception" in testing_skill
     assert "Temporary hosted-CI exception" in release_skill
@@ -1288,23 +1310,74 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /' in macos
     assert 'test -x "$HOME/.capsem/bin/capsem"' in macos
     assert '"$HOME/.capsem/bin/capsem" --version | grep -F "$VERSION"' in macos
-    assert macos.index("Notarize and staple .pkg") < macos.index(
-        "Install exact notarized package"
-    ) < macos.index("Collect macOS artifacts")
+    assert 'test -d "/Applications/Capsem.app"' in macos
+    assert (
+        "for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui"
+        in macos
+    )
+    assert 'grep -F "Installed: true" /tmp/capsem-status.txt' in macos
+    assert 'grep -F "Running:   true" /tmp/capsem-status.txt' in macos
+    assert (
+        macos.index("Notarize and staple .pkg")
+        < macos.index("Install exact notarized package")
+        < macos.index("Collect macOS artifacts")
+    )
     assert "Post-install full gate (just test)" not in macos
     assert "run: just test" not in macos
     assert "Install exact release deb" in linux
     assert "sudo dpkg -i target/release/bundle/deb/*.deb" in linux
     assert "test -x /usr/bin/capsem" in linux
     assert '/usr/bin/capsem --version | grep -F "$VERSION"' in linux
-    assert linux.index("Repack .deb with companion binaries") < linux.index(
-        "Install exact release deb"
-    ) < linux.index("Collect Linux artifacts")
+    assert (
+        "for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui"
+        in linux
+    )
+    assert "dpkg-query -W -f='${Version}' capsem | grep -Fx \"$VERSION\"" in linux
+    assert 'grep -F "Installed: true" /tmp/capsem-status.txt' in linux
+    assert 'grep -F "Running:   true" /tmp/capsem-status.txt' in linux
+    assert "Enable KVM for exact-package VM proof" in linux
+    assert "test -r /dev/kvm -a -w /dev/kvm" in linux
+    assert "scripts/prove-installed-shell.py" in linux
+    assert "CAPSEM_EXACT_PACKAGE_SHELL_OK" in linux
+    assert "/usr/bin/capsem run" not in linux
+    assert (
+        linux.index("Repack .deb with companion binaries")
+        < linux.index("Install exact release deb")
+        < linux.index("Collect Linux artifacts")
+    )
     assert "Post-install full gate (just test)" not in linux
     assert "run: just test" not in linux
     assert "needs: [test, build-app-macos, build-app-linux]" in create_release
     assert "test-install" not in create_release
     assert "continue-on-error: true" not in create_release
+
+
+def test_install_gate_rebuilds_missing_base_image_before_derived_image() -> None:
+    recipe = _recipe_block("test-install:")
+
+    base_check = "docker image inspect capsem-host-builder:latest"
+    base_build = "just build-host-image"
+    derived_build = 'docker build -t "$IMAGE" -f docker/Dockerfile.install-test .'
+    assert base_check in recipe
+    assert base_build in recipe
+    assert recipe.index(base_check) < recipe.index(base_build) < recipe.index(derived_build)
+
+
+def test_release_skill_requires_ci_and_local_mac_installer_outcome_proof() -> None:
+    release_skill = _source_text("skills/release-process/SKILL.md")
+
+    assert "Installer outcome gate" in release_skill
+    assert "exact publishable `.pkg`" in release_skill
+    assert "exact publishable `.deb`" in release_skill
+    assert "Linux CI installed-product proof" in release_skill
+    assert "macOS CI exact-package proof" in release_skill
+    assert "Final local macOS installed-product proof" in release_skill
+    assert "sudo /usr/sbin/installer -pkg" in release_skill
+    assert "capsem shell" in release_skill
+    assert "manual GUI click-through" in release_skill
+    assert "does not count as release proof" in release_skill
+    assert "forward-only release" in release_skill
+    assert "Do not call the release complete" in release_skill
 
 
 def test_release_recipe_dispatches_one_parameterized_workflow() -> None:
@@ -1335,8 +1408,9 @@ def test_self_update_docs_match_verified_package_execution() -> None:
     assert "/usr/sbin/installer -pkg {cached} -target /" in install_tests
     assert "apt-get install --yes {cached}" in install_tests
     assert "and print the tested package-manager apply command (`sudo" not in install_skill
-    assert "downloads verified binary installers, prints the package-manager apply command," not in (
-        architecture_skill
+    assert (
+        "downloads verified binary installers, prints the package-manager apply command,"
+        not in (architecture_skill)
     )
     assert "prints the\ntested package-manager apply command for the verified package" not in (
         service_docs
@@ -1794,9 +1868,14 @@ def test_remote_readiness_rejects_manifest_pointer_drift() -> None:
     result = checker.check_release_site_contract(fixture["site"], fixture["channel"])
 
     assert not result.ok
-    assert "release index stable missing manifest URL /assets/nightly/manifest.json" in result.detail
+    assert (
+        "release index stable missing manifest URL /assets/nightly/manifest.json" in result.detail
+    )
     assert "channel page stable missing manifest URL /assets/nightly/manifest.json" in result.detail
-    assert "unexpected header fetch https://release.capsem.org/assets/nightly/manifest.json" in result.detail
+    assert (
+        "unexpected header fetch https://release.capsem.org/assets/nightly/manifest.json"
+        in result.detail
+    )
 
 
 def test_remote_readiness_rejects_profile_catalog_artifact_drift() -> None:
@@ -1818,8 +1897,7 @@ def test_remote_readiness_rejects_profile_catalog_artifact_drift() -> None:
     assert not result.ok
     assert (
         "profile co-work architecture arm64 image "
-        "/assets/releases/2030.0101.1/arm64-rootfs.erofs blake3 mismatch"
-        in result.detail
+        "/assets/releases/2030.0101.1/arm64-rootfs.erofs blake3 mismatch" in result.detail
     )
 
 
@@ -1907,20 +1985,27 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     assert "scripts/check-public-binary-release.py" in verify_downloads
     assert '--channel "$RELEASE_CHANNEL"' in verify_downloads
     assert (
-        "--stable-manifest-url "
-        "https://release.capsem.org/assets/stable/manifest.json"
+        "--stable-manifest-url https://release.capsem.org/assets/stable/manifest.json"
     ) in verify_downloads
     assert (
-        "--nightly-manifest-url "
-        "https://release.capsem.org/assets/nightly/manifest.json"
+        "--nightly-manifest-url https://release.capsem.org/assets/nightly/manifest.json"
     ) in verify_downloads
     assert '--manifest-url "$ASSET_MANIFEST_URL"' in verify_downloads
     assert "--install-script-url https://capsem.org/install.sh" in verify_downloads
-    assert "--docker-linux-install" in verify_downloads
-    assert "--docker-channel-switch" in verify_downloads
-    assert "--docker-upgrade" in verify_downloads
-    assert "Glow-up verify public install, channel switch, and upgrade" in verify_downloads
-    assert "curl -fsSL https://capsem.org/install.sh | sh" in verify_downloads
+    assert "--docker-linux-install" not in verify_downloads
+    assert "Enable KVM for live public-install VM proof" in verify_downloads
+    assert "Install live public Linux release and prove guest shell execution" in verify_downloads
+    assert (
+        'curl -fsSL https://capsem.org/install.sh | CAPSEM_CHANNEL="$RELEASE_CHANNEL" sh'
+        in verify_downloads
+    )
+    assert "dpkg-query -W -f='${Version}' capsem" in verify_downloads
+    assert 'grep -F "Running:   true" /tmp/capsem-live-status.txt' in verify_downloads
+    assert 'grep -F "Service:   ok" /tmp/capsem-live-status.txt' in verify_downloads
+    assert 'grep -F "Gateway:   ok" /tmp/capsem-live-status.txt' in verify_downloads
+    assert "scripts/prove-installed-shell.py" in verify_downloads
+    assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in verify_downloads
+    assert '"$HOME/.capsem/bin/capsem" run' not in verify_downloads
     assert "skipping binary e2e" not in verify_downloads
     assert "::warning::no .deb" not in verify_downloads
     assert "::warning::no 'capsem' CLI" not in verify_downloads
@@ -2004,8 +2089,7 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
     assert "per-channel manifest JSON" in release_skill
     assert "package artifacts separately from the per-binary inventory" in release_skill_text
     assert (
-        "Profiles own their config files, profile images, ABOM/OBOM evidence"
-        in release_skill_text
+        "Profiles own their config files, profile images, ABOM/OBOM evidence" in release_skill_text
     )
     assert "channels/stable/index.json" not in release_skill
 
@@ -2032,7 +2116,10 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     assert "gh release download vX.Y.Z --pattern manifest.json" not in release_skill
     assert "VM asset manifests" in release_skill
     assert "root channel catalog live on" in release_skill
-    assert "`ci.yaml` runs `docs-build`, `site-build`, and `release-site-build` under `pr-gate`" in release_skill_text
+    assert (
+        "`ci.yaml` runs `docs-build`, `site-build`, and `release-site-build` under `pr-gate`"
+        in release_skill_text
+    )
     assert "`docs.yaml` and `site.yaml` deploy and smoke only on" in release_skill
     assert "`https://docs.capsem.org/` plus `/getting-started/`" in release_skill
     assert "`https://capsem.org/` for marketing" in release_skill
@@ -2249,7 +2336,9 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     assert "`https://release.capsem.org/` index" in docs
     assert "`/channels.json`, and" in docs
     assert "`/assets/<channel>/manifest.json` before the workflow can pass" in docs
-    assert "`docs.yaml` and `site.yaml` are independent from binary and profile image release" in docs
+    assert (
+        "`docs.yaml` and `site.yaml` are independent from binary and profile image release" in docs
+    )
     assert "`https://docs.capsem.org/`, content type `text/html`" in docs
     assert "`https://capsem.org/`, content type `text/html`" in docs
 
@@ -2306,8 +2395,8 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     docs_text = " ".join(docs.split())
 
     assert "Read-only remote release readiness checks" in script
-    assert "git\", \"rev-list\", \"--left-right\", \"--count\"" in script
-    assert "gh\", \"workflow\", \"view\", \"ci.yaml\"" in script
+    assert 'git", "rev-list", "--left-right", "--count"' in script
+    assert 'gh", "workflow", "view", "ci.yaml"' in script
     assert "branches/{branch}/protection" in script
     assert "repos/{repo}/rules/branches/{branch}" in script
     assert "socket.getaddrinfo" in script
@@ -2338,8 +2427,9 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "scripts/check-remote-release-readiness.py" in docs
     assert "read-only" in docs
     assert "remote `ci.yaml` exposes `pr-gate`" in docs_text
-    assert "aggregates `test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and `release-site-build`" in (
-        docs_text
+    assert (
+        "aggregates `test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and `release-site-build`"
+        in (docs_text)
     )
     assert "runs with `if: ${{ always() }}` and asserts every dependency result" in docs_text
     assert "branch protection or active branch rulesets require `pr-gate`" in docs_text
@@ -2443,10 +2533,7 @@ def test_live_release_activation_order_is_documented() -> None:
             "provision the `release.capsem.org` cloudflare pages project and dns"
             in normalized_lower
         )
-        assert (
-            "run `uv run python scripts/check-remote-release-readiness.py`"
-            in normalized_lower
-        )
+        assert "run `uv run python scripts/check-remote-release-readiness.py`" in normalized_lower
         assert (
             "manual VM asset workflow as a dry run" in normalized
             or "manual profile image workflow as a dry run" in normalized
@@ -2472,9 +2559,7 @@ def test_live_release_activation_order_is_documented() -> None:
         assert "installed update smokes" in normalized
         assert normalized_lower.index(
             "merge the release-rail commits to `main` only after"
-        ) < normalized_lower.index(
-            "require only `pr-gate` in branch protection or active rulesets"
-        )
+        ) < normalized_lower.index("require only `pr-gate` in branch protection or active rulesets")
         assert normalized_lower.index(
             "provision the `release.capsem.org` cloudflare pages project and dns"
         ) < min(
@@ -2524,7 +2609,9 @@ jobs:
 """.strip()
     stale = inline.replace(", docs-build, site-build, release-site-build", "")
     non_failing = inline + "\n    steps:\n      - run: echo ok\n"
-    fail_closed = inline + """
+    fail_closed = (
+        inline
+        + """
     if: ${{ always() }}
     steps:
       - name: Require all CI jobs
@@ -2543,6 +2630,7 @@ jobs:
           test "$SITE_BUILD_RESULT" = success
           test "$RELEASE_SITE_BUILD_RESULT" = success
 """
+    )
 
     assert module.workflow_job_needs(module.workflow_job_block(inline, "pr-gate")) == {
         "test-linux",
@@ -2565,12 +2653,8 @@ jobs:
         "site-build",
         "release-site-build",
     }.issubset(module.workflow_job_needs(module.workflow_job_block(stale, "pr-gate")))
-    assert module.pr_gate_contract_failures(
-        module.workflow_job_block(fail_closed, "pr-gate")
-    ) == []
-    assert module.pr_gate_contract_failures(
-        module.workflow_job_block(non_failing, "pr-gate")
-    ) == [
+    assert module.pr_gate_contract_failures(module.workflow_job_block(fail_closed, "pr-gate")) == []
+    assert module.pr_gate_contract_failures(module.workflow_job_block(non_failing, "pr-gate")) == [
         "pr-gate does not run with if: ${{ always() }}",
         "pr-gate does not assert test-linux result",
         "pr-gate does not assert test result",
@@ -2659,8 +2743,8 @@ def test_remote_release_readiness_requires_active_pr_gate_rule() -> None:
     assert not module.active_branch_rules_require_pr_gate(
         [{"type": "pull_request", "parameters": {"message": "mention pr-gate only"}}]
     )
-    assert 'repos/{repo}/rules/branches/{branch}' in script
-    assert 'repos/{repo}/rulesets/{ruleset_id}' not in script
+    assert "repos/{repo}/rules/branches/{branch}" in script
+    assert "repos/{repo}/rulesets/{ruleset_id}" not in script
     assert "active branch rules" in script
     assert "branch protection or active branch rulesets require `pr-gate`" in docs_text
 
@@ -2753,7 +2837,10 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
     corrupted = json.loads(json.dumps(health))
     corrupted["evidence"]["vm_oboms"][0]["hash"] = "0" * 64
     failures = module.check_release_evidence("https://release.capsem.test", corrupted)
-    assert "VM OBOM evidence /assets/releases/2030.0101.1/arm64-obom.cdx.json blake3 mismatch" in failures
+    assert (
+        "VM OBOM evidence /assets/releases/2030.0101.1/arm64-obom.cdx.json blake3 mismatch"
+        in failures
+    )
 
     assert "def check_release_evidence" in script
     assert '"sha256", "host SBOM evidence", "spdx"' in script
@@ -2774,8 +2861,7 @@ def test_remote_release_readiness_checker_verifies_vm_asset_file_content() -> No
     script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
     workflow = _workflow_text("release-channel.yaml")
     rootfs_url = (
-        "https://github.com/google/capsem/releases/download/"
-        "assets-v2030.0101.1/arm64-rootfs.erofs"
+        "https://github.com/google/capsem/releases/download/assets-v2030.0101.1/arm64-rootfs.erofs"
     )
     rootfs_bytes = b"rootfs-content"
 
@@ -2804,7 +2890,7 @@ def test_remote_release_readiness_checker_verifies_vm_asset_file_content() -> No
             "https://release.capsem.org", item, "blake3", "VM asset file"
         )
     )
-    assert 'fetch_and_verify_evidence_artifact(' in script
+    assert "fetch_and_verify_evidence_artifact(" in script
     assert '"VM asset file"' in script
     assert "uv run python scripts/check-release-site-contract.py" in workflow
 
@@ -3006,7 +3092,9 @@ def test_remote_readiness_allows_first_channel_bootstrap_without_host_evidence()
     assert "health evidence host_sboms missing for published binary files" in failures
 
 
-def test_release_channel_smoke_and_remote_readiness_validate_matching_attestation_predicate_evidence() -> None:
+def test_release_channel_smoke_and_remote_readiness_validate_matching_attestation_predicate_evidence() -> (
+    None
+):
     module = _readiness_checker_module()
     script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
     workflow = _workflow_text("release-channel.yaml")
@@ -3335,9 +3423,7 @@ def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
         }
     ]
     assert (
-        module.check_release_cache_headers(
-            "https://release.capsem.test", "stable", asset_files
-        )
+        module.check_release_cache_headers("https://release.capsem.test", "stable", asset_files)
         == []
     )
     assert calls == list(headers)
@@ -3354,7 +3440,7 @@ def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
     ) in failures
 
     assert "def check_release_cache_headers" in script
-    assert "release_site_request(url, method=\"HEAD\")" in script
+    assert 'release_site_request(url, method="HEAD")' in script
     assert "RELEASE_VALIDATOR_USER_AGENT" in script
     assert "Cache-Control must contain {directive}" in script
     assert "max-age=31536000" in script
@@ -3691,6 +3777,12 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
         deb_postinst
     )
     assert "event=service_install_invoked" in deb_postinst
+    assert 'capsem install" 2>/dev/null || true' not in deb_postinst
+    assert "event=service_registration_failed" in deb_postinst
+    assert "event=readiness_poll" in deb_postinst
+    assert 'grep -q "Service:   ok"' in deb_postinst
+    assert 'grep -q "Gateway:   ok"' in deb_postinst
+    assert "event=service_not_ready" in deb_postinst
 
 
 def test_helper_version_surfaces_support_installed_update_smoke() -> None:
@@ -4339,8 +4431,17 @@ def test_guest_init_persists_boot_diagnostics_before_agent_launch() -> None:
     assert launch_log_pos != -1, "init must mark the exact agent launch boundary"
     assert chroot_pos != -1
     assert launch_pos != -1
-    assert exit_status_pos != -1, "init must report early agent exits instead of silently idling PID 1"
-    assert helper_pos < workspace_log_pos < agent_stdio_pos < launch_log_pos < launch_pos < exit_status_pos
+    assert exit_status_pos != -1, (
+        "init must report early agent exits instead of silently idling PID 1"
+    )
+    assert (
+        helper_pos
+        < workspace_log_pos
+        < agent_stdio_pos
+        < launch_log_pos
+        < launch_pos
+        < exit_status_pos
+    )
 
 
 def test_guest_init_publishes_rootfs_binaries_into_run_contract() -> None:
@@ -4447,7 +4548,10 @@ def test_linux_vm_launch_preformats_system_overlay_before_boot() -> None:
     assert "prewarm_system_overlay_templates(&run_dir, &profile_cache)" in service
     assert "fn prewarm_vm_asset_hash_cache" in service
     assert "capsem_core::VmConfig::verify_hash(path, hash)" in service
-    assert "prewarm_vm_asset_hash_cache(&assets_base_dir, manifest.as_deref(), &current_version)" in service
+    assert (
+        "prewarm_vm_asset_hash_cache(&assets_base_dir, manifest.as_deref(), &current_version)"
+        in service
+    )
     assert "mke2fs unavailable; guest will format system overlay at first boot" in process
     assert "lazy_itable_init=1,lazy_journal_init=1" in init
     assert "-J size=4" in init
