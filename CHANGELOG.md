@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside a KVM-backed guest on Linux.
 - Made Debian-package SBOM inspection parse the package archive directly, so
   release acceptance tests work with both BSD and GNU host toolchains.
+- Pinned the clean-build SSE stream dependency to its supported patch API so
+  untracked local resolution state cannot mask release CI compilation drift.
 
 ## [1.5.1783894498] - 2026-07-12
 
