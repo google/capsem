@@ -1296,6 +1296,15 @@ def test_binary_release_runs_complete_canonical_gate_in_ci() -> None:
     assert "Temporary hosted-CI exception" in release_skill
 
 
+def test_clean_build_pins_sse_stream_api() -> None:
+    workspace = _source_text("Cargo.toml")
+    server_manager = _source_text("crates/capsem-core/src/mcp/server_manager.rs")
+
+    assert 'sse-stream = "=0.2.4"' in workspace
+    assert "SseStream::from_bytes_stream" in server_manager
+    assert "SseStream::from_byte_stream" not in server_manager
+
+
 def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     workflow = _workflow_text("release.yaml")
     macos = _workflow_job_block("build-app-macos", "release.yaml")
