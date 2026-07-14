@@ -63,7 +63,7 @@ host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p c
 release_minor := "5"
 
 # Stamp version as 1.{release_minor}.{unix_timestamp} in Cargo.toml,
-# tauri.conf.json, and pyproject.toml.
+# tauri.conf.json, pyproject.toml, and the frozen Python lockfile.
 _stamp-version:
     #!/bin/bash
     set -euo pipefail
@@ -82,6 +82,9 @@ _stamp-version:
     sed_in_place "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
     sed_in_place "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
     sed_in_place "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" pyproject.toml
+    # Keep the editable project metadata in the frozen lockfile on the exact
+    # release version before cut-release creates its commit and tag.
+    uv lock --offline
 
 # Compile all host binaries
 _build-host:
@@ -1273,7 +1276,7 @@ cut-release: test _stamp-version
     # Extract latest release notes for the frontend boot screen
     uv run python3 scripts/extract-release-notes.py
     # Commit and tag locally. Push only after checking the local commit/tag.
-    git add Cargo.toml crates/capsem-app/tauri.conf.json pyproject.toml CHANGELOG.md LATEST_RELEASE.md
+    git add Cargo.toml crates/capsem-app/tauri.conf.json pyproject.toml uv.lock CHANGELOG.md LATEST_RELEASE.md
     git commit -m "release: v${NEW}"
     git tag "$TAG"
     echo "Prepared $TAG locally."
