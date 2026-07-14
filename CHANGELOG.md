@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1784071469] - 2026-07-14
+
 ### Fixed
 - Made the public macOS curl installer synchronously apply the downloaded
   package with `/usr/sbin/installer`, so the command completes a real install

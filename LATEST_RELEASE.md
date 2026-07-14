@@ -1,13 +1,17 @@
-version: 1.5.1783894498
+version: 1.5.1784071469
 ---
-### Changed
-- Added a Stage 0 clean-container install-harness preflight to `just test`,
-  before audits/builds/VMs, plus ordering contracts and agent/skill policy. It
-  proves the container-owned uv environment can launch pytest early while the
-  complete Docker/systemd package install E2E remains mandatory later.
-
 ### Fixed
-- Made the host exec-output transport retry interrupted socket reads instead
-  of publishing an empty or partial buffer with the guest command's successful
-  exit code. This prevents release replays from losing output emitted at
-  process exit while preserving the real exit status.
+- Made the public macOS curl installer synchronously apply the downloaded
+  package with `/usr/sbin/installer`, so the command completes a real install
+  instead of handing the package to a generic `open` action.
+- Made both macOS and Linux public installers reject package downloads whose
+  byte size or SHA-256 does not match the release manifest before elevation.
+- Strengthened release CI to verify exact installed package versions, complete
+  binary cohorts, service readiness, and PTY-driven `capsem shell` execution
+  inside a KVM-backed guest on Linux.
+- Made Debian-package SBOM inspection parse the package archive directly, so
+  release acceptance tests work with both BSD and GNU host toolchains.
+- Pinned the clean-build SSE stream dependency to its supported patch API so
+  untracked local resolution state cannot mask release CI compilation drift.
+- Made macOS CI install the release-site lockfile before integration tests so
+  cached local Node modules cannot mask clean-runner release-contract failures.
