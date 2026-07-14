@@ -236,6 +236,17 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
     )
 
 
+def test_macos_ci_installs_release_site_dependencies_before_integration() -> None:
+    job = _workflow_job_block("test")
+    install = "cd release-site && pnpm install --frozen-lockfile"
+    integration = "Python integration tests (non-VM suites)"
+
+    assert "frontend/pnpm-lock.yaml" in job
+    assert "release-site/pnpm-lock.yaml" in job
+    assert install in job
+    assert job.index(install) < job.index(integration)
+
+
 def test_ci_test_steps_do_not_mask_failures_with_true() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
 
