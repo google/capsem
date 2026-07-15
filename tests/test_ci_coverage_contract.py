@@ -5,11 +5,21 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_python_coverage_gate_does_not_round_subthreshold_total() -> None:
+    project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
+    precision = project["tool"]["coverage"]["report"]["precision"]
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+
+    assert precision >= 2
+    assert "--cov-fail-under=90" in justfile
 
 
 @dataclass(frozen=True)

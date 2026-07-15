@@ -339,6 +339,15 @@ class TestParseB3sums:
         assert parse_b3sums("") == []
         assert parse_b3sums("\n") == []
 
+    def test_malformed_line_is_ignored_without_dropping_valid_assets(self):
+        assets = parse_b3sums(f"missing-filename\n{B3SUMS_OUTPUT}")
+
+        assert [asset.filename for asset in assets] == [
+            "vmlinuz",
+            "initrd.img",
+            "rootfs.erofs",
+        ]
+
 
 # ---------------------------------------------------------------------------
 # collect_bom
