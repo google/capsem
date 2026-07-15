@@ -2,12 +2,27 @@
 
 from pathlib import Path
 
+import pytest
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _read_text_exact_case(relative_path: str) -> str:
+    """Read a repository file only when every path component has exact case."""
+    path = PROJECT_ROOT
+    for component in Path(relative_path).parts:
+        exact_entries = {entry.name for entry in path.iterdir()}
+        assert component in exact_entries, (
+            f"repository path component {component!r} does not match exact on-disk case "
+            f"below {path}"
+        )
+        path /= component
+    return path.read_text()
+
+
 def _just_recipe_block(name: str) -> str:
-    lines = (PROJECT_ROOT / "Justfile").read_text().splitlines()
+    lines = _read_text_exact_case("justfile").splitlines()
     start = next(i for i, line in enumerate(lines) if line.startswith(name))
     end = len(lines)
     for i in range(start + 1, len(lines)):
@@ -16,6 +31,11 @@ def _just_recipe_block(name: str) -> str:
             end = i
             break
     return "\n".join(lines[start:end])
+
+
+def test_release_contract_rejects_wrong_case_even_on_macos() -> None:
+    with pytest.raises(AssertionError, match="does not match exact on-disk case"):
+        _read_text_exact_case("Justfile")
 
 
 def test_version_stamp_refreshes_frozen_lock_before_release_cut() -> None:
