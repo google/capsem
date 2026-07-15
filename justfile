@@ -1034,16 +1034,24 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
 _test-install-harness-preflight:
     #!/bin/bash
     set -euo pipefail
+    IMAGE="capsem-install-test"
     if ! docker image inspect capsem-host-builder:latest >/dev/null 2>&1; then
         just build-host-image
     fi
-    docker build -t capsem-install-test -f docker/Dockerfile.install-test .
-    docker run --rm \
-        -u capsem \
-        -e UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test \
-        -v "$PWD":/src:ro \
-        capsem-install-test \
-        bash -lc 'cd /src && uv run python -m pytest --version'
+    check_install_image() {
+        docker run --rm \
+            -u capsem \
+            -e UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test \
+            -v "$PWD":/src:ro \
+            "$IMAGE" \
+            bash -lc 'set -e; sudo -n true; cd /src && uv run python -m pytest --version'
+    }
+    docker build -t "$IMAGE" -f docker/Dockerfile.install-test .
+    if ! check_install_image; then
+        echo "Install-test image smoke check failed; rebuilding without Docker cache..." >&2
+        docker build --no-cache -t "$IMAGE" -f docker/Dockerfile.install-test .
+        check_install_image
+    fi
 
 test-install:
     #!/bin/bash
@@ -1053,6 +1061,7 @@ test-install:
     # runners that lack libglib2.0-dev/libgtk-3-dev (the failure mode that
     # masked the asset-URL bug for v1.0.1777065213).
     set -euo pipefail
+    just _test-install-harness-preflight
     IMAGE="capsem-install-test"
     # The derived install-test image is FROM capsem-host-builder. The cleanup
     # trap and low-disk recovery may remove both images, so the standalone gate
@@ -1066,6 +1075,13 @@ test-install:
         echo "Building $IMAGE Docker image..."
         docker build -t "$IMAGE" -f docker/Dockerfile.install-test .
     fi
+    HOST_UID=$(id -u)
+    HOST_GID=$(id -g)
+    CONTAINER="capsem-install-test"
+    # Detach the previous gate container before inspecting or resetting its
+    # persistent target volume. Otherwise Docker refuses the volume removal;
+    # ignoring that failure allowed the cache to fill the entire Docker disk.
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
     # Durable disk cushion. Both checks are no-ops in the common case
     # (plenty of Colima headroom, cache under 25 GB) so they don't thrash
     # the build cache every run -- they only fire when we're about to
@@ -1090,17 +1106,18 @@ test-install:
         VOLUME_GB=$(echo "$VOLUME_SIZE" | grep -oE '^[0-9]+' | head -1)
         if [[ "${VOLUME_GB:-}" =~ ^[0-9]+$ ]] && echo "$VOLUME_SIZE" | grep -q "GB$" && [ "$VOLUME_GB" -gt 25 ]; then
             echo "capsem-install-target is ${VOLUME_SIZE} -- resetting (>25 GB threshold)..."
-            docker volume rm capsem-install-target >/dev/null 2>&1 || true
+            if ! docker volume rm capsem-install-target >/dev/null; then
+                echo "Error: Failed to reset oversized capsem-install-target volume." >&2
+                echo "Containers still attached to the gate-owned volume:" >&2
+                docker ps -a --filter volume=capsem-install-target >&2 || true
+                exit 1
+            fi
         fi
     fi
     # Stable container name + preemptive rm -f handles any container leaked
     # by a previous run that aborted before reaching cleanup (e.g. cargo
     # SIGTERM under Colima OOM). The EXIT trap below guarantees cleanup on
     # any exit path of *this* run so the leak can't start over.
-    HOST_UID=$(id -u)
-    HOST_GID=$(id -g)
-    CONTAINER="capsem-install-test"
-    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
     cleanup() {
         docker exec "$CONTAINER" bash -c "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" >/dev/null 2>&1 || true
         docker rm -f "$CONTAINER" >/dev/null 2>&1 || true

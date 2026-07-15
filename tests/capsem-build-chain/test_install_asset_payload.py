@@ -125,6 +125,19 @@ def test_install_test_restores_host_workspace_ownership() -> None:
     assert 'docker rm -f "$CONTAINER"' in block
 
 
+def test_install_test_removes_stale_container_before_fail_closed_cache_reset() -> None:
+    block = _just_recipe_block("test-install")
+
+    remove_stale = block.index('docker rm -f "$CONTAINER"')
+    inspect_cache = block.index('VOLUME_LINE=$(docker system df -v')
+    reset_cache = block.index('docker volume rm capsem-install-target')
+
+    assert remove_stale < inspect_cache < reset_cache
+    assert 'docker volume rm capsem-install-target >/dev/null 2>&1 || true' not in block
+    assert 'Failed to reset oversized capsem-install-target volume' in block
+    assert 'docker ps -a --filter volume=capsem-install-target' in block
+
+
 def test_install_test_runs_local_release_glowup_from_real_package() -> None:
     block = _just_recipe_block("test-install")
 
@@ -200,6 +213,17 @@ def test_full_gate_preflights_clean_install_harness_before_expensive_stages() ->
     assert "docker/Dockerfile.install-test" in preflight
     assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in preflight
     assert "uv run python -m pytest --version" in preflight
+    assert "sudo -n true" in preflight
+    assert "docker build --no-cache" in preflight
+
+
+def test_standalone_install_gate_preflights_privileged_helper() -> None:
+    block = _just_recipe_block("test-install")
+
+    preflight = block.index("just _test-install-harness-preflight")
+    start_container = block.index('echo "Starting systemd container..."')
+
+    assert preflight < start_container
 
 
 def test_binary_release_sbom_jobs_install_zstd_for_deb_payloads() -> None:
