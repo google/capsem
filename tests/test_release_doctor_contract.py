@@ -1053,6 +1053,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
 
 def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> None:
     workflow = _workflow_text("release.yaml")
+    qualification = _workflow_text("release-qualification.yaml")
     create_release = _workflow_job_block("create-release", "release.yaml")
     assemble_channel = _workflow_job_block("assemble-release-channel", "release.yaml")
     trigger = workflow.split("\npermissions:", maxsplit=1)[0]
@@ -1085,7 +1086,9 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "vm-assets-" not in workflow
     assert "assets/current" not in workflow
     assert """echo '{"releases":{}}'""" not in workflow
-    assert "Complete canonical release gate (just test)" in workflow
+    assert "Complete canonical release gate (just test)" in qualification
+    assert "run: just test" not in workflow
+    assert "scripts/check-release-qualification.py" in workflow
     assert "just build-kernel" not in workflow
     assert "just build-rootfs" not in workflow
     assert "cargo run -p capsem-admin -- manifest generate assets" not in workflow
@@ -1269,13 +1272,26 @@ def test_binary_release_channel_policy_supports_fast_nightly_and_weekly_stable()
     assert "stable is promoted on the weekly cadence" in release_skill_text
 
 
-def test_binary_release_runs_complete_canonical_gate_in_ci() -> None:
+def test_untagged_release_candidate_runs_complete_canonical_gate_in_ci() -> None:
     workflow = _workflow_text("release.yaml")
-    gate = _workflow_job_block("test", "release.yaml")
+    qualification_workflow = _workflow_text("release-qualification.yaml")
+    gate = _workflow_job_block("qualification", "release-qualification.yaml")
     agents = _source_text("AGENTS.md")
     testing_skill = _source_text("skills/dev-testing/SKILL.md")
     release_skill = _source_text("skills/release-process/SKILL.md")
 
+    assert "run-name: Qualify release ${{ inputs.sha }}" in qualification_workflow
+    assert "sha:" in qualification_workflow
+    assert "ref: ${{ inputs.sha }}" in qualification_workflow
+    assert '[[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]' in gate
+    assert 'test "$GITHUB_REF_TYPE" = branch' in gate
+    assert 'test "$GITHUB_REF_NAME" = main' in gate
+    assert 'test "$GITHUB_SHA" = "$EXPECTED_SHA"' in gate
+    assert 'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"' in gate
+    assert "contents: read" in qualification_workflow
+    assert "contents: write" not in qualification_workflow
+    assert "gh release" not in qualification_workflow
+    assert 'git tag "$TAG"' not in qualification_workflow
     assert "matrix.os" not in gate
     assert "TEMPORARILY DISABLED: macOS full gate" in gate
     assert "Restore a parallel macOS `just" in gate
@@ -1297,11 +1313,18 @@ def test_binary_release_runs_complete_canonical_gate_in_ci() -> None:
     assert "test -r /dev/vhost-vsock -a -w /dev/vhost-vsock" in gate
     assert "Start Docker on macOS" not in gate
     assert "just test" in gate
-    assert workflow.count("run: just test") == 1
+    assert qualification_workflow.count("run: just test") == 1
+    assert "run: just test" not in workflow
     assert "cargo llvm-cov --workspace --bins --no-cfg-coverage" not in gate
     assert "Create stub v2 asset manifest for unit tests" not in gate
-    assert "needs: [preflight, test]" in _workflow_job_block("build-app-macos", "release.yaml")
-    assert "needs: [preflight, test]" in _workflow_job_block("build-app-linux", "release.yaml")
+    assert "needs: preflight" in _workflow_job_block("build-app-macos", "release.yaml")
+    assert "needs: preflight" in _workflow_job_block("build-app-linux", "release.yaml")
+    preflight = _workflow_job_block("preflight", "release.yaml")
+    assert "Verify exact commit passed remote qualification" in preflight
+    assert 'scripts/check-release-qualification.py --sha "$GITHUB_SHA"' in preflight
+    assert "fetch-depth: 0" in preflight
+    assert "git fetch origin main" in preflight
+    assert 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' in preflight
     assert "temporary GitHub-hosted exception" in agents
     assert "Temporary hosted-CI exception" in testing_skill
     assert "Temporary hosted-CI exception" in release_skill
@@ -1323,8 +1346,8 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     create_release = _workflow_job_block("create-release", "release.yaml")
 
     assert "  test-install:" not in workflow
-    assert "needs: [preflight, test]" in macos
-    assert "needs: [preflight, test]" in linux
+    assert "needs: preflight" in macos
+    assert "needs: preflight" in linux
     assert "continue-on-error: true" not in linux
     assert "Install exact notarized package" in macos
     assert "Verify exact notarized package identity and Gatekeeper acceptance" in macos
@@ -1373,7 +1396,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     )
     assert "Post-install full gate (just test)" not in linux
     assert "run: just test" not in linux
-    assert "needs: [test, build-app-macos, build-app-linux]" in create_release
+    assert "needs: [build-app-macos, build-app-linux]" in create_release
     assert "test-install" not in create_release
     assert "continue-on-error: true" not in create_release
 
@@ -1439,6 +1462,12 @@ def test_release_recipe_dispatches_one_parameterized_workflow() -> None:
     assert 'RUN_TITLE="Release $CHANNEL $TAG"' in recipe
     assert "displayTitle" in recipe
     assert "headBranch" not in recipe
+    assert 'LOCAL_TAG_SHA=$(git rev-parse "$TAG^{commit}")' in recipe
+    assert 'REMOTE_TAG_SHA=$(git ls-remote --tags origin' in recipe
+    assert 'test "$LOCAL_TAG_SHA" = "$REMOTE_TAG_SHA"' in recipe
+    assert recipe.index('test "$LOCAL_TAG_SHA" = "$REMOTE_TAG_SHA"') < recipe.index(
+        'scripts/check-release-qualification.py --sha "$LOCAL_TAG_SHA"'
+    )
 
 
 def test_self_update_docs_match_verified_package_execution() -> None:
@@ -3665,13 +3694,15 @@ def test_ci_builds_frontend_before_compiling_tauri_app_tests() -> None:
 
 def test_frontend_generated_settings_use_one_shared_rail() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    release_workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
+    release_qualification = (
+        PROJECT_ROOT / ".github" / "workflows" / "release-qualification.yaml"
+    ).read_text()
     just = (PROJECT_ROOT / "justfile").read_text()
 
     generate_pos = workflow.find("bash scripts/generate-settings.sh")
     first_frontend_build_pos = workflow.find("cd frontend && pnpm run build")
     frontend_check_pos = workflow.find("pnpm run check")
-    release_gate_pos = release_workflow.find("run: just test")
+    release_gate_pos = release_qualification.find("run: just test")
 
     assert generate_pos != -1
     assert first_frontend_build_pos != -1

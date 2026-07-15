@@ -773,12 +773,17 @@ def test_linux_postinstall_prints_service_journal_on_readiness_failure() -> None
 
 def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
+    qualification = (
+        PROJECT_ROOT / ".github" / "workflows" / "release-qualification.yaml"
+    ).read_text()
 
     assert "  build-assets:" not in workflow
     assert "vm-assets-" not in workflow
     assert "assets/current" not in workflow
     assert """echo '{"releases":{}}'""" not in workflow
-    assert "Complete canonical release gate (just test)" in workflow
+    assert "Complete canonical release gate (just test)" in qualification
+    assert "run: just test" not in workflow
+    assert "scripts/check-release-qualification.py" in workflow
     assert "just build-kernel" not in workflow
     assert "just build-rootfs" not in workflow
     assert "RELEASE_CHANNEL: ${{ inputs.channel }}" in workflow

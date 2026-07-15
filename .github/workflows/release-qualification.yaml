@@ -1,0 +1,105 @@
+name: Release qualification
+run-name: Qualify release ${{ inputs.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact untagged main commit to qualify
+        required: true
+        type: string
+
+concurrency:
+  group: release-qualification-${{ inputs.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  qualification:
+    # TEMPORARILY DISABLED: macOS full gate. GitHub-hosted macOS runners cannot
+    # provide nested Virtualization.framework access for Capsem/Colima, and the
+    # repository has no physical macOS runner. Restore a parallel macOS `just
+    # test` job when that runner exists. This exact-SHA Linux qualification is
+    # release-blocking; final tags and both package jobs require its success.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact untagged candidate identity
+        env:
+          EXPECTED_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF_TYPE" = branch
+          test "$GITHUB_REF_NAME" = main
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git tag --points-at HEAD 'v*')"
+
+      - uses: extractions/setup-just@v3
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: full-release-qualification-linux
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 10
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Install Linux full-gate system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libssl-dev \
+            libglib2.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            musl-tools \
+            pkg-config \
+            xdg-utils \
+            xvfb
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm -a -w /dev/kvm
+          sudo modprobe vhost_vsock
+          sudo chmod 0666 /dev/vhost-vsock
+          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+
+      - name: Complete canonical release gate (just test)
+        run: just test
+
+      - name: Upload full-gate artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-qualification-linux-${{ inputs.sha }}-${{ github.run_attempt }}
+          path: |
+            test-artifacts/
+            frontend/test-artifacts/
+            target/build.log
+          retention-days: 14
+          if-no-files-found: ignore

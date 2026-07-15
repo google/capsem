@@ -29,7 +29,9 @@
 #   test-install     -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
 #   install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd + _materialize-config
 #                       (release build + frontend + Tauri bundle + .pkg/.deb installer)
-#   cut-release      -> test + _stamp-version (commits changelog, creates local tag)
+#   prepare-release  -> test + _stamp-version (commits an untagged candidate)
+#   qualify-release  -> remote canonical Linux gate for the exact candidate SHA
+#   cut-release      -> verifies exact-SHA qualification, then creates local tag
 #   release [tag]    -> (waits for CI on a pushed tag)
 #
 # First-time dev readiness:
@@ -40,7 +42,8 @@
 #                     just ui            (service + Tauri GUI with hot-reload)
 #                     just exec "<cmd>"  (one-shot command in a temp VM)
 # Local install:      just install       (build .pkg/.deb + install it)
-# Releases:           just cut-release   (test + bump, local tag; then push main + tag)
+# Releases:           just prepare-release; push main; just qualify-release;
+#                     just cut-release   (only then push the immutable tag)
 # Dep maintenance:    just update-deps   (cargo update + pnpm update)
 #                     just update-prices (refresh genai-prices.json)
 #                     just update-fixture <src> (rebuild test.db fixture)
@@ -1224,6 +1227,15 @@ release tag="" channel="stable":
         echo "Push it first: git push origin $TAG"
         exit 1
     fi
+    LOCAL_TAG_SHA=$(git rev-parse "$TAG^{commit}")
+    REMOTE_TAG_SHA=$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | \
+        awk '$2 ~ /\^\{\}$/ { peeled=$1 } $2 !~ /\^\{\}$/ { direct=$1 } END { print peeled ? peeled : direct }')
+    if ! test "$LOCAL_TAG_SHA" = "$REMOTE_TAG_SHA"; then
+        echo "Error: local $TAG resolves to $LOCAL_TAG_SHA but origin resolves to $REMOTE_TAG_SHA" >&2
+        echo "Never dispatch a release for a mismatched tag." >&2
+        exit 1
+    fi
+    python3 scripts/check-release-qualification.py --sha "$LOCAL_TAG_SHA"
 
     RUN_TITLE="Release $CHANNEL $TAG"
     echo "=== $RUN_TITLE ==="
@@ -1273,15 +1285,15 @@ release tag="" channel="stable":
     echo "=== $RUN_TITLE published ==="
     echo "https://github.com/google/capsem/releases/tag/$TAG"
 
-# Stamp version, commit, and create a local release tag.
-# Runs test first (all validation gates) before a tag can leave the machine.
-cut-release: test _stamp-version
+# Stamp the version and commit an untagged candidate. The exact commit must be
+# pushed and remotely qualified before cut-release is allowed to mint a tag.
+prepare-release: test _stamp-version
     #!/usr/bin/env bash
     set -euo pipefail
     NEW=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
     TAG="v${NEW}"
     TODAY=$(date +%Y-%m-%d)
-    echo "=== Cutting release $TAG ==="
+    echo "=== Preparing untagged release candidate $TAG ==="
     # Stamp changelog: [Unreleased] -> [NEW] - TODAY
     awk -v new="$NEW" -v today="$TODAY" '
         { print }
@@ -1293,14 +1305,77 @@ cut-release: test _stamp-version
     mv CHANGELOG.md.tmp CHANGELOG.md
     # Extract latest release notes for the frontend boot screen
     uv run python3 scripts/extract-release-notes.py
-    # Commit and tag locally. Push only after checking the local commit/tag.
+    # Commit only. A candidate is deliberately not a release tag.
     git add Cargo.toml crates/capsem-app/tauri.conf.json pyproject.toml uv.lock CHANGELOG.md LATEST_RELEASE.md
-    git commit -m "release: v${NEW}"
-    git tag "$TAG"
-    echo "Prepared $TAG locally."
-    echo "Publish with:"
-    echo "  git ls-remote origin refs/tags/$TAG"
+    git commit -m "release candidate: v${NEW}"
+    echo "Prepared untagged candidate $(git rev-parse HEAD)."
+    echo "Qualify it with:"
     echo "  git push origin HEAD:main"
+    echo "  just qualify-release"
+    echo "  just cut-release"
+
+# Dispatch and wait for the canonical remote gate on the exact untagged HEAD.
+# This recipe never creates a tag, GitHub release, or channel mutation.
+qualify-release:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SHA=$(git rev-parse HEAD)
+    git fetch origin main
+    if ! test "$(git rev-parse origin/main)" = "$SHA"; then
+        echo "Error: exact candidate $SHA is not origin/main" >&2
+        echo "Push the ordinary candidate commit before qualification." >&2
+        exit 1
+    fi
+    if [ -n "$(git tag --points-at HEAD 'v*')" ]; then
+        echo "Error: release qualification accepts only an untagged candidate" >&2
+        exit 1
+    fi
+    if python3 scripts/check-release-qualification.py --sha "$SHA"; then
+        exit 0
+    fi
+    RUN_TITLE="Qualify release $SHA"
+    gh workflow run release-qualification.yaml --ref main -f "sha=$SHA"
+    RUN_ID=""
+    for _ in $(seq 1 30); do
+        RUN_ID=$(gh run list --workflow=release-qualification.yaml --commit "$SHA" --event workflow_dispatch --limit 20 \
+            --json databaseId,displayTitle,headSha \
+            --jq ".[] | select(.displayTitle==\"$RUN_TITLE\" and .headSha==\"$SHA\") | .databaseId" | head -1)
+        [ -n "$RUN_ID" ] && break
+        sleep 2
+    done
+    if [ -z "$RUN_ID" ]; then
+        echo "Error: exact-SHA qualification run did not appear" >&2
+        exit 1
+    fi
+    echo "Qualification run: $RUN_ID"
+    gh run watch "$RUN_ID" --exit-status
+    python3 scripts/check-release-qualification.py --sha "$SHA"
+
+# Mint the immutable local tag only after GitHub proves this exact published
+# commit passed release qualification. No stamping or commit happens here.
+cut-release:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    SHA=$(git rev-parse HEAD)
+    git fetch origin main
+    if ! test "$(git rev-parse origin/main)" = "$SHA"; then
+        echo "Error: HEAD $SHA is not the exact published origin/main candidate" >&2
+        exit 1
+    fi
+    NEW=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    TAG="v${NEW}"
+    if git show-ref --verify --quiet "refs/tags/$TAG"; then
+        echo "Error: local tag $TAG already exists; never reuse or move release tags" >&2
+        exit 1
+    fi
+    if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+        echo "Error: remote tag $TAG already exists; never reuse or move release tags" >&2
+        exit 1
+    fi
+    python3 scripts/check-release-qualification.py --sha "$SHA"
+    git tag "$TAG"
+    echo "Created qualified local tag $TAG at $SHA."
+    echo "Publish with:"
     echo "  git push origin $TAG"
     echo "  just release $TAG stable"
 

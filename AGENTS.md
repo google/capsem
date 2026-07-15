@@ -13,27 +13,32 @@ and release gates, load `/dev-testing` and `/ironbank`. For debugging, load
 ## Release CI Is the Authority
 
 Every stable and nightly binary release must run the complete `just test` gate
-inside the same globally serialized release workflow before any package build,
-GitHub Release creation, channel assembly, or deployment may proceed.
+in `release-qualification.yaml` on the exact versioned, untagged candidate
+commit before an immutable release tag may be created. `release.yaml` must
+verify that successful exact-SHA result before any package build, GitHub
+Release creation, channel assembly, or deployment may proceed.
 
 There is one explicit temporary GitHub-hosted exception: the full gate runs on
 Linux only because GitHub-hosted macOS cannot provide the nested
 Virtualization.framework access required by Capsem and Colima, and the
-repository has no physical macOS runner. The workflow comment must remain until
-a physical runner exists. The macOS package job must depend on the Linux full
-gate, then fan out with the Linux package builds; it still builds, notarizes,
-installs, and verifies the exact `.pkg` before publication.
+repository has no physical macOS runner. The qualification-workflow comment
+must remain until a physical runner exists. The macOS and Linux package jobs
+may fan out only after `release.yaml` verifies the exact qualification result;
+macOS still builds, notarizes, installs, and verifies the exact `.pkg` before
+publication.
 
 - Never replace `just test` with a hand-picked subset, a coverage-only job, or
   a faster release-specific approximation.
-- Never treat a local run, a prior tag/commit's green run, or an agent's claim
-  that tests passed as release evidence. Only the current immutable release
-  tag's CI gate counts.
+- Never treat a local run, a nearby commit's green run, a run title without a
+  matching `headSha`, or an agent's claim that tests passed as release
+  evidence. Only the successful remote qualification for the exact candidate
+  SHA counts.
 - The gate includes audits, lint, frontend, Rust coverage, four-VM parallel
   Python tests, Winterfell/MCP lifecycle tests, IronBank, injection,
   integration, benchmarks, cross-compilation, and Docker/systemd install tests.
-- Run the complete `just test` gate exactly once in each release workflow. Do
-  not duplicate it after packaging.
+- Run the complete `just test` gate exactly once for each candidate in
+  `release-qualification.yaml`. Do not rerun or duplicate it after tagging or
+  packaging.
 - Keep cheap clean-environment bootstrap proofs at the start of `just test` for
   every expensive release harness. In particular, prove the Docker install
   image can create its container-owned Python environment and launch pytest
@@ -45,8 +50,10 @@ installs, and verifies the exact `.pkg` before publication.
   publication. The public install/channel-switch/upgrade glow-up is then the
   end-to-end test of the deployed release. None of these gates substitutes for
   another.
-- Stable and nightly use the same parameterized workflow and full gate. Only
-  the selected channel may be updated.
+- Stable and nightly require the same exact-SHA qualification and use the same
+  parameterized tagged workflow. Only the selected channel may be updated.
+- A failed candidate may receive forward fix commits and be qualified again,
+  but it must not receive a final tag, GitHub Release, or channel mutation.
 
 ## Logger DB Boundary
 

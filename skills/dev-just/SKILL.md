@@ -40,8 +40,10 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just sandbox-logs <id>` | View process + serial logs for a specific sandbox |
 | `just build-host-image` | Build/refresh the `capsem-host-builder` Docker image |
 | `just install` | Build release .pkg/.deb + install it locally (postinstall handles codesign, PATH, service registration) |
-| `just release [tag]` | Wait for CI to build + publish a pushed tag |
-| `just cut-release` | Run test, bump version, stamp changelog, commit, and create a local tag |
+| `just prepare-release` | Run local full gate, stamp version/changelog, and commit an untagged candidate |
+| `just qualify-release` | Run and wait for the remote canonical Linux gate on exact published `HEAD` |
+| `just cut-release` | Verify exact-SHA remote qualification, then create the local immutable tag |
+| `just release [tag]` | Verify qualification again, then wait for CI package proofs and publication |
 | `just clean` | Remove all build artifacts |
 | `just clean all` | clean + Docker prune (full reset) |
 
@@ -62,7 +64,9 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | Service HTTP API / CLI / MCP | `just smoke` (parallel pytest groups cover all three) |
 | Install / postinst / systemd / release glow-up flow | `just test-install` |
 | Pre-release | `just test` |
-| Ship | `just cut-release`, then manually push `main` and the tag |
+| Prepare candidate | `just prepare-release`, then manually push only `main` |
+| Qualify candidate | `just qualify-release` (no tag or publication) |
+| Ship qualified candidate | `just cut-release`, push the tag, then `just release <tag> <channel>` |
 
 ## Dependency chains
 
@@ -80,7 +84,9 @@ bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-servi
 test-gateway-e2e -> _check-assets + _pack-initrd + _sign
 test-install     -> Docker package install + generated local stable/nightly glow-up
 install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd
-cut-release      -> test + _stamp-version
+prepare-release  -> test + _stamp-version (commit only, no tag)
+qualify-release  -> exact origin/main SHA + release-qualification.yaml
+cut-release      -> exact successful qualification + local tag (no stamp/commit)
 ```
 
 `_`-prefixed recipes are internal (hidden from `just --list`).

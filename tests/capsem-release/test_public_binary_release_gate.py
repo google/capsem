@@ -402,7 +402,7 @@ def test_release_workflow_verifies_exact_installed_state_before_artifact_publica
             "Collect macOS artifacts" if job_name == "build-app-macos" else "Collect Linux artifacts"
         )
 
-    assert jobs["create-release"].index("needs: [test, build-app-macos, build-app-linux]") >= 0
+    assert jobs["create-release"].index("needs: [build-app-macos, build-app-linux]") >= 0
 
 
 def test_public_binary_release_gate_keeps_public_installer_default_on_stable() -> None:

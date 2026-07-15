@@ -14,19 +14,22 @@ just test                      # ALL tests: unit + integration + cross-compile +
 ```
 
 The checklist is developer feedback only. It is never release authorization.
-For every stable and nightly tag, the globally serialized `release.yaml`
-workflow must run the complete `just test` recipe again in CI on that exact
-tag, and every build/publication/deployment job must depend on it. Never
-substitute a partial Rust/frontend/coverage job, a previous green commit, or a
-local agent-run gate. CI is authoritative because agent-reported local evidence
-is not trusted release proof.
+For every stable and nightly release, `release-qualification.yaml` must run the
+complete `just test` recipe in CI on the exact versioned, untagged candidate
+commit. A final immutable tag must not exist until that run succeeds.
+`release.yaml` then verifies the successful qualification's exact `headSha`
+before package work. Never substitute a partial Rust/frontend/coverage job, a
+previous or nearby green commit, a matching display title with another SHA, or
+a local agent-run gate. CI is authoritative because agent-reported local
+evidence is not trusted release proof.
 
 Temporary hosted-CI exception: `just test` runs once on Linux because
 GitHub-hosted macOS cannot expose the nested Virtualization.framework support
 Capsem and Colima require, and no physical macOS runner is registered. Keep the
-exception explicitly commented in `release.yaml`. The macOS packaging job must
-depend on that Linux full gate and fan out only after it passes. Restore a
-parallel macOS full gate once a physical runner exists.
+exception explicitly commented in `release-qualification.yaml`. The tagged
+workflow must fail in preflight unless that exact qualification passed; macOS
+and Linux package jobs fan out only after preflight. Restore a parallel macOS
+full gate once a physical runner exists.
 
 `just test` includes Winterfell/MCP persistence, the four-VM concurrency
 canary, IronBank, integration and injection, benchmarks, cross-compilation, and
@@ -380,29 +383,49 @@ checkouts disagreeing about what was actually shipped.
 - Never use `git commit --amend`, `git push --force`, `git push --force-with-lease`,
   `git tag -f`, or a forced tag push for a release that has already left the
   machine.
-- If a pushed release commit or tag fails CI, land a normal follow-up commit on
-  top of `main`, stamp a new unique version, create a new tag, and push forward.
+- If an untagged candidate fails qualification, land a normal follow-up commit
+  on top of `main` and requalify that new SHA without minting any tag. If a
+  failure happens after a final tag exists, stamp a new unique version, create
+  a new forward tag, and leave the old tag untouched.
 - Cancel superseded failed CI runs when useful, but leave the historical commit
   and tag alone. The goal is a clean next release, not rewriting the failed one.
 - Do not reuse a version string or tag name. For the `1.2.{unix_timestamp}`
   release line, choose a later timestamp and let the old tag remain historical.
 
-### Prepare release commit and local tag
+### Prepare and remotely qualify an untagged candidate
+
+```bash
+just prepare-release
+git push origin HEAD:main
+just qualify-release
+```
+
+`prepare-release` runs the local gate, stamps the version and changelog, and
+creates an ordinary candidate commit. It must not create a tag, GitHub Release,
+or channel mutation. Push that ordinary commit, then `qualify-release` dispatches
+the canonical Linux gate for its exact SHA. If qualification fails, add a
+normal forward fix commit and qualify the new exact SHA. Do not mint failure
+tags and do not stamp a new version merely to obtain another CI attempt.
+
+### Mint the immutable tag after qualification
 
 ```bash
 just cut-release
 ```
 
-Runs `test` (all tests including integration, cross-compile, benchmarks), then
-bumps the version, stamps the changelog, creates the release commit, and creates
-a local `vX.Y.Z` tag. It does **not** push. Push the branch and tag manually
-after checking the local commit/tag.
+`cut-release` performs no stamping and creates no commit. It compares `HEAD`
+with `origin/main`, requires a successful completed
+`release-qualification.yaml` run whose display title and `headSha` both match
+that exact SHA, rejects existing local or remote tag names, and only then
+creates the local `vX.Y.Z` tag. Missing, pending, failed, malformed, or nearby
+qualification results are hard failures.
 
 ### Manual publish
 
 1. Confirm the release tag does not already exist remotely:
    `git ls-remote origin "refs/tags/vX.Y.Z"`
-2. Push the release commit to `main`: `git push origin HEAD:main`
+2. Confirm exact-SHA qualification again:
+   `python3 scripts/check-release-qualification.py --sha "$(git rev-parse HEAD)"`
 3. Push the immutable tag: `git push origin vX.Y.Z`
 4. Dispatch and watch one channel workflow: `just release vX.Y.Z stable`
 
@@ -425,27 +448,31 @@ gh run view <run-id> --log-failed
 gh release view vX.Y.Z --json name,tagName,isDraft,isPrerelease,assets,url
 ```
 
-Before pushing a tag, confirm the tag does not already exist remotely. After
-pushing, dispatch the selected channel and watch the release workflow to
-completion. If CI fails, use
-`gh run view --log-failed` to diagnose, make a forward fix, and cut the next tag.
+Before pushing a tag, confirm the tag does not already exist remotely and the
+exact candidate qualification succeeded. After pushing, dispatch the selected
+channel and watch package proof and publication to completion. If candidate
+qualification fails, diagnose it with `gh run view --log-failed`, make a
+forward fix, and requalify without creating any tag. A failure after tagging
+still requires a new forward version and tag; never move the old tag.
 
-## CI pipeline (release.yaml)
+## CI pipelines
 
-Explicitly dispatched with `{tag, channel}` and globally serialized:
+Candidate qualification is dispatched with `{sha}` before a tag exists:
 
 ```
-preflight ──> test ──> build-app-macos (exact .pkg install) ──┐
-                  └──> build-app-linux (exact .deb installs) ─┴──> create-release
+release-qualification.yaml: exact untagged SHA ──> just test
+
+release.yaml: verified tag/SHA/qualification ──> build-app-macos (exact .pkg install) ──┐
+                                         └─────> build-app-linux (exact .deb installs) ─┴──> create-release
 ```
 
 | Job | Runner | Needs | Purpose |
 |-----|--------|-------|---------|
-| `preflight` | macos-14 | -- | Fail-fast: Apple cert, Tauri key, notarization |
-| `test` | macos-14 | preflight | Unit tests + coverage, frontend, audit |
-| `build-app-macos` | macos-14 | preflight, test | Build, sign, notarize, and staple `.pkg`, then install and verify that exact package |
-| `build-app-linux` | ubuntu arm64 + x86_64 | preflight, test | Build `.deb` packages, then install and verify each exact matrix artifact |
-| `create-release` | ubuntu-latest | test, build-app-macos, build-app-linux | Publish the install-tested `.pkg`, mandatory `.deb` files, and host SBOM |
+| `qualification` | ubuntu-24.04 | -- | Exact-SHA canonical `just test`, read-only and untagged |
+| `preflight` | macos-14 | -- | Verify tag identity, exact qualification, Apple cert, Tauri key, notarization |
+| `build-app-macos` | macos-14 | preflight | Build, sign, notarize, staple, Gatekeeper-check, install, and verify exact `.pkg` |
+| `build-app-linux` | ubuntu arm64 + x86_64 | preflight | Build `.deb` packages, install and verify each exact artifact, and prove a guest shell on KVM |
+| `create-release` | ubuntu-latest | build-app-macos, build-app-linux | Publish the install-tested `.pkg`, mandatory `.deb` files, and host SBOM |
 
 The qualification job completes once, then the platform builds and exact
 artifact install gates fan out. Publication cannot start unless all are green.
@@ -504,7 +531,7 @@ artifact install gates fan out. Publication cannot start unless all are green.
   progress. Install each tool separately with `CARGO_NET_RETRY=10` and a small
   shell retry loop so a single registry lookup hiccup does not fail the release.
 - **`Cargo.lock` is gitignored.** CI resolves a fresh lockfile each build. This means dependency versions can drift between builds. Acceptable for now but a reproducibility risk.
-- **Three files hold the binary version.** `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`. `just _stamp-version` handles all three automatically. `just cut-release` and `just install` both call it.
+- **Three files hold the binary version.** `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`. `just _stamp-version` handles all three automatically. `just prepare-release` and `just install` call it; `just cut-release` must never stamp or commit.
 - **Do not resurrect local VM manifest signing.** VM asset integrity is the
   profile manifest plus BLAKE3 hashes, manifest metadata/hash reporting, and
   SBOM/OBOM/build-ledger evidence. Local `manifest-sign.pub` keys and minisign
@@ -786,7 +813,7 @@ removed, fixed, and security groups.
 
 Binary and asset versions are **orthogonal**:
 
-- **Binary**: `1.3.{unix_timestamp}` for the current release line -- auto-stamped by `just _stamp-version` on every `just install` and `just cut-release`. Set `CAPSEM_RELEASE_VERSION=x.y.z` when you need an exact preselected stamp.
+- **Binary**: `1.3.{unix_timestamp}` for the current release line -- auto-stamped by `just _stamp-version` on every `just install` and `just prepare-release`. `just cut-release` only tags an already qualified exact commit. Set `CAPSEM_RELEASE_VERSION=x.y.z` when you need an exact preselected stamp.
 - **Assets**: `YYYY.MMDD.patch` -- derived by `capsem-admin manifest generate` from the build date
 
 Three files hold the binary version (kept in sync by `_stamp-version`): `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`.

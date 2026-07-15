@@ -20,6 +20,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: read
   contents: write
   attestations: write
   deployments: write
@@ -35,6 +36,8 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Verify immutable dispatch tag and channel
         run: |
@@ -44,6 +47,13 @@ jobs:
           case "$RELEASE_TAG" in v*) ;; *) exit 1 ;; esac
           case "$RELEASE_CHANNEL" in stable|nightly) ;; *) exit 1 ;; esac
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - name: Verify exact commit passed remote qualification
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/check-release-qualification.py --sha "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
 
       - name: Select Xcode 16.2
         run: sudo xcode-select -s /Applications/Xcode_16.2.app
@@ -108,81 +118,8 @@ jobs:
             && echo "Notarization credentials verified (notarytool history succeeded)" \
             || { echo "::error::notarytool history failed -- check APPLE_API_ISSUER, APPLE_API_KEY, and APPLE_API_KEY_PATH secrets"; exit 1; }
           rm -rf "$RUNNER_TEMP/private_keys"
-  test:
-    # TEMPORARILY DISABLED: macOS full gate. GitHub-hosted macOS runners cannot
-    # provide nested Virtualization.framework access for Capsem/Colima, and the
-    # repository has no physical macOS runner. Restore a parallel macOS `just
-    # test` job when that runner exists. Until then, this Linux full gate remains
-    # release-blocking; both macOS and Linux package jobs fan out only after it.
-    needs: preflight
-    runs-on: ubuntu-24.04
-    timeout-minutes: 360
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: extractions/setup-just@v3
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: full-release-gate-linux
-
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 10
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
-      - uses: astral-sh/setup-uv@v5
-
-      - name: Install Linux full-gate system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libssl-dev \
-            libglib2.0-dev \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            libxdo-dev \
-            musl-tools \
-            pkg-config \
-            xdg-utils \
-            xvfb
-
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          test -r /dev/kvm -a -w /dev/kvm
-          sudo modprobe vhost_vsock
-          sudo chmod 0666 /dev/vhost-vsock
-          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
-
-      - name: Complete canonical release gate (just test)
-        run: just test
-
-      - name: Upload full-gate artifacts on failure
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: full-release-gate-linux-${{ github.run_attempt }}
-          path: |
-            test-artifacts/
-            frontend/test-artifacts/
-            target/build.log
-          retention-days: 14
-          if-no-files-found: ignore
-
   build-app-macos:
-    needs: [preflight, test]
+    needs: preflight
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v5
@@ -397,7 +334,7 @@ jobs:
           path: release-artifacts/
 
   build-app-linux:
-    needs: [preflight, test]
+    needs: preflight
     strategy:
       fail-fast: false
       matrix:
@@ -554,7 +491,7 @@ jobs:
           path: release-artifacts/
 
   create-release:
-    needs: [test, build-app-macos, build-app-linux]
+    needs: [build-app-macos, build-app-linux]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
