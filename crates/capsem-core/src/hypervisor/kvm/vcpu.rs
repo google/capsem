@@ -760,16 +760,29 @@ mod tests {
     fn pause_collects_vcpu_snapshots() {
         let control = Arc::new(VcpuControl::new(1));
         let c = Arc::clone(&control);
+        let (initial_poll_tx, initial_poll_rx) = std::sync::mpsc::sync_channel(0);
         let handle = std::thread::spawn(move || {
             c.wait_if_paused(0, || Ok(snapshot(0))).unwrap();
+            initial_poll_tx.send(()).unwrap();
+            loop {
+                if c.is_stopped() {
+                    break;
+                }
+                c.wait_if_paused(0, || Ok(snapshot(0))).unwrap();
+                std::thread::yield_now();
+            }
         });
 
+        // Prove the vCPU observed RUNNING before the pause request. A real vCPU
+        // keeps polling; a one-shot test thread can exit here and race the pause.
+        initial_poll_rx.recv().unwrap();
         control.request_pause(Duration::from_secs(1)).unwrap();
         let snapshots = control.snapshots().unwrap();
 
         assert_eq!(snapshots.len(), 1);
         assert_eq!(snapshots[0].id, 0);
         control.resume().unwrap();
+        control.request_stop();
         handle.join().unwrap();
     }
 
