@@ -1327,6 +1327,9 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "needs: [preflight, test]" in linux
     assert "continue-on-error: true" not in linux
     assert "Install exact notarized package" in macos
+    assert "Verify exact notarized package identity and Gatekeeper acceptance" in macos
+    assert 'pkgutil --check-signature "packages/Capsem-$VERSION.pkg"' in macos
+    assert 'spctl -a -vv -t install "packages/Capsem-$VERSION.pkg"' in macos
     assert 'sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /' in macos
     assert 'test -x "$HOME/.capsem/bin/capsem"' in macos
     assert '"$HOME/.capsem/bin/capsem" --version | grep -F "$VERSION"' in macos
@@ -1340,6 +1343,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "scripts/verify-installed-release.py" in macos
     assert (
         macos.index("Notarize and staple .pkg")
+        < macos.index("Verify exact notarized package identity and Gatekeeper acceptance")
         < macos.index("Install exact notarized package")
         < macos.index("Collect macOS artifacts")
     )

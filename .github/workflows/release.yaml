@@ -348,6 +348,13 @@ jobs:
           xcrun stapler staple "packages/Capsem-$VERSION.pkg"
           xcrun stapler validate "packages/Capsem-$VERSION.pkg"
 
+      - name: Verify exact notarized package identity and Gatekeeper acceptance
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          pkgutil --check-signature "packages/Capsem-$VERSION.pkg"
+          spctl -a -vv -t install "packages/Capsem-$VERSION.pkg"
+
       - name: Install exact notarized package
         run: |
           set -euo pipefail
