@@ -274,9 +274,8 @@ authority path.
 ```
 ~/.capsem/
   bin/                 capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
-  assets/              manifest.json, vmlinuz-{hash16}, initrd-{hash16}.img, rootfs-{hash16}.erofs
+  assets/              manifest.json, manifest-metadata.json, vmlinuz-{hash16}, initrd-{hash16}.img, rootfs-{hash16}.erofs
   run/                 service.sock, service.pid, gateway.token, gateway.port, instances/
-  update-check.json    Self-update cache (24h TTL)
   settings.toml        UI/application preferences
   corp.toml            Enterprise constraints/reporting config (optional)
   profiles/            Profile-owned assets, rules, MCP, plugins, VM defaults

@@ -44,7 +44,7 @@ def _status(client: Any, method: str, path: str, body: dict | None = None) -> tu
 
 
 def _seed_mcp_tool_cache(service_env: Any) -> None:
-    cache_path = service_env.tmp_dir / "mcp_tool_cache.json"
+    cache_path = service_env.home_dir / "mcp_tool_cache.json"
     cache_path.write_text(
         json.dumps(
             [

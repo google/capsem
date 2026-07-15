@@ -367,6 +367,11 @@ jobs:
           grep -F "Service:   ok" /tmp/capsem-status.txt
           grep -F "Gateway:   ok" /tmp/capsem-status.txt
           pgrep -x capsem-tray
+          python3 scripts/verify-installed-release.py \
+            --capsem "$HOME/.capsem/bin/capsem" \
+            --manifest-url "$ASSET_MANIFEST_URL" \
+            --channel "$RELEASE_CHANNEL" \
+            --package-version "$VERSION"
 
       - name: Collect macOS artifacts
         run: |
@@ -514,6 +519,11 @@ jobs:
           grep -F "Running:   true" /tmp/capsem-status.txt
           grep -F "Service:   ok" /tmp/capsem-status.txt
           grep -F "Gateway:   ok" /tmp/capsem-status.txt
+          python3 scripts/verify-installed-release.py \
+            --capsem /usr/bin/capsem \
+            --manifest-url "$ASSET_MANIFEST_URL" \
+            --channel "$RELEASE_CHANNEL" \
+            --package-version "$VERSION"
 
       - name: Prove exact-package guest shell execution
         if: matrix.arch == 'x86_64'
@@ -824,6 +834,11 @@ jobs:
           name: binary-channel-preview
           path: target/release-channel/
 
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-channel-before
+          path: target/binary-channel/*/manifest.before.json
+
   deploy-release-channel:
     needs: [assemble-release-channel]
     uses: ./.github/workflows/release-channel.yaml
@@ -842,6 +857,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v5
+      - uses: actions/download-artifact@v8
+        with:
+          name: binary-channel-before
+          path: /tmp/binary-channel-before
 
       - name: Wait for release assets to be queryable
         env:
@@ -929,6 +948,7 @@ jobs:
             --nightly-manifest-url https://release.capsem.org/assets/nightly/manifest.json \
             --install-script-url https://capsem.org/install.sh \
             --site-url https://capsem.org/ \
+            --docker-transition-from-manifest "/tmp/binary-channel-before/$RELEASE_CHANNEL/manifest.before.json" \
             --work-dir /tmp/public-binary-release
 
       - name: Enable KVM for live public-install VM proof
@@ -968,12 +988,17 @@ jobs:
             test -x "$HOME/.capsem/bin/$bin"
             "$HOME/.capsem/bin/$bin" --version | grep -F "$EXPECTED_VERSION"
           done
-          grep -F "$ASSET_MANIFEST_URL" "$HOME/.capsem/assets/manifest-origin.json"
+          grep -F "$ASSET_MANIFEST_URL" "$HOME/.capsem/assets/manifest-metadata.json"
           "$HOME/.capsem/bin/capsem" status | tee /tmp/capsem-live-status.txt
           grep -F "Installed: true" /tmp/capsem-live-status.txt
           grep -F "Running:   true" /tmp/capsem-live-status.txt
           grep -F "Service:   ok" /tmp/capsem-live-status.txt
           grep -F "Gateway:   ok" /tmp/capsem-live-status.txt
+          python3 scripts/verify-installed-release.py \
+            --capsem "$HOME/.capsem/bin/capsem" \
+            --manifest-url "$ASSET_MANIFEST_URL" \
+            --channel "$RELEASE_CHANNEL" \
+            --package-version "$EXPECTED_VERSION"
           python3 scripts/prove-installed-shell.py \
             --capsem "$HOME/.capsem/bin/capsem" \
             --marker CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK \

@@ -422,16 +422,19 @@ def test_explicit_manifest_url_is_packaged_without_manifest_payload(tmp_path):
     extracted = _deb_contents(output, tmp_path / "extracted")
     assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
     assert not (assets_dir / "manifest.json").exists()
-    assert (assets_dir / "manifest-origin.json").is_file()
-    origin = json.loads((assets_dir / "manifest-origin.json").read_text())
-    assert origin["schema"] == "capsem.manifest_origin.v1"
+    assert (assets_dir / "manifest-metadata.json").is_file()
+    origin = json.loads((assets_dir / "manifest-metadata.json").read_text())
+    assert origin["schema"] == "capsem.manifest_metadata.v1"
     assert origin["origin"] == "package"
-    assert origin["source"] == manifest.resolve().as_uri()
+    assert origin["manifest_url"] == manifest.resolve().as_uri()
+    assert origin["channel"] == "corp"
+    assert origin["channel_kind"] == "corporate"
+    assert origin["channel_locked"] is True
     assert "fetched_at" in origin
     assert "packaged_at" in origin
     assert origin["package_version"] == "0.0.1"
     assert "snapshot_sha256" not in origin
-    assert sorted(path.name for path in assets_dir.iterdir()) == ["manifest-origin.json"]
+    assert sorted(path.name for path in assets_dir.iterdir()) == ["manifest-metadata.json"]
 
 
 def test_explicit_remote_manifest_url_is_packaged_with_origin_provenance(tmp_path):
@@ -480,12 +483,15 @@ def test_explicit_remote_manifest_url_is_packaged_with_origin_provenance(tmp_pat
 
     extracted = _deb_contents(output, tmp_path / "extracted-remote")
     assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
-    assert sorted(path.name for path in assets_dir.iterdir()) == ["manifest-origin.json"]
+    assert sorted(path.name for path in assets_dir.iterdir()) == ["manifest-metadata.json"]
     assert not (assets_dir / "manifest.json").exists()
-    origin = json.loads((assets_dir / "manifest-origin.json").read_text())
-    assert origin["schema"] == "capsem.manifest_origin.v1"
+    origin = json.loads((assets_dir / "manifest-metadata.json").read_text())
+    assert origin["schema"] == "capsem.manifest_metadata.v1"
     assert origin["origin"] == "package"
-    assert origin["source"] == manifest_url
+    assert origin["manifest_url"] == manifest_url
+    assert origin["channel"] == "corp"
+    assert origin["channel_kind"] == "corporate"
+    assert origin["channel_locked"] is True
     assert "fetched_at" in origin
     assert "packaged_at" in origin
     assert origin["package_version"] == "0.0.1"
@@ -498,10 +504,10 @@ def test_release_graph_manifest_url_is_recorded_without_conversion(tmp_path):
     bin_dir = tmp_path / "bin"
     config_dir = tmp_path / "target-config"
     graph_root = tmp_path / "remote"
-    graph = graph_root / "manifest.json"
+    graph = graph_root / "assets" / "stable" / "manifest.json"
     _seed_binaries(bin_dir)
     _seed_config(config_dir)
-    graph_root.mkdir()
+    graph.parent.mkdir(parents=True)
     graph.write_text(
         json.dumps(
             {
@@ -521,7 +527,7 @@ def test_release_graph_manifest_url_is_recorded_without_conversion(tmp_path):
         base_url,
         seen_user_agents,
     ):
-        manifest_url = f"{base_url}/manifest.json"
+        manifest_url = f"{base_url}/assets/stable/manifest.json"
         res = subprocess.run(
             [
                 str(SCRIPT),
@@ -543,10 +549,13 @@ def test_release_graph_manifest_url_is_recorded_without_conversion(tmp_path):
 
     extracted = _deb_contents(output, tmp_path / "extracted-graph")
     assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
-    assert sorted(path.name for path in assets_dir.iterdir()) == ["manifest-origin.json"]
+    assert sorted(path.name for path in assets_dir.iterdir()) == ["manifest-metadata.json"]
     assert not (assets_dir / "manifest.json").exists()
-    origin = json.loads((assets_dir / "manifest-origin.json").read_text())
-    assert origin["source"] == manifest_url
+    origin = json.loads((assets_dir / "manifest-metadata.json").read_text())
+    assert origin["manifest_url"] == manifest_url
+    assert origin["channel"] == "stable"
+    assert origin["channel_kind"] == "public"
+    assert origin["channel_locked"] is False
     assert "snapshot_sha256" not in origin
 
 
@@ -581,7 +590,7 @@ def test_repacked_deb_payload_is_closed_and_manifest_only_for_assets(tmp_path):
 
     extracted = _deb_contents(output, tmp_path / "extracted")
     assets_dir = extracted / "usr" / "share" / "capsem" / "assets"
-    assert sorted(path.name for path in assets_dir.iterdir()) == ["manifest-origin.json"]
+    assert sorted(path.name for path in assets_dir.iterdir()) == ["manifest-metadata.json"]
 
     unexpected = []
     for path in extracted.rglob("*"):
@@ -592,7 +601,7 @@ def test_repacked_deb_payload_is_closed_and_manifest_only_for_assets(tmp_path):
             continue
         if rel.startswith("usr/bin/") and rel.removeprefix("usr/bin/") in REQUIRED_BINARIES:
             continue
-        if rel == "usr/share/capsem/assets/manifest-origin.json":
+        if rel == "usr/share/capsem/assets/manifest-metadata.json":
             continue
         if rel.startswith("usr/share/capsem/profiles/"):
             continue

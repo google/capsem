@@ -45,25 +45,28 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
     let manifest_hash = capsem_core::asset_manager::hash_file(&assets_dir.join("manifest.json"))
         .expect("manifest hash should be computable");
     std::fs::write(
-        assets_dir.join("manifest-origin.json"),
+        assets_dir.join("manifest-metadata.json"),
         serde_json::json!({
-            "schema": "capsem.manifest_origin.v1",
+            "schema": "capsem.manifest_metadata.v1",
             "origin": "update",
-            "source": "https://release.capsem.org/assets/stable/manifest.json"
+            "manifest_url": "https://release.capsem.org/assets/stable/manifest.json"
         })
         .to_string(),
     )
     .unwrap();
-    let cache_path = dir.path().join("update-check.json");
+    let cache_path = assets_dir.join("manifest-metadata.json");
     std::fs::write(
         &cache_path,
         serde_json::json!({
+            "schema": "capsem.manifest_metadata.v1",
+            "origin": "update",
+            "manifest_url": "https://release.capsem.org/assets/stable/manifest.json",
             "checked_at": 1000,
             "latest_version": "1.3.1782600000",
             "update_available": true,
             "latest_assets": "2026.0628.1",
             "assets_update_available": true,
-            "source": "https://release.capsem.org/assets/stable/manifest.json",
+            "checked_url": "https://release.capsem.org/assets/stable/manifest.json",
             "channel_hash": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
             "validation_status": "valid"
         })
@@ -147,10 +150,11 @@ fn update_status_reports_profile_and_image_tracks_from_release_cache() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
     std::fs::create_dir_all(&assets_dir).unwrap();
-    let cache_path = dir.path().join("update-check.json");
+    let cache_path = assets_dir.join("manifest-metadata.json");
     std::fs::write(
         &cache_path,
         serde_json::json!({
+            "schema": "capsem.manifest_metadata.v1",
             "checked_at": 1000,
             "latest_version": "1.3.1782582155",
             "update_available": false,
@@ -161,7 +165,7 @@ fn update_status_reports_profile_and_image_tracks_from_release_cache() {
             "latest_images": "images-2030.0101.1",
             "images_update_available": false,
             "images_state": "published",
-            "source": "https://release.capsem.org/health.json"
+            "checked_url": "https://release.capsem.org/health.json"
         })
         .to_string(),
     )
@@ -198,10 +202,11 @@ fn update_status_reports_blocked_profile_track_from_release_cache() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
     std::fs::create_dir_all(&assets_dir).unwrap();
-    let cache_path = dir.path().join("update-check.json");
+    let cache_path = assets_dir.join("manifest-metadata.json");
     std::fs::write(
         &cache_path,
         serde_json::json!({
+            "schema": "capsem.manifest_metadata.v1",
             "checked_at": 1000,
             "latest_version": "1.3.1782582155",
             "update_available": false,
@@ -210,7 +215,7 @@ fn update_status_reports_blocked_profile_track_from_release_cache() {
             "profiles_update_available": false,
             "profiles_state": "published",
             "profiles_blocked_reason": "requires binary 1.4.0 or newer",
-            "source": "https://release.capsem.org/health.json"
+            "checked_url": "https://release.capsem.org/health.json"
         })
         .to_string(),
     )
@@ -261,10 +266,11 @@ fn update_status_reports_blocked_asset_track_from_release_cache() {
         .to_string(),
     )
     .unwrap();
-    let cache_path = dir.path().join("update-check.json");
+    let cache_path = assets_dir.join("manifest-metadata.json");
     std::fs::write(
         &cache_path,
         serde_json::json!({
+            "schema": "capsem.manifest_metadata.v1",
             "checked_at": 1000,
             "latest_version": "1.3.1782582155",
             "update_available": false,
@@ -272,7 +278,7 @@ fn update_status_reports_blocked_asset_track_from_release_cache() {
             "assets_update_available": false,
             "assets_state": "published",
             "assets_blocked_reason": "requires binary 99.99.99 or newer",
-            "source": "https://release.capsem.org/health.json"
+            "checked_url": "https://release.capsem.org/health.json"
         })
         .to_string(),
     )
@@ -301,11 +307,11 @@ fn update_status_reports_unknown_when_cache_is_missing_and_keeps_manifest_channe
     let assets_dir = dir.path().join("assets");
     std::fs::create_dir_all(&assets_dir).unwrap();
     std::fs::write(
-        assets_dir.join("manifest-origin.json"),
+        assets_dir.join("manifest-metadata.json"),
         serde_json::json!({
-            "schema": "capsem.manifest_origin.v1",
+            "schema": "capsem.manifest_metadata.v1",
             "origin": "package",
-            "source": "https://corp.example/capsem/assets/internal/manifest.json"
+            "manifest_url": "https://corp.example/capsem/assets/internal/manifest.json"
         })
         .to_string(),
     )
@@ -314,7 +320,7 @@ fn update_status_reports_unknown_when_cache_is_missing_and_keeps_manifest_channe
     let status = update_status_response_from_paths(
         "1.3.1782582155",
         &assets_dir,
-        &dir.path().join("missing-update-check.json"),
+        &assets_dir.join("missing-manifest-metadata.json"),
         1200,
     );
 
@@ -341,16 +347,16 @@ fn update_status_reports_unknown_when_cache_is_missing_and_keeps_manifest_channe
 }
 
 #[test]
-fn update_status_uses_manifest_url_from_manifest_origin_when_cache_is_missing() {
+fn update_status_uses_manifest_url_from_metadata_when_check_state_is_missing() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
     std::fs::create_dir_all(&assets_dir).unwrap();
     std::fs::write(
-        assets_dir.join("manifest-origin.json"),
+        assets_dir.join("manifest-metadata.json"),
         serde_json::json!({
-            "schema": "capsem.manifest_origin.v1",
+            "schema": "capsem.manifest_metadata.v1",
             "origin": "package",
-            "source": "https://updates.corp.example/releases/assets/stable/manifest.json"
+            "manifest_url": "https://updates.corp.example/releases/assets/stable/manifest.json"
         })
         .to_string(),
     )
@@ -359,7 +365,7 @@ fn update_status_uses_manifest_url_from_manifest_origin_when_cache_is_missing() 
     let status = update_status_response_from_paths(
         "1.3.1782582155",
         &assets_dir,
-        &dir.path().join("missing-update-check.json"),
+        &assets_dir.join("missing-manifest-metadata.json"),
         1200,
     );
 
@@ -378,89 +384,26 @@ fn update_status_uses_manifest_url_from_manifest_origin_when_cache_is_missing() 
 }
 
 #[test]
-fn update_status_ignores_legacy_health_cache_when_manifest_origin_is_present() {
+fn update_status_uses_only_manifest_metadata_for_provenance_and_check_state() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
     std::fs::create_dir_all(&assets_dir).unwrap();
+    let metadata_path = assets_dir.join("manifest-metadata.json");
     std::fs::write(
-        assets_dir.join("manifest-origin.json"),
+        &metadata_path,
         serde_json::json!({
-            "schema": "capsem.manifest_origin.v1",
+            "schema": "capsem.manifest_metadata.v1",
             "origin": "package",
-            "source": "https://release.capsem.org/assets/stable/manifest.json"
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let cache_path = dir.path().join("update-check.json");
-    std::fs::write(
-        &cache_path,
-        serde_json::json!({
-            "checked_at": 1000,
-            "source": "https://release.capsem.org/health.json",
-            "validation_status": "fetch_error",
-            "validation_error": "GET https://release.capsem.org/health.json timed out"
-        })
-        .to_string(),
-    )
-    .unwrap();
-
-    let status =
-        update_status_response_from_paths("1.3.1782582155", &assets_dir, &cache_path, 1200);
-
-    assert_eq!(
-        status.channel_url.as_deref(),
-        Some("https://release.capsem.org/assets/stable/manifest.json")
-    );
-    assert_eq!(status.validation_status, None);
-    assert_eq!(status.validation_error, None);
-    assert_eq!(status.last_error, None);
-    assert_eq!(
-        status.supply_chain.channel_index.url.as_deref(),
-        Some("https://release.capsem.org/assets/stable/manifest.json")
-    );
-}
-
-#[test]
-fn update_status_reads_source_scoped_cache_for_manifest_channel() {
-    let dir = tempfile::tempdir().unwrap();
-    let assets_dir = dir.path().join("assets");
-    std::fs::create_dir_all(&assets_dir).unwrap();
-    std::fs::write(
-        assets_dir.join("manifest-origin.json"),
-        serde_json::json!({
-            "schema": "capsem.manifest_origin.v1",
-            "origin": "package",
-            "source": "https://release.capsem.org/assets/stable/manifest.json"
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let legacy_cache_path = dir.path().join("update-check.json");
-    std::fs::write(
-        &legacy_cache_path,
-        serde_json::json!({
-            "checked_at": 1000,
-            "source": "https://release.capsem.org/health.json",
-            "validation_status": "fetch_error",
-            "validation_error": "GET https://release.capsem.org/health.json timed out"
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let scoped_dir = dir.path().join("update-checks");
-    std::fs::create_dir_all(&scoped_dir).unwrap();
-    std::fs::write(
-        scoped_dir.join("stable-manifest-cache.json"),
-        serde_json::json!({
+            "manifest_url": "https://release.capsem.org/assets/stable/manifest.json",
+            "installed_at": 900,
             "checked_at": 1100,
+            "checked_url": "https://release.capsem.org/assets/stable/manifest.json",
             "latest_version": "1.3.1782600000",
             "update_available": true,
             "latest_profiles": "profiles-2030.0101.1",
             "current_profiles": "profiles-2030.0101.0",
             "profiles_update_available": true,
             "profiles_state": "update_available",
-            "source": "https://release.capsem.org/assets/stable/manifest.json",
             "channel_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "validation_status": "valid"
         })
@@ -469,7 +412,7 @@ fn update_status_reads_source_scoped_cache_for_manifest_channel() {
     .unwrap();
 
     let status =
-        update_status_response_from_paths("1.3.1782582155", &assets_dir, &legacy_cache_path, 1200);
+        update_status_response_from_paths("1.3.1782582155", &assets_dir, &metadata_path, 1200);
 
     assert_eq!(status.checked_at, Some(1100));
     assert_eq!(
@@ -487,12 +430,140 @@ fn update_status_reads_source_scoped_cache_for_manifest_channel() {
         status.profiles.state,
         api::UpdateTrackState::UpdateAvailable
     );
+    assert_eq!(
+        status.supply_chain.manifest.source.as_deref(),
+        Some("https://release.capsem.org/assets/stable/manifest.json")
+    );
+}
+
+#[test]
+fn system_status_documents_preserve_exact_installed_manifest_and_metadata() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("manifest.json");
+    let metadata_path = dir.path().join("manifest-metadata.json");
+    let manifest = serde_json::json!({
+        "channel": "stable",
+        "version": "1.0.142",
+        "packages": [{"name": "Capsem.pkg", "binaries": [{"name": "capsem"}]}],
+        "profiles": {"code": {"name": "Code", "description": "Coding", "revision": "2026.0703.2"}}
+    });
+    let metadata = serde_json::json!({
+        "schema": "capsem.manifest_metadata.v1",
+        "manifest_url": "https://release.capsem.org/assets/stable/manifest.json",
+        "installed_at": 1000,
+        "refreshed_at": 1100,
+        "checked_at": 1200,
+        "update_available": false
+    });
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+
+    assert_eq!(
+        read_installed_status_document(&manifest_path).unwrap(),
+        manifest
+    );
+    assert_eq!(
+        read_manifest_metadata_status_document(&metadata_path).unwrap(),
+        metadata
+    );
+}
+
+#[test]
+fn system_status_rejects_noncanonical_manifest_metadata_schema() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("manifest-metadata.json");
+    std::fs::write(&path, r#"{"schema":"capsem.other.v1"}"#).unwrap();
+
+    let error = read_manifest_metadata_status_document(&path).unwrap_err();
+
+    assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(error.1.contains("capsem.manifest_metadata.v1"));
+}
+
+#[tokio::test]
+async fn system_status_route_returns_exact_installed_documents_in_one_response() {
+    let (state, _dir) = make_test_state_with_tempdir();
+    std::fs::create_dir_all(&state.assets_dir).unwrap();
+    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let digest = |ch: char| ch.to_string().repeat(64);
+    let manifest = serde_json::json!({
+        "channel": "stable",
+        "version": "1.0.142",
+        "status": "current",
+        "packages": [{
+            "name": "Capsem.pkg",
+            "version": "0.0.0",
+            "status": "current",
+            "binaries": [{"name": "capsem", "installed_path": "/usr/local/bin/capsem"}],
+            "evidence": [{"kind": "sbom", "url": "https://example.test/capsem.spdx.json"}]
+        }],
+        "profiles": {"code": {
+            "name": "Code",
+            "description": "Optimized for coding.",
+            "revision": "2026.0703.2",
+            "status": "current",
+            "architectures": [{
+                "architecture": arch,
+                "image_revision": "2026.0714.18",
+                "images": [
+                    {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":digest('a'),"sha256":digest('1')}},
+                    {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":digest('b'),"sha256":digest('2')}},
+                    {"kind":"rootfs","name":"rootfs.erofs","bytes":30,"status":"current","digest":{"blake3":digest('c'),"sha256":digest('3')}}
+                ],
+                "evidence": [{"kind":"obom","url":"https://example.test/obom.json"}]
+            }]
+        }}
+    });
+    let metadata = serde_json::json!({
+        "schema": "capsem.manifest_metadata.v1",
+        "manifest_url": "https://release.capsem.org/assets/stable/manifest.json",
+        "installed_at": 1000,
+        "checked_at": 1100,
+        "checked_url": "https://release.capsem.org/assets/stable/manifest.json",
+        "validation_status": "valid",
+        "update_available": false
+    });
+    std::fs::write(
+        state.assets_dir.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        state.assets_dir.join("manifest-metadata.json"),
+        serde_json::to_vec(&metadata).unwrap(),
+    )
+    .unwrap();
+
+    let (status, body) = route_request(
+        build_service_router(state),
+        axum::http::Method::GET,
+        "/system/status",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["manifest"], manifest);
+    assert_eq!(body["manifest_metadata"], metadata);
+    let code = body["profiles"]["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|profile| profile["id"] == "code")
+        .unwrap();
+    assert_eq!(
+        code["description"],
+        "Optimized for coding and long-running agents."
+    );
+    assert_eq!(body["updates"]["checked_at"], 1100);
 }
 
 #[test]
 fn update_status_reports_cache_parse_errors_without_panicking() {
     let dir = tempfile::tempdir().unwrap();
-    let cache_path = dir.path().join("update-check.json");
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    let cache_path = assets_dir.join("manifest-metadata.json");
     std::fs::write(&cache_path, "not json").unwrap();
 
     let status = update_status_response_from_paths("1.3.1782582155", dir.path(), &cache_path, 1200);
@@ -507,12 +578,15 @@ fn update_status_reports_cache_parse_errors_without_panicking() {
 #[test]
 fn update_status_reports_cached_channel_validation_errors() {
     let dir = tempfile::tempdir().unwrap();
-    let cache_path = dir.path().join("update-check.json");
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    let cache_path = assets_dir.join("manifest-metadata.json");
     std::fs::write(
         &cache_path,
         serde_json::json!({
+            "schema": "capsem.manifest_metadata.v1",
             "checked_at": 1000,
-            "source": "https://release.capsem.org/health.json",
+            "checked_url": "https://release.capsem.org/health.json",
             "channel_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "validation_status": "fetch_error",
             "validation_error": "GET https://release.capsem.org/health.json timed out"
@@ -6025,7 +6099,7 @@ fn profile_asset_status_rejects_unmaterialized_asset_descriptors() {
 }
 
 #[test]
-fn profile_asset_status_reports_installed_manifest_origin_and_hash() {
+fn profile_asset_status_reports_installed_manifest_metadata_and_hash() {
     let dir = tempfile::tempdir().unwrap();
     let arch = capsem_core::net::policy_config::current_profile_arch();
     std::fs::create_dir_all(dir.path().join(arch)).unwrap();
@@ -6057,13 +6131,13 @@ fn profile_asset_status_reports_installed_manifest_origin_and_hash() {
     .to_string();
     let manifest_path = dir.path().join("manifest.json");
     std::fs::write(&manifest_path, manifest_json).unwrap();
-    let origin_path = dir.path().join("manifest-origin.json");
+    let origin_path = dir.path().join("manifest-metadata.json");
     std::fs::write(
         &origin_path,
         serde_json::json!({
-            "schema": "capsem.manifest_origin.v1",
+            "schema": "capsem.manifest_metadata.v1",
             "origin": "package",
-            "source": "/tmp/corp/manifest.json",
+            "manifest_url": "/tmp/corp/manifest.json",
             "packaged_at": "2026-06-09T12:00:00Z"
         })
         .to_string(),
@@ -10896,35 +10970,30 @@ fn classify_provision_error_other_returns_500() {
     }
 }
 
-// wait_for_vm_ready polls a cheap local sentinel file. Typical VM boot
-// ready-time is sub-second, so the backoff must not overshoot readiness
-// by hundreds of ms -- that shows up directly in provision->exec latency.
+// wait_for_vm_ready polls a cheap local sentinel file. Lock the production
+// backoff directly instead of asserting host wall-clock timing, which measures
+// test-runner starvation under parallel LLVM coverage rather than poll delay.
 #[tokio::test]
-async fn wait_for_vm_ready_detects_ready_within_tight_overshoot() {
+async fn wait_for_vm_ready_uses_tight_poll_contract_and_detects_ready() {
     let dir = tempfile::tempdir().unwrap();
     let uds_path = dir.path().join("vm.sock");
     let ready_path = uds_path.with_extension("ready");
 
+    let opts = vm_ready_poll_opts(30);
+    assert_eq!(opts.initial_delay, std::time::Duration::from_millis(5));
+    assert_eq!(opts.max_delay, std::time::Duration::from_millis(50));
+    assert_eq!(opts.timeout, std::time::Duration::from_secs(30));
+
     // Simulate a VM that becomes ready ~200ms after provision. Real VM
     // boots land in the 400-700ms range, so 200ms is a conservative stand-in.
     let ready_clone = ready_path.clone();
-    let creator = tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let creator = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(200));
         std::fs::write(&ready_clone, b"").unwrap();
     });
 
-    let start = std::time::Instant::now();
     wait_for_vm_ready(&uds_path, 30, None, None)
         .await
         .expect("ready should be detected");
-    let elapsed_ms = start.elapsed().as_millis();
-    creator.await.unwrap();
-
-    // Overshoot budget: a tight poll curve should catch the sentinel
-    // within ~100ms of it appearing. A 500ms max_delay would miss the
-    // 200ms creation and catch it at ~350ms instead.
-    assert!(
-        elapsed_ms < 300,
-        "wait_for_vm_ready overshot: {elapsed_ms}ms (ready created at ~200ms, budget 300ms)"
-    );
+    creator.join().unwrap();
 }

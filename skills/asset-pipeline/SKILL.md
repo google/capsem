@@ -276,14 +276,14 @@ assets/manifest.json
 **Installed** (`~/.capsem/assets/` -- flat, hash-based filenames):
 ```
 manifest.json
-manifest-origin.json
+manifest-metadata.json
 vmlinuz-2c0bd752db929642
 initrd-e5e910e9ab38b873.img
 rootfs-89eb92b83534d9d0.erofs
 ```
 
 Native packages do not carry `assets/manifest.json`. They carry
-`manifest-origin.json` with the selected channel or corp manifest URL, and
+`manifest-metadata.json` with the selected channel or corp manifest URL, and
 postinstall runs `capsem update --assets --manifest <URL>` to write the live
 installed manifest plus any missing profile image assets.
 

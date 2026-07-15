@@ -33,7 +33,7 @@ def _hash_filename(logical_name: str, digest: str) -> str:
     return f"{logical_name}-{prefix}"
 
 
-def test_update_assets_hydrates_from_manifest_origin_file_url(
+def test_update_assets_hydrates_from_manifest_metadata_file_url(
     tmp_path: Path,
     installed_layout,
 ) -> None:
@@ -56,12 +56,12 @@ def test_update_assets_hydrates_from_manifest_origin_file_url(
     installed_assets = capsem_home / "assets"
     installed_assets.mkdir(parents=True)
     (installed_assets / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (installed_assets / "manifest-origin.json").write_text(
+    (installed_assets / "manifest-metadata.json").write_text(
         json.dumps(
             {
-                "schema": "capsem.manifest_origin.v1",
+                "schema": "capsem.manifest_metadata.v1",
                 "origin": "package",
-                "source": manifest_path.as_uri(),
+                "manifest_url": manifest_path.as_uri(),
                 "packaged_at": "2026-06-16T00:00:00Z",
             },
             sort_keys=True,
@@ -142,10 +142,10 @@ def test_update_assets_manifest_override_hydrates_from_file_url(
 
     installed_manifest = json.loads((installed_assets / "manifest.json").read_text())
     assert installed_manifest == manifest
-    origin = json.loads((installed_assets / "manifest-origin.json").read_text())
-    assert origin["schema"] == "capsem.manifest_origin.v1"
+    origin = json.loads((installed_assets / "manifest-metadata.json").read_text())
+    assert origin["schema"] == "capsem.manifest_metadata.v1"
     assert origin["origin"] == "update"
-    assert origin["source"] == manifest_path.as_uri()
+    assert origin["manifest_url"] == manifest_path.as_uri()
 
     for logical_name, data in files.items():
         digest = _blake3(data)
@@ -155,7 +155,7 @@ def test_update_assets_manifest_override_hydrates_from_file_url(
         assert (target.stat().st_mode & 0o777) == 0o444
 
 
-def test_update_assets_rejects_bare_manifest_origin_path_and_lists_allowed_url_schemes(
+def test_update_assets_rejects_bare_manifest_metadata_path_and_lists_allowed_url_schemes(
     tmp_path: Path,
     installed_layout,
 ) -> None:
@@ -177,12 +177,12 @@ def test_update_assets_rejects_bare_manifest_origin_path_and_lists_allowed_url_s
         json.dumps(_make_manifest(arch, files)),
         encoding="utf-8",
     )
-    (installed_assets / "manifest-origin.json").write_text(
+    (installed_assets / "manifest-metadata.json").write_text(
         json.dumps(
             {
-                "schema": "capsem.manifest_origin.v1",
+                "schema": "capsem.manifest_metadata.v1",
                 "origin": "package",
-                "source": str(manifest_path),
+                "manifest_url": str(manifest_path),
                 "packaged_at": "2026-06-16T00:00:00Z",
             },
             sort_keys=True,
@@ -205,7 +205,7 @@ def test_update_assets_rejects_bare_manifest_origin_path_and_lists_allowed_url_s
 
     assert result.returncode != 0
     err = result.stdout + result.stderr
-    assert "asset manifest origin source must be a URL" in err, err
+    assert "asset manifest metadata source must be a URL" in err, err
     assert "https://..." in err, err
     assert "http://..." in err, err
     assert "file:///absolute/path" in err, err

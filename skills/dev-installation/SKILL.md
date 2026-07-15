@@ -12,9 +12,8 @@ description: Capsem native package installer -- package install, service registr
   bin/capsem, capsem-service, capsem-process, capsem-tui,
       capsem-mcp, capsem-mcp-aggregator, capsem-mcp-builtin,
       capsem-gateway, capsem-tray, capsem-admin
-  assets/manifest.json, manifest-origin.json, {asset-name}-{hash16}.{ext}
+  assets/manifest.json, manifest-metadata.json, {asset-name}-{hash16}.{ext}
   run/service.sock, service.pid, instances/, persistent/
-  update-checks/{manifest-url-hash}.json
   corp.toml               (CLI-provisioned corp config)
   corp-source.json         (corp config source metadata)
 ```
@@ -70,11 +69,19 @@ Side-effecting:
 
 The package is the install unit. It may accept a manifest URL override for corp
 and development installs, records that URL in packaged
-`manifest-origin.json`, hydrates the live manifest through
+`manifest-metadata.json`, hydrates the live manifest through
 `capsem update --assets --manifest <URL>` during postinstall, installs/restarts
 service files, and writes timestamped install logs. Packages do not carry an
 `assets/manifest.json` payload. They do not run an AI-provider setup wizard and
 they do not create a user policy file.
+
+Postinstall writes the selected verified release document unchanged to
+`assets/manifest.json`. The boot resolver derives its compact runtime view in
+memory; it must never serialize that view over the installed release graph.
+`assets/manifest-metadata.json`, with schema
+`capsem.manifest_metadata.v1`, is the only sidecar for provenance and update
+state. CLI status and About Capsem both read the service's canonical
+`GET /system/status` response, which includes those exact two JSON documents.
 
 ## Package maintainer scripts
 
@@ -93,13 +100,14 @@ they do not create a user policy file.
 ## Self-update (update.rs)
 
 - `read_cached_update_notice()` -> sync file read on every command
-- `refresh_update_cache_if_stale()` -> background 24h-cached check scoped by manifest URL
+- `refresh_update_cache_if_stale()` -> background 24h-cached check merged atomically into `assets/manifest-metadata.json`
 - `run_update()` -> check the selected manifest URL, choose the matching `.pkg`/`.deb` installer metadata, and keep profile image refresh on `capsem update --assets`
 - `capsem update --yes` -> downloads the selected installer into `~/.capsem/updates/installers/`, verifies size + SHA-256, prints the tested package-manager apply command for audit, and executes it through `sudo` (`/usr/sbin/installer -pkg ... -target /` or `apt-get install --yes ...`)
 - `capsem update --assets` -> hydrate the locally installed manifest or an explicit `--manifest` URL
 - Corporate VM asset channels use `capsem update --assets --manifest <URL>`; `--corp <URL>` provisions policy config and must not be combined with `--assets`
 - `--manifest` and `--corp` are URL-only inputs. Local files must use `file:///absolute/path`, while hosted release and corporate channels use `https://...` or `http://...`; bare paths are rejected so update checks share one URL-based mechanism.
-- Stable/nightly switching is currently a manifest URL switch: stable uses `https://release.capsem.org/assets/stable/manifest.json`; nightly uses `https://release.capsem.org/assets/nightly/manifest.json`. Their cached update checks must coexist under `update-checks/` without overwriting each other.
+- Stable/nightly switching uses the installed CLI: `capsem update --assets --channel <stable|nightly>` switches VM assets, while `capsem update --yes --channel <stable|nightly>` applies the verified package transition and assets. Explicit channel transitions may downgrade; Linux uses `apt-get --allow-downgrades`. The single metadata file records the installed manifest URL separately from the most recently checked URL.
+- An explicit corporate asset manifest moves the installation into a one-way locked channel. Persist `channel_kind=corporate` and `channel_locked=true`; later public-channel or different-manifest selections must fail before fetch or mutation.
 - Profile-owned images/configs/evidence belong to the selected channel/profile. Updating the co-work nightly profile can refresh only nightly co-work image/config refs and matching digests; it must not mutate stable, packages, per-binary inventory, or other profiles.
 - Profiles may set `min_capsem_version` when a profile requires newer client behavior. That is the compatibility hook; profiles must not point at the selected Capsem binary.
 - Layout detection: MacosPkg, LinuxDeb, UserDir, Development (development bails with "build from source")

@@ -43,7 +43,7 @@ def test_credential_store_retry_and_hot_status_reads_pay_lifecycle_debt_blackbox
     try:
         service.start()
         client = service.client()
-        store_path = Path(service.tmp_dir) / "credential-store.json"
+        store_path = Path(service.home_dir) / "credential-store.json"
         store_path.write_text(
             json.dumps({f"{provider}:{credential_ref}": raw_credential}, indent=2),
             encoding="utf-8",

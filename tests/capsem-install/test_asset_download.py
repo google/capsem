@@ -117,6 +117,8 @@ def _make_release_channel_manifest(
     *,
     profile_id: str = "default",
     revision: str = NEW_ASSET_VERSION,
+    image_revision: str | None = None,
+    config_files: dict[str, bytes] | None = None,
 ) -> dict:
     """Build the split-lane release graph shape published at /assets/<channel>/manifest.json."""
     return {
@@ -133,8 +135,22 @@ def _make_release_channel_manifest(
                 "architectures": [
                     {
                         "architecture": arch,
+                        "image_revision": image_revision or revision,
                         "software": [],
-                        "config": [],
+                        "config": [
+                            {
+                                "kind": "profile" if name == "profile.toml" else "config",
+                                "path": f"profiles/{profile_id}/{name}",
+                                "url": f"/profiles/releases/{revision}/{profile_id}/{arch}/{name}",
+                                "bytes": len(blob),
+                                "digest": {
+                                    "sha256": _sha256(blob),
+                                    "blake3": _blake3(blob),
+                                },
+                                "status": "current",
+                            }
+                            for name, blob in (config_files or {}).items()
+                        ],
                         "images": [
                             {
                                 "kind": kind,
@@ -181,7 +197,7 @@ def _write_installed_manifest_and_assets(
     arch_assets.mkdir(parents=True)
     manifest = _make_manifest(arch, files, asset_version)
     (assets_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    (assets_dir / "manifest-origin.json").write_text(
+    (assets_dir / "manifest-metadata.json").write_text(
         json.dumps(origin, sort_keys=True) + "\n",
         encoding="utf-8",
     )
@@ -449,12 +465,12 @@ def test_update_assets_refreshes_remote_channel_manifest_before_download(
         json.dumps(_make_manifest(arch, old_files, "2030.0101.1")),
         encoding="utf-8",
     )
-    (assets / "manifest-origin.json").write_text(
+    (assets / "manifest-metadata.json").write_text(
         json.dumps(
             {
-                "schema": "capsem.manifest_origin.v1",
+                "schema": "capsem.manifest_metadata.v1",
                 "origin": "package",
-                "source": channel_manifest_url,
+                "manifest_url": channel_manifest_url,
                 "packaged_at": "2026-06-16T00:00:00Z",
             },
             sort_keys=True,
@@ -477,8 +493,8 @@ def test_update_assets_refreshes_remote_channel_manifest_before_download(
     assert set(requested_paths).isdisjoint(legacy_blob_paths), requested_paths
     installed_manifest = json.loads((assets / "manifest.json").read_text())
     assert installed_manifest["assets"]["current"] == NEW_ASSET_VERSION
-    origin = json.loads((assets / "manifest-origin.json").read_text())
-    assert origin["source"] == channel_manifest_url
+    origin = json.loads((assets / "manifest-metadata.json").read_text())
+    assert origin["manifest_url"] == channel_manifest_url
 
     for name, blob in new_files.items():
         expected_hash = _blake3(blob)
@@ -522,9 +538,9 @@ def test_update_assets_retries_transient_remote_channel_manifest_fetch(
         capsem_home = tmp_path / ".capsem"
         assets = capsem_home / "assets"
         old_origin = {
-            "schema": "capsem.manifest_origin.v1",
+            "schema": "capsem.manifest_metadata.v1",
             "origin": "package",
-            "source": channel_manifest_url,
+            "manifest_url": channel_manifest_url,
             "packaged_at": "2026-06-16T00:00:00Z",
         }
         _write_installed_manifest_and_assets(
@@ -586,9 +602,9 @@ def test_update_assets_records_channel_change_audit_log(
         old_files,
         asset_version=ASSET_VERSION,
         origin={
-            "schema": "capsem.manifest_origin.v1",
+            "schema": "capsem.manifest_metadata.v1",
             "origin": "package",
-            "source": f"{base_url}/assets/stable/manifest.json",
+            "manifest_url": f"{base_url}/assets/stable/manifest.json",
             "package_version": "1.5.100",
             "packaged_at": "2026-06-16T00:00:00Z",
         },
@@ -644,9 +660,14 @@ def test_update_assets_accepts_release_channel_profile_manifest(
         "initrd.img": b"profile-graph-initrd-" + os.urandom(64),
         "rootfs.erofs": b"profile-graph-rootfs-" + os.urandom(64),
     }
+    profile_config = b'id = "default"\nrevision = "2030.0101.2"\n'
 
     channel_manifest_url = f"{base_url}/assets/stable/manifest.json"
-    channel_manifest = _make_release_channel_manifest(arch, new_files)
+    channel_manifest = _make_release_channel_manifest(
+        arch,
+        new_files,
+        config_files={"profile.toml": profile_config},
+    )
     channel_manifest_path = serve_dir / "assets" / "stable" / "manifest.json"
     channel_manifest_path.parent.mkdir(parents=True)
     channel_manifest_path.write_text(json.dumps(channel_manifest), encoding="utf-8")
@@ -655,6 +676,7 @@ def test_update_assets_accepts_release_channel_profile_manifest(
     release_dir.mkdir(parents=True)
     for name, blob in new_files.items():
         (release_dir / name).write_bytes(blob)
+    (release_dir / "profile.toml").write_bytes(profile_config)
 
     capsem_home = tmp_path / ".capsem"
     assets = capsem_home / "assets"
@@ -664,9 +686,9 @@ def test_update_assets_accepts_release_channel_profile_manifest(
         old_files,
         asset_version=ASSET_VERSION,
         origin={
-            "schema": "capsem.manifest_origin.v1",
+            "schema": "capsem.manifest_metadata.v1",
             "origin": "package",
-            "source": channel_manifest_url,
+            "manifest_url": channel_manifest_url,
             "packaged_at": "2026-06-16T00:00:00Z",
         },
     )
@@ -680,20 +702,158 @@ def test_update_assets_accepts_release_channel_profile_manifest(
         f"/profiles/releases/{NEW_ASSET_VERSION}/default/{arch}/{name}" for name in new_files
     }
     assert expected_blob_paths.issubset(set(requested_paths))
+    assert f"/profiles/releases/{NEW_ASSET_VERSION}/default/{arch}/profile.toml" in requested_paths
     assert "missing field `format`" not in result.stderr
 
     installed_manifest = json.loads((assets / "manifest.json").read_text())
-    assert installed_manifest["format"] == 2
-    assert installed_manifest["assets"]["current"] == NEW_ASSET_VERSION
-    installed_assets = installed_manifest["assets"]["releases"][NEW_ASSET_VERSION]["arches"][arch]
-    assert set(installed_assets) == {"vmlinuz", "initrd.img", "rootfs.erofs"}
-    origin = json.loads((assets / "manifest-origin.json").read_text())
-    assert origin["source"] == channel_manifest_url
+    assert installed_manifest == channel_manifest
+    assert installed_manifest["profiles"]["default"]["revision"] == NEW_ASSET_VERSION
+    installed_images = installed_manifest["profiles"]["default"]["architectures"][0]["images"]
+    assert {image["name"] for image in installed_images} == {
+        "vmlinuz",
+        "initrd.img",
+        "rootfs.erofs",
+    }
+    origin = json.loads((assets / "manifest-metadata.json").read_text())
+    assert origin["manifest_url"] == channel_manifest_url
 
     for name, blob in new_files.items():
         target = assets / arch / _hashed_asset_name(name, blob)
         assert target.exists(), f"{target} not downloaded. stdout={result.stdout}"
         assert target.read_bytes() == blob
+    assert (capsem_home / "profiles" / "default" / "profile.toml").read_bytes() == profile_config
+
+
+def test_installed_cli_switches_public_channels_then_corporate_channel_locks(
+    tmp_path: Path,
+    http_fixture,
+    installed_layout,
+):
+    base_url, serve_dir, requested_paths = http_fixture
+    binary = _fresh_capsem_binary()
+    arch = _arch()
+    stable_files = {
+        "vmlinuz": b"stable-channel-kernel",
+        "initrd.img": b"stable-channel-initrd",
+        "rootfs.erofs": b"stable-channel-rootfs",
+    }
+    nightly_files = {
+        "vmlinuz": b"nightly-channel-kernel",
+        "initrd.img": b"nightly-channel-initrd",
+        "rootfs.erofs": b"nightly-channel-rootfs",
+    }
+    stable = _make_manifest(arch, stable_files, ASSET_VERSION)
+    nightly = _make_manifest(arch, nightly_files, NEW_ASSET_VERSION)
+    stable["asset_base"] = f"{base_url}/blobs/{{asset_version}}"
+    nightly["asset_base"] = f"{base_url}/blobs/{{asset_version}}"
+    stable_body = json.dumps(stable, sort_keys=True, separators=(",", ":")).encode()
+    nightly_body = json.dumps(nightly, sort_keys=True, separators=(",", ":")).encode()
+
+    for channel, body in (("stable", stable_body), ("nightly", nightly_body)):
+        path = serve_dir / "assets" / channel / "manifest.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(body)
+    corp_path = serve_dir / "corp" / "manifest.json"
+    corp_path.parent.mkdir(parents=True)
+    corp_path.write_bytes(nightly_body)
+    for version, files in ((ASSET_VERSION, stable_files), (NEW_ASSET_VERSION, nightly_files)):
+        blob_dir = serve_dir / "blobs" / version
+        blob_dir.mkdir(parents=True)
+        for name, blob in files.items():
+            (blob_dir / f"{arch}-{name}").write_bytes(blob)
+    channels = {
+        "version": 1,
+        "channels": {
+            channel: {
+                "manifests": [
+                    {
+                        "version": "1.0.0",
+                        "status": "current",
+                        "url": f"/assets/{channel}/manifest.json",
+                        "digest": {
+                            "sha256": _sha256(body),
+                            "blake3": _blake3(body),
+                        },
+                    }
+                ]
+            }
+            for channel, body in (("stable", stable_body), ("nightly", nightly_body))
+        },
+    }
+    (serve_dir / "channels.json").write_text(json.dumps(channels), encoding="utf-8")
+
+    capsem_home = tmp_path / ".capsem"
+    assets = capsem_home / "assets"
+    _write_installed_manifest_and_assets(
+        assets,
+        arch,
+        stable_files,
+        asset_version=ASSET_VERSION,
+        origin={
+            "schema": "capsem.manifest_metadata.v1",
+            "origin": "package",
+            "manifest_url": f"{base_url}/assets/stable/manifest.json",
+            "channel": "stable",
+            "channel_kind": "public",
+            "channel_locked": False,
+        },
+    )
+    env = {
+        "CAPSEM_HOME": str(capsem_home),
+        "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+        "CAPSEM_RELEASE_CHANNELS_URL": f"{base_url}/channels.json",
+    }
+
+    nightly_result = _run_binary(binary, env, "update", "--assets", "--channel", "nightly")
+    assert nightly_result.returncode == 0, nightly_result.stderr
+    origin = json.loads((assets / "manifest-metadata.json").read_text())
+    assert origin["manifest_url"] == f"{base_url}/assets/nightly/manifest.json"
+    assert origin["channel"] == "nightly"
+    assert origin["channel_kind"] == "public"
+    assert origin["channel_locked"] is False
+    nightly_cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text())
+    assert nightly_cache["checked_url"] == f"{base_url}/assets/nightly/manifest.json"
+    assert nightly_cache["validation_status"] == "valid"
+    assert nightly_cache.get("validation_error") is None
+
+    stable_result = _run_binary(binary, env, "update", "--assets", "--channel", "stable")
+    assert stable_result.returncode == 0, stable_result.stderr
+    origin = json.loads((assets / "manifest-metadata.json").read_text())
+    assert origin["manifest_url"] == f"{base_url}/assets/stable/manifest.json"
+    assert origin["channel"] == "stable"
+    stable_cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text())
+    assert stable_cache["checked_url"] == f"{base_url}/assets/stable/manifest.json"
+    assert stable_cache["validation_status"] == "valid"
+    assert stable_cache.get("validation_error") is None
+
+    corp_url = f"{base_url}/corp/manifest.json"
+    corp_result = _run_binary(binary, env, "update", "--assets", "--manifest", corp_url)
+    assert corp_result.returncode == 0, corp_result.stderr
+    origin = json.loads((assets / "manifest-metadata.json").read_text())
+    assert origin["manifest_url"] == corp_url
+    assert origin["channel"] == "corp"
+    assert origin["channel_kind"] == "corporate"
+    assert origin["channel_locked"] is True
+
+    requests_before_rejected_switch = list(requested_paths)
+    rejected = _run_binary(binary, env, "update", "--assets", "--channel", "stable")
+    assert rejected.returncode != 0
+    assert "corporate channel is locked" in rejected.stderr
+    assert requested_paths == requests_before_rejected_switch
+    assert json.loads((assets / "manifest-metadata.json").read_text()) == origin
+
+    rejected_corp_change = _run_binary(
+        binary,
+        env,
+        "update",
+        "--assets",
+        "--manifest",
+        f"{base_url}/other-corp/manifest.json",
+    )
+    assert rejected_corp_change.returncode != 0
+    assert "corporate channel is locked to" in rejected_corp_change.stderr
+    assert requested_paths == requests_before_rejected_switch
+    assert json.loads((assets / "manifest-metadata.json").read_text()) == origin
 
 
 def test_manifest_url_controls_asset_source(
@@ -747,8 +907,8 @@ def test_manifest_url_controls_asset_source(
     installed_manifest = json.loads((assets / "manifest.json").read_text())
     assert installed_manifest["asset_base"] == channel_manifest["asset_base"]
     assert installed_manifest["assets"]["current"] == NEW_ASSET_VERSION
-    origin = json.loads((assets / "manifest-origin.json").read_text())
-    assert origin["source"] == channel_manifest_url
+    origin = json.loads((assets / "manifest-metadata.json").read_text())
+    assert origin["manifest_url"] == channel_manifest_url
 
     for name, blob in files.items():
         target = assets / arch / _hashed_asset_name(name, blob)
@@ -791,9 +951,9 @@ def test_update_assets_failed_remote_refresh_keeps_previous_manifest_and_assets(
     assets = capsem_home / "assets"
     arch_assets = assets / arch
     old_origin = {
-        "schema": "capsem.manifest_origin.v1",
+        "schema": "capsem.manifest_metadata.v1",
         "origin": "package",
-        "source": channel_manifest_url,
+        "manifest_url": channel_manifest_url,
         "packaged_at": "2026-06-16T00:00:00Z",
     }
     old_manifest = _write_installed_manifest_and_assets(
@@ -813,7 +973,7 @@ def test_update_assets_failed_remote_refresh_keeps_previous_manifest_and_assets(
     installed_manifest = json.loads((assets / "manifest.json").read_text())
     assert installed_manifest["assets"]["current"] == ASSET_VERSION
     assert installed_manifest == old_manifest
-    assert json.loads((assets / "manifest-origin.json").read_text()) == old_origin
+    assert json.loads((assets / "manifest-metadata.json").read_text()) == old_origin
 
     for name, blob in old_files.items():
         target = arch_assets / _hashed_asset_name(name, blob)
@@ -862,9 +1022,9 @@ def test_update_assets_rejects_incomplete_remote_manifest_without_clobbering_old
     capsem_home = tmp_path / ".capsem"
     assets = capsem_home / "assets"
     old_origin = {
-        "schema": "capsem.manifest_origin.v1",
+        "schema": "capsem.manifest_metadata.v1",
         "origin": "package",
-        "source": channel_manifest_url,
+        "manifest_url": channel_manifest_url,
         "packaged_at": "2026-06-16T00:00:00Z",
     }
     old_manifest = _write_installed_manifest_and_assets(
@@ -882,7 +1042,7 @@ def test_update_assets_rejects_incomplete_remote_manifest_without_clobbering_old
     assert "rootfs not found" in err, err
     assert "restored previous installed manifest" in err, err
     assert json.loads((assets / "manifest.json").read_text()) == old_manifest
-    assert json.loads((assets / "manifest-origin.json").read_text()) == old_origin
+    assert json.loads((assets / "manifest-metadata.json").read_text()) == old_origin
     for name, blob in old_files.items():
         target = assets / arch / _hashed_asset_name(name, blob)
         assert target.exists(), f"previous working asset was removed: {target}"
@@ -917,9 +1077,9 @@ def test_update_assets_interrupted_remote_blob_keeps_previous_manifest_and_clean
     with _serve_interrupted_asset_channel(channel_manifest, blobs, interrupted_path) as base_url:
         channel_manifest_url = f"{base_url}/assets/stable/manifest.json"
         old_origin = {
-            "schema": "capsem.manifest_origin.v1",
+            "schema": "capsem.manifest_metadata.v1",
             "origin": "package",
-            "source": channel_manifest_url,
+            "manifest_url": channel_manifest_url,
             "packaged_at": "2026-06-16T00:00:00Z",
         }
         old_manifest = _write_installed_manifest_and_assets(
@@ -937,7 +1097,7 @@ def test_update_assets_interrupted_remote_blob_keeps_previous_manifest_and_clean
     assert "asset refresh failed" in err, err
     assert "restored previous installed manifest" in err, err
     assert json.loads((assets / "manifest.json").read_text()) == old_manifest
-    assert json.loads((assets / "manifest-origin.json").read_text()) == old_origin
+    assert json.loads((assets / "manifest-metadata.json").read_text()) == old_origin
 
     arch_assets = assets / arch
     for name, blob in old_files.items():
@@ -964,9 +1124,9 @@ def test_update_assets_missing_remote_channel_manifest_keeps_previous_assets(
     capsem_home = tmp_path / ".capsem"
     assets = capsem_home / "assets"
     old_origin = {
-        "schema": "capsem.manifest_origin.v1",
+        "schema": "capsem.manifest_metadata.v1",
         "origin": "package",
-        "source": channel_manifest_url,
+        "manifest_url": channel_manifest_url,
         "packaged_at": "2026-06-16T00:00:00Z",
     }
     old_manifest = _write_installed_manifest_and_assets(
@@ -985,7 +1145,7 @@ def test_update_assets_missing_remote_channel_manifest_keeps_previous_assets(
     assert "404" in err or "not found" in err, err
     assert "/assets/stable/manifest.json" in requested_paths
     assert json.loads((assets / "manifest.json").read_text()) == old_manifest
-    assert json.loads((assets / "manifest-origin.json").read_text()) == old_origin
+    assert json.loads((assets / "manifest-metadata.json").read_text()) == old_origin
     for name, blob in old_files.items():
         target = assets / arch / _hashed_asset_name(name, blob)
         assert target.exists(), f"previous working asset was removed: {target}"
@@ -1027,9 +1187,9 @@ def test_update_assets_deprecated_remote_release_keeps_previous_assets(
     capsem_home = tmp_path / ".capsem"
     assets = capsem_home / "assets"
     old_origin = {
-        "schema": "capsem.manifest_origin.v1",
+        "schema": "capsem.manifest_metadata.v1",
         "origin": "package",
-        "source": channel_manifest_url,
+        "manifest_url": channel_manifest_url,
         "packaged_at": "2026-06-16T00:00:00Z",
     }
     old_manifest = _write_installed_manifest_and_assets(
@@ -1053,7 +1213,7 @@ def test_update_assets_deprecated_remote_release_keeps_previous_assets(
     }
     assert set(requested_paths).isdisjoint(deprecated_blob_paths), requested_paths
     assert json.loads((assets / "manifest.json").read_text()) == old_manifest
-    assert json.loads((assets / "manifest-origin.json").read_text()) == old_origin
+    assert json.loads((assets / "manifest-metadata.json").read_text()) == old_origin
     for name, blob in old_files.items():
         target = assets / arch / _hashed_asset_name(name, blob)
         assert target.exists(), f"previous working asset was removed: {target}"

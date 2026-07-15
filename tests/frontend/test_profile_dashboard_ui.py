@@ -21,7 +21,7 @@ def test_profile_cards_are_route_owned_and_per_profile() -> None:
     assert "Promise.all(profiles.map(fetchProfileAssets))" in source
     assert "getAssetsStatus(profile.id)" in source
     assert "profileAssetText(launcher.assets)" in source
-    assert "profileAssetChecklist(launcher)" in source
+    assert "profileAssetChecklist(launcher)" not in source
 
     assert "{launcher.profile.name}" in source
     assert "{launcher.profile.description}" in source
@@ -47,16 +47,13 @@ def test_profile_card_buttons_follow_asset_readiness() -> None:
     assert "launcher.loading || launcher.creating || launcher.ensuring || launcher.assets?.downloading === true" in source
 
 
-def test_profile_asset_checklist_renders_all_route_statuses() -> None:
+def test_profile_cards_do_not_render_release_diagnostics() -> None:
     source = read(DASHBOARD)
 
-    assert "VM assets" in source
-    assert "asset.status === 'present'" in source
-    assert "asset.status === 'downloading'" in source
-    assert "<CheckCircle" in source
-    assert "<CircleNotch" in source
-    assert "<Warning" in source
-    assert "{asset.kind ?? asset.name}" in source
+    assert "Profile and image state" not in source
+    assert ">VM assets<" not in source
+    assert "Not published" not in source
+    assert "{asset.kind ?? asset.name}" not in source
 
 
 def test_dashboard_groups_broken_sessions_and_exposes_refresh_and_purge() -> None:

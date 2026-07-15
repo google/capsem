@@ -212,18 +212,18 @@ def test_profile_asset_routes_gate_start_until_hash_named_assets_are_hydrated(
         service.stop()
 
 
-def test_profile_asset_routes_report_manifest_origin_hash_and_validity(tmp_path: Path) -> None:
+def test_profile_asset_routes_report_manifest_metadata_hash_and_validity(tmp_path: Path) -> None:
     profiles, source_assets, files, manifest = _seed_profile_fixture(tmp_path)
     arch = _arch()
     installed_assets = tmp_path / "installed-assets"
     (installed_assets / arch).mkdir(parents=True)
     shutil.copy2(manifest, installed_assets / "manifest.json")
-    (installed_assets / "manifest-origin.json").write_text(
+    (installed_assets / "manifest-metadata.json").write_text(
         json.dumps(
             {
-                "schema": "capsem.manifest_origin.v1",
+                "schema": "capsem.manifest_metadata.v1",
                 "origin": "package",
-                "source": manifest.as_uri(),
+                "manifest_url": manifest.as_uri(),
                 "packaged_at": "2026-06-16T00:00:00Z",
             },
             sort_keys=True,

@@ -1926,7 +1926,12 @@ impl ProfileCatalog {
         }
         let installed = crate::paths::capsem_home().join("profiles");
         if installed.is_dir() {
-            return Self::load_from_dir(&installed);
+            let mut catalog = Self::load_from_dir(&installed)?;
+            let manifest_path = crate::paths::capsem_assets_dir().join("manifest.json");
+            if manifest_path.is_file() {
+                overlay_release_manifest_assets(&mut catalog, &manifest_path)?;
+            }
+            return Ok(catalog);
         }
         Ok(Self::builtin())
     }
@@ -1941,6 +1946,207 @@ impl ProfileCatalog {
 
     pub fn get(&self, profile_id: &str) -> Option<&ProfileConfigFile> {
         self.profiles.get(profile_id)
+    }
+}
+
+fn overlay_release_manifest_assets(
+    catalog: &mut ProfileCatalog,
+    manifest_path: &Path,
+) -> Result<(), String> {
+    let content = fs::read_to_string(manifest_path).map_err(|error| {
+        format!(
+            "read installed manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+    let document: serde_json::Value = serde_json::from_str(&content).map_err(|error| {
+        format!(
+            "parse installed manifest {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+    let Some(profiles) = document
+        .get("profiles")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Ok(());
+    };
+
+    let source_label = catalog.source_path_label();
+    for (profile_id, profile_value) in profiles {
+        let profile = catalog.profiles.get_mut(profile_id).ok_or_else(|| {
+            format!(
+                "installed manifest profile {profile_id} has no verified profile config in {}",
+                source_label
+            )
+        })?;
+        let revision = profile_value
+            .get("revision")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| {
+                format!("installed manifest profile {profile_id} is missing revision")
+            })?;
+        profile.revision = revision.to_string();
+        let architectures = profile_value
+            .get("architectures")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| {
+                format!("installed manifest profile {profile_id} is missing architectures")
+            })?;
+        for architecture in architectures {
+            let arch = architecture
+                .get("architecture")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    format!("installed manifest profile {profile_id} has an unnamed architecture")
+                })?;
+            let Some(profile_arch) = profile.assets.arch.get_mut(arch) else {
+                continue;
+            };
+            let images = architecture
+                .get("images")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| {
+                    format!(
+                        "installed manifest profile {profile_id} architecture {arch} is missing images"
+                    )
+                })?;
+            let mut overlaid = BTreeMap::new();
+            for image in images {
+                if image.get("status").and_then(serde_json::Value::as_str) == Some("revoked") {
+                    continue;
+                }
+                let kind = image
+                    .get("kind")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        format!(
+                            "installed manifest profile {profile_id} architecture {arch} has an image without kind"
+                        )
+                    })?;
+                let descriptor = match kind {
+                    "kernel" => &mut profile_arch.kernel,
+                    "initrd" => &mut profile_arch.initrd,
+                    "rootfs" => &mut profile_arch.rootfs,
+                    _ => continue,
+                };
+                let name = image
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        format!("installed manifest {profile_id}/{arch}/{kind} is missing name")
+                    })?;
+                let url = image
+                    .get("url")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        format!("installed manifest {profile_id}/{arch}/{kind} is missing URL")
+                    })?;
+                let size = image
+                    .get("bytes")
+                    .and_then(serde_json::Value::as_u64)
+                    .ok_or_else(|| {
+                        format!(
+                            "installed manifest {profile_id}/{arch}/{kind} is missing byte size"
+                        )
+                    })?;
+                let blake3 = image
+                    .pointer("/digest/blake3")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        format!("installed manifest {profile_id}/{arch}/{kind} is missing BLAKE3")
+                    })?;
+                if blake3.len() != 64 || !blake3.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                    return Err(format!(
+                        "installed manifest {profile_id}/{arch}/{kind} has invalid BLAKE3"
+                    ));
+                }
+                descriptor.name = name.to_string();
+                descriptor.url = url.to_string();
+                descriptor.hash = Some(format!("blake3:{blake3}"));
+                descriptor.size = Some(size);
+                overlaid.insert(kind, ());
+            }
+            for required in ["kernel", "initrd", "rootfs"] {
+                if !overlaid.contains_key(required) {
+                    return Err(format!(
+                        "installed manifest profile {profile_id} architecture {arch} is missing {required} image"
+                    ));
+                }
+            }
+            if let Some(configs) = architecture
+                .get("config")
+                .and_then(serde_json::Value::as_array)
+            {
+                for config in configs {
+                    if config.get("status").and_then(serde_json::Value::as_str) == Some("revoked") {
+                        continue;
+                    }
+                    let kind = config
+                        .get("kind")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            format!(
+                                "installed manifest profile {profile_id} architecture {arch} has config without kind"
+                            )
+                        })?;
+                    let slot = match kind {
+                        "enforcement" => &mut profile.files.enforcement,
+                        "detection" => &mut profile.files.detection,
+                        "mcp" => &mut profile.files.mcp,
+                        "apt_packages" => &mut profile.files.apt_packages,
+                        "python_requirements" => &mut profile.files.python_requirements,
+                        "npm_packages" => &mut profile.files.npm_packages,
+                        "build" => &mut profile.files.build,
+                        "tips" => &mut profile.files.tips,
+                        "root_manifest" => &mut profile.files.root_manifest,
+                        _ => continue,
+                    };
+                    let path = config
+                        .get("path")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            format!("installed manifest {profile_id}/{arch}/{kind} is missing path")
+                        })?;
+                    let size = config
+                        .get("bytes")
+                        .and_then(serde_json::Value::as_u64)
+                        .ok_or_else(|| {
+                            format!(
+                                "installed manifest {profile_id}/{arch}/{kind} is missing byte size"
+                            )
+                        })?;
+                    let blake3 = config
+                        .pointer("/digest/blake3")
+                        .and_then(serde_json::Value::as_str)
+                        .ok_or_else(|| {
+                            format!(
+                                "installed manifest {profile_id}/{arch}/{kind} is missing BLAKE3"
+                            )
+                        })?;
+                    if blake3.len() != 64 || !blake3.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                        return Err(format!(
+                            "installed manifest {profile_id}/{arch}/{kind} has invalid BLAKE3"
+                        ));
+                    }
+                    *slot = Some(ProfileFileDescriptor {
+                        path: path.to_string(),
+                        hash: Some(format!("blake3:{blake3}")),
+                        size: Some(size),
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+impl ProfileCatalog {
+    fn source_path_label(&self) -> String {
+        match &self.source {
+            ProfileCatalogSource::BuiltIn => "built-in profiles".to_string(),
+            ProfileCatalogSource::Directory(path) => path.display().to_string(),
+        }
     }
 }
 

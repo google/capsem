@@ -547,6 +547,24 @@ export async function debugSnapshot(): Promise<unknown> {
   };
 }
 
+/** Canonical installed-system status used by the About page. The fields are
+ * sourced from the same service endpoints as `capsem status`; this is not a
+ * settings snapshot and it fails if any required status source is unavailable. */
+export interface CapsemStatus {
+  version: string;
+  service: string;
+  manifest: Record<string, unknown>;
+  manifest_metadata: Record<string, unknown>;
+  profiles: Record<string, unknown>;
+  corp: Record<string, unknown>;
+  updates: UpdateStatusResponse;
+}
+
+export async function getCapsemStatus(): Promise<CapsemStatus> {
+  const resp = await _get('/system/status');
+  return await resp.json();
+}
+
 function emptyStatus(): StatusResponse {
   return {
     service: 'offline',

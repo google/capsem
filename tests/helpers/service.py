@@ -227,7 +227,14 @@ class ServiceInstance:
     """A running capsem-service instance on an isolated socket."""
 
     def __init__(self, *, assets_dir: Path | None = None):
-        self.tmp_dir = make_capsem_tmp_dir("capsem-test-")
+        # Match the installed layout exactly: CAPSEM_HOME owns a run/
+        # directory and sessions/main.db is its sibling.  Using the temporary
+        # home itself as CAPSEM_RUN_DIR makes main_db_path_for_run_dir() resolve
+        # to the shared system temporary directory, so parallel workers all
+        # write the same /tmp/sessions/main.db.
+        self.home_dir = make_capsem_tmp_dir("capsem-test-")
+        self.tmp_dir = self.home_dir / "run"
+        self.tmp_dir.mkdir()
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.assets_dir = assets_dir
         self.profiles_dir = None
@@ -253,12 +260,12 @@ class ServiceInstance:
         env = os.environ.copy()
         env["RUST_LOG"] = "debug"
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
-        env["CAPSEM_HOME"] = str(self.tmp_dir)
+        env["CAPSEM_HOME"] = str(self.home_dir)
         env["CAPSEM_PROFILES_DIR"] = str(self.profiles_dir)
         env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
-            self.tmp_dir / "credential-store.json"
+            self.home_dir / "credential-store.json"
         )
-        env["HOME"] = str(self.tmp_dir)
+        env["HOME"] = str(self.home_dir)
 
         log_path = self.tmp_dir / "service.log"
         print(f"SERVICE LOG: {log_path}")
@@ -308,12 +315,14 @@ class ServiceInstance:
     def client(self):
         return UdsHttpClient(self.uds_path)
 
-    def stop(self):
+    def stop(self, *, cleanup: bool = True):
         """Stop the service and clean up temporary directory.
 
         Gives the service enough time for graceful shutdown to reap every
         per-VM capsem-process child (SIGTERM -> 500ms grace -> SIGKILL
         survivors). SIGKILL here would skip that cleanup and orphan VMs.
+        Tests that need to inspect shutdown-flushed state may pass
+        ``cleanup=False`` and call ``stop()`` again after their assertions.
         """
         if self.proc:
             self.proc.terminate()
@@ -328,10 +337,13 @@ class ServiceInstance:
             self._log_file.close()
             self._log_file = None
 
-        preserve_tmp_dir_on_failure(self.tmp_dir)
+        if not cleanup:
+            return
 
-        if self.tmp_dir.exists():
-            shutil.rmtree(self.tmp_dir, ignore_errors=True)
+        preserve_tmp_dir_on_failure(self.home_dir)
+
+        if self.home_dir.exists():
+            shutil.rmtree(self.home_dir, ignore_errors=True)
 
 
 def wait_exec_ready(client, vm_name, timeout=EXEC_READY_TIMEOUT):

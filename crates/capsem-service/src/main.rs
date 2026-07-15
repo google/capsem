@@ -2087,8 +2087,18 @@ impl ServiceState {
                     .map_err(|e| anyhow!("load builtin profile {profile_id}: {e}"))
             }
             ProfileCatalogSource::Directory(profiles_dir) => {
-                Profile::load_from_dir(profiles_dir.join(profile_id))
-                    .map_err(|e| anyhow!("load profile {profile_id}: {e}"))
+                let config_root = profiles_dir.parent().ok_or_else(|| {
+                    anyhow!(
+                        "profile directory {} must be under a config root",
+                        profiles_dir.display()
+                    )
+                })?;
+                Profile::from_config(
+                    config_root.to_path_buf(),
+                    profiles_dir.join(profile_id),
+                    profile,
+                )
+                .map_err(|e| anyhow!("load profile {profile_id}: {e}"))
             }
         }
     }
@@ -4594,11 +4604,7 @@ async fn wait_for_vm_ready(
     // exec_ready / boot_ready latency gates. Peer callers (service-connect,
     // gateway-ready) wait for remote processes with seconds-scale startup
     // where 500ms is appropriate; this poll is different.
-    let opts = capsem_core::poll::PollOpts {
-        initial_delay: std::time::Duration::from_millis(5),
-        max_delay: std::time::Duration::from_millis(50),
-        ..capsem_core::poll::PollOpts::new("vm-ready", std::time::Duration::from_secs(timeout_secs))
-    };
+    let opts = vm_ready_poll_opts(timeout_secs);
     let died: Arc<std::sync::atomic::AtomicBool> =
         Arc::new(std::sync::atomic::AtomicBool::new(false));
     let res = capsem_core::poll::poll_until(opts, || {
@@ -4636,6 +4642,14 @@ async fn wait_for_vm_ready(
             ready_span.record("status", "error");
             Err(format!("{error}"))
         }
+    }
+}
+
+fn vm_ready_poll_opts(timeout_secs: u64) -> capsem_core::poll::PollOpts {
+    capsem_core::poll::PollOpts {
+        initial_delay: std::time::Duration::from_millis(5),
+        max_delay: std::time::Duration::from_millis(50),
+        ..capsem_core::poll::PollOpts::new("vm-ready", std::time::Duration::from_secs(timeout_secs))
     }
 }
 
@@ -5071,8 +5085,8 @@ fn profile_status_value(state: &ServiceState, profile: &Profile) -> serde_json::
 
 fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
     let path = state.assets_dir.join("manifest.json");
-    let origin_path = state.assets_dir.join("manifest-origin.json");
-    let origin_metadata = std::fs::read_to_string(&origin_path)
+    let metadata_path = state.assets_dir.join("manifest-metadata.json");
+    let manifest_metadata = std::fs::read_to_string(&metadata_path)
         .ok()
         .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok());
     let refreshed_at = std::fs::metadata(&path)
@@ -5085,7 +5099,7 @@ fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
         None
     };
     let manifest_validation = validate_asset_manifest_file(&path);
-    let origin = if let Some(origin) = origin_metadata
+    let origin = if let Some(origin) = manifest_metadata
         .as_ref()
         .and_then(|value| value.get("origin"))
         .and_then(|value| value.as_str())
@@ -5112,12 +5126,15 @@ fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
             obj.insert("validation_error".to_string(), json!(error));
         }
     }
-    if let (Some(metadata), Some(obj)) = (&origin_metadata, value.as_object_mut()) {
+    if let (Some(metadata), Some(obj)) = (&manifest_metadata, value.as_object_mut()) {
         obj.insert(
             "origin_path".to_string(),
-            json!(origin_path.display().to_string()),
+            json!(metadata_path.display().to_string()),
         );
-        if let Some(source) = metadata.get("source").and_then(|value| value.as_str()) {
+        if let Some(source) = metadata
+            .get("manifest_url")
+            .and_then(|value| value.as_str())
+        {
             obj.insert("origin_source".to_string(), json!(source));
         }
         if let Some(packaged_at) = metadata.get("packaged_at").and_then(|value| value.as_str()) {
@@ -5145,6 +5162,7 @@ fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
 
 #[derive(Debug, Clone, Deserialize)]
 struct UpdateCheckCache {
+    #[serde(default)]
     checked_at: u64,
     #[serde(default)]
     latest_version: Option<String>,
@@ -5176,7 +5194,7 @@ struct UpdateCheckCache {
     images_state: Option<String>,
     #[serde(default)]
     images_blocked_reason: Option<String>,
-    #[serde(default)]
+    #[serde(default, rename = "checked_url")]
     source: Option<String>,
     #[serde(default)]
     channel_hash: Option<String>,
@@ -5187,11 +5205,10 @@ struct UpdateCheckCache {
 }
 
 fn update_status_response(state: &ServiceState) -> api::UpdateStatusResponse {
-    let capsem_home = capsem_core::paths::capsem_home();
     update_status_response_from_paths(
         &state.current_version,
         &state.assets_dir,
-        &capsem_home.join("update-check.json"),
+        &state.assets_dir.join("manifest-metadata.json"),
         unix_now_secs(),
     )
 }
@@ -5211,7 +5228,7 @@ fn update_status_response_from_paths(
 ) -> api::UpdateStatusResponse {
     let current_assets = current_asset_version_from_manifest(assets_dir);
     let manifest_channel = manifest_channel_source(assets_dir);
-    let cache_result = read_update_check_cache_for_channel(cache_path, manifest_channel.as_deref());
+    let cache_result = read_update_check_cache(cache_path);
     let (cache, parse_error) = match cache_result {
         Ok(cache) => (cache, None),
         Err(error) => (None, Some(error)),
@@ -5296,10 +5313,10 @@ fn supply_chain_evidence_from_paths(
     channel_hash: Option<String>,
 ) -> api::SupplyChainEvidence {
     let manifest_path = assets_dir.join("manifest.json");
-    let origin_metadata = std::fs::read_to_string(assets_dir.join("manifest-origin.json"))
+    let manifest_metadata = std::fs::read_to_string(assets_dir.join("manifest-metadata.json"))
         .ok()
         .and_then(|body| serde_json::from_str::<serde_json::Value>(&body).ok());
-    let manifest_origin = origin_metadata
+    let metadata_origin = manifest_metadata
         .as_ref()
         .and_then(|value| value.get("origin"))
         .and_then(|value| value.as_str())
@@ -5311,9 +5328,9 @@ fn supply_chain_evidence_from_paths(
                 None
             }
         });
-    let manifest_source = origin_metadata
+    let manifest_source = manifest_metadata
         .as_ref()
-        .and_then(|value| value.get("source"))
+        .and_then(|value| value.get("manifest_url"))
         .and_then(|value| value.as_str())
         .map(ToOwned::to_owned);
     let manifest_hash = if manifest_path.is_file() {
@@ -5324,7 +5341,7 @@ fn supply_chain_evidence_from_paths(
 
     api::SupplyChainEvidence {
         manifest: api::SupplyChainManifestEvidence {
-            origin: manifest_origin,
+            origin: metadata_origin,
             source: manifest_source,
             path: manifest_path.display().to_string(),
             blake3: manifest_hash,
@@ -5382,64 +5399,19 @@ fn read_update_check_cache(
     }
     let content = std::fs::read_to_string(path)
         .map_err(|error| format!("read {}: {error}", path.display()))?;
-    serde_json::from_str(&content)
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|error| format!("parse {}: {error}", path.display()))?;
+    if value.get("schema").and_then(serde_json::Value::as_str)
+        != Some("capsem.manifest_metadata.v1")
+    {
+        return Err(format!(
+            "parse {}: expected schema capsem.manifest_metadata.v1",
+            path.display()
+        ));
+    }
+    serde_json::from_value(value)
         .map(Some)
         .map_err(|error| format!("parse {}: {error}", path.display()))
-}
-
-fn read_update_check_cache_for_channel(
-    legacy_path: &StdPath,
-    channel_source: Option<&str>,
-) -> std::result::Result<Option<UpdateCheckCache>, String> {
-    if let Some(source) = channel_source {
-        if let Some(cache) = read_source_scoped_update_cache(legacy_path, source)? {
-            return Ok(Some(cache));
-        }
-    }
-
-    let legacy = read_update_check_cache(legacy_path)?;
-    let Some(cache) = legacy else {
-        return Ok(None);
-    };
-    if let (Some(source), Some(cache_source)) = (channel_source, cache.source.as_deref()) {
-        if cache_source != source {
-            return Ok(None);
-        }
-    }
-    Ok(Some(cache))
-}
-
-fn read_source_scoped_update_cache(
-    legacy_path: &StdPath,
-    source: &str,
-) -> std::result::Result<Option<UpdateCheckCache>, String> {
-    let Some(parent) = legacy_path.parent() else {
-        return Ok(None);
-    };
-    let dir = parent.join("update-checks");
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(format!("read {}: {error}", dir.display())),
-    };
-
-    for entry in entries {
-        let entry = entry.map_err(|error| format!("read {}: {error}", dir.display()))?;
-        let path = entry.path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
-            continue;
-        }
-        let content = std::fs::read_to_string(&path)
-            .map_err(|error| format!("read {}: {error}", path.display()))?;
-        let cache = match serde_json::from_str::<UpdateCheckCache>(&content) {
-            Ok(cache) => cache,
-            Err(_) => continue,
-        };
-        if cache.source.as_deref() == Some(source) {
-            return Ok(Some(cache));
-        }
-    }
-    Ok(None)
 }
 
 fn current_asset_version_from_manifest(assets_dir: &StdPath) -> Option<String> {
@@ -5450,10 +5422,10 @@ fn current_asset_version_from_manifest(assets_dir: &StdPath) -> Option<String> {
 }
 
 fn manifest_channel_source(assets_dir: &StdPath) -> Option<String> {
-    let content = std::fs::read_to_string(assets_dir.join("manifest-origin.json")).ok()?;
+    let content = std::fs::read_to_string(assets_dir.join("manifest-metadata.json")).ok()?;
     let value: serde_json::Value = serde_json::from_str(&content).ok()?;
     value
-        .get("source")
+        .get("manifest_url")
         .and_then(|source| source.as_str())
         .map(ToOwned::to_owned)
 }
@@ -6100,6 +6072,10 @@ async fn handle_corp_config(
 
 /// GET /corp/info -- summarize the installed corporate overlay without exposing TOML.
 async fn handle_corp_info() -> Result<Json<serde_json::Value>, AppError> {
+    Ok(Json(corp_info_value()?))
+}
+
+fn corp_info_value() -> Result<serde_json::Value, AppError> {
     use capsem_core::net::policy_config::{corp_config_paths, corp_provision};
 
     let capsem_dir = capsem_core::paths::capsem_home_opt().ok_or(AppError(
@@ -6116,11 +6092,11 @@ async fn handle_corp_info() -> Result<Json<serde_json::Value>, AppError> {
         })
         .collect();
     let source = corp_provision::read_corp_source(&capsem_dir);
-    Ok(Json(json!({
+    Ok(json!({
         "installed": paths.iter().any(|path| path["exists"].as_bool().unwrap_or(false)),
         "paths": paths,
         "source": source,
-    })))
+    }))
 }
 
 /// POST /corp/validate -- validate corporate config from URL or inline TOML without installing it.
@@ -6243,17 +6219,7 @@ fn profile_for_route(profile_id: String) -> Result<Profile, AppError> {
             format!("profile not found: {profile_id}"),
         )
     })?;
-    match catalog.source() {
-        ProfileCatalogSource::Directory(profiles_dir) => {
-            Profile::load_from_dir(profiles_dir.join(&profile_id)).map_err(|error| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    format!("invalid profile {profile_id}: {error}"),
-                )
-            })
-        }
-        ProfileCatalogSource::BuiltIn => profile_from_catalog_entry(profile, catalog.source()),
-    }
+    profile_from_catalog_entry(profile, catalog.source())
 }
 
 #[derive(Clone, Debug)]
@@ -12069,6 +12035,7 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
     Router::new()
         .route("/status", get(handle_service_status))
         .route("/update/status", get(handle_update_status))
+        .route("/system/status", get(handle_system_status))
         .route("/update/check", post(handle_update_check))
         .route("/update/apply", post(handle_update_apply))
         .route(
@@ -12298,6 +12265,73 @@ async fn handle_update_status(
     State(state): State<Arc<ServiceState>>,
 ) -> Result<Json<api::UpdateStatusResponse>, AppError> {
     Ok(Json(update_status_response(&state)))
+}
+
+async fn handle_system_status(
+    State(state): State<Arc<ServiceState>>,
+) -> Result<Json<api::SystemStatusResponse>, AppError> {
+    let manifest = read_installed_status_document(&state.assets_dir.join("manifest.json"))?;
+    capsem_core::asset_manager::ManifestV2::from_json(&serde_json::to_string(&manifest).map_err(
+        |error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("serialize installed manifest for validation: {error}"),
+            )
+        },
+    )?)
+    .map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("installed manifest is invalid: {error:#}"),
+        )
+    })?;
+    let manifest_metadata =
+        read_manifest_metadata_status_document(&state.assets_dir.join("manifest-metadata.json"))?;
+    let profiles = if asset_reconcile_has_route_fields(&state) {
+        refresh_reconcile_fields(&state, profile_status_cache(&state)?.catalog)
+    } else {
+        profile_status_cache(&state)?.catalog
+    };
+    Ok(Json(api::SystemStatusResponse {
+        version: state.current_version.clone(),
+        service: "running".to_string(),
+        manifest,
+        manifest_metadata,
+        profiles,
+        corp: corp_info_value()?,
+        updates: update_status_response(&state),
+    }))
+}
+
+fn read_installed_status_document(path: &StdPath) -> Result<serde_json::Value, AppError> {
+    let content = std::fs::read_to_string(path).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("read installed status document {}: {error}", path.display()),
+        )
+    })?;
+    serde_json::from_str(&content).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!(
+                "parse installed status document {}: {error}",
+                path.display()
+            ),
+        )
+    })
+}
+
+fn read_manifest_metadata_status_document(path: &StdPath) -> Result<serde_json::Value, AppError> {
+    let value = read_installed_status_document(path)?;
+    if value.get("schema").and_then(serde_json::Value::as_str)
+        != Some("capsem.manifest_metadata.v1")
+    {
+        return Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "installed manifest metadata must use schema capsem.manifest_metadata.v1".to_string(),
+        ));
+    }
+    Ok(value)
 }
 
 async fn handle_update_check(

@@ -40,7 +40,7 @@ mkdir -p "$DST/$ARCH"
 
 cp "$SRC/manifest.json" "$DST/manifest.json.tmp"
 mv "$DST/manifest.json.tmp" "$DST/manifest.json"
-python3 - "$SRC/manifest.json" "$DST/manifest-origin.json" <<'PY'
+python3 - "$SRC/manifest.json" "$DST/manifest-metadata.json" <<'PY'
 import json
 import pathlib
 import sys
@@ -51,9 +51,9 @@ tmp = dst.with_suffix(dst.suffix + ".tmp")
 tmp.write_text(
     json.dumps(
         {
-            "schema": "capsem.manifest_origin.v1",
+            "schema": "capsem.manifest_metadata.v1",
             "origin": "local-dev-sync",
-            "source": str(manifest),
+            "manifest_url": manifest.as_uri(),
         },
         sort_keys=True,
     )

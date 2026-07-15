@@ -50,7 +50,7 @@ class TestStatusEndpoint:
         manifest = profiles["asset_manifest"]
         assert manifest["origin"] == "package"
         assert manifest["origin_source"] == "file:///tmp/corp/manifest.json"
-        assert manifest["origin_path"].endswith("/manifest-origin.json")
+        assert manifest["origin_path"].endswith("/manifest-metadata.json")
         assert manifest["blake3"] == "0123456789abcdef"
         assert manifest["validation_status"] == "valid"
         assert manifest["refresh_policy"] == "24h"

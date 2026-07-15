@@ -192,7 +192,7 @@ bash scripts/build-pkg.sh \
 ```
 
 The package copies that selected manifest into its payload and writes
-`manifest-origin.json`. Installed service status exposes the manifest path,
+`manifest-metadata.json`. Installed service status exposes the manifest path,
 BLAKE3 hash, origin, and source so corp can debug exactly which manifest a
 machine is using. `--manifest` is always URL-shaped: local custom manifests use
 `file:///absolute/path/to/manifest.json`, while hosted corp channels use

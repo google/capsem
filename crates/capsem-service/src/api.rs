@@ -333,6 +333,17 @@ pub struct UpdateStatusResponse {
     pub supply_chain: SupplyChainEvidence,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct SystemStatusResponse {
+    pub version: String,
+    pub service: String,
+    pub manifest: serde_json::Value,
+    pub manifest_metadata: serde_json::Value,
+    pub profiles: serde_json::Value,
+    pub corp: serde_json::Value,
+    pub updates: UpdateStatusResponse,
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateCheckRequest {

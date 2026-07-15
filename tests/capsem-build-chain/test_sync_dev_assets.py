@@ -135,7 +135,7 @@ def test_sync_dev_assets_materializes_hash_names_from_literal_build_output(
     assert not (dst / arch / "rootfs.erofs").exists()
 
 
-def test_sync_dev_assets_writes_local_manifest_origin(tmp_path: Path) -> None:
+def test_sync_dev_assets_writes_local_manifest_metadata(tmp_path: Path) -> None:
     src = tmp_path / "src-assets"
     dst = tmp_path / "installed-assets"
     _write_assets(src, literal=True)
@@ -149,12 +149,12 @@ def test_sync_dev_assets_writes_local_manifest_origin(tmp_path: Path) -> None:
         check=True,
     )
 
-    origin_path = dst / "manifest-origin.json"
+    origin_path = dst / "manifest-metadata.json"
     assert origin_path.is_file()
     origin = json.loads(origin_path.read_text())
-    assert origin["schema"] == "capsem.manifest_origin.v1"
+    assert origin["schema"] == "capsem.manifest_metadata.v1"
     assert origin["origin"] == "local-dev-sync"
-    assert origin["source"] == str(src / "manifest.json")
+    assert origin["manifest_url"] == (src / "manifest.json").resolve().as_uri()
 
 
 def test_sync_dev_assets_removes_stale_hash_names(tmp_path: Path) -> None:

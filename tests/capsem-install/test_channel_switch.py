@@ -32,6 +32,9 @@ def _current_manifest(graph: dict, channel: str) -> dict:
 def test_resolver_never_selects_revoked_manifest() -> None:
     source = UPDATE_RS.read_text(encoding="utf-8")
 
+    assert "#[cfg(test)]\nstruct ReleaseChannelsCatalog" not in source
+    assert "#[cfg(test)]\nfn select_channel_manifest_url" not in source
+    assert "#[cfg(test)]\nfn validate_hex_digest" not in source
     assert "enum ReleaseManifestStatus" in source
     assert "ReleaseManifestStatus::Revoked" in source
     assert ".filter(|manifest| manifest.status != ReleaseManifestStatus::Revoked)" in source
@@ -50,14 +53,18 @@ def test_old_capsem_selects_compatible_supported_manifest() -> None:
     )
 
 
-def test_stable_and_nightly_caches_coexist() -> None:
+def test_channel_checks_share_one_manifest_metadata_document() -> None:
     source = UPDATE_RS.read_text(encoding="utf-8")
 
-    assert "fn cache_path_for_source" in source
-    assert "fn cache_key_for_source" in source
-    assert 'd.join("update-checks")' in source
-    assert "stable_and_nightly_update_caches_coexist" in source
+    assert "fn write_cache" in source
+    assert "fn read_cache_for_source" in source
+    assert 'home.join("assets/manifest-metadata.json")' in source
+    assert "fn cache_path_for_source" not in source
+    assert "fn cache_key_for_source" not in source
+    assert "update-checks" not in source
+    assert "single_manifest_metadata_records_only_the_latest_channel_check" in source
     assert "https://release.capsem.org/assets/nightly/manifest.json" in source
+    assert source.count("update_check_from_release_payload(") >= 3
 
 
 def test_switch_stable_to_nightly_and_back() -> None:
@@ -92,6 +99,8 @@ def test_switch_stable_to_nightly_and_back() -> None:
     assert stable_before["packages"][0]["binaries"][0]["version"] == "1.4.0"
     assert nightly["packages"][0]["binaries"][0]["version"] == "1.5.0-nightly.20260702"
     assert "stable_to_nightly_manifest_switch_resolves_nightly_updates" in source
+    assert "resolve_release_channel_manifest" in source
+    assert "verify_selected_channel_manifest" in source
 
 
 def test_switch_never_selects_revoked_records() -> None:

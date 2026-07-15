@@ -136,7 +136,7 @@ jobs:
         run: |
           cargo install cargo-audit --locked
           cargo audit
-          cd frontend && pnpm audit
+          python3 scripts/audit-pnpm-bulk.py --project-dir frontend
 
       - name: Install tools
         run: |
@@ -315,7 +315,7 @@ jobs:
           | Line coverage | $COV |
           | Test results | See Codecov test analytics |
           | Cross-compile | aarch64-unknown-linux-musl |
-          | Audit | cargo audit + pnpm audit |
+          | Audit | cargo audit + npm bulk advisory API |
 
           > Coverage covers library crates + gateway (capsem-core, agent, logger, proto, gateway).
           > Full workspace coverage runs in the release pipeline.

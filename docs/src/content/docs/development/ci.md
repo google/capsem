@@ -264,7 +264,7 @@ Each release publishes:
 - `capsem-sbom.spdx.json` -- host SBOM
 
 Installers carry host binaries, materialized profiles, the selected manifest
-URL, and `manifest-origin.json` provenance. They do not carry
+URL, and `manifest-metadata.json` provenance. They do not carry
 `assets/manifest.json`; postinstall hydrates the live channel with
 `capsem update --assets --manifest <URL>`. Heavy profile image files are
 downloaded through that same path and verified against the profile-owned file
@@ -281,7 +281,7 @@ metadata changes.
 
 After `release.capsem.org` deploys, the glow-up gate downloads the public
 install script and packages, verifies package-owned binary hashes, rejects any
-packaged `assets/manifest.json`, checks `manifest-origin.json` points at the
+packaged `assets/manifest.json`, checks `manifest-metadata.json` points at the
 selected channel manifest URL, then runs Docker install, stable/nightly asset
 switching, and the binary updater path against the public channel.
 

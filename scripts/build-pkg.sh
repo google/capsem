@@ -95,10 +95,10 @@ copy_tree_clean() {
     fi
 }
 
-write_manifest_origin() {
-    local manifest_source="${1:?write_manifest_origin <manifest_source> <package_version> <dst>}"
-    local package_version="${2:?write_manifest_origin <manifest_source> <package_version> <dst>}"
-    local dst="${3:?write_manifest_origin <manifest_source> <package_version> <dst>}"
+write_manifest_metadata() {
+    local manifest_source="${1:?write_manifest_metadata <manifest_source> <package_version> <dst>}"
+    local package_version="${2:?write_manifest_metadata <manifest_source> <package_version> <dst>}"
+    local dst="${3:?write_manifest_metadata <manifest_source> <package_version> <dst>}"
     python3 - "$manifest_source" "$package_version" "$dst" <<'PY'
 import datetime
 import json
@@ -112,11 +112,23 @@ dst = pathlib.Path(sys.argv[3])
 parsed = urllib.parse.urlparse(raw_source)
 if parsed.scheme not in ("http", "https", "file"):
     raise SystemExit(f"manifest must be a URL: {raw_source}")
+parts = [part for part in parsed.path.split("/") if part]
+public_channel = (
+    parts[-2]
+    if len(parts) >= 3
+    and parts[-3] == "assets"
+    and parts[-2] in ("stable", "nightly")
+    and parts[-1] == "manifest.json"
+    else None
+)
 fetched_at = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 dst.write_text(json.dumps({
-    "schema": "capsem.manifest_origin.v1",
+    "schema": "capsem.manifest_metadata.v1",
     "origin": "package",
-    "source": raw_source,
+    "manifest_url": raw_source,
+    "channel": public_channel or "corp",
+    "channel_kind": "public" if public_channel else "corporate",
+    "channel_locked": public_channel is None,
     "fetched_at": fetched_at,
     "packaged_at": fetched_at,
     "package_version": package_version,
@@ -214,7 +226,7 @@ else
     fi
     SELECTED_MANIFEST_SOURCE="$(file_url "$ASSETS_DIR/manifest.json")"
 fi
-write_manifest_origin "$SELECTED_MANIFEST_SOURCE" "$VERSION" "$SHARE_DIR/assets/manifest-origin.json"
+write_manifest_metadata "$SELECTED_MANIFEST_SOURCE" "$VERSION" "$SHARE_DIR/assets/manifest-metadata.json"
 
 # Materialized profile catalog. Profiles pin the asset hashes the daemon boots;
 # the package installs the profile ledger and the manifest ledger together, but

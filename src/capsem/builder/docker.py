@@ -61,17 +61,26 @@ ROOTFS_SUPPORT_FILES = ["capsem-bashrc", "banner.txt", "tips.txt"]
 
 
 def enforce_guest_binary_perms(paths: list[Path]) -> None:
-    """Apply chmod 555 to guest binaries on the host.
+    """Finalize guest binaries as host-owned atomic 0555 files.
 
-    The container-native build chmods inside the container, but Docker-for-Mac
-    bind-mount semantics sometimes let an exec/write bit survive on the host.
-    Re-applying on the host guarantees the guest-binary read-only invariant
-    (CLAUDE.md) regardless of container runtime quirks.
+    Docker-for-Mac bind-mount metadata can arrive after the container exits and
+    overwrite a host chmod on the same inode. Copying into a host-created
+    temporary inode and replacing the bind-mounted output makes that delayed
+    metadata update harmless.
     """
     for p in paths:
         if not p.exists():
             raise FileNotFoundError(p)
-        os.chmod(p, 0o555)
+        staged = p.with_name(f".{p.name}.readonly-{os.getpid()}")
+        try:
+            shutil.copyfile(p, staged)
+            os.chmod(staged, 0o555)
+            os.replace(staged, p)
+        finally:
+            staged.unlink(missing_ok=True)
+        mode = p.stat().st_mode & 0o777
+        if mode != 0o555:
+            raise RuntimeError(f"guest binary {p} expected mode 0555, got {oct(mode)}")
 
 
 def _guest_binary_source(binary: str) -> str:

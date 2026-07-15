@@ -279,14 +279,14 @@ Release packages are the primary install entry point. Local development uses
 the same package rail as CI: build the package, pass a manifest override, and
 let the package install service files plus manifest URL provenance.
 
-Package install handles service registration, records manifest origin metadata,
+Package install handles service registration, records manifest metadata metadata,
 and hydrates the live manifest through `capsem update --assets --manifest
 <URL>`. Profile configuration handles security rules, plugins, MCP, assets, and
 packaged root content; credentials are brokered at runtime.
 
 **Install layout** (`~/.capsem/`):
 - `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp, capsem-gateway, capsem-tray
-- `assets/` -- manifest.json, manifest-origin.json, and profile-selected VM
+- `assets/` -- manifest.json, manifest-metadata.json, and profile-selected VM
   assets such as `vmlinuz`, `initrd.img`, and EROFS rootfs images
 - `run/` -- service.sock, service.pid, gateway.token, gateway.port, gateway.pid, instances/{id}.sock
 
@@ -297,9 +297,9 @@ packaged root content; credentials are brokered at runtime.
 **Self-update**: `capsem update` checks the release-channel health index,
 downloads verified binary installers, prints the package-manager apply command
 for audit, executes it with `--yes`, materializes VM assets from URL-shaped
-manifest sources, and reports manifest origin/hash plus update availability
-through service status. Background update-check cache (`update-check.json`, 24h
-TTL) refreshes on ordinary CLI commands.
+manifest sources, and reports manifest metadata/hash plus update availability
+through the canonical `/system/status` service endpoint. Background update state
+is merged into `assets/manifest-metadata.json` and refreshes on ordinary CLI commands.
 
 Key source files: `crates/capsem/src/paths.rs`,
 `crates/capsem/src/service_install.rs`, `crates/capsem/src/update.rs`, and

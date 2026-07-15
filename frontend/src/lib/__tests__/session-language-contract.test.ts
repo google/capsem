@@ -13,6 +13,18 @@ const toolbar = readFileSync(
   new URL('../components/shell/Toolbar.svelte', import.meta.url),
   'utf8',
 );
+const settings = readFileSync(
+  new URL('../components/shell/SettingsPage.svelte', import.meta.url),
+  'utf8',
+);
+const about = readFileSync(
+  new URL('../components/shell/AboutPage.svelte', import.meta.url),
+  'utf8',
+);
+const app = readFileSync(
+  new URL('../components/shell/App.svelte', import.meta.url),
+  'utf8',
+);
 const vmStore = readFileSync(
   new URL('../stores/vms.svelte.ts', import.meta.url),
   'utf8',
@@ -41,26 +53,56 @@ describe('user-facing session language contract', () => {
     expect(dashboard).toContain('New');
     expect(dashboard).toContain('Customize');
     expect(dashboard).toContain('openCustomizeProfile');
-    expect(dashboard).toContain('profileAssetChecklist');
-    expect(dashboard).toContain('VM assets');
-    expect(dashboard).toContain('profileAssetText(launcher.assets)');
     expect(dashboard).toContain('launcher.assets?.ready === true');
     expect(dashboard).toContain("onclick={() => ready ? createFromProfile(launcher.profile.id) : ensureProfileAssets(launcher.profile.id)}");
     expect(dashboard).toContain("title={ready ? `New ${launcher.profile.name} session` : profileAssetText(launcher.assets)}");
-    expect(dashboard).toContain("asset.status === 'present'");
-    expect(dashboard).toContain("asset.status === 'downloading'");
-    expect(dashboard).toContain('<CheckCircle');
     expect(dashboard).toContain('<DownloadSimple');
+    expect(dashboard).toContain('Downloading');
     expect(dashboard).not.toContain('Customize Session...');
     expect(dashboard).not.toContain('vmStore.showCreateModal = true');
   });
 
-  it('shows profile and image update state separately from session creation', () => {
-    expect(dashboard).toContain('getUpdateStatus');
-    expect(dashboard).toContain('profileDashboardUpdateRows');
-    expect(dashboard).toContain('Profile and image state');
-    expect(dashboard).toContain('Existing sessions stay pinned');
-    expect(dashboard).toContain('start from the current profile and VM assets');
+  it('keeps the Sessions profile picker focused on profiles and descriptions', () => {
+    expect(dashboard).toContain('launcher.profile.name');
+    expect(dashboard).toContain('launcher.profile.description');
+    expect(dashboard).not.toContain('getUpdateStatus');
+    expect(dashboard).not.toContain('profileDashboardUpdateRows');
+    expect(dashboard).not.toContain('Profile and image state');
+    expect(dashboard).not.toContain('Not published');
+    expect(dashboard).not.toContain('profileAssetChecklist');
+    expect(dashboard).not.toContain('>VM assets<');
+    expect(dashboard).not.toContain("profileAssetText(launcher.assets)}</span>");
+  });
+
+  it('routes About Capsem to a top-level canonical status page', () => {
+    expect(toolbar).toContain("tabStore.openSingleton('about', 'About Capsem')");
+    expect(app).toContain("tab.view === 'about'");
+    expect(app).toContain('loadAbout()');
+    expect(settings).not.toContain('About Capsem');
+    expect(settings).not.toContain('Release diagnostics');
+    expect(settings).not.toContain('debugSnapshot');
+    expect(about).toContain('About Capsem');
+    expect(about).toContain('api.getCapsemStatus()');
+    expect(about).toContain('api.checkForUpdates()');
+    expect(about).toContain('system?.manifest.profiles');
+    expect(about).toContain('system?.manifest.packages');
+    expect(about).toContain('system.manifest_metadata.manifest_url');
+    expect(about).toContain('profile.description');
+    expect(about).toContain('profile.revision');
+    expect(about).toContain('live.profile_payload_hash');
+    expect(about).toContain('profileEvidence(id, profile)');
+    expect(about).toContain('packageEvidence(pkg)');
+    expect(about).toContain('evidence.url');
+    expect(about).toContain('<details');
+    expect(about).toContain('Installed package binaries');
+    expect(about).toContain('Channel package differs from installed Capsem');
+    expect(about).toContain('packages.filter((pkg) => pkg.platform === platform)');
+    expect(about).not.toContain('The installed Capsem version is absent from the installed release manifest.');
+    expect(about).not.toContain('api.getProfileObom');
+    expect(about).not.toContain('updates.supply_chain');
+    expect(about).not.toContain('Not published');
+    expect(about).not.toContain("trackLabel(key: UpdateTrackKey): string");
+    expect(about).not.toContain("return 'VM images'");
   });
 
   it('does not duplicate profile actions in the card header and footer', () => {

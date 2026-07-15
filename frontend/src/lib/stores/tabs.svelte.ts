@@ -1,4 +1,4 @@
-export type TabView = 'new-tab' | 'overview' | 'terminal' | 'stats' | 'files' | 'logs' | 'settings' | 'profile';
+export type TabView = 'new-tab' | 'overview' | 'terminal' | 'stats' | 'files' | 'logs' | 'settings' | 'about' | 'profile';
 
 export interface Tab {
   id: string;

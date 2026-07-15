@@ -31,7 +31,7 @@ def _credential_reference(provider: str, raw_credential: str) -> str:
 
 def _write_test_store(service_env: Any, *, provider: str, raw_credential: str) -> str:
     credential_ref = _credential_reference(provider, raw_credential)
-    store_path = Path(service_env.tmp_dir) / "credential-store.json"
+    store_path = Path(service_env.home_dir) / "credential-store.json"
     store_path.write_text(
         json.dumps({f"{provider}:{credential_ref}": raw_credential}, indent=2),
         encoding="utf-8",

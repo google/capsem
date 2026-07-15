@@ -278,8 +278,13 @@ fn is_hash_tagged_asset_filename(filename: &str) -> bool {
 impl ManifestV2 {
     /// Parse a manifest from JSON.
     pub fn from_json(content: &str) -> Result<Self> {
-        let manifest: ManifestV2 =
+        let value: serde_json::Value =
             serde_json::from_str(content).context("failed to parse manifest JSON")?;
+        let manifest: ManifestV2 = if value.get("format").is_some() {
+            serde_json::from_value(value).context("failed to parse manifest v2 JSON")?
+        } else {
+            manifest_v2_from_release_graph(&value)?
+        };
         if manifest.format != 2 {
             bail!("expected manifest format 2, got {}", manifest.format);
         }
@@ -403,6 +408,160 @@ impl ManifestV2 {
     }
 }
 
+/// Convert the public release graph into the runtime-only v2 view in memory.
+///
+/// The installed `manifest.json` remains the exact public document. This
+/// adapter exists only because the boot resolver needs the compact v2 asset
+/// index; it must never be serialized back over the installed manifest.
+fn manifest_v2_from_release_graph(value: &serde_json::Value) -> Result<ManifestV2> {
+    let profiles = value
+        .get("profiles")
+        .and_then(serde_json::Value::as_object)
+        .context("manifest is neither format 2 nor a release graph with profiles")?;
+    if profiles.is_empty() {
+        bail!("release graph contains no profiles");
+    }
+
+    let (_, profile) = profiles
+        .iter()
+        .filter(|(_, profile)| {
+            profile.get("status").and_then(serde_json::Value::as_str) != Some("revoked")
+        })
+        .min_by_key(|(id, _)| if id.as_str() == "default" { 0 } else { 1 })
+        .context("release graph contains no usable profile")?;
+    let min_binary = profile
+        .get("min_capsem_version")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let architectures = profile
+        .get("architectures")
+        .and_then(serde_json::Value::as_array)
+        .context("release graph profile is missing architectures")?;
+    let mut arches = HashMap::new();
+    let mut asset_version = None;
+    for architecture in architectures {
+        let arch = architecture
+            .get("architecture")
+            .and_then(serde_json::Value::as_str)
+            .context("release graph profile architecture is missing architecture")?;
+        let image_revision = architecture
+            .get("image_revision")
+            .and_then(serde_json::Value::as_str)
+            .context("release graph profile architecture is missing image_revision")?;
+        match asset_version.as_deref() {
+            Some(expected) if expected != image_revision => bail!(
+                "release graph profile image revisions disagree: {expected} != {image_revision} for {arch}"
+            ),
+            None => asset_version = Some(image_revision.to_string()),
+            _ => {}
+        }
+        let images = architecture
+            .get("images")
+            .and_then(serde_json::Value::as_array)
+            .context("release graph profile architecture is missing images")?;
+        let mut assets = HashMap::new();
+        for image in images.iter().filter(|image| {
+            image.get("status").and_then(serde_json::Value::as_str) != Some("revoked")
+        }) {
+            let Some(kind) = image.get("kind").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            if !matches!(kind, "kernel" | "initrd" | "rootfs") {
+                continue;
+            }
+            let name = image
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .context("release graph image is missing name")?;
+            let digest = image
+                .get("digest")
+                .context("release graph image is missing digest")?;
+            assets.insert(
+                name.to_string(),
+                AssetEntry {
+                    hash: digest
+                        .get("blake3")
+                        .and_then(serde_json::Value::as_str)
+                        .context("release graph image is missing BLAKE3")?
+                        .to_string(),
+                    sha256: digest
+                        .get("sha256")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    size: image
+                        .get("bytes")
+                        .and_then(serde_json::Value::as_u64)
+                        .context("release graph image is missing byte size")?,
+                },
+            );
+        }
+        for required in ["vmlinuz", "initrd.img", "rootfs.erofs"] {
+            if !assets.contains_key(required) {
+                bail!("release graph profile architecture {arch} is missing {required}");
+            }
+        }
+        arches.insert(arch.to_string(), assets);
+    }
+    if arches.is_empty() {
+        bail!("release graph profile contains no usable architectures");
+    }
+    let asset_version =
+        asset_version.context("release graph profile contains no image revision")?;
+
+    let packages = value
+        .get("packages")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let binary_version = packages
+        .iter()
+        .filter(|package| {
+            package.get("status").and_then(serde_json::Value::as_str) != Some("revoked")
+        })
+        .find_map(|package| package.get("version").and_then(serde_json::Value::as_str))
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string();
+
+    Ok(ManifestV2 {
+        format: 2,
+        refresh_policy: value
+            .get("refresh_policy")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("24h")
+            .to_string(),
+        asset_base: None,
+        assets: AssetsSection {
+            current: asset_version.clone(),
+            releases: HashMap::from([(
+                asset_version.clone(),
+                AssetRelease {
+                    date: String::new(),
+                    deprecated: false,
+                    deprecated_date: None,
+                    min_binary,
+                    arches,
+                },
+            )]),
+        },
+        binaries: BinariesSection {
+            current: binary_version.clone(),
+            releases: HashMap::from([(
+                binary_version.clone(),
+                BinaryRelease {
+                    date: String::new(),
+                    deprecated: false,
+                    deprecated_date: None,
+                    min_assets: asset_version,
+                    version: binary_version,
+                    files: Vec::new(),
+                },
+            )]),
+        },
+    })
+}
+
 // ---------------------------------------------------------------------------
 // Utility functions
 // ---------------------------------------------------------------------------
@@ -494,17 +653,17 @@ pub fn asset_release_base_url_from_manifest_url(manifest_url: &str) -> Option<St
     Some(out.as_str().trim_end_matches('/').to_string())
 }
 
-/// Derive a remote asset blob base from `manifest-origin.json`, when present.
-pub fn asset_release_base_url_from_manifest_origin(assets_dir: &Path) -> Result<Option<String>> {
-    let origin_path = assets_dir.join("manifest-origin.json");
-    if !origin_path.exists() {
+/// Derive a remote asset blob base from `manifest-metadata.json`, when present.
+pub fn asset_release_base_url_from_manifest_metadata(assets_dir: &Path) -> Result<Option<String>> {
+    let metadata_path = assets_dir.join("manifest-metadata.json");
+    if !metadata_path.exists() {
         return Ok(None);
     }
-    let content = std::fs::read_to_string(&origin_path)
-        .with_context(|| format!("read {}", origin_path.display()))?;
+    let content = std::fs::read_to_string(&metadata_path)
+        .with_context(|| format!("read {}", metadata_path.display()))?;
     let value: serde_json::Value = serde_json::from_str(&content)
-        .with_context(|| format!("parse {}", origin_path.display()))?;
-    let Some(source) = value.get("source").and_then(|v| v.as_str()) else {
+        .with_context(|| format!("parse {}", metadata_path.display()))?;
+    let Some(source) = value.get("manifest_url").and_then(|v| v.as_str()) else {
         return Ok(None);
     };
     Ok(asset_release_base_url_from_manifest_url(source))
@@ -514,7 +673,7 @@ fn remote_asset_release_base_url(manifest: &ManifestV2, assets_dir: &Path) -> Re
     let asset_base_url = manifest
         .asset_base
         .clone()
-        .or(asset_release_base_url_from_manifest_origin(assets_dir)?)
+        .or(asset_release_base_url_from_manifest_metadata(assets_dir)?)
         .unwrap_or_else(asset_release_base_url);
     let asset_base_url = asset_base_url.trim_end_matches('/').to_string();
     let validation_url = asset_base_url.replace("{asset_version}", "0");
@@ -625,7 +784,7 @@ where
         let name_str = name.to_string_lossy();
 
         if name_str == "manifest.json"
-            || name_str == "manifest-origin.json"
+            || name_str == "manifest-metadata.json"
             || name_str.starts_with('.')
             || name_str.ends_with(".tmp")
         {
@@ -1093,6 +1252,100 @@ mod tests {
         let arm64 = &rel.arches["arm64"];
         assert_eq!(arm64.len(), 3);
         assert_eq!(arm64["vmlinuz"].size, 7797248);
+    }
+
+    #[test]
+    fn public_release_graph_parses_to_runtime_view_without_rewriting_document() {
+        let raw = serde_json::json!({
+            "channel": "stable",
+            "version": "1.0.142",
+            "status": "current",
+            "packages": [{
+                "name": "Capsem-1.5.1783857731.pkg",
+                "version": "1.5.1783857731",
+                "status": "current"
+            }],
+            "profiles": {
+                "co-work": {
+                    "name": "Co-work",
+                    "description": "Shared profile for collaborative agent sessions.",
+                    "revision": "2026.0703.2",
+                    "status": "current",
+                    "min_capsem_version": "1.5.0",
+                    "architectures": [{
+                        "architecture": "arm64",
+                        "image_revision": "2026.0714.18",
+                        "images": [
+                            {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sha256":"1111111111111111111111111111111111111111111111111111111111111111"}},
+                            {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","sha256":"2222222222222222222222222222222222222222222222222222222222222222"}},
+                            {"kind":"rootfs","name":"rootfs.erofs","bytes":30,"status":"current","digest":{"blake3":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","sha256":"3333333333333333333333333333333333333333333333333333333333333333"}}
+                        ]
+                    }]
+                }
+            }
+        });
+        let raw_text = serde_json::to_string(&raw).unwrap();
+
+        let runtime = ManifestV2::from_json(&raw_text).unwrap();
+
+        assert_eq!(runtime.assets.current, "2026.0714.18");
+        assert_eq!(runtime.binaries.current, "1.5.1783857731");
+        assert_eq!(
+            runtime.assets.releases["2026.0714.18"].arches["arm64"]["rootfs.erofs"].size,
+            30
+        );
+        let unchanged: serde_json::Value = serde_json::from_str(&raw_text).unwrap();
+        assert_eq!(
+            unchanged["profiles"]["co-work"]["description"],
+            raw["profiles"]["co-work"]["description"]
+        );
+        assert_eq!(unchanged["packages"], raw["packages"]);
+    }
+
+    #[test]
+    fn public_release_graph_requires_one_exact_image_revision_for_every_architecture() {
+        let base_image = serde_json::json!({
+            "kind": "kernel",
+            "name": "vmlinuz",
+            "bytes": 10,
+            "status": "current",
+            "digest": {"blake3": "a".repeat(64), "sha256": "1".repeat(64)}
+        });
+        let images = vec![
+            base_image,
+            serde_json::json!({
+                "kind": "initrd", "name": "initrd.img", "bytes": 20, "status": "current",
+                "digest": {"blake3": "b".repeat(64), "sha256": "2".repeat(64)}
+            }),
+            serde_json::json!({
+                "kind": "rootfs", "name": "rootfs.erofs", "bytes": 30, "status": "current",
+                "digest": {"blake3": "c".repeat(64), "sha256": "3".repeat(64)}
+            }),
+        ];
+        let graph = |architectures: serde_json::Value| {
+            serde_json::json!({
+                "packages": [{"version": "1.5.0", "status": "current"}],
+                "profiles": {"code": {
+                    "revision": "profile-revision-is-not-an-image-version",
+                    "status": "current",
+                    "architectures": architectures
+                }}
+            })
+        };
+
+        let missing = graph(serde_json::json!([{
+            "architecture": "arm64",
+            "images": images.clone()
+        }]));
+        let error = ManifestV2::from_json(&missing.to_string()).unwrap_err();
+        assert!(format!("{error:#}").contains("missing image_revision"));
+
+        let disagreeing = graph(serde_json::json!([
+            {"architecture": "arm64", "image_revision": "2026.0714.18", "images": images},
+            {"architecture": "x86_64", "image_revision": "2026.0714.19", "images": images}
+        ]));
+        let error = ManifestV2::from_json(&disagreeing.to_string()).unwrap_err();
+        assert!(format!("{error:#}").contains("image revisions disagree"));
     }
 
     #[test]
@@ -1789,14 +2042,14 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_preserves_manifest_origin_provenance() {
+    fn cleanup_preserves_manifest_metadata() {
         let dir = tempfile::tempdir().unwrap();
         let base = dir.path();
 
         std::fs::write(base.join("manifest.json"), SAMPLE_V2_MANIFEST).unwrap();
         std::fs::write(
-            base.join("manifest-origin.json"),
-            br#"{"schema":"capsem.manifest_origin.v1","origin":"package"}"#,
+            base.join("manifest-metadata.json"),
+            br#"{"schema":"capsem.manifest_metadata.v1","origin":"package"}"#,
         )
         .unwrap();
         std::fs::write(base.join("rootfs-deadbeef12345678.erofs"), b"stale").unwrap();
@@ -1806,7 +2059,7 @@ mod tests {
 
         assert_eq!(removed, vec![base.join("rootfs-deadbeef12345678.erofs")]);
         assert!(base.join("manifest.json").exists());
-        assert!(base.join("manifest-origin.json").exists());
+        assert!(base.join("manifest-metadata.json").exists());
     }
 
     #[test]

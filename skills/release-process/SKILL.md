@@ -57,7 +57,7 @@ following as separate, non-substitutable release gates:
 - **macOS CI exact-package proof:** build the exact publishable `.pkg`, sign,
   notarize, and staple it, then install that same file with
   `sudo /usr/sbin/installer -pkg <pkg> -target /`. Assert the installed app,
-  complete host-binary cohort, package version, manifest origin, service
+  complete host-binary cohort, package version, manifest metadata, service
   registration, and launchable public CLI surfaces before uploading it.
 - **Linux CI installed-product proof:** build the exact publishable `.deb` for
   every supported release architecture, install that same file on a clean
@@ -70,6 +70,13 @@ following as separate, non-substitutable release gates:
   count as release proof. Signing, notarization, file existence, and package
   expansion are necessary checks, but none substitutes for installing the
   artifact.
+- Every installed-product rail must run
+  `scripts/verify-installed-release.py` before accepting the install. That
+  verifier must compare the installed manifest byte-for-byte with the selected
+  manifest URL, require all manifest-declared profiles ready, validate the one
+  canonical metadata sidecar including install/refresh/check state and package
+  version, and reject every legacy origin/check/cache path. Do not replace this
+  with ad-hoc status greps in an individual workflow.
 
 ### Public installer gates
 
@@ -81,6 +88,51 @@ following as separate, non-substitutable release gates:
   environment and repeat installed version, binary-cohort, service, and
   functional-command assertions. Parser tests and command stubs do not count
   as this gate.
+- The installed `assets/manifest.json` must be the exact verified manifest
+  document selected from the channel. Package postinstall and update code must
+  not rewrite it into a reduced runtime schema or discard package binaries,
+  profile descriptions, image records, ABOM/OBOM, software inventory, or host
+  SBOM evidence. Runtime adapters may derive an in-memory boot view only.
+- Installed manifest state has exactly one sidecar:
+  `assets/manifest-metadata.json` with schema
+  `capsem.manifest_metadata.v1`. It owns the manifest URL, channel/lock,
+  package/install/refresh/check timestamps, checked URL and digest, validation
+  result, and update comparison. Do not create a separate origin file, update
+  check file, source-keyed cache directory, or UI-specific release cache.
+- `GET /system/status` is the single installed-status contract. It returns the
+  exact parsed `manifest.json`, exact parsed `manifest-metadata.json`, live
+  profile readiness, corp state, and update comparison. `capsem status` and
+  About Capsem must consume that same endpoint; the UI must not synthesize
+  publication state or fetch a parallel profile/evidence status source.
+
+### Stateful channel glow-up gate
+
+The glow-up name is earned only by exercising one installed product through
+state transitions. Fresh installs with different `CAPSEM_CHANNEL` values do
+not prove channel switching and must never satisfy this gate.
+
+- Run the compiled, package-installed CLI with `capsem update --channel`; a
+  source inspection, fixture-only resolver, or direct `--manifest` substitution
+  does not count as a public-channel switch.
+- On the same Linux installation, prove stable -> nightly -> stable for VM
+  assets and prove the installed manifest metadata records the exact selected
+  channel, manifest URL, and correlated update-audit event each time.
+- Prove a verified nightly package upgrade and a verified stable package
+  downgrade through the native package manager. Linux downgrade application
+  must use `apt-get --allow-downgrades`; both directions must leave the full
+  binary cohort and service healthy.
+- Move that installation to an explicit corporate manifest, persist
+  `channel_kind=corporate` and `channel_locked=true`, refresh it successfully,
+  then prove attempts to select stable, nightly, or a different corporate
+  manifest fail before network or package mutation. A machine may enter corp
+  but cannot leave corp through self-update.
+- Verify the channel catalog record and selected manifest SHA-256 and BLAKE3
+  before writing cache, assets, origin, or package state. Tampered manifests
+  must fail nonzero and preserve the prior installed state.
+- CI must run this stateful glow-up on the built Linux package. The final exact
+  published macOS package must additionally be installed on a real Mac, switch
+  against the real public channels, and spawn a guest shell before the release
+  is called complete.
 
 ### Final local macOS installed-product proof
 
@@ -101,7 +153,7 @@ again; never reuse or move the failed tag.
 
 Release asset manifests are generated through `capsem-admin manifest generate`.
 Do not publish or document alternate manifest writers. Runtime VM asset
-integrity is BLAKE3 hash verification plus manifest origin/hash reporting; do
+integrity is BLAKE3 hash verification plus manifest metadata/hash reporting; do
 not resurrect local manifest-signing keys or `manifest-sign.pub` verification.
 
 The public asset channel is generated by `capsem-admin assets channel build`
@@ -454,7 +506,7 @@ artifact install gates fan out. Publication cannot start unless all are green.
 - **`Cargo.lock` is gitignored.** CI resolves a fresh lockfile each build. This means dependency versions can drift between builds. Acceptable for now but a reproducibility risk.
 - **Three files hold the binary version.** `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`. `just _stamp-version` handles all three automatically. `just cut-release` and `just install` both call it.
 - **Do not resurrect local VM manifest signing.** VM asset integrity is the
-  profile manifest plus BLAKE3 hashes, manifest origin/hash reporting, and
+  profile manifest plus BLAKE3 hashes, manifest metadata/hash reporting, and
   SBOM/OBOM/build-ledger evidence. Local `manifest-sign.pub` keys and minisign
   setup are security theater for this rail. Tauri updater signatures still use
   `TAURI_SIGNING_PRIVATE_KEY`; do not confuse that with VM asset manifests.
@@ -627,16 +679,29 @@ uv run python3 scripts/check-public-binary-release.py \
   --install-script-url https://capsem.org/install.sh \
   --docker-linux-install \
   --docker-channel-switch \
-  --docker-upgrade
+  --docker-upgrade \
+  --docker-transition-from-manifest /path/to/frozen-predeploy-manifest.json
 ```
 
 Use `scripts/check-public-binary-release.py` for post-deploy glow-up instead of
 ad hoc `tar`/`strings` checks. It validates public `install.sh`, package URLs,
 package SHA-256, package-owned binary hashes, absence of packaged
-`assets/manifest.json`, `manifest-origin.json` source provenance, Docker
+`assets/manifest.json`, `manifest-metadata.json` source provenance, Docker
 install, stable/nightly asset switching, and the binary updater path. Package
 scripts must not normalize or convert manifest JSON; the selected channel
 manifest is the only runtime manifest format.
+
+Binary transition proof must use two manifests that reference two genuinely
+compiled package cohorts with different versions. Rewriting only Debian control
+metadata, package provenance, filenames, or manifest package versions is a test
+bypass and is forbidden. The release workflow freezes the selected channel
+manifest before deployment, installs its real Linux package, updates to the real
+candidate package, verifies every installed binary reports the candidate
+version, then explicitly downgrades to the frozen package and verifies every
+binary again. Equal-version cohorts do not satisfy this gate. The hermetic local
+glow-up may use one genuine cohort to prove curl install, stable/nightly asset
+switching, and corporate locking; it must never claim binary upgrade or
+downgrade coverage unless a second genuinely compiled cohort is supplied.
 
 Binary GitHub releases publish host packages and the canonical host SBOM
 artifact, `capsem-sbom.spdx.json`; the SBOM attestation subject list must cover

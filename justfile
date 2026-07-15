@@ -329,7 +329,7 @@ build-assets profile="" arch="":
     cargo run -p capsem-admin -- image build "${ARGS[@]}"
     just _docker-gc
 
-# Run vulnerability audits (cargo audit + pnpm audit). Fast standalone gate.
+# Run vulnerability audits (cargo audit + npm bulk advisory API). Fast standalone gate.
 # `just test` runs these too; this recipe is a quick pre-push check.
 audit: _install-tools _pnpm-install
     #!/bin/bash
@@ -337,8 +337,8 @@ audit: _install-tools _pnpm-install
     echo "=== cargo audit ==="
     cargo audit
     echo ""
-    echo "=== pnpm audit ==="
-    cd frontend && pnpm audit
+    echo "=== npm bulk audit ==="
+    python3 scripts/audit-pnpm-bulk.py --project-dir frontend
     echo ""
     echo "Audits clean."
 
@@ -443,7 +443,7 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     # FAIL=1.
     echo "=== Audits + lint + frontend ==="
     cargo audit & PID_CARGO_AUDIT=$!
-    (cd frontend && pnpm audit) & PID_PNPM_AUDIT=$!
+    python3 scripts/audit-pnpm-bulk.py --project-dir frontend & PID_PNPM_AUDIT=$!
     uv run ruff check . & PID_RUFF=$!
     uv run ty check src/capsem & PID_TY=$!
     uv run capsem-builder validate-skills skills & PID_SKILLS=$!
@@ -459,7 +459,7 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     fi
     cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
     wait $PID_CARGO_AUDIT || { echo "cargo audit failed"; FAIL=1; }
-    wait $PID_PNPM_AUDIT  || { echo "pnpm audit failed";  FAIL=1; }
+    wait $PID_PNPM_AUDIT  || { echo "npm bulk audit failed";  FAIL=1; }
     wait $PID_CLIPPY      || { echo "cargo clippy failed (warnings = error)"; FAIL=1; }
     wait $PID_RUFF        || { echo "ruff check failed"; FAIL=1; }
     wait $PID_TY          || { echo "ty check failed"; FAIL=1; }
@@ -816,7 +816,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     uv run ty check src/capsem & TY_PID=$!
     uv run capsem-builder validate-skills skills & SKILLS_PID=$!
     cargo audit & AUDIT_PID=$!
-    (cd frontend && pnpm audit) & PNPM_AUDIT_PID=$!
+    python3 scripts/audit-pnpm-bulk.py --project-dir frontend & PNPM_AUDIT_PID=$!
     (cd frontend && pnpm run check) & FE_CHECK_PID=$!
     FAIL=0
     wait $CLIPPY_PID     || { echo "cargo clippy failed"; FAIL=1; }
@@ -824,7 +824,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     wait $TY_PID         || { echo "ty check failed"; FAIL=1; }
     wait $SKILLS_PID     || { echo "skill validation failed"; FAIL=1; }
     wait $AUDIT_PID      || { echo "cargo audit failed";  FAIL=1; }
-    wait $PNPM_AUDIT_PID || { echo "pnpm audit failed";   FAIL=1; }
+    wait $PNPM_AUDIT_PID || { echo "npm bulk audit failed";   FAIL=1; }
     wait $FE_CHECK_PID   || { echo "pnpm check failed";   FAIL=1; }
     [ $FAIL -eq 0 ] || exit 1
     step_done
@@ -940,6 +940,7 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
     acquire_exec_lock "$HOME/.capsem/run/execution.lock"
     VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"
     export CAPSEM_BUILD_TS=$(date +%y%m%d%H%M)
     echo "=== Building release binaries (build=$CAPSEM_BUILD_TS) ==="
     cargo build --release {{host_crates}}
@@ -977,7 +978,7 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
         eval cargo tauri build --bundles app $TAURI_FLAGS
         echo "=== Assembling .pkg (v$VERSION) ==="
         bash scripts/build-pkg.sh \
-            --manifest "file://$PWD/{{assets_dir}}/manifest.json" \
+            --manifest "$MANIFEST_URL" \
             "target/release/bundle/macos/Capsem.app" \
             "target/release" \
             "{{assets_dir}}" \
@@ -994,7 +995,7 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
         echo "=== Building .deb ==="
         eval cargo tauri build --bundles deb $TAURI_FLAGS
         DEB=$(ls target/release/bundle/deb/*.deb)
-        bash scripts/repack-deb.sh --manifest "file://$PWD/{{assets_dir}}/manifest.json" "$DEB" "target/release" "target/config" "{{assets_dir}}"
+        bash scripts/repack-deb.sh --manifest "$MANIFEST_URL" "$DEB" "target/release" "target/config" "{{assets_dir}}"
         echo "=== Installing .deb ==="
         sudo dpkg -i "$DEB" 2>&1 || sudo apt-get install -f -y
     fi
@@ -1625,9 +1626,9 @@ _pack-initrd:
     else
         echo "=== Agent binaries up to date, no cross-compile needed ==="
     fi
-    # Note: capsem-builder enforces 0o555 on the host after the container build
-    # (src/capsem/builder/docker.py::enforce_guest_binary_perms). No redundant
-    # chmod needed here.
+    # The builder applies 0o555 after a fresh cross-compile. Reassert the same
+    # invariant below for cached staging directories too: a cached binary may
+    # have been replaced or have its mode changed between builds.
     echo "=== Repack initrd ==="
     WORKDIR=$(mktemp -d)
     cd "$WORKDIR"
@@ -1641,6 +1642,7 @@ _pack-initrd:
             echo "ERROR: $b missing from $RELEASE_DIR"
             exit 1
         fi
+        chmod 555 "$RELEASE_DIR/$b"
         rm -f "$b"
         cp "$RELEASE_DIR/$b" .
         chmod 555 "$b"

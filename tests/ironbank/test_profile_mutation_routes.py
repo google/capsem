@@ -57,7 +57,7 @@ def _status(client: Any, method: str, path: str, body: dict | None = None) -> tu
 
 
 def _main_db(service: ServiceInstance) -> Path:
-    return service.tmp_dir.parent / "sessions" / "main.db"
+    return service.home_dir / "sessions" / "main.db"
 
 
 def _profile_dir(service: ServiceInstance) -> Path:
@@ -224,7 +224,7 @@ def test_profile_mutation_routes_persist_profile_files_hashes_and_ledger() -> No
 
         # write(event).await accepts into the logger-owned buffer. Graceful
         # service shutdown is the visibility barrier before opening main.db.
-        service.stop()
+        service.stop(cleanup=False)
         rows = _mutation_rows(service)
         observed = {
             (row["category"], row["target_kind"], row["target_key"], row["operation"])

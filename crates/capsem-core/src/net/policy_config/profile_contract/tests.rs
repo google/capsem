@@ -29,6 +29,52 @@ size = 1
 "#;
 
 #[test]
+fn installed_release_graph_overlays_profile_bootstrap_assets_in_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("manifest.json");
+    let manifest = serde_json::json!({
+        "version": "1.0.0",
+        "profiles": {
+            "code": {
+                "revision": "2030.01.02.3",
+                "architectures": [{
+                "architecture": "arm64",
+                "config": [
+                    {"kind": "enforcement", "path": "profiles/code/enforcement.toml", "url": "https://release.example/enforcement.toml", "bytes": 44, "digest": {"blake3": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", "sha256": "4444444444444444444444444444444444444444444444444444444444444444"}}
+                ],
+                "images": [
+                        {"kind": "kernel", "name": "vmlinuz", "url": "https://release.example/arm64-vmlinuz", "bytes": 11, "digest": {"blake3": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"}},
+                        {"kind": "initrd", "name": "initrd.img", "url": "https://release.example/arm64-initrd.img", "bytes": 22, "digest": {"blake3": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "sha256": "2222222222222222222222222222222222222222222222222222222222222222"}},
+                        {"kind": "rootfs", "name": "rootfs.erofs", "url": "https://release.example/arm64-rootfs.erofs", "bytes": 33, "digest": {"blake3": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "sha256": "3333333333333333333333333333333333333333333333333333333333333333"}}
+                    ]
+                }]
+            }
+        }
+    });
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let mut catalog = ProfileCatalog::builtin();
+
+    overlay_release_manifest_assets(&mut catalog, &manifest_path).unwrap();
+
+    let code = catalog.get("code").unwrap();
+    let arm64 = code.assets.arch.get("arm64").unwrap();
+    assert_eq!(code.revision, "2030.01.02.3");
+    assert_eq!(arm64.kernel.url, "https://release.example/arm64-vmlinuz");
+    assert_eq!(
+        arm64.initrd.hash.as_deref(),
+        Some("blake3:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+    );
+    assert_eq!(arm64.rootfs.size, Some(33));
+    let enforcement = code.files.enforcement.as_ref().unwrap();
+    assert_eq!(enforcement.path, "profiles/code/enforcement.toml");
+    assert_eq!(
+        enforcement.hash.as_deref(),
+        Some("blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")
+    );
+    assert_eq!(enforcement.size, Some(44));
+}
+
+#[test]
 fn profile_config_requires_assets_section() {
     let error = toml::from_str::<ProfileConfigFile>(
         r#"

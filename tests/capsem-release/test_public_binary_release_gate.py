@@ -7,6 +7,7 @@ import hashlib
 import io
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tarfile
@@ -16,6 +17,15 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "check-public-binary-release.py"
+
+
+def _workflow_job_blocks(workflow: str) -> dict[str, str]:
+    blocks: dict[str, str] = {}
+    matches = list(re.finditer(r"(?m)^  ([a-zA-Z0-9_-]+):\n", workflow))
+    for index, match in enumerate(matches):
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(workflow)
+        blocks[match.group(1)] = workflow[match.start() : end]
+    return blocks
 
 
 def _load_release_gate() -> ModuleType:
@@ -300,7 +310,7 @@ def test_public_binary_release_gate_rejects_frozen_manifest_payload(tmp_path: Pa
     assert "freezes /usr/share/capsem/assets/manifest.json" in (result.stderr + result.stdout)
 
 
-def test_public_binary_release_gate_rejects_manifest_origin_package_version_drift(
+def test_public_binary_release_gate_rejects_manifest_metadata_package_version_drift(
     tmp_path: Path,
 ) -> None:
     package_dir = tmp_path / "packages"
@@ -349,7 +359,7 @@ def test_public_binary_release_gate_rejects_manifest_origin_package_version_drif
     )
 
     assert result.returncode != 0
-    assert "manifest-origin package_version '9.9.8' does not match 9.9.9" in (
+    assert "manifest-metadata package_version '9.9.8' does not match 9.9.9" in (
         result.stderr + result.stdout
     )
 
@@ -377,7 +387,22 @@ def test_release_workflow_runs_public_package_gate_and_native_install() -> None:
     )
     assert "scripts/prove-installed-shell.py" in verify_downloads
     assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in verify_downloads
+    assert "scripts/verify-installed-release.py" in verify_downloads
     assert '"$HOME/.capsem/bin/capsem" run' not in verify_downloads
+
+
+def test_release_workflow_verifies_exact_installed_state_before_artifact_publication() -> None:
+    workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8")
+    jobs = _workflow_job_blocks(workflow)
+
+    for job_name in ("build-app-macos", "build-app-linux"):
+        job = jobs[job_name]
+        assert "scripts/verify-installed-release.py" in job
+        assert job.index("scripts/verify-installed-release.py") < job.index(
+            "Collect macOS artifacts" if job_name == "build-app-macos" else "Collect Linux artifacts"
+        )
+
+    assert jobs["create-release"].index("needs: [test, build-app-macos, build-app-linux]") >= 0
 
 
 def test_public_binary_release_gate_keeps_public_installer_default_on_stable() -> None:
@@ -429,12 +454,13 @@ def test_public_binary_release_gate_switches_stable_to_nightly_and_back(
 
     script = calls[0][7]
     assert "CAPSEM_CHANNEL=stable" in script
+    assert "update --assets --channel stable" in script
     initial_stable = script.index(f"grep -F {stable}")
-    switch_nightly = script.index(f"update --assets --manifest {nightly}")
+    switch_nightly = script.index("update --assets --channel nightly")
     verify_nightly = script.index(f"grep -F {nightly}", switch_nightly)
-    switch_stable = script.index(f"update --assets --manifest {stable}", verify_nightly)
+    switch_stable = script.index("update --assets --channel stable", verify_nightly)
     verify_stable = script.index(f"grep -F {stable}", switch_stable)
-    upgrade_nightly = script.index(f"CAPSEM_RELEASE_MANIFEST_URL={nightly}")
+    upgrade_nightly = script.index("update --yes --channel nightly")
     assert initial_stable < switch_nightly < verify_nightly < switch_stable
     assert switch_stable < verify_stable < upgrade_nightly
     assert "dpkg-query -W -f='${Version}' capsem | grep -Fx 1.5.0" in script
@@ -449,17 +475,70 @@ def test_public_binary_release_gate_runs_install_switch_and_upgrade_paths() -> N
 
     assert "--docker-channel-switch" in source
     assert "--docker-upgrade" in source
-    assert "update --assets --manifest" in source
-    assert "CAPSEM_RELEASE_MANIFEST_URL=" in source
-    assert "update --yes" in source
+    assert "--docker-transition-from-manifest" in source
+    assert "update --assets --channel nightly" in source
+    assert "update --assets --channel stable" in source
+    assert "CAPSEM_RELEASE_CHANNELS_URL=" in source
+    assert "update --yes --channel nightly" in source
     assert '.capsem/bin/$bin\\\\" --version' in source
-    assert "manifest-origin.json" in source
+    assert "manifest-metadata.json" in source
     assert "snapshot_sha256" in source
     assert "freezes {frozen_manifest_path}" in source
     assert "should_execute_packaged_binary" in source
     assert "check_packaged_binary_version" in source
     assert "--site-url" in source
     assert "check_public_site_download_links" in source
+
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
+    assert "name: binary-channel-before" in workflow
+    assert "target/binary-channel/*/manifest.before.json" in workflow
+    assert '--docker-transition-from-manifest "/tmp/binary-channel-before/$RELEASE_CHANNEL/manifest.before.json"' in workflow
+
+
+def test_public_binary_transition_gate_uses_two_real_manifests_and_downgrades(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    gate = _load_release_gate()
+    calls: list[list[str]] = []
+    monkeypatch.setattr(gate.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(
+        gate.subprocess,
+        "run",
+        lambda args, **_kwargs: calls.append(args) or subprocess.CompletedProcess(args, 0),
+    )
+    def package(version: str) -> dict[str, object]:
+        return {
+            "name": f"Capsem_{version}_amd64.deb",
+            "version": version,
+            "kind": "debian_package",
+            "platform": "linux",
+            "architecture": "x86_64",
+            "status": "current",
+            "url": f"https://example.test/v{version}/Capsem_{version}_amd64.deb",
+            "bytes": 100,
+            "digest": {"sha256": "1" * 64, "blake3": "2" * 64},
+        }
+    older = {"version": "1.0.1", "packages": [package("1.5.100")], "profiles": {}}
+    newer = {"version": "1.0.2", "packages": [package("1.5.101")], "profiles": {}}
+
+    gate.run_docker_binary_transition_smoke(
+        older_manifest=older,
+        newer_manifest=newer,
+        install_script_url="https://capsem.org/install.sh",
+        docker_image="ubuntu:24.04",
+        work_dir=tmp_path,
+    )
+
+    script = calls[0][-1]
+    assert "CAPSEM_CHANNEL=stable" in script
+    assert "update --yes --channel nightly" in script
+    assert "check_installed_version 1.5.101" in script
+    assert "update --yes --channel stable" in script
+    assert script.count("check_installed_version 1.5.100") == 2
+    assert "dpkg-query -W -f='${Version}' capsem | grep -Fx \"$expected\"" in script
+    assert 'check_binary_versions "$expected"' in script
+    assert script.count("scripts/verify-installed-release.py") == 3
 
 
 def test_public_binary_release_gate_requires_fail_closed_installer_integrity() -> None:
@@ -586,16 +665,16 @@ def _write_minimal_deb(
 ) -> None:
     origin = json.dumps(
         {
-            "schema": "capsem.manifest_origin.v1",
+            "schema": "capsem.manifest_metadata.v1",
             "origin": "package",
-            "source": manifest_url,
+            "manifest_url": manifest_url,
             "package_version": package_version,
         },
         sort_keys=True,
     ).encode()
     members = {
         **members,
-        "usr/share/capsem/assets/manifest-origin.json": origin,
+        "usr/share/capsem/assets/manifest-metadata.json": origin,
     }
     data_tar = io.BytesIO()
     with gzip.GzipFile(fileobj=data_tar, mode="wb", mtime=0) as gz:

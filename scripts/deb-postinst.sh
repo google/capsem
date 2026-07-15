@@ -54,16 +54,19 @@ rm -f "$CAPSEM_DIR/$retired_user_config" "$CAPSEM_DIR/service.toml"
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=retired_config_removed"
 rm -rf "$CAPSEM_DIR/bin/capsem-admin-python"
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=retired_python_admin_bundle_removed"
+rm -rf "$CAPSEM_DIR"/update-check*
+rm -f "$CAPSEM_DIR/assets"/manifest-*origin*.json
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=obsolete_manifest_state_removed"
 
 MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"
 CAPSEM_INSTALL_PHASE="install_manifest_provenance"
-if [ -f "/usr/share/capsem/assets/manifest-origin.json" ]; then
-    install -m 0644 /usr/share/capsem/assets/manifest-origin.json "$CAPSEM_DIR/assets/manifest-origin.json"
-    MANIFEST_ORIGIN=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-origin.json")
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_origin $MANIFEST_ORIGIN"
-    ORIGIN_SOURCE=$(sed -n 's/.*"source"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CAPSEM_DIR/assets/manifest-origin.json" | head -n 1)
-    if [ -n "$ORIGIN_SOURCE" ]; then
-        MANIFEST_SOURCE="$ORIGIN_SOURCE"
+if [ -f "/usr/share/capsem/assets/manifest-metadata.json" ]; then
+    install -m 0644 /usr/share/capsem/assets/manifest-metadata.json "$CAPSEM_DIR/assets/manifest-metadata.json"
+    MANIFEST_METADATA=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-metadata.json")
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_metadata $MANIFEST_METADATA"
+    METADATA_MANIFEST_URL=$(sed -n 's/.*"manifest_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CAPSEM_DIR/assets/manifest-metadata.json" | head -n 1)
+    if [ -n "$METADATA_MANIFEST_URL" ]; then
+        MANIFEST_SOURCE="$METADATA_MANIFEST_URL"
     fi
 fi
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_source source=$MANIFEST_SOURCE"
@@ -100,6 +103,21 @@ if [ -x "$CAPSEM_DIR/bin/capsem" ]; then
     echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=assets_hydrated"
 fi
 
+case "$MANIFEST_SOURCE" in
+    http://*|https://*)
+        CAPSEM_INSTALL_PHASE="refresh_update_status"
+        if ! su "$TARGET_USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" CAPSEM_RELEASE_MANIFEST_URL=\"$MANIFEST_SOURCE\" \"$CAPSEM_DIR/bin/capsem\" update --check"; then
+            echo "capsem: update status refresh failed" >&2
+            echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=update_status_refresh_failed source=$MANIFEST_SOURCE"
+            exit 1
+        fi
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=update_status_refreshed source=$MANIFEST_SOURCE"
+        ;;
+    *)
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=update_status_refresh_skipped source=$MANIFEST_SOURCE reason=non_http_manifest"
+        ;;
+esac
+
 # Register systemd user unit as the target user.
 # XDG_RUNTIME_DIR is required for systemctl --user; su drops it.
 CAPSEM_INSTALL_PHASE="register_service"
@@ -119,16 +137,26 @@ if command -v systemctl >/dev/null 2>&1; then
     for attempt in $(seq 1 30); do
         STATUS_OUTPUT=$(su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR CAPSEM_HOME=$CAPSEM_DIR CAPSEM_RUN_DIR=$CAPSEM_DIR/run $CAPSEM_DIR/bin/capsem status" 2>/dev/null || true)
         echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=readiness_poll attempt=$attempt"
+        PROFILE_COUNTS=$(echo "$STATUS_OUTPUT" | sed -n 's/^Profiles:[[:space:]]*\([0-9][0-9]*\)\/\([0-9][0-9]*\) ready.*/\1 \2/p' | head -n 1)
+        READY_PROFILES=${PROFILE_COUNTS%% *}
+        TOTAL_PROFILES=${PROFILE_COUNTS##* }
         if echo "$STATUS_OUTPUT" | grep -q "Service:   ok" \
-            && echo "$STATUS_OUTPUT" | grep -q "Gateway:   ok"; then
+            && echo "$STATUS_OUTPUT" | grep -q "Gateway:   ok" \
+            && [ -n "$PROFILE_COUNTS" ] \
+            && [ "$READY_PROFILES" = "$TOTAL_PROFILES" ] \
+            && [ "$TOTAL_PROFILES" -gt 0 ]; then
             READY=1
             break
         fi
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=profiles_not_ready attempt=$attempt ready=${READY_PROFILES:-unknown} total=${TOTAL_PROFILES:-unknown}"
         sleep 1
     done
     if [ "$READY" -ne 1 ]; then
         echo "capsem: service is not ready after install" >&2
         echo "$STATUS_OUTPUT" >&2
+        echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=service_diagnostics"
+        su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR systemctl --user status capsem.service --no-pager -l" 2>&1 || true
+        su "$TARGET_USER" -c "XDG_RUNTIME_DIR=$XDG_DIR journalctl --user-unit capsem.service --no-pager -n 100" 2>&1 || true
         echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=service_not_ready"
         exit 1
     fi

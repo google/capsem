@@ -5,22 +5,16 @@
   import * as api from '../../api';
   import type { ProfileSummary } from '../../api';
   import type { AssetStatusResponse } from '../../types/assets';
-  import type { UpdateStatusResponse, VmSummary } from '../../types/gateway';
+  import type { VmSummary } from '../../types/gateway';
   import type { GlobalStats } from '../../types/gateway';
   import { formatUptime, formatTokens, formatCost } from '../../format';
   import { canOpenSession, hasVmAction, startAction, startLabel } from '../../vm-actions';
-  import {
-    profileDashboardUpdateRows,
-    profileDashboardUpdateSummary,
-    type ProfileDashboardUpdateRow,
-  } from '../../models/update-status';
   import Modal from './Modal.svelte';
   import Pause from 'phosphor-svelte/lib/Pause';
   import Trash from 'phosphor-svelte/lib/Trash';
   import Play from 'phosphor-svelte/lib/Play';
   import Plus from 'phosphor-svelte/lib/Plus';
   import BracketsAngle from 'phosphor-svelte/lib/BracketsAngle';
-  import CheckCircle from 'phosphor-svelte/lib/CheckCircle';
   import CircleNotch from 'phosphor-svelte/lib/CircleNotch';
   import DownloadSimple from 'phosphor-svelte/lib/DownloadSimple';
   import Warning from 'phosphor-svelte/lib/Warning';
@@ -48,15 +42,9 @@
   let profileLaunchers = $state<ProfileLauncher[]>([]);
   let profilesLoading = $state(true);
   let profilesError = $state<string | null>(null);
-  let updateStatus = $state<UpdateStatusResponse | null>(null);
-  let updateStatusError = $state<string | null>(null);
-  let updateStatusLoading = $state(true);
-  let profileUpdateRows = $derived(profileDashboardUpdateRows(updateStatus));
-  let profileUpdateSummary = $derived(profileDashboardUpdateSummary(updateStatus));
 
   onMount(async () => {
     void loadProfileLaunchers();
-    void loadUpdateStatus();
     try {
       const stats = await api.getStats();
       globalStats = stats.global;
@@ -187,16 +175,6 @@
     return assetHealth.ready ? 'Ready.' : 'Assets are not ready.';
   }
 
-  function profileAssetChecklist(launcher: ProfileLauncher) {
-    return launcher.assets?.assets.slice(0, 4) ?? [];
-  }
-
-  function dashboardUpdateTone(row: ProfileDashboardUpdateRow): string {
-    if (row.tone === 'available') return 'text-primary';
-    if (row.tone === 'blocked') return 'text-destructive';
-    return 'text-muted-foreground-1';
-  }
-
   function updateProfileLauncher(profileId: string, patch: Partial<ProfileLauncher>) {
     profileLaunchers = profileLaunchers.map(launcher =>
       launcher.profile.id === profileId ? { ...launcher, ...patch } : launcher
@@ -251,25 +229,11 @@
     }
   }
 
-  async function loadUpdateStatus() {
-    updateStatusLoading = true;
-    updateStatusError = null;
-    try {
-      updateStatus = await api.getUpdateStatus();
-    } catch (err) {
-      updateStatus = null;
-      updateStatusError = parseApiError(err);
-    } finally {
-      updateStatusLoading = false;
-    }
-  }
-
   async function refreshDashboard() {
     statsLoading = true;
     await Promise.all([
       vmStore.refresh(),
       loadProfileLaunchers(),
-      loadUpdateStatus(),
       api.getStats()
         .then(stats => { globalStats = stats.global; })
         .catch(() => { globalStats = null; }),
@@ -478,48 +442,9 @@
       <p class="text-muted-foreground-1 text-sm">No web-available profiles</p>
     </div>
   {:else}
-    <div class="bg-card border border-card-line rounded-xl divide-y divide-card-divider mb-3">
-      <div class="flex items-center justify-between gap-x-4 p-4">
-        <div>
-          <p class="text-sm font-medium text-foreground">Profile and image state</p>
-          <p class="text-xs text-muted-foreground-1 mt-0.5">
-            {#if updateStatusLoading}
-              Checking release channel.
-            {:else if updateStatusError}
-              {updateStatusError}
-            {:else}
-              {profileUpdateSummary}
-            {/if}
-          </p>
-          {#if updateStatus?.last_error}
-            <p class="text-xs text-destructive mt-1">{updateStatus.last_error}</p>
-          {/if}
-        </div>
-        <p class="text-xs text-muted-foreground-1 text-end max-w-72">
-          Existing sessions stay pinned. Use New or Customize after updating to start from the current profile and VM assets.
-        </p>
-      </div>
-      {#if profileUpdateRows.length > 0}
-        <div class="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-card-divider">
-          {#each profileUpdateRows as row (row.key)}
-            <div class="p-4">
-              <div class="flex items-center justify-between gap-x-3">
-                <p class="text-sm text-foreground">{row.label}</p>
-                <p class="text-xs {dashboardUpdateTone(row)}">{row.stateLabel}</p>
-              </div>
-              <p class="text-xs text-muted-foreground-1 mt-1">{row.version}</p>
-              {#if row.detail}
-                <p class="text-[11px] text-muted-foreground-1 mt-2 leading-4">{row.detail}</p>
-              {/if}
-            </div>
-          {/each}
-        </div>
-      {/if}
-    </div>
     <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
       {#each profileLaunchers as launcher (launcher.profile.id)}
         {@const ready = launcher.assets?.ready === true}
-        {@const busy = launcher.loading || launcher.ensuring || launcher.creating || launcher.assets?.downloading === true}
         <div class="group bg-card border border-card-line rounded-xl p-4 transition-colors hover:border-primary/50 hover:bg-muted-hover">
           <div class="flex items-start gap-x-3">
             <span class="size-10 shrink-0 inline-flex items-center justify-center rounded-lg bg-muted text-foreground [&>svg]:size-5 [&>svg]:max-w-5 [&>svg]:max-h-5" aria-hidden="true">
@@ -534,25 +459,8 @@
                 <span class="text-sm font-semibold text-foreground truncate">{launcher.profile.name}</span>
               </span>
               <span class="block text-xs text-muted-foreground-1 mt-1 line-clamp-2">{launcher.profile.description}</span>
-              <span class="block text-[11px] text-muted-foreground-2 mt-2">{launcher.error ?? profileAssetText(launcher.assets)}</span>
-              {#if profileAssetChecklist(launcher).length > 0}
-                <span class="mt-3 block">
-                  <span class="block text-[11px] font-semibold uppercase tracking-wider text-muted-foreground-2">VM assets</span>
-                  <span class="mt-1 grid gap-1">
-                    {#each profileAssetChecklist(launcher) as asset (`${asset.arch ?? ''}:${asset.kind ?? asset.name}`)}
-                      <span class="flex items-center gap-x-1.5 text-[11px] text-muted-foreground-1">
-                        {#if asset.status === 'present'}
-                          <CheckCircle size={12} weight="fill" class="text-primary shrink-0" />
-                        {:else if asset.status === 'downloading'}
-                          <CircleNotch size={12} class="text-muted-foreground-1 animate-spin shrink-0" />
-                        {:else}
-                          <Warning size={12} class="text-destructive shrink-0" />
-                        {/if}
-                        <span class="truncate">{asset.kind ?? asset.name}</span>
-                      </span>
-                    {/each}
-                  </span>
-                </span>
+              {#if launcher.error}
+                <span class="block text-[11px] text-destructive mt-2">{launcher.error}</span>
               {/if}
               <span class="mt-3 flex flex-wrap items-center gap-2">
                 <button
@@ -565,6 +473,12 @@
                   {#if ready}
                     <Plus size={14} weight="bold" />
                     New
+                  {:else if launcher.loading}
+                    <CircleNotch size={14} class="animate-spin" />
+                    Checking
+                  {:else if launcher.ensuring || launcher.assets?.downloading === true}
+                    <CircleNotch size={14} class="animate-spin" />
+                    Downloading
                   {:else}
                     <DownloadSimple size={14} />
                     Download

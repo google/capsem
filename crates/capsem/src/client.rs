@@ -733,10 +733,6 @@ impl UdsClient {
         self.request::<(), R>("GET", path, None).await
     }
 
-    pub async fn get_update_status(&self) -> Result<UpdateStatusResponse> {
-        self.get("/update/status").await
-    }
-
     /// Like `request` but returns the raw response bytes + content-type
     /// instead of deserializing JSON. Used for the file-download
     /// endpoint which returns arbitrary binary payloads with a

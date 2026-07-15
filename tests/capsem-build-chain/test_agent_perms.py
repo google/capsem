@@ -7,27 +7,34 @@ read-only invariant (CLAUDE.md) holds for every caller.
 """
 
 import pytest
+from pathlib import Path
 
 
 from capsem.builder.docker import GUEST_BINARIES, enforce_guest_binary_perms
 
 pytestmark = pytest.mark.build_chain
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 def test_enforce_guest_binary_perms_sets_555(tmp_path):
-    """Paths with 0o755 on disk become 0o555 after enforcement."""
+    """Bind-mounted outputs become host-owned atomic 0555 files."""
     paths = []
+    original_inodes = {}
     for name in GUEST_BINARIES:
         p = tmp_path / name
         p.write_bytes(b"binary")
         p.chmod(0o755)
         paths.append(p)
+        original_inodes[p] = p.stat().st_ino
 
     enforce_guest_binary_perms(paths)
 
     for p in paths:
         mode = p.stat().st_mode & 0o777
         assert mode == 0o555, f"{p.name} expected 0o555, got {oct(mode)}"
+        assert p.read_bytes() == b"binary"
+        assert p.stat().st_ino != original_inodes[p]
 
 
 def test_enforce_guest_binary_perms_idempotent(tmp_path):
@@ -45,3 +52,11 @@ def test_enforce_guest_binary_perms_missing_file_raises(tmp_path):
     """Missing path surfaces as an error, not a silent skip."""
     with pytest.raises(FileNotFoundError):
         enforce_guest_binary_perms([tmp_path / "does-not-exist"])
+
+
+def test_pack_initrd_reasserts_cached_guest_binary_permissions():
+    """Cached staging binaries are repaired before initrd packaging."""
+    justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
+    recipe = justfile.split("_pack-initrd:", 1)[1].split("\n_", 1)[0]
+
+    assert 'chmod 555 "$RELEASE_DIR/$b"' in recipe

@@ -224,7 +224,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                     "asset_manifest": {
                         "origin": "package",
                         "path": "/Users/test/.capsem/assets/manifest.json",
-                        "origin_path": "/Users/test/.capsem/assets/manifest-origin.json",
+                        "origin_path": "/Users/test/.capsem/assets/manifest-metadata.json",
                         "origin_source": "file:///tmp/corp/manifest.json",
                         "packaged_at": "2026-06-13T00:00:00Z",
                         "blake3": "0123456789abcdef",

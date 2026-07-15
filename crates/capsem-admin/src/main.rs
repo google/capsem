@@ -6029,6 +6029,18 @@ fn load_profile_materialize_manifest(
     profile_id: &str,
     selected_arches: &[String],
 ) -> Result<ProfileMaterializeManifest> {
+    let release_graph = serde_json::from_str::<serde_json::Value>(manifest_content)
+        .ok()
+        .and_then(|document| document.get("profiles").cloned())
+        .is_some_and(|profiles| profiles.is_object());
+    if release_graph {
+        return profile_materialize_manifest_from_release_channel(
+            manifest_url,
+            manifest_content,
+            profile_id,
+            selected_arches,
+        );
+    }
     if let Ok(manifest) = ManifestV2::from_json(manifest_content) {
         return Ok(ProfileMaterializeManifest {
             manifest,

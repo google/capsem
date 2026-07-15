@@ -31,11 +31,13 @@ use std::{
 };
 use tokio::io::AsyncWriteExt;
 
+#[cfg(test)]
+use client::UpdateTrackState;
 use client::{
     ApiResponse, AssetStatusResponse, ExecRequest, ExecResponse, ForkRequest, ForkResponse,
     HistoryResponse, ListResponse, LogsResponse, PersistRequest, ProvisionRequest,
     ProvisionResponse, PurgeRequest, PurgeResponse, RunRequest, SessionInfo, UdsClient,
-    UpdateStatusResponse, UpdateTrackState, VmLifecycleState,
+    UpdateStatusResponse, VmLifecycleState,
 };
 
 const DEFAULT_PROFILE_ID: &str = "code";
@@ -520,6 +522,9 @@ enum MiscCommands {
         /// Useful when an asset-only release ships independently of binaries.
         #[arg(long)]
         assets: bool,
+        /// Select a named public release channel (for example stable or nightly).
+        #[arg(long, value_name = "NAME", value_parser = validate_update_channel, conflicts_with = "manifest")]
+        channel: Option<String>,
         /// Override the asset manifest endpoint for this update.
         #[arg(long, value_name = "URL", value_parser = validate_update_manifest_url)]
         manifest: Option<String>,
@@ -595,6 +600,10 @@ enum MiscCommands {
 
 fn validate_update_manifest_url(value: &str) -> std::result::Result<String, String> {
     update::validate_source_url_arg("--manifest", value)
+}
+
+fn validate_update_channel(value: &str) -> std::result::Result<String, String> {
+    update::validate_channel_name(value).map_err(|error| error.to_string())
 }
 
 fn validate_update_corp_url(value: &str) -> std::result::Result<String, String> {
@@ -1214,15 +1223,7 @@ fn update_status_lines(status: &UpdateStatusResponse) -> Vec<String> {
     } else if !blocked.is_empty() {
         lines.push(format!("Updates:   blocked ({})", blocked.join(", ")));
     } else {
-        let asset_state = match status.assets.state {
-            UpdateTrackState::Unknown => "assets unknown",
-            UpdateTrackState::NotPublished => "assets not published",
-            _ => "assets current",
-        };
-        let freshness = if status.stale { "stale" } else { "fresh" };
-        lines.push(format!(
-            "Updates:   current ({asset_state}, cache {freshness})"
-        ));
+        lines.push("Updates:   current".to_string());
     }
     if let Some(channel) = &status.channel_url {
         lines.push(format!("Channel:   {channel}"));
@@ -1259,6 +1260,7 @@ fn should_refresh_update_cache_for_command(command: &Commands) -> bool {
                 | MiscCommands::Status
                 | MiscCommands::Start
                 | MiscCommands::Stop
+                | MiscCommands::Update { .. }
                 | MiscCommands::Completions { .. }
                 | MiscCommands::Uninstall { .. }
                 | MiscCommands::SupportBundle { .. }
@@ -1493,17 +1495,22 @@ async fn main() -> Result<()> {
                 let sock = cli_service_socket_path();
                 let status_client = client::UdsClient::new(sock, false);
                 println!();
-                match service_json(&status_client, "/profiles/status").await {
-                    Some(profile_status) => print_profiles_status(&profile_status),
-                    None => println!("Profiles:  unavailable"),
-                }
-                match service_json(&status_client, "/corp/info").await {
-                    Some(corp_info) => print_corp_status(&corp_info),
-                    None => println!("Corp:      unavailable"),
-                }
-                match status_client.get_update_status().await {
-                    Ok(update_status) => print_update_status(&update_status),
-                    Err(_) => println!("Updates:   unavailable"),
+                match service_json(&status_client, "/system/status").await {
+                    Some(system_status) => {
+                        print_profiles_status(&system_status["profiles"]);
+                        print_corp_status(&system_status["corp"]);
+                        match serde_json::from_value::<UpdateStatusResponse>(
+                            system_status["updates"].clone(),
+                        ) {
+                            Ok(update_status) => print_update_status(&update_status),
+                            Err(_) => println!("Updates:   unavailable"),
+                        }
+                    }
+                    None => {
+                        println!("Profiles:  unavailable");
+                        println!("Corp:      unavailable");
+                        println!("Updates:   unavailable");
+                    }
                 }
             }
 
@@ -1572,10 +1579,19 @@ async fn main() -> Result<()> {
             yes,
             check,
             assets,
+            channel,
             manifest,
             corp,
         }) => {
-            update::run_update(*yes, *check, *assets, manifest.as_deref(), corp.as_deref()).await?;
+            update::run_update(
+                *yes,
+                *check,
+                *assets,
+                channel.as_deref(),
+                manifest.as_deref(),
+                corp.as_deref(),
+            )
+            .await?;
             return Ok(());
         }
         _ => {}
@@ -2584,14 +2600,16 @@ mod tests {
     }
 
     #[test]
-    fn update_status_lines_reports_current_stale_asset_state() {
+    fn update_status_lines_does_not_invent_track_or_cache_state_when_current() {
         let mut status = base_update_status();
         status.stale = true;
         status.assets.state = UpdateTrackState::Unknown;
 
         let lines = update_status_lines(&status);
 
-        assert_eq!(lines[0], "Updates:   current (assets unknown, cache stale)");
+        assert_eq!(lines[0], "Updates:   current");
+        assert!(!lines.join("\n").contains("not published"));
+        assert!(!lines.join("\n").contains("cache"));
     }
 
     // -----------------------------------------------------------------------
@@ -2843,6 +2861,7 @@ mod tests {
             &["capsem", "start"][..],
             &["capsem", "stop"][..],
             &["capsem", "version"][..],
+            &["capsem", "update", "--assets", "--channel", "stable"][..],
             &["capsem", "debug"][..],
             &["capsem", "completions", "zsh"][..],
             &["capsem", "uninstall", "--yes"][..],
@@ -3357,12 +3376,14 @@ mod tests {
                 yes,
                 check,
                 assets,
+                channel,
                 manifest,
                 corp,
             }) => {
                 assert!(!yes);
                 assert!(!check);
                 assert!(!assets);
+                assert_eq!(channel, None);
                 assert_eq!(manifest, None);
                 assert_eq!(corp, None);
             }
@@ -3378,12 +3399,14 @@ mod tests {
                 yes,
                 check,
                 assets,
+                channel,
                 manifest,
                 corp,
             }) => {
                 assert!(yes);
                 assert!(!check);
                 assert!(!assets);
+                assert_eq!(channel, None);
                 assert_eq!(manifest, None);
                 assert_eq!(corp, None);
             }
@@ -3399,12 +3422,14 @@ mod tests {
                 yes,
                 check,
                 assets,
+                channel,
                 manifest,
                 corp,
             }) => {
                 assert!(!yes);
                 assert!(check);
                 assert!(!assets);
+                assert_eq!(channel, None);
                 assert_eq!(manifest, None);
                 assert_eq!(corp, None);
             }
@@ -3447,16 +3472,51 @@ mod tests {
                 yes,
                 check,
                 assets,
+                channel,
                 manifest,
                 corp,
             }) => {
                 assert!(!yes);
                 assert!(!check);
                 assert!(assets);
+                assert_eq!(channel, None);
                 assert_eq!(manifest, None);
                 assert_eq!(corp, None);
             }
             _ => panic!("expected Update"),
+        }
+    }
+
+    #[test]
+    fn parse_update_named_channel_for_check_and_asset_switch() {
+        for args in [
+            ["capsem", "update", "--check", "--channel", "nightly"],
+            ["capsem", "update", "--assets", "--channel", "stable"],
+        ] {
+            let cli = Cli::parse_from(args);
+            match cli.command.unwrap() {
+                Commands::Misc(MiscCommands::Update { channel, .. }) => {
+                    assert!(matches!(channel.as_deref(), Some("nightly" | "stable")));
+                }
+                _ => panic!("expected Update"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_update_rejects_invalid_or_ambiguous_channel_selection() {
+        for args in [
+            vec!["capsem", "update", "--channel", "../nightly"],
+            vec![
+                "capsem",
+                "update",
+                "--channel",
+                "nightly",
+                "--manifest",
+                "https://release.capsem.org/assets/stable/manifest.json",
+            ],
+        ] {
+            assert!(Cli::try_parse_from(args).is_err());
         }
     }
 

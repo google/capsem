@@ -209,12 +209,15 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
         assert app_info["CFBundleShortVersionString"] == version
 
         assets = share / "assets"
-        assert sorted(path.name for path in assets.iterdir()) == ["manifest-origin.json"]
+        assert sorted(path.name for path in assets.iterdir()) == ["manifest-metadata.json"]
         assert not (assets / "manifest.json").exists()
-        origin = json.loads((assets / "manifest-origin.json").read_text())
-        assert origin["schema"] == "capsem.manifest_origin.v1"
+        origin = json.loads((assets / "manifest-metadata.json").read_text())
+        assert origin["schema"] == "capsem.manifest_metadata.v1"
         assert origin["origin"] == "package"
-        assert origin["source"] == manifest.resolve().as_uri()
+        assert origin["manifest_url"] == manifest.resolve().as_uri()
+        assert origin["channel"] == "corp"
+        assert origin["channel_kind"] == "corporate"
+        assert origin["channel_locked"] is True
         assert "fetched_at" in origin
         assert "packaged_at" in origin
         assert origin["package_version"] == version
@@ -231,7 +234,7 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
                 continue
             if rel.startswith("bin/") and rel.removeprefix("bin/") in REQUIRED_BINARIES:
                 continue
-            if rel == "assets/manifest-origin.json":
+            if rel == "assets/manifest-metadata.json":
                 continue
             if rel.startswith("profiles/"):
                 continue
@@ -424,12 +427,15 @@ def test_macos_pkg_remote_manifest_override_records_source_only(tmp_path: Path) 
             text=True,
         )
         assets = _find_capsem_share(expanded) / "assets"
-        assert sorted(path.name for path in assets.iterdir()) == ["manifest-origin.json"]
+        assert sorted(path.name for path in assets.iterdir()) == ["manifest-metadata.json"]
         assert not (assets / "manifest.json").exists()
-        origin = json.loads((assets / "manifest-origin.json").read_text())
-        assert origin["schema"] == "capsem.manifest_origin.v1"
+        origin = json.loads((assets / "manifest-metadata.json").read_text())
+        assert origin["schema"] == "capsem.manifest_metadata.v1"
         assert origin["origin"] == "package"
-        assert origin["source"] == manifest_url
+        assert origin["manifest_url"] == manifest_url
+        assert origin["channel"] == "corp"
+        assert origin["channel_kind"] == "corporate"
+        assert origin["channel_locked"] is True
         assert "fetched_at" in origin
         assert "packaged_at" in origin
         assert origin["package_version"] == version

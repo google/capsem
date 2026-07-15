@@ -216,6 +216,7 @@ fn service_proxy_routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/version", get(proxy::handle_proxy))
         .route("/update/status", get(proxy::handle_proxy))
+        .route("/system/status", get(proxy::handle_proxy))
         .route("/update/check", post(proxy::handle_proxy))
         .route("/update/apply", post(proxy::handle_proxy))
         .route("/vms/create", post(proxy::handle_proxy))

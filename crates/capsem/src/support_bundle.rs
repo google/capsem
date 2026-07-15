@@ -350,8 +350,8 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
         }
     }
     {
-        let path = home.join("assets").join("manifest-origin.json");
-        let entry_path = format!("{bundle_root}/assets/manifest-origin.json");
+        let path = home.join("assets").join("manifest-metadata.json");
+        let entry_path = format!("{bundle_root}/assets/manifest-metadata.json");
         if let Ok(bytes) = fs::read(&path) {
             let len = bytes.len() as u64;
             add_bytes(&mut tar, &entry_path, &bytes)?;
@@ -955,7 +955,7 @@ fn supply_chain_debug_references() -> serde_json::Value {
             "runtime_update_status_field": "supply_chain",
             "support_bundle_paths": [
                 "assets/manifest.json",
-                "assets/manifest-origin.json",
+                "assets/manifest-metadata.json",
             ],
         },
     })

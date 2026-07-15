@@ -28,7 +28,7 @@ from .conftest import (
     get_build_hash,
 )
 
-UPDATE_CACHE = CAPSEM_DIR / "update-check.json"
+UPDATE_CACHE = CAPSEM_DIR / "assets" / "manifest-metadata.json"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -104,7 +104,9 @@ def _serve_release(health: dict | Callable[[str], dict], files: dict[str, bytes]
 
 
 @contextmanager
-def _serve_manifest_release(files: dict[str, bytes]):
+def _serve_manifest_release(
+    files: dict[str, bytes] | Callable[[str], dict[str, bytes]],
+):
     requests: list[str] = []
     handler = type(
         "ManifestReleaseHandler",
@@ -114,6 +116,7 @@ def _serve_manifest_release(files: dict[str, bytes]):
     server = socketserver.TCPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     base = f"http://127.0.0.1:{server.server_address[1]}"
+    handler.files = files(base) if callable(files) else files
     thread.start()
     try:
         yield base, requests
@@ -171,6 +174,25 @@ def _update_manifest(
 
 def _manifest_bytes(manifest: dict) -> bytes:
     return json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _channels_catalog_bytes(manifests: dict[str, bytes]) -> bytes:
+    channels = {}
+    for channel, body in manifests.items():
+        channels[channel] = {
+            "manifests": [
+                {
+                    "version": "1.0.0",
+                    "status": "current",
+                    "url": f"/assets/{channel}/manifest.json",
+                    "digest": {
+                        "sha256": hashlib.sha256(body).hexdigest(),
+                        "blake3": blake3(body).hexdigest(),
+                    },
+                }
+            ]
+        }
+    return _manifest_bytes({"version": 1, "channels": channels})
 
 
 def _copy_user_dir_capsem(source_bin: Path, capsem_home: Path) -> Path:
@@ -499,8 +521,8 @@ def test_update_fetches_release_manifest_and_writes_channel_cache(
     assert "Run `capsem update --assets` separately" in result.stdout
     assert all(not path.endswith("/health.json") for path in requests)
 
-    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
-    assert cache["source"] == manifest_url
+    cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
+    assert cache["checked_url"] == manifest_url
     assert cache["channel_hash"] == hashlib.sha256(body).hexdigest()
     assert cache["validation_status"] == "valid"
     assert cache.get("validation_error") is None
@@ -512,7 +534,153 @@ def test_update_fetches_release_manifest_and_writes_channel_cache(
     assert cache.get("images_state") is None
 
 
-def test_corporate_manifest_origin_uses_manifest_endpoint_for_update_check(
+def test_compiled_cli_switches_named_channels_and_records_latest_check_in_metadata(
+    tmp_path: Path,
+    installed_layout,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    fresh_capsem = _fresh_capsem_binary()
+    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
+    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
+    stable = _manifest_bytes(_update_manifest("99.99.98", "2030.0101.1"))
+    nightly = _manifest_bytes(_update_manifest("99.99.99", "2030.0101.2"))
+    catalog = _channels_catalog_bytes({"stable": stable, "nightly": nightly})
+
+    with _serve_manifest_release(
+        {
+            "/channels.json": catalog,
+            "/assets/stable/manifest.json": stable,
+            "/assets/nightly/manifest.json": nightly,
+        }
+    ) as (base_url, requests):
+        env = {
+            **os.environ,
+            "CAPSEM_HOME": str(capsem_home),
+            "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+            "CAPSEM_RELEASE_CHANNELS_URL": f"{base_url}/channels.json",
+        }
+        nightly_result = subprocess.run(
+            [str(capsem), "update", "--check", "--channel", "nightly"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+        stable_result = subprocess.run(
+            [str(capsem), "update", "--check", "--channel", "stable"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env=env,
+        )
+
+    assert nightly_result.returncode == 0, nightly_result.stderr
+    assert stable_result.returncode == 0, stable_result.stderr
+    assert requests == [
+        "/channels.json",
+        "/assets/nightly/manifest.json",
+        "/channels.json",
+        "/assets/stable/manifest.json",
+    ]
+    metadata = json.loads(
+        (capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8")
+    )
+    assert metadata["schema"] == "capsem.manifest_metadata.v1"
+    assert metadata["checked_url"] == f"{base_url}/assets/stable/manifest.json"
+    assert metadata["channel_hash"] == hashlib.sha256(stable).hexdigest()
+    assert not (capsem_home / "update-checks").exists()
+
+
+def test_compiled_cli_rejects_tampered_named_channel_manifest(
+    tmp_path: Path,
+    installed_layout,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    fresh_capsem = _fresh_capsem_binary()
+    source_capsem = fresh_capsem if fresh_capsem is not None else installed_layout / "capsem"
+    capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
+    declared = _manifest_bytes(_update_manifest("99.99.99", "2030.0101.2"))
+    tampered = _manifest_bytes(_update_manifest("99.99.100", "2030.0101.3"))
+    catalog = _channels_catalog_bytes({"nightly": declared})
+
+    with _serve_manifest_release(
+        {
+            "/channels.json": catalog,
+            "/assets/nightly/manifest.json": tampered,
+        }
+    ) as (base_url, requests):
+        result = subprocess.run(
+            [str(capsem), "update", "--check", "--channel", "nightly"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_CHANNELS_URL": f"{base_url}/channels.json",
+            },
+        )
+
+    assert result.returncode != 0
+    assert "manifest SHA-256 mismatch" in result.stderr
+    assert requests == ["/channels.json", "/assets/nightly/manifest.json"]
+    assert not (capsem_home / "assets" / "manifest-metadata.json").exists()
+
+
+def test_explicit_channel_selects_verified_lower_package_for_downgrade(
+    tmp_path: Path,
+) -> None:
+    capsem_home = tmp_path / ".capsem"
+    fresh_capsem = _fresh_capsem_binary()
+    assert fresh_capsem is not None
+    capsem = _copy_layout_capsem(fresh_capsem, tmp_path, "linux_deb")
+    installer_name = f"Capsem_1.0.0_{_deb_arch()}.deb"
+    package = b"verified lower-version package"
+
+    def release_files(base_url: str) -> dict[str, bytes]:
+        manifest = _manifest_bytes(
+            _update_manifest(
+                "1.0.0",
+                "2030.0101.1",
+                binary_files=[
+                    {
+                        "name": installer_name,
+                        "url": f"{base_url}/{installer_name}",
+                        "sha256": hashlib.sha256(package).hexdigest(),
+                        "blake3": blake3(package).hexdigest(),
+                        "size": len(package),
+                    }
+                ],
+            )
+        )
+        return {
+            "/channels.json": _channels_catalog_bytes({"stable": manifest}),
+            "/assets/stable/manifest.json": manifest,
+            f"/{installer_name}": package,
+        }
+
+    with _serve_manifest_release(release_files) as (base_url, requests):
+        result = subprocess.run(
+            [str(capsem), "update", "--check", "--channel", "stable"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            env={
+                **os.environ,
+                "CAPSEM_HOME": str(capsem_home),
+                "CAPSEM_RUN_DIR": str(capsem_home / "run"),
+                "CAPSEM_RELEASE_CHANNELS_URL": f"{base_url}/channels.json",
+            },
+        )
+
+    assert result.returncode == 0, result.stderr
+    assert "-> 1.0.0" in result.stdout
+    assert installer_name in result.stdout
+    assert requests == ["/channels.json", "/assets/stable/manifest.json"]
+
+
+def test_corporate_manifest_metadata_uses_manifest_endpoint_for_update_check(
     tmp_path: Path,
     installed_layout,
 ) -> None:
@@ -529,12 +697,12 @@ def test_corporate_manifest_origin_uses_manifest_endpoint_for_update_check(
         requests,
     ):
         manifest_url = f"{base_url}/corp/assets/internal/manifest.json"
-        (capsem_home / "assets" / "manifest-origin.json").write_text(
+        (capsem_home / "assets" / "manifest-metadata.json").write_text(
             json.dumps(
                 {
-                    "schema": "capsem.manifest_origin.v1",
+                    "schema": "capsem.manifest_metadata.v1",
                     "origin": "package",
-                    "source": manifest_url,
+                    "manifest_url": manifest_url,
                     "packaged_at": "2026-06-28T00:00:00Z",
                 },
                 sort_keys=True,
@@ -566,8 +734,8 @@ def test_corporate_manifest_origin_uses_manifest_endpoint_for_update_check(
     assert "/corp/assets/internal/manifest.json" in requests
     assert all(not path.endswith("/health.json") for path in requests)
 
-    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
-    assert cache["source"] == manifest_url
+    cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
+    assert cache["checked_url"] == manifest_url
     assert cache["channel_hash"] == hashlib.sha256(body).hexdigest()
     assert cache["validation_status"] == "valid"
     assert cache.get("validation_error") is None
@@ -696,7 +864,7 @@ def test_binary_update_state_does_not_claim_asset_update(
     assert "VM asset update available" not in result.stdout
     assert "VM asset state unknown" not in result.stdout
 
-    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
     assert cache["update_available"] is True
     assert cache["assets_update_available"] is False
     assert cache["latest_assets"] == "2026.0627.8"
@@ -753,7 +921,7 @@ def test_asset_update_state_does_not_claim_binary_update(
     assert "Binary update available" not in result.stdout
     assert "VM asset update available: 2026.0627.8 -> 2030.0101.1." in result.stdout
 
-    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
     assert cache["update_available"] is False
     assert cache["assets_update_available"] is True
     assert cache["latest_assets"] == "2030.0101.1"
@@ -815,7 +983,7 @@ def test_asset_update_requiring_newer_binary_is_reported_as_blocked(
     assert "VM asset update available" not in result.stdout
     assert "Run `capsem update --assets` separately" not in result.stdout
 
-    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
     assert cache["update_available"] is False
     assert cache["assets_update_available"] is False
     assert cache["latest_assets"] == "2030.0101.1"
@@ -869,7 +1037,7 @@ def test_profile_update_state_does_not_claim_binary_or_asset_update(
     assert "Binary update available" not in result.stdout
     assert "VM asset update available" not in result.stdout
 
-    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
     assert cache["update_available"] is False
     assert cache["assets_update_available"] is False
     assert cache["profiles_update_available"] is True
@@ -926,7 +1094,7 @@ def test_mixed_binary_and_asset_update_state_reports_both_tracks(
     assert "Binary update available" in result.stdout
     assert "VM asset update available: 2026.0627.8 -> 2030.0101.1." in result.stdout
 
-    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
     assert cache["update_available"] is True
     assert cache["assets_update_available"] is True
     assert cache["latest_assets"] == "2030.0101.1"
@@ -1093,7 +1261,7 @@ def test_staged_update_state_matrix_keeps_cli_tracks_separated(
         assert forbidden not in result.stdout
     assert "VM image update" not in result.stdout
 
-    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
     for key, value in case["cache"].items():
         assert cache[key] is value
 
@@ -1196,7 +1364,7 @@ def test_update_yes_applies_compatible_profile_catalog_from_release_channel(
     assert origin["revision"] == revision
     assert origin["hash"] == blake3(catalog_bytes).hexdigest()
 
-    cache = json.loads((capsem_home / "update-check.json").read_text(encoding="utf-8"))
+    cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
     assert cache["profile_catalog_source"] == catalog_path
     assert cache["profile_catalog_hash"] == blake3(catalog_bytes).hexdigest()
 
@@ -1388,7 +1556,9 @@ def test_linux_update_yes_applies_verified_deb_with_package_manager(
     )
     cached = capsem_home / "updates" / "installers" / installer_name
     assert cached.read_bytes() == payload
-    assert f"apt-get install --yes {cached}\n" == sudo_log.read_text(encoding="utf-8")
+    assert f"apt-get install --yes --allow-downgrades {cached}\n" == sudo_log.read_text(
+        encoding="utf-8"
+    )
     assert "Binary update applied." in result.stdout
     events = _read_update_log(capsem_home)
     assert [event["event"] for event in events[-2:]] == [

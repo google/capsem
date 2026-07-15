@@ -1337,6 +1337,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     )
     assert 'grep -F "Installed: true" /tmp/capsem-status.txt' in macos
     assert 'grep -F "Running:   true" /tmp/capsem-status.txt' in macos
+    assert "scripts/verify-installed-release.py" in macos
     assert (
         macos.index("Notarize and staple .pkg")
         < macos.index("Install exact notarized package")
@@ -1355,6 +1356,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "dpkg-query -W -f='${Version}' capsem | grep -Fx \"$VERSION\"" in linux
     assert 'grep -F "Installed: true" /tmp/capsem-status.txt' in linux
     assert 'grep -F "Running:   true" /tmp/capsem-status.txt' in linux
+    assert "scripts/verify-installed-release.py" in linux
     assert "Enable KVM for exact-package VM proof" in linux
     assert "test -r /dev/kvm -a -w /dev/kvm" in linux
     assert "scripts/prove-installed-shell.py" in linux
@@ -1398,6 +1400,27 @@ def test_release_skill_requires_ci_and_local_mac_installer_outcome_proof() -> No
     assert "does not count as release proof" in release_skill
     assert "forward-only release" in release_skill
     assert "Do not call the release complete" in release_skill
+    assert "scripts/verify-installed-release.py" in release_skill
+    assert "byte-for-byte" in release_skill
+    assert "all manifest-declared profiles ready" in release_skill
+
+
+def test_release_skill_requires_exact_manifest_single_metadata_and_shared_status_contract() -> None:
+    release_skill = _source_text("skills/release-process/SKILL.md")
+    installation_skill = _source_text("skills/dev-installation/SKILL.md")
+
+    for source in (release_skill, installation_skill):
+        normalized = " ".join(source.split())
+        assert "assets/manifest.json" in source
+        assert "assets/manifest-metadata.json" in source
+        assert "capsem.manifest_metadata.v1" in source
+        assert "GET /system/status" in source
+        assert "in memory" in normalized or "in-memory" in normalized
+    release_normalized = " ".join(release_skill.split())
+    assert "exact verified manifest" in release_normalized
+    assert "must not rewrite it into a reduced runtime schema" in release_normalized
+    assert "Do not create a separate origin file" in release_normalized
+    assert "the UI must not synthesize publication state" in release_normalized
 
 
 def test_release_recipe_dispatches_one_parameterized_workflow() -> None:
@@ -1426,7 +1449,7 @@ def test_self_update_docs_match_verified_package_execution() -> None:
     assert "test_macos_update_yes_applies_verified_pkg_with_package_manager" in install_tests
     assert "test_linux_update_yes_applies_verified_deb_with_package_manager" in install_tests
     assert "/usr/sbin/installer -pkg {cached} -target /" in install_tests
-    assert "apt-get install --yes {cached}" in install_tests
+    assert "apt-get install --yes --allow-downgrades {cached}" in install_tests
     assert "and print the tested package-manager apply command (`sudo" not in install_skill
     assert (
         "downloads verified binary installers, prints the package-manager apply command,"
@@ -2024,6 +2047,7 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
     assert 'grep -F "Service:   ok" /tmp/capsem-live-status.txt' in verify_downloads
     assert 'grep -F "Gateway:   ok" /tmp/capsem-live-status.txt' in verify_downloads
     assert "scripts/prove-installed-shell.py" in verify_downloads
+    assert "scripts/verify-installed-release.py" in verify_downloads
     assert "CAPSEM_LIVE_PUBLIC_INSTALL_SHELL_OK" in verify_downloads
     assert '"$HOME/.capsem/bin/capsem" run' not in verify_downloads
     assert "skipping binary e2e" not in verify_downloads
@@ -2237,7 +2261,7 @@ def test_asset_and_install_skills_document_channel_switching() -> None:
         "`file:///absolute/path/to/manifest.json`",
         "`https://release.capsem.org/assets/stable/manifest.json`",
         "`https://release.capsem.org/assets/nightly/manifest.json`",
-        "cached update checks must coexist under `update-checks/`",
+        "single metadata file records the installed manifest URL separately",
         "Updating the co-work nightly profile",
         "must not mutate stable, packages, per-binary inventory, or other profiles",
     ]:

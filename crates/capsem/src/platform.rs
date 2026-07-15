@@ -3,7 +3,7 @@ use std::path::PathBuf;
 /// How capsem was installed.
 #[derive(Debug, Clone, PartialEq)]
 pub enum InstallLayout {
-    /// macOS .pkg installer (/usr/local/bin)
+    /// macOS .pkg installer (native payload plus ~/.capsem/bin runtime copy)
     MacosPkg,
     /// Linux .deb installer (/usr/bin)
     LinuxDeb,
@@ -21,11 +21,21 @@ pub fn detect_install_layout() -> InstallLayout {
         Err(_) => return InstallLayout::Development,
     };
 
-    detect_layout_from_path(&exe)
+    let macos_pkg_marker = cfg!(target_os = "macos")
+        && std::path::Path::new("/usr/local/share/capsem/bin/capsem").is_file();
+    detect_layout_from_path_with_macos_pkg_marker(&exe, macos_pkg_marker)
 }
 
 /// Testable core: detect layout from an arbitrary path.
+#[cfg(test)]
 fn detect_layout_from_path(exe: &std::path::Path) -> InstallLayout {
+    detect_layout_from_path_with_macos_pkg_marker(exe, false)
+}
+
+fn detect_layout_from_path_with_macos_pkg_marker(
+    exe: &std::path::Path,
+    macos_pkg_marker: bool,
+) -> InstallLayout {
     use std::path::Component;
 
     let components: Vec<_> = exe.components().collect();
@@ -71,7 +81,11 @@ fn detect_layout_from_path(exe: &std::path::Path) -> InstallLayout {
         )
     });
     if in_capsem_bin {
-        return InstallLayout::UserDir;
+        return if macos_pkg_marker {
+            InstallLayout::MacosPkg
+        } else {
+            InstallLayout::UserDir
+        };
     }
 
     InstallLayout::Development
@@ -80,7 +94,7 @@ fn detect_layout_from_path(exe: &std::path::Path) -> InstallLayout {
 /// Return the install bin directory for the current layout.
 pub fn install_bin_dir() -> Option<PathBuf> {
     match detect_install_layout() {
-        InstallLayout::MacosPkg => Some(PathBuf::from("/usr/local/bin")),
+        InstallLayout::MacosPkg => Some(capsem_core::paths::capsem_bin_dir()),
         InstallLayout::LinuxDeb => Some(PathBuf::from("/usr/bin")),
         InstallLayout::UserDir => Some(capsem_core::paths::capsem_bin_dir()),
         InstallLayout::Development => None,
@@ -108,6 +122,19 @@ mod tests {
     fn detect_user_dir_layout() {
         let path = Path::new("/Users/elie/.capsem/bin/capsem");
         assert_eq!(detect_layout_from_path(path), InstallLayout::UserDir);
+    }
+
+    #[test]
+    fn detect_macos_pkg_runtime_copy_from_native_payload_marker() {
+        let path = Path::new("/Users/elie/.capsem/bin/capsem");
+        assert_eq!(
+            detect_layout_from_path_with_macos_pkg_marker(path, true),
+            InstallLayout::MacosPkg
+        );
+        assert_eq!(
+            detect_layout_from_path_with_macos_pkg_marker(path, false),
+            InstallLayout::UserDir
+        );
     }
 
     #[test]

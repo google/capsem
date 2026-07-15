@@ -1358,6 +1358,39 @@ describe('api', () => {
     });
   });
 
+  describe('getCapsemStatus', () => {
+    beforeEach(async () => {
+      mockFetch
+        .mockReturnValueOnce(jsonResponse({ ok: true, version: '1.0.0', service_socket: '/tmp/s' }))
+        .mockReturnValueOnce(jsonResponse({ token: 'tok' }))
+        .mockReturnValueOnce(jsonResponse({ service: 'running', gateway_version: '1.0.0', vm_count: 0, vms: [], resource_summary: null }));
+      await api.init();
+    });
+
+    it('reads manifest, metadata, profiles, and update state from one canonical route', async () => {
+      const payload = {
+        version: '1.5.1',
+        service: 'running',
+        manifest: { channel: 'stable', packages: [], profiles: {} },
+        manifest_metadata: {
+          schema: 'capsem.manifest_metadata.v1',
+          manifest_url: 'https://release.capsem.org/assets/stable/manifest.json',
+        },
+        profiles: { profiles: [] },
+        corp: { installed: false },
+        updates: updateStatusFixture(),
+      };
+      const callsBefore = mockFetch.mock.calls.length;
+      mockFetch.mockReturnValueOnce(jsonResponse(payload));
+
+      const result = await api.getCapsemStatus();
+
+      expect(result).toEqual(payload);
+      expect(mockFetch.mock.calls).toHaveLength(callsBefore + 1);
+      expect(mockFetch.mock.calls.at(-1)?.[0]).toContain('/system/status');
+    });
+  });
+
   // ---- Terminal ----
 
   describe('terminal', () => {
