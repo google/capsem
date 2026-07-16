@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Made release qualification validate the live public manifest with the exact
+  candidate runtime, and made update checks reject profile graphs that the
+  runtime cannot install, including graphs missing required image revisions.
+
 ## [1.5.1784153530] - 2026-07-15
 
 ## [1.5.1784146303] - 2026-07-15

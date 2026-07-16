@@ -97,6 +97,17 @@ jobs:
           sudo chmod 0666 /dev/vhost-vsock
           test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
 
+      - name: Validate public install manifest with candidate runtime
+        run: |
+          set -euo pipefail
+          cargo build -p capsem
+          RUNTIME_HOME="$(mktemp -d)"
+          mkdir -p "$RUNTIME_HOME/.capsem/bin"
+          cp target/debug/capsem "$RUNTIME_HOME/.capsem/bin/capsem"
+          HOME="$RUNTIME_HOME" \
+            CAPSEM_RELEASE_MANIFEST_URL="$CAPSEM_INSTALL_MANIFEST_URL" \
+            "$RUNTIME_HOME/.capsem/bin/capsem" update --check
+
       - name: Complete canonical release gate (just test)
         run: just test
 

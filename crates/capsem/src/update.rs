@@ -5,6 +5,9 @@
 //! publishes one; the privileged installer apply step is intentionally separate
 //! from VM asset hydration.
 
+#[cfg(test)]
+mod runtime_contract_tests;
+
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs::OpenOptions,
@@ -1625,6 +1628,12 @@ fn update_check_from_release_payload(
     let current_binary = local_current_binary_version();
     if let Ok(graph) = serde_json::from_slice::<ReleaseGraphManifest>(body) {
         if !graph.packages.is_empty() || !graph.profiles.is_empty() {
+            if !graph.profiles.is_empty() {
+                let text = std::str::from_utf8(body)
+                    .context("release graph manifest is not valid UTF-8")?;
+                capsem_core::asset_manager::ManifestV2::from_json(text)
+                    .context("validate release graph through the runtime manifest parser")?;
+            }
             return update_check_from_release_graph_manifest(
                 &graph,
                 now_secs(),
@@ -4447,7 +4456,41 @@ mod tests {
                     "architectures": [{
                         "architecture": deb_graph_arch(),
                         "image_revision": "2030.0101.7",
-                        "images": []
+                        "images": [
+                            {
+                                "kind": "kernel",
+                                "name": "vmlinuz",
+                                "url": "https://release.capsem.org/assets/releases/2030.0101.7/vmlinuz",
+                                "bytes": 1,
+                                "status": "current",
+                                "digest": {
+                                    "sha256": "1".repeat(64),
+                                    "blake3": "a".repeat(64)
+                                }
+                            },
+                            {
+                                "kind": "initrd",
+                                "name": "initrd.img",
+                                "url": "https://release.capsem.org/assets/releases/2030.0101.7/initrd.img",
+                                "bytes": 1,
+                                "status": "current",
+                                "digest": {
+                                    "sha256": "2".repeat(64),
+                                    "blake3": "b".repeat(64)
+                                }
+                            },
+                            {
+                                "kind": "rootfs",
+                                "name": "rootfs.erofs",
+                                "url": "https://release.capsem.org/assets/releases/2030.0101.7/rootfs.erofs",
+                                "bytes": 1,
+                                "status": "current",
+                                "digest": {
+                                    "sha256": "3".repeat(64),
+                                    "blake3": "c".repeat(64)
+                                }
+                            }
+                        ]
                     }]
                 }
             }

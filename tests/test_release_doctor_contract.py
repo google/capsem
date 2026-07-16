@@ -1304,6 +1304,15 @@ def test_untagged_release_candidate_runs_complete_canonical_gate_in_ci() -> None
     assert "libglib2.0-dev" in gate
     assert "libwebkit2gtk-4.1-dev" in gate
     assert "musl-tools" in gate
+    public_manifest_gate = "Validate public install manifest with candidate runtime"
+    assert public_manifest_gate in gate
+    assert "cargo build -p capsem" in gate
+    assert 'cp target/debug/capsem "$RUNTIME_HOME/.capsem/bin/capsem"' in gate
+    assert 'CAPSEM_RELEASE_MANIFEST_URL="$CAPSEM_INSTALL_MANIFEST_URL"' in gate
+    assert '"$RUNTIME_HOME/.capsem/bin/capsem" update --check' in gate
+    assert gate.index(public_manifest_gate) < gate.index(
+        "Complete canonical release gate (just test)"
+    )
     assert gate.index("Install Linux full-gate system dependencies") < gate.index(
         "Complete canonical release gate (just test)"
     )
