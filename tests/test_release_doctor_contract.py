@@ -174,18 +174,7 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     assert 'test "$RELEASE_SITE_BUILD_RESULT" = success' in gate
     assert "astral-sh/setup-uv@v5" in release_site_job
     assert "uv sync --frozen" in release_site_job
-    assert (
-        "uv run python scripts/write-release-site-ci-fixture.py target/release-site-fixture"
-        in release_site_job
-    )
-    assert release_site_job.index(
-        "uv run python scripts/write-release-site-ci-fixture.py target/release-site-fixture"
-    ) < release_site_job.index("cargo run -p capsem-admin -- assets channel build")
-    assert (
-        '--manifest "file://$PWD/target/release-site-fixture/assets/manifest.json"'
-        in release_site_job
-    )
-    assert "--assets-dir target/release-site-fixture/assets" in release_site_job
+    assert "bash scripts/check-web-surface.sh release-site" in release_site_job
 
 
 def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
@@ -214,12 +203,12 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
 
     assert "cache-dependency-path: docs/pnpm-lock.yaml" in docs_job
     assert "cd docs && pnpm install --frozen-lockfile" in docs_job
-    assert "cd docs && pnpm run build" in docs_job
+    assert "bash scripts/check-web-surface.sh docs" in docs_job
     assert "pages deploy" not in docs_job
 
     assert "cache-dependency-path: site/pnpm-lock.yaml" in site_job
     assert "cd site && pnpm install --frozen-lockfile" in site_job
-    assert "cd site && pnpm run build" in site_job
+    assert "bash scripts/check-web-surface.sh site" in site_job
     assert "pages deploy" not in site_job
 
     assert "pull_request:" not in docs_deploy
@@ -513,7 +502,7 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     assert "--without-binary-files" in workflow
     assert "--assets-dir target/release-channel-staging-fixture/assets" in workflow
     assert "--asset-source-base" not in workflow
-    assert "pnpm run build:channel" in workflow
+    assert "bash scripts/check-web-surface.sh release-site-build" in workflow
     assert "cargo run -p capsem-admin -- assets channel check" in workflow
     assert "name: asset-channel-staging-preview" in workflow
     assert "uses: ./.github/workflows/release-channel.yaml" in workflow
@@ -1059,13 +1048,13 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert "paths:" not in push_trigger, workflow_name
         assert f"cache-dependency-path: {directory}/pnpm-lock.yaml" in ci_block
         assert f"cd {directory} && pnpm install --frozen-lockfile" in ci_block
-        assert f"cd {directory} && pnpm run build" in ci_block
+        assert f"bash scripts/check-web-surface.sh {directory}" in ci_block
         assert (
             "needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]"
             in ci_workflow
         )
         assert f"cd {directory} && pnpm install --frozen-lockfile" in workflow
-        assert f"cd {directory} && pnpm run build" in workflow
+        assert f"bash scripts/check-web-surface.sh {directory}" in workflow
         assert (
             "if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}" in workflow
         )
@@ -2471,7 +2460,7 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
     just_test = _recipe_block("test:")
 
     for stage in [
-        "Audits + lint + frontend",
+        "Audits + lint + web surfaces",
         "Cross-compile agent (both arches)",
         "Rust: test suite with coverage",
         "Python: non-serial tests (n=4 parallel)",
@@ -2487,7 +2476,7 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
 
     assert "## PR gate compared with `just test`" in docs
     assert (
-        "| Audits, lint, frontend check/test/build | `test` job: dependency audit, Python lint/type/skills, frontend check/vitest/build | Same signal, split for GitHub summaries |"
+        "| Audits, lint, and all web surfaces | `test`, `docs-build`, `site-build`, and `release-site-build` reuse `scripts/check-web-surface.sh` | Same checked-in entrypoint; `just test` remains the canonical owner |"
         in docs
     )
     assert (
@@ -2499,7 +2488,7 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
         in docs
     )
     assert (
-        "| Docs, marketing, and release-channel site builds | `docs-build`, `site-build`, and `release-site-build` install and build `docs/`, `site/`, and `release-site/` before `pr-gate` can pass | Merge-blocking build proof; deploy happens only after merge or explicit release-channel publication |"
+        "| Docs, marketing, and release-channel site builds | `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test` before `pr-gate` can pass | Merge-blocking duplicate execution of the canonical local gate; deploy happens only after merge or explicit release-channel publication |"
         in docs
     )
     assert "`pr-gate` is the only status that should be required by branch protection" in docs
@@ -2566,6 +2555,95 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
         "physical-Mac VZ shell proof",
     ):
         assert unavoidable_boundary in release_skill
+
+
+def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
+    script = _source_text("scripts/check-web-surface.sh")
+    just = (PROJECT_ROOT / "justfile").read_text()
+    ci = _workflow_text("ci.yaml")
+    docs = _workflow_text("docs.yaml")
+    site = _workflow_text("site.yaml")
+    release = _workflow_text("release.yaml")
+    release_assets = _workflow_text("release-assets.yaml")
+    binary_staging = _workflow_text("release-binary-staging.yaml")
+    channel_staging = _workflow_text("release-channel-staging.yaml")
+
+    for surface in (
+        "frontend",
+        "frontend-build",
+        "docs",
+        "site",
+        "release-site",
+        "release-site-build",
+    ):
+        assert f"{surface})" in script
+
+    assert "bash scripts/check-web-surface.sh frontend" in just
+    assert "bash scripts/check-web-surface.sh docs" in just
+    assert "bash scripts/check-web-surface.sh site" in just
+    assert "bash scripts/check-web-surface.sh release-site" in just
+
+    assert "bash scripts/check-web-surface.sh frontend" in ci
+    assert "bash scripts/check-web-surface.sh docs" in ci
+    assert "bash scripts/check-web-surface.sh site" in ci
+    assert "bash scripts/check-web-surface.sh release-site" in ci
+    assert "bash scripts/check-web-surface.sh docs" in docs
+    assert "bash scripts/check-web-surface.sh site" in site
+    assert release.count("bash scripts/check-web-surface.sh frontend-build") == 2
+    for workflow in (release, release_assets, binary_staging, channel_staging):
+        assert "bash scripts/check-web-surface.sh release-site-build" in workflow
+
+    bypasses = (
+        "cd frontend && pnpm run build",
+        "cd frontend && pnpm build",
+        "cd docs && pnpm run build",
+        "cd site && pnpm run build",
+        "cd release-site && pnpm run build:channel",
+    )
+    for text in (
+        just,
+        ci,
+        docs,
+        site,
+        release,
+        release_assets,
+        binary_staging,
+        channel_staging,
+    ):
+        for bypass in bypasses:
+            assert bypass not in text
+
+    assert "write-release-site-ci-fixture.py" in script
+    assert "assets channel build" in script
+    assert "pnpm --dir release-site run build:channel" in script
+    assert "assets channel check" in script
+    assert "CAPSEM_FRONTEND_JUNIT" in script
+
+
+def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
+    just = (PROJECT_ROOT / "justfile").read_text()
+    qualification = _workflow_text("release-qualification.yaml")
+    testing = (PROJECT_ROOT / "skills/dev-testing/SKILL.md").read_text()
+    ironbank = (PROJECT_ROOT / "skills/ironbank/SKILL.md").read_text()
+    release = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+
+    for document in (testing, ironbank, release):
+        assert "Ironbank parity rule" in document
+        assert "every portable release gate" in document
+        assert "`just test`" in document
+
+    assert "run: just test" in qualification
+    assert "cargo llvm-cov --workspace --bins --lib --tests" in just
+    assert "--fail-under-lines 65" in just
+    assert "--cov-fail-under=90" in just
+    assert "CAPSEM_REQUIRE_ARTIFACTS=1" in just
+    assert "tests/ironbank/test_route_health.py" in just
+    assert "scripts/integration_test.py" in just
+    assert "=== Benchmarks ===" in just
+    assert "tests/capsem-serial/test_capsem_bench_baseline.py" in just
+    assert "just test-install" in just
+    for surface in ("frontend", "docs", "site", "release-site"):
+        assert f"bash scripts/check-web-surface.sh {surface}" in just
 
 
 def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -> None:
@@ -3784,7 +3862,7 @@ def test_ci_workflow_references_only_live_workspace_packages_and_skills() -> Non
 
 def test_ci_builds_frontend_before_compiling_tauri_app_tests() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    build_pos = workflow.find("cd frontend && pnpm run build")
+    build_pos = workflow.find("bash scripts/check-web-surface.sh frontend-build")
     capsem_app_pos = workflow.find("-p capsem-app")
     coverage_pos = workflow.rfind("cargo llvm-cov nextest --no-cfg-coverage", 0, capsem_app_pos)
 
@@ -3800,10 +3878,13 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
         PROJECT_ROOT / ".github" / "workflows" / "release-qualification.yaml"
     ).read_text()
     just = (PROJECT_ROOT / "justfile").read_text()
+    web_gate = _source_text("scripts/check-web-surface.sh")
 
     generate_pos = workflow.find("bash scripts/generate-settings.sh")
-    first_frontend_build_pos = workflow.find("cd frontend && pnpm run build")
-    frontend_check_pos = workflow.find("pnpm run check")
+    first_frontend_build_pos = workflow.find(
+        "bash scripts/check-web-surface.sh frontend-build"
+    )
+    frontend_check_pos = workflow.find("bash scripts/check-web-surface.sh frontend")
     release_gate_pos = release_qualification.find("run: just test")
 
     assert generate_pos != -1
@@ -3811,7 +3892,8 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert frontend_check_pos != -1
     assert release_gate_pos != -1
     assert "test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings" in just
-    assert "pnpm run check" in just
+    assert "bash scripts/check-web-surface.sh frontend" in just
+    assert "pnpm --dir frontend run check" in web_gate
     assert generate_pos < first_frontend_build_pos
     assert generate_pos < frontend_check_pos
     assert "bash scripts/generate-settings.sh" in just

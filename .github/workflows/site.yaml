@@ -27,7 +27,7 @@ jobs:
       - name: Install
         run: cd site && pnpm install --frozen-lockfile
       - name: Build
-        run: cd site && pnpm run build
+        run: bash scripts/check-web-surface.sh site
       - name: Deploy
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: cloudflare/wrangler-action@v3

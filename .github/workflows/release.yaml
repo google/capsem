@@ -155,7 +155,7 @@ jobs:
       - run: cd frontend && pnpm install --frozen-lockfile
 
       - name: Build frontend
-        run: cd frontend && pnpm build
+        run: bash scripts/check-web-surface.sh frontend-build
 
       - name: Install cargo tools
         env:
@@ -389,7 +389,7 @@ jobs:
       - run: cd frontend && pnpm install --frozen-lockfile
 
       - name: Build frontend
-        run: cd frontend && pnpm build
+        run: bash scripts/check-web-surface.sh frontend-build
 
       - name: Install cargo tools
         env:
@@ -757,7 +757,7 @@ jobs:
       - name: Build release site pages
         env:
           CAPSEM_RELEASE_CHANNEL_DIST: ${{ github.workspace }}/target/release-channel
-        run: cd release-site && pnpm run build:channel
+        run: bash scripts/check-web-surface.sh release-site-build
 
       - name: Materialize preserved profile artifacts
         run: |

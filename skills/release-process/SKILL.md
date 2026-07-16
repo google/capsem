@@ -481,6 +481,22 @@ artifact install gates fan out. Publication cannot start unless all are green.
 
 #### Local/CI execution parity
 
+##### Ironbank parity rule
+
+The Ironbank parity rule is that every portable release gate must be owned by
+`just test`. Before qualification, the exact candidate must pass the complete
+`just test` locally; exact-SHA CI then runs that identical recipe. A specialized
+job is useful evidence, but it must reuse an entrypoint already exercised by
+`just test` and cannot become the sole owner of a portable release requirement.
+
+The canonical gate includes workspace/runtime tests, Rust and Python coverage
+floors, `capsem-doctor` and Ironbank acceptance, benchmarks, artifact
+completeness, frontend/docs/marketing/release-site checks, and the
+Docker/systemd Linux package install with a real guest-shell proof. Keep only
+unavoidable platform boundaries outside it: Apple signing/notarization,
+hosted-runner KVM, Cloudflare publication, and the literal public install plus
+VZ guest-shell proof on the physical Mac.
+
 Every portable release-critical workflow must share the same production
 entrypoint with a local gate. Current required mappings are:
 

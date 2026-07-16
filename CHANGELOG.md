@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `cdxgen` asset-evidence tool installed by asset CI, refreshes its base image
   from the checked-in Dockerfile, and makes `just install` verify the installed
   manifest and execute a real guest-shell marker before succeeding.
+- Made the Ironbank parity rule explicit: every portable release gate is owned
+  by `just test`, which now validates the frontend, docs, marketing site, and
+  generated release-site channel through the same checked-in entrypoint used
+  by CI and release workflows.
 
 ## [1.5.1784153530] - 2026-07-15
 

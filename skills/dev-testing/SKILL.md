@@ -52,6 +52,22 @@ must still exercise the installed package and post-install behavior.
 
 ## Local/CI execution parity
 
+### Ironbank parity rule
+
+The Ironbank parity rule is that every portable release gate must be owned by
+`just test`. A release candidate is not qualified until the complete
+`just test` passes locally and exact-SHA CI runs that same recipe successfully.
+Specialized CI jobs may provide faster feedback or platform evidence, but they
+must call the same checked-in recipe or script already exercised by
+`just test`; they cannot be the only owner of a portable requirement.
+
+This includes workspace/runtime tests, Rust and Python coverage floors,
+`capsem-doctor` and Ironbank acceptance, benchmarks, artifact completeness,
+frontend/docs/marketing/release-site validation, and the Docker/systemd Linux
+package install and guest-shell proof. Truly non-portable boundaries remain
+explicit final gates: Apple signing/notarization, hosted KVM, Cloudflare
+publication, and the physical-Mac public install plus VZ guest shell.
+
 Every portable release-critical CI path must be executable locally through the
 same production entrypoint. Do not create a local lookalike that merely checks
 similar commands. If CI calls a `just` recipe or checked-in script, local proof

@@ -17,6 +17,18 @@ generated schemas, hermetic fixture definitions, logs, DB rows, and installed
 package metadata. If the contract is missing, write the RED test for the
 missing contract.
 
+### Ironbank parity rule
+
+The Ironbank parity rule is that every portable release gate belongs in
+`just test`. The exact candidate must pass the complete recipe locally, then
+exact-SHA CI must run the same recipe; green split jobs do not replace it.
+Specialized workflows must reuse the same checked-in entrypoints exercised by
+`just test`, including workspace/runtime tests, coverage floors,
+`capsem-doctor`, Ironbank acceptance, benchmarks, artifact checks, all web
+surfaces, and Docker/systemd Linux install plus a real guest-shell proof. Only
+unavoidable platform boundaries may remain outside, and each must be named
+with its authoritative final gate.
+
 ## Required Shape
 
 - Suite home: `tests/ironbank/`.

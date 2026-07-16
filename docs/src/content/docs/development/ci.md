@@ -159,18 +159,20 @@ later steps depend on earlier public state being true.
 
 ## PR gate compared with `just test`
 
-`just test` is still the full local/release validation command. GitHub-hosted PR
-CI splits that contract across jobs and names every runner substitution instead
-of pretending the hosted lane is identical.
+The Ironbank parity rule is that every portable release gate is owned by
+`just test`. The complete recipe must pass locally, and exact-SHA release
+qualification runs that same recipe. GitHub-hosted PR CI may split feedback
+across jobs, but those jobs reuse the same checked-in entrypoints and do not
+replace the canonical gate. Unavoidable runner substitutions are named below.
 
 | `just test` stage | PR CI proof | Difference |
 |-------------------|-------------|------------|
-| Audits, lint, frontend check/test/build | `test` job: dependency audit, Python lint/type/skills, frontend check/vitest/build | Same signal, split for GitHub summaries |
+| Audits, lint, and all web surfaces | `test`, `docs-build`, `site-build`, and `release-site-build` reuse `scripts/check-web-surface.sh` | Same checked-in entrypoint; `just test` remains the canonical owner |
 | Cross-compile agent (both arches) | `test` job: musl target check for `capsem-agent`; `test-linux` covers Linux host crates | Hosted PR substitution for Docker release cross-compile |
 | Rust workspace coverage | `test` and `test-linux` jobs run `cargo llvm-cov nextest` on macOS and Linux crate sets | Same coverage rail with runner-specific package sets |
 | Host binary signing prerequisites | `test` job builds and ad-hoc signs host binaries before non-VM integration suites | Same PR prerequisite for artifact-dependent Python suites |
 | Python schema and no-VM integration suites | `test` job runs schema coverage plus bootstrap, codesign, rootfs artifact, and release-channel suites | Same no-VM suites, scoped to generated artifacts available in CI |
-| Docs, marketing, and release-channel site builds | `docs-build`, `site-build`, and `release-site-build` install and build `docs/`, `site/`, and `release-site/` before `pr-gate` can pass | Merge-blocking build proof; deploy happens only after merge or explicit release-channel publication |
+| Docs, marketing, and release-channel site builds | `docs-build`, `site-build`, and `release-site-build` call the same web-surface entrypoint as `just test` before `pr-gate` can pass | Merge-blocking duplicate execution of the canonical local gate; deploy happens only after merge or explicit release-channel publication |
 | VM-heavy Python suites (`pytest tests/ -n 4`) | Import collection only on hosted PR runners | Runner substitution: full execution remains a local/release gate until PR runners can host Apple VZ reliably |
 | Serial timing, build-chain, release-channel, and route-health suites | Import collection only on hosted PR runners | Runner substitution: local `just test` and release gates remain authoritative |
 | Legacy injection/integration scripts and benchmark recording | Not run in hosted PR CI | Runner substitution: still required by local `just test` before release work is claimed |

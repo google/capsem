@@ -22,7 +22,7 @@
 #                       (audit, full doctor, injection, integration, parallel pytest groups)
 #   test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
 #                       + _check-assets + _pack-initrd + _materialize-config (everything: audit, cov, cross-compile,
-#                       frontend, python, injection, integration, bench, test-install)
+#                       all web surfaces, python, injection, integration, bench, test-install)
 #   bench            -> _ensure-dev-ready + _check-assets + _pack-initrd + _materialize-config + _ensure-service
 #   test-gateway     -> (no deps; unit + mock UDS tests)
 #   test-gateway-e2e -> _check-assets + _pack-initrd + _materialize-config + _sign (real service + VMs)
@@ -207,9 +207,7 @@ build-ui profile="debug": _pnpm-install _generate-settings
     #!/bin/bash
     set -euo pipefail
     echo "=== Frontend build ==="
-    cd frontend
-    pnpm run build
-    cd ..
+    bash scripts/check-web-surface.sh frontend-build
     echo ""
     echo "=== capsem-app ({{profile}}) build ==="
     if [[ "{{profile}}" == "release" ]]; then
@@ -224,17 +222,12 @@ build-ui profile="debug": _pnpm-install _generate-settings
 
 # Frontend release gate used by Sprinty and docs.
 test-frontend: _pnpm-install _generate-settings
-    #!/bin/bash
-    set -euo pipefail
-    cd frontend
-    pnpm run check
-    pnpm run test
-    pnpm run build
+    bash scripts/check-web-surface.sh frontend
 
 # Build both public documentation surfaces used by the release gate.
 docs: _pnpm-install
-    pnpm --dir docs run build
-    pnpm --dir site run build
+    bash scripts/check-web-surface.sh docs
+    bash scripts/check-web-surface.sh site
 
 # Run the Tauri desktop app after a clean frontend+binary rebuild.
 # Pass extra args after `--`: `just run-ui -- --connect <vm-id>`.
@@ -444,20 +437,27 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     # clippy: capsem-app's Tauri context embeds frontend/dist at compile time.
     # `set -e` does not trip on failed background jobs, so aggregate with
     # FAIL=1.
-    echo "=== Audits + lint + frontend ==="
+    echo "=== Audits + lint + web surfaces ==="
     cargo audit & PID_CARGO_AUDIT=$!
     python3 scripts/audit-pnpm-bulk.py --project-dir frontend & PID_PNPM_AUDIT=$!
     uv run ruff check . & PID_RUFF=$!
     uv run ty check src/capsem & PID_TY=$!
     uv run capsem-builder validate-skills skills & PID_SKILLS=$!
     FAIL=0
-    if ! (
-        cd frontend
-        pnpm run check
-        pnpm run test
-        pnpm run build
-    ); then
+    if ! bash scripts/check-web-surface.sh frontend; then
         echo "frontend (check/test/build) failed"
+        FAIL=1
+    fi
+    if ! bash scripts/check-web-surface.sh docs; then
+        echo "docs build failed"
+        FAIL=1
+    fi
+    if ! bash scripts/check-web-surface.sh site; then
+        echo "marketing site build failed"
+        FAIL=1
+    fi
+    if ! bash scripts/check-web-surface.sh release-site; then
+        echo "release site (check/test/generated channel build) failed"
         FAIL=1
     fi
     cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
@@ -1839,7 +1839,7 @@ _pnpm-install:
     done
 
 _frontend: _pnpm-install
-    cd frontend && pnpm build
+    bash scripts/check-web-surface.sh frontend-build
 
 _compile: _frontend _clean-stale
     cargo build -p capsem

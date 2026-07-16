@@ -66,7 +66,7 @@ jobs:
       - name: Build release site pages
         env:
           CAPSEM_RELEASE_CHANNEL_DIST: ${{ github.workspace }}/target/release-channel
-        run: cd release-site && pnpm run build:channel
+        run: bash scripts/check-web-surface.sh release-site-build
 
       - name: Check staging release channel
         run: |
