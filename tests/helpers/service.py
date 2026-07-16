@@ -56,6 +56,14 @@ def make_capsem_tmp_dir(prefix: str) -> Path:
     return Path(tempfile.mkdtemp(prefix=prefix, dir=capsem_test_tmp_parent()))
 
 
+def make_service_home_run_dirs() -> tuple[Path, Path]:
+    """Create the installed home/run layout for an isolated test service."""
+    home_dir = make_capsem_tmp_dir("capsem-test-")
+    run_dir = home_dir / "run"
+    run_dir.mkdir()
+    return home_dir, run_dir
+
+
 def _contains_profile_toml(profiles_dir: Path) -> bool:
     return any(path.name == "profile.toml" for path in profiles_dir.glob("*/profile.toml"))
 
@@ -232,9 +240,7 @@ class ServiceInstance:
         # home itself as CAPSEM_RUN_DIR makes main_db_path_for_run_dir() resolve
         # to the shared system temporary directory, so parallel workers all
         # write the same /tmp/sessions/main.db.
-        self.home_dir = make_capsem_tmp_dir("capsem-test-")
-        self.tmp_dir = self.home_dir / "run"
-        self.tmp_dir.mkdir()
+        self.home_dir, self.tmp_dir = make_service_home_run_dirs()
         self.uds_path = self.tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
         self.assets_dir = assets_dir
         self.profiles_dir = None

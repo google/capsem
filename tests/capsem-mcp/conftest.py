@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from helpers.constants import EXEC_READY_TIMEOUT
 from helpers.mcp import kill_mcp_proc, wait_exec_ready as mcp_wait_exec_ready
 from helpers.service import (
-    make_capsem_tmp_dir,
+    make_service_home_run_dirs,
     materialize_test_profiles,
     preserve_tmp_dir_on_failure,
 )
@@ -133,25 +133,29 @@ def _start_capsem_service():
     sign_binary(PROCESS_BINARY)
     sign_binary(SERVICE_BINARY)
 
-    tmp_dir = make_capsem_tmp_dir("capsem-test-")
-    print(f"\n@@@ WORKER {os.environ.get('PYTEST_XDIST_WORKER', 'master')} TMP_DIR: {tmp_dir}", file=sys.stderr)
-    uds_path = tmp_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
+    home_dir, run_dir = make_service_home_run_dirs()
+    print(
+        f"\n@@@ WORKER {os.environ.get('PYTEST_XDIST_WORKER', 'master')} "
+        f"TMP_DIR: {home_dir}",
+        file=sys.stderr,
+    )
+    uds_path = run_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
 
     arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
     assets_dir = ASSETS_DIR / arch
 
     env = os.environ.copy()
     env["RUST_LOG"] = "debug"
-    env["CAPSEM_RUN_DIR"] = str(tmp_dir)
-    env["CAPSEM_HOME"] = str(tmp_dir)
-    env["HOME"] = str(tmp_dir)
-    env["CAPSEM_PROFILES_DIR"] = str(materialize_test_profiles(tmp_dir))
+    env["CAPSEM_RUN_DIR"] = str(run_dir)
+    env["CAPSEM_HOME"] = str(home_dir)
+    env["HOME"] = str(home_dir)
+    env["CAPSEM_PROFILES_DIR"] = str(materialize_test_profiles(run_dir))
     env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
-        tmp_dir / "credential-store.json"
+        home_dir / "credential-store.json"
     )
 
-    log_path = tmp_dir / "service.log"
-    stderr_path = tmp_dir / "service.stderr.log"
+    log_path = run_dir / "service.log"
+    stderr_path = run_dir / "service.stderr.log"
     stderr_file = open(stderr_path, "w")
 
     # Skip --tray-binary: macOS menu bar icon; flashes on every test.
@@ -204,8 +208,8 @@ def _start_capsem_service():
         if stderr_path.exists():
             print(f"\n--- SERVICE STDERR ---\n{stderr_path.read_text()}\n---", file=sys.stderr)
 
-        preserve_tmp_dir_on_failure(tmp_dir)
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        preserve_tmp_dir_on_failure(home_dir)
+        shutil.rmtree(home_dir, ignore_errors=True)
 
     return uds_path, teardown
 

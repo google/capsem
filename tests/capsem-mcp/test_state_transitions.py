@@ -1,13 +1,31 @@
 """State-changing MCP tools: suspend, persist, purge."""
 
+import shutil
 import uuid
 
 import pytest
 
 from helpers.constants import EXEC_READY_TIMEOUT
 from helpers.mcp import parse_content, wait_exec_ready
+from helpers.service import make_service_home_run_dirs
 
 pytestmark = pytest.mark.mcp
+
+
+def test_mcp_service_dirs_isolate_session_index_databases():
+    """Each service fixture must derive a private sessions/main.db path."""
+    home_a, run_a = make_service_home_run_dirs()
+    home_b, run_b = make_service_home_run_dirs()
+    try:
+        db_a = run_a.parent / "sessions" / "main.db"
+        db_b = run_b.parent / "sessions" / "main.db"
+
+        assert run_a == home_a / "run"
+        assert run_b == home_b / "run"
+        assert db_a != db_b
+    finally:
+        shutil.rmtree(home_a, ignore_errors=True)
+        shutil.rmtree(home_b, ignore_errors=True)
 
 
 def test_suspend_and_resume_persistent(fresh_vm, mcp_session):
