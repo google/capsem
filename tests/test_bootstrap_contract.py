@@ -54,6 +54,15 @@ def test_bootstrap_uses_colima_exit_status_not_running_text() -> None:
     assert 'colima status 2>&1 | grep -qi "running"' not in bootstrap
 
 
+def test_bootstrap_repairs_stale_live_rosetta_registration_before_docker_probe() -> None:
+    bootstrap = _read("bootstrap.sh")
+
+    registration = "colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta"
+    assert registration in bootstrap
+    assert "colima restart" in bootstrap
+    assert bootstrap.index(registration) < bootstrap.index("docker info >/dev/null")
+
+
 def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     justfile = _read("justfile")
     web_gate = _read("scripts/check-web-surface.sh")

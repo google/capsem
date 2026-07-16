@@ -329,6 +329,36 @@ def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:
     assert swapped_packages == native_packages
 
 
+def test_cross_arch_tauri_swap_primes_native_introspection_provider() -> None:
+    """Ubuntu foreign GIR deps need the native Multi-Arch provider installed."""
+    swap_script = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text()
+
+    provider = '"gobject-introspection-bin:${NATIVE_ARCH}"'
+    foreign_install = '"${FOREIGN_PKGS[@]}"'
+    assert provider in swap_script
+    assert swap_script.index(provider) < swap_script.index(foreign_install)
+
+
+def test_cross_arch_frontend_build_precedes_foreign_dev_library_swap() -> None:
+    """The foreign GTK graph removes native Node; build static UI first."""
+    cross_compile = _just_recipe_block("cross-compile ")
+
+    frontend = "echo '--- Build frontend ---'"
+    swap = "swap-dev-libs \\$DPKG_ARCH"
+    rust = "echo '--- Build agent binaries ---'"
+    assert cross_compile.index(frontend) < cross_compile.index(swap)
+    assert cross_compile.index(swap) < cross_compile.index(rust)
+
+
+def test_deb_repacker_strips_each_elf_with_its_target_tool_and_fails_closed() -> None:
+    repack = (PROJECT_ROOT / "scripts/repack-deb.sh").read_text()
+
+    assert "x86_64-linux-gnu-strip" in repack
+    assert "aarch64-linux-gnu-strip" in repack
+    assert "CAPSEM_REPACK_STRIP" not in repack
+    assert "could not be stripped" not in repack
+
+
 def test_cross_compile_refreshes_the_cached_host_builder_image() -> None:
     cross_compile = _just_recipe_block("cross-compile ")
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
@@ -763,8 +793,8 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "ASSET_MODE=" not in repack_deb
     assert "export COPYFILE_DISABLE=1" in repack_deb
     assert "strip_packaged_binaries" in repack_deb
-    assert "CAPSEM_REPACK_STRIP:-1" in repack_deb
-    assert 'strip --strip-unneeded "$path"' in repack_deb
+    assert "CAPSEM_REPACK_STRIP" not in repack_deb
+    assert '"$strip_tool" --strip-unneeded "$path"' in repack_deb
     assert 'CONFIG_ROOT="${POSITIONAL[2]}"' in repack_deb
     assert "--manifest" in repack_deb
     assert "materialize_manifest_input" not in repack_deb

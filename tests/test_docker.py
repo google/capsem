@@ -2079,7 +2079,7 @@ class TestRootfsArtifactConstants:
 
 
 class TestCrossCompileAgent:
-    """Tests for cross_compile_agent() -- delegates to container on macOS."""
+    """Tests for host/target-aware guest binary compilation dispatch."""
 
     @patch("capsem.builder.docker.sys")
     @patch("capsem.builder.docker.container_compile_agent")
@@ -2093,9 +2093,10 @@ class TestCrossCompileAgent:
 
     @patch("capsem.builder.docker.container_compile_agent")
     @patch("capsem.builder.docker.sys")
+    @patch("capsem.builder.docker.platform.machine", return_value="aarch64")
     @patch("capsem.builder.docker.run_cmd")
     def test_native_on_linux_skips_container(
-        self, mock_run, mock_sys, mock_container, tmp_path,
+        self, mock_run, _mock_machine, mock_sys, mock_container, tmp_path,
     ):
         mock_sys.platform = "linux"
         mock_run.return_value = MagicMock(stdout="aarch64-unknown-linux-musl")
@@ -2115,6 +2116,31 @@ class TestCrossCompileAgent:
         assert len(cargo_calls) == 1
         assert "build" in cargo_calls[0][0][0]
         assert "--target" in cargo_calls[0][0][0]
+
+    @pytest.mark.parametrize(
+        ("host_machine", "rust_target"),
+        [
+            ("x86_64", "aarch64-unknown-linux-musl"),
+            ("amd64", "aarch64-unknown-linux-musl"),
+            ("aarch64", "x86_64-unknown-linux-musl"),
+            ("arm64", "x86_64-unknown-linux-musl"),
+        ],
+    )
+    @patch("capsem.builder.docker.container_compile_agent")
+    @patch("capsem.builder.docker.sys")
+    def test_foreign_target_on_linux_delegates_to_architecture_matched_container(
+        self, mock_sys, mock_container, host_machine, rust_target, tmp_path,
+    ):
+        mock_sys.platform = "linux"
+        mock_container.return_value = []
+
+        with patch("capsem.builder.docker.platform.machine", return_value=host_machine):
+            result = cross_compile_agent(rust_target, tmp_path, tmp_path / "out")
+
+        assert result == []
+        mock_container.assert_called_once_with(
+            rust_target, tmp_path, tmp_path / "out",
+        )
 
     @patch("capsem.builder.docker.container_compile_agent")
     @patch("capsem.builder.docker.sys")

@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -618,16 +619,21 @@ def cross_compile_agent(
 ) -> list[Path]:
     """Cross-compile guest agent binaries for a given Rust target.
 
-    On macOS, this delegates to container_compile_agent to avoid complex
-    local cross-linker setup for x86_64.
+    Foreign-architecture builds delegate to container_compile_agent so the C
+    toolchain used by transitive Rust dependencies matches the target CPU.
     """
-    # Use container build on macOS for cross-arch or if specifically requested.
-    # For now, let's follow the plan and ensure it uses container on macOS.
     if sys.platform == "darwin":
         print(f"  macOS detected: using container-native build for {rust_target}")
         return container_compile_agent(rust_target, repo_root, output_dir)
 
-    # Native cross-compile (Linux/CI)
+    if sys.platform.startswith("linux") and not _rust_target_is_native(rust_target):
+        print(
+            "  Linux foreign target detected "
+            f"({platform.machine()} -> {rust_target}): using container-native build"
+        )
+        return container_compile_agent(rust_target, repo_root, output_dir)
+
+    # Native Linux compile.
     # Ensure target installed
     try:
         result = run_cmd(
@@ -662,6 +668,24 @@ def cross_compile_agent(
         copied.append(dst)
     enforce_guest_binary_perms(copied)
     return copied
+
+
+def _rust_target_is_native(rust_target: str) -> bool:
+    """Return whether a supported Linux Rust target matches the host CPU."""
+    host_aliases = {
+        "aarch64": "aarch64",
+        "arm64": "aarch64",
+        "x86_64": "x86_64",
+        "amd64": "x86_64",
+    }
+    host_arch = host_aliases.get(platform.machine().lower())
+    if rust_target.startswith("aarch64-"):
+        target_arch = "aarch64"
+    elif rust_target.startswith("x86_64-"):
+        target_arch = "x86_64"
+    else:
+        raise ValueError(f"unsupported guest Rust target: {rust_target}")
+    return host_arch == target_arch
 
 
 def build_version_script(config: GuestImageConfig) -> str:

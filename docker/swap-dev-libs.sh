@@ -38,6 +38,12 @@ for pkg in "${DEV_PACKAGES[@]}"; do
 done
 
 apt-get update -qq
+# Ubuntu's foreign gobject-introspection package depends on the virtual
+# gobject-introspection-bin-linux provider. The native binary package is
+# Multi-Arch: foreign and provides that contract, but apt otherwise selects
+# the unavailable foreign provider. Prime the valid provider explicitly.
+apt-get install -y --no-install-recommends \
+    "gobject-introspection-bin:${NATIVE_ARCH}" >/dev/null
 apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-overwrite" "${FOREIGN_PKGS[@]}"
 rm -rf /var/lib/apt/lists/*
 

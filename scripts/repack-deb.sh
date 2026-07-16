@@ -147,35 +147,36 @@ is_elf_binary() {
 }
 
 strip_packaged_binaries() {
-    if [ "${CAPSEM_REPACK_STRIP:-1}" = "0" ]; then
-        echo "  Skipping ELF strip: CAPSEM_REPACK_STRIP=0"
-        return
-    fi
-    if ! command -v strip >/dev/null 2>&1; then
-        echo "  WARNING: strip not found; packaging ELF binaries with debug symbols" >&2
-        return
-    fi
-
     local stripped=0
-    local failed=0
     local path
     while IFS= read -r -d '' path; do
         if ! is_elf_binary "$path"; then
             continue
         fi
-        if strip --strip-unneeded "$path" 2>/dev/null; then
-            stripped=$((stripped + 1))
+        local description candidate strip_tool
+        description="$(LC_ALL=C file -b "$path")"
+        case "$description" in
+            *x86-64*) candidate="x86_64-linux-gnu-strip" ;;
+            *aarch64*|*ARM64*) candidate="aarch64-linux-gnu-strip" ;;
+            *) candidate="strip" ;;
+        esac
+        if command -v "$candidate" >/dev/null 2>&1; then
+            strip_tool="$candidate"
+        elif command -v strip >/dev/null 2>&1; then
+            strip_tool="strip"
         else
-            echo "  WARNING: unable to strip debug symbols from $path" >&2
-            failed=$((failed + 1))
+            echo "ERROR: no strip tool available for $description ($path)" >&2
+            return 1
         fi
+        if ! "$strip_tool" --strip-unneeded "$path"; then
+            echo "ERROR: $strip_tool failed for $description ($path)" >&2
+            return 1
+        fi
+        stripped=$((stripped + 1))
     done < <(find "$WORK_DIR/deb/usr/bin" -maxdepth 1 -type f -print0)
 
     if [ "$stripped" -gt 0 ]; then
         echo "  Stripped ELF binaries: $stripped"
-    fi
-    if [ "$failed" -gt 0 ]; then
-        echo "  WARNING: $failed ELF binaries could not be stripped" >&2
     fi
 }
 

@@ -203,6 +203,27 @@ case "$(uname -s)" in
                     colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
                 fi
             fi
+            # The persistent config can say Rosetta is enabled while the
+            # running VM predates that config and has no live binfmt handler.
+            # Repair that stale runtime before the Docker probe or expensive
+            # cross-architecture builds. Intel Macs do not need Rosetta.
+            if command -v colima >/dev/null 2>&1 \
+                && colima status >/dev/null 2>&1 \
+                && [ "$(uname -m)" = "arm64" ]; then
+                colima_yaml="$HOME/.colima/default/colima.yaml"
+                if [ -f "$colima_yaml" ] \
+                    && grep -q 'rosetta: true' "$colima_yaml" \
+                    && grep -q 'vmType: vz' "$colima_yaml"; then
+                    if ! colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1; then
+                        if confirm "restart Colima to register Rosetta for amd64 release builds"; then
+                            colima restart
+                        fi
+                    fi
+                elif confirm "restart Colima with VZ Rosetta for amd64 release builds"; then
+                    colima stop
+                    colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
+                fi
+            fi
             if command -v docker >/dev/null 2>&1; then
                 docker info >/dev/null
                 docker run --rm --pull=missing alpine:3.20 true >/dev/null

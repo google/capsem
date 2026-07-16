@@ -881,6 +881,8 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         -w /src \
         capsem-host-builder:latest \
         bash -c "trap 'chown -R \"\$HOST_UID:\$HOST_GID\" /src/dist /src/frontend/node_modules /src/frontend/dist 2>/dev/null || true' EXIT && \
+               echo '--- Build frontend ---' && \
+               cd frontend && CI=true pnpm install && pnpm build && cd .. && \
                swap-dev-libs \$DPKG_ARCH && \
                echo '--- Build agent binaries ---' && \
                cargo build --release --target \$RUST_TARGET -p capsem-agent && \
@@ -888,8 +890,6 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                cp /cargo-target/\$RUST_TARGET/release/capsem-pty-agent /cargo-target/\$RUST_TARGET/release/capsem-mcp-server /cargo-target/\$RUST_TARGET/release/capsem-net-proxy /cargo-target/\$RUST_TARGET/release/capsem-dns-proxy /cargo-target/\$RUST_TARGET/release/capsem-sysutil /cargo-target/linux-agent/\$TARGET_ARCH/ && \
                echo '--- Build companion host binaries ---' && \
                cargo build --release --target \$RUST_TARGET -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin && \
-               echo '--- Build frontend ---' && \
-               cd frontend && CI=true pnpm install && pnpm build && cd .. && \
                echo '--- Resolve Tauri signing key ---' && \
                DEV_KEY=/cargo-target/dev-tauri-private && \
                if [ -z \"\${TAURI_SIGNING_PRIVATE_KEY:-}\" ]; then \
