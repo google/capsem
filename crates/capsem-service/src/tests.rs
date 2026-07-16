@@ -765,7 +765,9 @@ fn test_profile_mutation_db(run_dir: &StdPath) -> Arc<capsem_logger::DbHandle> {
 }
 
 fn make_test_state() -> Arc<ServiceState> {
-    let run_dir = PathBuf::from("/tmp/capsem-test-svc");
+    let test_tempdir = tempfile::tempdir().unwrap();
+    let run_dir = test_tempdir.path().join("run");
+    std::fs::create_dir_all(&run_dir).unwrap();
     let registry_path = run_dir.join("persistent_registry.json");
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     Arc::new(ServiceState {
@@ -804,6 +806,7 @@ fn make_test_state() -> Arc<ServiceState> {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        _test_tempdir: Some(test_tempdir),
     })
 }
 
@@ -1092,6 +1095,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        _test_tempdir: None,
     })
 }
 
@@ -6850,7 +6854,8 @@ fn drain_dead_instances_releases_mutex_before_returning() {
 // Cap: MAX_FAILED_SESSIONS (5).
 // -----------------------------------------------------------------------
 
-fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
+fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
+    let run_dir = test_root.join("run");
     let registry_path = run_dir.join("persistent_registry.json");
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     std::fs::create_dir_all(run_dir.join("sessions")).unwrap();
@@ -6890,6 +6895,7 @@ fn make_state_in(run_dir: PathBuf) -> Arc<ServiceState> {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        _test_tempdir: None,
     })
 }
 
@@ -7398,8 +7404,9 @@ fn provision_persistent_validates_name() {
 
 fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
-    let registry_path = dir.path().join("persistent_registry.json");
-    let run_dir = dir.path().to_path_buf();
+    let run_dir = dir.path().join("run");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let registry_path = run_dir.join("persistent_registry.json");
     let asset_status_path = asset_status_path_for_run_dir(&run_dir);
     let state = Arc::new(ServiceState {
         instances: Mutex::new(HashMap::new()),
@@ -7437,8 +7444,41 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        _test_tempdir: None,
     });
     (state, dir)
+}
+
+#[test]
+fn tempdir_test_states_use_distinct_session_index_databases() {
+    let (first, first_dir) = make_test_state_with_tempdir();
+    let (second, second_dir) = make_test_state_with_tempdir();
+
+    let first_db = first.main_db_path();
+    let second_db = second.main_db_path();
+
+    assert!(
+        first_db.starts_with(first_dir.path()),
+        "first test database escaped its tempdir: {}",
+        first_db.display()
+    );
+    assert!(
+        second_db.starts_with(second_dir.path()),
+        "second test database escaped its tempdir: {}",
+        second_db.display()
+    );
+    assert_ne!(
+        first_db, second_db,
+        "independent test states must not share a session index database"
+    );
+
+    let first_owned = make_test_state();
+    let second_owned = make_test_state();
+    assert_ne!(
+        first_owned.main_db_path(),
+        second_owned.main_db_path(),
+        "test states that own their tempdirs must not share a session index database"
+    );
 }
 
 #[tokio::test]
@@ -10143,6 +10183,7 @@ fn make_test_state_with_tempdir_at(
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        _test_tempdir: None,
     });
     (state, dir)
 }

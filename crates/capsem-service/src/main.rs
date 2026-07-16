@@ -260,6 +260,11 @@ struct ServiceState {
     /// sufficient because production runs exactly one capsem-service per
     /// user-host.
     shutdown_lock: tokio::sync::Mutex<()>,
+    /// Keeps the unique filesystem root alive for helpers that return only a
+    /// service state. Test constructors that return their TempDir separately
+    /// leave this empty.
+    #[cfg(test)]
+    _test_tempdir: Option<tempfile::TempDir>,
 }
 
 #[derive(Clone)]
@@ -12746,6 +12751,8 @@ async fn main() -> Result<()> {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        #[cfg(test)]
+        _test_tempdir: None,
     });
     hydrate_startup_route_caches(&state).map_err(|AppError(_, message)| anyhow!("{message}"))?;
     state.hydrate_session_db_handles();
