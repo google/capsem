@@ -969,6 +969,7 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
     acquire_exec_lock "$HOME/.capsem/run/execution.lock"
     VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
     MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"
+    MANIFEST_CHANNEL="${CAPSEM_INSTALL_CHANNEL:-stable}"
     export CAPSEM_BUILD_TS=$(date +%y%m%d%H%M)
     echo "=== Building release binaries (build=$CAPSEM_BUILD_TS) ==="
     cargo build --release {{host_crates}}
@@ -1049,6 +1050,18 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
     fi
     "$HOME/.capsem/bin/capsem" status
     "$HOME/.capsem/bin/capsem" debug
+    echo "=== Verifying installed release contract ==="
+    python3 scripts/verify-installed-release.py \
+        --capsem "$HOME/.capsem/bin/capsem" \
+        --manifest-url "$MANIFEST_URL" \
+        --channel "$MANIFEST_CHANNEL" \
+        --package-version "$VERSION"
+    echo "=== Proving installed guest shell ==="
+    python3 scripts/prove-installed-shell.py \
+        --capsem "$HOME/.capsem/bin/capsem" \
+        --marker CAPSEM_LOCAL_NATIVE_INSTALL_SHELL_OK \
+        --session-name local-native-install-shell \
+        --timeout 300
     if [ "$OS" = "Darwin" ]; then
         echo "=== Opening Capsem.app ==="
         open /Applications/Capsem.app
@@ -1207,16 +1220,17 @@ _test-install-harness-preflight:
     #!/bin/bash
     set -euo pipefail
     IMAGE="capsem-install-test"
-    if ! docker image inspect capsem-host-builder:latest >/dev/null 2>&1; then
-        just build-host-image
-    fi
+    # Always refresh the base from its checked-in Dockerfile. Docker keeps
+    # unchanged layers cached; merely checking whether the tag exists lets a
+    # stale local image hide new CI prerequisites.
+    just build-host-image
     check_install_image() {
         docker run --rm \
             -u capsem \
             -e UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test \
             -v "$PWD":/src:ro \
             "$IMAGE" \
-            bash -lc 'set -e; sudo -n true; cd /src && uv run python -m pytest --version'
+            bash -lc 'set -e; sudo -n true; cd /src; cdxgen --version; source /src/scripts/doctor-linux.sh; linux_musl_toolchain_available; uv run python -m pytest --version'
     }
     docker build -t "$IMAGE" -f docker/Dockerfile.install-test .
     if ! check_install_image; then

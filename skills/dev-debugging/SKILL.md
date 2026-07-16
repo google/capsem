@@ -142,6 +142,21 @@ After the fix, run the full validation:
 2. `just exec "capsem-doctor"` -- VM smoke test
 3. If the bug touched telemetry: `just inspect-session` after a real session
 
+## Local/CI execution parity
+
+When a bug appears only in CI, first identify the exact production entrypoint,
+runner dependency, architecture, environment variable, permission, device, or
+service-manager difference that local testing skipped. Reproduce every portable
+Linux difference in Docker and execute the same production entrypoint or shared
+predicate that CI executes. A hand-written approximation is not a regression
+test.
+
+Keep an executable parity test after the fix and audit sibling workflows for
+the same one-sided assumption. If reproduction crosses an unavoidable platform
+boundary, document the boundary and preserve the nearest local contract plus
+the required exact-SHA CI or physical-machine proof. Do not relabel an
+unreproduced CI failure as transient.
+
 ## What NOT to do
 
 - **Do not "fix" a failing test by changing the test assertion.** The test is telling you something. Listen to it. If the test is genuinely wrong, explain why in detail before changing it.

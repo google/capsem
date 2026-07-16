@@ -50,6 +50,30 @@ ordering contract for this Stage 0 proof. It is fail-fast infrastructure
 validation only: the later Docker/systemd install E2E remains mandatory and
 must still exercise the installed package and post-install behavior.
 
+## Local/CI execution parity
+
+Every portable release-critical CI path must be executable locally through the
+same production entrypoint. Do not create a local lookalike that merely checks
+similar commands. If CI calls a `just` recipe or checked-in script, local proof
+must call that same recipe or script; if a requirement is implemented as a
+shared shell function, both paths must execute that function.
+
+Run Linux-only build, doctor, package, and service prerequisites in Docker from
+`just test` whenever the host is macOS. Match the CI architecture, command
+names, environment variables, permissions, and service manager as closely as
+the container permits. Add a contract test that ties the workflow command to
+the local entrypoint, plus an executable container regression for the failed
+requirement. A CI-only failure is evidence of a missing parity gate: add the
+local reproducer before rerunning CI.
+
+When an unavoidable platform boundary prevents local execution, name it in the
+release skill and retain the nearest deterministic local proof. Hardware and
+external-service gates still require exact-SHA CI evidence; macOS VZ behavior
+still requires the final physical Mac install and guest-shell proof. Examples
+include Apple signing/notarization, hosted-runner KVM, Cloudflare publication,
+and physical-Mac VZ. Never silently omit a gate because the current host cannot
+run it.
+
 ## TDD workflow
 
 Write tests first:

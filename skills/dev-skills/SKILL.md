@@ -181,3 +181,12 @@ Skills in `~/.claude/skills/` are available across all projects. We install meta
 7. **Skills load on demand** -- having 18 skills costs nothing when they're not triggered. Don't try to merge skills to save space.
 8. **Agent clients read the same format.** SKILL.md with YAML frontmatter works
    for Claude Code, Gemini CLI, Codex, and Cursor. No duplication needed.
+9. **Treat local/CI parity as a tested contract.** A Linux asset workflow once
+   failed only in CI because the doctor required
+   `x86_64-linux-musl-gcc` on an arm64 runner even though the native `musl-gcc`
+   installed by `musl-tools` was the real build contract. The local
+   Docker rail had tested package installation but not that exact doctor
+   predicate. Whenever CI exposes a missing dependency or runner assumption,
+   execute the same production entrypoint or shared predicate locally in
+   Docker when possible, add a regression, and audit sibling workflows before
+   retrying CI. Record any unavoidable platform boundary explicitly.

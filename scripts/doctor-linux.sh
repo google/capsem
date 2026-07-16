@@ -86,19 +86,18 @@ _doctor_install_linux_musl_tools() {
     fi
 }
 
+linux_musl_toolchain_available() {
+    command -v musl-gcc >/dev/null 2>&1 \
+        && musl-gcc --version >/dev/null 2>&1
+}
+
 check_linux_musl_toolchain() {
     section "C Toolchain"
 
-    if command -v musl-gcc &>/dev/null; then
+    if linux_musl_toolchain_available; then
         pass "musl-gcc"
     else
         fixable linux-musl-tools "musl-gcc missing -- install: $(tool_hint musl-tools)"
-    fi
-
-    if command -v x86_64-linux-musl-gcc &>/dev/null; then
-        pass "x86_64-linux-musl-gcc"
-    else
-        fixable linux-musl-tools "x86_64-linux-musl-gcc missing -- install: $(tool_hint musl-tools)"
     fi
 }
 

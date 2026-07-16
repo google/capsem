@@ -924,10 +924,40 @@ def test_linux_doctor_installs_musl_c_toolchain_before_building_assets() -> None
     assert doctor.index("_reg linux-musl-tools") < doctor.index("_reg build-assets")
     assert "check_linux_musl_toolchain" in doctor
     assert 'section "C Toolchain"' in linux
+    assert "linux_musl_toolchain_available" in linux
     assert "command -v musl-gcc" in linux
-    assert "command -v x86_64-linux-musl-gcc" in linux
+    assert "command -v x86_64-linux-musl-gcc" not in linux
     assert "apt-get install -y musl-tools" in linux
     assert "dnf install -y musl-gcc" in linux
+
+
+def test_linux_doctor_accepts_native_musl_gcc_without_x86_cross_compiler(
+    tmp_path: Path,
+) -> None:
+    musl_gcc = tmp_path / "musl-gcc"
+    musl_gcc.write_text("#!/bin/sh\nexit 0\n")
+    musl_gcc.chmod(0o755)
+
+    result = subprocess.run(
+        [
+            "/bin/bash",
+            "-c",
+            """
+            source scripts/doctor-linux.sh
+            section() { :; }
+            pass() { printf 'PASS:%s\\n' "$1"; }
+            fixable() { printf 'FIXABLE:%s\\n' "$*"; }
+            check_linux_musl_toolchain
+            """,
+        ],
+        cwd=PROJECT_ROOT,
+        env={"PATH": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout == "PASS:musl-gcc\n"
 
 
 def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
@@ -2478,6 +2508,64 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
         "needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]"
         in workflow
     )
+
+
+def test_release_skills_require_local_ci_execution_parity_and_record_native_musl_lesson() -> None:
+    testing = (PROJECT_ROOT / "skills/dev-testing/SKILL.md").read_text()
+    skills = (PROJECT_ROOT / "skills/dev-skills/SKILL.md").read_text()
+    debugging = (PROJECT_ROOT / "skills/dev-debugging/SKILL.md").read_text()
+    release = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+
+    for document in (testing, debugging, release):
+        assert "Local/CI execution parity" in document
+        assert "same production entrypoint" in document
+        assert "Docker" in document
+
+    assert "local/CI parity" in skills
+    assert "native `musl-gcc`" in skills
+    assert "`x86_64-linux-musl-gcc`" in skills
+    assert "unavoidable platform boundary" in testing
+    assert "physical Mac" in testing
+    assert "exact-SHA CI" in testing
+    assert "release-assets.yaml" in release
+    assert "linux_musl_toolchain_available" in release
+
+
+def test_release_critical_workflows_share_local_entrypoints_or_name_platform_boundaries() -> None:
+    just = (PROJECT_ROOT / "justfile").read_text()
+    qualification = _workflow_text("release-qualification.yaml")
+    assets = _workflow_text("release-assets.yaml")
+    ci = _workflow_text("ci.yaml")
+    release = _workflow_text("release.yaml")
+    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+
+    assert "run: just test" in qualification
+    assert "test:" in just
+
+    for command in ("just build-kernel", "just build-rootfs"):
+        assert command in assets
+    assert "build-kernel arch" in just
+    assert "build-rootfs arch" in just
+
+    assert "run: just test-install" in ci
+    assert "test-install:" in just
+
+    for shared_script in (
+        "scripts/build-pkg.sh",
+        "scripts/repack-deb.sh",
+        "scripts/verify-installed-release.py",
+        "scripts/prove-installed-shell.py",
+    ):
+        assert shared_script in release
+        assert shared_script in just
+
+    for unavoidable_boundary in (
+        "Apple signing and notarization",
+        "hosted-runner KVM",
+        "Cloudflare publication",
+        "physical-Mac VZ shell proof",
+    ):
+        assert unavoidable_boundary in release_skill
 
 
 def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -> None:

@@ -479,6 +479,37 @@ artifact install gates fan out. Publication cannot start unless all are green.
 
 ### CI invariants (hard-won lessons)
 
+#### Local/CI execution parity
+
+Every portable release-critical workflow must share the same production
+entrypoint with a local gate. Current required mappings are:
+
+- candidate qualification: local and CI both execute `just test`;
+- VM assets: local and `release-assets.yaml` both execute
+  `just build-kernel` and `just build-rootfs`;
+- Linux package E2E: local and PR CI both execute `just test-install`;
+- package assembly and acceptance: local and release CI share
+  `scripts/build-pkg.sh`, `scripts/repack-deb.sh`,
+  `scripts/verify-installed-release.py`, and
+  `scripts/prove-installed-shell.py`; `just install` must finish with the same
+  installed-manifest verification and real guest-shell proof before success.
+
+Run portable Linux prerequisites in Docker before spending CI. The container
+must execute the same production entrypoint or shared predicate, not a copied
+approximation. The native-musl regression is the model: asset CI installs
+`musl-tools`, so both `just build-kernel`/`just build-rootfs` and the local
+Docker preflight execute `linux_musl_toolchain_available`, which accepts the
+native `musl-gcc` on arm64 and x86_64 without inventing an
+`x86_64-linux-musl-gcc` requirement.
+
+The unavoidable platform boundaries are Apple signing and notarization,
+hosted-runner KVM, Cloudflare publication, and physical-Mac VZ shell proof.
+Keep their nearest deterministic local contract, but never claim the boundary
+itself from emulation: retain exact-SHA CI for hosted services/KVM and the
+literal public install plus guest-shell proof on a physical Mac. Any new
+CI-only step must either gain a local shared-entrypoint proof or be added to
+this explicit boundary list with its substitute and final authoritative gate.
+
 - **CI is a clean checkout.** If the build depends on a generated source file,
   either track it or regenerate it in CI before the consumer imports it. A local
   generated file hidden by `.gitignore` can pass local tests and fail immediately

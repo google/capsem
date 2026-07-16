@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made release qualification validate the live public manifest with the exact
   candidate runtime, and made update checks reject profile graphs that the
   runtime cannot install, including graphs missing required image revisions.
+- Made the Linux doctor accept the portable native `musl-gcc` supplied by the
+  supported packages instead of requiring an x86-only cross-compiler on arm64
+  asset-build runners, and exercise the same check in the local Docker
+  preflight before expensive release gates.
+- Made local/CI release-path parity a tested project rule, documented the
+  native musl doctor miss as a hard-won lesson, and required explicit
+  authoritative gates for platform boundaries that cannot run locally. The
+  local Linux release container now also carries and preflights the same
+  `cdxgen` asset-evidence tool installed by asset CI, refreshes its base image
+  from the checked-in Dockerfile, and makes `just install` verify the installed
+  manifest and execute a real guest-shell marker before succeeding.
 
 ## [1.5.1784153530] - 2026-07-15
 

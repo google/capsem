@@ -278,10 +278,31 @@ def test_full_gate_preflights_clean_install_harness_before_expensive_stages() ->
         "cargo clippy --workspace --all-targets"
     )
     assert "docker/Dockerfile.install-test" in preflight
+    assert "source /src/scripts/doctor-linux.sh" in preflight
+    assert "linux_musl_toolchain_available" in preflight
+    assert preflight.index("linux_musl_toolchain_available") < preflight.index(
+        "uv run python -m pytest --version"
+    )
     assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in preflight
     assert "uv run python -m pytest --version" in preflight
     assert "sudo -n true" in preflight
     assert "docker build --no-cache" in preflight
+
+
+def test_local_linux_preflight_contains_asset_ci_release_tools() -> None:
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+    preflight = justfile.split("_test-install-harness-preflight:", maxsplit=1)[1].split(
+        "\ntest-install:", maxsplit=1
+    )[0]
+    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+
+    assert "@cyclonedx/cdxgen@latest" in host_builder
+    assert "just build-host-image" in preflight
+    assert "if ! docker image inspect capsem-host-builder" not in preflight
+    assert "cdxgen --version" in preflight
+    assert preflight.index("cdxgen --version") < preflight.index(
+        "uv run python -m pytest --version"
+    )
 
 
 def test_standalone_install_gate_preflights_privileged_helper() -> None:
@@ -554,6 +575,16 @@ def test_local_native_install_uses_public_manifest_contract_by_default() -> None
     )
     assert '--manifest "$MANIFEST_URL"' in install
     assert '--manifest "file://$PWD/' not in install
+    assert 'MANIFEST_CHANNEL="${CAPSEM_INSTALL_CHANNEL:-stable}"' in install
+    assert "scripts/verify-installed-release.py" in install
+    assert '--manifest-url "$MANIFEST_URL"' in install
+    assert '--channel "$MANIFEST_CHANNEL"' in install
+    assert '--package-version "$VERSION"' in install
+    assert "scripts/prove-installed-shell.py" in install
+    assert "CAPSEM_LOCAL_NATIVE_INSTALL_SHELL_OK" in install
+    assert install.index("scripts/verify-installed-release.py") < install.index(
+        "scripts/prove-installed-shell.py"
+    )
 
 
 def test_dev_service_does_not_replace_installed_assets_with_worktree_symlink() -> None:
