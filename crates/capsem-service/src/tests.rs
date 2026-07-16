@@ -9294,11 +9294,14 @@ async fn resume_sandbox_passes_profile_scratch_disk_size_to_process() {
     let (mut state, _dir) = make_test_state_with_tempdir();
     let run_dir = state.run_dir.clone();
     let argv_path = run_dir.join("resume-argv.txt");
+    let argv_tmp_path = run_dir.join("resume-argv.txt.tmp");
     let process_path = run_dir.join("record-process-argv.sh");
     std::fs::write(
         &process_path,
         format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nsleep 1\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\nmv '{}' '{}'\nsleep 1\n",
+            argv_tmp_path.display(),
+            argv_tmp_path.display(),
             argv_path.display()
         ),
     )

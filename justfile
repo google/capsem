@@ -612,6 +612,15 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     #!/bin/bash
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
+    MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"
+    MANIFEST_CHANNEL="${CAPSEM_INSTALL_CHANNEL:-stable}"
+    case "$MANIFEST_CHANNEL" in
+        stable|nightly|corp) ;;
+        *)
+            echo "ERROR: CAPSEM_INSTALL_CHANNEL must be stable, nightly, or corp (got: $MANIFEST_CHANNEL)" >&2
+            exit 1
+            ;;
+    esac
     # Default to host architecture
     if [ -z "{{arch}}" ]; then
         TARGET_ARCH=$(uname -m | sed 's/aarch64/arm64/;s/x86_64/x86_64/')
@@ -668,26 +677,18 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     mkdir -p "$ROOT/dist"
     HOST_UID=$(id -u)
     HOST_GID=$(id -g)
-    # KVM boot test: pass KVM/vsock devices if available (Linux host);
-    # macOS runs without them. Docker's default seccomp profile blocks
-    # AF_VSOCK, so the native Linux boot test needs seccomp relaxed.
-    DOCKER_KVM_ARGS=()
-    if [ -e /dev/kvm ]; then
-        DOCKER_KVM_ARGS+=(--security-opt seccomp=unconfined --device /dev/kvm)
-        if [ -e /dev/vhost-vsock ]; then
-            DOCKER_KVM_ARGS+=(--device /dev/vhost-vsock)
-        fi
-        if [ -e /dev/vsock ]; then
-            DOCKER_KVM_ARGS+=(--device /dev/vsock)
-        fi
-    fi
+    # The builder is deliberately build-only: package postinstall requires a
+    # real systemd user session and must never be exercised in this container.
+    # Record the exact copied package so stale dist/ artifacts cannot be proved.
+    DEB_RECORD="$ROOT/dist/.cross-compile-$TARGET_ARCH-deb"
+    rm -f "$DEB_RECORD"
     docker run --rm \
-        ${DOCKER_KVM_ARGS[@]+"${DOCKER_KVM_ARGS[@]}"} \
         ${SIGNING_ARGS[@]+"${SIGNING_ARGS[@]}"} \
         -e "TARGET_ARCH=$TARGET_ARCH" \
         -e "RUST_TARGET=$RUST_TARGET" \
         -e "DPKG_ARCH=$DPKG_ARCH" \
         -e "PKG_CONFIG_PATH=$PKG_CONFIG_PATH_CROSS" \
+        -e "CAPSEM_INSTALL_MANIFEST_URL=$MANIFEST_URL" \
         -e "HOST_UID=$HOST_UID" \
         -e "HOST_GID=$HOST_GID" \
         -v "$ROOT:/src" \
@@ -726,26 +727,50 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
                cd crates/capsem-app && cargo tauri build --target \$RUST_TARGET --bundles deb && cd ../.. && \
                echo '--- Repack Debian package ---' && \
                DEB=\$(ls -t /cargo-target/\$RUST_TARGET/release/bundle/deb/*.deb | head -n1) && \
-               bash scripts/repack-deb.sh --manifest \"file://\$PWD/assets/manifest.json\" \"\$DEB\" \"/cargo-target/\$RUST_TARGET/release\" \"target/config\" \"assets\" && \
+               bash scripts/repack-deb.sh --manifest \"\$CAPSEM_INSTALL_MANIFEST_URL\" \"\$DEB\" \"/cargo-target/\$RUST_TARGET/release\" \"target/config\" \"assets\" && \
                echo '--- Validate artifacts ---' && \
                dpkg-deb --info \"\$DEB\" && \
                dpkg-deb --contents \"\$DEB\" | grep -E 'usr/bin/(capsem|capsem-service|capsem-process|capsem-tui|capsem-mcp|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin)\$' && \
                cp \"\$DEB\" /src/dist/ && \
-               cp /cargo-target/linux-agent/\$TARGET_ARCH/* /src/dist/ && \
-               echo '--- Boot test ---' && \
-               if [ -e /dev/kvm ] && [ \"\$TARGET_ARCH\" = \"\$(uname -m | sed 's/aarch64/arm64/')\" ]; then \
-                   echo 'KVM available + native arch: running boot test' && \
-                   dpkg -i \"\$DEB\" 2>/dev/null || apt-get install -f -y && \
-                   BOOT_USER=\"\${SUDO_USER:-\${USER:-}}\" && \
-                   if [ -z \"\$BOOT_USER\" ] || [ \"\$BOOT_USER\" = \"root\" ]; then BOOT_USER=\$(getent passwd 1000 | cut -d: -f1 || true); fi && \
-                   if [ -z \"\$BOOT_USER\" ]; then echo 'ERROR: cannot determine installed package user for boot test' >&2; exit 1; fi && \
-                   BOOT_HOME=\$(eval echo \"~\$BOOT_USER\") && \
-                   BOOT_CAPSEM_HOME=\"\$BOOT_HOME/.capsem\" && \
-                   test -x /usr/bin/capsem && command -v capsem >/dev/null && \
-                   CAPSEM_HOME=\"\$BOOT_CAPSEM_HOME\" CAPSEM_RUN_DIR=\"\$BOOT_CAPSEM_HOME/run\" timeout 120 python3 scripts/doctor_session_test.py --binary /usr/bin/capsem --assets \"\$BOOT_CAPSEM_HOME/assets\"; \
-               else \
-                   echo 'Skipping boot test (no KVM or cross-arch -- CI will test)'; \
-               fi"
+               basename \"\$DEB\" > \"/src/dist/.cross-compile-\$TARGET_ARCH-deb\" && \
+               cp /cargo-target/linux-agent/\$TARGET_ARCH/* /src/dist/"
+    if [ ! -s "$DEB_RECORD" ]; then
+        echo "ERROR: builder did not record the exact Debian package" >&2
+        exit 1
+    fi
+    DEB_BASENAME=$(tr -d '\r\n' < "$DEB_RECORD")
+    rm -f "$DEB_RECORD"
+    case "$DEB_BASENAME" in
+        *.deb) ;;
+        *)
+            echo "ERROR: invalid Debian package record: $DEB_BASENAME" >&2
+            exit 1
+            ;;
+    esac
+    if [ "$DEB_BASENAME" != "$(basename "$DEB_BASENAME")" ]; then
+        echo "ERROR: Debian package record escaped dist/: $DEB_BASENAME" >&2
+        exit 1
+    fi
+    DEB="$ROOT/dist/$DEB_BASENAME"
+    test -f "$DEB"
+
+    HOST_ARCH=$(uname -m | sed 's/aarch64/arm64/;s/x86_64/x86_64/')
+    if [ "$(uname -s)" = "Linux" ] \
+        && [ "$TARGET_ARCH" = "$HOST_ARCH" ] \
+        && [ -r /dev/kvm ] && [ -w /dev/kvm ] \
+        && [ -r /dev/vhost-vsock ] && [ -w /dev/vhost-vsock ]; then
+        echo "=== Proving exact Debian package in systemd + KVM ==="
+        CAPSEM_PROOF_DEB="$DEB" \
+        CAPSEM_PROOF_MANIFEST_URL="$MANIFEST_URL" \
+        CAPSEM_PROOF_MANIFEST_CHANNEL="$MANIFEST_CHANNEL" \
+            just _prove-linux-deb
+    elif [ "${CAPSEM_REQUIRE_LINUX_DEB_PROOF:-0}" = "1" ]; then
+        echo "ERROR: exact Debian package proof requires native Linux KVM and vhost-vsock" >&2
+        echo "       host=$(uname -s)/$HOST_ARCH target=$TARGET_ARCH kvm=$(test -r /dev/kvm -a -w /dev/kvm && echo ready || echo unavailable) vhost-vsock=$(test -r /dev/vhost-vsock -a -w /dev/vhost-vsock && echo ready || echo unavailable)" >&2
+        exit 1
+    else
+        echo "Skipping exact Debian package proof (requires native Linux KVM; release qualification makes this mandatory)."
+    fi
     echo ""
     echo "=== Artifacts ==="
     ls -lh "$ROOT/dist/"
@@ -1034,6 +1059,150 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
 # Run install e2e tests in Docker (Linux + systemd).
 # Builds the real .deb (Tauri + repack), installs with dpkg -i (exercises
 # deb-postinst.sh), then runs the pytest suite against the installed layout.
+_prove-linux-deb: _test-install-harness-preflight
+    #!/bin/bash
+    set -euo pipefail
+    ROOT="{{justfile_directory()}}"
+    MANIFEST_URL="${CAPSEM_PROOF_MANIFEST_URL:?exact package proof requires CAPSEM_PROOF_MANIFEST_URL}"
+    MANIFEST_CHANNEL="${CAPSEM_PROOF_MANIFEST_CHANNEL:?exact package proof requires CAPSEM_PROOF_MANIFEST_CHANNEL}"
+    case "$MANIFEST_CHANNEL" in
+        stable|nightly|corp) ;;
+        *)
+            echo "ERROR: unsupported exact package proof channel: $MANIFEST_CHANNEL" >&2
+            exit 1
+            ;;
+    esac
+    DEB_INPUT="${CAPSEM_PROOF_DEB:?exact package proof requires CAPSEM_PROOF_DEB}"
+    DEB_DIR=$(cd "$(dirname "$DEB_INPUT")" && pwd -P)
+    DEB="$DEB_DIR/$(basename "$DEB_INPUT")"
+    case "$DEB" in
+        "$ROOT"/dist/*.deb) ;;
+        *)
+            echo "ERROR: exact Debian package proof only accepts dist/*.deb (got: $DEB)" >&2
+            exit 1
+            ;;
+    esac
+    test -f "$DEB"
+    test -r /dev/kvm -a -w /dev/kvm
+    test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+
+    IMAGE="capsem-install-test"
+    CONTAINER="capsem-qualified-deb-proof"
+    RELATIVE_DEB="${DEB#$ROOT/}"
+    CONTAINER_DEB="/src/$RELATIVE_DEB"
+    EXPECTED_VERSION=$(dpkg-deb -f "$DEB" Version)
+    test -n "$EXPECTED_VERSION"
+
+    DEVICE_ARGS=(
+        --device /dev/kvm
+        --device /dev/vhost-vsock
+    )
+    if [ -r /dev/vsock ] && [ -w /dev/vsock ]; then
+        DEVICE_ARGS+=(--device /dev/vsock)
+    fi
+    cleanup() {
+        docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    }
+    trap cleanup EXIT
+    cleanup
+
+    echo "Starting clean systemd container for exact package proof..."
+    docker run -d --name "$CONTAINER" \
+        --privileged --cgroupns=host \
+        --security-opt seccomp=unconfined \
+        "${DEVICE_ARGS[@]}" \
+        -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+        --tmpfs /run --tmpfs /tmp \
+        -v "$ROOT:/src:ro" \
+        "$IMAGE" /usr/lib/systemd/systemd
+
+    SYSTEMD_READY=false
+    for _ in $(seq 1 60); do
+        if docker exec "$CONTAINER" systemctl is-system-running --wait 2>/dev/null \
+            | grep -qE 'running|degraded'; then
+            SYSTEMD_READY=true
+            break
+        fi
+        sleep 0.5
+    done
+    if [ "$SYSTEMD_READY" != "true" ]; then
+        echo "ERROR: systemd did not become ready for exact Debian package proof" >&2
+        docker logs "$CONTAINER" >&2 || true
+        exit 1
+    fi
+    docker exec "$CONTAINER" test -r /dev/kvm -a -w /dev/kvm
+    docker exec "$CONTAINER" test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+
+    echo "Installing exact package: $DEB"
+    docker exec -e CONTAINER_DEB="$CONTAINER_DEB" "$CONTAINER" \
+        bash -c 'dpkg -i "$CONTAINER_DEB" 2>&1 || apt-get install -f -y'
+    INSTALLED_STATE=$(docker exec "$CONTAINER" dpkg-query -W -f='${Status}' capsem)
+    INSTALLED_VERSION=$(docker exec "$CONTAINER" dpkg-query -W -f='${Version}' capsem)
+    test "$INSTALLED_STATE" = "install ok installed"
+    test "$INSTALLED_VERSION" = "$EXPECTED_VERSION"
+    for bin in \
+        capsem \
+        capsem-admin \
+        capsem-app \
+        capsem-gateway \
+        capsem-mcp \
+        capsem-mcp-aggregator \
+        capsem-mcp-builtin \
+        capsem-process \
+        capsem-service \
+        capsem-tray \
+        capsem-tui; do
+        docker exec "$CONTAINER" test -x "/usr/bin/$bin"
+        if [ "$bin" != "capsem-app" ]; then
+            docker exec "$CONTAINER" "/usr/bin/$bin" --version | grep -F "$EXPECTED_VERSION"
+        fi
+    done
+
+    STATUS_OUTPUT=$(docker exec \
+        -u capsem \
+        -e HOME=/home/capsem \
+        -e XDG_RUNTIME_DIR=/run/user/1000 \
+        "$CONTAINER" /usr/bin/capsem status)
+    printf '%s\n' "$STATUS_OUTPUT"
+    grep -F "Installed: true" <<<"$STATUS_OUTPUT"
+    grep -F "Running:   true" <<<"$STATUS_OUTPUT"
+    grep -F "Service:   ok" <<<"$STATUS_OUTPUT"
+    grep -F "Gateway:   ok" <<<"$STATUS_OUTPUT"
+    PROFILE_COUNTS=$(sed -n 's/^Profiles:[[:space:]]*\([0-9][0-9]*\)\/\([0-9][0-9]*\) ready.*/\1 \2/p' <<<"$STATUS_OUTPUT" | head -n 1)
+    if [ -z "$PROFILE_COUNTS" ]; then
+        echo "ERROR: exact package status has no Profiles: ready count" >&2
+        exit 1
+    fi
+    read -r READY_PROFILES TOTAL_PROFILES <<<"$PROFILE_COUNTS"
+    if [ "$TOTAL_PROFILES" -le 0 ] || [ "$READY_PROFILES" -ne "$TOTAL_PROFILES" ]; then
+        echo "ERROR: exact package profiles are not all ready: $READY_PROFILES/$TOTAL_PROFILES" >&2
+        exit 1
+    fi
+
+    docker exec \
+        -u capsem \
+        -e HOME=/home/capsem \
+        -e XDG_RUNTIME_DIR=/run/user/1000 \
+        "$CONTAINER" \
+        python3 /src/scripts/verify-installed-release.py \
+            --capsem /usr/bin/capsem \
+            --capsem-home /home/capsem/.capsem \
+            --manifest-url "$MANIFEST_URL" \
+            --channel "$MANIFEST_CHANNEL" \
+            --package-version "$EXPECTED_VERSION"
+
+    docker exec \
+        -u capsem \
+        -e HOME=/home/capsem \
+        -e XDG_RUNTIME_DIR=/run/user/1000 \
+        "$CONTAINER" \
+        python3 /src/scripts/prove-installed-shell.py \
+            --capsem /usr/bin/capsem \
+            --marker CAPSEM_QUALIFIED_DEB_SHELL_OK \
+            --session-name qualification-exact-deb-shell \
+            --timeout 300
+    echo "Exact Debian package proof passed: version=$EXPECTED_VERSION profiles=$READY_PROFILES/$TOTAL_PROFILES"
+
 _test-install-harness-preflight:
     #!/bin/bash
     set -euo pipefail

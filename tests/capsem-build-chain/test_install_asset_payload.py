@@ -77,42 +77,109 @@ def test_just_install_invokes_package_without_gui_installer_block() -> None:
     assert '"$HOME/.capsem/bin/capsem" debug' in install_body
 
 
-def test_cross_compile_repacks_deb_before_boot_test() -> None:
+def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
     block = _just_recipe_block("cross-compile")
 
     companion_pos = block.find("--- Build companion host binaries ---")
     tauri_pos = block.find("cargo tauri build --target")
     repack_pos = block.find("scripts/repack-deb.sh")
     validate_pos = block.find("dpkg-deb --contents")
-    install_pos = block.find('dpkg -i \\"\\$DEB\\"')
-    capsem_home_pos = block.find('CAPSEM_HOME=\\"\\$BOOT_CAPSEM_HOME\\"')
-    doctor_pos = block.find("--binary /usr/bin/capsem")
+    copy_pos = block.find('cp \\"\\$DEB\\" /src/dist/')
+    proof_pos = block.find("just _prove-linux-deb")
 
     assert companion_pos != -1
     assert tauri_pos != -1
     assert repack_pos != -1
     assert validate_pos != -1
-    assert install_pos != -1
-    assert capsem_home_pos != -1
-    assert doctor_pos != -1
+    assert copy_pos != -1
+    assert proof_pos != -1
     assert (
         companion_pos
         < tauri_pos
         < repack_pos
         < validate_pos
-        < install_pos
-        < capsem_home_pos
-        < doctor_pos
+        < copy_pos
+        < proof_pos
     )
-    assert "--security-opt seccomp=unconfined --device /dev/kvm" in block
-    assert "--device /dev/vhost-vsock" in block
-    assert "--device /dev/vsock" in block
+    assert 'dpkg -i \\"\\$DEB\\"' not in block
+    assert "CAPSEM_REQUIRE_LINUX_DEB_PROOF" in block
+    assert "exact Debian package proof requires native Linux KVM" in block
+    assert (
+        'MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"'
+        in block
+    )
+    assert 'MANIFEST_CHANNEL="${CAPSEM_INSTALL_CHANNEL:-stable}"' in block
+    assert '-e "CAPSEM_INSTALL_MANIFEST_URL=$MANIFEST_URL"' in block
+    assert 'scripts/repack-deb.sh --manifest \\"\\$CAPSEM_INSTALL_MANIFEST_URL\\"' in block
+    assert 'file://\\$PWD/assets/manifest.json' not in block
+    assert 'CAPSEM_PROOF_MANIFEST_URL="$MANIFEST_URL"' in block
+    assert 'CAPSEM_PROOF_MANIFEST_CHANNEL="$MANIFEST_CHANNEL"' in block
+    assert 'CAPSEM_PROOF_DEB="$DEB"' in block
     assert "capsem-admin)\\$'" in block
     assert '-e "HOST_UID=$HOST_UID"' in block
     assert '-e "HOST_GID=$HOST_GID"' in block
     assert 'trap \'chown -R \\"\\$HOST_UID:\\$HOST_GID\\"' in block
     assert "/src/frontend/node_modules /src/frontend/dist" in block
     assert "dpkg -i /cargo-target/$RUST_TARGET/release/bundle/deb/*.deb" not in block
+
+
+def test_exact_linux_deb_proof_uses_systemd_and_proves_guest_shell() -> None:
+    block = _just_recipe_block("_prove-linux-deb")
+
+    assert "capsem-install-test" in block
+    assert "/usr/lib/systemd/systemd" in block
+    assert "--privileged --cgroupns=host" in block
+    assert "--security-opt seccomp=unconfined" in block
+    assert "--device /dev/kvm" in block
+    assert "--device /dev/vhost-vsock" in block
+    assert '-v "$ROOT:/src:ro"' in block
+    assert 'dpkg -i "$CONTAINER_DEB"' in block
+    assert "apt-get install -f -y" in block
+    assert "dpkg-query -W" in block
+    for binary in (
+        "capsem",
+        "capsem-admin",
+        "capsem-app",
+        "capsem-gateway",
+        "capsem-mcp",
+        "capsem-mcp-aggregator",
+        "capsem-mcp-builtin",
+        "capsem-process",
+        "capsem-service",
+        "capsem-tray",
+        "capsem-tui",
+    ):
+        assert binary in block
+    assert 'test -x "/usr/bin/$bin"' in block
+    assert '"/usr/bin/$bin" --version | grep -F "$EXPECTED_VERSION"' in block
+    assert 'grep -F "Installed: true"' in block
+    assert 'grep -F "Running:   true"' in block
+    assert 'grep -F "Service:   ok"' in block
+    assert 'grep -F "Gateway:   ok"' in block
+    assert "Profiles:" in block
+    assert "scripts/prove-installed-shell.py" in block
+    assert "CAPSEM_QUALIFIED_DEB_SHELL_OK" in block
+    assert "scripts/verify-installed-release.py" in block
+    assert 'MANIFEST_URL="${CAPSEM_PROOF_MANIFEST_URL:?exact package proof requires' in block
+    assert 'MANIFEST_CHANNEL="${CAPSEM_PROOF_MANIFEST_CHANNEL:?exact package proof requires' in block
+    assert 'DEB_INPUT="${CAPSEM_PROOF_DEB:?exact package proof requires' in block
+    assert "{{deb}}" not in block
+    assert '--manifest-url "$MANIFEST_URL"' in block
+    assert '--channel "$MANIFEST_CHANNEL"' in block
+    assert '--package-version "$EXPECTED_VERSION"' in block
+    assert "trap cleanup EXIT" in block
+    assert "dpkg -i \"$CONTAINER_DEB\" 2>/dev/null || true" not in block
+
+
+def test_release_qualification_requires_exact_linux_deb_proof() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release-qualification.yaml").read_text()
+
+    assert 'CAPSEM_REQUIRE_LINUX_DEB_PROOF: "1"' in workflow
+    assert (
+        "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json"
+        in workflow
+    )
+    assert "CAPSEM_INSTALL_CHANNEL: stable" in workflow
 
 
 def test_install_test_restores_host_workspace_ownership() -> None:
@@ -855,11 +922,17 @@ def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
     assert "CAPSEM_SKIP_KVM_CHECK" not in smoke_block
 
 
-def test_cross_compile_guards_empty_kvm_array_under_bash_nounset() -> None:
-    justfile = (PROJECT_ROOT / "justfile").read_text()
+def test_only_systemd_package_proof_receives_kvm_devices() -> None:
+    cross_compile = _just_recipe_block("cross-compile")
+    proof = _just_recipe_block("_prove-linux-deb")
 
-    assert '${DOCKER_KVM_ARGS[@]+"${DOCKER_KVM_ARGS[@]}"}' in justfile
-    assert '\n        "${DOCKER_KVM_ARGS[@]}" \\\n' not in justfile
+    assert "DOCKER_KVM_ARGS" not in cross_compile
+    assert "--device /dev/kvm" not in cross_compile
+    assert "--device /dev/vhost-vsock" not in cross_compile
+    assert "DEVICE_ARGS=(" in proof
+    assert "--device /dev/kvm" in proof
+    assert "--device /dev/vhost-vsock" in proof
+    assert '"${DEVICE_ARGS[@]}"' in proof
 
 
 def test_security_event_rows_go_through_security_engine_emitter() -> None:

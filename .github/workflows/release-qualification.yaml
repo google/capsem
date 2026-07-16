@@ -25,6 +25,10 @@ jobs:
     # release-blocking; final tags and both package jobs require its success.
     runs-on: ubuntu-24.04
     timeout-minutes: 360
+    env:
+      CAPSEM_REQUIRE_LINUX_DEB_PROOF: "1"
+      CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json
+      CAPSEM_INSTALL_CHANNEL: stable
     steps:
       - uses: actions/checkout@v5
         with:
