@@ -56,6 +56,7 @@ def test_bootstrap_uses_colima_exit_status_not_running_text() -> None:
 
 def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     justfile = _read("justfile")
+    web_gate = _read("scripts/check-web-surface.sh")
 
     assert "_bootstrap:\n    sh {{justfile_directory()}}/bootstrap.sh -y" in justfile
     assert "test: _bootstrap _install-tools _clean-stale _pnpm-install" in justfile
@@ -64,11 +65,18 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
         "uv run ty check src/capsem",
         "uv run capsem-builder validate-skills skills",
         "cargo clippy --workspace --all-targets -- -D warnings",
-        "pnpm run check",
-        "pnpm run test",
-        "pnpm run build",
+        "bash scripts/check-web-surface.sh frontend",
+        "bash scripts/check-web-surface.sh docs",
+        "bash scripts/check-web-surface.sh site",
+        "bash scripts/check-web-surface.sh release-site",
     ]:
         assert command in justfile
+    for command in [
+        "pnpm --dir frontend run check",
+        "pnpm --dir frontend run test",
+        "pnpm --dir frontend run build",
+    ]:
+        assert command in web_gate
 
 
 def test_exact_sha_release_qualification_uses_fail_closed_workspace_clippy_gate() -> None:
@@ -85,12 +93,13 @@ def test_exact_sha_release_qualification_uses_fail_closed_workspace_clippy_gate(
 
 def test_frontend_release_gate_recipe_exists_and_is_complete() -> None:
     justfile = _read("justfile")
+    web_gate = _read("scripts/check-web-surface.sh")
 
     assert "\ntest-frontend: _pnpm-install _generate-settings\n" in justfile
     block = justfile.split(
         "\ntest-frontend: _pnpm-install _generate-settings\n", 1
     )[1].split("\n\n", 1)[0]
-    assert "cd frontend" in block
-    assert "pnpm run check" in block
-    assert "pnpm run test" in block
-    assert "pnpm run build" in block
+    assert "bash scripts/check-web-surface.sh frontend" in block
+    assert "pnpm --dir frontend run check" in web_gate
+    assert "pnpm --dir frontend run test" in web_gate
+    assert "pnpm --dir frontend run build" in web_gate

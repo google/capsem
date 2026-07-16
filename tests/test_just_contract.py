@@ -89,5 +89,5 @@ def test_justfile_exposes_docs_release_gate() -> None:
     docs_block = justfile.split("\ndocs: _pnpm-install\n", maxsplit=1)[1].split(
         "\n\n", maxsplit=1
     )[0]
-    assert "pnpm --dir docs run build" in docs_block
-    assert "pnpm --dir site run build" in docs_block
+    assert "bash scripts/check-web-surface.sh docs" in docs_block
+    assert "bash scripts/check-web-surface.sh site" in docs_block
