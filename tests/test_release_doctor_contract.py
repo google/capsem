@@ -1308,7 +1308,12 @@ def test_untagged_release_candidate_runs_complete_canonical_gate_in_ci() -> None
         "Complete canonical release gate (just test)"
     )
     assert "Enable KVM" in gate
+    assert "udevadm" not in gate
+    assert "test -c /dev/kvm" in gate
+    assert "sudo chmod 0666 /dev/kvm" in gate
+    assert "test -r /dev/kvm -a -w /dev/kvm" in gate
     assert "sudo modprobe vhost_vsock" in gate
+    assert "test -c /dev/vhost-vsock" in gate
     assert "sudo chmod 0666 /dev/vhost-vsock" in gate
     assert "test -r /dev/vhost-vsock -a -w /dev/vhost-vsock" in gate
     assert "Start Docker on macOS" not in gate

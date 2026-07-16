@@ -85,11 +85,15 @@ jobs:
 
       - name: Enable KVM
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
+          set -euxo pipefail
+          # Hosted runners expose KVM directly. Requiring the real character
+          # device avoids depending on whether a userspace udev daemon happens
+          # to accept control/trigger requests on this runner instance.
+          test -c /dev/kvm
+          sudo chmod 0666 /dev/kvm
           test -r /dev/kvm -a -w /dev/kvm
           sudo modprobe vhost_vsock
+          test -c /dev/vhost-vsock
           sudo chmod 0666 /dev/vhost-vsock
           test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
 
