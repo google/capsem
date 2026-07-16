@@ -62,6 +62,7 @@ pub(crate) struct VsockOptions {
     pub(crate) uds_path: PathBuf,
     pub(crate) db: Arc<capsem_logger::DbWriter>,
     pub(crate) pty_log: Option<Arc<crate::pty_log::PtyLog>>,
+    pub(crate) shutdown: Arc<tokio::sync::Mutex<crate::Shutdown>>,
 }
 
 pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
@@ -87,6 +88,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
         uds_path,
         db,
         pty_log,
+        shutdown,
         ..
     } = options;
 
@@ -423,6 +425,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     let db_for_cmd = Arc::clone(&db);
     let security_rules_for_cmd = Arc::clone(&security_rules);
     let pty_log_for_cmd = pty_log.clone();
+    let shutdown_for_cmd = Arc::clone(&shutdown);
     let mut ctrl_rx = ctrl_rx;
 
     tokio::spawn(async move {
@@ -584,6 +587,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     let v_m = Arc::clone(&vm_handle_for_cmd);
                     let i_tx = ipc_tx_for_cmd.clone();
                     let v_id = vm_id_for_cmd.clone();
+                    let shutdown = Arc::clone(&shutdown_for_cmd);
                     tokio::spawn(async move {
                         // W4: explicit timing spans on every step of suspend so a
                         // future hang lands in process.log with `duration_ms` per
@@ -680,6 +684,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                                 })
                             );
                             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                            crate::drain_background_owners(&shutdown).await;
                             std::process::exit(0);
                         }
                         // On suspend failure the VM is still running (we did pause but
@@ -691,6 +696,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         let _ = std::fs::remove_file(&full_path);
                         warn!("suspend did not complete; exiting without Suspended marker");
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                        crate::drain_background_owners(&shutdown).await;
                         std::process::exit(1);
                     });
                 }
@@ -700,6 +706,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                         hub_tx.send(HostToGuest::Shutdown).await
                     );
                     let v_m = Arc::clone(&vm_handle_for_cmd);
+                    let shutdown = Arc::clone(&shutdown_for_cmd);
                     tokio::spawn(async move {
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                         // channel-closed-ok: spawn_blocking JoinHandle and stop()'s
@@ -714,6 +721,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             let _ = v_m.blocking_lock().stop();
                         })
                         .await;
+                        crate::drain_background_owners(&shutdown).await;
                         std::process::exit(0);
                     });
                 }

@@ -255,6 +255,68 @@ fn queue_overflow_caps_at_max() {
     assert_eq!(dropped, 1);
 }
 
+#[test]
+fn reconciliation_finds_changes_missing_from_notify_queue() {
+    let root = tempfile::tempdir().unwrap();
+    let before = workspace_snapshot(root.path(), root.path());
+    let created = root.path().join("late.txt");
+    std::fs::write(&created, "late write").unwrap();
+    let after = workspace_snapshot(root.path(), root.path());
+
+    let events = reconciliation_events(&before, &after);
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].path, "late.txt");
+    assert_eq!(events[0].action, FileAction::Created);
+}
+
+#[test]
+fn shutdown_reconciles_unpolled_file_and_security_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let db_path = dir.path().join("session.db");
+    let db = Arc::new(DbWriter::open(&db_path, 64).unwrap());
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.file_create_late]
+name = "file_create_late"
+action = "allow"
+detection_level = "informational"
+match = 'file.create.path == "late.txt"'
+"#,
+    )
+    .unwrap();
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).unwrap();
+    let monitor = FsMonitor::start(
+        workspace.clone(),
+        workspace.clone(),
+        Arc::clone(&db),
+        Arc::new(std::sync::RwLock::new(Arc::new(rules))),
+        empty_trace_state(),
+    )
+    .unwrap();
+
+    // Do not wait for PollWatcher's 500ms scan. Shutdown itself must be the
+    // visibility boundary for this already-materialized file.
+    std::fs::write(workspace.join("late.txt"), "late write").unwrap();
+    monitor.shutdown_and_join();
+    db.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let joined: (i64, i64) = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT fs_events.event_id), COUNT(security_rule_events.id)
+             FROM fs_events
+             JOIN security_rule_events ON security_rule_events.event_id = fs_events.event_id
+             WHERE fs_events.path = 'late.txt'
+               AND security_rule_events.rule_id = 'profiles.rules.file_create_late'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(joined, (1, 1));
+}
+
 #[tokio::test]
 async fn emit_brokers_env_credentials_and_persists_reference() {
     let _lock = crate::credential_broker::TEST_ENV_LOCK.lock().await;

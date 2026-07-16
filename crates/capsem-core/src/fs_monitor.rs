@@ -76,6 +76,95 @@ struct QueuedEvent {
     action: FileAction,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SnapshotEntry {
+    fs_path: PathBuf,
+    is_dir: bool,
+    len: u64,
+    modified: Option<(u64, u32)>,
+}
+
+struct WorkspaceState {
+    watch_dir: PathBuf,
+    strip_prefix: PathBuf,
+    snapshot: HashMap<String, SnapshotEntry>,
+}
+
+fn snapshot_entry(fs_path: &Path) -> Option<SnapshotEntry> {
+    let metadata = std::fs::symlink_metadata(fs_path).ok()?;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|value| (value.as_secs(), value.subsec_nanos()));
+    Some(SnapshotEntry {
+        fs_path: fs_path.to_path_buf(),
+        is_dir: metadata.is_dir(),
+        len: metadata.len(),
+        modified,
+    })
+}
+
+fn workspace_snapshot(watch_dir: &Path, strip_prefix: &Path) -> HashMap<String, SnapshotEntry> {
+    let mut snapshot = HashMap::new();
+    for entry in walkdir::WalkDir::new(watch_dir)
+        .min_depth(1)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| !should_exclude(entry.path()))
+        .filter_map(Result::ok)
+    {
+        let fs_path = entry.path();
+        let rel = fs_path
+            .strip_prefix(strip_prefix)
+            .unwrap_or(fs_path)
+            .to_string_lossy()
+            .to_string();
+        if rel.is_empty() {
+            continue;
+        }
+        if let Some(snapshot_entry) = snapshot_entry(fs_path) {
+            snapshot.insert(rel, snapshot_entry);
+        }
+    }
+    snapshot
+}
+
+fn reconciliation_events(
+    previous: &HashMap<String, SnapshotEntry>,
+    current: &HashMap<String, SnapshotEntry>,
+) -> Vec<QueuedEvent> {
+    let mut paths = previous
+        .keys()
+        .chain(current.keys())
+        .cloned()
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.dedup();
+
+    paths
+        .into_iter()
+        .filter_map(|path| match (previous.get(&path), current.get(&path)) {
+            (None, Some(entry)) => Some(QueuedEvent {
+                path,
+                fs_path: entry.fs_path.clone(),
+                action: FileAction::Created,
+            }),
+            (Some(entry), None) => Some(QueuedEvent {
+                path,
+                fs_path: entry.fs_path.clone(),
+                action: FileAction::Deleted,
+            }),
+            (Some(before), Some(after)) if before != after => Some(QueuedEvent {
+                path,
+                fs_path: after.fs_path.clone(),
+                action: FileAction::Modified,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Host-side file system monitor.
 ///
 /// Watches the VirtioFS workspace directory using stat-based polling.
@@ -105,6 +194,15 @@ impl FsMonitor {
         security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
         trace_state: Arc<std::sync::Mutex<TraceState>>,
     ) -> anyhow::Result<Self> {
+        // PollWatcher discovers changes asynchronously. Keep an owner-local
+        // baseline so shutdown can reconcile changes that exist on disk but
+        // have not reached the notify callback yet.
+        let initial_snapshot = workspace_snapshot(&watch_dir, &strip_prefix);
+        let workspace_state = WorkspaceState {
+            watch_dir: watch_dir.clone(),
+            strip_prefix,
+            snapshot: initial_snapshot,
+        };
         let (event_tx, event_rx) = mpsc::channel::<Event>(1024);
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<()>(1);
 
@@ -132,7 +230,7 @@ impl FsMonitor {
                 rt.block_on(Self::event_loop(
                     event_rx,
                     shutdown_rx,
-                    strip_prefix,
+                    workspace_state,
                     db,
                     security_rules,
                     trace_state,
@@ -162,7 +260,7 @@ impl FsMonitor {
     async fn event_loop(
         mut event_rx: mpsc::Receiver<Event>,
         mut shutdown_rx: mpsc::Receiver<()>,
-        strip_prefix: PathBuf,
+        mut workspace: WorkspaceState,
         db: Arc<DbWriter>,
         security_rules: Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
         trace_state: Arc<std::sync::Mutex<TraceState>>,
@@ -174,14 +272,24 @@ impl FsMonitor {
         loop {
             tokio::select! {
                 _ = shutdown_rx.recv() => {
-                    // Final flush
-                    Self::flush(&mut queue, &mut dropped, &db, &security_rules, &trace_state).await;
+                    // Drain callbacks already accepted by the monitor, then
+                    // reconcile the actual workspace state. PollWatcher may
+                    // not have completed its next 500ms scan when shutdown
+                    // starts, so queue drainage alone is not a visibility
+                    // barrier for the latest guest writes.
+                    Self::flush(&mut queue, &mut dropped, &mut workspace.snapshot, &db, &security_rules, &trace_state).await;
+                    let current = workspace_snapshot(&workspace.watch_dir, &workspace.strip_prefix);
+                    queue.extend(reconciliation_events(&workspace.snapshot, &current));
+                    Self::flush(&mut queue, &mut dropped, &mut workspace.snapshot, &db, &security_rules, &trace_state).await;
                     debug!("host fs-monitor stopped");
                     break;
                 }
                 event = event_rx.recv() => {
                     let Some(event) = event else {
-                        Self::flush(&mut queue, &mut dropped, &db, &security_rules, &trace_state).await;
+                        Self::flush(&mut queue, &mut dropped, &mut workspace.snapshot, &db, &security_rules, &trace_state).await;
+                        let current = workspace_snapshot(&workspace.watch_dir, &workspace.strip_prefix);
+                        queue.extend(reconciliation_events(&workspace.snapshot, &current));
+                        Self::flush(&mut queue, &mut dropped, &mut workspace.snapshot, &db, &security_rules, &trace_state).await;
                         debug!("host fs-monitor channel closed");
                         break;
                     };
@@ -192,7 +300,7 @@ impl FsMonitor {
                             continue;
                         }
                         let rel = path
-                            .strip_prefix(&strip_prefix)
+                            .strip_prefix(&workspace.strip_prefix)
                             .unwrap_or(path)
                             .to_string_lossy()
                             .to_string();
@@ -207,7 +315,7 @@ impl FsMonitor {
                     }
                 }
                 _ = tokio::time::sleep(flush_interval) => {
-                    Self::flush(&mut queue, &mut dropped, &db, &security_rules, &trace_state).await;
+                    Self::flush(&mut queue, &mut dropped, &mut workspace.snapshot, &db, &security_rules, &trace_state).await;
                 }
             }
         }
@@ -221,6 +329,7 @@ impl FsMonitor {
     async fn flush(
         queue: &mut Vec<QueuedEvent>,
         dropped: &mut u64,
+        snapshot: &mut HashMap<String, SnapshotEntry>,
         db: &DbWriter,
         security_rules: &Arc<std::sync::RwLock<Arc<SecurityRuleSet>>>,
         trace_state: &Arc<std::sync::Mutex<TraceState>>,
@@ -266,6 +375,7 @@ impl FsMonitor {
                         old_action,
                     )
                     .await;
+                    Self::update_snapshot(snapshot, &event.path, &old_fs_path, old_action);
                     emitted += 1;
                 }
                 None => {
@@ -277,11 +387,25 @@ impl FsMonitor {
         // Emit all remaining pending entries
         for (path, (action, fs_path)) in pending {
             Self::emit(db, security_rules, trace_state, &path, &fs_path, action).await;
+            Self::update_snapshot(snapshot, &path, &fs_path, action);
             emitted += 1;
         }
 
         if emitted > 0 {
             debug!(raw = raw_count, emitted, "fs-monitor flush");
+        }
+    }
+
+    fn update_snapshot(
+        snapshot: &mut HashMap<String, SnapshotEntry>,
+        path: &str,
+        fs_path: &Path,
+        action: FileAction,
+    ) {
+        if action == FileAction::Deleted {
+            snapshot.remove(path);
+        } else if let Some(entry) = snapshot_entry(fs_path) {
+            snapshot.insert(path.to_string(), entry);
         }
     }
 

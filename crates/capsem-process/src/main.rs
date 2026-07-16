@@ -31,7 +31,7 @@ use vsock::VsockOptions;
 /// `sprints/explicit-shutdown-cleanup/` and /dev-rust-patterns
 /// "Signal-driven explicit cleanup".
 #[derive(Default)]
-struct Shutdown {
+pub(crate) struct Shutdown {
     db: Option<Arc<DbWriter>>,
     fs_monitor: Option<FsMonitor>,
 }
@@ -48,6 +48,17 @@ impl Shutdown {
             db.shutdown_blocking();
         }
     }
+}
+
+pub(crate) async fn drain_background_owners(shutdown: &Arc<Mutex<Shutdown>>) {
+    // Taking the owners makes this safe when graceful shutdown, a signal,
+    // and an error path race. Exactly one path drains; the others see an
+    // empty owner set.
+    let mut owned = {
+        let mut guard = shutdown.lock().await;
+        std::mem::take(&mut *guard)
+    };
+    let _ = tokio::task::spawn_blocking(move || owned.drain_blocking()).await;
 }
 
 fn process_kernel_cmdline() -> &'static str {
@@ -256,6 +267,7 @@ fn main() -> Result<()> {
     let trace_id_for_loop = trace_id.clone();
     let session_dir_for_loop = session_dir.clone();
     let shutdown_for_loop = Arc::clone(&shutdown);
+    let shutdown_for_loop_error = Arc::clone(&shutdown);
     let vm_for_signal = Arc::clone(&vm_arc);
     rt.spawn(async move {
         if let Err(e) = run_async_main_loop(
@@ -270,6 +282,7 @@ fn main() -> Result<()> {
         .await
         {
             error!("async loop failed: {e:#}");
+            drain_background_owners(&shutdown_for_loop_error).await;
             std::process::exit(1);
         }
     });
@@ -300,18 +313,7 @@ fn main() -> Result<()> {
             Err(e) => tracing::warn!(signal = signal_name, error = %e, "VM stop failed during signal teardown"),
         }
 
-        // Take the Shutdown struct out from under the async mutex so we
-        // can hand it to `spawn_blocking` for the synchronous join. The
-        // join itself blocks on thread handles, which we must not do on
-        // a tokio worker.
-        let mut owned = {
-            let mut guard = shutdown_for_sig.lock().await;
-            std::mem::take(&mut *guard)
-        };
-        let _ = tokio::task::spawn_blocking(move || {
-            owned.drain_blocking();
-        })
-        .await;
+        drain_background_owners(&shutdown_for_sig).await;
         tracing::warn!(
             signal = signal_name,
             "background owners drained, stopping run loop"
@@ -627,6 +629,8 @@ async fn run_async_main_loop(
     let vm_ready_vsock = Arc::clone(&vm_ready);
     let uds_path_vsock = uds_path.clone();
     let db_for_vsock = Arc::clone(&db);
+    let shutdown_for_vsock = Arc::clone(&shutdown);
+    let shutdown_for_vsock_error = Arc::clone(&shutdown);
     let pty_log = match pty_log::PtyLog::open(&session_dir.join("pty.log")) {
         Ok(pl) => Some(Arc::new(pl)),
         Err(e) => {
@@ -657,6 +661,7 @@ async fn run_async_main_loop(
             uds_path: uds_path_vsock,
             db: db_for_vsock,
             pty_log,
+            shutdown: shutdown_for_vsock,
         })
         .await
         {
@@ -668,6 +673,7 @@ async fn run_async_main_loop(
             // instance promptly so the caller (test, CLI, MCP) sees the
             // failure in <1s instead of 30s.
             error!("vsock failed: {e:#}");
+            drain_background_owners(&shutdown_for_vsock_error).await;
             std::process::exit(1);
         }
     });

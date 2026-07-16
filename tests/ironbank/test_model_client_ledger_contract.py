@@ -589,9 +589,24 @@ def test_openai_two_tool_calls_have_exact_item_cardinality(
     assert len({item["filename"] for item in result["results"]}) == 2, result
     raw_secret = "sk-" + result["credential_nonce"]
 
+    # This test reconciles protocol rows with their security-ledger rows by
+    # opening session.db directly. DbWriter.write().await only accepts a row
+    # into the DB-owned producer buffer, and filesystem events are emitted by
+    # a separate monitor. Stop the persistent VM first so the process drains
+    # FsMonitor -> DbWriter and checkpoints the database before we reopen it.
+    # A timing poll here would only hide a missing visibility barrier.
+    db_path = model_client_env.db_path
+    stopped = model_client_env.client.post(
+        f"/vms/{model_client_env.session_id}/stop",
+        {},
+        timeout=60,
+    )
+    assert stopped == {"success": True, "persistent": True}, stopped
+    assert db_path.exists(), db_path
+
     import sqlite3
 
-    with closing(sqlite3.connect(f"file:{model_client_env.db_path}?mode=ro", uri=True)) as conn:
+    with closing(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)) as conn:
         conn.row_factory = sqlite3.Row
         tables = {
             row[0]
