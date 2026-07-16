@@ -34,11 +34,18 @@ check_platform() {
             fail "colima not running -- start: colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8"
         fi
 
-        # Rosetta
+        # Rosetta. The config bit is not sufficient: an already-running Colima
+        # VM can predate that setting and have no registered amd64 emulator.
+        # This exact stale-runtime state makes Docker fail later with
+        # `exec /bin/sh: exec format error`, so require the live binfmt rail.
         local colima_yaml="$HOME/.colima/default/colima.yaml"
         if [[ -f "$colima_yaml" ]]; then
             if grep -q 'rosetta: true' "$colima_yaml" && grep -q 'vmType: vz' "$colima_yaml"; then
-                pass "colima rosetta (enabled, vz)"
+                if colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta &>/dev/null; then
+                    pass "colima rosetta (enabled, registered, vz)"
+                else
+                    fail "colima rosetta configured but not registered -- fix: colima restart"
+                fi
             else
                 fail "colima rosetta not enabled -- fix: colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8"
             fi

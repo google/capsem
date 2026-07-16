@@ -305,6 +305,41 @@ def test_local_linux_preflight_contains_asset_ci_release_tools() -> None:
     )
 
 
+def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:
+    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    swap_script = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text()
+    native_block = host_builder.split(
+        "# ---- Native-arch Tauri dev libraries ----", maxsplit=1
+    )[1].split("# ---- Helper script", maxsplit=1)[0]
+    swap_block = swap_script.split("DEV_PACKAGES=(", maxsplit=1)[1].split(
+        ")", maxsplit=1
+    )[0]
+
+    native_packages = {
+        line.strip().removesuffix("\\").strip()
+        for line in native_block.splitlines()
+        if line.strip().startswith("lib")
+    }
+    swapped_packages = {
+        line.strip()
+        for line in swap_block.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+    assert swapped_packages == native_packages
+
+
+def test_cross_compile_refreshes_the_cached_host_builder_image() -> None:
+    cross_compile = _just_recipe_block("cross-compile ")
+    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+
+    assert "just build-host-image" in cross_compile
+    assert "docker image inspect capsem-host-builder:latest" not in cross_compile
+    assert host_builder.index("COPY swap-dev-libs.sh") > host_builder.index(
+        "cargo install tauri-cli"
+    )
+
+
 def test_standalone_install_gate_preflights_privileged_helper() -> None:
     block = _just_recipe_block("test-install")
 

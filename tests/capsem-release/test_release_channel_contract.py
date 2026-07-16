@@ -35,6 +35,19 @@ CHANNEL = "stable"
 pytestmark = pytest.mark.build_chain
 
 
+def test_deploy_workflow_runs_authoritative_live_validator_for_both_channels() -> None:
+    workflow = (
+        PROJECT_ROOT / ".github" / "workflows" / "release-channel.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert "validate_complete_public_channels:" in workflow
+    assert "default: true" in workflow
+    assert "scripts/check-release-site-contract.py" in workflow
+    assert 'CHANNEL_ARGS=(--channel stable --channel nightly)' in workflow
+    assert '--base-url "$RELEASE_SITE_URL"' in workflow
+    assert "--attempts 30" in workflow
+
+
 def _run(
     command: list[str],
     *,

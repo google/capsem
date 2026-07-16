@@ -173,29 +173,18 @@ jobs:
             tests/capsem-release/test_profile_lane_gate.py \
             tests/capsem-release/test_release_lane_diff_policy.py -q
 
-      - name: Build asset channel preview
+      - name: Build complete asset channel preview
         if: ${{ steps.asset-delta.outputs.changed == 'true' }}
         run: |
           ASSET_BASE='https://github.com/google/capsem/releases/download/assets-v{asset_version}'
-          cargo run -p capsem-admin -- assets channel build \
-            --manifest "file://$PWD/assets/manifest.json" \
+          uv run python scripts/build-complete-release-channel.py \
+            --channel-source "$CHANNEL=file://$PWD/assets/manifest.json" \
+            --primary-channel "$CHANNEL" \
+            --assets-dir assets \
             --asset-source-base "$ASSET_BASE" \
-            --channel "$CHANNEL" \
             --manifest-version "${{ inputs.manifest_version }}" \
-            --out-dir target/release-channel
-
-      - name: Build release site pages
-        if: ${{ steps.asset-delta.outputs.changed == 'true' }}
-        env:
-          CAPSEM_RELEASE_CHANNEL_DIST: ${{ github.workspace }}/target/release-channel
-        run: bash scripts/check-web-surface.sh release-site-build
-
-      - name: Check asset channel preview
-        if: ${{ steps.asset-delta.outputs.changed == 'true' }}
-        run: |
-          cargo run -p capsem-admin -- assets channel check \
-            --channel "$CHANNEL" \
-            --dist target/release-channel
+            --out-dir target/release-channel \
+            --allow-mirror-missing
 
       - name: Publish immutable GitHub asset release
         if: ${{ steps.asset-delta.outputs.asset_blobs_changed == 'true' }}

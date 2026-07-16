@@ -87,4 +87,5 @@ jobs:
       dist_artifact: asset-channel-staging-preview
       deploy_branch: ${{ inputs.deploy_branch }}
       release_site_url: ${{ inputs.release_site_url }}
+      validate_complete_public_channels: false
     secrets: inherit

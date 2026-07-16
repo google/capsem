@@ -1,4 +1,4 @@
-"""Local live-release artifact contract tests."""
+"""Hermetic multi-channel release artifact contract tests."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ import subprocess
 import hashlib
 from pathlib import Path
 from typing import Any
-from urllib.request import Request, urlopen
 
 import blake3
 
@@ -126,56 +125,6 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
         assert _hash_label(architecture["config"][0]["digest"]["sha256"]) in page
         assert _hash_label(architecture["images"][0]["digest"]["sha256"]) in page
         assert _hash_label(architecture["evidence"][0]["digest"]["sha256"]) in page
-
-
-def test_live_channels_json_and_manifests_verify() -> None:
-    base = "https://release.capsem.org"
-    channels_body = _fetch_bytes(f"{base}/channels.json")
-    channels = json.loads(channels_body)
-
-    assert sorted(channels["channels"]) == ["nightly", "stable"]
-    expected_package_names: dict[str, list[str]] = {}
-    allowed_statuses = {"current", "supported", "deprecated", "revoked"}
-    for channel in ("stable", "nightly"):
-        records = channels["channels"][channel]["manifests"]
-        assert records
-        statuses = [record["status"] for record in records]
-        assert statuses.count("current") == 1
-        assert set(statuses) <= allowed_statuses
-        assert "removed" not in statuses
-        current = next(record for record in records if record["status"] == "current")
-        manifest_body = _fetch_bytes(f"{base}{current['url']}")
-        assert hashlib.sha256(manifest_body).hexdigest() == current["digest"]["sha256"]
-        manifest = json.loads(manifest_body)
-        assert manifest["version"] == current["version"]
-        assert current["url"] == f"/assets/{channel}/manifest.json"
-        assert "profile_catalog" not in channels["channels"][channel]
-        assert manifest["packages"]
-        assert "binaries" not in manifest
-        assert manifest["packages"][0]["binaries"]
-        assert sorted(manifest["profiles"]) == sorted(PROFILE_IDS)
-        expected_package_names[channel] = [package["name"] for package in manifest["packages"]]
-
-        for profile_id in PROFILE_IDS:
-            profile_url = f"{base}/channels/{channel}/profiles/{profile_id}/"
-            profile_page = _fetch_bytes(profile_url).decode("utf-8")
-            profile = manifest["profiles"][profile_id]
-            assert profile["revision"] in profile_page
-            architecture = _profile_architectures(profile)[0]
-            assert _hash_label(architecture["config"][0]["digest"]["sha256"]) in profile_page
-            assert _hash_label(architecture["images"][0]["digest"]["sha256"]) in profile_page
-
-    root = _fetch_bytes(f"{base}/").decode("utf-8")
-    stable = _fetch_bytes(f"{base}/channels/stable/").decode("utf-8")
-    nightly = _fetch_bytes(f"{base}/channels/nightly/").decode("utf-8")
-    assert "Stable" in root
-    assert "Nightly" in root
-    assert "Co-work" not in root
-    assert "Code" not in root
-    for package_name in expected_package_names["stable"]:
-        assert package_name in stable
-    for package_name in expected_package_names["nightly"]:
-        assert package_name in nightly
 
 
 def _materialize_graph_dist(graph: dict[str, Any], dist: Path) -> None:
@@ -298,10 +247,3 @@ def _profile_architectures(profile: dict[str, Any]) -> list[dict[str, Any]]:
         }
         for image in profile.get("images", [])
     ]
-
-
-def _fetch_bytes(url: str) -> bytes:
-    request = Request(url, headers={"User-Agent": "CapsemReleaseValidator/1.0"})
-    with urlopen(request, timeout=20) as response:
-        assert response.status == 200, url
-        return response.read()

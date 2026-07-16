@@ -489,8 +489,13 @@ def test_asset_release_noop_gate_controls_preview_and_deploy_workflow() -> None:
         assemble_channel.index("scripts/check-asset-release-delta.py")
     )
     assert assemble_channel.index("scripts/preserve-binary-channel-metadata.py") < (
-        assemble_channel.index("cargo run -p capsem-admin -- assets channel build")
+        assemble_channel.index("scripts/build-complete-release-channel.py")
     )
+    assert "scripts/build-complete-release-channel.py" in workflow
+    assert '--channel-source "$CHANNEL=file://$PWD/assets/manifest.json"' in workflow
+    assert '--primary-channel "$CHANNEL"' in workflow
+    assert "--assets-dir assets" in workflow
+    assert "--out-dir target/release-channel" in workflow
     assert (
         '--previous-manifest-url "https://release.capsem.org/assets/$CHANNEL/manifest.json"'
         in workflow

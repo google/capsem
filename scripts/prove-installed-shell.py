@@ -15,16 +15,28 @@ import subprocess
 import sys
 import termios
 import time
+import uuid
 from pathlib import Path
 
 
 SAFE_VALUE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
 
-def guest_marker_command(marker: str) -> bytes:
+def guest_marker_command(marker: str, proof_name: str) -> bytes:
     """Build a command whose input bytes do not contain the success marker."""
     octal = "".join(f"\\{byte:03o}" for byte in marker.encode("utf-8"))
-    return f"printf '{octal}\\n'\r".encode("ascii")
+    return f"printf '{octal}\\n' | tee \"$HOME/{proof_name}\"\r".encode("ascii")
+
+
+def guest_proof_paths(proof_name: str) -> list[Path]:
+    """Return host VirtioFS paths matching the proof file written in guest $HOME."""
+    run_dir = Path(
+        os.environ.get("CAPSEM_RUN_DIR", str(Path.home() / ".capsem" / "run"))
+    )
+    persistent = run_dir / "persistent"
+    if not persistent.is_dir():
+        return []
+    return list(persistent.glob(f"*/guest/workspace/{proof_name}"))
 
 
 def stop_process(process: subprocess.Popen[bytes]) -> None:
@@ -79,7 +91,8 @@ def prove_shell(
     os.close(slave)
 
     marker_bytes = marker.encode("utf-8")
-    command = guest_marker_command(marker)
+    proof_name = f".capsem-shell-proof-{uuid.uuid4().hex}"
+    command = guest_marker_command(marker, proof_name)
     output = bytearray()
     deadline = time.monotonic() + timeout
     next_send = time.monotonic() + startup_delay
@@ -105,6 +118,12 @@ def prove_shell(
                     if marker_bytes in output:
                         observed = True
                         break
+            if any(
+                path.is_file() and path.read_bytes().rstrip(b"\r\n") == marker_bytes
+                for path in guest_proof_paths(proof_name)
+            ):
+                observed = True
+                break
             if process.poll() is not None:
                 break
 

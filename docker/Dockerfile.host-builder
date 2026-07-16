@@ -58,10 +58,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxdo-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ---- Helper script to swap -dev libs for cross-compilation ----
-COPY swap-dev-libs.sh /usr/local/bin/swap-dev-libs
-RUN chmod +x /usr/local/bin/swap-dev-libs
-
 # ---- Node.js 24 + pnpm 10 ----
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
@@ -90,6 +86,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3 python3
     && curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh \
     && install -m 555 /root/.local/bin/uv /usr/local/bin/uv \
     && install -m 555 /root/.local/bin/uvx /usr/local/bin/uvx
+
+# ---- Helper script to swap -dev libs for cross-compilation ----
+# Keep this after the expensive stable toolchain layers so edits to the swap
+# contract do not rebuild Node, Rust, Tauri CLI, or Python tooling.
+COPY swap-dev-libs.sh /usr/local/bin/swap-dev-libs
+RUN chmod +x /usr/local/bin/swap-dev-libs
 
 # ---- Cargo cross-compilation config ----
 ENV CARGO_TARGET_DIR=/cargo-target

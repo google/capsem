@@ -739,39 +739,18 @@ jobs:
             tests/capsem-release/test_binary_lane_gate.py \
             tests/capsem-release/test_release_lane_diff_policy.py -q
 
-      - name: Build release channels with existing VM assets
+      - name: Build complete release channels with existing VM assets
         run: |
           set -euo pipefail
-          rm -rf target/release-channel
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
-          for channel in stable nightly; do
-            cargo run -p capsem-admin -- assets channel build \
-              --manifest "file://$PWD/target/binary-channel/$channel/manifest.json" \
-              --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
-              --channel "$channel" \
-              --manifest-version "1.0.${{ github.run_number }}" \
-              --generated-at "$generated_at" \
-              --out-dir target/release-channel
-          done
-
-      - name: Build release site pages
-        env:
-          CAPSEM_RELEASE_CHANNEL_DIST: ${{ github.workspace }}/target/release-channel
-        run: bash scripts/check-web-surface.sh release-site-build
-
-      - name: Materialize preserved profile artifacts
-        run: |
-          uv run python3 scripts/materialize-graph-profile-artifacts.py \
-            --dist target/release-channel
-
-      - name: Check binary-updated release channels
-        run: |
-          set -euo pipefail
-          for channel in stable nightly; do
-            cargo run -p capsem-admin -- assets channel check \
-              --channel "$channel" \
-              --dist target/release-channel
-          done
+          uv run python scripts/build-complete-release-channel.py \
+            --channel-source "stable=file://$PWD/target/binary-channel/stable/manifest.json" \
+            --channel-source "nightly=file://$PWD/target/binary-channel/nightly/manifest.json" \
+            --primary-channel "$RELEASE_CHANNEL" \
+            --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
+            --manifest-version "1.0.${{ github.run_number }}" \
+            --generated-at "$generated_at" \
+            --out-dir target/release-channel
 
       - uses: actions/upload-artifact@v7
         with:

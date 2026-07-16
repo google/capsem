@@ -1,0 +1,19 @@
+---
+import ReleaseLayout from '../layouts/ReleaseLayout.astro';
+---
+<ReleaseLayout
+  title="Artifact not found | Capsem Release Channels"
+  description="The requested Capsem release artifact does not exist."
+>
+  <header class="border-b border-zinc-200 pb-6">
+    <p class="text-sm font-medium text-blue-600">release.capsem.org</p>
+    <h1 class="mt-2 text-4xl font-semibold tracking-normal text-black">Artifact not found</h1>
+    <p class="mt-3 max-w-3xl text-base text-zinc-600">
+      The requested release artifact does not exist. Check the selected channel manifest for the
+      current verified URL.
+    </p>
+    <a class="mt-6 inline-block text-sm font-medium text-blue-600 underline" href="/">
+      View release channels
+    </a>
+  </header>
+</ReleaseLayout>

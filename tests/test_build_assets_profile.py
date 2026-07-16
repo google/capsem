@@ -32,6 +32,66 @@ def test_build_assets_requires_profile_and_uses_capsem_admin() -> None:
     assert "uv run capsem-builder build guest/" not in block
 
 
+def test_asset_build_primitives_accept_an_isolated_output_root() -> None:
+    for recipe in ("build-kernel", "build-rootfs", "build-assets"):
+        block = _recipe_block(recipe)
+        assert "output=assets_dir" in block
+        assert 'OUTPUT_ARG="{{output}}"' in block
+        assert '--output "$OUTPUT_ARG"' in block
+
+
+def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
+    test = _recipe_block("test:")
+    asset_gate = _recipe_block("test-assets:")
+
+    assert "just test-assets" in test
+    assert "for profile_path in config/profiles/*/profile.toml; do" in asset_gate
+    assert "for arch in arm64 x86_64; do" in asset_gate
+    assert 'just build-kernel "$arch" "$profile" "$profile_assets"' in asset_gate
+    assert 'just build-rootfs "$arch" "$profile" "$profile_assets"' in asset_gate
+    assert 'ln -sfn "$HOST_ARCH" "$profile_assets/current"' in asset_gate
+    assert 'readlink "$profile_assets/current"' in asset_gate
+    assert 'cp target/config/settings/settings.toml "$profile_home/settings.toml"' not in asset_gate
+    assert "mktemp -d /tmp/capsem-a.XXXXXX" in asset_gate
+    assert 'profile_run="$profile_root/run"' not in asset_gate
+    assert 'cp -R "$profile_run"/. "$profile_root/run-failure"/' in asset_gate
+    assert 'python3 scripts/create_hash_assets.py "$profile_assets"' in asset_gate
+    assert asset_gate.index("scripts/create_hash_assets.py") < asset_gate.index(
+        "cargo run -p capsem-admin -- manifest check"
+    )
+    assert "cargo run -p capsem-admin -- manifest check" in asset_gate
+    assert "scripts/prove-installed-shell.py" in asset_gate
+    assert 'CAPSEM_ASSETS_DIR="$profile_assets"' in asset_gate
+    assert 'CAPSEM_PROFILES_DIR="$profile_config/profiles"' in asset_gate
+
+
+def test_asset_gate_reaps_gateway_and_service_between_profile_proofs() -> None:
+    asset_gate = _recipe_block("test-assets:")
+
+    assert "stop_gate_pidfile" in asset_gate
+    assert "gate_pid_running" in asset_gate
+    assert "ps -o stat=" in asset_gate
+    assert '"$state" != Z*' in asset_gate
+    assert 'stop_gate_pidfile "$run_dir/gateway.pid"' in asset_gate
+    assert 'stop_gate_pidfile "$run_dir/service.pid"' in asset_gate
+    assert asset_gate.index('stop_gate_pidfile "$run_dir/gateway.pid"') < asset_gate.index(
+        'stop_gate_pidfile "$run_dir/service.pid"'
+    )
+    assert asset_gate.index('stop_gate_pidfile "$run_dir/service.pid"') < asset_gate.index(
+        'rm -rf "$profile_run"'
+    )
+
+
+def test_asset_ci_uses_primitives_owned_by_just_test() -> None:
+    workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
+    asset_gate = _recipe_block("test-assets:")
+
+    assert 'just build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
+    assert 'just build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
+    assert "just build-kernel" in asset_gate
+    assert "just build-rootfs" in asset_gate
+
+
 def test_check_assets_recovers_by_iterating_checked_in_profiles() -> None:
     block = _recipe_block("_check-assets:")
 

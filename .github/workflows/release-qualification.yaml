@@ -67,6 +67,14 @@ jobs:
           cache-dependency-path: frontend/pnpm-lock.yaml
       - uses: astral-sh/setup-uv@v5
 
+      # `just test` owns the complete arm64 + x86_64 asset-build matrix. The
+      # x86_64 qualification runner therefore needs real arm64 binfmt support;
+      # this is runner setup, not a second hidden build path.
+      - name: Enable cross-architecture container execution
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Install Linux full-gate system dependencies
         run: |
           sudo apt-get update

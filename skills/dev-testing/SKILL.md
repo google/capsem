@@ -61,12 +61,24 @@ Specialized CI jobs may provide faster feedback or platform evidence, but they
 must call the same checked-in recipe or script already exercised by
 `just test`; they cannot be the only owner of a portable requirement.
 
+Treat `just test` as a strict superset, not merely a collection of similar
+assertions. Anything a CI workflow builds locally-portably must be built and
+tested by `just test` through the same production primitive. CI is allowed to
+run only the slice it needs; the local canonical gate is not allowed to omit
+that slice. A workflow-only build, even when another test validates its input
+schema, is an Ironbank violation because the produced artifact is unaccounted
+for.
+
 This includes workspace/runtime tests, Rust and Python coverage floors,
 `capsem-doctor` and Ironbank acceptance, benchmarks, artifact completeness,
 frontend/docs/marketing/release-site validation, and the Docker/systemd Linux
-package install and guest-shell proof. Truly non-portable boundaries remain
-explicit final gates: Apple signing/notarization, hosted KVM, Cloudflare
-publication, and the physical-Mac public install plus VZ guest shell.
+package install and guest-shell proof. It also includes the full profile-owned
+VM asset matrix: `just test` calls `just test-assets`, which rebuilds every
+checked-in profile for arm64 and x86_64 through `just build-kernel` and
+`just build-rootfs`, validates the release payload and manifest, and boots each
+host-architecture result to a real guest-shell marker. Truly non-portable
+boundaries remain explicit final gates: Apple signing/notarization, hosted KVM,
+Cloudflare publication, and the physical-Mac public install plus VZ guest shell.
 
 Every portable release-critical CI path must be executable locally through the
 same production entrypoint. Do not create a local lookalike that merely checks

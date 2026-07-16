@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -13,11 +13,13 @@ use tokio::sync::RwLock;
 
 use crate::AppState;
 
-const CACHE_TTL: Duration = Duration::from_secs(1);
-
 pub struct StatusCache {
-    inner: RwLock<Option<(Instant, StatusResponse)>>,
-    /// Serializes refresh calls so only one fetch runs at a time.
+    /// Previous response retained only to diff VM lifecycle events. It must
+    /// never be served as the answer to a later `/status` request: capsem
+    /// mutates VM state over the service UDS, outside the gateway, so the
+    /// gateway cannot safely know that a cached response is still current.
+    inner: RwLock<Option<StatusResponse>>,
+    /// Serializes service reads so concurrent UI polls do not stampede UDS.
     refresh: tokio::sync::Mutex<()>,
 }
 
@@ -107,38 +109,22 @@ pub struct ResourceSummary {
 
 /// GET /status -- aggregated system health for tray polling.
 ///
-/// Uses a refresh mutex to prevent thundering herd: when the cache expires,
-/// only one request fetches from the service while others wait and reuse
-/// the refreshed cache.
+/// Every request reads the authoritative service `/vms/list` endpoint.
+///
+/// VM mutations are made directly over the service UDS, so a gateway TTL
+/// cache can return a pre-mutation snapshot immediately after `capsem create`
+/// and make the TUI reject a session that is already running. The retained
+/// snapshot below is event-diff state only and is never returned to callers.
 pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
-    // Fast path: serve from cache if fresh
-    {
-        let cache = state.status_cache.inner.read().await;
-        if let Some((ts, ref resp)) = *cache {
-            if ts.elapsed() < CACHE_TTL {
-                return (StatusCode::OK, axum::Json(resp.clone())).into_response();
-            }
-        }
-    }
-
-    // Slow path: acquire refresh lock so only one caller fetches
+    // Serialize refreshes, but never substitute the previous response for a
+    // current service read.
     let _refresh_guard = state.status_cache.refresh.lock().await;
-
-    // Double-check: another caller may have refreshed while we waited
-    {
-        let cache = state.status_cache.inner.read().await;
-        if let Some((ts, ref resp)) = *cache {
-            if ts.elapsed() < CACHE_TTL {
-                return (StatusCode::OK, axum::Json(resp.clone())).into_response();
-            }
-        }
-    }
 
     let old_vms: Vec<(String, VmLifecycleState)> = {
         let cache = state.status_cache.inner.read().await;
         cache
             .as_ref()
-            .map(|(_, r)| r.vms.iter().map(|v| (v.id.clone(), v.status)).collect())
+            .map(|r| r.vms.iter().map(|v| (v.id.clone(), v.status)).collect())
             .unwrap_or_default()
     };
 
@@ -166,7 +152,7 @@ pub async fn handle_status(State(state): State<Arc<AppState>>) -> Response {
 
     {
         let mut cache = state.status_cache.inner.write().await;
-        *cache = Some((Instant::now(), resp.clone()));
+        *cache = Some(resp.clone());
     }
 
     (StatusCode::OK, axum::Json(resp)).into_response()

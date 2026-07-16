@@ -435,7 +435,8 @@ async fn handle_health(State(state): State<Arc<AppState>>) -> impl IntoResponse 
 /// WebSocket endpoint for real-time events (VM state changes, progress, etc.).
 ///
 /// Clients receive JSON messages: `{"type":"vm-state-changed","payload":{...}}`
-/// Events are broadcast when the status cache detects VM state transitions.
+/// Events are broadcast when consecutive authoritative status reads detect VM
+/// state transitions.
 async fn handle_events_ws(
     ws: axum::extract::WebSocketUpgrade,
     State(state): State<Arc<AppState>>,

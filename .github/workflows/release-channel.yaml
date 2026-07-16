@@ -18,6 +18,11 @@ on:
         type: string
         required: false
         default: https://release.capsem.org
+      validate_complete_public_channels:
+        description: Require both stable and nightly after a production deploy.
+        type: boolean
+        required: false
+        default: true
     secrets:
       CLOUDFLARE_ACCOUNT_ID:
         required: true
@@ -112,10 +117,14 @@ jobs:
       - name: Validate deployed asset channel content
         env:
           RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
+          VALIDATE_COMPLETE_PUBLIC_CHANNELS: ${{ inputs.validate_complete_public_channels }}
         run: |
+          CHANNEL_ARGS=(--channel "$CHANNEL")
+          if [ "$VALIDATE_COMPLETE_PUBLIC_CHANNELS" = "true" ]; then
+            CHANNEL_ARGS=(--channel stable --channel nightly)
+          fi
           uv run python scripts/check-release-site-contract.py \
             --base-url "$RELEASE_SITE_URL" \
-            --channel stable \
-            --channel nightly \
+            "${CHANNEL_ARGS[@]}" \
             --attempts 30 \
             --delay-seconds 20

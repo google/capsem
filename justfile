@@ -14,6 +14,7 @@
 #   run-service      -> _check-assets + _pack-initrd + _materialize-config + _ensure-service (start daemon, idempotent)
 #   exec +CMD        -> run-service (one-shot command in a fresh temp VM)
 #   build-assets     -> _install-tools + _clean-stale + inline doctor (kernel + rootfs via capsem-admin)
+#   test-assets      -> rebuild every profile for both arches + manifest validation + host-arch guest shell
 #   build-ui         -> _pnpm-install (pnpm build + cargo build -p capsem-app, in lockstep)
 #   docs             -> _pnpm-install (build docs + marketing site release docs surfaces)
 #   run-ui *ARGS     -> build-ui (launch ./target/debug/capsem-app)
@@ -22,7 +23,8 @@
 #                       (audit, full doctor, injection, integration, parallel pytest groups)
 #   test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
 #                       + _check-assets + _pack-initrd + _materialize-config (everything: audit, cov, cross-compile,
-#                       all web surfaces, python, injection, integration, bench, test-install)
+#                       all web surfaces, full dual-arch VM asset builds, python, injection, integration,
+#                       bench, test-install)
 #   bench            -> _ensure-dev-ready + _check-assets + _pack-initrd + _materialize-config + _ensure-service
 #   test-gateway     -> (no deps; unit + mock UDS tests)
 #   test-gateway-e2e -> _check-assets + _pack-initrd + _materialize-config + _sign (real service + VMs)
@@ -260,10 +262,11 @@ exec +CMD: run-service
 
 
 # Build kernel only for one profile/arch (CI-facing primitive).
-build-kernel arch profile="":
+build-kernel arch profile="" output=assets_dir:
     #!/bin/bash
     set -euo pipefail
     PROFILE_ARG="{{profile}}"
+    OUTPUT_ARG="{{output}}"
     if [[ -z "$PROFILE_ARG" ]]; then
         echo "ERROR: profile id required. Use: just build-kernel {{arch}} <profile-id>"
         exit 2
@@ -273,17 +276,18 @@ build-kernel arch profile="":
     cargo run -p capsem-admin -- image build \
         --profile "config/profiles/${PROFILE_ARG}/profile.toml" \
         --config-root config \
-        --output "{{assets_dir}}" \
+        --output "$OUTPUT_ARG" \
         --arch "{{arch}}" \
         --template kernel \
         --clean
     just _docker-gc
 
 # Build rootfs only for one profile/arch (CI-facing primitive).
-build-rootfs arch profile="":
+build-rootfs arch profile="" output=assets_dir:
     #!/bin/bash
     set -euo pipefail
     PROFILE_ARG="{{profile}}"
+    OUTPUT_ARG="{{output}}"
     if [[ -z "$PROFILE_ARG" ]]; then
         echo "ERROR: profile id required. Use: just build-rootfs {{arch}} <profile-id>"
         exit 2
@@ -293,7 +297,7 @@ build-rootfs arch profile="":
     cargo run -p capsem-admin -- image build \
         --profile "config/profiles/${PROFILE_ARG}/profile.toml" \
         --config-root config \
-        --output "{{assets_dir}}" \
+        --output "$OUTPUT_ARG" \
         --arch "{{arch}}" \
         --template rootfs \
         --clean
@@ -301,11 +305,12 @@ build-rootfs arch profile="":
 
 # VM asset rebuild (kernel + rootfs). Profile is mandatory. Optional second arg
 # restricts to one arch.
-build-assets profile="" arch="":
+build-assets profile="" arch="" output=assets_dir:
     #!/bin/bash
     set -euo pipefail
     PROFILE_ARG="{{profile}}"
     ARCH_ARG="{{arch}}"
+    OUTPUT_ARG="{{output}}"
     if [[ -z "$PROFILE_ARG" ]]; then
         echo "ERROR: profile id required. Use: just build-assets <profile-id> [arm64|x86_64]"
         exit 2
@@ -316,7 +321,7 @@ build-assets profile="" arch="":
     ARGS=(
         --profile "config/profiles/${PROFILE_ARG}/profile.toml"
         --config-root config
-        --output "{{assets_dir}}"
+        --output "$OUTPUT_ARG"
         --clean
     )
     if [[ -n "$ARCH_ARG" ]]; then
@@ -324,6 +329,176 @@ build-assets profile="" arch="":
     fi
     cargo run -p capsem-admin -- image build "${ARGS[@]}"
     just _docker-gc
+
+# Ironbank VM asset gate. This is the superset owner for the image-build work
+# performed by release-assets.yaml: every checked-in profile, both published
+# architectures, the exact CI-facing build primitives, generated-manifest
+# validation, and a real shell marker from each profile-owned host-arch image.
+# Outputs stay under target/ so the gate never mutates the developer's assets/.
+test-assets: _install-tools _generate-settings _sign
+    #!/bin/bash
+    set -euo pipefail
+    ROOT="{{justfile_directory()}}"
+    TEST_ROOT="$ROOT/target/ironbank-assets"
+    HOST_ARCH=$(uname -m | sed 's/aarch64/arm64/;s/arm64/arm64/;s/amd64/x86_64/')
+    case "$HOST_ARCH" in
+        arm64|x86_64) ;;
+        *)
+            echo "ERROR: unsupported host architecture for asset boot proof: $HOST_ARCH" >&2
+            exit 1
+            ;;
+    esac
+    case "$HOST_ARCH" in
+        arm64)
+            CROSS_PLATFORM=linux/amd64
+            CROSS_ARCH=x86_64
+            ;;
+        x86_64)
+            CROSS_PLATFORM=linux/arm64
+            CROSS_ARCH=arm64
+            ;;
+    esac
+    echo "=== Ironbank $CROSS_ARCH container execution preflight ==="
+    if ! docker run --rm --platform "$CROSS_PLATFORM" debian:bookworm-slim /bin/true; then
+        echo "ERROR: Docker cannot execute $CROSS_PLATFORM containers." >&2
+        if [[ "$(uname -s)" == "Darwin" ]]; then
+            echo "Colima Rosetta may be configured but stale; run 'colima restart' and retry." >&2
+        else
+            echo "Install/register binfmt QEMU support and retry." >&2
+        fi
+        exit 1
+    fi
+    rm -rf "$TEST_ROOT"
+    mkdir -p "$TEST_ROOT"
+
+    gate_pid_running() {
+        local pid="$1"
+        kill -0 "$pid" 2>/dev/null || return 1
+        local state
+        state=$(ps -o stat= -p "$pid" 2>/dev/null | awk '{print $1}')
+        [[ -n "$state" && "$state" != Z* ]]
+    }
+
+    stop_gate_pidfile() {
+        local pidfile="$1"
+        local label
+        label=$(basename "$pidfile")
+        if [[ -f "$pidfile" ]]; then
+            local pid
+            pid=$(cat "$pidfile" 2>/dev/null || true)
+            if [[ "$pid" =~ ^[0-9]+$ ]] && gate_pid_running "$pid"; then
+                kill "$pid" 2>/dev/null || true
+                for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+                    gate_pid_running "$pid" || break
+                    sleep 0.1
+                done
+                if gate_pid_running "$pid"; then
+                    kill -9 "$pid" 2>/dev/null || true
+                fi
+                for _ in 1 2 3 4 5 6 7 8 9 10; do
+                    gate_pid_running "$pid" || break
+                    sleep 0.1
+                done
+                if gate_pid_running "$pid"; then
+                    echo "ERROR: isolated asset gate $label process $pid did not exit" >&2
+                    return 1
+                fi
+            fi
+        fi
+        rm -f "$pidfile"
+    }
+
+    stop_gate_service() {
+        local run_dir="$1"
+        # The gateway owns the fixed localhost port. Reap it explicitly before
+        # stopping the service so the next profile cannot attach to an orphan
+        # gateway whose UDS points at the previous profile's deleted run dir.
+        stop_gate_pidfile "$run_dir/gateway.pid"
+        stop_gate_pidfile "$run_dir/service.pid"
+    }
+
+    for profile_path in config/profiles/*/profile.toml; do
+        profile=$(basename "$(dirname "$profile_path")")
+        profile_root="$TEST_ROOT/$profile"
+        profile_assets="$profile_root/assets"
+        profile_config="$profile_root/config"
+        profile_home="$profile_root/home/.capsem"
+        echo "=== Ironbank asset build: $profile (arm64 + x86_64) ==="
+
+        for arch in arm64 x86_64; do
+            just build-kernel "$arch" "$profile" "$profile_assets"
+            just build-rootfs "$arch" "$profile" "$profile_assets"
+            for logical_name in vmlinuz initrd.img rootfs.erofs obom.cdx.json software-inventory.json; do
+                artifact="$profile_assets/$arch/$logical_name"
+                if [[ ! -s "$artifact" ]]; then
+                    echo "ERROR: asset build did not produce non-empty $artifact" >&2
+                    exit 1
+                fi
+            done
+        done
+        # The builders update `current` to the arch they most recently built.
+        # The matrix ends with x86_64, so restore the physical-host alias before
+        # the host-architecture VM proof.
+        ln -sfn "$HOST_ARCH" "$profile_assets/current"
+        test "$(readlink "$profile_assets/current")" = "$HOST_ARCH"
+
+        # The installed runtime resolves content-addressed filenames. Build
+        # output intentionally uses canonical logical names, so materialize
+        # the same zero-copy hash aliases that package/dev preparation uses.
+        # Without this, startup falls through to a remote fetch for the
+        # local-only asset version and the gate is no longer hermetic.
+        python3 scripts/create_hash_assets.py "$profile_assets"
+        cargo run -p capsem-admin -- manifest check "$profile_assets/manifest.json"
+        manifest_uri=$(python3 - "$profile_assets/manifest.json" <<'PY'
+    from pathlib import Path
+    import sys
+    print(Path(sys.argv[1]).resolve().as_uri())
+    PY
+        )
+        for runtime_profile in config/profiles/*/profile.toml; do
+            cargo run -p capsem-admin -- profile materialize \
+                --profile "$runtime_profile" \
+                --config-root config \
+                --manifest "$manifest_uri" \
+                --assets-dir "$profile_assets" \
+                --output-root "$profile_config" \
+                --arch "$HOST_ARCH"
+        done
+
+        mkdir -p "$profile_home"
+        # Keep AF_UNIX paths below macOS SUN_LEN. TEST_ROOT is intentionally
+        # descriptive and too long once the gateway appends its session path.
+        # Create runtime state only when the shell proof starts; durable
+        # failure evidence is copied under target/ironbank-assets on exit.
+        profile_run=$(mktemp -d /tmp/capsem-a.XXXXXX)
+        marker="CAPSEM_ASSET_${profile//-/_}_${HOST_ARCH}_SHELL_OK"
+        cleanup_asset_profile() {
+            status=$?
+            stop_gate_service "$profile_run"
+            if [[ $status -ne 0 ]]; then
+                rm -rf "$profile_root/run-failure"
+                mkdir -p "$profile_root/run-failure"
+                cp -R "$profile_run"/. "$profile_root/run-failure"/ 2>/dev/null || true
+            fi
+            rm -rf "$profile_run"
+            return "$status"
+        }
+        trap cleanup_asset_profile EXIT
+        CAPSEM_HOME="$profile_home" \
+        CAPSEM_RUN_DIR="$profile_run" \
+        CAPSEM_ASSETS_DIR="$profile_assets" \
+        CAPSEM_PROFILES_DIR="$profile_config/profiles" \
+            python3 scripts/prove-installed-shell.py \
+                --capsem target/debug/capsem \
+                --marker "$marker" \
+                --session-name "asset-${profile}-${HOST_ARCH}" \
+                --timeout 300
+        stop_gate_service "$profile_run"
+        rm -rf "$profile_run"
+        trap - EXIT
+    done
+
+    echo "Ironbank VM asset build and boot gate passed for every profile and architecture."
 
 # Run vulnerability audits (cargo audit + npm bulk advisory API). Fast standalone gate.
 # `just test` runs these too; this recipe is a quick pre-push check.
@@ -490,6 +665,14 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     echo "=== Sign binaries for integration tests ==="
     just _sign
 
+    # ---- Stage 4b: full VM asset build + boot parity -----------------------
+    # This is the canonical owner of the portable work performed by the VM
+    # asset publication workflow. It rebuilds every profile for both published
+    # architectures in isolation, validates the manifests and release payload,
+    # then boots each profile-owned host-arch result and proves a guest shell.
+    echo "=== VM assets: all profiles, both arches, real guest shell ==="
+    just test-assets
+
     # ---- Stage 5: Python pytest ---------------------------------------------
     # Dogfooding canary: 4 concurrent VMs. --dist=loadfile keeps per-file
     # fixtures on the same worker. Any concurrency flake here is a Capsem-side
@@ -563,8 +746,9 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/test_capsem_bench_baseline.py -v --tb=short
 
     # ---- Stage 7: Docker e2e ------------------------------------------------
-    echo "=== Cross-compile Linux release (Docker) ==="
-    just cross-compile
+    echo "=== Cross-compile Linux releases (Docker, both arches) ==="
+    just cross-compile arm64
+    just cross-compile x86_64
 
     echo "=== Install e2e tests (Docker + systemd) ==="
     just test-install
@@ -631,11 +815,9 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         echo "ERROR: unsupported arch '$TARGET_ARCH' (arm64 or x86_64)"
         exit 1
     fi
-    # Ensure build image exists
-    if ! docker image inspect capsem-host-builder:latest &>/dev/null; then
-        echo "=== Build image not found, building... ==="
-        just build-host-image
-    fi
+    # Always run the cached image build so changes to the Dockerfile or helper
+    # scripts cannot be hidden behind a stale local image.
+    just build-host-image
     # Sync container VM clock on macOS (prevents apt "not valid yet" errors)
     if [[ "$(uname -s)" = "Darwin" ]]; then
         NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)

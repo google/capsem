@@ -23,6 +23,7 @@ DEV_PACKAGES=(
     libwebkit2gtk-4.1-dev
     libayatana-appindicator3-dev
     librsvg2-dev
+    libxdo-dev
 )
 
 echo "Swapping -dev libs: $NATIVE_ARCH -> $TARGET_ARCH"

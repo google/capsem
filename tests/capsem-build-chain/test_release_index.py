@@ -715,14 +715,15 @@ def test_asset_release_index_workflow_deploys_generated_preview_only_after_asset
 
     assert "cargo run -p capsem-admin -- manifest generate assets" in assemble_channel
     assert "scripts/check-asset-release-delta.py" in assemble_channel
-    assert "cargo run -p capsem-admin -- assets channel build" in assemble_channel
-    assert '--manifest "file://$PWD/assets/manifest.json"' in assemble_channel
+    assert "scripts/build-complete-release-channel.py" in assemble_channel
+    assert '--channel-source "$CHANNEL=file://$PWD/assets/manifest.json"' in assemble_channel
+    assert '--primary-channel "$CHANNEL"' in assemble_channel
+    assert "--allow-mirror-missing" in assemble_channel
     assert (
         "--asset-source-base \"$ASSET_BASE\"" in assemble_channel
         and "assets-v{asset_version}" in assemble_channel
     )
     assert '--out-dir target/release-channel' in assemble_channel
-    assert "cargo run -p capsem-admin -- assets channel check" in assemble_channel
     assert "name: asset-channel-preview" in assemble_channel
     assert "path: target/release-channel/" in assemble_channel
     assert "asset_changed: ${{ steps.asset-delta.outputs.changed }}" in assemble_channel

@@ -29,6 +29,15 @@ surfaces, and Docker/systemd Linux install plus a real guest-shell proof. Only
 unavoidable platform boundaries may remain outside, and each must be named
 with its authoritative final gate.
 
+`just test` is the strict superset of portable CI work. CI workflows may run a
+smaller relevant slice, but no portable artifact may be built only in workflow
+YAML. In particular, VM asset publication uses the same `just build-kernel`
+and `just build-rootfs` primitives owned by `just test` through
+`just test-assets`; the canonical gate rebuilds every profile for arm64 and
+x86_64, validates every required artifact and manifest, and boots each rebuilt
+host-architecture image to a guest-shell marker. Input-contract tests are not
+a substitute for testing the artifact that was actually built.
+
 ## Required Shape
 
 - Suite home: `tests/ironbank/`.

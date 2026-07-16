@@ -501,8 +501,19 @@ Every portable release-critical workflow must share the same production
 entrypoint with a local gate. Current required mappings are:
 
 - candidate qualification: local and CI both execute `just test`;
-- VM assets: local and `release-assets.yaml` both execute
-  `just build-kernel` and `just build-rootfs`;
+- VM assets: `just test` owns `just test-assets`, which executes the same
+  `just build-kernel` and `just build-rootfs` primitives as
+  `release-assets.yaml` for every checked-in profile and both published
+  architectures, validates the full payload and manifest, and proves a real
+  guest shell from each rebuilt host-architecture image;
+- release-channel assembly: the local `release-site` gate and production asset
+  and binary workflows execute `scripts/build-complete-release-channel.py`;
+  every deployable production dist must contain and validate both `stable` and
+  `nightly`, preserving the untouched channel graph instead of replacing the
+  Pages site with only the channel being updated;
+- Linux package assembly: `just test` executes `just cross-compile arm64` and
+  `just cross-compile x86_64`, so both publishable `.deb` architecture builds
+  are locally accounted for before the release workflow repeats them;
 - Linux package E2E: local and PR CI both execute `just test-install`;
 - package assembly and acceptance: local and release CI share
   `scripts/build-pkg.sh`, `scripts/repack-deb.sh`,

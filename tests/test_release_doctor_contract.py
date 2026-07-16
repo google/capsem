@@ -105,6 +105,38 @@ def test_doctor_fix_builds_assets_for_each_checked_in_profile() -> None:
     assert '"touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just build-assets"' not in source
 
 
+def test_macos_doctor_requires_live_rosetta_registration() -> None:
+    source = _source_text("scripts/doctor-macos.sh")
+    asset_gate = _recipe_block("test-assets:")
+
+    assert "/proc/sys/fs/binfmt_misc/rosetta" in source
+    assert "colima rosetta configured but not registered" in source
+    assert "colima restart" in source
+    assert "CROSS_PLATFORM=linux/amd64" in asset_gate
+    assert "CROSS_PLATFORM=linux/arm64" in asset_gate
+    assert 'docker run --rm --platform "$CROSS_PLATFORM"' in asset_gate
+    assert "Docker cannot execute $CROSS_PLATFORM containers" in asset_gate
+
+
+def test_linux_release_qualification_enables_arm64_for_canonical_asset_gate() -> None:
+    workflow = _workflow_text("release-qualification.yaml")
+
+    qemu = workflow.index("docker/setup-qemu-action@v3")
+    canonical_gate = workflow.index("run: just test")
+    assert "platforms: arm64" in workflow
+    assert qemu < canonical_gate
+
+
+def test_canonical_gate_builds_both_linux_release_architectures() -> None:
+    canonical_gate = _recipe_block("test:")
+
+    arm64 = canonical_gate.index("just cross-compile arm64")
+    x86_64 = canonical_gate.index("just cross-compile x86_64")
+    install = canonical_gate.rindex("just test-install")
+    assert arm64 < x86_64 < install
+    assert "just cross-compile\n" not in canonical_gate
+
+
 def test_install_e2e_materializes_config_before_repacking_package() -> None:
     block = _recipe_block("test-install:")
 
@@ -346,9 +378,9 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "binary_version:" not in workflow
     assert "BINARY_VERSION" not in workflow
     assert '--version "$BINARY_VERSION"' not in workflow
-    assert "cargo run -p capsem-admin -- assets channel build" in workflow
-    assert '--manifest "file://$PWD/assets/manifest.json"' in workflow
-    assert "cargo run -p capsem-admin -- assets channel check" in workflow
+    assert "scripts/build-complete-release-channel.py" in workflow
+    assert '--channel-source "$CHANNEL=file://$PWD/assets/manifest.json"' in workflow
+    assert "--allow-mirror-missing" in workflow
     assert "name: Preserve binary channel metadata" in workflow
     assert "scripts/preserve-binary-channel-metadata.py" in workflow
     assert "--manifest-path assets/manifest.json" in workflow
@@ -357,7 +389,7 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
         "scripts/check-asset-release-delta.py"
     )
     assert workflow.index("scripts/preserve-binary-channel-metadata.py") < workflow.index(
-        "cargo run -p capsem-admin -- assets channel build"
+        "scripts/build-complete-release-channel.py"
     )
     assert "name: asset-release-plan" in workflow
     assert "path: target/asset-release/" in workflow
@@ -473,7 +505,8 @@ def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_
     assert '--base-url "$RELEASE_SITE_URL"' in validator_step
     assert "--channel stable" in validator_step
     assert "--channel nightly" in validator_step
-    assert '--channel "$CHANNEL"' not in validator_step
+    assert 'CHANNEL_ARGS=(--channel "$CHANNEL")' in validator_step
+    assert '"${CHANNEL_ARGS[@]}"' in validator_step
     assert "--attempts 30" in validator_step
     assert "--delay-seconds 20" in validator_step
     assert workflow.index("cloudflare/wrangler-action@v3") < workflow.index(
@@ -1154,12 +1187,16 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "target/binary-channel/$RELEASE_CHANNEL/manifest.json" in record_step
     assert "for channel in" not in record_step
     build_channels = assemble_channel.split(
-        "- name: Build release channels with existing VM assets", maxsplit=1
-    )[1].split("- name: Build release site pages", maxsplit=1)[0]
+        "- name: Build complete release channels with existing VM assets", maxsplit=1
+    )[1].split("- uses: actions/upload-artifact", maxsplit=1)[0]
     assert "generated_at=\"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\"" in build_channels
     assert '--generated-at "$generated_at"' in build_channels
+    assert "scripts/build-complete-release-channel.py" in build_channels
+    assert '--channel-source "stable=file://$PWD/target/binary-channel/stable/manifest.json"' in build_channels
+    assert '--channel-source "nightly=file://$PWD/target/binary-channel/nightly/manifest.json"' in build_channels
+    assert '--primary-channel "$RELEASE_CHANNEL"' in build_channels
     assert build_channels.index('generated_at="$(date -u') < build_channels.index(
-        "for channel in stable nightly"
+        "scripts/build-complete-release-channel.py"
     )
     assert "Prove binary lane did not change VM assets" in assemble_channel
     assert "binary release changed VM asset metadata" in assemble_channel
@@ -1167,11 +1204,10 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
         "Record binary release metadata in selected channel manifest"
     )
     assert assemble_channel.index("Record binary release metadata in selected channel manifest") < (
-        assemble_channel.index("Build release channels with existing VM assets")
+        assemble_channel.index("Build complete release channels with existing VM assets")
     )
-    assert assemble_channel.index("Build release channels with existing VM assets") < (
-        assemble_channel.index("Check binary-updated release channels")
-    )
+    assert "- name: Build release site pages" not in assemble_channel
+    assert "- name: Check binary-updated release channels" not in assemble_channel
 
 
 def test_binary_release_channel_assembly_preflights_canonical_artifacts() -> None:
@@ -2469,7 +2505,7 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
         "Injection test",
         "Integration test",
         "Benchmarks",
-        "Cross-compile Linux release (Docker)",
+        "Cross-compile Linux releases (Docker, both arches)",
         "Install e2e tests (Docker + systemd)",
     ]:
         assert stage in just_test
@@ -2590,8 +2626,10 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     assert "bash scripts/check-web-surface.sh docs" in docs
     assert "bash scripts/check-web-surface.sh site" in site
     assert release.count("bash scripts/check-web-surface.sh frontend-build") == 2
-    for workflow in (release, release_assets, binary_staging, channel_staging):
+    for workflow in (binary_staging, channel_staging):
         assert "bash scripts/check-web-surface.sh release-site-build" in workflow
+    assert "scripts/build-complete-release-channel.py" in release
+    assert "scripts/build-complete-release-channel.py" in release_assets
 
     bypasses = (
         "cd frontend && pnpm run build",
@@ -2614,9 +2652,12 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
             assert bypass not in text
 
     assert "write-release-site-ci-fixture.py" in script
-    assert "assets channel build" in script
+    assert "build-complete-release-channel.py" in script
     assert "pnpm --dir release-site run build:channel" in script
-    assert "assets channel check" in script
+    assert 'test -s "$CAPSEM_RELEASE_CHANNEL_DIST/404.html"' in script
+    assert 'grep -q "Artifact not found"' in script
+    complete_builder = _source_text("scripts/build-complete-release-channel.py")
+    assert '"assets",\n                "channel",\n                "check"' in complete_builder
     assert "CAPSEM_FRONTEND_JUNIT" in script
 
 
@@ -2644,6 +2685,17 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
     assert "just test-install" in just
     for surface in ("frontend", "docs", "site", "release-site"):
         assert f"bash scripts/check-web-surface.sh {surface}" in just
+
+
+def test_release_channel_deploy_validates_the_deployed_channel_shape() -> None:
+    deploy = _workflow_text("release-channel.yaml")
+    staging = _workflow_text("release-channel-staging.yaml")
+
+    assert "validate_complete_public_channels:" in deploy
+    assert 'CHANNEL_ARGS=(--channel "$CHANNEL")' in deploy
+    assert "CHANNEL_ARGS=(--channel stable --channel nightly)" in deploy
+    assert '"${CHANNEL_ARGS[@]}"' in deploy
+    assert "validate_complete_public_channels: false" in staging
 
 
 def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -> None:

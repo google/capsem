@@ -144,7 +144,7 @@ fn list_response_rejects_missing_lifecycle_state() {
 }
 
 #[tokio::test]
-async fn cache_returns_fresh_data() {
+async fn snapshot_retains_previous_data_for_event_diffing() {
     let cache = StatusCache::new();
     let resp = StatusResponse {
         service: "running".into(),
@@ -155,50 +155,22 @@ async fn cache_returns_fresh_data() {
         profiles: None,
     };
 
-    // Populate cache
+    // Retain the prior response for lifecycle-event comparison only.
     {
         let mut guard = cache.inner.write().await;
-        *guard = Some((Instant::now(), resp.clone()));
+        *guard = Some(resp.clone());
     }
 
-    // Read back within TTL
     {
         let guard = cache.inner.read().await;
-        let (ts, ref cached) = guard.as_ref().unwrap();
-        assert!(ts.elapsed() < CACHE_TTL);
+        let cached = guard.as_ref().unwrap();
         assert_eq!(cached.service, "running");
         assert_eq!(cached.vm_count, 1);
     }
 }
 
 #[tokio::test]
-async fn cache_expires_after_ttl() {
-    let cache = StatusCache::new();
-    let resp = StatusResponse {
-        service: "running".into(),
-        gateway_version: "test".into(),
-        vm_count: 0,
-        vms: vec![],
-        resource_summary: None,
-        profiles: None,
-    };
-
-    // Populate cache with a timestamp beyond the 1s TTL
-    {
-        let mut guard = cache.inner.write().await;
-        *guard = Some((Instant::now() - Duration::from_secs(2), resp));
-    }
-
-    // Cache should be stale
-    {
-        let guard = cache.inner.read().await;
-        let (ts, _) = guard.as_ref().unwrap();
-        assert!(ts.elapsed() >= CACHE_TTL);
-    }
-}
-
-#[tokio::test]
-async fn cache_starts_empty() {
+async fn previous_status_snapshot_starts_empty() {
     let cache = StatusCache::new();
     let guard = cache.inner.read().await;
     assert!(guard.is_none());
@@ -474,7 +446,7 @@ async fn fetch_status_malformed_list_json() {
 }
 
 #[tokio::test]
-async fn cache_prevents_duplicate_fetches() {
+async fn status_does_not_hide_a_new_vm_behind_the_previous_snapshot() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     let counter = Arc::new(AtomicUsize::new(0));
@@ -484,8 +456,21 @@ async fn cache_prevents_duplicate_fetches() {
         axum::routing::get(move || {
             let c = c.clone();
             async move {
-                c.fetch_add(1, Ordering::SeqCst);
-                axum::Json(serde_json::json!({"sandboxes": []}))
+                let request = c.fetch_add(1, Ordering::SeqCst);
+                let sandboxes = if request == 0 {
+                    serde_json::json!([])
+                } else {
+                    serde_json::json!([{
+                        "id": "vm-new",
+                        "name": "new-session",
+                        "profile_id": "code",
+                        "pid": 123,
+                        "status": "Running",
+                        "persistent": true,
+                        "available_actions": ["pause", "stop", "fork", "delete"]
+                    }])
+                };
+                axum::Json(serde_json::json!({"sandboxes": sandboxes}))
             }
         }),
     );
@@ -499,17 +484,25 @@ async fn cache_prevents_duplicate_fetches() {
         events_tx: tokio::sync::broadcast::channel(16).0,
     });
 
-    // First call -- cache miss, fetches from UDS
-    handle_status(axum::extract::State(state.clone())).await;
+    // A tray/UI poll can populate /status immediately before `capsem create`.
+    // The next status read must still see the VM that the service now reports;
+    // otherwise `capsem shell --name ...` rejects a VM that already booted.
+    let first = handle_status(axum::extract::State(state.clone())).await;
     assert_eq!(counter.load(Ordering::SeqCst), 1);
+    let first_body = first.into_body().collect().await.unwrap().to_bytes();
+    let first_json: serde_json::Value = serde_json::from_slice(&first_body).unwrap();
+    assert_eq!(first_json["vm_count"], 0);
 
-    // Second call within TTL -- should use cache
-    handle_status(axum::extract::State(state.clone())).await;
+    let second = handle_status(axum::extract::State(state.clone())).await;
     assert_eq!(
         counter.load(Ordering::SeqCst),
-        1,
-        "cache should prevent second fetch"
+        2,
+        "every status read must observe the service's current VM registry"
     );
+    let second_body = second.into_body().collect().await.unwrap().to_bytes();
+    let second_json: serde_json::Value = serde_json::from_slice(&second_body).unwrap();
+    assert_eq!(second_json["vm_count"], 1);
+    assert_eq!(second_json["vms"][0]["id"], "vm-new");
     h.abort();
 }
 
