@@ -10,9 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Started the Claude Web GUI feasibility programme on the `v1.6` branch,
   required its GUI profile to use the normal `capsem-admin` authoring and build
-  rails, recorded its signed input, dependency-closure, host, budget, and
-  Apple-VZ transport baseline, and retained useful reviewed work for later
-  tranche hardening.
+  rails, pinned a signed server-only Xpra input set, recorded its dependency
+  closure, host, budget, and Apple-VZ transport baseline, and retained useful
+  reviewed work for later tranche hardening.
 
 ### Fixed
 - Made release qualification validate the live public manifest with the exact

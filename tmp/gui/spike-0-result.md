@@ -105,6 +105,22 @@ The official deb822 source is Bookworm `main` at `https://xpra.org`, signed by
 not accepted because upstream identifies it as unsupported and missing current
 HTML5 and security fixes.
 
+The guest pins the server-only subset below instead of installing the `xpra`
+metapackage, which hard-depends on the unused GTK client. All rows come from
+the signature-verified arm64 Bookworm package index.
+
+| Guest package | Version | Bytes | SHA-256 |
+| --- | --- | ---: | --- |
+| `xpra-common` | `6.5.1-r0-1` | 7,734,396 | `ce68e85a976df7e2e34c5fe19be2a071c9595b554e22011bda33cf0f502ed58b` |
+| `xpra-server` | `6.5.1-r0-1` | 375,700 | `28540b648a31ef8d469249ec859598e8bd0368ad5a4046e701c47ca51a8235d0` |
+| `xpra-x11` | `6.5.1-r0-1` | 740,604 | `41c8ed007f6dafb32e3128dd3703afec9c52d76bea8b3a20af766a3199e762b6` |
+| `xpra-codecs` | `6.5.1-r0-1` | 509,944 | `8669a2edcfc37854ba4cc4e8858215024399121ba23bae19a4a5115381d5f1d7` |
+
+`xpra-html5` is a version-matched host/UI input, not a required guest runtime
+package. Its signed `.deb` supplies the ignored spike client workspace. The
+final image closure is still determined by the real admin build and recorded
+from its OBOM, not inferred from these direct package rows.
+
 ## Dependency-closure experiment
 
 A clean arm64 Bookworm apt simulation with `--no-install-recommends` selected
@@ -114,8 +130,10 @@ whose first satisfier is `kde-cli-tools`, so apt selected the KDE closure.
 Adding `trash-cli` explicitly in the same transaction satisfies that
 alternative without KDE. Adding the required `xserver-xorg-video-dummy` and
 `dbus-x11` at the same time produces the current 200-package closure candidate.
-The actual package/version OBOM, installed bytes, rootfs bytes, and delta from
-the admin-built baseline remain pending S01-003. Simulation is not build proof.
+That simulation used the broad Xpra metapackage. The selected server-only set
+above should reduce the closure further. The actual package/version OBOM,
+installed bytes, rootfs bytes, and delta from the admin-built baseline remain
+pending S01-003. Simulation is not build proof.
 
 No desktop environment, window manager, guest browser, VNC/noVNC, Spice,
 socat, websockify, QEMU, or virtiofsd is admitted by this decision.
