@@ -780,6 +780,7 @@ def extract_software_inventory(
     platform: str,
     arch_name: str,
     output_dir: Path,
+    config: GuestImageConfig,
 ) -> Path:
     """Write installed package inventory captured from the built rootfs image."""
     from capsem.builder.manifest import collect_bom
@@ -790,18 +791,22 @@ def extract_software_inventory(
         platform,
         "dpkg-query -W -f='${Package}\\t${Version}\\t${Architecture}\\n'",
     )
-    pip_output = _container_output(
-        runtime,
-        image_tag,
-        platform,
-        "python3 -m pip list --format json",
-    )
-    npm_output = _container_output(
-        runtime,
-        image_tag,
-        platform,
-        "npm ls --json --global --depth=0 --prefix /opt/ai-clis 2>/dev/null || npm ls --json --global --depth=0",
-    )
+    pip_output = "[]"
+    if "python" in config.package_sets:
+        pip_output = _container_output(
+            runtime,
+            image_tag,
+            platform,
+            "python3 -m pip list --format json",
+        )
+    npm_output = "{}"
+    if "npm" in config.package_sets:
+        npm_output = _container_output(
+            runtime,
+            image_tag,
+            platform,
+            "npm ls --json --global --depth=0 --prefix /opt/ai-clis 2>/dev/null || npm ls --json --global --depth=0",
+        )
     manifest = collect_bom(
         arch=arch_name,
         dpkg_output=dpkg_output,
@@ -1519,6 +1524,7 @@ def build_image(
                 arch.docker_platform,
                 arch_name,
                 arch_output,
+                config,
             )
             _append_build_ledger(arch_output, {
                 "stage": "rootfs.software_inventory",

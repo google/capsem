@@ -35,6 +35,7 @@ from capsem.builder.docker import (
     docker_build,
     experimental_erofs_build_config,
     export_container_fs,
+    extract_software_inventory,
     extract_tool_versions,
     extract_kernel_assets,
     generate_build_context,
@@ -1152,6 +1153,34 @@ class TestBuildLedger:
         assert "installed_packages" not in record
         assert "installed_versions" not in record
 
+    @patch("capsem.builder.docker._container_output")
+    def test_inventory_queries_only_profile_owned_package_managers(
+        self, mock_output, real_config, tmp_path
+    ):
+        package_sets = {
+            key: value
+            for key, value in real_config.package_sets.items()
+            if key not in {"npm", "python"}
+        }
+        config = real_config.model_copy(update={"package_sets": package_sets})
+        mock_output.return_value = "coreutils\t9.1\tarm64\n"
+
+        path = extract_software_inventory(
+            "docker", "gui-rootfs", "linux/arm64", "arm64", tmp_path, config
+        )
+
+        assert mock_output.call_count == 1
+        assert "dpkg-query" in mock_output.call_args.args[-1]
+        inventory = json.loads(path.read_text())
+        assert inventory["packages"] == [
+            {
+                "architecture": "arm64",
+                "name": "coreutils",
+                "source": "dpkg",
+                "version": "9.1",
+            }
+        ]
+
     @patch("capsem.builder.docker.run_cmd")
     def test_generate_cyclonedx_obom_extracts_rootfs_and_runs_cdxgen(self, mock_run, tmp_path, monkeypatch):
         repo_root = tmp_path
@@ -1247,7 +1276,7 @@ class TestBuildLedger:
         def fake_versions(_runtime, _tag, _platform, output_dir, _config):
             (output_dir / "tool-versions.txt").write_text("codex=1.0.0\n")
 
-        def fake_inventory(_runtime, _tag, _platform, _arch_name, output_dir):
+        def fake_inventory(_runtime, _tag, _platform, _arch_name, output_dir, _config):
             path = output_dir / "software-inventory.json"
             path.write_text(
                 json.dumps({

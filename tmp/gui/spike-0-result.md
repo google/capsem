@@ -205,6 +205,23 @@ These are feasibility thresholds, not product SLOs.
 | UI-11 Observability | pending | one opaque correlated run identity |
 | UI-12 Cleanup | pending | post-verdict removal and prohibited-data audit |
 
+## Build attempts
+
+### Attempt 1 — failed after rootfs construction
+
+`just build-assets gui arm64 tmp/gui/spike-0/assets` reached the normal
+`capsem-admin image build` backend. It built the 7.0.11 kernel/initrd, rendered
+the GUI profile without language-runtime installer layers, verified the vendor
+keys and direct package SHA-256 values, installed the exact Claude/Xpra set,
+and completed the rootfs container image. Evidence extraction then failed
+before rootfs export because `extract_software_inventory` unconditionally ran
+`python3 -m pip list` even though the profile declared no Python package set.
+
+This is an Admin/build evidence-boundary defect, not a GUI-package failure.
+The forward fix makes inventory query only the package managers declared by
+the active profile and adds a regression test. Attempt 1 is not build or boot
+proof; its partial output is replaced by the next clean Admin run.
+
 ## Measurement tables
 
 No runtime samples exist yet. Rows are added only from the complete Capsem Web
@@ -242,6 +259,9 @@ path; disposable-container diagnostics do not populate acceptance tables.
   while the build Dockerfile does not verify kernel.org's published checksum.
   The exact 7.0.11 digest is recorded, but this is a build-rail weakness rather
   than a property the GUI profile can conceal.
+- The first Admin build exposed an unconditional pip-inventory query after the
+  GUI rootfs completed. A profile with no Python package set must produce an
+  apt-only inventory; the failed attempt remains recorded above.
 - Reusing the `code` profile, generating a backend outside Capsem Admin, or
   creating a one-off GUI Dockerfile would not prove the product architecture
   and is prohibited by the spike contract.
