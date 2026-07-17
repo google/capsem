@@ -364,6 +364,59 @@ or Claude process, session socket, display socket, or AF_VSOCK 14500 listener
 remained. UI-2 passes. The new `/dev/shm` and NSS profile changes still require
 a clean Admin replay before later product gates may rely on them.
 
+### Host relay attempt 1 — Apple VZ to authenticated HTML canvas
+
+The Apple VZ backend now retains its configured virtio socket device and uses
+`VZVirtioSocketDevice.connectToPort` on the main run loop to open a
+host-initiated connection to fixed guest port 14500. `capsem-process` exposes
+the relay only on its existing mode-0600 per-VM WebSocket UDS; the gateway
+derives that UDS from a validated VM id and exposes `/gui/{id}` through its
+normal browser-token authentication. The browser cannot choose a vsock port,
+UDS path, guest command, PID, URL, or Xpra option.
+
+The GUI relay has no terminal batching, timer, or intermediate channel.
+Awaited sends provide backpressure, a reusable 32 MiB `BytesMut` slab covers
+one uncompressed 3840x2160 RGBA frame, ownership transfers into WebSocket
+`Bytes` without copying, and each WebSocket message is capped at 64 MiB.
+
+After rebuilding and re-signing the exact debug `capsem-process` with the
+checked-in VZ entitlement, the persistent Admin-built VM resumed. Because it
+predates the retained initrd change, the disposable VM needed its already
+recorded live `/dev/shm` diagnostic mount after reboot. Claude and Xpra then
+remained alive on `*:14500`. A browser upgrade to the authenticated gateway
+route returned HTTP 101 with subprotocol `binary`, and Xpra recorded a new
+vsock connection at the same time.
+
+The exact signed `xpra-html5` 21-r1-1 package, SHA-256
+`232d498314d302983522fbb8c9b6f91bd4ce12a9de2f37970ae3a7f5ff0ce466`,
+was extracted into the ignored spike workspace. Its client completed the Xpra
+handshake through the gateway and rendered both Claude surfaces in HTML
+canvas elements: the tray and the real 1200x800 main `browser-window`.
+The main window initially inherited an off-viewport X11 position and became
+visible after a diagnostic Xpra move to `(20,40)`. The live Get started button
+and browser input controls were left available for user interaction. Xpra's
+client ledger reported a 1-2 ms ping latency with no decode errors during the
+proof. This passes the first transport/canvas proof; typed lifecycle,
+responsive placement, durable frontend assets, and measured workload gates
+remain open.
+
+User testing then exposed two prerequisite failures that a screenshot-only
+proof would have missed. Claude warned that Git was required for local
+sessions and that authentication would not persist without an unlocked system
+keyring. The live VM received Debian Git 2.39.5, GNOME Keyring 42.1, and
+libsecret-tools 0.20.5, all now retained in Admin profile revision
+`2026.07.17.3`. In Claude's own D-Bus session, the login keyring was unlocked
+before Electron started and a `secret-tool` store, lookup, and clear round-trip
+passed as `capsem-gui`; its keyring file is owned by that identity at mode
+0600. After one restart Claude returned to its authenticated home without
+either prerequisite warning.
+
+The retained launcher generates a random per-VM keyring password on first
+boot, starts the real Secret Service, removes the password variable before
+executing Claude, and never selects Chromium's insecure basic password store.
+The live launch used a diagnostic password because the running image predates
+revision `.3`; a clean Admin rebuild must prove the retained first-boot path.
+
 ## Measurement tables
 
 No runtime samples exist yet. Rows are added only from the complete Capsem Web
@@ -371,7 +424,7 @@ path; disposable-container diagnostics do not populate acceptance tables.
 
 | Workload | Input-to-update p50/p95/p99 | Presented FPS median | >100 ms intervals | WS RTT | Notes |
 | --- | --- | --- | --- | --- | --- |
-| idle | pending | pending | pending | pending | |
+| idle | pending | pending | pending | 1-2 ms | first authenticated VZ/UDS/gateway/HTML canvas proof; Xpra client ping latency, no decode errors |
 | typing | pending | pending | pending | pending | |
 | scrolling | pending | pending | pending | pending | |
 | dialog | pending | pending | pending | pending | |
@@ -440,6 +493,27 @@ path; disposable-container diagnostics do not populate acceptance tables.
   Xpra's window ledger showed the 1200x800 main surface, and a subscribed Xpra
   client decoded it. Future tests must inspect and subscribe to the main
   non-tray window rather than capture the server root.
+- A raw `cargo build` replaces the local ad-hoc signature on
+  `capsem-process`; Apple VZ then rejects boot without the virtualization
+  entitlement. Live hypervisor tests must sign the exact rebuilt process with
+  the checked-in entitlement before launch.
+- The isolated service replay needs both its original `CAPSEM_RUN_DIR` and the
+  Admin-materialized `CAPSEM_PROFILES_DIR`. Omitting either loses the private
+  runtime registry or makes the persisted GUI profile unavailable.
+- Xpra preserved Claude's prior X11 coordinates, placing the 1200x800 window
+  beyond the narrower HTML client viewport. The product lifecycle must request
+  deterministic initial placement and the Web component must fit or scale the
+  canvas instead of relying on a diagnostic `xpra control move`.
+- Advertising Xpra system-tray support produced a second 32x32 Claude surface,
+  while the real Electron window was undecorated and therefore had no usable
+  drag handle. The corrected diagnostic client advertises no tray support,
+  suppresses Xpra's toolbar and virtual keyboard, and sends the main window a
+  viewport-sized geometry. The product component must preserve that
+  single-application policy rather than exposing a remote window manager.
+- Installing Git after Claude had already started did not clear its local
+  session prerequisite warning. GUI image prerequisites and Secret Service
+  must be ready before Electron starts; one lifecycle restart then cleared
+  both warnings and returned to the authenticated home.
 - Reusing the `code` profile, generating a backend outside Capsem Admin, or
   creating a one-off GUI Dockerfile would not prove the product architecture
   and is prohibited by the spike contract.
@@ -456,11 +530,11 @@ path; disposable-container diagnostics do not populate acceptance tables.
 
 ## Smallest next experiment
 
-Implement the typed host-initiated Apple VZ connection to the fixed Xpra port
-and its bounded, cancellable process relay. Then expose that relay through the
-authenticated gateway and HTML canvas so the user can interact directly. A
-clean Admin rebuild with the retained `/dev/shm` and NSS changes remains a
-mandatory replay before the end-to-end gate.
+Replace the diagnostic launch and single-surface client patch with the fixed
+typed GUI lifecycle, then embed the pinned HTML client in the Capsem Web
+component with responsive placement and lifecycle/relay metrics. A clean Admin
+rebuild with the retained `/dev/shm` and NSS changes remains a mandatory replay
+before the end-to-end gate.
 
 ## User verdict, authentication, and teardown
 

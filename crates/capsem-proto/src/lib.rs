@@ -113,6 +113,13 @@ pub const VSOCK_PORT_AUDIT: u32 = 5006;
 /// over an `rmp-serde` length-framed envelope.
 pub const VSOCK_PORT_DNS_PROXY: u32 = 5007;
 
+/// Guest-listening Xpra endpoint for the GUI profile.
+///
+/// Unlike the host-listening control-plane ports above, this port is opened
+/// by Xpra inside the guest and reached through a host-initiated hypervisor
+/// connection. It is fixed product configuration, never browser input.
+pub const GUI_VSOCK_PORT: u32 = 14500;
+
 /// Host-side VSOCK services that the guest is allowed to connect to.
 ///
 /// This is the authoritative raw VSOCK boundary. Guest TCP traffic, model

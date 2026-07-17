@@ -55,6 +55,17 @@ pub trait VmHandle: Send {
     /// Downcast to the concrete backend type.
     fn as_any(&self) -> &dyn std::any::Any;
 
+    /// Open a host-initiated connection to a guest-listening vsock port.
+    ///
+    /// Backends that cannot initiate guest connections return an explicit
+    /// unsupported error. Product callers must use a fixed, typed port rather
+    /// than forwarding caller-selected values into this primitive.
+    fn connect_vsock(&self, _port: u32) -> Result<VsockConnection> {
+        Err(anyhow::anyhow!(
+            "host-initiated vsock is not supported by this hypervisor backend"
+        ))
+    }
+
     /// Pause the VM.
     fn pause(&self) -> Result<()> {
         Err(anyhow::anyhow!(
@@ -152,6 +163,7 @@ mod tests {
     #[test]
     fn kvm_default_impls_return_errors() {
         let handle = DummyKvmHandle;
+        assert!(handle.connect_vsock(14500).is_err());
         assert!(!handle.supports_checkpoint());
         assert!(handle.pause().is_err());
         assert!(handle.resume().is_err());

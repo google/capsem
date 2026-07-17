@@ -19,7 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Electron's standard sandbox under a deterministic unprivileged GUI identity,
   mounted a hardened guest `/dev/shm`, seeded Chromium's NSS database with the
   Capsem CA while preserving TLS verification, proved the real 1200x800 Claude
-  surface through an Xpra client decode,
+  surface through an Xpra client decode, added host-initiated Apple VZ
+  connections to the fixed guest Xpra port, bridged them through the
+  process-owned private UDS and authenticated gateway WebSocket, sized the
+  bounded zero-copy relay for uncompressed 4K frames, and rendered the live
+  Claude surface as one fitted, tray-free application canvas in the pinned
+  Xpra HTML client, preinstalled Git for local sessions, and added a per-VM
+  GNOME Keyring/Secret Service launcher so authentication survives restarts
+  without an insecure Chromium credential-store override,
   recorded its host, budget, and transport baseline, and retained useful
   reviewed work for later hardening.
 

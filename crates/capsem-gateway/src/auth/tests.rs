@@ -28,6 +28,7 @@ fn test_app(token: &str) -> Router {
         .route("/vms/list", get(|| async { "ok" }))
         .route("/status", get(|| async { "status" }))
         .route("/terminal/{id}", get(|| async { "terminal" }))
+        .route("/gui/{id}", get(|| async { "gui" }))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -465,6 +466,36 @@ async fn terminal_accepts_query_param_token() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn gui_accepts_query_param_token() {
+    let app = test_app("my-secret");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/gui/vm1?token=my-secret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn gui_rejects_wrong_query_param_token() {
+    let app = test_app("correct");
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/gui/vm1?token=wrong")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]

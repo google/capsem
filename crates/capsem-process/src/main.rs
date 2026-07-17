@@ -1,3 +1,4 @@
+mod gui;
 mod helpers;
 mod ipc;
 mod job_store;
@@ -699,7 +700,7 @@ async fn run_async_main_loop(
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&ws_sock_path, std::fs::Permissions::from_mode(0o600))?;
     }
-    info!(socket = %ws_sock_path.display(), "listening for terminal WS (mode 0600)");
+    info!(socket = %ws_sock_path.display(), "listening for private WS relays (mode 0600)");
 
     // Terminal relay: fan-out broadcast + ring buffer so a newly-connecting
     // WS client sees the shell's startup banner (printed before it joined).
@@ -715,18 +716,30 @@ async fn run_async_main_loop(
     let ctrl_tx_ws = ctrl_tx_ipc.clone();
     let term_relay_app = Arc::clone(&term_relay);
 
-    let ws_app = axum::Router::new().route(
-        "/terminal",
-        axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade| {
-            let ctrl_tx = ctrl_tx_ws.clone();
-            let (replay, term_rx) = term_relay_app.subscribe();
-            async move {
-                ws.on_upgrade(move |socket| {
-                    terminal::handle_terminal_socket(socket, ctrl_tx, replay, term_rx)
-                })
-            }
-        }),
-    );
+    let vm_gui = Arc::clone(&vm);
+    let ws_app = axum::Router::new()
+        .route(
+            "/terminal",
+            axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade| {
+                let ctrl_tx = ctrl_tx_ws.clone();
+                let (replay, term_rx) = term_relay_app.subscribe();
+                async move {
+                    ws.on_upgrade(move |socket| {
+                        terminal::handle_terminal_socket(socket, ctrl_tx, replay, term_rx)
+                    })
+                }
+            }),
+        )
+        .route(
+            "/gui",
+            axum::routing::get(move |ws: axum::extract::ws::WebSocketUpgrade| {
+                let vm = Arc::clone(&vm_gui);
+                async move {
+                    ws.max_message_size(gui::GUI_WS_MAX_MESSAGE_BYTES)
+                        .on_upgrade(move |socket| gui::handle_gui_socket(socket, vm))
+                }
+            }),
+        );
 
     tokio::spawn(async move {
         if let Err(e) = axum::serve(ws_listener, ws_app).await {

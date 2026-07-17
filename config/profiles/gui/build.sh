@@ -110,6 +110,8 @@ assert_version xpra-codecs "$XPRA_VERSION"
 
 command -v claude-desktop >/dev/null
 command -v xpra >/dev/null
+command -v gnome-keyring-daemon >/dev/null
+command -v secret-tool >/dev/null
 xpra showconfig | grep -q "bind-vsock"
 
 # Claude Desktop is Electron. Run the application as a dedicated unprivileged
@@ -141,6 +143,41 @@ if [ "$nss_trust" != "C,," ]; then
     echo "Capsem CA missing from GUI NSS trust store" >&2
     exit 1
 fi
+
+# There is no display-manager login in the appliance, so PAM cannot unlock a
+# desktop keyring for the GUI identity. The application lifecycle enters a
+# private D-Bus session and invokes this launcher. It creates a per-VM random
+# login-keyring password on first boot, unlocks the real Secret Service before
+# Claude starts, and removes the password from Claude's environment.
+cat >/usr/local/bin/capsem-gui-session <<'EOF'
+#!/bin/sh
+set -eu
+
+: "${HOME:?HOME must be set for the GUI identity}"
+: "${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR must be set for the GUI identity}"
+[ "$#" -gt 0 ] || {
+    echo "usage: capsem-gui-session COMMAND [ARG ...]" >&2
+    exit 64
+}
+
+keyring_state="$HOME/.config/capsem"
+keyring_password="$keyring_state/keyring-unlock"
+install -d -m 0700 "$keyring_state" "$HOME/.local/share/keyrings"
+if [ ! -s "$keyring_password" ]; then
+    umask 077
+    od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$keyring_password"
+fi
+chmod 0600 "$keyring_password"
+
+gnome_keyring_password="$(cat "$keyring_password")"
+printf '%s' "$gnome_keyring_password" | gnome-keyring-daemon --login
+gnome-keyring-daemon --start --components=secrets >/dev/null
+unset gnome_keyring_password keyring_password
+
+exec "$@"
+EOF
+chown root:root /usr/local/bin/capsem-gui-session
+chmod 0755 /usr/local/bin/capsem-gui-session
 
 sandbox_helper=/usr/lib/claude-desktop/chrome-sandbox
 chown root:root "$sandbox_helper"

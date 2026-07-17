@@ -105,7 +105,7 @@ where
 
 /// Validate VM ID: alphanumeric, hyphens, underscores. Must start with
 /// alphanumeric, length 1-64. Matches capsem-service's `validate_vm_name`.
-fn validate_vm_id(id: &str) -> Result<(), &'static str> {
+pub(crate) fn validate_vm_id(id: &str) -> Result<(), &'static str> {
     if id.is_empty() {
         return Err("VM id cannot be empty");
     }
@@ -125,7 +125,7 @@ fn validate_vm_id(id: &str) -> Result<(), &'static str> {
 }
 
 /// Derive the per-VM WebSocket UDS path from the service socket and VM ID.
-fn terminal_uds_path(service_uds: &std::path::Path, id: &str) -> PathBuf {
+pub(crate) fn terminal_uds_path(service_uds: &std::path::Path, id: &str) -> PathBuf {
     let run_dir = service_uds
         .parent()
         .filter(|p| !p.as_os_str().is_empty())

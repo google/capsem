@@ -1,8 +1,9 @@
 use anyhow::Result;
+use block2::RcBlock;
 use objc2::rc::Retained;
 use objc2::runtime::{Bool, ProtocolObject};
 use objc2::{define_class, msg_send, AnyThread, DefinedClass, Message};
-use objc2_foundation::{NSArray, NSObject, NSObjectProtocol};
+use objc2_foundation::{NSArray, NSError, NSObject, NSObjectProtocol};
 use objc2_virtualization::{
     VZSocketDevice, VZVirtioSocketConnection, VZVirtioSocketDevice, VZVirtioSocketListener,
     VZVirtioSocketListenerDelegate,
@@ -121,4 +122,82 @@ pub fn setup_vsock_listeners(
     }
 
     Ok((rx, delegate, listeners))
+}
+
+/// Open one host-initiated connection to a guest-listening vsock port.
+///
+/// Virtualization.framework owns the returned fd, so the retained connection
+/// object is carried inside `VsockConnection` as its lifetime anchor. This
+/// function must run on the main thread because both the VZ call and its
+/// completion are serviced by the main run loop.
+pub fn connect_to_guest(
+    socket_devices: &NSArray<VZSocketDevice>,
+    port: u32,
+) -> Result<VsockConnection> {
+    anyhow::ensure!(
+        super::machine::is_main_thread(),
+        "VZVirtioSocketDevice.connectToPort() must run on the main thread"
+    );
+    anyhow::ensure!(
+        socket_devices.count() > 0,
+        "no socket devices configured on VM"
+    );
+
+    let socket_device = socket_devices.objectAtIndex(0);
+    let device_ref: &VZSocketDevice = &socket_device;
+    // Safety: Capsem configures exactly one VZVirtioSocketDeviceConfiguration,
+    // so the runtime device behind the superclass reference is always virtio.
+    let virtio_device: &VZVirtioSocketDevice =
+        unsafe { &*(device_ref as *const VZSocketDevice as *const VZVirtioSocketDevice) };
+
+    let (tx, rx) = std::sync::mpsc::channel::<Result<VsockConnection>>();
+    let completion = RcBlock::new(
+        move |connection: *mut VZVirtioSocketConnection, error: *mut NSError| {
+            if !error.is_null() {
+                let description = unsafe { format!("{:?}", (*error).debugDescription()) };
+                let _ = tx.send(Err(anyhow::anyhow!(
+                    "VZ vsock connect to guest port {port} failed: {description}"
+                )));
+                return;
+            }
+            if connection.is_null() {
+                let _ = tx.send(Err(anyhow::anyhow!(
+                    "VZ vsock connect to guest port {port} returned no connection"
+                )));
+                return;
+            }
+
+            let connection_ref = unsafe { &*connection };
+            let fd = unsafe { connection_ref.fileDescriptor() };
+            if fd < 0 {
+                let _ = tx.send(Err(anyhow::anyhow!(
+                    "VZ vsock connect to guest port {port} returned invalid fd"
+                )));
+                return;
+            }
+            let retained = connection_ref.retain();
+            let connected = VsockConnection::new(fd, port, Box::new(VzConnectionAnchor(retained)));
+            let _ = tx.send(Ok(connected));
+        },
+    );
+
+    unsafe {
+        virtio_device.connectToPort_completionHandler(port, &completion);
+    }
+
+    loop {
+        match rx.try_recv() {
+            Ok(result) => return result,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                anyhow::bail!("VZ vsock connect completion channel closed")
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => unsafe {
+                core_foundation_sys::runloop::CFRunLoopRunInMode(
+                    core_foundation_sys::runloop::kCFRunLoopDefaultMode,
+                    0.005,
+                    1,
+                );
+            },
+        }
+    }
 }

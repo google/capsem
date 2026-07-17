@@ -165,7 +165,7 @@ pub async fn auth_middleware(
     // (browser WebSocket API cannot set custom headers).
     // Only the "token" param is recognized; all others are dropped.
     let query_valid = !header_valid
-        && (path.starts_with("/terminal/") || path == "/events")
+        && (path.starts_with("/terminal/") || path.starts_with("/gui/") || path == "/events")
         && req
             .uri()
             .query()

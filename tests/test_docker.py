@@ -1537,11 +1537,19 @@ class TestKernelConfig:
         build = (profile_root / "build.sh").read_text()
 
         assert "libnss3-tools" in packages
+        assert "git" in packages
+        assert "gnome-keyring" in packages
+        assert "libsecret-tools" in packages
         assert "certutil -N --empty-password" in build
         assert "certutil -A" in build
         assert "/usr/local/share/ca-certificates/capsem-ca.crt" in build
         assert "-n Capsem -t 'C,,'" in build
         assert "ignore-certificate-errors" not in build
+        assert "gnome-keyring-daemon --login" in build
+        assert "gnome-keyring-daemon --start --components=secrets" in build
+        assert "keyring-unlock" in build
+        assert "unset gnome_keyring_password keyring_password" in build
+        assert "exec \"$@\"" in build
 
     def test_init_uses_iptables_nft_only(self):
         content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()

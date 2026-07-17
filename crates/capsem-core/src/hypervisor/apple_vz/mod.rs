@@ -7,7 +7,11 @@ pub(crate) mod vsock;
 
 use anyhow::Result;
 use objc2::rc::Retained;
-use objc2_virtualization::{VZVirtioSocketListener, VZVirtualMachine as ObjcVZVirtualMachine};
+use objc2_foundation::NSArray;
+use objc2_virtualization::{
+    VZSocketDevice, VZVirtioSocketListener, VZVirtualMachine as ObjcVZVirtualMachine,
+};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use super::{Hypervisor, SerialConsole, VmHandle, VsockConnection};
@@ -75,6 +79,7 @@ impl Hypervisor for AppleVzHypervisor {
         let handle = AppleVzHandle {
             machine,
             serial: serial_console,
+            socket_devices: Arc::new(SendableSocketDevices(socket_devices)),
             _vsock_delegate: delegate,
             _vsock_listeners: listeners,
         };
@@ -87,10 +92,18 @@ impl Hypervisor for AppleVzHypervisor {
 pub struct AppleVzHandle {
     machine: machine::AppleVzMachine,
     serial: serial::AppleVzSerialConsole,
+    socket_devices: Arc<SendableSocketDevices>,
     // Keep vsock ObjC objects alive so listeners remain active.
     _vsock_delegate: Retained<vsock::VsockListenerDelegate>,
     _vsock_listeners: Vec<Retained<VZVirtioSocketListener>>,
 }
+
+/// The socket-device array is created and used only on the main run loop.
+/// The wrapper crosses worker threads solely so `run_on_main_thread` can move
+/// ownership back to that run loop without touching Objective-C state.
+struct SendableSocketDevices(Retained<NSArray<VZSocketDevice>>);
+unsafe impl Send for SendableSocketDevices {}
+unsafe impl Sync for SendableSocketDevices {}
 
 // Safety: We manage thread safety through channels and main-thread dispatch.
 unsafe impl Send for AppleVzHandle {}
@@ -110,6 +123,11 @@ impl VmHandle for AppleVzHandle {
 
     fn as_any(&self) -> &dyn std::any::Any {
         self
+    }
+
+    fn connect_vsock(&self, port: u32) -> Result<VsockConnection> {
+        let socket_devices = Arc::clone(&self.socket_devices);
+        run_on_main_thread(move || vsock::connect_to_guest(&socket_devices.0, port))
     }
 
     fn pause(&self) -> Result<()> {

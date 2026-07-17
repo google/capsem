@@ -8,7 +8,7 @@ id = "gui"
 name = "GUI"
 description = "Single-application GUI agents streamed through Capsem Web."
 icon_svg = "<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M2 2h12v9H9.5l2 2H13v1H3v-1h1.5l2-2H2V2Zm1 1v7h10V3H3Z\"/></svg>"
-revision = "2026.07.17.2"
+revision = "2026.07.17.3"
 refresh_policy = "24h"
 
 [availability]
