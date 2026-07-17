@@ -192,7 +192,7 @@ These are feasibility thresholds, not product SLOs.
 | Gate | State | Evidence or next proof |
 | --- | --- | --- |
 | UI-0 Provenance | pending | signed metadata verified; admin build must verify the exact downloaded package |
-| UI-1 Admin-authored profile | pending | create, validate, check, build, boot, materialize, and ledger `gui` |
+| UI-1 Admin-authored profile | pass | Admin create, validate, check, build, materialize, and Apple VZ boot of `gui` |
 | UI-2 Single application | pending | Claude window under Xpra/Xdummy, no WM |
 | UI-3 Direct vsock | pending | Xpra AF_VSOCK to typed Apple VZ relay, no TCP |
 | UI-4 Gateway path | pending | authenticated gateway/service/process ownership chain |
@@ -248,6 +248,45 @@ cdxgen's offline-rootfs mode (`-t rootfs`) and makes Admin reject an OBOM with
 no Debian package components. Attempt 2 proves Admin image construction and
 the independent dpkg inventory, but not valid OBOM production or VM boot.
 
+### Attempt 3 — valid Admin evidence and Apple VZ boot
+
+Candidate `19e35b85` completed the clean Admin build with asset release
+`2026.0717.2`. Validation compiled 10 profile rules; source check found all six
+profile payloads; materialization pinned the Admin outputs below:
+
+| Output | Bytes | BLAKE3 |
+| --- | ---: | --- |
+| `vmlinuz` | 8,786,432 | `af8e3b893ae19b2776fe5a2f6c5a25a2e49086de343b1062f5e9de168da96363` |
+| `initrd.img` | 996,564 | `b8776974ed4b97044a3356275c3f30d2c47c3f5e967eb9018a613ae1f9ab86ac` |
+| `rootfs.erofs` | 612,360,192 | `a253dece33a47e81053785dab5d72bc2159a2e86bef7d19150a5919388eab203` |
+| `obom.cdx.json` | 17,912,554 | `adf98604bbedf6b546c335f78bb9f32063ef77be4e8bc6a3b411441192fb4e2d` |
+| `software-inventory.json` | 45,715 | `a61ad9f33f8a8dcd9865bfea10711ea770342f5809c41150456e6bff129cc107` |
+
+The cdxgen 12.7.1 OBOM identifies `rootfs` as its container component and
+contains 16,090 components, including 548 `pkg:deb/` binary/source records.
+The independent installed-package inventory remains 356 dpkg rows. The build
+ledger records a 1,159,753,216-byte exported rootfs tar; the 612,360,192-byte
+EROFS is 547,393,024 bytes smaller (47.2% reduction, 52.8% of the tar size).
+No code-profile image was available locally for a cross-profile size delta,
+so none is invented.
+
+An isolated signed service loaded the Admin-materialized profiles directory
+and exact Admin asset directory. `POST /vms/create` with `profile_id=gui`
+returned Running VM `e452d927-4b1a-4290-8787-6a72203330ba`. In-guest proof:
+
+- Debian GNU/Linux 12 Bookworm, arm64, kernel 7.0.11;
+- `claude-desktop=1.22209.0` and `xpra-{common,server,x11,codecs}=6.5.1-r0-1`;
+- `/usr/bin/claude-desktop` and `/usr/bin/xpra` present;
+- Xpra exposes `bind-vsock` and `vsock-auth` configuration keys;
+- every forbidden browser, desktop, window-manager, VNC, websockify, socat,
+  and SSH-server package is absent or has dpkg status `not-installed`;
+- listeners are restricted to Capsem's loopback DNS proxy on 1053 and network
+  proxy on 10080/10443 before the application/Xpra launch tranche.
+
+UI-1 passes. This does not prove a Claude window, relay, browser surface,
+interaction, performance, stability, or authentication; UI-2 through UI-12
+remain open.
+
 ## Measurement tables
 
 No runtime samples exist yet. Rows are added only from the complete Capsem Web
@@ -292,6 +331,17 @@ path; disposable-container diagnostics do not populate acceptance tables.
   an extracted-rootfs operand for inventory ownership and scans the live host.
   Offline guest roots require `-t rootfs`; shape-only validation was too weak
   to catch the macOS document and now requires Debian package components.
+- The v1.6 Admin CLI accepts the profile path positionally for `validate` and
+  `check`, but `materialize` uses `--profile`. The first combined invocation
+  used the materialize spelling for validate and was rejected before mutation.
+- A guest forbidden-package probe initially treated any `dpkg-query -W`
+  record as installed; dpkg retains `unknown ok not-installed` rows. The
+  acceptance predicate must require the exact status `install ok installed`.
+  The first corrected command also needed `\${Status}` so the guest shell did
+  not expand dpkg's format token under `set -u`.
+- Attempts 2 and 3 produced identical-size 612,360,192-byte EROFS files but
+  different hashes. The profile inputs and installed inventory were stable,
+  but byte-for-byte rootfs reproducibility is not yet established.
 - Reusing the `code` profile, generating a backend outside Capsem Admin, or
   creating a one-off GUI Dockerfile would not prove the product architecture
   and is prohibited by the spike contract.
@@ -308,11 +358,9 @@ path; disposable-container diagnostics do not populate acceptance tables.
 
 ## Smallest next experiment
 
-Regenerate the GUI image through `capsem-admin` with the corrected offline
-rootfs OBOM mode, inspect the Debian component inventory, and materialize the
-source profile against that exact manifest. Boot that exact image under Apple
-VZ and verify the application/Xpra versions and forbidden-package absence
-before adding relay or frontend code.
+Launch Xdummy, Xpra, and Claude Desktop in the proven GUI VM without a window
+manager. Capture the exact lifecycle commands, first-window evidence, process
+tree, sockets, and clean-stop result before implementing a relay or frontend.
 
 ## User verdict, authentication, and teardown
 
@@ -321,4 +369,5 @@ User responsiveness notes: pending complete Capsem Web run.
 Authentication remains deliberately `AUTH_NOT_RUN` until Stage A produces a
 browser-visible Claude UI and the user elects to continue.
 
-Teardown proof: pending. No acceptance VM or GUI run has been created yet.
+Teardown proof: pending. The isolated UI-1 image-proof VM is running; no GUI
+application process or authentication run has started yet.
