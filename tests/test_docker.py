@@ -25,6 +25,7 @@ from capsem.builder.docker import (
     _directory_tree_hash,
     _file_ledger_entry,
     _rootfs_config_input_record,
+    _validate_cyclonedx_obom,
     build_all_architectures,
     build_version_script,
     build_image,
@@ -1201,7 +1202,13 @@ class TestBuildLedger:
                             ]
                         }
                     },
-                    "components": [],
+                    "components": [
+                        {
+                            "name": "coreutils",
+                            "version": "9.1-1",
+                            "purl": "pkg:deb/debian/coreutils@9.1-1",
+                        }
+                    ],
                 }))
             return MagicMock(stdout="")
 
@@ -1216,8 +1223,32 @@ class TestBuildLedger:
         assert "-xf" in tar_cmd
         assert str(rootfs_tar) in tar_cmd
         cdxgen_cmd = mock_run.call_args_list[1][0][0]
-        assert cdxgen_cmd[:4] == ["cdxgen", "-t", "os", "-o"]
+        assert cdxgen_cmd[:4] == ["cdxgen", "-t", "rootfs", "-o"]
         assert cdxgen_cmd[4] == str(output)
+
+    def test_cyclonedx_obom_rejects_host_only_inventory(self, tmp_path):
+        output = tmp_path / "obom.cdx.json"
+        output.write_text(json.dumps({
+            "bomFormat": "CycloneDX",
+            "metadata": {
+                "tools": {
+                    "components": [{"name": "cdxgen", "version": "12.7.1"}]
+                },
+                "component": {
+                    "name": "macOS",
+                    "purl": "pkg:swid/macOS@26.5.1",
+                },
+            },
+            "components": [
+                {
+                    "name": "Claude.app",
+                    "purl": "pkg:swid/Claude.app#/Applications/Claude.app",
+                }
+            ],
+        }))
+
+        with pytest.raises(RuntimeError, match="Debian rootfs package components"):
+            _validate_cyclonedx_obom(output)
 
     @patch("capsem.builder.docker.remove_image")
     @patch("capsem.builder.docker.extract_software_inventory")

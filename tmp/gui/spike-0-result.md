@@ -222,6 +222,32 @@ The forward fix makes inventory query only the package managers declared by
 the active profile and adds a regression test. Attempt 1 is not build or boot
 proof; its partial output is replaced by the next clean Admin run.
 
+### Attempt 2 — image succeeded; OBOM rejected as host-contaminated
+
+The clean Admin rerun completed at candidate `11327e6d`, generated manifest
+release `2026.0717.1`, and produced these arm64 outputs:
+
+| Output | Bytes | BLAKE3 |
+| --- | ---: | --- |
+| `vmlinuz` | 8,786,432 | `af8e3b893ae19b2776fe5a2f6c5a25a2e49086de343b1062f5e9de168da96363` |
+| `initrd.img` | 996,564 | `b8776974ed4b97044a3356275c3f30d2c47c3f5e967eb9018a613ae1f9ab86ac` |
+| `rootfs.erofs` | 612,360,192 | `c8cc0bbdb81cf923be4e3793630b9915b05ce8cb408203f6a775d73a6893a158` |
+| `software-inventory.json` | 45,715 | `a61ad9f33f8a8dcd9865bfea10711ea770342f5809c41150456e6bff129cc107` |
+
+The Admin inventory contains 356 dpkg packages. It records
+`claude-desktop=1.22209.0` and the four direct Xpra server packages at
+`6.5.1-r0-1`; the profile's forbidden browser, desktop, window-manager,
+VNC, websockify, socat, and SSH-server packages are absent.
+
+The generated `obom.cdx.json` cannot be accepted. Although the command was
+given the extracted guest rootfs path, `cdxgen -t os` means live-host
+inventory: it emitted the macOS 26.5.1 host, 2,794 host components, local
+Claude.app rows, and zero `pkg:deb/` components. The manifest therefore pins
+a structurally valid but semantically false VM OBOM. The forward fix uses
+cdxgen's offline-rootfs mode (`-t rootfs`) and makes Admin reject an OBOM with
+no Debian package components. Attempt 2 proves Admin image construction and
+the independent dpkg inventory, but not valid OBOM production or VM boot.
+
 ## Measurement tables
 
 No runtime samples exist yet. Rows are added only from the complete Capsem Web
@@ -262,6 +288,10 @@ path; disposable-container diagnostics do not populate acceptance tables.
 - The first Admin build exposed an unconditional pip-inventory query after the
   GUI rootfs completed. A profile with no Python package set must produce an
   apt-only inventory; the failed attempt remains recorded above.
+- The second Admin build exposed a semantic OBOM bug: `cdxgen -t os` ignores
+  an extracted-rootfs operand for inventory ownership and scans the live host.
+  Offline guest roots require `-t rootfs`; shape-only validation was too weak
+  to catch the macOS document and now requires Debian package components.
 - Reusing the `code` profile, generating a backend outside Capsem Admin, or
   creating a one-off GUI Dockerfile would not prove the product architecture
   and is prohibited by the spike contract.
@@ -278,11 +308,11 @@ path; disposable-container diagnostics do not populate acceptance tables.
 
 ## Smallest next experiment
 
-Author `config/profiles/gui` with pinned trust roots, package versions, and the
-explicit minimal closure. Run `capsem-admin profile validate`, `profile check`,
-and the arm64 `image build`; retain the JSON build plan, OBOM, exact artifact
-digests, and size delta. Boot that image under Apple VZ before adding relay or
-frontend code.
+Regenerate the GUI image through `capsem-admin` with the corrected offline
+rootfs OBOM mode, inspect the Debian component inventory, and materialize the
+source profile against that exact manifest. Boot that exact image under Apple
+VZ and verify the application/Xpra versions and forbidden-package absence
+before adding relay or frontend code.
 
 ## User verdict, authentication, and teardown
 

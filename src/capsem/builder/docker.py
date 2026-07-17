@@ -869,6 +869,13 @@ def _validate_cyclonedx_obom(path: Path) -> None:
         for tool in candidates
     ):
         raise RuntimeError(f"OBOM {path} must record cdxgen name and version in metadata.tools")
+    components = document.get("components")
+    if not isinstance(components, list) or not any(
+        isinstance(component, dict)
+        and str(component.get("purl", "")).startswith("pkg:deb/")
+        for component in components
+    ):
+        raise RuntimeError(f"OBOM {path} must contain Debian rootfs package components")
 
 
 def generate_cyclonedx_obom(rootfs_tar: Path, output_path: Path, *, repo_root: Path) -> Path:
@@ -898,7 +905,7 @@ def generate_cyclonedx_obom(rootfs_tar: Path, output_path: Path, *, repo_root: P
         run_cmd([
             *_cdxgen_command(),
             "-t",
-            "os",
+            "rootfs",
             "-o",
             str(output_path),
             str(rootfs_dir),
