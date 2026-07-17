@@ -2142,16 +2142,26 @@ class TestCrossCompileAgent:
             rust_target, tmp_path, tmp_path / "out",
         )
 
+    @pytest.mark.parametrize(
+        ("host_machine", "rust_target"),
+        [
+            ("aarch64", "aarch64-unknown-linux-musl"),
+            ("arm64", "aarch64-unknown-linux-musl"),
+            ("x86_64", "x86_64-unknown-linux-musl"),
+            ("amd64", "x86_64-unknown-linux-musl"),
+        ],
+    )
     @patch("capsem.builder.docker.container_compile_agent")
     @patch("capsem.builder.docker.sys")
     @patch("capsem.builder.docker.run_cmd")
     def test_native_on_linux_replaces_existing_readonly_outputs(
-        self, mock_run, mock_sys, mock_container, tmp_path,
+        self, mock_run, mock_sys, mock_container,
+        host_machine, rust_target, tmp_path,
     ):
         mock_sys.platform = "linux"
-        mock_run.return_value = MagicMock(stdout="aarch64-unknown-linux-musl")
+        mock_run.return_value = MagicMock(stdout=rust_target)
 
-        release_dir = tmp_path / "target" / "aarch64-unknown-linux-musl" / "release"
+        release_dir = tmp_path / "target" / rust_target / "release"
         release_dir.mkdir(parents=True)
         output_dir = tmp_path / "out"
         output_dir.mkdir()
@@ -2161,7 +2171,8 @@ class TestCrossCompileAgent:
             old.write_bytes(b"old")
             old.chmod(0o555)
 
-        cross_compile_agent("aarch64-unknown-linux-musl", tmp_path, output_dir)
+        with patch("capsem.builder.docker.platform.machine", return_value=host_machine):
+            cross_compile_agent(rust_target, tmp_path, output_dir)
 
         mock_container.assert_not_called()
         for binary in GUEST_BINARIES:
