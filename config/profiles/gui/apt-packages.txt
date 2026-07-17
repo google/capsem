@@ -31,6 +31,7 @@ xserver-xorg-core
 xserver-xorg-video-dummy
 fontconfig
 fonts-dejavu-core
+libnss3-tools
 
 # Satisfy Claude's trash-provider alternative without pulling KDE.
 trash-cli

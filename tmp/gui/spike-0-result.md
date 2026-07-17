@@ -3,7 +3,7 @@ User responsiveness verdict: not_tested
 Authentication decision: AUTH_NOT_RUN
 Host/guest: macOS arm64 / Apple VZ / arm64 Debian
 Web end-to-end path proven: no
-Failed UI gates: none; UI-0 through UI-12 remain open
+Failed UI gates: none; UI-1 and UI-2 pass, UI-0 and UI-3 through UI-12 remain open
 Failed auth gates: not_run
 Tranche 3 transport/UI legs feasible after Tranches 1 and 2: no
 Tranche 3 OAuth/agent leg feasible: not_proven
@@ -193,7 +193,7 @@ These are feasibility thresholds, not product SLOs.
 | --- | --- | --- |
 | UI-0 Provenance | pending | signed metadata verified; admin build must verify the exact downloaded package |
 | UI-1 Admin-authored profile | pass | Admin create, validate, check, build, materialize, and Apple VZ boot of `gui` |
-| UI-2 Single application | pending | Claude window under Xpra/Xdummy, no WM |
+| UI-2 Single application | pass | real 1200x800 Claude surface decoded through Xpra with no WM; instance stop reaped server/app tree, client, display, sockets, and AF_VSOCK listener |
 | UI-3 Direct vsock | pending | Xpra AF_VSOCK to typed Apple VZ relay, no TCP |
 | UI-4 Gateway path | pending | authenticated gateway/service/process ownership chain |
 | UI-5 Capsem Web surface | pending | normal Capsem UI sandboxed iframe |
@@ -324,6 +324,46 @@ only Claude's Chromium helper and defines deterministic `capsem-gui` uid/gid
 1000 with a nologin shell and tmpfs-backed runtime home. Builder tests guard
 strip-before-allowlist ordering, path validation, and final mode checks.
 
+### Launch attempt 3 — sandbox passed; guest shared memory was absent
+
+Asset release `2026.0717.4` booted with the deterministic `capsem-gui`
+identity and the allowlisted Chromium helper at root:root 4755. Xpra again
+bound only AF_VSOCK `any:14500` plus its local Unix sockets. Claude advanced
+through sandbox startup but aborted because the minimal guest init had not
+mounted `/dev/shm`.
+
+A diagnostic tmpfs mount at `/dev/shm` with mode 1777 and `nosuid,nodev`
+allowed Claude to remain alive. This runtime mutation is discovery evidence,
+not a passing image gate. The generic initrd forward fix creates that hardened
+tmpfs before launching guest processes and fails boot if the mount fails.
+
+### Launch attempt 4 — real Claude surface decoded; profile fixes pending rebuild
+
+After the shared-memory diagnostic, Claude created renderer processes but its
+main BrowserWindow stayed hidden while Chromium rejected the Capsem MITM CA
+with `net_error -202`. A control `curl https://claude.ai` in the same VM
+returned HTTP 302 with `ssl_verify_result=0`, proving the Debian system store.
+Electron required the same Capsem CA in the unprivileged user's NSS database.
+Importing `/usr/local/share/ca-certificates/capsem-ca.crt` as nickname `Capsem`
+with trust `C,,` removed the Chromium TLS errors without a certificate bypass.
+
+Xpra then reported two Claude surfaces: the 16x16 tray and the main X11 window
+`0x400004`, title `Claude`, role `browser-window`, size 1200x800. Root-display
+captures were black because seamless Xpra redirects application windows and
+the main surface was not yet subscribed by a display client. A diagnostic,
+version-matched Xpra 6.5.1 client subscribed on a second Xvfb display, decoded
+the main surface, and produced `claude-visible.png`: the real "Claude for
+Linux" Get started screen. The client/capture packages were installed only in
+the disposable live VM and are not product image inputs.
+
+This proves that Claude, Xpra, AF_VSOCK binding, and the encoded GUI surface
+work in the Admin-built Apple VZ guest. `xpra stop :100` reaped the server
+Xvfb, Claude, renderers, and detached crash handler; stopping the dedicated
+GUI instance then reaped the diagnostic client and its second Xvfb. No Xpra
+or Claude process, session socket, display socket, or AF_VSOCK 14500 listener
+remained. UI-2 passes. The new `/dev/shm` and NSS profile changes still require
+a clean Admin replay before later product gates may rely on them.
+
 ## Measurement tables
 
 No runtime samples exist yet. Rows are added only from the complete Capsem Web
@@ -388,6 +428,18 @@ path; disposable-container diagnostics do not populate acceptance tables.
   rootfs hardening layer strips all setuid/setgid bits afterward. The corrected
   rail keeps the strip and restores only strictly validated profile allowlist
   entries, rather than weakening the global hardening step.
+- The minimal guest mounted `/dev` and `/dev/pts` but not `/dev/shm`; Electron
+  cannot start without shared memory. The durable mount belongs to generic
+  initrd boot, not an application launch workaround.
+- Debian system CA trust is not sufficient for this Electron build. Chromium
+  reads the GUI user's NSS database, so the profile must import the existing
+  Capsem CA there with SSL trust. Disabling certificate checks is not an
+  accepted fix.
+- Xpra seamless mode redirects application windows away from the root
+  framebuffer. A black root screenshot did not mean the window was absent;
+  Xpra's window ledger showed the 1200x800 main surface, and a subscribed Xpra
+  client decoded it. Future tests must inspect and subscribe to the main
+  non-tray window rather than capture the server root.
 - Reusing the `code` profile, generating a backend outside Capsem Admin, or
   creating a one-off GUI Dockerfile would not prove the product architecture
   and is prohibited by the spike contract.
@@ -404,9 +456,11 @@ path; disposable-container diagnostics do not populate acceptance tables.
 
 ## Smallest next experiment
 
-Launch Xdummy, Xpra, and Claude Desktop in the proven GUI VM without a window
-manager. Capture the exact lifecycle commands, first-window evidence, process
-tree, sockets, and clean-stop result before implementing a relay or frontend.
+Implement the typed host-initiated Apple VZ connection to the fixed Xpra port
+and its bounded, cancellable process relay. Then expose that relay through the
+authenticated gateway and HTML canvas so the user can interact directly. A
+clean Admin rebuild with the retained `/dev/shm` and NSS changes remains a
+mandatory replay before the end-to-end gate.
 
 ## User verdict, authentication, and teardown
 
@@ -415,5 +469,6 @@ User responsiveness notes: pending complete Capsem Web run.
 Authentication remains deliberately `AUTH_NOT_RUN` until Stage A produces a
 browser-visible Claude UI and the user elects to continue.
 
-Teardown proof: pending. The isolated UI-1 image-proof VM is running; no GUI
-application process or authentication run has started yet.
+Application teardown passed: no Claude, Xpra, Xvfb, crash handler, display or
+session socket, or AF_VSOCK 14500 listener remained. The isolated VM stays
+running for the next relay experiment. Authentication remains unrun.

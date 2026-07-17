@@ -124,6 +124,24 @@ useradd --uid 1000 --gid 1000 --home-dir /tmp/capsem-gui-home \
     --no-create-home --shell /usr/sbin/nologin capsem-gui
 [ "$(id -u capsem-gui):$(id -g capsem-gui)" = "1000:1000" ]
 
+# Chromium uses the unprivileged user's NSS database rather than Debian's
+# system CA bundle. Seed it with the same Capsem CA that the generic rootfs
+# rail installs into /etc/ssl/certs, keeping normal TLS verification enabled.
+gui_home=/tmp/capsem-gui-home
+gui_nssdb=$gui_home/.pki/nssdb
+install -d -o capsem-gui -g capsem-gui -m 0700 \
+    "$gui_home" "$gui_home/.pki" "$gui_nssdb"
+runuser -u capsem-gui -- certutil -N --empty-password -d "sql:$gui_nssdb"
+runuser -u capsem-gui -- certutil -A -d "sql:$gui_nssdb" \
+    -n Capsem -t 'C,,' \
+    -i /usr/local/share/ca-certificates/capsem-ca.crt
+nss_trust="$(runuser -u capsem-gui -- certutil -L -d "sql:$gui_nssdb" \
+    | awk '$1 == "Capsem" { print $2 }')"
+if [ "$nss_trust" != "C,," ]; then
+    echo "Capsem CA missing from GUI NSS trust store" >&2
+    exit 1
+fi
+
 sandbox_helper=/usr/lib/claude-desktop/chrome-sandbox
 chown root:root "$sandbox_helper"
 chmod 4755 "$sandbox_helper"

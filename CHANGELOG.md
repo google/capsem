@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   build host, validated and materialized the Admin output, booted the exact
   GUI image under Apple VZ, added a strict post-strip SUID allowlist for
   Electron's standard sandbox under a deterministic unprivileged GUI identity,
+  mounted a hardened guest `/dev/shm`, seeded Chromium's NSS database with the
+  Capsem CA while preserving TLS verification, proved the real 1200x800 Claude
+  surface through an Xpra client decode,
   recorded its host, budget, and transport baseline, and retained useful
   reviewed work for later hardening.
 

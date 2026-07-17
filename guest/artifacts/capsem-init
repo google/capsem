@@ -212,6 +212,11 @@ mount -t sysfs    sysfs    /newroot/sys
 mount -t devtmpfs devtmpfs /newroot/dev
 mkdir -p /newroot/dev/pts
 mount -t devpts   devpts   /newroot/dev/pts
+mkdir -p /newroot/dev/shm
+mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs /newroot/dev/shm || {
+    echo "[capsem-init] FATAL: cannot mount /dev/shm tmpfs"
+    exit 1
+}
 
 # Mount /root workspace.
 # VirtioFS mode: bind-mount the workspace/ dir from the VirtioFS share.

@@ -1522,6 +1522,27 @@ class TestKernelConfig:
         assert 'boot_mark "$ROOTFS_LABEL"' in content
         assert "FATAL: cannot mount /dev/vda" in content
 
+    def test_init_mounts_hardened_shared_memory(self):
+        content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+        assert "mkdir -p /newroot/dev/shm" in content
+        assert (
+            "mount -t tmpfs -o mode=1777,nosuid,nodev tmpfs "
+            "/newroot/dev/shm"
+        ) in content
+        assert "FATAL: cannot mount /dev/shm tmpfs" in content
+
+    def test_gui_profile_seeds_chromium_nss_trust(self):
+        profile_root = PROJECT_ROOT / "config" / "profiles" / "gui"
+        packages = _package_lines(profile_root / "apt-packages.txt")
+        build = (profile_root / "build.sh").read_text()
+
+        assert "libnss3-tools" in packages
+        assert "certutil -N --empty-password" in build
+        assert "certutil -A" in build
+        assert "/usr/local/share/ca-certificates/capsem-ca.crt" in build
+        assert "-n Capsem -t 'C,,'" in build
+        assert "ignore-certificate-errors" not in build
+
     def test_init_uses_iptables_nft_only(self):
         content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
         assert "iptables-nft" in content
