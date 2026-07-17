@@ -115,6 +115,15 @@ xpra showconfig | grep -q "bind-vsock"
 # Claude Desktop is Electron. Run the application as a dedicated unprivileged
 # identity and keep Chromium's normal SUID sandbox available; never paper over
 # a broken image with a runtime sandbox-bypass flag.
+if getent passwd capsem-gui >/dev/null || getent group capsem-gui >/dev/null; then
+    echo "reserved capsem-gui identity already exists" >&2
+    exit 1
+fi
+groupadd --gid 1000 capsem-gui
+useradd --uid 1000 --gid 1000 --home-dir /tmp/capsem-gui-home \
+    --no-create-home --shell /usr/sbin/nologin capsem-gui
+[ "$(id -u capsem-gui):$(id -g capsem-gui)" = "1000:1000" ]
+
 sandbox_helper=/usr/lib/claude-desktop/chrome-sandbox
 chown root:root "$sandbox_helper"
 chmod 4755 "$sandbox_helper"
@@ -122,6 +131,11 @@ if [ "$(stat -c '%u:%g:%a' "$sandbox_helper")" != "0:0:4755" ]; then
     echo "Claude Chromium sandbox helper must be root:root mode 4755" >&2
     exit 1
 fi
+install -d -o root -g root -m 0755 /usr/local/share/capsem
+printf '%s\n' "$sandbox_helper" \
+    >/usr/local/share/capsem/profile-setuid-allowlist
+chown root:root /usr/local/share/capsem/profile-setuid-allowlist
+chmod 0444 /usr/local/share/capsem/profile-setuid-allowlist
 
 for forbidden in \
     kde-cli-tools chromium firefox-esr epiphany-browser \

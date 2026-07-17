@@ -308,6 +308,22 @@ session directory. This is valid clean-failure lifecycle evidence, not window
 proof. The image forward fix explicitly enforces root:root mode 4755 and a
 source-contract test prohibits the sandbox-bypass flag.
 
+### Launch attempt 2 — downstream hardening stripped the helper
+
+Asset release `2026.0717.3` contained the profile-build change, but the fresh
+VM still reported `chrome-sandbox` as root:root 0755. The rootfs template runs
+a later global setuid/setgid strip because its historical assumption is that
+all guest work runs as root. The profile hook's 4755 assertion therefore
+passed during its Docker layer and was invalidated by a later layer.
+
+The forward fix preserves the global strip and adds a narrow generic restore
+rail: a profile may emit a root-owned, non-symlink, mode-0444 allowlist of
+absolute regular-file paths. Only those files are restored to root:root 4755,
+and the final mode is asserted in the rootfs layer. The GUI profile allowlists
+only Claude's Chromium helper and defines deterministic `capsem-gui` uid/gid
+1000 with a nologin shell and tmpfs-backed runtime home. Builder tests guard
+strip-before-allowlist ordering, path validation, and final mode checks.
+
 ## Measurement tables
 
 No runtime samples exist yet. Rows are added only from the complete Capsem Web
@@ -368,6 +384,10 @@ path; disposable-container diagnostics do not populate acceptance tables.
   1 also showed that Claude's packaged Chromium helper was mode 0755 rather
   than the required root:root 4755; the image must enforce that invariant and
   must never disable Electron's sandbox.
+- Setting 4755 inside the profile hook was insufficient because the generic
+  rootfs hardening layer strips all setuid/setgid bits afterward. The corrected
+  rail keeps the strip and restores only strictly validated profile allowlist
+  entries, rather than weakening the global hardening step.
 - Reusing the `code` profile, generating a backend outside Capsem Admin, or
   creating a one-off GUI Dockerfile would not prove the product architecture
   and is prohibited by the spike contract.

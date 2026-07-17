@@ -111,8 +111,26 @@ RUN chmod 555 /usr/local/bin/snapshots
 # so any stray pip invocation outside the venv gives a real error, not PEP 668.
 RUN rm -f /usr/lib/python*/EXTERNALLY-MANAGED
 
-# Strip setuid/setgid bits from all binaries (VM runs as root, no need for them).
-RUN find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -exec chmod u-s,g-s {} + 2>/dev/null || true
+# Strip setuid/setgid bits globally, then restore only profile-declared setuid
+# helpers from a root-owned immutable allowlist. Most guests run as root and
+# have no allowlist; GUI profiles need Chromium's sandbox while running apps as
+# an unprivileged identity.
+RUN find / -xdev \( -perm -4000 -o -perm -2000 \) -type f -exec chmod u-s,g-s {} + 2>/dev/null || true; \
+    allowlist=/usr/local/share/capsem/profile-setuid-allowlist; \
+    if [ -e "$allowlist" ]; then \
+        [ -f "$allowlist" ] && [ ! -L "$allowlist" ] && \
+        [ "$(stat -c '%u:%g:%a' "$allowlist")" = "0:0:444" ] || \
+            { echo "invalid profile setuid allowlist" >&2; exit 1; }; \
+        while IFS= read -r setuid_path; do \
+            case "$setuid_path" in ''|'#'*) continue ;; /*) ;; \
+                *) echo "setuid allowlist path must be absolute: $setuid_path" >&2; exit 1 ;; esac; \
+            [ -f "$setuid_path" ] && [ ! -L "$setuid_path" ] || \
+                { echo "invalid setuid helper: $setuid_path" >&2; exit 1; }; \
+            chown root:root "$setuid_path"; \
+            chmod 4755 "$setuid_path"; \
+            [ "$(stat -c '%u:%g:%a' "$setuid_path")" = "0:0:4755" ] || exit 1; \
+        done < "$allowlist"; \
+    fi
 
 # /root is a tmpfs at runtime, so don't put anything here
 RUN rm -rf /root && mkdir -p /root

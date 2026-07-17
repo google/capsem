@@ -254,6 +254,7 @@ class TestRenderRootfs:
 
     def test_setuid_strip(self, rendered_arm64):
         assert "-4000" in rendered_arm64
+        assert "profile-setuid-allowlist" in rendered_arm64
 
     def test_root_cleanup(self, rendered_arm64):
         assert "rm -rf /root" in rendered_arm64
@@ -405,10 +406,16 @@ class TestRootfsSecurityInvariants:
         assert "rm -f /usr/lib/python*/EXTERNALLY-MANAGED" in rendered_arm64
 
     def test_setuid_bits_stripped(self, rendered_arm64):
-        """All setuid/setgid bits must be stripped -- VM runs as root."""
+        """Setuid bits are stripped globally and restored only by allowlist."""
         assert "perm -4000" in rendered_arm64
         assert "perm -2000" in rendered_arm64
         assert "chmod u-s,g-s" in rendered_arm64
+        strip_pos = rendered_arm64.index("chmod u-s,g-s")
+        allowlist_pos = rendered_arm64.index("profile-setuid-allowlist")
+        restore_pos = rendered_arm64.index("chmod 4755", allowlist_pos)
+        assert strip_pos < allowlist_pos < restore_pos
+        assert 'stat -c \'%u:%g:%a\'' in rendered_arm64
+        assert "setuid allowlist path must be absolute" in rendered_arm64
 
     def test_apt_sources_https(self, rendered_arm64):
         """Runtime apt must use HTTPS -- VM blocks port 80."""

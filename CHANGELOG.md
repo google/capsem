@@ -15,9 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package sets in both the image and inventory rails, recorded its dependency
   closure, generated VM OBOMs from the extracted rootfs instead of the live
   build host, validated and materialized the Admin output, booted the exact
-  GUI image under Apple VZ, enforced Electron's standard SUID sandbox for an
-  unprivileged GUI identity, recorded its host, budget, and transport baseline,
-  and retained useful reviewed work for later hardening.
+  GUI image under Apple VZ, added a strict post-strip SUID allowlist for
+  Electron's standard sandbox under a deterministic unprivileged GUI identity,
+  recorded its host, budget, and transport baseline, and retained useful
+  reviewed work for later hardening.
 
 ### Fixed
 - Made release qualification validate the live public manifest with the exact
