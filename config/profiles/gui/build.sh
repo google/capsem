@@ -112,6 +112,17 @@ command -v claude-desktop >/dev/null
 command -v xpra >/dev/null
 xpra showconfig | grep -q "bind-vsock"
 
+# Claude Desktop is Electron. Run the application as a dedicated unprivileged
+# identity and keep Chromium's normal SUID sandbox available; never paper over
+# a broken image with a runtime sandbox-bypass flag.
+sandbox_helper=/usr/lib/claude-desktop/chrome-sandbox
+chown root:root "$sandbox_helper"
+chmod 4755 "$sandbox_helper"
+if [ "$(stat -c '%u:%g:%a' "$sandbox_helper")" != "0:0:4755" ]; then
+    echo "Claude Chromium sandbox helper must be root:root mode 4755" >&2
+    exit 1
+fi
+
 for forbidden in \
     kde-cli-tools chromium firefox-esr epiphany-browser \
     gnome-shell plasma-desktop xfce4-session openbox \

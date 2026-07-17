@@ -287,6 +287,27 @@ UI-1 passes. This does not prove a Claude window, relay, browser surface,
 interaction, performance, stability, or authentication; UI-2 through UI-12
 remain open.
 
+## Application launch attempts
+
+### Launch attempt 1 — Xpra lifecycle passed; Claude sandbox invariant failed
+
+Launching Claude directly through the root-owned guest exec rail aborted as
+designed because Electron refuses root without disabling its sandbox. The
+sandbox was not disabled. A disposable unprivileged identity then launched:
+
+`Xpra :100 -> Xvfb -> dbus-run-session -> claude-desktop`
+
+Xpra 6.5.1-r0 created display `:100`, bound AF_VSOCK
+`4294967295:14500` (`any:14500`), created its Unix and abstract sockets, and
+reached ready state with no window manager. Claude aborted because the vendor
+package left `/usr/lib/claude-desktop/chrome-sandbox` owned by root but mode
+0755; Electron requires the standard root-owned 4755 SUID sandbox helper.
+
+`--exit-with-children` then reaped Xpra, Xvfb, both Xpra sockets, and the Xpra
+session directory. This is valid clean-failure lifecycle evidence, not window
+proof. The image forward fix explicitly enforces root:root mode 4755 and a
+source-contract test prohibits the sandbox-bypass flag.
+
 ## Measurement tables
 
 No runtime samples exist yet. Rows are added only from the complete Capsem Web
@@ -342,6 +363,11 @@ path; disposable-container diagnostics do not populate acceptance tables.
 - Attempts 2 and 3 produced identical-size 612,360,192-byte EROFS files but
   different hashes. The profile inputs and installed inventory were stable,
   but byte-for-byte rootfs reproducibility is not yet established.
+- Guest exec runs as root, and Electron correctly refuses that identity. A GUI
+  app lifecycle needs a dedicated unprivileged guest identity. Launch attempt
+  1 also showed that Claude's packaged Chromium helper was mode 0755 rather
+  than the required root:root 4755; the image must enforce that invariant and
+  must never disable Electron's sandbox.
 - Reusing the `code` profile, generating a backend outside Capsem Admin, or
   creating a one-off GUI Dockerfile would not prove the product architecture
   and is prohibited by the spike contract.

@@ -500,6 +500,12 @@ fn checked_in_gui_profile_parses_and_validates() {
     assert!(profile.files.build.is_some());
     assert!(profile.files.python_requirements.is_none());
     assert!(profile.files.npm_packages.is_none());
+
+    let build_script = include_str!("../../../../../../config/profiles/gui/build.sh");
+    assert!(build_script.contains("sandbox_helper=/usr/lib/claude-desktop/chrome-sandbox"));
+    assert!(build_script.contains("chmod 4755 \"$sandbox_helper\""));
+    assert!(build_script.contains("0:0:4755"));
+    assert!(!build_script.contains("--no-sandbox"));
 }
 
 #[test]
