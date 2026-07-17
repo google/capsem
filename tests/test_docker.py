@@ -312,6 +312,19 @@ class TestRootfsLayerOrdering:
             "Order must be: COPY cert -> update-ca-certificates -> certifi patch"
         )
 
+    def test_ca_cert_before_profile_build_hook(self, rendered_profile_arm64):
+        """Profile hooks may seed app-specific stores only from generic trust."""
+        copy_ca = self._pos(rendered_profile_arm64, "COPY capsem-ca.crt", "COPY CA cert")
+        update_ca = self._pos(
+            rendered_profile_arm64, "update-ca-certificates", "update-ca-certificates"
+        )
+        profile_build = self._pos(
+            rendered_profile_arm64, "COPY profile-build.sh", "profile build hook"
+        )
+        assert copy_ca < update_ca < profile_build, (
+            "System CA trust must exist before profile build hooks run"
+        )
+
     def test_node_before_npm_install(self, rendered_profile_arm64):
         """npm install requires node to be installed first."""
         node_pos = self._pos(rendered_profile_arm64, "nvm install", "node install")

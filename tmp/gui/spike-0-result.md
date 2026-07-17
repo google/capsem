@@ -287,6 +287,38 @@ UI-1 passes. This does not prove a Claude window, relay, browser surface,
 interaction, performance, stability, or authentication; UI-2 through UI-12
 remain open.
 
+### Attempt 4 — revision .3 clean build, materialization, and first-boot proof
+
+The first clean build of profile revision `2026.07.17.3` failed correctly:
+the profile hook tried to seed Chromium NSS before the shared rootfs template
+copied the Capsem CA into the system trust store. The forward fix orders the
+generic CA copy and `update-ca-certificates` before every profile build hook,
+with a rendered-Dockerfile contract test guarding that sequence. No
+certificate was copied by a profile-specific workaround.
+
+The rerun completed through `capsem-admin image build`, offline-rootfs OBOM,
+manifest generation, profile materialization, and an isolated Apple VZ boot:
+
+| Output | Bytes | BLAKE3 |
+| --- | ---: | --- |
+| `vmlinuz` | 8,786,432 | `44d06626679e14acda4c66cb65d4c1556833452041b9fa12954f55ccb66cf8b7` |
+| `initrd.img` | 996,599 | `f4e00626d82075f6385a69445442e4f4a785d3255c5d93d849c8c7cbabb40472` |
+| `rootfs.erofs` | 642,445,312 | `56201eac67d6dfb7b55e10f5a600e726ba96071752d85aa054273a909fa703bc` |
+| `obom.cdx.json` | 18,151,645 | `1f1ae5656e8ec28e1eaa3c8836b92b78a6bb4e84481f6ede1763980d7d494b2c` |
+
+The OBOM contains 563 Debian purl components. The independent package
+inventory records Claude 1.22209.0, Xpra 6.5.1-r0-1, Git 2.39.5, GNOME
+Keyring 42.1, and libsecret-tools 0.20.5. In clean VM `gui-v3-clean`, Git
+executed, `/dev/shm` was tmpfs with `nosuid,nodev`, the Chromium helper was
+root:root 4755, and NSS listed `Capsem C,,`.
+
+Two separate `dbus-run-session -- capsem-gui-session` invocations proved
+first-boot persistence: the first stored a dummy secret; the second unlocked
+the same mode-0600 login keyring with the generated mode-0600 per-VM secret,
+looked the value up, and cleared it. This is the durable image proof for the
+Git and keyring prerequisites; user authentication material was never used in
+the test.
+
 ## Application launch attempts
 
 ### Launch attempt 1 — Xpra lifecycle passed; Claude sandbox invariant failed

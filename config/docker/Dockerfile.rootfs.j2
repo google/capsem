@@ -46,15 +46,17 @@ RUN npm install -g --prefix {{ npm_prefix }} \
 ENV PATH="{{ npm_prefix }}/bin:$PATH"
 {% endif %}
 
+# Install MITM CA certificate into system trust store
+# before profile hooks so application-specific trust stores can import the
+# same certificate without duplicating or bypassing the generic trust rail.
+# (copied into build context by capsem-builder before docker build)
+COPY capsem-ca.crt /usr/local/share/ca-certificates/capsem-ca.crt
+RUN update-ca-certificates
+
 {% if profile_build_script %}
 COPY profile-build.sh /tmp/profile-build.sh
 RUN chmod 555 /tmp/profile-build.sh && /tmp/profile-build.sh && rm -f /tmp/profile-build.sh
 {% endif %}
-
-# Install MITM CA certificate into system trust store
-# (copied into build context by capsem-builder before docker build)
-COPY capsem-ca.crt /usr/local/share/ca-certificates/capsem-ca.crt
-RUN update-ca-certificates
 
 {% if python_packages %}
 # Patch certifi's CA bundle (Python requests/openai SDK use certifi, not system store)

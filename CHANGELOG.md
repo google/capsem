@@ -26,7 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Claude surface as one fitted, tray-free application canvas in the pinned
   Xpra HTML client, preinstalled Git for local sessions, and added a per-VM
   GNOME Keyring/Secret Service launcher so authentication survives restarts
-  without an insecure Chromium credential-store override,
+  without an insecure Chromium credential-store override, and ordered shared
+  system CA installation before profile hooks that seed application trust,
   recorded its host, budget, and transport baseline, and retained useful
   reviewed work for later hardening.
 
