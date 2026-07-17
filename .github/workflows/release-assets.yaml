@@ -6,11 +6,13 @@ on:
       channel:
         description: Asset channel to publish.
         required: true
-        default: stable
+        type: choice
+        options:
+          - stable
+          - nightly
       profile:
         description: Profile id that owns the VM image build.
         required: true
-        default: code
       manifest_version:
         description: Manifest contract version to publish under the selected channel.
         required: true

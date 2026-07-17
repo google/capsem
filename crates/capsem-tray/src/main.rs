@@ -348,15 +348,9 @@ async fn dispatch_action(client: &GatewayClient, action: Action) {
             r
         }
         Action::NewSession => {
-            info!("provisioning new temp session");
-            match client.provision_temp().await {
-                Ok(id) => {
-                    info!(id = %id, "new session provisioned, launching UI");
-                    launch_ui(Some(&id));
-                    return;
-                }
-                Err(e) => Err(e),
-            }
+            info!("opening profile-aware new session launcher");
+            launch_ui(None);
+            return;
         }
         Action::Save(id) => {
             launch_ui_action(id, "save");

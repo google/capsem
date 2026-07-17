@@ -21,10 +21,16 @@ def _load_module():
     return module
 
 
-def _run(*, sha: str = SHA, status: str = "completed", conclusion: str = "success"):
+def _run(
+    *,
+    sha: str = SHA,
+    channel: str = "stable",
+    status: str = "completed",
+    conclusion: str = "success",
+):
     return {
         "databaseId": 123,
-        "displayTitle": f"Qualify release {sha}",
+        "displayTitle": f"Qualify release {channel} {sha}",
         "status": status,
         "conclusion": conclusion,
         "headSha": sha,
@@ -42,7 +48,7 @@ def test_accepts_only_a_completed_success_for_the_exact_sha(monkeypatch) -> None
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
 
-    result = module.check_release_qualification("google/capsem", SHA)
+    result = module.check_release_qualification("google/capsem", SHA, "stable")
 
     assert result.ok is True
     assert result.run_id == 123
@@ -79,7 +85,7 @@ def test_rejects_successful_run_for_a_different_sha(monkeypatch) -> None:
         ),
     )
 
-    result = module.check_release_qualification("google/capsem", SHA)
+    result = module.check_release_qualification("google/capsem", SHA, "stable")
 
     assert result.ok is False
     assert "no successful completed qualification for exact SHA" in result.detail
@@ -100,7 +106,7 @@ def test_rejects_pending_failed_and_malformed_runs(monkeypatch) -> None:
         ),
     )
 
-    result = module.check_release_qualification("google/capsem", SHA)
+    result = module.check_release_qualification("google/capsem", SHA, "stable")
 
     assert result.ok is False
     assert "no successful completed qualification for exact SHA" in result.detail
@@ -114,7 +120,23 @@ def test_rejects_non_full_commit_sha_without_querying_github(monkeypatch) -> Non
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("must not query")),
     )
 
-    result = module.check_release_qualification("google/capsem", "deadbeef")
+    result = module.check_release_qualification("google/capsem", "deadbeef", "stable")
 
     assert result.ok is False
     assert "40-character lowercase commit SHA" in result.detail
+
+
+def test_rejects_successful_exact_sha_for_a_different_channel(monkeypatch) -> None:
+    module = _load_module()
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 0, json.dumps([_run(channel="stable")]), ""
+        ),
+    )
+
+    result = module.check_release_qualification("google/capsem", SHA, "nightly")
+
+    assert result.ok is False
+    assert "exact SHA and channel" in result.detail

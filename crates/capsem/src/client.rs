@@ -4,6 +4,7 @@
 //! service API, and small helpers used across command handlers.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -101,6 +102,8 @@ impl std::fmt::Display for VmLifecycleState {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SessionInfo {
     pub id: String,
+    #[serde(default)]
+    pub profile_id: String,
     #[serde(default)]
     pub name: Option<String>,
     pub pid: u32,
@@ -449,6 +452,20 @@ fn isolation_mode_active() -> bool {
         .unwrap_or(false)
 }
 
+fn direct_spawn_service_args(paths: &paths::CapsemPaths, isolated: bool) -> Vec<OsString> {
+    let mut args = vec![
+        "--foreground".into(),
+        "--assets-dir".into(),
+        paths.assets_dir.clone().into_os_string(),
+        "--process-binary".into(),
+        paths.process_bin.clone().into_os_string(),
+    ];
+    if isolated {
+        args.extend([OsString::from("--gateway-port"), OsString::from("0")]);
+    }
+    args
+}
+
 /// Validate that a session identifier is safe for path construction.
 /// Rejects identifiers containing path separators or traversal sequences.
 pub fn validate_id(id: &str) -> Result<()> {
@@ -633,11 +650,7 @@ impl UdsClient {
         // them alive long after the CLI returns. Service logs go to
         // `<run_dir>/service.log` regardless, so nothing useful is lost.
         let mut child = tokio::process::Command::new(&paths.service_bin)
-            .arg("--foreground")
-            .arg("--assets-dir")
-            .arg(&paths.assets_dir)
-            .arg("--process-binary")
-            .arg(&paths.process_bin)
+            .args(direct_spawn_service_args(&paths, isolation_mode_active()))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())

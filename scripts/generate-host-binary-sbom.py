@@ -60,6 +60,11 @@ def executable_entries(artifact: Path) -> list[dict[str, object]]:
 
 def deb_entries(artifact: Path) -> list[dict[str, object]]:
     data_name, data_contents = deb_data_member(artifact)
+    if data_name.endswith(".zst") and shutil.which("zstd") is None:
+        raise SystemExit(
+            f"zstd is required to extract {data_name} from {artifact}; "
+            "install the canonical release prerequisite before generating the host SBOM"
+        )
     with tempfile.TemporaryDirectory() as raw_tmp:
         raw = Path(raw_tmp)
         data = raw / data_name

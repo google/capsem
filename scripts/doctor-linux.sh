@@ -38,6 +38,12 @@ tool_hint() {
                 *)   echo "https://git-scm.com" ;;
             esac ;;
         b3sum)     echo "cargo install b3sum --locked" ;;
+        zstd)
+            case "$pkg" in
+                apt) echo "sudo apt install zstd" ;;
+                dnf) echo "sudo dnf install zstd" ;;
+                *)   echo "install zstd" ;;
+            esac ;;
         flock)
             case "$pkg" in
                 apt) echo "sudo apt install util-linux" ;;

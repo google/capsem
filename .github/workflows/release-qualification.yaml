@@ -1,5 +1,5 @@
 name: Release qualification
-run-name: Qualify release ${{ inputs.sha }}
+run-name: Qualify release ${{ inputs.channel }} ${{ inputs.sha }}
 
 on:
   workflow_dispatch:
@@ -8,9 +8,16 @@ on:
         description: Exact untagged main commit to qualify
         required: true
         type: string
+      channel:
+        description: Exact release channel whose install manifest is qualified
+        required: true
+        type: choice
+        options:
+          - stable
+          - nightly
 
 concurrency:
-  group: release-qualification-${{ inputs.sha }}
+  group: release-qualification-${{ inputs.channel }}-${{ inputs.sha }}
   cancel-in-progress: false
 
 permissions:
@@ -27,8 +34,8 @@ jobs:
     timeout-minutes: 360
     env:
       CAPSEM_REQUIRE_LINUX_DEB_PROOF: "1"
-      CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json
-      CAPSEM_INSTALL_CHANNEL: stable
+      CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json
+      CAPSEM_INSTALL_CHANNEL: ${{ inputs.channel }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -89,7 +96,8 @@ jobs:
             musl-tools \
             pkg-config \
             xdg-utils \
-            xvfb
+            xvfb \
+            zstd
 
       - name: Enable KVM
         run: |
@@ -110,11 +118,21 @@ jobs:
           set -euo pipefail
           cargo build -p capsem
           RUNTIME_HOME="$(mktemp -d)"
-          mkdir -p "$RUNTIME_HOME/.capsem/bin"
+          mkdir -p "$RUNTIME_HOME/.capsem/bin" "$RUNTIME_HOME/.capsem/assets"
           cp target/debug/capsem "$RUNTIME_HOME/.capsem/bin/capsem"
-          HOME="$RUNTIME_HOME" \
-            CAPSEM_RELEASE_MANIFEST_URL="$CAPSEM_INSTALL_MANIFEST_URL" \
-            "$RUNTIME_HOME/.capsem/bin/capsem" update --check
+          python3 - "$RUNTIME_HOME/.capsem/assets/manifest-metadata.json" <<'PY'
+          import json
+          import os
+          import pathlib
+          import sys
+
+          pathlib.Path(sys.argv[1]).write_text(json.dumps({
+              "schema": "capsem.manifest_metadata.v1",
+              "manifest_url": os.environ["CAPSEM_INSTALL_MANIFEST_URL"],
+              "channel": os.environ["CAPSEM_INSTALL_CHANNEL"],
+          }, indent=2) + "\n")
+          PY
+          HOME="$RUNTIME_HOME" "$RUNTIME_HOME/.capsem/bin/capsem" update --check
 
       - name: Complete canonical release gate (just test)
         run: just test

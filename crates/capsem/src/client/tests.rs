@@ -440,6 +440,7 @@ fn list_response_with_entries() {
         sessions: vec![
             SessionInfo {
                 id: "vm-1".into(),
+                profile_id: "code".into(),
                 name: None,
                 pid: 100,
                 status: VmLifecycleState::Running,
@@ -466,6 +467,7 @@ fn list_response_with_entries() {
             },
             SessionInfo {
                 id: "mydev".into(),
+                profile_id: "co-work".into(),
                 name: Some("mydev".into()),
                 pid: 0,
                 status: VmLifecycleState::Stopped,
@@ -794,5 +796,41 @@ fn request_does_not_auto_launch_after_explicit_stop_marker() {
     assert!(
         msg.contains("capsem start"),
         "error should name the explicit recovery command, got: {msg}"
+    );
+}
+
+#[test]
+fn isolated_direct_spawn_uses_an_ephemeral_gateway_port() {
+    let paths = paths::CapsemPaths {
+        service_bin: PathBuf::from("/opt/capsem/bin/capsem-service"),
+        process_bin: PathBuf::from("/opt/capsem/bin/capsem-process"),
+        gateway_bin: PathBuf::from("/opt/capsem/bin/capsem-gateway"),
+        tray_bin: PathBuf::from("/opt/capsem/bin/capsem-tray"),
+        assets_dir: PathBuf::from("/opt/capsem/assets"),
+    };
+    let args = direct_spawn_service_args(&paths, true);
+    let args: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
+
+    assert!(
+        args.windows(2).any(|pair| pair == ["--gateway-port", "0"]),
+        "isolated service must not collide with an installed gateway: {args:?}"
+    );
+}
+
+#[test]
+fn ordinary_direct_spawn_preserves_the_installed_gateway_port_contract() {
+    let paths = paths::CapsemPaths {
+        service_bin: PathBuf::from("/opt/capsem/bin/capsem-service"),
+        process_bin: PathBuf::from("/opt/capsem/bin/capsem-process"),
+        gateway_bin: PathBuf::from("/opt/capsem/bin/capsem-gateway"),
+        tray_bin: PathBuf::from("/opt/capsem/bin/capsem-tray"),
+        assets_dir: PathBuf::from("/opt/capsem/assets"),
+    };
+    let args = direct_spawn_service_args(&paths, false);
+    let args: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
+
+    assert!(
+        !args.iter().any(|arg| arg == "--gateway-port"),
+        "ordinary installs retain the configured/default gateway port: {args:?}"
     );
 }

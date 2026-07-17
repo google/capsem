@@ -18,6 +18,18 @@ use tracing::{error, info};
 
 const DEFAULT_PROFILE_ID: &str = "code";
 
+fn requested_profile(profile: Option<&str>) -> Result<&str, String> {
+    let profile = profile.unwrap_or(DEFAULT_PROFILE_ID);
+    if profile.is_empty()
+        || !profile
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(format!("invalid profile id: {profile:?}"));
+    }
+    Ok(profile)
+}
+
 /// Case-insensitive line-level grep over a block of text.
 fn grep_lines(text: &str, pattern: &str) -> String {
     let pat = pattern.to_lowercase();
@@ -157,7 +169,7 @@ fn build_create_body(params: &CreateParams) -> Value {
     let persistent = params.name.is_some() || params.from.is_some();
     let mut body = json!({
         "name": params.name,
-        "profile_id": DEFAULT_PROFILE_ID,
+        "profile_id": params.profile.as_deref().unwrap_or(DEFAULT_PROFILE_ID),
         "persistent": persistent,
     });
     if let Some(ram) = params.ram_mb {
@@ -179,7 +191,7 @@ fn build_create_body(params: &CreateParams) -> Value {
 fn build_run_body(params: &RunParams) -> Value {
     let mut body = json!({
         "command": params.command,
-        "profile_id": DEFAULT_PROFILE_ID,
+        "profile_id": params.profile.as_deref().unwrap_or(DEFAULT_PROFILE_ID),
         "timeout_secs": params.timeout.unwrap_or(60),
     });
     if let Some(ref env) = params.env {
@@ -416,6 +428,8 @@ struct IdParams {
 struct CreateParams {
     /// Optional requested session name. If omitted, the service assigns a profile-scoped name.
     name: Option<String>,
+    /// Profile to use. Defaults to code when omitted.
+    profile: Option<String>,
     #[serde(rename = "ramMb")]
     #[schemars(rename = "ramMb")]
     ram_mb: Option<u64>,
@@ -465,6 +479,8 @@ struct PurgeParams {
 struct RunParams {
     /// Shell command to execute
     command: String,
+    /// Profile to use. Defaults to code when omitted.
+    profile: Option<String>,
     /// Timeout in seconds (default 60)
     timeout: Option<u64>,
     /// Environment variables to inject into the guest at boot
@@ -555,16 +571,26 @@ struct HostLogsMcpParams {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct McpToolsParams {
+    /// Profile whose MCP configuration should be inspected
+    profile: Option<String>,
     /// Filter tools by server name (optional)
     server: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
 struct McpCallParams {
+    /// Profile whose MCP tool should be called
+    profile: Option<String>,
     /// Namespaced tool name (e.g. github__search_repos)
     name: String,
     /// JSON arguments for the tool call
     arguments: Option<Value>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Default)]
+struct McpProfileParams {
+    /// Profile whose MCP configuration should be inspected
+    profile: Option<String>,
 }
 
 async fn resolve_session_route_id(client: &UdsClient, typed: &str) -> Result<String, String> {
@@ -959,12 +985,16 @@ impl CapsemHandler {
         name = "capsem_mcp_servers",
         description = "List configured MCP servers with connection status and tool counts"
     )]
-    async fn mcp_servers(&self) -> Result<String, String> {
+    async fn mcp_servers(
+        &self,
+        Parameters(params): Parameters<McpProfileParams>,
+    ) -> Result<String, String> {
+        let profile = requested_profile(params.profile.as_deref())?;
         let resp: Vec<Value> = self
             .client
             .request(
                 "GET",
-                &format!("/profiles/{}/mcp/servers/list", DEFAULT_PROFILE_ID),
+                &format!("/profiles/{}/mcp/servers/list", profile),
                 None::<&()>,
             )
             .await
@@ -980,6 +1010,7 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<McpToolsParams>,
     ) -> Result<String, String> {
+        let profile = requested_profile(params.profile.as_deref())?;
         let server_names = if let Some(ref filter) = params.server {
             vec![filter.clone()]
         } else {
@@ -987,7 +1018,7 @@ impl CapsemHandler {
                 .client
                 .request(
                     "GET",
-                    &format!("/profiles/{}/mcp/servers/list", DEFAULT_PROFILE_ID),
+                    &format!("/profiles/{}/mcp/servers/list", profile),
                     None::<&()>,
                 )
                 .await
@@ -1005,7 +1036,7 @@ impl CapsemHandler {
                     "GET",
                     &format!(
                         "/profiles/{}/mcp/servers/{}/tools/list",
-                        DEFAULT_PROFILE_ID, server_name
+                        profile, server_name
                     ),
                     None::<&()>,
                 )
@@ -1024,6 +1055,7 @@ impl CapsemHandler {
         &self,
         Parameters(params): Parameters<McpCallParams>,
     ) -> Result<String, String> {
+        let profile = requested_profile(params.profile.as_deref())?;
         let (server_name, tool_name) = params.name.split_once("__").ok_or_else(|| {
             "MCP tool calls must use namespaced names like server__tool".to_string()
         })?;
@@ -1034,7 +1066,7 @@ impl CapsemHandler {
                 "POST",
                 &format!(
                     "/profiles/{}/mcp/servers/{}/tools/{}/call",
-                    DEFAULT_PROFILE_ID, server_name, tool_name
+                    profile, server_name, tool_name
                 ),
                 Some(&args),
             )

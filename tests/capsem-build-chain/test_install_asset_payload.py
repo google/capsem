@@ -1,6 +1,8 @@
 """Install package asset-payload contract tests."""
 
 import importlib.util
+import os
+import subprocess
 from types import ModuleType
 from pathlib import Path
 
@@ -42,6 +44,91 @@ def _load_local_release_glowup() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _run_docker_space_gate(
+    tmp_path: Path, *, before_kib: int, after_kib: int, minimum_gib: int = 16
+) -> subprocess.CompletedProcess[str]:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir(parents=True)
+    state = tmp_path / "pruned"
+    docker = fake_bin / "docker"
+    docker.write_text(
+        """#!/bin/sh
+set -eu
+if [ "$1" = "run" ]; then
+    if [ -f "$FAKE_DOCKER_STATE" ]; then
+        free="$FAKE_DOCKER_AFTER_KIB"
+    else
+        free="$FAKE_DOCKER_BEFORE_KIB"
+    fi
+    printf '%s\\n' "$free"
+elif [ "$1" = "builder" ] && [ "$2" = "prune" ]; then
+    : > "$FAKE_DOCKER_STATE"
+elif [ "$1" = "system" ] && [ "$2" = "df" ]; then
+    printf 'fake docker disk report\\n'
+else
+    printf 'unexpected fake docker command: %s\\n' "$*" >&2
+    exit 97
+fi
+"""
+    )
+    docker.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "FAKE_DOCKER_STATE": str(state),
+            "FAKE_DOCKER_BEFORE_KIB": str(before_kib),
+            "FAKE_DOCKER_AFTER_KIB": str(after_kib),
+        }
+    )
+    return subprocess.run(
+        [
+            "bash",
+            str(PROJECT_ROOT / "scripts" / "ensure-docker-space.sh"),
+            str(minimum_gib),
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
+    recipe = _just_recipe_block("test-assets:")
+
+    preflight = 'scripts/ensure-docker-space.sh" 16'
+    assert preflight in recipe
+    assert recipe.index(preflight) < recipe.index(
+        "build_arch_lane arm64"
+    )
+
+    enough = _run_docker_space_gate(
+        tmp_path / "enough", before_kib=20 * 1024 * 1024, after_kib=0
+    )
+    assert enough.returncode == 0, enough.stderr
+    assert "already has" in enough.stdout
+
+    reclaimed = _run_docker_space_gate(
+        tmp_path / "reclaimed",
+        before_kib=8 * 1024 * 1024,
+        after_kib=20 * 1024 * 1024,
+    )
+    assert reclaimed.returncode == 0, reclaimed.stderr
+    assert "pruning unused builder cache" in reclaimed.stdout
+    assert "reclaimed enough space" in reclaimed.stdout
+
+    exhausted = _run_docker_space_gate(
+        tmp_path / "exhausted",
+        before_kib=8 * 1024 * 1024,
+        after_kib=10 * 1024 * 1024,
+    )
+    assert exhausted.returncode != 0
+    assert "requires at least 16 GiB" in exhausted.stderr
+    assert "fake docker disk report" in exhausted.stderr
 
 
 def test_just_install_does_not_sync_assets_after_installer() -> None:
@@ -103,7 +190,8 @@ def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
     )
     assert 'dpkg -i \\"\\$DEB\\"' not in block
     assert "CAPSEM_REQUIRE_LINUX_DEB_PROOF" in block
-    assert "exact Debian package proof requires native Linux KVM" in block
+    assert "scripts/select-linux-deb-proof.sh" in block
+    assert 'if [ "$PROOF_DECISION" = "prove" ]' in block
     assert (
         'MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"'
         in block
@@ -171,15 +259,83 @@ def test_exact_linux_deb_proof_uses_systemd_and_proves_guest_shell() -> None:
     assert "dpkg -i \"$CONTAINER_DEB\" 2>/dev/null || true" not in block
 
 
+def test_systemd_install_image_cannot_flush_host_binfmt_registrations() -> None:
+    dockerfile = (PROJECT_ROOT / "docker/Dockerfile.install-test").read_text()
+    install_gate = _just_recipe_block("test-install:")
+
+    assert "/etc/systemd/system/systemd-binfmt.service" in dockerfile
+    assert "ln -s /dev/null" in dockerfile
+    assert "HOST_ROSETTA_REGISTRATION=required" in install_gate
+    assert install_gate.count("/proc/sys/fs/binfmt_misc/rosetta") >= 2
+    assert "systemd install container removed Colima's Rosetta binfmt registration" in install_gate
+
+
 def test_release_qualification_requires_exact_linux_deb_proof() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release-qualification.yaml").read_text()
 
     assert 'CAPSEM_REQUIRE_LINUX_DEB_PROOF: "1"' in workflow
+    assert "runs-on: ubuntu-24.04" in workflow
+    assert "platforms: arm64" in workflow
     assert (
-        "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json"
+        "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json"
         in workflow
     )
-    assert "CAPSEM_INSTALL_CHANNEL: stable" in workflow
+    assert "CAPSEM_INSTALL_CHANNEL: ${{ inputs.channel }}" in workflow
+
+
+def test_linux_deb_proof_selector_requires_only_the_native_package() -> None:
+    selector = PROJECT_ROOT / "scripts" / "select-linux-deb-proof.sh"
+
+    cases = (
+        ("Linux", "x86_64", "x86_64", "1", "1", "prove"),
+        ("Linux", "x86_64", "arm64", "0", "1", "skip"),
+        ("Linux", "arm64", "arm64", "1", "1", "prove"),
+        ("Linux", "arm64", "x86_64", "0", "1", "skip"),
+        ("Darwin", "arm64", "arm64", "0", "1", "skip"),
+    )
+    for host_os, host_arch, target_arch, kvm_ready, required, expected in cases:
+        result = subprocess.run(
+            [
+                "bash",
+                str(selector),
+                host_os,
+                host_arch,
+                target_arch,
+                kvm_ready,
+                required,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == expected
+
+
+def test_linux_deb_proof_selector_fails_closed_for_native_package_without_kvm() -> None:
+    selector = PROJECT_ROOT / "scripts" / "select-linux-deb-proof.sh"
+
+    result = subprocess.run(
+        ["bash", str(selector), "Linux", "arm64", "arm64", "0", "1"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "native Linux package proof requires KVM and vhost-vsock" in result.stderr
+
+
+def test_release_matrix_installs_both_architectures_and_keeps_kvm_proof_mandatory() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
+    linux = _workflow_job_blocks(workflow)["build-app-linux"]
+
+    assert "runner: ubuntu-24.04-arm" in linux
+    assert "runner: ubuntu-24.04" in linux
+    assert linux.count("if: matrix.arch == 'x86_64'") == 2
+    assert "Enable KVM for exact-package VM proof" in linux
+    assert "Prove exact-package guest shell execution" in linux
+    assert "CAPSEM_EXACT_PACKAGE_SHELL_OK" in linux
 
 
 def test_install_test_restores_host_workspace_ownership() -> None:
@@ -700,6 +856,7 @@ def test_native_postinstall_merges_fresh_check_into_manifest_metadata() -> None:
         refresh = script.index("update --check", hydrate)
 
         assert metadata < hydrate < refresh, relative
+        assert "CAPSEM_RELEASE_MANIFEST_URL" not in script[refresh - 240 : refresh], relative
         assert "update-check.json" not in script, relative
         assert "update-checks" not in script, relative
         assert "update_status_refreshed" in script[refresh:], relative
@@ -847,10 +1004,10 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "event=manifest_report" not in deb_postinst
     assert "MANIFEST_METADATA=$(tr" in deb_postinst
     assert "event=manifest_metadata" in deb_postinst
-    assert "METADATA_MANIFEST_URL=$(sed" in deb_postinst
-    assert (
-        'MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"' in deb_postinst
-    )
+    assert "MANIFEST_SOURCE=$(sed" in deb_postinst
+    assert 'MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"' not in deb_postinst
+    assert "packaged manifest-metadata.json missing" in deb_postinst
+    assert "packaged manifest-metadata.json has no manifest_url" in deb_postinst
     assert "event=manifest_source" in deb_postinst
     assert (
         'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets --manifest \\"$MANIFEST_SOURCE\\"'
@@ -886,11 +1043,13 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "event=manifest_report" not in pkg_postinstall
     assert "MANIFEST_METADATA=$(tr" in pkg_postinstall
     assert "event=manifest_metadata" in pkg_postinstall
-    assert "METADATA_MANIFEST_URL=$(sed" in pkg_postinstall
+    assert "MANIFEST_SOURCE=$(sed" in pkg_postinstall
     assert (
         'MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"'
-        in pkg_postinstall
+        not in pkg_postinstall
     )
+    assert "packaged manifest-metadata.json missing" in pkg_postinstall
+    assert "packaged manifest-metadata.json has no manifest_url" in pkg_postinstall
     assert "event=manifest_source" in pkg_postinstall
     assert (
         'CAPSEM_HOME=\\"$CAPSEM_DIR\\" CAPSEM_RUN_DIR=\\"$CAPSEM_DIR/run\\" \\"$CAPSEM_DIR/bin/capsem\\" update --assets --manifest \\"$MANIFEST_SOURCE\\"'

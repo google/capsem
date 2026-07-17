@@ -236,6 +236,13 @@ if [ ! -d "$CONFIG_ROOT/profiles" ]; then
     echo "Run: just _materialize-config" >&2
     exit 1
 fi
+for profile_path in "$CONFIG_ROOT"/profiles/*/profile.toml; do
+    [ -f "$profile_path" ] || {
+        echo "ERROR: no materialized profiles found under $CONFIG_ROOT/profiles" >&2
+        exit 1
+    }
+    "$BIN_DIR/capsem-admin" profile validate "$profile_path" --config-root "$CONFIG_ROOT" --materialized
+done
 mkdir -p "$SHARE_DIR/profiles"
 copy_tree_clean "$CONFIG_ROOT/profiles" "$SHARE_DIR/profiles"
 

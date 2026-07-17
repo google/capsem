@@ -67,7 +67,9 @@ following as separate, non-substitutable release gates:
   native runner, and assert package metadata, the complete installed binary
   cohort, exact version agreement, service startup, and a functional Capsem
   command. Where the CI runner exposes KVM, prove `capsem shell` can start a
-  guest and execute a deterministic command inside it.
+  guest and execute a deterministic command inside it. The current arm64
+  hosted runner does not expose `/dev/kvm`, so arm64 must still pass the exact
+  package/service proof while x86_64 owns the mandatory guest-shell proof.
 - Publication must depend on both platform jobs. A skipped, optional,
   `continue-on-error`, mocked, source-layout, or inspect-only result does not
   count as release proof. Signing, notarization, file existence, and package
@@ -397,26 +399,29 @@ checkouts disagreeing about what was actually shipped.
 ```bash
 just prepare-release
 git push origin HEAD:main
-just qualify-release
+just qualify-release stable
 ```
 
 `prepare-release` runs the local gate, stamps the version and changelog, and
 creates an ordinary candidate commit. It must not create a tag, GitHub Release,
 or channel mutation. Push that ordinary commit, then `qualify-release` dispatches
 the canonical Linux gate for its exact SHA. If qualification fails, add a
-normal forward fix commit and qualify the new exact SHA. Do not mint failure
+normal forward fix commit and qualify the new exact SHA. Qualification is bound
+to both the exact SHA and the exact channel: a stable run cannot authorize a
+nightly release, or vice versa. Do not mint failure
 tags and do not stamp a new version merely to obtain another CI attempt.
 
 ### Mint the immutable tag after qualification
 
 ```bash
-just cut-release
+just cut-release stable
 ```
 
 `cut-release` performs no stamping and creates no commit. It compares `HEAD`
 with `origin/main`, requires a successful completed
-`release-qualification.yaml` run whose display title and `headSha` both match
-that exact SHA, rejects existing local or remote tag names, and only then
+`release-qualification.yaml` run whose display title, `headSha`, and channel all
+match that exact SHA/channel pair, rejects existing local or remote tag names,
+and only then
 creates the local `vX.Y.Z` tag. Missing, pending, failed, malformed, or nearby
 qualification results are hard failures.
 
@@ -425,12 +430,20 @@ qualification results are hard failures.
 1. Confirm the release tag does not already exist remotely:
    `git ls-remote origin "refs/tags/vX.Y.Z"`
 2. Confirm exact-SHA qualification again:
-   `python3 scripts/check-release-qualification.py --sha "$(git rev-parse HEAD)"`
+   `python3 scripts/check-release-qualification.py --sha "$(git rev-parse HEAD)" --channel stable`
 3. Push the immutable tag: `git push origin vX.Y.Z`
 4. Dispatch and watch one channel workflow: `just release vX.Y.Z stable`
 
 Never reuse or move a tag. Always increment the version number, and always tag
 forward.
+
+Before candidate qualification, run
+`scripts/check-hardcoded-release-selections.sh` through `just test`. It rejects
+named profile selection in UI/tray/CLI/MCP request paths, one-profile release
+materialization, qualification that is not channel-bound, and native installer
+fallbacks to stable/nightly. Keep the vocabulary list current; it intentionally
+includes `code`, `co-work`, `cowork`, `terminal`, the known `termional` spelling,
+and `gui` so future profile renames cannot bypass the guard during migration.
 
 ### GitHub CLI release control
 
@@ -515,11 +528,20 @@ entrypoint with a local gate. Current required mappings are:
   `just cross-compile x86_64`, so both publishable `.deb` architecture builds
   are locally accounted for before the release workflow repeats them;
 - Linux package E2E: local and PR CI both execute `just test-install`;
+- Linux platform branches: macOS-local `just test` executes
+  `just test-linux-rust` in the checked-in host-builder container as a non-root
+  user, while Linux CI calls the same runner natively;
+- generated settings: `just test` regenerates the tracked settings outputs and
+  fails if their before/after contents drift, matching CI's generation drift
+  gate without requiring the local worktree to be committed first;
 - package assembly and acceptance: local and release CI share
   `scripts/build-pkg.sh`, `scripts/repack-deb.sh`,
   `scripts/verify-installed-release.py`, and
-  `scripts/prove-installed-shell.py`; `just install` must finish with the same
-  installed-manifest verification and real guest-shell proof before success.
+  `scripts/prove-installed-shell.py`; macOS-local `just test` builds the real
+  release-mode app and unsigned `.pkg`, both Linux release-mode `.deb`
+  architectures, and runs `scripts/generate-host-binary-sbom.py` over those
+  exact artifacts. `just install` must finish with the same installed-manifest
+  verification and real guest-shell proof before success.
 
 Run portable Linux prerequisites in Docker before spending CI. The container
 must execute the same production entrypoint or shared predicate, not a copied

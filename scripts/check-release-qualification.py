@@ -14,6 +14,7 @@ from typing import NamedTuple
 WORKFLOW = "release-qualification.yaml"
 RUN_FIELDS = "databaseId,displayTitle,status,conclusion,headSha,url"
 FULL_SHA = re.compile(r"[0-9a-f]{40}")
+RELEASE_CHANNELS = ("stable", "nightly")
 
 
 class QualificationResult(NamedTuple):
@@ -23,8 +24,13 @@ class QualificationResult(NamedTuple):
     url: str | None = None
 
 
-def check_release_qualification(repo: str, sha: str) -> QualificationResult:
-    """Return the successful qualification for *sha*, never a nearby run."""
+def check_release_qualification(repo: str, sha: str, channel: str) -> QualificationResult:
+    """Return the successful qualification for exact *sha* and *channel*."""
+    if channel not in RELEASE_CHANNELS:
+        return QualificationResult(
+            False,
+            f"expected release channel stable or nightly, got {channel!r}",
+        )
     if FULL_SHA.fullmatch(sha) is None:
         return QualificationResult(
             False,
@@ -60,7 +66,7 @@ def check_release_qualification(repo: str, sha: str) -> QualificationResult:
     if not isinstance(runs, list):
         return QualificationResult(False, "gh run list did not return a JSON array")
 
-    expected_title = f"Qualify release {sha}"
+    expected_title = f"Qualify release {channel} {sha}"
     for run in runs:
         if not isinstance(run, dict):
             continue
@@ -74,7 +80,7 @@ def check_release_qualification(repo: str, sha: str) -> QualificationResult:
         ):
             return QualificationResult(
                 True,
-                f"exact SHA {sha} passed remote qualification",
+                f"exact SHA {sha} and channel {channel} passed remote qualification",
                 run["databaseId"],
                 run["url"],
             )
@@ -87,7 +93,7 @@ def check_release_qualification(repo: str, sha: str) -> QualificationResult:
     suffix = f"; observed {observed}" if observed else ""
     return QualificationResult(
         False,
-        f"no successful completed qualification for exact SHA {sha}{suffix}",
+        f"no successful completed qualification for exact SHA and channel {sha}/{channel}{suffix}",
     )
 
 
@@ -95,9 +101,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default="google/capsem")
     parser.add_argument("--sha", required=True)
+    parser.add_argument("--channel", required=True, choices=RELEASE_CHANNELS)
     args = parser.parse_args()
 
-    result = check_release_qualification(args.repo, args.sha)
+    result = check_release_qualification(args.repo, args.sha, args.channel)
     if not result.ok:
         print(f"release qualification rejected: {result.detail}", file=sys.stderr)
         return 1

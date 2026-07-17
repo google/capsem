@@ -77,23 +77,24 @@ def test_release_candidate_is_committed_without_minting_a_tag() -> None:
 
 
 def test_release_tag_is_minted_only_after_exact_head_qualification() -> None:
-    cut = _just_recipe_block("cut-release:")
+    cut = _just_recipe_block("cut-release ")
 
     assert "test" not in cut.splitlines()[0]
     assert "_stamp-version" not in cut
     assert 'SHA=$(git rev-parse HEAD)' in cut
-    assert 'scripts/check-release-qualification.py --sha "$SHA"' in cut
-    assert cut.index('scripts/check-release-qualification.py --sha "$SHA"') < cut.index(
+    qualification = 'scripts/check-release-qualification.py --sha "$SHA" --channel "$CHANNEL"'
+    assert qualification in cut
+    assert cut.index(qualification) < cut.index(
         'git tag "$TAG"'
     )
     assert "git commit" not in cut
 
 
 def test_remote_qualification_dispatches_the_exact_published_head() -> None:
-    qualify = _just_recipe_block("qualify-release:")
+    qualify = _just_recipe_block("qualify-release ")
 
     assert 'SHA=$(git rev-parse HEAD)' in qualify
     assert 'test "$(git rev-parse origin/main)" = "$SHA"' in qualify
-    assert 'gh workflow run release-qualification.yaml --ref main -f "sha=$SHA"' in qualify
-    assert 'scripts/check-release-qualification.py --sha "$SHA"' in qualify
+    assert 'gh workflow run release-qualification.yaml --ref main -f "sha=$SHA" -f "channel=$CHANNEL"' in qualify
+    assert 'scripts/check-release-qualification.py --sha "$SHA" --channel "$CHANNEL"' in qualify
     assert 'git tag "$TAG"' not in qualify

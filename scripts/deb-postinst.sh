@@ -58,16 +58,18 @@ rm -rf "$CAPSEM_DIR"/update-check*
 rm -f "$CAPSEM_DIR/assets"/manifest-*origin*.json
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=obsolete_manifest_state_removed"
 
-MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"
 CAPSEM_INSTALL_PHASE="install_manifest_provenance"
-if [ -f "/usr/share/capsem/assets/manifest-metadata.json" ]; then
-    install -m 0644 /usr/share/capsem/assets/manifest-metadata.json "$CAPSEM_DIR/assets/manifest-metadata.json"
-    MANIFEST_METADATA=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-metadata.json")
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_metadata $MANIFEST_METADATA"
-    METADATA_MANIFEST_URL=$(sed -n 's/.*"manifest_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CAPSEM_DIR/assets/manifest-metadata.json" | head -n 1)
-    if [ -n "$METADATA_MANIFEST_URL" ]; then
-        MANIFEST_SOURCE="$METADATA_MANIFEST_URL"
-    fi
+if [ ! -f "/usr/share/capsem/assets/manifest-metadata.json" ]; then
+    echo "capsem: packaged manifest-metadata.json missing" >&2
+    exit 1
+fi
+install -m 0644 /usr/share/capsem/assets/manifest-metadata.json "$CAPSEM_DIR/assets/manifest-metadata.json"
+MANIFEST_METADATA=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-metadata.json")
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_metadata $MANIFEST_METADATA"
+MANIFEST_SOURCE=$(sed -n 's/.*"manifest_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CAPSEM_DIR/assets/manifest-metadata.json" | head -n 1)
+if [ -z "$MANIFEST_SOURCE" ]; then
+    echo "capsem: packaged manifest-metadata.json has no manifest_url" >&2
+    exit 1
 fi
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_source source=$MANIFEST_SOURCE"
 
@@ -106,7 +108,7 @@ fi
 case "$MANIFEST_SOURCE" in
     http://*|https://*)
         CAPSEM_INSTALL_PHASE="refresh_update_status"
-        if ! su "$TARGET_USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" CAPSEM_RELEASE_MANIFEST_URL=\"$MANIFEST_SOURCE\" \"$CAPSEM_DIR/bin/capsem\" update --check"; then
+        if ! su "$TARGET_USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --check"; then
             echo "capsem: update status refresh failed" >&2
             echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=update_status_refresh_failed source=$MANIFEST_SOURCE"
             exit 1

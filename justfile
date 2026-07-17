@@ -273,14 +273,7 @@ build-kernel arch profile="" output=assets_dir:
     fi
     just _install-tools
     CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor
-    cargo run -p capsem-admin -- image build \
-        --profile "config/profiles/${PROFILE_ARG}/profile.toml" \
-        --config-root config \
-        --output "$OUTPUT_ARG" \
-        --arch "{{arch}}" \
-        --template kernel \
-        --clean
-    just _docker-gc
+    just _build-image-template "{{arch}}" "$PROFILE_ARG" "$OUTPUT_ARG" kernel
 
 # Build rootfs only for one profile/arch (CI-facing primitive).
 build-rootfs arch profile="" output=assets_dir:
@@ -294,12 +287,30 @@ build-rootfs arch profile="" output=assets_dir:
     fi
     just _install-tools
     CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor
+    just _build-image-template "{{arch}}" "$PROFILE_ARG" "$OUTPUT_ARG" rootfs
+
+# Already-preflighted image-build primitive shared by public CI recipes and
+# the canonical all-profile matrix. Public recipes own tool/doctor setup;
+# test-assets owns that setup once through its _bootstrap dependencies.
+_build-image-template arch profile output template:
+    #!/bin/bash
+    set -euo pipefail
+    PROFILE_ARG="{{profile}}"
+    OUTPUT_ARG="{{output}}"
+    TEMPLATE_ARG="{{template}}"
+    case "$TEMPLATE_ARG" in
+        kernel|rootfs) ;;
+        *)
+            echo "ERROR: unsupported image template: $TEMPLATE_ARG" >&2
+            exit 2
+            ;;
+    esac
     cargo run -p capsem-admin -- image build \
         --profile "config/profiles/${PROFILE_ARG}/profile.toml" \
         --config-root config \
         --output "$OUTPUT_ARG" \
         --arch "{{arch}}" \
-        --template rootfs \
+        --template "$TEMPLATE_ARG" \
         --clean
     just _docker-gc
 
@@ -368,6 +379,11 @@ test-assets: _bootstrap _install-tools _generate-settings _sign
         fi
         exit 1
     fi
+    # Two rootfs lanes expand multi-gigabyte tarballs concurrently inside the
+    # Docker daemon. Earlier `just test` stages also populate large Rust build
+    # caches, so reclaim unused builder layers before the opaque overlay write
+    # fails halfway through EROFS creation.
+    bash "$ROOT/scripts/ensure-docker-space.sh" 16
     rm -rf "$TEST_ROOT"
     mkdir -p "$TEST_ROOT"
 
@@ -433,8 +449,8 @@ test-assets: _bootstrap _install-tools _generate-settings _sign
             local profile_root="$TEST_ROOT/$profile"
             local lane_assets="$profile_root/build-$arch"
             echo "=== Ironbank asset build lane: $profile ($arch) ==="
-            just build-kernel "$arch" "$profile" "$lane_assets"
-            just build-rootfs "$arch" "$profile" "$lane_assets"
+            just _build-image-template "$arch" "$profile" "$lane_assets" kernel
+            just _build-image-template "$arch" "$profile" "$lane_assets" rootfs
             for logical_name in vmlinuz initrd.img rootfs.erofs obom.cdx.json software-inventory.json; do
                 local artifact="$lane_assets/$arch/$logical_name"
                 if [[ ! -s "$artifact" ]]; then
@@ -447,6 +463,8 @@ test-assets: _bootstrap _install-tools _generate-settings _sign
 
     ARM64_BUILD_PID=""
     X86_64_BUILD_PID=""
+    ARM64_BUILD_LOG="$TEST_ROOT/build-arm64.log"
+    X86_64_BUILD_LOG="$TEST_ROOT/build-x86_64.log"
     cleanup_asset_builds() {
         local pid
         for pid in "$ARM64_BUILD_PID" "$X86_64_BUILD_PID"; do
@@ -455,20 +473,40 @@ test-assets: _bootstrap _install-tools _generate-settings _sign
             fi
         done
         wait 2>/dev/null || true
+        bash "$ROOT/scripts/cleanup-docker-containers-by-mount.sh" "$TEST_ROOT" || true
+    }
+    report_asset_lane_failure() {
+        local arch="$1"
+        local status="$2"
+        local log="$3"
+        echo "ERROR: Ironbank $arch asset-build lane failed (exit $status)" >&2
+        if [[ -f "$log" ]]; then
+            echo "--- tail of $log ---" >&2
+            tail -n 200 "$log" >&2
+            echo "--- complete log: $log ---" >&2
+        else
+            echo "ERROR: expected lane log is missing: $log" >&2
+        fi
     }
     trap cleanup_asset_builds EXIT
-    build_arch_lane arm64 &
+    ( set -o pipefail; build_arch_lane arm64 2>&1 | tee "$ARM64_BUILD_LOG" ) &
     ARM64_BUILD_PID=$!
-    build_arch_lane x86_64 &
+    ( set -o pipefail; build_arch_lane x86_64 2>&1 | tee "$X86_64_BUILD_LOG" ) &
     X86_64_BUILD_PID=$!
-    BUILD_FAIL=0
-    wait "$ARM64_BUILD_PID" || BUILD_FAIL=1
-    wait "$X86_64_BUILD_PID" || BUILD_FAIL=1
+    ARM64_BUILD_STATUS=0
+    X86_64_BUILD_STATUS=0
+    wait "$ARM64_BUILD_PID" || ARM64_BUILD_STATUS=$?
+    wait "$X86_64_BUILD_PID" || X86_64_BUILD_STATUS=$?
     ARM64_BUILD_PID=""
     X86_64_BUILD_PID=""
     trap - EXIT
-    if [[ "$BUILD_FAIL" -ne 0 ]]; then
-        echo "ERROR: one or more Ironbank architecture build lanes failed" >&2
+    if [[ "$ARM64_BUILD_STATUS" -ne 0 ]]; then
+        report_asset_lane_failure "arm64" "$ARM64_BUILD_STATUS" "$ARM64_BUILD_LOG"
+    fi
+    if [[ "$X86_64_BUILD_STATUS" -ne 0 ]]; then
+        report_asset_lane_failure "x86_64" "$X86_64_BUILD_STATUS" "$X86_64_BUILD_LOG"
+    fi
+    if [[ "$ARM64_BUILD_STATUS" -ne 0 || "$X86_64_BUILD_STATUS" -ne 0 ]]; then
         exit 1
     fi
 
@@ -540,6 +578,7 @@ test-assets: _bootstrap _install-tools _generate-settings _sign
                 --capsem target/debug/capsem \
                 --marker "$marker" \
                 --session-name "asset-${profile}-${HOST_ARCH}" \
+                --profile "$profile" \
                 --timeout 300
         stop_gate_service "$profile_run"
         rm -rf "$profile_run"
@@ -608,7 +647,7 @@ test-artifacts:
 _bootstrap:
     sh {{justfile_directory()}}/bootstrap.sh -y
 
-test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _check-assets _pack-initrd _materialize-config
+test: _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-settings _check-assets _pack-initrd _materialize-config
     #!/bin/bash
     set -euo pipefail
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
@@ -644,6 +683,9 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
         rm -f "$PIDFILE" "$SOCKET"
     }
     trap cleanup_test_capsem_home_service EXIT
+
+    echo "=== Hardcoded profile/channel selection guard ==="
+    bash scripts/check-hardcoded-release-selections.sh
 
     # ---- Stage 0: release harness bootstrap --------------------------------
     # Prove the clean Linux install container can resolve and launch its test
@@ -699,6 +741,16 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     echo "=== Cross-compile agent (both arches) ==="
     uv run capsem-builder agent config/docker/image
 
+    # ---- Stage 2b: Linux Rust platform parity ------------------------------
+    # Native Linux runs exercise these cfg branches in Stage 3 below. A Mac
+    # host must execute the same checked-in Linux runner inside the existing
+    # host-builder image; otherwise Linux-only regressions can remain excluded
+    # from the local canonical gate until exact-SHA CI.
+    if [ "$(uname -s)" = "Darwin" ]; then
+        echo "=== Linux Rust platform tests + coverage (Docker) ==="
+        just test-linux-rust
+    fi
+
     # ---- Stage 3: Rust tests + coverage -------------------------------------
     # Threshold is 65, not 100. Some files (uninstall, completions) are intentionally
     # at 0% because they're thin shells over OS/CLI primitives. Some defensive paths
@@ -732,9 +784,8 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     #
     # --ignore=tests/capsem-recipes -- recipe meta-tests invoke `cargo build
     #   --workspace` via subprocess, which atomically replaces the codesigned
-    #   binaries concurrent VM tests need. All their assertions are already
-    #   covered by Stage 1 clippy + Stage 3 llvm-cov + Stage 4 _build-host.
-    #   Still runnable standalone via `uv run pytest -m recipe`.
+    #   binaries concurrent VM tests need. They run explicitly after every VM
+    #   and installed-package proof, when replacing those binaries is safe.
     # --ignore=tests/capsem-install -- install-suite tests also spawn `cargo
     #   build -p capsem` from within pytest. This directory is owned by
     #   Stage 7's `just test-install`, which runs it inside Docker with
@@ -798,8 +849,22 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings _c
     just cross-compile arm64
     just cross-compile x86_64
 
+    # ---- Stage 7b: publishable host packages + host SBOM -------------------
+    # Linux release packages above are real release-mode .debs. On macOS,
+    # build the real release-mode app and .pkg with the production assembler.
+    # Then run the production host-SBOM generator over those exact artifacts.
+    if [ "$(uname -s)" = "Darwin" ]; then
+        echo "=== macOS release package artifact ==="
+        just test-macos-release-package
+    fi
+    echo "=== Host package SBOM artifact ==="
+    just test-host-package-sbom
+
     echo "=== Install e2e tests (Docker + systemd) ==="
     just test-install
+
+    echo "=== Just recipe tests (post-VM, serial) ==="
+    uv run python -m pytest tests/capsem-recipes/ -v --tb=short -m recipe
 
     # ---- Stage 8: cleanup ---------------------------------------------------
     echo "=== Pruning stale build artifacts ==="
@@ -816,13 +881,161 @@ build-host-image:
         -f docker/Dockerfile.host-builder \
         docker/
 
+# Execute the portable Linux host-crate suite through one checked-in runner.
+# Linux CI calls this recipe natively. Mac-local `just test` calls it through
+# capsem-host-builder so cfg(target_os = "linux") tests are not CI-only.
+test-linux-rust:
+    #!/bin/bash
+    set -euo pipefail
+    ROOT="{{justfile_directory()}}"
+    if [ "$(uname -s)" = "Linux" ]; then
+        CAPSEM_LINUX_RUST_OUTPUT_DIR="$ROOT" bash "$ROOT/scripts/test-linux-rust.sh"
+        exit 0
+    fi
+
+    [ "$(uname -s)" = "Darwin" ] || {
+        echo "ERROR: Linux Rust parity supports native Linux or Docker on macOS" >&2
+        exit 1
+    }
+
+    # Native Linux CI runs the shared script directly. Only a Mac host needs
+    # the Linux builder image, so do not make Linux CI build an unused image.
+    just build-host-image
+    [ -f "$ROOT/Cargo.lock" ] || cargo generate-lockfile
+    OUTPUT_DIR="$ROOT/target/linux-rust-coverage"
+    HOST_UID=$(id -u)
+    HOST_GID=$(id -g)
+    mkdir -p "$OUTPUT_DIR/nextest"
+    # Match the non-root GitHub runner. Running this suite as container root
+    # makes chmod-based permission regressions impossible to observe.
+    docker run --rm \
+        -v capsem-linux-rust-cargo-registry:/usr/local/cargo/registry \
+        -v capsem-linux-rust-cargo-git:/usr/local/cargo/git \
+        -v capsem-linux-rust-rustup:/usr/local/rustup \
+        -v capsem-linux-rust-target:/cargo-target \
+        capsem-host-builder:latest \
+        sh -c "chown -R $HOST_UID:$HOST_GID /usr/local/cargo/registry /usr/local/cargo/git /usr/local/rustup /cargo-target"
+    docker run --rm \
+        --user "$HOST_UID:$HOST_GID" \
+        -e HOME=/tmp/capsem-home \
+        -e CAPSEM_SKIP_KVM_TESTS=1 \
+        -e CAPSEM_LINUX_RUST_OUTPUT_DIR=/linux-rust-output \
+        --tmpfs /tmp:rw,exec,mode=1777 \
+        -v "$ROOT:/src:ro" \
+        -v "$OUTPUT_DIR:/linux-rust-output" \
+        -v "$OUTPUT_DIR/nextest:/src/target/nextest" \
+        -v capsem-linux-rust-cargo-registry:/usr/local/cargo/registry \
+        -v capsem-linux-rust-cargo-git:/usr/local/cargo/git \
+        -v capsem-linux-rust-rustup:/usr/local/rustup \
+        -v capsem-linux-rust-target:/cargo-target \
+        -w /src \
+        capsem-host-builder:latest \
+        bash /src/scripts/test-linux-rust.sh
+    docker run --rm \
+        -v "$OUTPUT_DIR:/linux-rust-output" \
+        alpine chown -R "$HOST_UID:$HOST_GID" /linux-rust-output
+
+# Build the actual unsigned macOS release package using the same Tauri release
+# build and scripts/build-pkg.sh primitive as release.yaml. Signing,
+# notarization, Gatekeeper, and system installation remain explicit final Mac
+# boundaries; package assembly and payload/SBOM validation do not.
+test-macos-release-package: _pnpm-install _materialize-config
+    #!/bin/bash
+    set -euo pipefail
+    [ "$(uname -s)" = "Darwin" ] || {
+        echo "ERROR: macOS package proof requires macOS" >&2
+        exit 1
+    }
+    ROOT="{{justfile_directory()}}"
+    VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"
+    bash "$ROOT/scripts/check-web-surface.sh" frontend-build
+    cargo tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+    cargo build --release \
+        -p capsem \
+        -p capsem-service \
+        -p capsem-process \
+        -p capsem-tui \
+        -p capsem-mcp \
+        -p capsem-mcp-aggregator \
+        -p capsem-mcp-builtin \
+        -p capsem-gateway \
+        -p capsem-tray \
+        -p capsem-admin
+    bash "$ROOT/scripts/build-pkg.sh" \
+        --manifest "$MANIFEST_URL" \
+        "$ROOT/target/release/bundle/macos/Capsem.app" \
+        "$ROOT/target/release" \
+        "$ROOT/assets" \
+        "$ROOT/target/config" \
+        "$VERSION"
+    PKG="$ROOT/packages/Capsem-$VERSION.pkg"
+    test -s "$PKG"
+    python3 "$ROOT/scripts/generate-host-binary-sbom.py" \
+        --output "$ROOT/target/macos-package-sbom.spdx.json" \
+        "$PKG"
+    python3 - "$ROOT/target/macos-package-sbom.spdx.json" <<'PY'
+    import json
+    import pathlib
+    import sys
+
+    expected = {
+        "capsem", "capsem-admin", "capsem-app", "capsem-gateway",
+        "capsem-mcp", "capsem-mcp-aggregator", "capsem-mcp-builtin",
+        "capsem-process", "capsem-service", "capsem-tray", "capsem-tui",
+    }
+    document = json.loads(pathlib.Path(sys.argv[1]).read_text())
+    actual = {pathlib.Path(row["fileName"]).name for row in document["files"]}
+    missing = sorted(expected - actual)
+    if missing:
+        raise SystemExit(f"macOS package SBOM missing executables: {missing}")
+    PY
+
+# Run the production release SBOM generator over the exact current-version
+# packages built by the canonical gate. Mac runs cover one .pkg plus both .deb
+# architectures; native Linux qualification covers both .deb architectures.
+test-host-package-sbom:
+    #!/bin/bash
+    set -euo pipefail
+    ROOT="{{justfile_directory()}}"
+    VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    shopt -s nullglob
+    DEBS=("$ROOT"/dist/*"$VERSION"*.deb)
+    [ "${#DEBS[@]}" -eq 2 ] || {
+        echo "ERROR: expected exactly two current-version Linux packages, found ${#DEBS[@]}" >&2
+        printf '  %s\n' "${DEBS[@]}" >&2
+        exit 1
+    }
+    ARTIFACTS=("${DEBS[@]}")
+    if [ "$(uname -s)" = "Darwin" ]; then
+        PKG="$ROOT/packages/Capsem-$VERSION.pkg"
+        test -s "$PKG"
+        ARTIFACTS+=("$PKG")
+    fi
+    OUTPUT="$ROOT/target/ironbank-host-sbom.spdx.json"
+    python3 "$ROOT/scripts/generate-host-binary-sbom.py" \
+        --output "$OUTPUT" \
+        "${ARTIFACTS[@]}"
+    python3 - "$OUTPUT" "${#ARTIFACTS[@]}" <<'PY'
+    import json
+    import pathlib
+    import sys
+
+    document = json.loads(pathlib.Path(sys.argv[1]).read_text())
+    if document.get("spdxVersion") != "SPDX-2.3":
+        raise SystemExit("host SBOM is not SPDX-2.3")
+    if not document.get("files"):
+        raise SystemExit("host SBOM contains no packaged executables")
+    print(f"host SBOM validated: artifacts={sys.argv[2]} files={len(document['files'])}")
+    PY
+
 # Remove cross-compilation image and cached volumes.
 _clean-host-image:
     #!/bin/bash
     set -euo pipefail
     docker rmi capsem-host-builder:latest 2>/dev/null || true
     docker rmi capsem-install-test:latest 2>/dev/null || true
-    for vol in capsem-cargo-registry capsem-cargo-git capsem-host-target-arm64 capsem-host-target-x86_64 capsem-rustup capsem-install-target capsem-install-cargo capsem-install-rustup; do
+    for vol in capsem-cargo-registry capsem-cargo-git capsem-linux-rust-cargo-registry capsem-linux-rust-cargo-git capsem-linux-rust-rustup capsem-linux-rust-target capsem-host-target-arm64 capsem-host-target-x86_64 capsem-rustup capsem-install-target capsem-install-cargo capsem-install-rustup; do
         docker volume rm "$vol" 2>/dev/null || true
     done
     echo "Cleaned host builder image and volumes."
@@ -984,22 +1197,27 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     DEB="$ROOT/dist/$DEB_BASENAME"
     test -f "$DEB"
 
+    HOST_OS=$(uname -s)
     HOST_ARCH=$(uname -m | sed 's/aarch64/arm64/;s/x86_64/x86_64/')
-    if [ "$(uname -s)" = "Linux" ] \
-        && [ "$TARGET_ARCH" = "$HOST_ARCH" ] \
-        && [ -r /dev/kvm ] && [ -w /dev/kvm ] \
+    KVM_READY=0
+    if [ -r /dev/kvm ] && [ -w /dev/kvm ] \
         && [ -r /dev/vhost-vsock ] && [ -w /dev/vhost-vsock ]; then
+        KVM_READY=1
+    fi
+    PROOF_DECISION=$(bash "$ROOT/scripts/select-linux-deb-proof.sh" \
+        "$HOST_OS" \
+        "$HOST_ARCH" \
+        "$TARGET_ARCH" \
+        "$KVM_READY" \
+        "${CAPSEM_REQUIRE_LINUX_DEB_PROOF:-0}")
+    if [ "$PROOF_DECISION" = "prove" ]; then
         echo "=== Proving exact Debian package in systemd + KVM ==="
         CAPSEM_PROOF_DEB="$DEB" \
         CAPSEM_PROOF_MANIFEST_URL="$MANIFEST_URL" \
         CAPSEM_PROOF_MANIFEST_CHANNEL="$MANIFEST_CHANNEL" \
             just _prove-linux-deb
-    elif [ "${CAPSEM_REQUIRE_LINUX_DEB_PROOF:-0}" = "1" ]; then
-        echo "ERROR: exact Debian package proof requires native Linux KVM and vhost-vsock" >&2
-        echo "       host=$(uname -s)/$HOST_ARCH target=$TARGET_ARCH kvm=$(test -r /dev/kvm -a -w /dev/kvm && echo ready || echo unavailable) vhost-vsock=$(test -r /dev/vhost-vsock -a -w /dev/vhost-vsock && echo ready || echo unavailable)" >&2
-        exit 1
     else
-        echo "Skipping exact Debian package proof (requires native Linux KVM; release qualification makes this mandatory)."
+        echo "Skipping exact Debian package proof for non-host or optional target ($HOST_OS/$HOST_ARCH -> $TARGET_ARCH)."
     fi
     echo ""
     echo "=== Artifacts ==="
@@ -1011,6 +1229,40 @@ _generate-settings:
     #!/bin/bash
     set -euo pipefail
     bash scripts/generate-settings.sh
+
+# Generate tracked settings outputs and fail if the generator changed them.
+# This is the local equivalent of CI's generate-then-git-diff drift gate, but
+# compares before/after content so an intentional already-generated worktree
+# change can still be tested before it is committed.
+_check-generated-settings:
+    #!/bin/bash
+    set -euo pipefail
+    ROOT="{{justfile_directory()}}"
+    SNAPSHOT=$(mktemp -d)
+    trap 'rm -rf "$SNAPSHOT"' EXIT
+    FILES=(
+        config/settings/schema.generated.json
+        config/settings/ui-metadata.generated.json
+        frontend/src/lib/mock-settings.generated.ts
+    )
+    for file in "${FILES[@]}"; do
+        test -f "$ROOT/$file"
+        mkdir -p "$SNAPSHOT/$(dirname "$file")"
+        cp "$ROOT/$file" "$SNAPSHOT/$file"
+    done
+    bash "$ROOT/scripts/generate-settings.sh"
+    drift=0
+    for file in "${FILES[@]}"; do
+        if ! cmp -s "$SNAPSHOT/$file" "$ROOT/$file"; then
+            echo "ERROR: generated settings drifted: $file" >&2
+            diff -u "$SNAPSHOT/$file" "$ROOT/$file" || true
+            drift=1
+        fi
+    done
+    [ "$drift" -eq 0 ] || {
+        echo "Generated files were refreshed. Review them, then rerun just test." >&2
+        exit 1
+    }
 
 # Fast path: audit, doctor, injection, integration tests (no Docker, no cross-compile)
 smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-config
@@ -1494,6 +1746,17 @@ test-install:
     HOST_UID=$(id -u)
     HOST_GID=$(id -g)
     CONTAINER="capsem-install-test"
+    HOST_ROSETTA_REGISTRATION=not_applicable
+    if [ "$(uname -s)" = "Darwin" ] \
+        && command -v colima >/dev/null 2>&1 \
+        && colima status >/dev/null 2>&1; then
+        if ! colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1; then
+            echo "ERROR: Colima Rosetta binfmt registration is missing before test-install" >&2
+            echo "Run the canonical bootstrap to repair it before testing packages." >&2
+            exit 1
+        fi
+        HOST_ROSETTA_REGISTRATION=required
+    fi
     # Detach the previous gate container before inspecting or resetting its
     # persistent target volume. Otherwise Docker refuses the volume removal;
     # ignoring that failure allowed the cache to fill the entire Docker disk.
@@ -1603,6 +1866,11 @@ test-install:
     echo "Running local release glow-up (install, channel switch, upgrade)..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
         'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && python3 scripts/local-release-glowup.py --input-deb "$DEB" --bin-dir /cargo-target/debug --assets-dir assets --config-root target/config --work-dir target/local-release-glowup'
+    if [ "$HOST_ROSETTA_REGISTRATION" = "required" ] \
+        && ! colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1; then
+        echo "ERROR: systemd install container removed Colima's Rosetta binfmt registration" >&2
+        exit 1
+    fi
 
 # Dispatch one serialized release workflow and wait for publication.
 # Usage: just release                       (latest tag on HEAD, stable)
@@ -1648,7 +1916,7 @@ release tag="" channel="stable":
         echo "Never dispatch a release for a mismatched tag." >&2
         exit 1
     fi
-    python3 scripts/check-release-qualification.py --sha "$LOCAL_TAG_SHA"
+    python3 scripts/check-release-qualification.py --sha "$LOCAL_TAG_SHA" --channel "$CHANNEL"
 
     RUN_TITLE="Release $CHANNEL $TAG"
     echo "=== $RUN_TITLE ==="
@@ -1729,9 +1997,14 @@ prepare-release: test _stamp-version
 
 # Dispatch and wait for the canonical remote gate on the exact untagged HEAD.
 # This recipe never creates a tag, GitHub release, or channel mutation.
-qualify-release:
+qualify-release channel="stable":
     #!/usr/bin/env bash
     set -euo pipefail
+    CHANNEL="{{channel}}"
+    case "$CHANNEL" in
+        stable|nightly) ;;
+        *) echo "Error: channel must be stable or nightly (got: $CHANNEL)" >&2; exit 1 ;;
+    esac
     SHA=$(git rev-parse HEAD)
     git fetch origin main
     if ! test "$(git rev-parse origin/main)" = "$SHA"; then
@@ -1743,11 +2016,11 @@ qualify-release:
         echo "Error: release qualification accepts only an untagged candidate" >&2
         exit 1
     fi
-    if python3 scripts/check-release-qualification.py --sha "$SHA"; then
+    if python3 scripts/check-release-qualification.py --sha "$SHA" --channel "$CHANNEL"; then
         exit 0
     fi
-    RUN_TITLE="Qualify release $SHA"
-    gh workflow run release-qualification.yaml --ref main -f "sha=$SHA"
+    RUN_TITLE="Qualify release $CHANNEL $SHA"
+    gh workflow run release-qualification.yaml --ref main -f "sha=$SHA" -f "channel=$CHANNEL"
     RUN_ID=""
     for _ in $(seq 1 30); do
         RUN_ID=$(gh run list --workflow=release-qualification.yaml --commit "$SHA" --event workflow_dispatch --limit 20 \
@@ -1762,13 +2035,18 @@ qualify-release:
     fi
     echo "Qualification run: $RUN_ID"
     gh run watch "$RUN_ID" --exit-status
-    python3 scripts/check-release-qualification.py --sha "$SHA"
+    python3 scripts/check-release-qualification.py --sha "$SHA" --channel "$CHANNEL"
 
 # Mint the immutable local tag only after GitHub proves this exact published
 # commit passed release qualification. No stamping or commit happens here.
-cut-release:
+cut-release channel="stable":
     #!/usr/bin/env bash
     set -euo pipefail
+    CHANNEL="{{channel}}"
+    case "$CHANNEL" in
+        stable|nightly) ;;
+        *) echo "Error: channel must be stable or nightly (got: $CHANNEL)" >&2; exit 1 ;;
+    esac
     SHA=$(git rev-parse HEAD)
     git fetch origin main
     if ! test "$(git rev-parse origin/main)" = "$SHA"; then
@@ -1785,12 +2063,12 @@ cut-release:
         echo "Error: remote tag $TAG already exists; never reuse or move release tags" >&2
         exit 1
     fi
-    python3 scripts/check-release-qualification.py --sha "$SHA"
+    python3 scripts/check-release-qualification.py --sha "$SHA" --channel "$CHANNEL"
     git tag "$TAG"
     echo "Created qualified local tag $TAG at $SHA."
     echo "Publish with:"
     echo "  git push origin $TAG"
-    echo "  just release $TAG stable"
+    echo "  just release $TAG $CHANNEL"
 
 # Check dev tools and dependencies. Pass "fix" to auto-fix.
 doctor fix="": _pnpm-install

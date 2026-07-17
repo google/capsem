@@ -415,9 +415,8 @@ fn now_secs() -> u64 {
 }
 
 fn manifest_metadata_path() -> Option<PathBuf> {
-    crate::paths::capsem_home()
-        .ok()
-        .map(|home| home.join("assets/manifest-metadata.json"))
+    capsem_core::asset_manager::default_assets_dir()
+        .map(|assets_dir| assets_dir.join("manifest-metadata.json"))
 }
 
 /// Validate user-provided update source flags.
@@ -739,24 +738,47 @@ pub async fn refresh_update_cache_if_stale() {
 }
 
 fn release_manifest_url() -> Result<String> {
+    release_manifest_url_for_layout(&platform::detect_install_layout())
+}
+
+fn release_manifest_url_for_layout(layout: &InstallLayout) -> Result<String> {
     if let Ok(value) = std::env::var(RELEASE_MANIFEST_URL_ENV) {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
+            if !matches!(layout, InstallLayout::Development) {
+                anyhow::bail!(
+                    "{RELEASE_MANIFEST_URL_ENV} is a development-only override; installed Capsem must use manifest-metadata.json provenance"
+                );
+            }
             return validate_release_manifest_url(trimmed);
         }
     }
     if let Ok(value) = std::env::var(LEGACY_RELEASE_HEALTH_URL_ENV) {
         let trimmed = value.trim();
         if !trimmed.is_empty() {
+            if !matches!(layout, InstallLayout::Development) {
+                anyhow::bail!(
+                    "{LEGACY_RELEASE_HEALTH_URL_ENV} is a development-only override; installed Capsem must use manifest-metadata.json provenance"
+                );
+            }
             return validate_release_manifest_url(trimmed);
         }
     }
 
-    if let Some(url) = release_manifest_url_from_manifest_metadata() {
+    if let Some(url) = release_manifest_url_from_manifest_metadata()? {
         return Ok(url);
     }
 
-    Ok(DEFAULT_RELEASE_MANIFEST_URL.to_string())
+    if matches!(layout, InstallLayout::Development) {
+        return Ok(DEFAULT_RELEASE_MANIFEST_URL.to_string());
+    }
+
+    let metadata_path = manifest_metadata_path()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<CAPSEM_HOME>/assets/manifest-metadata.json".to_string());
+    anyhow::bail!(
+        "installed Capsem requires {metadata_path}; refusing to silently select the stable channel"
+    )
 }
 
 fn select_channel_manifest_url(
@@ -952,13 +974,23 @@ fn validate_release_manifest_url(url: &str) -> Result<String> {
     Ok(parsed.as_str().trim_end_matches('/').to_string())
 }
 
-fn release_manifest_url_from_manifest_metadata() -> Option<String> {
-    let assets_dir = capsem_core::asset_manager::default_assets_dir()?;
-    let metadata_path = assets_dir.join("manifest-metadata.json");
-    let content = std::fs::read_to_string(metadata_path).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&content).ok()?;
-    let source = value.get("manifest_url").and_then(|v| v.as_str())?;
-    release_manifest_url_from_manifest_url(source)
+fn release_manifest_url_from_manifest_metadata() -> Result<Option<String>> {
+    let Some(metadata_path) = manifest_metadata_path() else {
+        return Ok(None);
+    };
+    let Some(value) = read_manifest_metadata_value(&metadata_path)? else {
+        return Ok(None);
+    };
+    let source = value
+        .get("manifest_url")
+        .and_then(serde_json::Value::as_str)
+        .context("manifest-metadata.json must contain string field manifest_url")?;
+    let source = release_manifest_url_from_manifest_url(source).with_context(|| {
+        format!(
+            "manifest-metadata.json manifest_url must be an http(s) channel manifest URL, got {source}"
+        )
+    })?;
+    Ok(Some(source))
 }
 
 fn release_manifest_url_from_manifest_url(manifest_url: &str) -> Option<String> {
@@ -2179,7 +2211,7 @@ async fn apply_profile_catalog_update(check: &UpdateCheck) -> Result<()> {
     let channel_source = check
         .source
         .as_deref()
-        .unwrap_or(DEFAULT_RELEASE_MANIFEST_URL);
+        .context("release channel update is missing its manifest source")?;
     let catalog_url = resolve_release_channel_artifact_url(channel_source, source)?;
     let bytes = read_profile_catalog_source(&catalog_url).await?;
     let actual_hash = blake3::hash(&bytes).to_hex().to_string();
@@ -3740,10 +3772,12 @@ mod tests {
         let _lock = crate::lock_test_env();
         let home = tempfile::tempdir().unwrap();
         let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", "");
         let mut check = cached_notice_check();
         check.latest_assets = Some("2030.0101.1".into());
         check.current_assets = Some("2026.0627.1".into());
         check.assets_update_available = true;
+        seed_manifest_metadata(&check);
         write_cache(&check).unwrap();
 
         assert_eq!(
@@ -3759,10 +3793,12 @@ mod tests {
         let _lock = crate::lock_test_env();
         let home = tempfile::tempdir().unwrap();
         let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", "");
         let mut check = cached_notice_check();
         check.latest_profiles = Some("profiles-2030.0101.1".into());
         check.current_profiles = Some("profiles-2030.0101.0".into());
         check.profiles_update_available = true;
+        seed_manifest_metadata(&check);
         write_cache(&check).unwrap();
 
         assert_eq!(
@@ -3778,10 +3814,12 @@ mod tests {
         let _lock = crate::lock_test_env();
         let home = tempfile::tempdir().unwrap();
         let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", "");
         let mut check = cached_notice_check();
         check.latest_profiles = Some("profiles-2030.0101.1".into());
         check.current_profiles = Some("profiles-2030.0101.0".into());
         check.profiles_blocked_reason = Some("requires binary 1.4.1 or newer".into());
+        seed_manifest_metadata(&check);
         write_cache(&check).unwrap();
 
         assert_eq!(
@@ -3796,9 +3834,11 @@ mod tests {
         let _lock = crate::lock_test_env();
         let home = tempfile::tempdir().unwrap();
         let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", "");
         let assets = home.path().join("assets");
         std::fs::create_dir_all(&assets).unwrap();
         let path = assets.join("manifest-metadata.json");
+        assert_eq!(manifest_metadata_path().as_deref(), Some(path.as_path()));
         std::fs::write(
             &path,
             serde_json::json!({
@@ -3834,6 +3874,7 @@ mod tests {
         let _lock = crate::lock_test_env();
         let home = tempfile::tempdir().unwrap();
         let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", "");
 
         let mut stable = cached_notice_check();
         stable.source = Some("https://release.capsem.org/assets/stable/manifest.json".into());
@@ -3998,6 +4039,20 @@ mod tests {
         }
     }
 
+    fn seed_manifest_metadata(check: &UpdateCheck) {
+        let path = manifest_metadata_path().expect("manifest metadata path");
+        std::fs::create_dir_all(path.parent().expect("metadata parent")).unwrap();
+        std::fs::write(
+            path,
+            serde_json::json!({
+                "schema": "capsem.manifest_metadata.v1",
+                "manifest_url": check.source.as_deref().expect("check source"),
+            })
+            .to_string(),
+        )
+        .unwrap();
+    }
+
     #[test]
     fn update_channel_provenance_preserves_previous_cache_on_failure() {
         let previous = UpdateCheck {
@@ -4066,6 +4121,194 @@ mod tests {
         assert_eq!(
             release_manifest_url_from_manifest_url("file:///tmp/assets/stable/manifest.json"),
             None
+        );
+    }
+
+    #[test]
+    fn installed_update_source_requires_manifest_metadata() {
+        let _lock = crate::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", "");
+        let _manifest_override = EnvGuard::set(RELEASE_MANIFEST_URL_ENV, "");
+        let _legacy_override = EnvGuard::set(LEGACY_RELEASE_HEALTH_URL_ENV, "");
+
+        let error = release_manifest_url_for_layout(&InstallLayout::UserDir)
+            .expect_err("installed Capsem must not silently select stable");
+
+        assert!(
+            format!("{error:#}").contains("manifest-metadata.json"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn installed_update_source_rejects_malformed_manifest_metadata() {
+        let _lock = crate::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", "");
+        let _manifest_override = EnvGuard::set(RELEASE_MANIFEST_URL_ENV, "");
+        let _legacy_override = EnvGuard::set(LEGACY_RELEASE_HEALTH_URL_ENV, "");
+        let assets = home.path().join("assets");
+        std::fs::create_dir_all(&assets).unwrap();
+        std::fs::write(assets.join("manifest-metadata.json"), b"not json\n").unwrap();
+
+        let error = release_manifest_url_for_layout(&InstallLayout::MacosPkg)
+            .expect_err("malformed installed metadata must fail closed");
+
+        assert!(format!("{error:#}").contains("parse"), "{error:#}");
+    }
+
+    #[test]
+    fn installed_update_source_requires_manifest_url_field() {
+        let _lock = crate::lock_test_env();
+        let assets = tempfile::tempdir().unwrap();
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", assets.path().to_str().unwrap());
+        let _manifest_override = EnvGuard::set(RELEASE_MANIFEST_URL_ENV, "");
+        let _legacy_override = EnvGuard::set(LEGACY_RELEASE_HEALTH_URL_ENV, "");
+        std::fs::write(
+            assets.path().join("manifest-metadata.json"),
+            br#"{"schema":"capsem.manifest_metadata.v1"}"#,
+        )
+        .unwrap();
+
+        let error = release_manifest_url_for_layout(&InstallLayout::LinuxDeb)
+            .expect_err("installed metadata without manifest_url must fail closed");
+
+        assert!(format!("{error:#}").contains("manifest_url"), "{error:#}");
+    }
+
+    #[test]
+    fn installed_update_source_rejects_wrong_metadata_schema() {
+        let _lock = crate::lock_test_env();
+        let assets = tempfile::tempdir().unwrap();
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", assets.path().to_str().unwrap());
+        let _manifest_override = EnvGuard::set(RELEASE_MANIFEST_URL_ENV, "");
+        let _legacy_override = EnvGuard::set(LEGACY_RELEASE_HEALTH_URL_ENV, "");
+        std::fs::write(
+            assets.path().join("manifest-metadata.json"),
+            br#"{"schema":"capsem.wrong.v1","manifest_url":"https://release.capsem.org/assets/nightly/manifest.json"}"#,
+        )
+        .unwrap();
+
+        let error = release_manifest_url_for_layout(&InstallLayout::MacosPkg)
+            .expect_err("wrong metadata schema must fail closed");
+
+        assert!(
+            format!("{error:#}").contains("capsem.manifest_metadata.v1"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn installed_update_source_does_not_replace_file_manifest_with_stable() {
+        let _lock = crate::lock_test_env();
+        let assets = tempfile::tempdir().unwrap();
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", assets.path().to_str().unwrap());
+        let _manifest_override = EnvGuard::set(RELEASE_MANIFEST_URL_ENV, "");
+        let _legacy_override = EnvGuard::set(LEGACY_RELEASE_HEALTH_URL_ENV, "");
+        std::fs::write(
+            assets.path().join("manifest-metadata.json"),
+            br#"{"schema":"capsem.manifest_metadata.v1","manifest_url":"file:///tmp/release/assets/nightly/manifest.json"}"#,
+        )
+        .unwrap();
+
+        let error = release_manifest_url_for_layout(&InstallLayout::UserDir)
+            .expect_err("local manifest provenance must not silently become stable");
+
+        let message = format!("{error:#}");
+        assert!(message.contains("http(s)"), "{message}");
+        assert!(!message.contains(DEFAULT_RELEASE_MANIFEST_URL), "{message}");
+    }
+
+    #[test]
+    fn installed_update_source_uses_exact_metadata_url_and_assets_override() {
+        let _lock = crate::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let assets = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", assets.path().to_str().unwrap());
+        let _manifest_override = EnvGuard::set(RELEASE_MANIFEST_URL_ENV, "");
+        let _legacy_override = EnvGuard::set(LEGACY_RELEASE_HEALTH_URL_ENV, "");
+        let metadata_path = assets.path().join("manifest-metadata.json");
+        let nightly = "https://release.capsem.org/assets/nightly/manifest.json";
+        std::fs::write(
+            &metadata_path,
+            serde_json::json!({
+                "schema": "capsem.manifest_metadata.v1",
+                "manifest_url": nightly,
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            manifest_metadata_path().as_deref(),
+            Some(metadata_path.as_path())
+        );
+        assert_eq!(
+            release_manifest_url_for_layout(&InstallLayout::MacosPkg).unwrap(),
+            nightly
+        );
+        assert!(!home.path().join("assets/manifest-metadata.json").exists());
+    }
+
+    #[test]
+    fn installed_update_source_rejects_environment_channel_bypass() {
+        let _lock = crate::lock_test_env();
+        let assets = tempfile::tempdir().unwrap();
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", assets.path().to_str().unwrap());
+        let _manifest_override = EnvGuard::set(
+            RELEASE_MANIFEST_URL_ENV,
+            "https://release.capsem.org/assets/stable/manifest.json",
+        );
+        let _legacy_override = EnvGuard::set(LEGACY_RELEASE_HEALTH_URL_ENV, "");
+        std::fs::write(
+            assets.path().join("manifest-metadata.json"),
+            serde_json::json!({
+                "schema": "capsem.manifest_metadata.v1",
+                "manifest_url": "https://corp.example/capsem/assets/internal/manifest.json",
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let error = release_manifest_url_for_layout(&InstallLayout::UserDir)
+            .expect_err("installed environment must not bypass corporate provenance");
+
+        let message = format!("{error:#}");
+        assert!(message.contains(RELEASE_MANIFEST_URL_ENV), "{message}");
+        assert!(message.contains("installed"), "{message}");
+    }
+
+    #[test]
+    fn development_update_source_accepts_explicit_environment_url() {
+        let _lock = crate::lock_test_env();
+        let assets = tempfile::tempdir().unwrap();
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", assets.path().to_str().unwrap());
+        let nightly = "https://release.capsem.org/assets/nightly/manifest.json";
+        let _manifest_override = EnvGuard::set(RELEASE_MANIFEST_URL_ENV, nightly);
+        let _legacy_override = EnvGuard::set(LEGACY_RELEASE_HEALTH_URL_ENV, "");
+
+        assert_eq!(
+            release_manifest_url_for_layout(&InstallLayout::Development).unwrap(),
+            nightly
+        );
+    }
+
+    #[test]
+    fn development_update_source_may_default_to_stable_without_metadata() {
+        let _lock = crate::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let _assets_override = EnvGuard::set("CAPSEM_ASSETS_DIR", "");
+        let _manifest_override = EnvGuard::set(RELEASE_MANIFEST_URL_ENV, "");
+        let _legacy_override = EnvGuard::set(LEGACY_RELEASE_HEALTH_URL_ENV, "");
+
+        assert_eq!(
+            release_manifest_url_for_layout(&InstallLayout::Development).unwrap(),
+            DEFAULT_RELEASE_MANIFEST_URL
         );
     }
 

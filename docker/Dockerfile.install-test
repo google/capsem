@@ -24,6 +24,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
+# The container runs systemd with --privileged and shares the host's binfmt
+# filesystem. systemd-binfmt would otherwise flush the Colima VM's Rosetta
+# registration and replace it with registrations from this Ubuntu image.
+# Mask it before PID 1 starts; install tests do not need to register formats.
+RUN mkdir -p /etc/systemd/system \
+    && ln -s /dev/null /etc/systemd/system/systemd-binfmt.service
+
 # Install uv for Python test runner
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 

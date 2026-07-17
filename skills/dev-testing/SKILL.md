@@ -42,6 +42,13 @@ the public stable-to-nightly switch/upgrade glow-up remain mandatory afterward
 as the end-to-end deployed-release test. Do not duplicate `just test` after
 tagging or packaging.
 
+Linux proof is host-aware: a cross-built non-host package receives structural
+validation in qualification and exact native installation in its tagged release
+job. `CAPSEM_REQUIRE_LINUX_DEB_PROOF=1` must not reject that non-host package
+before the host package reaches its mandatory KVM proof. The hosted arm64 runner
+does not expose `/dev/kvm`, so it proves exact package/service operation while
+the x86_64 runner additionally owns the guest-shell marker.
+
 Expensive harnesses need a cheap clean-environment bootstrap proof at the start
 of `just test`. The Linux install rail must build the real install-test image,
 use a container-owned `UV_PROJECT_ENVIRONMENT`, and prove `python -m pytest`
@@ -69,6 +76,15 @@ that slice. A workflow-only build, even when another test validates its input
 schema, is an Ironbank violation because the produced artifact is unaccounted
 for.
 
+Run `scripts/check-hardcoded-release-selections.sh` at the start of `just test`.
+This source guard is a release contract, not a style check: user-facing and
+profile-scoped requests must obtain profile ids from arguments or the installed
+catalog, package rails must materialize the catalog, native installers must use
+packaged manifest metadata without a stable/nightly fallback, and exact-SHA
+qualification must also match the requested channel. Extend the guarded profile
+terms during renames; keep `code`, `co-work`, `cowork`, `terminal`, `termional`,
+and `gui` until every migration path is complete.
+
 This includes workspace/runtime tests, Rust and Python coverage floors,
 `capsem-doctor` and Ironbank acceptance, benchmarks, artifact completeness,
 frontend/docs/marketing/release-site validation, and the Docker/systemd Linux
@@ -86,6 +102,13 @@ similar commands. If CI calls a `just` recipe or checked-in script, local proof
 must call that same recipe or script; if a requirement is implemented as a
 shared shell function, both paths must execute that function.
 
+Artifact accounting is literal: macOS-local `just test` builds the real
+release-mode `.pkg`, builds both Linux release-mode `.deb` architectures, and
+runs the production host-SBOM generator over those exact packages. Generated
+settings are regenerated under a before/after idempotence gate. A fixture-only
+package test or a generator source inspection does not account for the artifact
+that a release workflow will publish.
+
 Run Linux-only build, doctor, package, and service prerequisites in Docker from
 `just test` whenever the host is macOS. Match the CI architecture, command
 names, environment variables, permissions, and service manager as closely as
@@ -94,9 +117,18 @@ the local entrypoint, plus an executable container regression for the failed
 requirement. A CI-only failure is evidence of a missing parity gate: add the
 local reproducer before rerunning CI.
 
+Linux test containers must run the test process as a non-root user unless the
+CI process is also root. Root invalidates permission-denied regressions and is
+therefore a parity failure, not a harmless container implementation detail.
+
 The canonical gate also has a runtime budget. Measure full local and CI stage
 durations and keep meaningful headroom below the runner's observed lifetime;
 the workflow's declared timeout is not proof that the host will live that long.
+Parallel Docker gates also own a daemon-space preflight: measure free space,
+reclaim only unused builder cache when below the documented reserve, and fail
+before launching lanes if the reserve remains unavailable. Preserve each lane's
+complete log and wait for the logging pipeline itself, so failure diagnostics
+cannot race a still-flushing process substitution.
 Two runs terminating at the same wall-clock age are a deterministic budget
 failure until disproved, not random infrastructure. Before another CI attempt,
 reproduce the expensive rail locally and remove the critical-path bottleneck.

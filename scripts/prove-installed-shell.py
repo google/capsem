@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import json
 import os
 import pty
 import re
@@ -65,12 +66,16 @@ def prove_shell(
     capsem: Path,
     marker: str,
     session_name: str,
+    profile: str | None,
     timeout: float,
     startup_delay: float,
     retry_interval: float,
 ) -> None:
+    create_args = [str(capsem), "create", "--name", session_name]
+    if profile is not None:
+        create_args.extend(["--profile", profile])
     create = subprocess.run(
-        [str(capsem), "create", "--name", session_name],
+        create_args,
         check=False,
         text=True,
         capture_output=True,
@@ -78,6 +83,29 @@ def prove_shell(
     )
     if create.returncode != 0:
         raise RuntimeError(f"failed to create shell-proof session: {create.stdout}{create.stderr}")
+    if profile is not None:
+        info = subprocess.run(
+            [str(capsem), "info", session_name, "--json"],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+        )
+        if info.returncode != 0:
+            raise RuntimeError(
+                f"failed to inspect shell-proof session profile: {info.stdout}{info.stderr}"
+            )
+        try:
+            actual_profile = json.loads(info.stdout)["profile_id"]
+        except (json.JSONDecodeError, KeyError, TypeError) as error:
+            raise RuntimeError(
+                f"shell-proof session info did not identify its profile: {info.stdout}"
+            ) from error
+        if actual_profile != profile:
+            raise RuntimeError(
+                "shell-proof session profile mismatch: "
+                f"requested {profile!r}, service reported {actual_profile!r}"
+            )
 
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
@@ -155,6 +183,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--capsem", type=Path, required=True)
     parser.add_argument("--marker", required=True)
     parser.add_argument("--session-name", default=f"installed-shell-proof-{os.getpid()}")
+    parser.add_argument("--profile")
     parser.add_argument("--timeout", type=float, default=300.0)
     parser.add_argument("--startup-delay", type=float, default=2.0)
     parser.add_argument("--retry-interval", type=float, default=5.0)
@@ -163,7 +192,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    for label, value in (("marker", args.marker), ("session name", args.session_name)):
+    values = [("marker", args.marker), ("session name", args.session_name)]
+    if args.profile is not None:
+        values.append(("profile", args.profile))
+    for label, value in values:
         if not SAFE_VALUE.fullmatch(value):
             raise SystemExit(f"{label} contains unsupported characters: {value!r}")
     if args.timeout <= 0 or args.startup_delay < 0 or args.retry_interval <= 0:
@@ -176,6 +208,7 @@ def main() -> int:
             args.capsem,
             args.marker,
             args.session_name,
+            args.profile,
             args.timeout,
             args.startup_delay,
             args.retry_interval,

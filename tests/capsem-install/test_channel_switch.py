@@ -58,7 +58,7 @@ def test_channel_checks_share_one_manifest_metadata_document() -> None:
 
     assert "fn write_cache" in source
     assert "fn read_cache_for_source" in source
-    assert 'home.join("assets/manifest-metadata.json")' in source
+    assert 'map(|assets_dir| assets_dir.join("manifest-metadata.json"))' in source
     assert "fn cache_path_for_source" not in source
     assert "fn cache_key_for_source" not in source
     assert "update-checks" not in source

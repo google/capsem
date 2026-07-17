@@ -9,6 +9,10 @@ const appShell = readFileSync(
   new URL('../components/shell/App.svelte', import.meta.url),
   'utf8',
 );
+const createDialog = readFileSync(
+  new URL('../components/shell/CreateSandboxDialog.svelte', import.meta.url),
+  'utf8',
+);
 const toolbar = readFileSync(
   new URL('../components/shell/Toolbar.svelte', import.meta.url),
   'utf8',
@@ -118,8 +122,18 @@ describe('user-facing session language contract', () => {
     expect(quickCreateSources).not.toContain('ram_mb: 2048');
     expect(quickCreateSources).not.toContain('cpus: 2');
     expect(dashboard).toContain('profile_id: profileId');
-    expect(appShell).toContain("profile_id: 'code'");
+    expect(appShell).toContain('vmStore.openCreateModal()');
+    expect(appShell).not.toContain("profile_id: 'code'");
     expect(quickCreateSources).toContain('persistent: true');
+  });
+
+  it('fails closed when the installed profile catalog cannot be loaded', () => {
+    expect(createDialog).toContain("let profileId = $state('')");
+    expect(createDialog).toContain("profiles[0]?.id ?? ''");
+    expect(createDialog).toContain('Could not load installed profiles');
+    expect(createDialog).toContain('disabled={creating || !profileId}');
+    expect(createDialog).not.toContain("?? 'code'");
+    expect(createDialog).not.toContain('<option value="code">');
   });
 
   it('uses sessions in toolbar controls and keeps build stamp out of visible chrome', () => {

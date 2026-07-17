@@ -37,7 +37,14 @@ def test_asset_build_primitives_accept_an_isolated_output_root() -> None:
         block = _recipe_block(recipe)
         assert "output=assets_dir" in block
         assert 'OUTPUT_ARG="{{output}}"' in block
-        assert '--output "$OUTPUT_ARG"' in block
+        if recipe == "build-assets":
+            assert '--output "$OUTPUT_ARG"' in block
+        else:
+            assert '"$OUTPUT_ARG"' in block
+    primitive = _recipe_block("_build-image-template")
+    assert " output template:" in primitive.splitlines()[0]
+    assert 'OUTPUT_ARG="{{output}}"' in primitive
+    assert '--output "$OUTPUT_ARG"' in primitive
 
 
 def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
@@ -48,8 +55,8 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
     assert "profile_paths=(config/profiles/*/profile.toml)" in asset_gate
     assert 'for profile_path in "${profile_paths[@]}"; do' in asset_gate
     assert "for arch in arm64 x86_64; do" in asset_gate
-    assert 'just build-kernel "$arch" "$profile" "$lane_assets"' in asset_gate
-    assert 'just build-rootfs "$arch" "$profile" "$lane_assets"' in asset_gate
+    assert 'just _build-image-template "$arch" "$profile" "$lane_assets" kernel' in asset_gate
+    assert 'just _build-image-template "$arch" "$profile" "$lane_assets" rootfs' in asset_gate
     assert 'ln -sfn "$HOST_ARCH" "$profile_assets/current"' in asset_gate
     assert 'readlink "$profile_assets/current"' in asset_gate
     assert 'cp target/config/settings/settings.toml "$profile_home/settings.toml"' not in asset_gate
@@ -62,6 +69,7 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
     )
     assert "cargo run -p capsem-admin -- manifest check" in asset_gate
     assert "scripts/prove-installed-shell.py" in asset_gate
+    assert '--profile "$profile"' in asset_gate
     assert 'CAPSEM_ASSETS_DIR="$profile_assets"' in asset_gate
     assert 'CAPSEM_PROFILES_DIR="$profile_config/profiles"' in asset_gate
 
@@ -71,8 +79,8 @@ def test_asset_gate_runs_architecture_lanes_in_parallel_before_boot_proofs() -> 
 
     assert asset_gate.startswith("test-assets: _bootstrap ")
     assert "build_arch_lane()" in asset_gate
-    assert 'build_arch_lane arm64 &' in asset_gate
-    assert 'build_arch_lane x86_64 &' in asset_gate
+    assert 'build_arch_lane arm64 2>&1 | tee "$ARM64_BUILD_LOG"' in asset_gate
+    assert 'build_arch_lane x86_64 2>&1 | tee "$X86_64_BUILD_LOG"' in asset_gate
     assert 'wait "$ARM64_BUILD_PID"' in asset_gate
     assert 'wait "$X86_64_BUILD_PID"' in asset_gate
     assert 'lane_assets="$profile_root/build-$arch"' in asset_gate
@@ -108,8 +116,22 @@ def test_asset_ci_uses_primitives_owned_by_just_test() -> None:
 
     assert 'just build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
     assert 'just build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
-    assert "just build-kernel" in asset_gate
-    assert "just build-rootfs" in asset_gate
+    assert "just _build-image-template" in asset_gate
+
+
+def test_asset_matrix_preflights_once_and_reuses_the_public_build_primitive() -> None:
+    asset_gate = _recipe_block("test-assets:")
+    kernel = _recipe_block("build-kernel")
+    rootfs = _recipe_block("build-rootfs")
+    primitive = _recipe_block("_build-image-template")
+
+    assert 'just _build-image-template "{{arch}}" "$PROFILE_ARG" "$OUTPUT_ARG" kernel' in kernel
+    assert 'just _build-image-template "{{arch}}" "$PROFILE_ARG" "$OUTPUT_ARG" rootfs' in rootfs
+    assert "cargo run -p capsem-admin -- image build" in primitive
+    assert "just _install-tools" not in primitive
+    assert "just doctor" not in primitive
+    assert asset_gate.startswith("test-assets: _bootstrap ")
+    assert "CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor" not in asset_gate
 
 
 def test_check_assets_recovers_by_iterating_checked_in_profiles() -> None:
@@ -188,9 +210,9 @@ def test_isolated_test_recipes_trap_test_home_service_cleanup() -> None:
 def test_release_workflow_uses_same_config_materializer() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
 
-    assert workflow.count("cargo run -p capsem-admin -- profile materialize") >= 2
-    assert "--output-root target/config" in workflow
-    assert '--manifest "$ASSET_MANIFEST_URL"' in workflow
+    assert workflow.count("bash scripts/materialize-config.sh") >= 2
+    assert workflow.count('CAPSEM_ASSET_MANIFEST="$ASSET_MANIFEST_URL"') >= 2
+    assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in workflow
 
 
 def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:

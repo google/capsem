@@ -43,6 +43,7 @@ def _fake_capsem(tmp_path: Path, *, execute_input: bool) -> tuple[Path, Path]:
         'case "$1" in\n'
         "  create) exit 0 ;;\n"
         "  delete) exit 0 ;;\n"
+        "  info) printf '{\"profile_id\":\"co-work\"}\\n'; exit 0 ;;\n"
         "  shell)\n"
         "    printf 'guest shell ready\\n'\n"
         f"{shell_body}"
@@ -89,6 +90,43 @@ def test_shell_proof_requires_guest_executed_marker(tmp_path: Path) -> None:
     assert calls[0] == "create --name proof-session"
     assert "shell --name proof-session" in calls
     assert calls[-1] == "delete proof-session"
+
+
+def test_shell_proof_creates_session_with_requested_profile(tmp_path: Path) -> None:
+    binary, log = _fake_capsem(tmp_path, execute_input=True)
+    env = os.environ.copy()
+    env["CAPSEM_FAKE_LOG"] = str(log)
+    env["HOME"] = str(tmp_path)
+
+    result = subprocess.run(
+        [
+            "python3",
+            str(PROOF_SCRIPT),
+            "--capsem",
+            str(binary),
+            "--marker",
+            "CAPSEM_PROFILE_SHELL_OK",
+            "--session-name",
+            "profile-proof",
+            "--profile",
+            "co-work",
+            "--startup-delay",
+            "0",
+            "--timeout",
+            "5",
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert log.read_text(encoding="utf-8").splitlines()[0] == (
+        "create --name profile-proof --profile co-work"
+    )
+    assert "info profile-proof --json" in log.read_text(encoding="utf-8").splitlines()
 
 
 def test_shell_proof_rejects_typed_but_unexecuted_command(tmp_path: Path) -> None:

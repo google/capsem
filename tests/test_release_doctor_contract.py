@@ -5,7 +5,9 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -118,6 +120,26 @@ def test_macos_doctor_requires_live_rosetta_registration() -> None:
     assert "Docker cannot execute $CROSS_PLATFORM containers" in asset_gate
 
 
+def test_host_sbom_zstd_dependency_has_local_and_exact_sha_parity() -> None:
+    """The canonical gate must provision the same Debian archive decoder everywhere."""
+    bootstrap = _source_text("bootstrap.sh")
+    doctor = _source_text("scripts/doctor-common.sh")
+    macos_doctor = _source_text("scripts/doctor-macos.sh")
+    linux_doctor = _source_text("scripts/doctor-linux.sh")
+    qualification = _workflow_text("release-qualification.yaml")
+
+    assert 'confirm "zstd (Debian package/SBOM archive support, via brew)"' in bootstrap
+    assert "brew install zstd" in bootstrap
+    assert "for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum flock zstd" in doctor
+    assert 'zstd)' in macos_doctor
+    assert 'echo "brew install zstd"' in macos_doctor
+    assert 'zstd)' in linux_doctor
+
+    install = qualification.index("Install Linux full-gate system dependencies")
+    canonical_gate = qualification.index("run: just test")
+    assert "            zstd\n" in qualification[install:canonical_gate]
+
+
 def test_linux_release_qualification_enables_arm64_for_canonical_asset_gate() -> None:
     workflow = _workflow_text("release-qualification.yaml")
 
@@ -125,6 +147,78 @@ def test_linux_release_qualification_enables_arm64_for_canonical_asset_gate() ->
     canonical_gate = workflow.index("run: just test")
     assert "platforms: arm64" in workflow
     assert qemu < canonical_gate
+
+
+def test_parallel_asset_gate_preserves_and_names_failed_architecture_logs() -> None:
+    gate = _recipe_block("test-assets:")
+
+    assert 'ARM64_BUILD_LOG="$TEST_ROOT/build-arm64.log"' in gate
+    assert 'X86_64_BUILD_LOG="$TEST_ROOT/build-x86_64.log"' in gate
+    assert 'tee "$ARM64_BUILD_LOG"' in gate
+    assert 'tee "$X86_64_BUILD_LOG"' in gate
+    assert 'build_arch_lane arm64 2>&1 | tee "$ARM64_BUILD_LOG"' in gate
+    assert 'build_arch_lane x86_64 2>&1 | tee "$X86_64_BUILD_LOG"' in gate
+    assert '> >(tee "$ARM64_BUILD_LOG")' not in gate
+    assert '> >(tee "$X86_64_BUILD_LOG")' not in gate
+    assert 'report_asset_lane_failure "arm64"' in gate
+    assert 'report_asset_lane_failure "x86_64"' in gate
+    assert 'tail -n 200 "$log"' in gate
+
+
+def test_asset_gate_interrupt_cleanup_only_reaps_owned_mounts(tmp_path: Path) -> None:
+    gate = _recipe_block("test-assets:")
+    assert 'cleanup-docker-containers-by-mount.sh" "$TEST_ROOT"' in gate
+
+    mount_root = tmp_path / "asset-root"
+    mount_root.mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    removals = tmp_path / "removals.log"
+    docker = fake_bin / "docker"
+    docker.write_text(
+        """#!/bin/sh
+set -eu
+if [ "$1" = "ps" ]; then
+    printf 'owned\\nforeign\\n'
+elif [ "$1" = "inspect" ]; then
+    id="${4}"
+    if [ "$id" = "owned" ]; then
+        printf '%s/lane/arm64\\n' "$FAKE_MOUNT_ROOT"
+    else
+        printf '/tmp/unrelated\\n'
+    fi
+elif [ "$1" = "rm" ]; then
+    printf '%s\\n' "${3}" >> "$FAKE_REMOVALS"
+else
+    exit 97
+fi
+"""
+    )
+    docker.chmod(0o755)
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "FAKE_MOUNT_ROOT": str(mount_root),
+            "FAKE_REMOVALS": str(removals),
+        }
+    )
+
+    result = subprocess.run(
+        [
+            "bash",
+            str(PROJECT_ROOT / "scripts/cleanup-docker-containers-by-mount.sh"),
+            str(mount_root),
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert removals.read_text().splitlines() == ["owned"]
 
 
 def test_canonical_gate_builds_both_linux_release_architectures() -> None:
@@ -358,8 +452,11 @@ def test_install_e2e_generates_manifest_through_admin_rail() -> None:
 
 def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     workflow = _workflow_text("release-assets.yaml")
+    trigger = workflow.split("\npermissions:", maxsplit=1)[0]
 
     assert "workflow_dispatch:" in workflow
+    assert "default: stable" not in trigger
+    assert "default: code" not in trigger
     assert "push:" not in workflow
     assert "tags:" not in workflow
     assert "deployments: write" in workflow
@@ -1242,6 +1339,9 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     assert "channel:" in real_trigger
 
     assert "workflow_dispatch:" in workflow
+    assert "asset_channel:" in workflow
+    assert "description: Existing VM asset channel to use as the staging source." in workflow
+    assert "default: stable" not in workflow.split("\npermissions:", maxsplit=1)[0]
     assert "push:" not in workflow
     assert "tags:" not in workflow
     assert "contents: read" in workflow
@@ -1265,7 +1365,11 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
         assert f"release-artifacts/{logical_name}" not in workflow
         assert f"release-artifacts/*{logical_name}" not in workflow
 
-    assert "ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json" in workflow
+    assert (
+        "ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.asset_channel }}/manifest.json"
+        in workflow
+    )
+    assert 'case "$ASSET_CHANNEL" in stable|nightly)' in assemble_channel
     assert "release-artifacts/Capsem-${VERSION}.pkg" in assemble_channel
     assert "release-artifacts/Capsem_${VERSION}_arm64.deb" in assemble_channel
     assert "release-artifacts/capsem-sbom.spdx.json" in assemble_channel
@@ -1335,7 +1439,9 @@ def test_untagged_release_candidate_runs_complete_canonical_gate_in_ci() -> None
     testing_skill = _source_text("skills/dev-testing/SKILL.md")
     release_skill = _source_text("skills/release-process/SKILL.md")
 
-    assert "run-name: Qualify release ${{ inputs.sha }}" in qualification_workflow
+    assert "run-name: Qualify release ${{ inputs.channel }} ${{ inputs.sha }}" in qualification_workflow
+    assert "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json" in qualification_workflow
+    assert "CAPSEM_INSTALL_CHANNEL: ${{ inputs.channel }}" in qualification_workflow
     assert "sha:" in qualification_workflow
     assert "ref: ${{ inputs.sha }}" in qualification_workflow
     assert '[[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]' in gate
@@ -1363,7 +1469,9 @@ def test_untagged_release_candidate_runs_complete_canonical_gate_in_ci() -> None
     assert public_manifest_gate in gate
     assert "cargo build -p capsem" in gate
     assert 'cp target/debug/capsem "$RUNTIME_HOME/.capsem/bin/capsem"' in gate
-    assert 'CAPSEM_RELEASE_MANIFEST_URL="$CAPSEM_INSTALL_MANIFEST_URL"' in gate
+    assert '"manifest_url": os.environ["CAPSEM_INSTALL_MANIFEST_URL"]' in gate
+    assert '"channel": os.environ["CAPSEM_INSTALL_CHANNEL"]' in gate
+    assert "CAPSEM_RELEASE_MANIFEST_URL=" not in gate
     assert '"$RUNTIME_HOME/.capsem/bin/capsem" update --check' in gate
     assert gate.index(public_manifest_gate) < gate.index(
         "Complete canonical release gate (just test)"
@@ -1390,7 +1498,7 @@ def test_untagged_release_candidate_runs_complete_canonical_gate_in_ci() -> None
     assert "needs: preflight" in _workflow_job_block("build-app-linux", "release.yaml")
     preflight = _workflow_job_block("preflight", "release.yaml")
     assert "Verify exact commit passed remote qualification" in preflight
-    assert 'scripts/check-release-qualification.py --sha "$GITHUB_SHA"' in preflight
+    assert 'scripts/check-release-qualification.py --sha "$GITHUB_SHA" --channel "$RELEASE_CHANNEL"' in preflight
     assert "fetch-depth: 0" in preflight
     assert "git fetch origin main" in preflight
     assert 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' in preflight
@@ -1535,7 +1643,7 @@ def test_release_recipe_dispatches_one_parameterized_workflow() -> None:
     assert 'REMOTE_TAG_SHA=$(git ls-remote --tags origin' in recipe
     assert 'test "$LOCAL_TAG_SHA" = "$REMOTE_TAG_SHA"' in recipe
     assert recipe.index('test "$LOCAL_TAG_SHA" = "$REMOTE_TAG_SHA"') < recipe.index(
-        'scripts/check-release-qualification.py --sha "$LOCAL_TAG_SHA"'
+        'scripts/check-release-qualification.py --sha "$LOCAL_TAG_SHA" --channel "$CHANNEL"'
     )
 
 
@@ -3943,12 +4051,16 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert first_frontend_build_pos != -1
     assert frontend_check_pos != -1
     assert release_gate_pos != -1
-    assert "test: _bootstrap _install-tools _clean-stale _pnpm-install _generate-settings" in just
+    assert "test: _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-settings" in just
     assert "bash scripts/check-web-surface.sh frontend" in just
     assert "pnpm --dir frontend run check" in web_gate
     assert generate_pos < first_frontend_build_pos
     assert generate_pos < frontend_check_pos
     assert "bash scripts/generate-settings.sh" in just
+    generated_gate = _recipe_block("_check-generated-settings:")
+    assert "bash \"$ROOT/scripts/generate-settings.sh\"" in generated_gate
+    assert "cmp -s" in generated_gate
+    assert "Generated files were refreshed" in generated_gate
     assert "dev-frontend: _pnpm-install _generate-settings" in just
     assert 'build-ui profile="debug": _pnpm-install _generate-settings' in just
     assert "test-frontend: _pnpm-install _generate-settings" in just
@@ -4343,6 +4455,7 @@ def test_pr_ci_coverage_reports_without_local_threshold_abort() -> None:
 
 def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
     workflow = _workflow_job_block("test-linux")
+    runner = _source_text("scripts/test-linux-rust.sh")
     nextest = tomllib.loads((PROJECT_ROOT / ".config" / "nextest.toml").read_text())
 
     coverage_step = workflow.split("- name: Unit tests (KVM backend) with coverage", maxsplit=1)[
@@ -4351,14 +4464,384 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
     slow_timeout = nextest["profile"]["ci"]["slow-timeout"]
 
     assert "timeout-minutes:" in coverage_step
-    assert "cargo llvm-cov nextest" in coverage_step
-    assert "--profile ci" in coverage_step
+    assert "run: just test-linux-rust" in coverage_step
+    assert "cargo llvm-cov nextest" in runner
+    report_block = runner.split("cargo llvm-cov report", maxsplit=1)[1]
+    assert "--bins" not in report_block
+    assert "--fail-under-lines" not in runner
+    assert "--fail-under-lines 65" in _recipe_block("test:")
+    assert "--profile ci" in runner
     assert slow_timeout == {
         "period": "120s",
         "terminate-after": 3,
         "grace-period": "10s",
         "on-timeout": "fail",
     }
+
+
+def test_just_test_owns_linux_rust_platform_coverage_through_docker() -> None:
+    canonical_gate = _recipe_block("test:")
+    linux_rust_gate = _recipe_block("test-linux-rust:")
+    linux_ci = _workflow_job_block("test-linux")
+    runner = _source_text("scripts/test-linux-rust.sh")
+    host_builder = _source_text("docker/Dockerfile.host-builder")
+
+    assert "just test-linux-rust" in canonical_gate
+    assert "test-linux-rust: _generate-settings" not in _source_text("justfile")
+    assert "scripts/test-linux-rust.sh" in linux_rust_gate
+    assert "capsem-host-builder:latest" in linux_rust_gate
+    assert "docker run --rm" in linux_rust_gate
+    assert '--user "$HOST_UID:$HOST_GID"' in linux_rust_gate
+    assert '-v "$ROOT:/src:ro"' in linux_rust_gate
+    assert '"$OUTPUT_DIR/nextest:/src/target/nextest"' in linux_rust_gate
+    assert "capsem-linux-rust-cargo-registry" in linux_rust_gate
+    assert "capsem-linux-rust-rustup" in linux_rust_gate
+    assert 'if [ "$(uname -s)" = "Linux" ]' in linux_rust_gate
+    assert linux_rust_gate.index("exit 0") < linux_rust_gate.index(
+        "just build-host-image"
+    )
+    assert "run: just test-linux-rust" in linux_ci
+    assert "cargo llvm-cov nextest" not in linux_ci
+    assert "cargo llvm-cov nextest" in runner
+    assert "capsem-service" in runner
+    assert 'package_args+=( -p "$package" )' in runner
+    assert "--profile ci" in runner
+    assert "cargo install cargo-nextest" in host_builder
+    assert "cargo install cargo-llvm-cov" in host_builder
+    assert host_builder.count("for attempt in 1 2 3") >= 4
+    assert "CARGO_NET_RETRY=10" in host_builder
+
+
+def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
+    canonical_gate = _recipe_block("test:")
+    mac_package = _recipe_block("test-macos-release-package:")
+    host_sbom = _recipe_block("test-host-package-sbom:")
+    release = _source_text(".github/workflows/release.yaml")
+
+    assert "just cross-compile arm64" in canonical_gate
+    assert "just cross-compile x86_64" in canonical_gate
+    assert "just test-macos-release-package" in canonical_gate
+    assert "just test-host-package-sbom" in canonical_gate
+    assert "pytest tests/capsem-recipes/" in canonical_gate
+    assert "cargo tauri build --bundles app" in mac_package
+    assert "cargo build --release" in mac_package
+    assert "scripts/build-pkg.sh" in mac_package
+    assert "scripts/generate-host-binary-sbom.py" in mac_package
+    assert "scripts/generate-host-binary-sbom.py" in host_sbom
+    assert 'DEBS=("$ROOT"/dist/*"$VERSION"*.deb)' in host_sbom
+    assert "scripts/build-pkg.sh" in release
+    assert "scripts/generate-host-binary-sbom.py" in release
+
+
+def test_release_packages_use_the_shared_all_profile_materialization_rail() -> None:
+    release = _source_text(".github/workflows/release.yaml")
+    mac_job = _workflow_job_block("build-app-macos", "release.yaml")
+    linux_job = _workflow_job_block("build-app-linux", "release.yaml")
+    materializer = _source_text("scripts/materialize-config.sh")
+
+    assert 'profile_paths=("$ROOT"/config/profiles/*/profile.toml)' in materializer
+    assert 'for profile_path in "${profile_paths[@]}"' in materializer
+    assert 'CAPSEM_ASSET_MANIFEST="$ASSET_MANIFEST_URL"' in mac_job
+    assert "CAPSEM_ARCH=arm64" in mac_job
+    assert "bash scripts/materialize-config.sh" in mac_job
+    assert 'CAPSEM_ASSET_MANIFEST="$ASSET_MANIFEST_URL"' in linux_job
+    assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in linux_job
+    assert "bash scripts/materialize-config.sh" in linux_job
+    assert "--profile config/profiles/code/profile.toml" not in release
+    for assembler in ("scripts/build-pkg.sh", "scripts/repack-deb.sh"):
+        source = _source_text(assembler)
+        assert 'for profile_path in "$CONFIG_ROOT"/profiles/*/profile.toml' in source
+        assert 'profile validate "$profile_path"' in source
+        assert '--config-root "$CONFIG_ROOT" --materialized' in source
+
+
+def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
+    app = _source_text("frontend/src/lib/components/shell/App.svelte")
+    tray_main = _source_text("crates/capsem-tray/src/main.rs")
+    tray_gateway = _source_text("crates/capsem-tray/src/gateway.rs")
+    cli = _source_text("crates/capsem/src/main.rs")
+    mcp = _source_text("crates/capsem-mcp/src/main.rs")
+
+    assert "vmStore.openCreateModal()" in app
+    assert "profile_id: 'code'" not in app
+    new_session = tray_main.split("Action::NewSession =>", maxsplit=1)[1].split(
+        "Action::Save", maxsplit=1
+    )[0]
+    assert "launch_ui(None)" in new_session
+    assert "provision_temp" not in new_session
+    assert "provision_temp" not in tray_gateway
+    assert "profile_id\":\"code" not in tray_gateway
+    assert "profile_id: profile.clone()" in cli
+    assert 'params.profile.as_deref().unwrap_or(DEFAULT_PROFILE_ID)' in mcp
+
+
+def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> None:
+    canonical_gate = _recipe_block("test:")
+    guard = _source_text("scripts/check-hardcoded-release-selections.sh")
+    reusable_channel = _workflow_text("release-channel.yaml")
+
+    assert "bash scripts/check-hardcoded-release-selections.sh" in canonical_gate
+    for term in ("code", "co-work", "cowork", "terminal", "termional", "gui"):
+        assert term in guard
+    assert "rg" in guard
+    assert "profile_id" in guard
+    assert "--profile" in guard
+    assert "stable" in guard
+    assert "nightly" in guard
+    assert "ASSET_MANIFEST_URL" in guard
+    assert ".github/workflows" in guard
+    assert "rg --files config/profiles" in guard
+    assert "builtin_profile_configs" in guard
+    assert "unwrap_or" in guard
+    assert "DEFAULT_RELEASE_MANIFEST_URL" in guard
+    assert "channel:\n        type: string\n        required: true" in reusable_channel
+    assert "inputs.channel || 'stable'" not in reusable_channel
+    assert "CHANNEL: ${{ inputs.channel }}" in reusable_channel
+
+
+def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Path) -> None:
+    fixture_paths = (
+        ".github/workflows",
+        "config/profiles",
+        "frontend/src/lib/components",
+        "crates/capsem-tray/src",
+        "crates/capsem-mcp/src/main.rs",
+        "crates/capsem/src/main.rs",
+        "crates/capsem/src/update.rs",
+        "crates/capsem-service/src/main.rs",
+        "crates/capsem-core/src/net/policy_config/profile_contract.rs",
+        "scripts/build-pkg.sh",
+        "scripts/repack-deb.sh",
+        "scripts/deb-postinst.sh",
+        "scripts/pkg-scripts/postinstall",
+        "tests/capsem-install",
+        "justfile",
+    )
+    for relative in fixture_paths:
+        source = PROJECT_ROOT / relative
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, target)
+        else:
+            shutil.copy2(source, target)
+
+    guard = PROJECT_ROOT / "scripts/check-hardcoded-release-selections.sh"
+    env = {**os.environ, "CAPSEM_GUARD_ROOT": str(tmp_path)}
+
+    def run_guard() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["bash", str(guard)],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    baseline = run_guard()
+    assert baseline.returncode == 0, baseline.stderr
+
+    dialog = tmp_path / "frontend/src/lib/components/shell/CreateSandboxDialog.svelte"
+    for profile in ("code", "co-work", "cowork", "terminal", "termional", "gui"):
+        original = dialog.read_text()
+        dialog.write_text(original + f"\n<!-- profile_id: '{profile}' -->\n")
+        rejected = run_guard()
+        dialog.write_text(original)
+        assert rejected.returncode != 0, f"guard accepted hardcoded profile {profile}"
+        assert "hardcodes a named profile" in rejected.stderr
+
+    workflow = tmp_path / ".github/workflows/release-binary-staging.yaml"
+    for channel in ("stable", "nightly"):
+        original = workflow.read_text()
+        workflow.write_text(
+            original
+            + f"\n# ASSET_MANIFEST_URL: https://release.capsem.org/assets/{channel}/manifest.json\n"
+        )
+        rejected = run_guard()
+        workflow.write_text(original)
+        assert rejected.returncode != 0, f"guard accepted hardcoded channel {channel}"
+        assert "hardcodes a stable/nightly ASSET_MANIFEST_URL" in rejected.stderr
+
+    postinstall = tmp_path / "scripts/deb-postinst.sh"
+    original = postinstall.read_text()
+    postinstall.write_text(
+        original
+        + "\n# MANIFEST_SOURCE='https://release.capsem.org/assets/nightly/manifest.json'\n"
+    )
+    rejected = run_guard()
+    postinstall.write_text(original)
+    assert rejected.returncode != 0
+    assert "postinstall silently falls back" in rejected.stderr
+
+    update = tmp_path / "crates/capsem/src/update.rs"
+    original = update.read_text()
+    update.write_text(original + "\n// value.unwrap_or(DEFAULT_RELEASE_MANIFEST_URL)\n")
+    rejected = run_guard()
+    update.write_text(original)
+    assert rejected.returncode != 0
+    assert "installed update flow silently substitutes" in rejected.stderr
+
+    future_profile = tmp_path / "config/profiles/terminal/profile.toml"
+    future_profile.parent.mkdir(parents=True)
+    shutil.copy2(tmp_path / "config/profiles/code/profile.toml", future_profile)
+    rejected = run_guard()
+    assert rejected.returncode != 0
+    assert "builtin_profile_configs does not exactly mirror" in rejected.stderr
+    future_profile.unlink()
+
+    for future_name in ("terminal", "gui"):
+        future_profile = tmp_path / f"config/profiles/{future_name}/profile.toml"
+        future_profile.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(tmp_path / "config/profiles/code/profile.toml", future_profile)
+        rejected = run_guard()
+        future_profile.unlink()
+        assert rejected.returncode != 0, f"guard accepted unembedded profile {future_name}"
+        assert "builtin_profile_configs does not exactly mirror" in rejected.stderr
+
+    profile_contract = (
+        tmp_path / "crates/capsem-core/src/net/policy_config/profile_contract.rs"
+    )
+    original = profile_contract.read_text()
+    profile_contract.write_text(
+        original + '\n// include_str!("../../../../../config/profiles/gui/profile.toml")\n'
+    )
+    rejected = run_guard()
+    profile_contract.write_text(original)
+    assert rejected.returncode != 0
+    assert "builtin_profile_configs does not exactly mirror" in rejected.stderr
+
+    original = dialog.read_text()
+    for regression in ("profileId = 'terminal'", "<option value='gui'>GUI</option>"):
+        dialog.write_text(original + f"\n<!-- {regression} -->\n")
+        rejected = run_guard()
+        assert rejected.returncode != 0, f"guard accepted picker regression {regression}"
+        assert "profile picker fabricates" in rejected.stderr
+    dialog.write_text(original)
+
+    mcp = tmp_path / "crates/capsem-mcp/src/main.rs"
+    original = mcp.read_text()
+    for regression, message in (
+        ('// "profile_id": DEFAULT_PROFILE_ID\n', "MCP request bypasses"),
+        ('// "/profiles/{}/mcp/servers", DEFAULT_PROFILE_ID\n', "silently uses the default"),
+    ):
+        mcp.write_text(original + "\n" + regression)
+        rejected = run_guard()
+        assert rejected.returncode != 0, f"guard accepted {regression.strip()}"
+        assert message in rejected.stderr
+    mcp.write_text(original)
+
+    release_workflow = tmp_path / ".github/workflows/release.yaml"
+    original = release_workflow.read_text()
+    release_workflow.write_text(original + "\n# --profile config/profiles/gui/profile.toml\n")
+    rejected = run_guard()
+    release_workflow.write_text(original)
+    assert rejected.returncode != 0
+    assert "materializes one named profile" in rejected.stderr
+
+    for selection in (
+        "stable",
+        "nightly",
+        "code",
+        "co-work",
+        "cowork",
+        "terminal",
+        "termional",
+        "gui",
+    ):
+        original = workflow.read_text()
+        input_name = "channel" if selection in {"stable", "nightly"} else "profile"
+        workflow.write_text(original + f"\nregression:\n  {input_name}:\n    default: {selection}\n")
+        rejected = run_guard()
+        workflow.write_text(original)
+        assert rejected.returncode != 0, f"guard accepted workflow default {selection}"
+        assert "silently defaults" in rejected.stderr
+
+    qualification = tmp_path / ".github/workflows/release-qualification.yaml"
+    original = qualification.read_text()
+    for channel in ("stable", "nightly"):
+        qualification.write_text(original + f"\n# CAPSEM_INSTALL_CHANNEL: {channel}\n")
+        rejected = run_guard()
+        assert rejected.returncode != 0, f"guard accepted qualification channel {channel}"
+        assert "qualification hardcodes" in rejected.stderr
+    qualification.write_text(original)
+    qualification.write_text(
+        original
+        + "\n# CAPSEM_RELEASE_MANIFEST_URL=https://release.capsem.org/assets/stable/manifest.json\n"
+    )
+    rejected = run_guard()
+    qualification.write_text(original)
+    assert rejected.returncode != 0
+    assert "qualification bypasses installed manifest-metadata" in rejected.stderr
+
+    installed_update_test = tmp_path / "tests/capsem-install/test_update.py"
+    original_installed_update_test = installed_update_test.read_text()
+    for override in ("CAPSEM_RELEASE_MANIFEST_URL", "CAPSEM_RELEASE_HEALTH_URL"):
+        installed_update_test.write_text(
+            original_installed_update_test + f'\n# "{override}": manifest_url\n'
+        )
+        rejected = run_guard()
+        assert rejected.returncode != 0, f"guard accepted installed test override {override}"
+        assert "installed update test bypasses manifest-metadata" in rejected.stderr
+    installed_update_test.write_text(original_installed_update_test)
+
+    reusable = tmp_path / ".github/workflows/release-channel.yaml"
+    original = reusable.read_text()
+    reusable.write_text(original + "\nchannel:\n  type: string\n  required: false\n")
+    rejected = run_guard()
+    assert rejected.returncode != 0
+    assert "makes its channel optional" in rejected.stderr
+    reusable.write_text(original + "\n# ${{ inputs.channel || 'stable' }}\n")
+    rejected = run_guard()
+    reusable.write_text(original)
+    assert rejected.returncode != 0
+    assert "silently substitutes stable" in rejected.stderr
+
+    justfile = tmp_path / "justfile"
+    original = justfile.read_text()
+    justfile.write_text(original + "\n# scripts/check-release-qualification.py --sha deadbeef\n")
+    rejected = run_guard()
+    justfile.write_text(original)
+    assert rejected.returncode != 0
+    assert "not bound to an explicit channel" in rejected.stderr
+
+    for relative in ("scripts/deb-postinst.sh", "scripts/pkg-scripts/postinstall"):
+        postinstall = tmp_path / relative
+        original = postinstall.read_text()
+        for channel in ("stable", "nightly"):
+            postinstall.write_text(
+                original
+                + f"\n# MANIFEST_SOURCE='https://release.capsem.org/assets/{channel}/manifest.json'\n"
+            )
+            rejected = run_guard()
+            assert rejected.returncode != 0, f"guard accepted {relative} fallback {channel}"
+            assert "postinstall silently falls back" in rejected.stderr
+        postinstall.write_text(
+            original
+            + "\n# CAPSEM_RELEASE_MANIFEST_URL=https://release.capsem.org/assets/stable/manifest.json\n"
+        )
+        rejected = run_guard()
+        assert rejected.returncode != 0
+        assert "postinstall bypasses installed manifest-metadata" in rejected.stderr
+        postinstall.write_text(original)
+
+    original = update.read_text()
+    for fallback in (
+        "value.unwrap_or(DEFAULT_RELEASE_MANIFEST_URL)",
+        "value.unwrap_or_else(|| DEFAULT_RELEASE_MANIFEST_URL)",
+    ):
+        update.write_text(original + f"\n// {fallback}\n")
+        rejected = run_guard()
+        assert rejected.returncode != 0, f"guard accepted update fallback {fallback}"
+        assert "installed update flow silently substitutes" in rejected.stderr
+    update.write_text(original)
+
+    for legacy_sidecar in ("update-check.json", "manifest-origin.json"):
+        update.write_text(original + f'\n// "{legacy_sidecar}"\n')
+        rejected = run_guard()
+        assert rejected.returncode != 0, f"guard accepted legacy {legacy_sidecar}"
+        assert "legacy split manifest/update sidecar" in rejected.stderr
+    update.write_text(original)
 
 
 def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:

@@ -33,18 +33,10 @@
     openUrl(href).catch(err => console.error('[app] openUrl failed:', err));
   }
 
-  async function handleKeydown(e: KeyboardEvent) {
+  function handleKeydown(e: KeyboardEvent) {
     if ((e.metaKey || e.ctrlKey) && e.key === 'n') {
       e.preventDefault();
-      try {
-        const { id, name } = await vmStore.provision({
-          profile_id: 'code',
-          persistent: true,
-        });
-        tabStore.openVM(id, name);
-      } catch {
-        // Error handled by vmStore.error
-      }
+      vmStore.openCreateModal();
     }
   }
 

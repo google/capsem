@@ -145,6 +145,9 @@ struct ProfileValidateArgs {
     /// Config root used to resolve profile rule files.
     #[arg(long)]
     config_root: Option<PathBuf>,
+    /// Require signed runtime pins instead of source-profile placeholders.
+    #[arg(long)]
+    materialized: bool,
     /// Emit a machine-readable validation report.
     #[arg(long)]
     json: bool,
@@ -888,7 +891,11 @@ fn main() -> Result<()> {
 }
 
 fn validate_profile_command(args: ProfileValidateArgs) -> Result<()> {
-    let report = validate_profile(&args.path, args.config_root.as_deref())?;
+    let report = if args.materialized {
+        validate_materialized_profile(&args.path, args.config_root.as_deref())?
+    } else {
+        validate_profile(&args.path, args.config_root.as_deref())?
+    };
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -7635,6 +7642,25 @@ fn infer_config_root(profile_path: &Path) -> Result<PathBuf> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn cli_accepts_materialized_profile_validation() {
+        let cli = Cli::parse_from([
+            "capsem-admin",
+            "profile",
+            "validate",
+            "target/config/profiles/co-work/profile.toml",
+            "--config-root",
+            "target/config",
+            "--materialized",
+        ]);
+        match cli.command {
+            Commands::Profile(ProfileCommand {
+                command: ProfileSubcommand::Validate(args),
+            }) => assert!(args.materialized),
+            _ => panic!("expected profile validate"),
+        }
+    }
 
     #[test]
     fn validates_checked_in_code_profile_through_security_rule_set() {

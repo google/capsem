@@ -239,29 +239,6 @@ impl GatewayClient {
         self.post(&format!("/vms/{id}/resume")).await?;
         Ok(())
     }
-
-    /// Provision a temporary (ephemeral) VM. Returns the new VM id.
-    pub async fn provision_temp(&self) -> Result<String> {
-        // Gateway requires Content-Type: application/json on POST /vms/create
-        // (returns 415 otherwise). Empty object == default ephemeral VM.
-        let resp = self
-            .client
-            .post(format!("{}/vms/create", self.base_url()))
-            .header(AUTHORIZATION, self.auth_header()?)
-            .json(&serde_json::json!({ "profile_id": "code" }))
-            .send()
-            .await
-            .context("gateway request failed")?;
-
-        if !resp.status().is_success() {
-            bail!("gateway returned {}", resp.status());
-        }
-        let body: serde_json::Value = resp.json().await?;
-        body["id"]
-            .as_str()
-            .map(|s| s.to_string())
-            .context("provision response missing id")
-    }
 }
 
 #[cfg(test)]
@@ -625,40 +602,6 @@ mod tests {
         client.resume_vm("vm-42").await.unwrap();
         handle.await.unwrap();
         assert!(captures.lock().unwrap()[0].starts_with("POST /vms/vm-42/resume "));
-    }
-
-    #[tokio::test]
-    async fn provision_temp_returns_id() {
-        let (base, captures, handle) =
-            spawn_http_probe("POST", "/vms/create", 200, r#"{"id":"vm-new"}"#).await;
-        let client = GatewayClient::new_with_base_url(base, "tok".into());
-        let id = client.provision_temp().await.unwrap();
-        handle.await.unwrap();
-        assert_eq!(id, "vm-new");
-        let request = captures.lock().unwrap().join("\n");
-        assert!(request.contains(r#""profile_id":"code""#), "{request}");
-        assert!(!request.contains(r#""name":"#), "{request}");
-        assert!(!request.contains(r#""persistent":false"#), "{request}");
-    }
-
-    #[tokio::test]
-    async fn provision_temp_errors_on_missing_id() {
-        let (base, _, handle) =
-            spawn_http_probe("POST", "/vms/create", 200, r#"{"status":"ok"}"#).await;
-        let client = GatewayClient::new_with_base_url(base, "tok".into());
-        let err = client.provision_temp().await.unwrap_err();
-        handle.await.unwrap();
-        assert!(err.to_string().contains("missing id"));
-    }
-
-    #[tokio::test]
-    async fn provision_temp_errors_on_http_error_status() {
-        let (base, _, handle) =
-            spawn_http_probe("POST", "/vms/create", 415, "unsupported media").await;
-        let client = GatewayClient::new_with_base_url(base, "tok".into());
-        let err = client.provision_temp().await.unwrap_err();
-        handle.await.unwrap();
-        assert!(err.to_string().contains("415"));
     }
 
     #[tokio::test]

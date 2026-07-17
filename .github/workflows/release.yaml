@@ -53,7 +53,7 @@ jobs:
       - name: Verify exact commit passed remote qualification
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/check-release-qualification.py --sha "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
+        run: python3 scripts/check-release-qualification.py --sha "$GITHUB_SHA" --channel "$RELEASE_CHANNEL" --repo "$GITHUB_REPOSITORY"
 
       - name: Select Xcode 16.2
         run: sudo xcode-select -s /Applications/Xcode_16.2.app
@@ -134,14 +134,9 @@ jobs:
 
       - name: Materialize runtime config
         run: |
-          cargo run -p capsem-admin -- profile materialize \
-            --profile config/profiles/code/profile.toml \
-            --config-root config \
-            --manifest "$ASSET_MANIFEST_URL" \
-            --assets-dir assets \
-            --output-root target/config \
-            --arch arm64 \
-            --clean
+          CAPSEM_ASSET_MANIFEST="$ASSET_MANIFEST_URL" \
+          CAPSEM_ARCH=arm64 \
+            bash scripts/materialize-config.sh
 
       - uses: pnpm/action-setup@v5
         with:
@@ -356,14 +351,9 @@ jobs:
 
       - name: Materialize runtime config
         run: |
-          cargo run -p capsem-admin -- profile materialize \
-            --profile config/profiles/code/profile.toml \
-            --config-root config \
-            --manifest "$ASSET_MANIFEST_URL" \
-            --assets-dir assets \
-            --output-root target/config \
-            --arch ${{ matrix.arch }} \
-            --clean
+          CAPSEM_ASSET_MANIFEST="$ASSET_MANIFEST_URL" \
+          CAPSEM_ARCH="${{ matrix.arch }}" \
+            bash scripts/materialize-config.sh
 
       - name: Install Tauri system deps
         run: |

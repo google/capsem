@@ -6,7 +6,7 @@
   import Modal from './Modal.svelte';
 
   let profiles = $state<ProfileSummary[]>([]);
-  let profileId = $state('code');
+  let profileId = $state('');
   let name = $state('');
   let ramMb = $state(2048);
   let cpus = $state(2);
@@ -16,15 +16,17 @@
   onMount(async () => {
     try {
       profiles = (await listProfiles()).profiles.filter(profile => profile.availability.web);
-      profileId = vmStore.createProfileId ?? profiles[0]?.id ?? 'code';
+      profileId = vmStore.createProfileId ?? profiles[0]?.id ?? '';
     } catch {
       profiles = [];
+      profileId = '';
+      error = 'Could not load installed profiles';
     }
   });
 
   function close() {
     vmStore.closeCreateModal();
-    profileId = vmStore.createProfileId ?? profiles[0]?.id ?? 'code';
+    profileId = vmStore.createProfileId ?? profiles[0]?.id ?? '';
     name = '';
     ramMb = 2048;
     cpus = 2;
@@ -36,6 +38,10 @@
     const trimmedName = name.trim();
     if (!trimmedName) {
       error = 'Name is required';
+      return;
+    }
+    if (!profileId) {
+      error = 'Could not load installed profiles';
       return;
     }
     creating = true;
@@ -69,7 +75,7 @@
   confirmLabel={creating ? 'Creating...' : 'Create'}
   onconfirm={handleSubmit}
   oncancel={close}
-  disabled={creating}
+  disabled={creating || !profileId}
 >
   <div class="space-y-4 py-2">
     {#if error}
@@ -87,7 +93,7 @@
         disabled={creating}
       >
         {#if profiles.length === 0}
-          <option value="code">code</option>
+          <option value="">No installed profiles available</option>
         {:else}
           {#each profiles as profile (profile.id)}
             <option value={profile.id}>{profile.name}</option>

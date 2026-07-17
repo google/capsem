@@ -150,6 +150,21 @@ if ! command -v flock >/dev/null 2>&1; then
     esac
 fi
 
+# The production host-SBOM generator reads the exact Debian packages emitted
+# by the Linux release rail. Ubuntu dpkg currently writes data.tar.zst, while
+# macOS bsdtar delegates that member to the external zstd executable. Install
+# it during canonical bootstrap so `just test` cannot discover the missing
+# decoder only after both release packages and the macOS package are built.
+if [ "$(uname -s)" = "Darwin" ] && ! command -v zstd >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+        if confirm "zstd (Debian package/SBOM archive support, via brew)"; then
+            brew install zstd
+        fi
+    else
+        printf "  [SKIP] zstd (Homebrew not installed -- install brew, then: brew install zstd)\n"
+    fi
+fi
+
 if command -v pnpm >/dev/null 2>&1; then
     printf "  Frontend deps (pnpm install)...\n"
     (cd frontend && CI=true pnpm install --frozen-lockfile)
@@ -226,8 +241,19 @@ case "$(uname -s)" in
             fi
             if command -v docker >/dev/null 2>&1; then
                 docker info >/dev/null
-                docker run --rm --pull=missing alpine:3.20 true >/dev/null
-                printf "  [ok]   docker VM probe (info + pull/run)\n"
+                docker_dns_ready=0
+                for attempt in $(seq 1 30); do
+                    if docker run --rm --pull=missing alpine:3.20 getent hosts ghcr.io >/dev/null 2>&1; then
+                        docker_dns_ready=1
+                        break
+                    fi
+                    sleep 1
+                done
+                if [ "$docker_dns_ready" -ne 1 ]; then
+                    printf "  [FAIL] Docker DNS did not become ready after Colima startup\n" >&2
+                    exit 1
+                fi
+                printf "  [ok]   docker VM probe (info + registry DNS)\n"
             fi
         fi ;;
     Linux)

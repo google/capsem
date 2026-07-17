@@ -17,6 +17,7 @@ import shutil
 import socketserver
 import subprocess
 import threading
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -402,6 +403,32 @@ def _write_installed_asset_manifest(capsem_home: Path, current_assets: str) -> N
     )
 
 
+def _write_manifest_metadata(capsem_home: Path, manifest_url: str) -> None:
+    """Seed the same provenance document written by native package installers."""
+    assets_dir = capsem_home / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    package_version = tomllib.loads((REPO_ROOT / "Cargo.toml").read_text(encoding="utf-8"))[
+        "workspace"
+    ]["package"]["version"]
+    (assets_dir / "manifest-metadata.json").write_text(
+        json.dumps(
+            {
+                "schema": "capsem.manifest_metadata.v1",
+                "origin": "package",
+                "manifest_url": manifest_url,
+                "channel": "stable",
+                "channel_kind": "public",
+                "channel_locked": False,
+                "packaged_at": "2026-07-17T00:00:00Z",
+                "package_version": package_version,
+            },
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 def _write_persistent_vm_pin_registry(capsem_home: Path) -> Path:
     assets_dir = capsem_home / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
@@ -501,6 +528,7 @@ def test_update_fetches_release_manifest_and_writes_channel_cache(
         requests,
     ):
         manifest_url = f"{base_url}/assets/stable/manifest.json"
+        _write_manifest_metadata(capsem_home, manifest_url)
         result = subprocess.run(
             [str(capsem), "update"],
             capture_output=True,
@@ -510,7 +538,6 @@ def test_update_fetches_release_manifest_and_writes_channel_cache(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_MANIFEST_URL": manifest_url,
             },
         )
 
@@ -787,6 +814,7 @@ def test_update_check_reports_binary_profile_asset_and_image_tracks(
     body = json.dumps(health, sort_keys=True, separators=(",", ":")).encode()
 
     with _serve_health(body) as health_url:
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update", "--check"],
             capture_output=True,
@@ -796,7 +824,6 @@ def test_update_check_reports_binary_profile_asset_and_image_tracks(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
             },
         )
 
@@ -844,6 +871,7 @@ def test_binary_update_state_does_not_claim_asset_update(
     body = json.dumps(health, sort_keys=True, separators=(",", ":")).encode()
 
     with _serve_health(body) as health_url:
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update", "--check"],
             capture_output=True,
@@ -853,7 +881,6 @@ def test_binary_update_state_does_not_claim_asset_update(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
             },
         )
 
@@ -901,6 +928,7 @@ def test_asset_update_state_does_not_claim_binary_update(
     body = json.dumps(health, sort_keys=True, separators=(",", ":")).encode()
 
     with _serve_health(body) as health_url:
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update", "--check"],
             capture_output=True,
@@ -910,7 +938,6 @@ def test_asset_update_state_does_not_claim_binary_update(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
             },
         )
 
@@ -962,6 +989,7 @@ def test_asset_update_requiring_newer_binary_is_reported_as_blocked(
     body = json.dumps(health, sort_keys=True, separators=(",", ":")).encode()
 
     with _serve_health(body) as health_url:
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update", "--check"],
             capture_output=True,
@@ -971,7 +999,6 @@ def test_asset_update_requiring_newer_binary_is_reported_as_blocked(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
             },
         )
 
@@ -1014,6 +1041,7 @@ def test_profile_update_state_does_not_claim_binary_or_asset_update(
         _profile_update_health(catalog_path, catalog_bytes, revision),
         {catalog_path: catalog_bytes},
     ) as (_, health_url):
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update", "--check"],
             capture_output=True,
@@ -1023,7 +1051,6 @@ def test_profile_update_state_does_not_claim_binary_or_asset_update(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
             },
         )
 
@@ -1075,6 +1102,7 @@ def test_mixed_binary_and_asset_update_state_reports_both_tracks(
     body = json.dumps(health, sort_keys=True, separators=(",", ":")).encode()
 
     with _serve_health(body) as health_url:
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update", "--check"],
             capture_output=True,
@@ -1084,7 +1112,6 @@ def test_mixed_binary_and_asset_update_state_reports_both_tracks(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
             },
         )
 
@@ -1239,6 +1266,7 @@ def test_staged_update_state_matrix_keeps_cli_tracks_separated(
     capsem = _copy_user_dir_capsem(source_capsem, capsem_home)
 
     with _serve_release(health, files) as (_, health_url):
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update", "--check"],
             capture_output=True,
@@ -1248,7 +1276,6 @@ def test_staged_update_state_matrix_keeps_cli_tracks_separated(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
             },
         )
 
@@ -1287,6 +1314,7 @@ def test_update_reports_profile_catalog_without_applying_by_default(
         _profile_update_health(catalog_path, catalog_bytes, revision),
         {catalog_path: catalog_bytes},
     ) as (_, health_url):
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update"],
             capture_output=True,
@@ -1296,7 +1324,6 @@ def test_update_reports_profile_catalog_without_applying_by_default(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
             },
         )
 
@@ -1334,6 +1361,7 @@ def test_update_yes_applies_compatible_profile_catalog_from_release_channel(
         _profile_update_health(catalog_path, catalog_bytes, revision),
         {catalog_path: catalog_bytes},
     ) as (_, health_url):
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update", "--yes"],
             capture_output=True,
@@ -1343,7 +1371,6 @@ def test_update_yes_applies_compatible_profile_catalog_from_release_channel(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
             },
         )
 
@@ -1395,6 +1422,7 @@ def test_profile_catalog_preserves_existing_vm_pins_on_update(
         _profile_update_health(catalog_path, catalog_bytes, revision),
         {catalog_path: catalog_bytes},
     ) as (_, health_url):
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update", "--yes"],
             capture_output=True,
@@ -1404,7 +1432,6 @@ def test_profile_catalog_preserves_existing_vm_pins_on_update(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
             },
         )
 
@@ -1452,6 +1479,7 @@ def test_update_preserves_profile_catalog_when_release_catalog_is_invalid(
         _profile_update_health(catalog_path, invalid_catalog, revision),
         {catalog_path: invalid_catalog},
     ) as (_, health_url):
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update", "--yes"],
             capture_output=True,
@@ -1461,7 +1489,6 @@ def test_update_preserves_profile_catalog_when_release_catalog_is_invalid(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
             },
         )
 
@@ -1493,6 +1520,7 @@ def test_macos_update_yes_applies_verified_pkg_with_package_manager(
         lambda base_url: _binary_update_health(base_url, installer_name, payload),
         {f"/{installer_name}": payload},
     ) as (_, health_url):
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update", "--yes"],
             capture_output=True,
@@ -1502,7 +1530,6 @@ def test_macos_update_yes_applies_verified_pkg_with_package_manager(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
                 "CAPSEM_FAKE_SUDO_LOG": str(sudo_log),
                 "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
             },
@@ -1536,6 +1563,7 @@ def test_linux_update_yes_applies_verified_deb_with_package_manager(
         lambda base_url: _binary_update_health(base_url, installer_name, payload),
         {f"/{installer_name}": payload},
     ) as (_, health_url):
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update", "--yes"],
             capture_output=True,
@@ -1545,7 +1573,6 @@ def test_linux_update_yes_applies_verified_deb_with_package_manager(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
                 "CAPSEM_FAKE_SUDO_LOG": str(sudo_log),
                 "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
             },
@@ -1613,6 +1640,7 @@ def test_linux_update_yes_records_failed_installer_verification(
     }
 
     with _serve_release(health, {f"/{installer_name}": served_payload}) as (_, health_url):
+        _write_manifest_metadata(capsem_home, health_url)
         result = subprocess.run(
             [str(capsem), "update", "--yes"],
             capture_output=True,
@@ -1622,7 +1650,6 @@ def test_linux_update_yes_records_failed_installer_verification(
                 **os.environ,
                 "CAPSEM_HOME": str(capsem_home),
                 "CAPSEM_RUN_DIR": str(capsem_home / "run"),
-                "CAPSEM_RELEASE_HEALTH_URL": health_url,
                 "CAPSEM_FAKE_SUDO_LOG": str(sudo_log),
                 "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
             },

@@ -11,6 +11,13 @@ on:
         description: Staged binary channel name.
         required: true
         default: binary-staging
+      asset_channel:
+        description: Existing VM asset channel to use as the staging source.
+        required: true
+        type: choice
+        options:
+          - stable
+          - nightly
       manifest_version:
         description: Staged manifest contract version.
         required: true
@@ -20,7 +27,8 @@ permissions:
   contents: read
 
 env:
-  ASSET_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json
+  ASSET_CHANNEL: ${{ inputs.asset_channel }}
+  ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.asset_channel }}/manifest.json
 
 jobs:
   assemble-binary-channel:
@@ -60,6 +68,7 @@ jobs:
 
       - name: Fetch current asset channel manifest
         run: |
+          case "$ASSET_CHANNEL" in stable|nightly) ;; *) exit 1 ;; esac
           mkdir -p target/binary-channel-dry-run
           curl -fsSL "$ASSET_MANIFEST_URL" -o target/binary-channel-dry-run/manifest.json
           cp target/binary-channel-dry-run/manifest.json \

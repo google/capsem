@@ -25,7 +25,7 @@ use nix::fcntl::{Flock, FlockArg};
 use std::{
     fs::OpenOptions,
     io::BufRead,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command as StdCommand, Stdio},
     time::{Duration, Instant},
 };
@@ -301,17 +301,31 @@ enum AssetsCommands {
 #[derive(Subcommand)]
 enum McpCommands {
     /// List configured MCP servers with connection status
-    Servers,
+    Servers {
+        /// Profile whose MCP configuration should be inspected
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
+    },
     /// List discovered MCP tools across all servers
     Tools {
+        /// Profile whose MCP configuration should be inspected
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
         /// Filter by server name
         #[arg(long)]
         server: Option<String>,
     },
     /// Re-discover tools from all MCP servers
-    Refresh,
+    Refresh {
+        /// Profile whose MCP servers should be refreshed
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
+    },
     /// Call an MCP tool by namespaced name
     Call {
+        /// Profile whose MCP tool should be called
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
         /// Namespaced tool name (e.g. github__search_repos)
         name: String,
         /// JSON arguments
@@ -330,6 +344,9 @@ enum SessionCommands {
         /// Name for the session (makes it persistent -- "if you name it, you keep it")
         #[arg(short = 'n', long)]
         name: Option<String>,
+        /// Profile to use for this session
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
         /// RAM in GB
         #[arg(long, default_value_t = 4)]
         ram: u64,
@@ -392,6 +409,9 @@ enum SessionCommands {
     Run {
         /// Command to execute
         command: String,
+        /// Profile to use for this session
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
         /// Timeout in seconds
         #[arg(long)]
         timeout: Option<u64>,
@@ -799,10 +819,65 @@ fn purge_summary_message(result: &PurgeResponse, all: bool) -> String {
     }
 }
 
-fn capsem_shell_tui_args(session: Option<&str>) -> Vec<String> {
-    session
-        .map(|session| vec!["--session".to_string(), session.to_string()])
-        .unwrap_or_default()
+fn capsem_shell_tui_args(session: Option<&str>, gateway_url: &str) -> Vec<String> {
+    let mut args = vec!["--gateway-url".to_string(), gateway_url.to_string()];
+    if let Some(session) = session {
+        args.extend(["--session".to_string(), session.to_string()]);
+    }
+    args
+}
+
+fn gateway_url_from_runtime(run_dir: &Path) -> Option<Result<String>> {
+    let port_path = run_dir.join("gateway.port");
+    let raw = match std::fs::read_to_string(&port_path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            return Some(Err(error).with_context(|| format!("read {}", port_path.display())))
+        }
+    };
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let port = match raw.parse::<u16>() {
+        Ok(0) => return Some(Err(anyhow!("{} contains port 0", port_path.display()))),
+        Ok(port) => port,
+        Err(error) => {
+            return Some(
+                Err(error)
+                    .with_context(|| format!("parse gateway port from {}", port_path.display())),
+            )
+        }
+    };
+    Some(Ok(format!("http://127.0.0.1:{port}")))
+}
+
+async fn wait_for_gateway_url(run_dir: &Path) -> Result<String> {
+    if let Ok(url) = std::env::var("CAPSEM_GATEWAY_URL") {
+        let url = url.trim_end_matches('/');
+        if !url.is_empty() {
+            return Ok(url.to_string());
+        }
+    }
+
+    let run_dir = run_dir.to_path_buf();
+    match capsem_core::poll::poll_until(
+        capsem_core::poll::PollOpts::new("gateway-runtime-ready", Duration::from_secs(5)),
+        || {
+            let run_dir = run_dir.clone();
+            async move { gateway_url_from_runtime(&run_dir) }
+        },
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(timeout) => Err(anyhow!(
+            "Capsem gateway did not publish {} within {:?}",
+            run_dir.join("gateway.port").display(),
+            timeout.timeout
+        )),
+    }
 }
 
 fn resolve_capsem_tui_binary() -> PathBuf {
@@ -820,13 +895,13 @@ fn resolve_capsem_tui_binary() -> PathBuf {
     PathBuf::from("capsem-tui")
 }
 
-async fn run_tui_shell(session: Option<&str>) -> Result<()> {
+async fn run_tui_shell(session: Option<&str>, gateway_url: &str) -> Result<()> {
     if let Some(session) = session {
         client::validate_id(session)?;
     }
     let binary = resolve_capsem_tui_binary();
     let status = tokio::process::Command::new(&binary)
-        .args(capsem_shell_tui_args(session))
+        .args(capsem_shell_tui_args(session, gateway_url))
         .stdin(std::process::Stdio::inherit())
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
@@ -1631,15 +1706,17 @@ async fn main() -> Result<()> {
         }
         Commands::Session(SessionCommands::Create {
             name,
+            profile,
             ram,
             cpu,
             env,
             from,
         }) => {
+            client::validate_id(profile)?;
             let persistent = name.is_some() || from.is_some();
             let req = ProvisionRequest {
                 name: name.clone(),
-                profile_id: DEFAULT_PROFILE_ID.to_string(),
+                profile_id: profile.clone(),
                 ram_mb: ram * 1024,
                 cpus: *cpu,
                 persistent,
@@ -1704,7 +1781,10 @@ async fn main() -> Result<()> {
         }
         Commands::Session(SessionCommands::Shell { name, session }) => {
             let target = name.as_ref().or(session.as_ref());
-            run_tui_shell(target.map(String::as_str)).await?;
+            let resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
+            resp.into_result()?;
+            let gateway_url = wait_for_gateway_url(&run_dir).await?;
+            run_tui_shell(target.map(String::as_str), &gateway_url).await?;
         }
         Commands::Session(SessionCommands::List { quiet }) => {
             let resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
@@ -1790,12 +1870,14 @@ async fn main() -> Result<()> {
         }
         Commands::Session(SessionCommands::Run {
             command,
+            profile,
             timeout,
             env,
         }) => {
+            client::validate_id(profile)?;
             let req = RunRequest {
                 command: command.clone(),
-                profile_id: DEFAULT_PROFILE_ID.to_string(),
+                profile_id: profile.clone(),
                 timeout_secs: *timeout,
                 env: client::parse_env_vars(env)?,
             };
@@ -2028,12 +2110,10 @@ async fn main() -> Result<()> {
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
         }
-        Commands::Mcp(McpCommands::Servers) => {
+        Commands::Mcp(McpCommands::Servers { profile }) => {
+            client::validate_id(profile)?;
             let resp: ApiResponse<Vec<serde_json::Value>> = client
-                .get(&format!(
-                    "/profiles/{}/mcp/servers/list",
-                    DEFAULT_PROFILE_ID
-                ))
+                .get(&format!("/profiles/{}/mcp/servers/list", profile))
                 .await?;
             let servers = resp.into_result()?;
             if servers.is_empty() {
@@ -2062,15 +2142,13 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Mcp(McpCommands::Tools { server }) => {
+        Commands::Mcp(McpCommands::Tools { profile, server }) => {
+            client::validate_id(profile)?;
             let server_names: Vec<String> = if let Some(server_filter) = server {
                 vec![server_filter.clone()]
             } else {
                 let resp: ApiResponse<Vec<serde_json::Value>> = client
-                    .get(&format!(
-                        "/profiles/{}/mcp/servers/list",
-                        DEFAULT_PROFILE_ID
-                    ))
+                    .get(&format!("/profiles/{}/mcp/servers/list", profile))
                     .await?;
                 resp.into_result()?
                     .into_iter()
@@ -2082,7 +2160,7 @@ async fn main() -> Result<()> {
                 let resp: ApiResponse<Vec<serde_json::Value>> = client
                     .get(&format!(
                         "/profiles/{}/mcp/servers/{}/tools/list",
-                        DEFAULT_PROFILE_ID, server_name
+                        profile, server_name
                     ))
                     .await?;
                 tools.extend(resp.into_result()?);
@@ -2114,21 +2192,16 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Mcp(McpCommands::Refresh) => {
+        Commands::Mcp(McpCommands::Refresh { profile }) => {
+            client::validate_id(profile)?;
             let resp: ApiResponse<Vec<serde_json::Value>> = client
-                .get(&format!(
-                    "/profiles/{}/mcp/servers/list",
-                    DEFAULT_PROFILE_ID
-                ))
+                .get(&format!("/profiles/{}/mcp/servers/list", profile))
                 .await?;
             for server in resp.into_result()? {
                 if let Some(server_name) = server["name"].as_str() {
                     let refresh: ApiResponse<serde_json::Value> = client
                         .post(
-                            &format!(
-                                "/profiles/{}/mcp/servers/{}/refresh",
-                                DEFAULT_PROFILE_ID, server_name
-                            ),
+                            &format!("/profiles/{}/mcp/servers/{}/refresh", profile, server_name),
                             &serde_json::json!({}),
                         )
                         .await?;
@@ -2137,7 +2210,12 @@ async fn main() -> Result<()> {
             }
             println!("MCP tools refreshed.");
         }
-        Commands::Mcp(McpCommands::Call { name, args }) => {
+        Commands::Mcp(McpCommands::Call {
+            profile,
+            name,
+            args,
+        }) => {
+            client::validate_id(profile)?;
             let (server_name, tool_name) = name.split_once("__").ok_or_else(|| {
                 anyhow!("MCP tool calls must use namespaced names like server__tool; got {name}")
             })?;
@@ -2147,7 +2225,7 @@ async fn main() -> Result<()> {
                 .post(
                     &format!(
                         "/profiles/{}/mcp/servers/{}/tools/{}/call",
-                        DEFAULT_PROFILE_ID, server_name, tool_name
+                        profile, server_name, tool_name
                     ),
                     &arguments,
                 )
@@ -2638,6 +2716,57 @@ mod tests {
     }
 
     #[test]
+    fn cli_create_accepts_profile() {
+        let cli = Cli::parse_from(["capsem", "create", "--profile", "co-work"]);
+        match cli.command.unwrap() {
+            Commands::Session(SessionCommands::Create { profile, .. }) => {
+                assert_eq!(profile, "co-work");
+            }
+            _ => panic!("expected Create"),
+        }
+    }
+
+    #[test]
+    fn cli_run_accepts_profile() {
+        let cli = Cli::parse_from(["capsem", "run", "echo ok", "--profile", "co-work"]);
+        match cli.command.unwrap() {
+            Commands::Session(SessionCommands::Run { profile, .. }) => {
+                assert_eq!(profile, "co-work");
+            }
+            _ => panic!("expected Run"),
+        }
+    }
+
+    #[test]
+    fn cli_mcp_commands_accept_profile() {
+        let cases = [
+            vec!["capsem", "mcp", "servers", "--profile", "co-work"],
+            vec!["capsem", "mcp", "tools", "--profile", "co-work"],
+            vec!["capsem", "mcp", "refresh", "--profile", "co-work"],
+            vec![
+                "capsem",
+                "mcp",
+                "call",
+                "server__tool",
+                "--profile",
+                "co-work",
+            ],
+        ];
+
+        for args in cases {
+            let cli = Cli::parse_from(args);
+            let profile = match cli.command.unwrap() {
+                Commands::Mcp(McpCommands::Servers { profile })
+                | Commands::Mcp(McpCommands::Tools { profile, .. })
+                | Commands::Mcp(McpCommands::Refresh { profile })
+                | Commands::Mcp(McpCommands::Call { profile, .. }) => profile,
+                _ => panic!("expected MCP command"),
+            };
+            assert_eq!(profile, "co-work");
+        }
+    }
+
+    #[test]
     fn parse_create_ephemeral() {
         let cli = Cli::parse_from(["capsem", "create"]);
         match cli.command.unwrap() {
@@ -2788,10 +2917,12 @@ mod tests {
         match cli.command.unwrap() {
             Commands::Session(SessionCommands::Run {
                 command,
+                profile,
                 timeout,
                 env,
             }) => {
                 assert_eq!(command, "echo hello");
+                assert_eq!(profile, "code");
                 assert_eq!(timeout, None);
                 assert!(env.is_empty());
             }
@@ -2805,10 +2936,12 @@ mod tests {
         match cli.command.unwrap() {
             Commands::Session(SessionCommands::Run {
                 command,
+                profile,
                 timeout,
                 env,
             }) => {
                 assert_eq!(command, "ls -la");
+                assert_eq!(profile, "code");
                 assert_eq!(timeout, Some(120));
                 assert!(env.is_empty());
             }
@@ -3679,14 +3812,43 @@ mod tests {
 
     #[test]
     fn shell_without_session_launches_tui_home() {
-        assert_eq!(capsem_shell_tui_args(None), Vec::<String>::new());
+        assert_eq!(
+            capsem_shell_tui_args(None, "http://127.0.0.1:49152"),
+            vec![
+                "--gateway-url".to_string(),
+                "http://127.0.0.1:49152".to_string()
+            ]
+        );
     }
 
     #[test]
     fn shell_with_session_focuses_tui_session() {
         assert_eq!(
-            capsem_shell_tui_args(Some("profile-v2")),
-            vec!["--session".to_string(), "profile-v2".to_string()]
+            capsem_shell_tui_args(Some("profile-v2"), "http://127.0.0.1:49152"),
+            vec![
+                "--gateway-url".to_string(),
+                "http://127.0.0.1:49152".to_string(),
+                "--session".to_string(),
+                "profile-v2".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn gateway_runtime_url_rejects_cross_instance_fallbacks() {
+        let run_dir = tempfile::tempdir().unwrap();
+        assert!(gateway_url_from_runtime(run_dir.path()).is_none());
+
+        std::fs::write(run_dir.path().join("gateway.port"), "not-a-port\n").unwrap();
+        assert!(gateway_url_from_runtime(run_dir.path()).unwrap().is_err());
+
+        std::fs::write(run_dir.path().join("gateway.port"), "0\n").unwrap();
+        assert!(gateway_url_from_runtime(run_dir.path()).unwrap().is_err());
+
+        std::fs::write(run_dir.path().join("gateway.port"), "49152\n").unwrap();
+        assert_eq!(
+            gateway_url_from_runtime(run_dir.path()).unwrap().unwrap(),
+            "http://127.0.0.1:49152"
         );
     }
 }

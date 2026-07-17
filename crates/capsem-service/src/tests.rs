@@ -3250,7 +3250,11 @@ fn checked_in_profile_catalog_status_reports_code_and_co_work() {
         .expect("repo root");
     let profiles_dir = repo_root.join("config/profiles");
     let catalog = ProfileCatalog::load_from_dir(&profiles_dir).expect("checked-in catalog loads");
-    let state = make_asset_state(repo_root.join("target/test-empty-assets"));
+    // The canonical Mac gate also runs this test inside a Linux container with
+    // the checkout mounted read-only. Test state must therefore live in an
+    // isolated writable directory instead of the repository's target tree.
+    let dir = tempfile::tempdir().expect("writable test root");
+    let state = make_asset_state(dir.path().join("assets"));
 
     let status = profile_catalog_status_value(&state, &catalog);
     let profile_ids = status["profiles"]

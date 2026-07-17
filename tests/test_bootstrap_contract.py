@@ -63,6 +63,14 @@ def test_bootstrap_repairs_stale_live_rosetta_registration_before_docker_probe()
     assert bootstrap.index(registration) < bootstrap.index("docker info >/dev/null")
 
 
+def test_bootstrap_waits_for_container_dns_after_colima_restart() -> None:
+    bootstrap = _read("bootstrap.sh")
+
+    assert "docker run --rm --pull=missing alpine:3.20 getent hosts ghcr.io" in bootstrap
+    assert "Docker DNS did not become ready" in bootstrap
+    assert "for attempt in $(seq 1 30)" in bootstrap
+
+
 def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     justfile = _read("justfile")
     web_gate = _read("scripts/check-web-surface.sh")

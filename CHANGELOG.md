@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Provisioned and preflighted `zstd` in local macOS bootstrap/doctor and the
+  exact-SHA Linux qualification gate, and made host-SBOM generation fail with
+  a direct prerequisite error before invoking `tar`. This closes the parity
+  hole where `just test` could build every release package before discovering
+  that macOS could not inspect the Linux `data.tar.zst` payloads.
+- Replaced installed-update tests' retired release endpoint environment
+  overrides with package-shaped `manifest-metadata.json` provenance, and made
+  the hardcoded-selection guard reject either override if it returns to the
+  installed test suite.
+- Masked `systemd-binfmt` in privileged Linux install-test containers and made
+  the local install gate prove Colima's live Rosetta registration survives the
+  full systemd/package/glow-up lifecycle. The container previously flushed the
+  host VM's binfmt table, making the later doctor/recipe rail fail after the
+  install rail had otherwise passed.
+- Made macOS bootstrap wait for registry DNS inside a real container after a
+  Colima restart. A cached `alpine true` probe previously reported success
+  while the VM DNS forwarder was still starting, allowing the next package
+  image build to fail resolving GHCR.
 - Made release qualification validate the live public manifest with the exact
   candidate runtime, and made update checks reject profile graphs that the
   runtime cannot install, including graphs missing required image revisions.
@@ -26,6 +44,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by `just test`, which now validates the frontend, docs, marketing site, and
   generated release-site channel through the same checked-in entrypoint used
   by CI and release workflows.
+- Made macOS-local `just test` exercise Linux-only Rust branches in a faithful
+  non-root Docker environment, fail generated-settings drift, build the real
+  release-mode macOS package and both Linux packages, generate the production
+  host SBOM from those exact artifacts, and execute the previously omitted
+  recipe tests after VM proofs complete.
+- Made exact-SHA Linux qualification require KVM for the native package without
+  rejecting the structurally validated non-host package before the native
+  systemd and guest-shell proof can run.
+- Made parallel VM asset qualification preflight Docker daemon capacity,
+  reclaim unused builder cache before extraction, and retain fully flushed,
+  architecture-specific failure logs.
+- Removed silent `code` selection from desktop shortcuts, the create dialog,
+  the tray, CLI run/MCP commands, and MCP tools. Profile-scoped operations now
+  carry an explicit or catalog-selected profile, and the UI fails closed when
+  the installed profile catalog cannot be loaded.
+- Made release packages materialize and validate every installed profile,
+  bound exact-SHA qualification to the exact stable/nightly channel, and added
+  a `just test` grep guard for current and planned profile names, channel URLs,
+  package rails, and qualification calls.
+- Removed the native macOS/Linux postinstall fallback to the stable manifest;
+  installers now require the package-generated `manifest-metadata.json` and
+  its manifest URL instead of silently changing channel when metadata is
+  missing.
+- Made isolated `CAPSEM_HOME` service launches bind an ephemeral gateway port,
+  and made `capsem shell` wait for and pass that exact runtime endpoint to the
+  TUI instead of silently falling back to another installation on port 19222.
 
 ## [1.5.1784153530] - 2026-07-15
 
