@@ -22,9 +22,9 @@ shippable tranches. The programme is developed on the `v1.6` branch so useful
 spike work can be reviewed, committed, and carried into the owning tranche:
 
 ```text
-Spike 0: end-to-end Claude Web UI on macOS/Apple VZ (active on v1.6)
+Spike 0: admin-authored GUI profile + Claude Web UI on macOS/Apple VZ
     |
-    | records evidence and retains useful reviewed code/tests
+    | records evidence and retains the reviewed GUI profile/code/tests
     v
 Tranche 1: robust application automation and delivery
     |

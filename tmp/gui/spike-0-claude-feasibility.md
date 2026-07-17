@@ -81,6 +81,7 @@ Spike 0 runs only on the current macOS/Apple-silicon development machine:
 | Host | macOS arm64 |
 | Hypervisor | Apple Virtualization.framework |
 | Guest | arm64 Debian |
+| Profile | `gui`, authored and built through `capsem-admin` |
 | Application | official arm64 Claude Desktop Linux package |
 | Client | Web browser through Capsem Web UI |
 | Transport | Xpra HTML5 over Apple VZ virtio-vsock relay |
@@ -95,9 +96,12 @@ surface and the one the user must evaluate.
 
 ## Branch and artifact policy
 
-The spike may bake a pinned Claude Desktop package directly into a throwaway
-arm64 Debian image. This intentionally bypasses the future Ansible/on-demand
-delivery work so package installation does not obscure GUI feasibility.
+The spike authors the real `config/profiles/gui` source contract and builds it
+through `capsem-admin`. The profile may pin Claude Desktop and Xpra in its
+profile-owned package/build inputs before the future Ansible/on-demand app
+delivery model exists, but it does not bypass profile ownership, admin
+validation, materialization, image construction, manifests, build ledgers, or
+OBOM evidence.
 
 Work directly on the `v1.6` branch. Useful source, tests, instrumentation,
 planning, and sanitized evidence should be committed at functional milestones
@@ -211,6 +215,11 @@ an Xpra debug page.
 
 The initial implementation is limited to these owned changes on `v1.6`:
 
+- `config/profiles/gui/` — the sole GUI profile source contract, including
+  package inputs, build hook, root seed, security inputs, and profile metadata;
+- `crates/capsem-admin/` and its tests only where the existing public
+  `profile validate|check|materialize` or `image build` rails cannot yet express
+  the GUI profile; no GUI-specific authoring command or backend-owned catalog;
 - `crates/capsem-gateway/src/main.rs` — mount the exact
   `/gui/{vm_id}/{app_instance_id}` WebSocket and explicit GUI-metrics proxy
   routes inside the existing auth/CORS/trace stack;
@@ -244,13 +253,17 @@ production-quality until the owning tranche review and gates pass.
 
 ## Stage A — mandatory end-to-end Web UI
 
-### A1. Build the throwaway image
+### A1. Author and build the GUI profile
 
+- create `config/profiles/gui` as the only GUI profile source contract;
+- run `capsem-admin profile validate`, `profile check`, and `profile
+  materialize`, then build through `capsem-admin image build` and the existing
+  `just build-assets gui arm64` rail;
 - start from the normal arm64 Debian guest base through the existing
   `config/docker/Dockerfile.rootfs.j2` and `config/docker/image/` build,
   manifest, security, and VM-environment inputs;
-- express GUI additions through the existing profile/build inputs on `v1.6`;
-  do not create an unrelated GUI Dockerfile or builder;
+- do not reuse the `code` profile, author generated backend workspaces, invoke
+  the Python backend directly, or create an unrelated GUI Dockerfile/builder;
 - install the exact verified Claude package and dependency closure;
 - install only the minimal Xpra/Xdummy/D-Bus/XDG/font/graphics runtime;
 - install the temporary fixed launcher/relay endpoint required for the spike;
@@ -469,7 +482,7 @@ Every gate is mandatory for `UI_GO`.
 | Gate | Pass condition |
 | --- | --- |
 | UI-0 Provenance | Official pinned arm64 Claude package is digest-verified; no remote installer runs. |
-| UI-1 Minimal Debian | Image boots under Apple VZ, dependency/image delta is recorded, and forbidden desktop/browser components are absent. |
+| UI-1 Admin-authored GUI profile | `config/profiles/gui` validates, checks, materializes, and builds through `capsem-admin`; its arm64 image boots under Apple VZ, its dependency/image delta and OBOM/build-ledger evidence are recorded, and forbidden desktop/browser components are absent. |
 | UI-2 Single application | Claude owns a usable Xpra window without a WM or supervising guest shell. |
 | UI-3 Direct vsock | Xpra traffic crosses Apple VZ virtio-vsock and a private Capsem relay; no guest GUI TCP or generic proxy exists. |
 | UI-4 Gateway path | Browser uses the running `capsem-gateway /gui/{vm}/{instance}` route, normal token/auth/origin middleware, service ownership check, and process UDS; no sidecar or direct Xpra URL exists. |
@@ -615,8 +628,8 @@ It also contains:
 4. the user's responsiveness notes;
 5. latency/resource/codec/frame/input tables and sample artifact digests;
 6. optional shaped-network results clearly separated from local acceptance;
-7. every temporary component mapped to its future owner and marked
-   **review before selective port; never promote automatically**;
+7. every retained component mapped to its tranche owner and marked for focused
+   review and hardening before that tranche closes;
 8. failures/blockers and the smallest next experiment;
 9. teardown and prohibited-data cleanup proof.
 
@@ -627,9 +640,8 @@ recorded, all UI gates have outcomes, evidence is sanitized, and cleanup is
 proven. Stage B may run immediately afterward or remain `AUTH_NOT_RUN` for a
 later focused session.
 
-`UI_GO` proves only that Claude is usable end to end in a Web browser on the
-macOS/Apple-VZ/arm64-Debian spike row. It carries no code automatically into the
-implementation sprints; the sanitized patch is review evidence from which
-specific telemetry/transport pieces may be deliberately reimplemented or
-ported. It proves nothing about Linux, KVM, x86_64, final delivery, profile
-authoring, release security, or qualification.
+`UI_GO` proves only that the admin-authored GUI profile and Claude are usable
+end to end in a Web browser on the macOS/Apple-VZ/arm64-Debian spike row.
+Reviewed commits remain on `v1.6` for their owning tranches, but no spike result
+waives tranche hardening or gates. It proves nothing about Linux, KVM, x86_64,
+final multi-architecture delivery, release security, or qualification.
