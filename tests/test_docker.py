@@ -8,6 +8,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tomllib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -45,10 +46,34 @@ from capsem.builder.docker import (
     prepare_build_context,
     render_dockerfile,
     resolve_kernel_version,
+    run_cmd,
     sync_container_clock,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_run_cmd_surfaces_captured_subprocess_stderr(monkeypatch, capsys):
+    """Opaque Docker failures must retain the daemon's actual diagnosis."""
+    failure = subprocess.CalledProcessError(
+        125,
+        ["docker", "run", "missing-image"],
+        output="stdout evidence\n",
+        stderr="Unable to find image 'missing-image' locally\n",
+    )
+
+    def fail(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(subprocess, "run", fail)
+
+    with pytest.raises(subprocess.CalledProcessError) as raised:
+        run_cmd(["docker", "run", "missing-image"], capture=True)
+
+    assert raised.value is failure
+    captured = capsys.readouterr()
+    assert "stdout evidence" in captured.err
+    assert "Unable to find image 'missing-image' locally" in captured.err
 
 
 # ---------------------------------------------------------------------------

@@ -4058,13 +4058,89 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert generate_pos < frontend_check_pos
     assert "bash scripts/generate-settings.sh" in just
     generated_gate = _recipe_block("_check-generated-settings:")
-    assert "bash \"$ROOT/scripts/generate-settings.sh\"" in generated_gate
-    assert "cmp -s" in generated_gate
-    assert "Generated files were refreshed" in generated_gate
+    assert "bash \"$ROOT/scripts/check-generated-settings.sh\"" in generated_gate
     assert "dev-frontend: _pnpm-install _generate-settings" in just
     assert 'build-ui profile="debug": _pnpm-install _generate-settings' in just
     assert "test-frontend: _pnpm-install _generate-settings" in just
     assert "uv run python scripts/generate_schema.py" not in just
+
+
+def test_generated_settings_gate_bootstraps_ignored_output_and_rejects_tracked_drift(
+    tmp_path: Path,
+) -> None:
+    """A clean checkout has no ignored frontend mock, but drift still fails closed."""
+    root = tmp_path / "clean-checkout"
+    scripts = root / "scripts"
+    settings = root / "config/settings"
+    frontend = root / "frontend/src/lib"
+    scripts.mkdir(parents=True)
+    settings.mkdir(parents=True)
+    frontend.mkdir(parents=True)
+
+    shutil.copy2(
+        PROJECT_ROOT / "scripts/check-generated-settings.sh",
+        scripts / "check-generated-settings.sh",
+    )
+    (scripts / "generate-settings.sh").write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+mkdir -p "$ROOT/frontend/src/lib"
+if [ "${FAKE_SKIP_RUNTIME_OUTPUT:-0}" != 1 ]; then
+  printf 'runtime mock\n' > "$ROOT/frontend/src/lib/mock-settings.generated.ts"
+fi
+if [ "${FAKE_TRACKED_DRIFT:-0}" = 1 ]; then
+  printf 'drifted schema\n' > "$ROOT/config/settings/schema.generated.json"
+fi
+"""
+    )
+    schema = settings / "schema.generated.json"
+    metadata = settings / "ui-metadata.generated.json"
+    runtime_mock = frontend / "mock-settings.generated.ts"
+    schema.write_text("checked-in schema\n")
+    metadata.write_text("checked-in metadata\n")
+    assert not runtime_mock.exists(), "fixture must model a clean git checkout"
+
+    clean = subprocess.run(
+        ["bash", str(scripts / "check-generated-settings.sh"), str(root)],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert clean.returncode == 0, clean.stderr
+    assert runtime_mock.read_text() == "runtime mock\n"
+    assert schema.read_text() == "checked-in schema\n"
+    assert metadata.read_text() == "checked-in metadata\n"
+
+    runtime_mock.unlink()
+    missing_env = os.environ.copy()
+    missing_env["FAKE_SKIP_RUNTIME_OUTPUT"] = "1"
+    missing = subprocess.run(
+        ["bash", str(scripts / "check-generated-settings.sh"), str(root)],
+        env=missing_env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert missing.returncode != 0
+    assert (
+        "settings generator did not create: "
+        "frontend/src/lib/mock-settings.generated.ts"
+    ) in missing.stderr
+
+    drift_env = os.environ.copy()
+    drift_env["FAKE_TRACKED_DRIFT"] = "1"
+    drifted = subprocess.run(
+        ["bash", str(scripts / "check-generated-settings.sh"), str(root)],
+        env=drift_env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert drifted.returncode != 0
+    assert "generated settings drifted: config/settings/schema.generated.json" in (
+        drifted.stderr
+    )
 
 
 def test_settings_generator_uses_current_config_authority() -> None:
@@ -5460,3 +5536,29 @@ def test_guest_virtiofs_pip_probe_is_hermetic() -> None:
     assert "import cowsay" not in source
     assert "pip install --no-index" in source
     assert "ZipFile" in source
+
+
+def test_automatic_docker_gc_never_prunes_tagged_images() -> None:
+    """Concurrent worktrees must not delete each other's newly tagged images."""
+    candidates = [PROJECT_ROOT / "justfile", *sorted((PROJECT_ROOT / "scripts").glob("*.sh"))]
+    violations: list[str] = []
+    unsafe = re.compile(r"docker\s+image\s+prune\s+[^\n]*(?:-[a-z]*a[a-z]*|--all)(?:\s|$)")
+    for path in candidates:
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if unsafe.search(line):
+                violations.append(f"{path.relative_to(PROJECT_ROOT)}:{line_number}: {line.strip()}")
+
+    assert not violations, "automatic Docker cleanup may not prune tagged images:\n" + "\n".join(violations)
+
+
+def test_parallel_asset_primitive_does_not_run_docker_gc() -> None:
+    """The two test-assets lanes must not run destructive cleanup against each other."""
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+    primitive = justfile.split("_build-image-template arch profile output template:", maxsplit=1)[1].split(
+        "\n# VM asset rebuild", maxsplit=1
+    )[0]
+    assert "_docker-gc" not in primitive
+
+    for recipe in ("build-kernel arch profile=\"\" output=assets_dir:", "build-rootfs arch profile=\"\" output=assets_dir:"):
+        body = justfile.split(recipe, maxsplit=1)[1].split("\n#", maxsplit=1)[0]
+        assert "just _docker-gc" in body

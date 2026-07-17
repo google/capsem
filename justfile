@@ -274,6 +274,7 @@ build-kernel arch profile="" output=assets_dir:
     just _install-tools
     CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor
     just _build-image-template "{{arch}}" "$PROFILE_ARG" "$OUTPUT_ARG" kernel
+    just _docker-gc
 
 # Build rootfs only for one profile/arch (CI-facing primitive).
 build-rootfs arch profile="" output=assets_dir:
@@ -288,6 +289,7 @@ build-rootfs arch profile="" output=assets_dir:
     just _install-tools
     CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor
     just _build-image-template "{{arch}}" "$PROFILE_ARG" "$OUTPUT_ARG" rootfs
+    just _docker-gc
 
 # Already-preflighted image-build primitive shared by public CI recipes and
 # the canonical all-profile matrix. Public recipes own tool/doctor setup;
@@ -312,7 +314,6 @@ _build-image-template arch profile output template:
         --arch "{{arch}}" \
         --template "$TEMPLATE_ARG" \
         --clean
-    just _docker-gc
 
 # VM asset rebuild (kernel + rootfs). Profile is mandatory. Optional second arg
 # restricts to one arch.
@@ -1238,31 +1239,7 @@ _check-generated-settings:
     #!/bin/bash
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
-    SNAPSHOT=$(mktemp -d)
-    trap 'rm -rf "$SNAPSHOT"' EXIT
-    FILES=(
-        config/settings/schema.generated.json
-        config/settings/ui-metadata.generated.json
-        frontend/src/lib/mock-settings.generated.ts
-    )
-    for file in "${FILES[@]}"; do
-        test -f "$ROOT/$file"
-        mkdir -p "$SNAPSHOT/$(dirname "$file")"
-        cp "$ROOT/$file" "$SNAPSHOT/$file"
-    done
-    bash "$ROOT/scripts/generate-settings.sh"
-    drift=0
-    for file in "${FILES[@]}"; do
-        if ! cmp -s "$SNAPSHOT/$file" "$ROOT/$file"; then
-            echo "ERROR: generated settings drifted: $file" >&2
-            diff -u "$SNAPSHOT/$file" "$ROOT/$file" || true
-            drift=1
-        fi
-    done
-    [ "$drift" -eq 0 ] || {
-        echo "Generated files were refreshed. Review them, then rerun just test." >&2
-        exit 1
-    }
+    bash "$ROOT/scripts/check-generated-settings.sh" "$ROOT"
 
 # Fast path: audit, doctor, injection, integration tests (no Docker, no cross-compile)
 smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-config
@@ -1765,13 +1742,14 @@ test-install:
     # (plenty of Colima headroom, cache under 25 GB) so they don't thrash
     # the build cache every run -- they only fire when we're about to
     # fail anyway.
-    # (a) If Colima has <10 GB free on /var/lib/docker, reclaim images +
-    #     build cache aggressively (no until= filter). Linux hosts do not need this.
+    # (a) If Colima has <10 GB free on /var/lib/docker, reclaim dangling
+    #     images + build cache. Tagged images may belong to a concurrent
+    #     worktree and must never be deleted by an automatic gate.
     if command -v colima >/dev/null 2>&1 && colima status >/dev/null 2>&1; then
         FREE_GB=$(colima ssh -- df -BG /var/lib/docker </dev/null 2>/dev/null | awk 'NR==2{gsub("G","",$4); print $4}')
         if [[ "${FREE_GB:-}" =~ ^[0-9]+$ ]] && [ "$FREE_GB" -lt 10 ]; then
             echo "Low Colima disk (${FREE_GB} GB free) -- pruning images + build cache..."
-            docker image prune -af >/dev/null 2>&1 || true
+            docker image prune -f >/dev/null 2>&1 || true
             docker builder prune -af >/dev/null 2>&1 || true
         fi
     fi
@@ -2239,8 +2217,10 @@ _docker-gc:
     if [ -n "$CONTAINERS" ]; then
         docker container rm $CONTAINERS >/dev/null 2>&1 || true
     fi
-    # Remove unused images older than 72h
-    docker image prune -af --filter until=72h >/dev/null 2>&1 || true
+    # Remove dangling images older than 72h. Never use --all/-a here: a
+    # newly tagged cached image can have an old creation timestamp and may be
+    # in active use by another architecture lane or worktree.
+    docker image prune -f --filter until=72h >/dev/null 2>&1 || true
     # Prune build cache older than 72h
     docker builder prune -f --filter until=72h >/dev/null 2>&1 || true
     # Reclaim sparse disk space from Colima VM (fstrim punches holes in the raw disk)

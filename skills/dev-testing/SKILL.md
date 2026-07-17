@@ -134,6 +134,12 @@ failure until disproved, not random infrastructure. Before another CI attempt,
 reproduce the expensive rail locally and remove the critical-path bottleneck.
 Parallelize only independent work with isolated workspaces, Docker tags, output
 roots, and cleanup ownership, and add a regression that asserts that isolation.
+Docker tags are daemon-global across worktrees. Automatic gates must never run
+`docker image prune --all`/`-a`, and an internal primitive used by concurrent
+lanes must not invoke garbage collection. A newly tagged cached image can have
+an old creation timestamp and be deleted by age-filtered `prune -a` from another
+lane or checkout. Run cleanup only at an owning outer boundary, prune dangling
+images and unused builder cache, and emit captured Docker stderr on failure.
 
 When an unavoidable platform boundary prevents local execution, name it in the
 release skill and retain the nearest deterministic local proof. Hardware and

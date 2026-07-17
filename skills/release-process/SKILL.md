@@ -568,6 +568,12 @@ shorten the critical path before dispatching again. Safe concurrency requires
 per-lane workspaces, image tags, output directories, and cleanup ownership plus
 a regression contract; two commands with different output arguments can still
 race through a hidden fixed workspace.
+The Docker daemon itself is shared across worktrees: automatic release gates
+must never use `docker image prune --all`/`-a`, and parallel build primitives
+must not invoke GC. A newly tagged cached image may retain an old creation
+timestamp and be deleted by another lane's age-filtered prune. Cleanup belongs
+at the outer owner and may prune only dangling images and unused builder cache;
+captured daemon stderr must remain visible as release evidence.
 
 - **CI is a clean checkout.** If the build depends on a generated source file,
   either track it or regenerate it in CI before the consumer imports it. A local

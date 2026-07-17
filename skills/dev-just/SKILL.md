@@ -98,12 +98,18 @@ default developer port.
 
 ## Docker disk management
 
-Docker builds (`build-assets`, `cross-compile`, `test-install`) accumulate images, build cache, and stopped containers inside the Colima VM. The `_docker-gc` helper runs automatically after each of these recipes to prevent unbounded disk growth:
+Docker builds (`build-assets`, `cross-compile`, `test-install`) accumulate images, build cache, and stopped containers inside the Colima VM. The `_docker-gc` helper runs at owning outer recipe boundaries to prevent unbounded disk growth:
 
 - Removes stopped containers
-- Prunes unused images older than 72h
+- Prunes dangling images older than 72h; it never prunes tagged images
 - Prunes build cache older than 72h
 - Runs `fstrim` on the Colima VM disk to release freed space back to macOS
+
+The Docker daemon is shared by concurrent lanes and worktrees. Never add
+`docker image prune -a` to an automatic path or call `_docker-gc` from an
+internal primitive used in parallel. A cached image can be newly tagged while
+retaining an old creation timestamp, so age-filtered `prune -a` can delete a
+different lane's live image.
 
 The Colima VM uses a Virtualization.framework raw disk that only grows, never shrinks on its own. Without `fstrim`, Docker prune frees space inside the VM but macOS never gets it back. This is why `_docker-gc` always trims after pruning.
 

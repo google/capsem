@@ -222,7 +222,15 @@ def run_cmd(
         kwargs["cwd"] = str(cwd)
     if capture:
         kwargs["capture_output"] = True
-    return subprocess.run(cmd, **kwargs)
+    try:
+        return subprocess.run(cmd, **kwargs)
+    except subprocess.CalledProcessError as error:
+        if capture:
+            if error.stdout:
+                print(error.stdout, file=sys.stderr, end="" if error.stdout.endswith("\n") else "\n")
+            if error.stderr:
+                print(error.stderr, file=sys.stderr, end="" if error.stderr.endswith("\n") else "\n")
+        raise
 
 
 def detect_runtime() -> str:
