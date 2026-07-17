@@ -701,6 +701,10 @@ def build_version_script(config: GuestImageConfig) -> str:
     # -- System: build-level tools (node, npm, uv, pip) + apt packages --
     system_cmds: list[tuple[str, str]] = []
     for key, cmd in config.build.version_commands.items():
+        if key in {"node", "npm"} and "npm" not in config.package_sets:
+            continue
+        if key in {"uv", "pip"} and "python" not in config.package_sets:
+            continue
         system_cmds.append((key, cmd))
     if "apt" in config.package_sets:
         for key, cmd in config.package_sets["apt"].version_commands.items():

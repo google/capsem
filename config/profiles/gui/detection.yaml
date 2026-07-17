@@ -1,0 +1,13 @@
+title: skill_loaded
+level: informational
+logsource:
+  product: capsem
+  service: security_event
+detection:
+  selection:
+    file.read.name: SKILL.md
+    file.read.ext: md
+  condition: selection
+capsem:
+  action: allow
+  reason: Record when an agent skill file is loaded.

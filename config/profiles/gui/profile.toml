@@ -1,0 +1,74 @@
+# Capsem GUI profile.
+#
+# This source profile is intentionally arm64-only for the Claude Web GUI
+# feasibility spike. capsem-admin owns validation, image construction, and
+# generated asset/file/OBOM pins; checked-in source descriptors stay unpinned.
+
+id = "gui"
+name = "GUI"
+description = "Single-application GUI agents streamed through Capsem Web."
+icon_svg = "<svg viewBox=\"0 0 16 16\" aria-hidden=\"true\"><path d=\"M2 2h12v9H9.5l2 2H13v1H3v-1h1.5l2-2H2V2Zm1 1v7h10V3H3Z\"/></svg>"
+revision = "2026.07.17.1"
+refresh_policy = "24h"
+
+[availability]
+web = true
+shell = true
+mobile = false
+
+[vm]
+cpu_count = 4
+ram_gb = 12
+scratch_disk_size_gb = 64
+
+[assets]
+format = "profile-assets.v1"
+refresh_policy = "on_profile_refresh"
+
+[assets.arch.arm64.kernel]
+name = "vmlinuz"
+url = "file://assets/arm64/vmlinuz"
+
+[assets.arch.arm64.initrd]
+name = "initrd.img"
+url = "file://assets/arm64/initrd.img"
+
+[assets.arch.arm64.rootfs]
+name = "rootfs.erofs"
+url = "file://assets/arm64/rootfs.erofs"
+
+[rule_files]
+enforcement = "profiles/gui/enforcement.toml"
+sigma = "profiles/gui/detection.yaml"
+
+[files.enforcement]
+path = "profiles/gui/enforcement.toml"
+
+[files.detection]
+path = "profiles/gui/detection.yaml"
+
+[files.mcp]
+path = "profiles/gui/mcp.json"
+
+[files.apt_packages]
+path = "profiles/gui/apt-packages.txt"
+
+[files.build]
+path = "profiles/gui/build.sh"
+
+[files.tips]
+path = "profiles/gui/tips.txt"
+
+[plugins.credential_broker]
+mode = "rewrite"
+detection_level = "informational"
+
+[plugins.log_sanitizer]
+mode = "rewrite"
+detection_level = "informational"
+
+[mcp]
+health_check_interval_secs = 60
+
+[mcp.server_enabled]
+local = true

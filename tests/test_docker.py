@@ -546,6 +546,21 @@ class TestGenerateBuildContext:
         ctx = generate_build_context("Dockerfile.rootfs.j2", config, "arm64")
         assert ctx["npm_packages"] == []
 
+    def test_rootfs_without_language_package_sets_skips_remote_installers(self, real_config):
+        package_sets = {
+            key: value
+            for key, value in real_config.package_sets.items()
+            if key not in {"npm", "python"}
+        }
+        config = real_config.model_copy(update={"package_sets": package_sets})
+
+        rendered = render_dockerfile("Dockerfile.rootfs.j2", config, "arm64")
+
+        assert "raw.githubusercontent.com/nvm-sh" not in rendered
+        assert "astral.sh/uv/install.sh" not in rendered
+        assert "pip3 install --break-system-packages --upgrade pip" not in rendered
+        assert "uv pip install" not in rendered
+
     def test_rootfs_npm_packages_can_come_from_profile_package_set(self, generated_profile_guest):
         ctx = generate_build_context("Dockerfile.rootfs.j2", generated_profile_guest, "arm64")
         assert ctx["npm_packages"] == ["@openai/codex", "@google/gemini-cli"]
@@ -888,6 +903,21 @@ class TestBuildVersionScript:
         assert 'git=' not in script
         assert 'python3=' not in script
         assert 'pytest=' not in script
+
+    def test_language_tool_versions_follow_profile_package_sets(self, real_config):
+        package_sets = {
+            key: value
+            for key, value in real_config.package_sets.items()
+            if key not in {"npm", "python"}
+        }
+        config = real_config.model_copy(update={"package_sets": package_sets})
+
+        script = build_version_script(config)
+
+        assert 'node=' not in script
+        assert 'npm=' not in script
+        assert 'uv=' not in script
+        assert 'pip=' not in script
 
     def test_empty_config_produces_empty_script(self):
         from capsem.builder.models import BuildConfig, GuestImageConfig

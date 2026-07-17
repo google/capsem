@@ -482,6 +482,27 @@ fn checked_in_code_profile_parses_and_validates() {
 }
 
 #[test]
+fn checked_in_gui_profile_parses_and_validates() {
+    let profile = toml::from_str::<ProfileConfigFile>(include_str!(
+        "../../../../../../config/profiles/gui/profile.toml"
+    ))
+    .expect("checked-in GUI profile parses");
+
+    profile
+        .validate()
+        .expect("checked-in GUI profile validates");
+    assert_eq!(profile.id, "gui");
+    assert_eq!(
+        profile.assets.arch.keys().collect::<Vec<_>>(),
+        vec!["arm64"]
+    );
+    assert!(profile.files.apt_packages.is_some());
+    assert!(profile.files.build.is_some());
+    assert!(profile.files.python_requirements.is_none());
+    assert!(profile.files.npm_packages.is_none());
+}
+
+#[test]
 fn profile_check_rejects_mutated_pinned_rule_file() {
     let fixture = ProfileFixture::new();
     let profile = Profile::load_from_dir(fixture.profile_dir()).expect("profile loads");

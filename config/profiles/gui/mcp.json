@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "capsem": {
+      "command": "/run/capsem-mcp-server"
+    }
+  }
+}

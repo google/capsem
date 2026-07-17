@@ -1,0 +1,4 @@
+# Tips shown randomly at login. One tip per line. Lines starting with # are ignored.
+This GUI profile runs one application surface without a desktop environment or window manager.
+Run capsem-doctor when the VM transport or sandbox feels unhealthy.
+Credentials are brokered by Capsem; do not bake secrets into the image.
