@@ -11041,3 +11041,25 @@ async fn wait_for_vm_ready_uses_tight_poll_contract_and_detects_ready() {
         .expect("ready should be detected");
     creator.join().unwrap();
 }
+
+#[cfg(not(target_os = "macos"))]
+#[tokio::test]
+async fn non_macos_lifecycle_does_not_take_the_apple_vz_host_lock() {
+    let guard = super::acquire_vz_host_lock(super::startup::VzHostLockMode::Exclusive)
+        .await
+        .expect("non-macOS lifecycle lock acquisition should succeed");
+
+    assert!(
+        guard.is_none(),
+        "KVM lifecycle operations are independent and must not contend on the Apple VZ host lock"
+    );
+}
+
+#[test]
+fn apple_vz_host_lock_is_required_only_on_macos() {
+    assert_eq!(
+        super::requires_vz_host_lock(),
+        cfg!(target_os = "macos"),
+        "the host-wide save/restore lock protects Apple VZ, not independent KVM VMs"
+    );
+}

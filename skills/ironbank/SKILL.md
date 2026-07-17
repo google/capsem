@@ -38,6 +38,13 @@ x86_64, validates every required artifact and manifest, and boots each rebuilt
 host-architecture image to a guest-shell marker. Input-contract tests are not
 a substitute for testing the artifact that was actually built.
 
+An exact gate that routinely approaches the hosted runner's observed lifetime
+is not release proof. Runtime headroom is part of the ledger: record stage
+durations, treat repeated same-age termination as a deterministic budget bug,
+and require the expensive production rail to pass locally before spending
+another CI run. Parallel work is acceptable only when its hidden workspaces,
+container tags, outputs, and cleanup are isolated and covered by a test.
+
 ## Required Shape
 
 - Suite home: `tests/ironbank/`.

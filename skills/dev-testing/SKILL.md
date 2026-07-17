@@ -94,6 +94,15 @@ the local entrypoint, plus an executable container regression for the failed
 requirement. A CI-only failure is evidence of a missing parity gate: add the
 local reproducer before rerunning CI.
 
+The canonical gate also has a runtime budget. Measure full local and CI stage
+durations and keep meaningful headroom below the runner's observed lifetime;
+the workflow's declared timeout is not proof that the host will live that long.
+Two runs terminating at the same wall-clock age are a deterministic budget
+failure until disproved, not random infrastructure. Before another CI attempt,
+reproduce the expensive rail locally and remove the critical-path bottleneck.
+Parallelize only independent work with isolated workspaces, Docker tags, output
+roots, and cleanup ownership, and add a regression that asserts that isolation.
+
 When an unavoidable platform boundary prevents local execution, name it in the
 release skill and retain the nearest deterministic local proof. Hardware and
 external-service gates still require exact-SHA CI evidence; macOS VZ behavior

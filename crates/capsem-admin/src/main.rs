@@ -5408,11 +5408,16 @@ fn escape_html(value: &str) -> String {
         .replace('\'', "&#39;")
 }
 
+fn image_build_workspace_path(source_profile: &ProfileConfigFile, arch: Option<&str>) -> PathBuf {
+    PathBuf::from("target")
+        .join("image-workspace")
+        .join(&source_profile.id)
+        .join(arch.unwrap_or("all"))
+}
+
 fn image_build_command(args: ImageBuildArgs) -> Result<()> {
     let source_profile = load_profile(&args.profile)?;
-    let workspace = PathBuf::from("target")
-        .join("image-workspace")
-        .join(&source_profile.id);
+    let workspace = image_build_workspace_path(&source_profile, args.arch.as_deref());
     let workspace_report = materialize_image_workspace(&ImageWorkspaceArgs {
         profile: args.profile.clone(),
         config_root: args.config_root.clone(),
@@ -8446,6 +8451,18 @@ decision = "block"
             .expect_err("profile is required");
 
         assert!(error.to_string().contains("--profile"), "{error}");
+    }
+
+    #[test]
+    fn image_build_workspaces_are_isolated_by_profile_and_architecture() {
+        let profile = ProfileConfigFile::builtin_primary();
+
+        let arm64 = image_build_workspace_path(&profile, Some("arm64"));
+        let x86_64 = image_build_workspace_path(&profile, Some("x86_64"));
+
+        assert_ne!(arm64, x86_64);
+        assert_eq!(arm64, PathBuf::from("target/image-workspace/code/arm64"));
+        assert_eq!(x86_64, PathBuf::from("target/image-workspace/code/x86_64"));
     }
 
     #[test]

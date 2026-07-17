@@ -335,7 +335,7 @@ build-assets profile="" arch="" output=assets_dir:
 # architectures, the exact CI-facing build primitives, generated-manifest
 # validation, and a real shell marker from each profile-owned host-arch image.
 # Outputs stay under target/ so the gate never mutates the developer's assets/.
-test-assets: _install-tools _generate-settings _sign
+test-assets: _bootstrap _install-tools _generate-settings _sign
     #!/bin/bash
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
@@ -417,28 +417,76 @@ test-assets: _install-tools _generate-settings _sign
         stop_gate_pidfile "$run_dir/service.pid"
     }
 
-    for profile_path in config/profiles/*/profile.toml; do
+    profile_paths=(config/profiles/*/profile.toml)
+
+    # A hosted qualification runner has an observed hard lifetime below the
+    # workflow's nominal timeout. Build two architecture lanes concurrently so
+    # the complete four-cell profile/architecture matrix fits with enough time
+    # left for pytest and installed-package proof. Each lane owns a distinct
+    # Docker tag (capsem-*-<arch>) and isolated output root; this avoids both
+    # tag collisions and concurrent manifest/current-symlink writes.
+    build_arch_lane() {
+        local arch="$1"
+        for profile_path in "${profile_paths[@]}"; do
+            local profile
+            profile=$(basename "$(dirname "$profile_path")")
+            local profile_root="$TEST_ROOT/$profile"
+            local lane_assets="$profile_root/build-$arch"
+            echo "=== Ironbank asset build lane: $profile ($arch) ==="
+            just build-kernel "$arch" "$profile" "$lane_assets"
+            just build-rootfs "$arch" "$profile" "$lane_assets"
+            for logical_name in vmlinuz initrd.img rootfs.erofs obom.cdx.json software-inventory.json; do
+                local artifact="$lane_assets/$arch/$logical_name"
+                if [[ ! -s "$artifact" ]]; then
+                    echo "ERROR: asset build did not produce non-empty $artifact" >&2
+                    return 1
+                fi
+            done
+        done
+    }
+
+    ARM64_BUILD_PID=""
+    X86_64_BUILD_PID=""
+    cleanup_asset_builds() {
+        local pid
+        for pid in "$ARM64_BUILD_PID" "$X86_64_BUILD_PID"; do
+            if [[ "$pid" =~ ^[0-9]+$ ]] && gate_pid_running "$pid"; then
+                kill "$pid" 2>/dev/null || true
+            fi
+        done
+        wait 2>/dev/null || true
+    }
+    trap cleanup_asset_builds EXIT
+    build_arch_lane arm64 &
+    ARM64_BUILD_PID=$!
+    build_arch_lane x86_64 &
+    X86_64_BUILD_PID=$!
+    BUILD_FAIL=0
+    wait "$ARM64_BUILD_PID" || BUILD_FAIL=1
+    wait "$X86_64_BUILD_PID" || BUILD_FAIL=1
+    ARM64_BUILD_PID=""
+    X86_64_BUILD_PID=""
+    trap - EXIT
+    if [[ "$BUILD_FAIL" -ne 0 ]]; then
+        echo "ERROR: one or more Ironbank architecture build lanes failed" >&2
+        exit 1
+    fi
+
+    for profile_path in "${profile_paths[@]}"; do
         profile=$(basename "$(dirname "$profile_path")")
         profile_root="$TEST_ROOT/$profile"
         profile_assets="$profile_root/assets"
         profile_config="$profile_root/config"
         profile_home="$profile_root/home/.capsem"
-        echo "=== Ironbank asset build: $profile (arm64 + x86_64) ==="
-
+        mkdir -p "$profile_assets"
         for arch in arm64 x86_64; do
-            just build-kernel "$arch" "$profile" "$profile_assets"
-            just build-rootfs "$arch" "$profile" "$profile_assets"
-            for logical_name in vmlinuz initrd.img rootfs.erofs obom.cdx.json software-inventory.json; do
-                artifact="$profile_assets/$arch/$logical_name"
-                if [[ ! -s "$artifact" ]]; then
-                    echo "ERROR: asset build did not produce non-empty $artifact" >&2
-                    exit 1
-                fi
-            done
+            lane_assets="$profile_root/build-$arch"
+            cp -a "$lane_assets/$arch" "$profile_assets/$arch"
         done
+        cargo run -p capsem-admin -- manifest generate "$profile_assets"
         # The builders update `current` to the arch they most recently built.
-        # The matrix ends with x86_64, so restore the physical-host alias before
-        # the host-architecture VM proof.
+        # The merged manifest generator selects one build arch, so restore the
+        # physical-host alias before the host-architecture VM proof.
         ln -sfn "$HOST_ARCH" "$profile_assets/current"
         test "$(readlink "$profile_assets/current")" = "$HOST_ARCH"
 

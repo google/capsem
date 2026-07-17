@@ -11126,9 +11126,21 @@ async fn handle_history_transcript(
 /// test load observed is ~15s, so 60s absorbs the typical p99. Returning
 /// 503 on timeout tells the caller "try again" instead of blocking
 /// indefinitely.
+fn requires_vz_host_lock() -> bool {
+    cfg!(target_os = "macos")
+}
+
 async fn acquire_vz_host_lock(
     mode: startup::VzHostLockMode,
-) -> Result<startup::VzHostLock, AppError> {
+) -> Result<Option<startup::VzHostLock>, AppError> {
+    // This lock exists solely for an Apple Virtualization.framework
+    // save/restore constraint. KVM VMs have independent VM fds and device
+    // state; forcing every Linux service/xdist worker through the same flock
+    // lets an exclusive suspend waiter starve behind unrelated cold starts.
+    if !requires_vz_host_lock() {
+        return Ok(None);
+    }
+
     let result = tokio::task::spawn_blocking(move || {
         startup::VzHostLock::acquire(mode, std::time::Duration::from_secs(60))
     })
@@ -11140,7 +11152,7 @@ async fn acquire_vz_host_lock(
         )
     })?;
     match result {
-        Ok(Some(guard)) => Ok(guard),
+        Ok(Some(guard)) => Ok(Some(guard)),
         Ok(None) => Err(AppError(
             StatusCode::SERVICE_UNAVAILABLE,
             "another process holds the Apple VZ save/restore lock; retry shortly".into(),

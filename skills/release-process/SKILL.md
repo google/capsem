@@ -537,6 +537,16 @@ literal public install plus guest-shell proof on a physical Mac. Any new
 CI-only step must either gain a local shared-entrypoint proof or be added to
 this explicit boundary list with its substitute and final authoritative gate.
 
+Qualification must fit the runner that actually executes it with substantial
+headroom for the final tests and evidence upload. Measure stage and total wall
+times; do not infer capacity from `timeout-minutes`. Repeated termination at
+nearly the same run age is a runtime-budget defect, not a transient runner loss.
+Hold the release, reproduce the expensive rail through `just test` locally, and
+shorten the critical path before dispatching again. Safe concurrency requires
+per-lane workspaces, image tags, output directories, and cleanup ownership plus
+a regression contract; two commands with different output arguments can still
+race through a hidden fixed workspace.
+
 - **CI is a clean checkout.** If the build depends on a generated source file,
   either track it or regenerate it in CI before the consumer imports it. A local
   generated file hidden by `.gitignore` can pass local tests and fail immediately

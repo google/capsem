@@ -45,10 +45,11 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
     asset_gate = _recipe_block("test-assets:")
 
     assert "just test-assets" in test
-    assert "for profile_path in config/profiles/*/profile.toml; do" in asset_gate
+    assert "profile_paths=(config/profiles/*/profile.toml)" in asset_gate
+    assert 'for profile_path in "${profile_paths[@]}"; do' in asset_gate
     assert "for arch in arm64 x86_64; do" in asset_gate
-    assert 'just build-kernel "$arch" "$profile" "$profile_assets"' in asset_gate
-    assert 'just build-rootfs "$arch" "$profile" "$profile_assets"' in asset_gate
+    assert 'just build-kernel "$arch" "$profile" "$lane_assets"' in asset_gate
+    assert 'just build-rootfs "$arch" "$profile" "$lane_assets"' in asset_gate
     assert 'ln -sfn "$HOST_ARCH" "$profile_assets/current"' in asset_gate
     assert 'readlink "$profile_assets/current"' in asset_gate
     assert 'cp target/config/settings/settings.toml "$profile_home/settings.toml"' not in asset_gate
@@ -63,6 +64,25 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
     assert "scripts/prove-installed-shell.py" in asset_gate
     assert 'CAPSEM_ASSETS_DIR="$profile_assets"' in asset_gate
     assert 'CAPSEM_PROFILES_DIR="$profile_config/profiles"' in asset_gate
+
+
+def test_asset_gate_runs_architecture_lanes_in_parallel_before_boot_proofs() -> None:
+    asset_gate = _recipe_block("test-assets:")
+
+    assert asset_gate.startswith("test-assets: _bootstrap ")
+    assert "build_arch_lane()" in asset_gate
+    assert 'build_arch_lane arm64 &' in asset_gate
+    assert 'build_arch_lane x86_64 &' in asset_gate
+    assert 'wait "$ARM64_BUILD_PID"' in asset_gate
+    assert 'wait "$X86_64_BUILD_PID"' in asset_gate
+    assert 'lane_assets="$profile_root/build-$arch"' in asset_gate
+    assert 'cargo run -p capsem-admin -- manifest generate "$profile_assets"' in asset_gate
+    assert asset_gate.index('wait "$ARM64_BUILD_PID"') < asset_gate.index(
+        'cargo run -p capsem-admin -- manifest generate "$profile_assets"'
+    )
+    assert asset_gate.index('wait "$X86_64_BUILD_PID"') < asset_gate.index(
+        'scripts/prove-installed-shell.py'
+    )
 
 
 def test_asset_gate_reaps_gateway_and_service_between_profile_proofs() -> None:
