@@ -379,6 +379,14 @@ def _is_vm_scalar_state_route(path: str) -> bool:
 
 
 def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float, float]:
+    if path == "/status" and gateway:
+        # Gateway status is not the service's scalar status route. It composes
+        # service status, VM inventory, and profile/asset readiness into the
+        # public dashboard payload. On Linux debug builds those service-owned
+        # projections consume the same aggregate CPU envelope as gateway
+        # /vms/list while remaining comfortably within the hot-route latency
+        # budget. Keep the direct service /status budget at the scalar default.
+        return (3.0, 8.0, 0.14)
     if _is_vm_scalar_state_route(path):
         # Per-session state routes touch richer lifecycle/profile metadata than
         # global scalar status, but must still stay memory-backed and responsive

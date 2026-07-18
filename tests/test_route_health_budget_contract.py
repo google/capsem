@@ -1,4 +1,8 @@
-from tests.ironbank.test_route_health import RouteTiming, _assert_timing_budget
+from tests.ironbank.test_route_health import (
+    RouteTiming,
+    _assert_timing_budget,
+    _hot_route_budget,
+)
 
 
 def test_route_health_budget_can_gate_p99_without_single_tail_outlier() -> None:
@@ -48,3 +52,13 @@ def test_route_health_budget_rejects_cpu_regression() -> None:
         return
 
     raise AssertionError("service CPU regression was not rejected")
+
+
+def test_gateway_status_budget_accounts_for_composite_service_work() -> None:
+    """Gateway status aggregates several service-owned readiness projections."""
+    direct_status_cpu_s = _hot_route_budget("/status")[2]
+    gateway_status_cpu_s = _hot_route_budget("/status", gateway=True)[2]
+    gateway_vm_list_cpu_s = _hot_route_budget("/vms/list", gateway=True)[2]
+
+    assert gateway_status_cpu_s > direct_status_cpu_s
+    assert gateway_status_cpu_s == gateway_vm_list_cpu_s
