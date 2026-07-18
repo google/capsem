@@ -41,6 +41,13 @@ channel-switch/upgrade glow-up verification remain additional requirements and
 provide the end-to-end deployed-release proof. Never replace the full gate
 with doctor, Winterfell, smoke, or another selected subset.
 
+Locally, the same complete gate is paid once per ready candidate—not after
+every few-line repair. Use focused red/green tests and the relevant clean Linux
+container proof while editing, batch related release-parity fixes, then run one
+complete local `just test` immediately before committing/pushing the new exact
+candidate. A subsequent production or gate change creates a new candidate and
+therefore needs a new complete run.
+
 Keep release-harness bootstrap checks fail-fast inside that canonical recipe.
 Before expensive audits/builds/VMs/package assembly, Stage 0 must build the
 clean Linux install image and prove its container-owned uv environment can run
@@ -444,6 +451,10 @@ materialization, qualification that is not channel-bound, and native installer
 fallbacks to stable/nightly. Keep the vocabulary list current; it intentionally
 includes `code`, `co-work`, `cowork`, `terminal`, the known `termional` spelling,
 and `gui` so future profile renames cannot bypass the guard during migration.
+This fail-fast guard must remain runnable in clean qualification Linux with
+only Python's standard library; its focused contract deliberately removes
+`rg` from `PATH` so a developer-only search dependency cannot burn another
+full-gate attempt.
 
 ### GitHub CLI release control
 
@@ -523,7 +534,9 @@ entrypoint with a local gate. Current required mappings are:
   and binary workflows execute `scripts/build-complete-release-channel.py`;
   every deployable production dist must contain and validate both `stable` and
   `nightly`, preserving the untouched channel graph instead of replacing the
-  Pages site with only the channel being updated;
+  Pages site with only the channel being updated. Local qualification must
+  materialize profile config from the same candidate worktree used to generate
+  its descriptors, while production assembly must use an immutable git ref;
 - Linux package assembly: `just test` executes `just cross-compile arm64` and
   `just cross-compile x86_64`, so both publishable `.deb` architecture builds
   are locally accounted for before the release workflow repeats them;
@@ -574,6 +587,11 @@ must not invoke GC. A newly tagged cached image may retain an old creation
 timestamp and be deleted by another lane's age-filtered prune. Cleanup belongs
 at the outer owner and may prune only dangling images and unused builder cache;
 captured daemon stderr must remain visible as release evidence.
+Container-runtime preflights must prove bounded process completion, not merely
+successful output. Never synchronize Colima's clock with a privileged Docker
+`date -s` container: the command can print success and stop while the Docker
+client hangs during cleanup. Both asset and package builds use the checked-in
+host-side Colima clock synchronizer with a hard timeout and fail closed.
 
 - **CI is a clean checkout.** If the build depends on a generated source file,
   either track it or regenerate it in CI before the consumer imports it. A local

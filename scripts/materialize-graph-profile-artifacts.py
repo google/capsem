@@ -24,24 +24,34 @@ def main() -> int:
     parser.add_argument("--dist", required=True, type=Path)
     parser.add_argument("--repo-root", default=Path("."), type=Path)
     parser.add_argument("--channel", action="append", dest="channels")
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
         "--source-ref",
         help="Override the inferred assets-v... source tag for all profile config files.",
+    )
+    source.add_argument(
+        "--source-root",
+        type=Path,
+        help="Read profile config files from this local candidate worktree.",
     )
     args = parser.parse_args()
 
     dist = args.dist.resolve()
     repo_root = args.repo_root.resolve()
+    source_root = args.source_root.resolve() if args.source_root else None
     manifests = manifest_paths(dist, args.channels)
     written = 0
     for manifest_path in manifests:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        source_ref = args.source_ref or infer_source_ref(manifest, manifest_path)
-        ensure_ref(repo_root, source_ref)
+        source_ref = None
+        if source_root is None:
+            source_ref = args.source_ref or infer_source_ref(manifest, manifest_path)
+            ensure_ref(repo_root, source_ref)
         written += materialize_manifest_profile_files(
             dist=dist,
             repo_root=repo_root,
             source_ref=source_ref,
+            source_root=source_root,
             manifest=manifest,
         )
     print(f"materialized {written} graph profile artifact files")
@@ -109,7 +119,8 @@ def materialize_manifest_profile_files(
     *,
     dist: Path,
     repo_root: Path,
-    source_ref: str,
+    source_ref: str | None,
+    source_root: Path | None,
     manifest: dict[str, Any],
 ) -> int:
     written = 0
@@ -129,7 +140,12 @@ def materialize_manifest_profile_files(
                     continue
                 if not isinstance(source_path, str) or not source_path:
                     raise SystemExit(f"profile config {url} missing source path")
-                source_bytes = git_show(repo_root, source_ref, f"config/{source_path}")
+                source_bytes = read_source(
+                    repo_root=repo_root,
+                    source_ref=source_ref,
+                    source_root=source_root,
+                    source_path=source_path,
+                )
                 verify_descriptor(url, item, source_bytes)
                 previous = seen.get(url)
                 if previous is not None and previous != source_bytes:
@@ -148,6 +164,29 @@ def git_show(repo_root: Path, source_ref: str, source_path: str) -> bytes:
     return subprocess.check_output(
         ["git", "-C", str(repo_root), "show", f"{source_ref}:{source_path}"]
     )
+
+
+def read_source(
+    *,
+    repo_root: Path,
+    source_ref: str | None,
+    source_root: Path | None,
+    source_path: str,
+) -> bytes:
+    if source_root is None:
+        if source_ref is None:
+            raise SystemExit("profile config source needs a git ref or local source root")
+        return git_show(repo_root, source_ref, f"config/{source_path}")
+
+    config_root = (source_root / "config").resolve()
+    candidate = (config_root / source_path).resolve()
+    try:
+        candidate.relative_to(config_root)
+    except ValueError as error:
+        raise SystemExit(f"profile config source escapes config root: {source_path}") from error
+    if not candidate.is_file():
+        raise SystemExit(f"profile config source is not a file: {source_path}")
+    return candidate.read_bytes()
 
 
 def verify_descriptor(url: str, item: dict[str, Any], contents: bytes) -> None:

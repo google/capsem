@@ -422,6 +422,34 @@ def test_profiles_package_agent_bootstrap_without_baking_credentials() -> None:
     assert not failures, "invalid agent bootstrap contract:\n" + "\n".join(failures)
 
 
+def test_profiles_pin_verified_agy_release_for_both_linux_architectures() -> None:
+    failures: list[str] = []
+    required_fragments = (
+        'AGY_VERSION="1.1.3"',
+        "agy_cli_linux_arm64.tar.gz",
+        "agy_cli_linux_x64.tar.gz",
+        "453f9c5530877ab6369e2536e576cfab2bbbcb45923a9bc776678142538e419d",
+        "7a7239a69b65d3cf3af7e75f27b2ff4e9cce696a7b9a9e5c37c695f1c74eec34",
+        "github.com/google-antigravity/antigravity-cli/releases/download/$AGY_VERSION/$asset",
+        "sha256sum -c -",
+        'install -m 555 "$tmp/antigravity" /usr/local/bin/agy',
+    )
+    for profile_dir in sorted(PROFILES_DIR.iterdir()):
+        if not profile_dir.is_dir():
+            continue
+        profile, build_path, _ = _profile_payload(profile_dir)
+        build_script = build_path.read_text()
+        for fragment in required_fragments:
+            if fragment not in build_script:
+                failures.append(f"{profile['id']}: AGY installer missing {fragment!r}")
+        if "antigravity.google/cli/install.sh" in build_script:
+            failures.append(f"{profile['id']}: AGY still uses mutable broken installer URL")
+        if "releases/latest" in build_script:
+            failures.append(f"{profile['id']}: AGY release is not version pinned")
+
+    assert not failures, "invalid pinned AGY installer contract:\n" + "\n".join(failures)
+
+
 def test_profiles_allow_only_capsem_mock_server_fixture_over_local_network_guard() -> None:
     failures: list[str] = []
     expected_match = (

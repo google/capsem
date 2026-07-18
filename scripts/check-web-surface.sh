@@ -73,7 +73,7 @@ case "$surface" in
             --asset-source-base \
                 "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
             --manifest-version 1.0.2 \
-            --profile-source-ref HEAD \
+            --profile-source-root "$ROOT" \
             --out-dir "$graph_dist"
         ;;
     *)

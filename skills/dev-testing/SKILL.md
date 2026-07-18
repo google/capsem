@@ -19,6 +19,13 @@ Three tiers, fast to thorough. Every change must pass all three before it ships.
 
 `just test` is the single source of truth. There is no "fast" tier that skips integration tests -- that's how the "Connection refused" bug shipped while tests said green. Individual `test-*` recipes exist for targeted debugging but `just test` is the gate.
 
+The full gate is a candidate boundary, not the edit loop. During TDD, reproduce
+the failure with the smallest focused test, run that test red/green, and batch
+adjacent parity fixes before paying for the complete gate. After a failed
+qualification, do not restart a 50-minute `just test` for each small edit. Run
+it once when the forward-fix candidate is ready; any later production or gate
+change invalidates that candidate and requires one new complete run.
+
 ## Release CI invariant
 
 Every stable and nightly release must execute `just test` in CI for the exact
@@ -84,6 +91,10 @@ packaged manifest metadata without a stable/nightly fallback, and exact-SHA
 qualification must also match the requested channel. Extend the guarded profile
 terms during renames; keep `code`, `co-work`, `cowork`, `terminal`, `termional`,
 and `gui` until every migration path is complete.
+Because it runs before the expensive test stages, the guard must use only
+declared bootstrap dependencies. Its scanner is Python-standard-library
+only and has an executable regression with `rg` absent; never reintroduce a
+developer-machine-only search command into this fail-fast boundary.
 
 This includes workspace/runtime tests, Rust and Python coverage floors,
 `capsem-doctor` and Ironbank acceptance, benchmarks, artifact completeness,
@@ -101,6 +112,12 @@ same production entrypoint. Do not create a local lookalike that merely checks
 similar commands. If CI calls a `just` recipe or checked-in script, local proof
 must call that same recipe or script; if a requirement is implemented as a
 shared shell function, both paths must execute that function.
+
+Generated release graphs and their materialized profile artifacts must come
+from the same source snapshot. The local gate qualifies uncommitted candidate
+bytes from the worktree; it must never generate descriptors from the worktree
+and then fetch artifact bytes from `HEAD`. Production release workflows keep
+using an immutable git ref. Guard both modes with functional tests.
 
 Artifact accounting is literal: macOS-local `just test` builds the real
 release-mode `.pkg`, builds both Linux release-mode `.deb` architectures, and
@@ -140,6 +157,12 @@ lanes must not invoke garbage collection. A newly tagged cached image can have
 an old creation timestamp and be deleted by age-filtered `prune -a` from another
 lane or checkout. Run cleanup only at an owning outer boundary, prune dangling
 images and unused builder cache, and emit captured Docker stderr on failure.
+Any preflight that mutates the container VM or daemon must have a hard
+wall-clock timeout and an executable test that waits for process completion.
+Printed success output is not completion proof. In particular, never set the
+Colima VM clock from a privileged Docker container: `date` can exit while the
+Docker client remains blocked in cleanup. Use the bounded host-side Colima
+clock primitive.
 
 When an unavoidable platform boundary prevents local execution, name it in the
 release skill and retain the nearest deterministic local proof. Hardware and

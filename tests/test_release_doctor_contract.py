@@ -4653,26 +4653,54 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
 
 def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> None:
     canonical_gate = _recipe_block("test:")
-    guard = _source_text("scripts/check-hardcoded-release-selections.sh")
+    guard = _source_text("scripts/check-hardcoded-release-selections.sh") + _source_text(
+        "scripts/check-hardcoded-release-selections.py"
+    )
     reusable_channel = _workflow_text("release-channel.yaml")
 
     assert "bash scripts/check-hardcoded-release-selections.sh" in canonical_gate
     for term in ("code", "co-work", "cowork", "terminal", "termional", "gui"):
         assert term in guard
-    assert "rg" in guard
+    assert "ripgrep" in guard
     assert "profile_id" in guard
     assert "--profile" in guard
     assert "stable" in guard
     assert "nightly" in guard
     assert "ASSET_MANIFEST_URL" in guard
     assert ".github/workflows" in guard
-    assert "rg --files config/profiles" in guard
+    assert 'glob("*/profile.toml")' in guard
     assert "builtin_profile_configs" in guard
     assert "unwrap_or" in guard
     assert "DEFAULT_RELEASE_MANIFEST_URL" in guard
     assert "channel:\n        type: string\n        required: true" in reusable_channel
     assert "inputs.channel || 'stable'" not in reusable_channel
     assert "CHANNEL: ${{ inputs.channel }}" in reusable_channel
+
+
+def test_hardcoded_release_selection_guard_runs_without_ripgrep(tmp_path: Path) -> None:
+    tool_bin = tmp_path / "bin"
+    tool_bin.mkdir()
+    for command in ("python3",):
+        source = shutil.which(command)
+        assert source is not None, f"test host is missing {command}"
+        (tool_bin / command).symlink_to(source)
+
+    assert shutil.which("rg", path=str(tool_bin)) is None
+    result = subprocess.run(
+        ["/bin/bash", str(PROJECT_ROOT / "scripts/check-hardcoded-release-selections.sh")],
+        cwd=PROJECT_ROOT,
+        env={
+            **os.environ,
+            "CAPSEM_GUARD_ROOT": str(PROJECT_ROOT),
+            "PATH": str(tool_bin),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Hardcoded profile/channel selection guard passed." in result.stdout
 
 
 def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Path) -> None:
@@ -4703,11 +4731,21 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
             shutil.copy2(source, target)
 
     guard = PROJECT_ROOT / "scripts/check-hardcoded-release-selections.sh"
-    env = {**os.environ, "CAPSEM_GUARD_ROOT": str(tmp_path)}
+    tool_bin = tmp_path / "tool-bin"
+    tool_bin.mkdir()
+    python3 = shutil.which("python3")
+    assert python3 is not None
+    (tool_bin / "python3").symlink_to(python3)
+    assert shutil.which("rg", path=str(tool_bin)) is None
+    env = {
+        **os.environ,
+        "CAPSEM_GUARD_ROOT": str(tmp_path),
+        "PATH": str(tool_bin),
+    }
 
     def run_guard() -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["bash", str(guard)],
+            ["/bin/bash", str(guard)],
             cwd=PROJECT_ROOT,
             env=env,
             text=True,

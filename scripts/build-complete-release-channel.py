@@ -185,6 +185,8 @@ def build_complete_dist(args: argparse.Namespace) -> None:
         ]
         if args.profile_source_ref:
             command.extend(["--source-ref", args.profile_source_ref])
+        elif args.profile_source_root:
+            command.extend(["--source-root", str(args.profile_source_root)])
         run(command)
     for channel in REQUIRED_CHANNELS:
         run(
@@ -217,9 +219,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--release-site", default="https://release.capsem.org")
     parser.add_argument("--allow-mirror-missing", action="store_true")
-    parser.add_argument(
+    profile_source = parser.add_mutually_exclusive_group()
+    profile_source.add_argument(
         "--profile-source-ref",
-        help="Override graph profile config source ref (for hermetic local fixtures).",
+        help="Override graph profile config source ref.",
+    )
+    profile_source.add_argument(
+        "--profile-source-root",
+        type=Path,
+        help="Read graph profile config from this local candidate worktree.",
     )
     return parser.parse_args()
 

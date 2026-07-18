@@ -1082,8 +1082,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     just build-host-image
     # Sync container VM clock on macOS (prevents apt "not valid yet" errors)
     if [[ "$(uname -s)" = "Darwin" ]]; then
-        NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        docker run --rm --privileged alpine date -s "$NOW" 2>/dev/null || true
+        python3 scripts/sync-container-clock.py
     fi
     # Map target arch to Rust triple, dpkg arch, and pkg-config paths
     case "$TARGET_ARCH" in

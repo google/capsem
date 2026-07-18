@@ -25,6 +25,7 @@ from capsem.builder.doctor import check_container_runtime
 from capsem.builder.models import ErofsConfig, GuestImageConfig
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
+CLOCK_SYNC_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "sync-container-clock.py"
 FALLBACK_KERNEL_VERSION = "7.0.11"
 DEFAULT_EROFS_UTILS_IMAGE = "debian:bookworm-slim"
 ZSTD_EROFS_UTILS_IMAGE = "debian:trixie-slim"
@@ -213,6 +214,7 @@ def run_cmd(
     cwd: str | Path | None = None,
     capture: bool = False,
     echo: bool = True,
+    timeout: float | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run a subprocess command. Single mock seam for tests."""
     if echo:
@@ -222,6 +224,8 @@ def run_cmd(
         kwargs["cwd"] = str(cwd)
     if capture:
         kwargs["capture_output"] = True
+    if timeout is not None:
+        kwargs["timeout"] = timeout
     try:
         return subprocess.run(cmd, **kwargs)
     except subprocess.CalledProcessError as error:
@@ -257,24 +261,19 @@ def sync_container_clock() -> None:
     after host sleep/wake. When the VM clock falls behind, Debian apt-get
     rejects release files as "not valid yet" (exit 100).
 
-    This sets the VM clock to the current host UTC time before builds.
-    Silently does nothing on native Linux (no VM layer) or on errors.
+    This sets the VM clock to the current host UTC time before builds. The
+    shared primitive owns a hard timeout; failures abort before an expensive
+    build instead of leaving Docker clients blocked indefinitely.
     """
     if sys.platform != "darwin":
         return
 
-    now = datetime.datetime.now(datetime.timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
+    run_cmd(
+        [sys.executable, str(CLOCK_SYNC_SCRIPT)],
+        capture=True,
+        echo=False,
+        timeout=15,
     )
-
-    try:
-        run_cmd(
-            ["docker", "run", "--rm", "--privileged",
-             "alpine", "date", "-s", now],
-            capture=True, echo=False,
-        )
-    except Exception:
-        pass  # Best effort -- apt-get options are the fallback
 
 
 def resolve_kernel_version(branch: str = "auto") -> str:

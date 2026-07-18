@@ -122,7 +122,10 @@ def test_asset_workflow_and_local_gate_share_complete_dist_builder() -> None:
     assert local_web_gate.count("scripts/build-complete-release-channel.py") == 2
     assert '--channel-source "stable=file://$graph_sources/stable.json"' in local_web_gate
     assert '--channel-source "nightly=file://$graph_sources/nightly.json"' in local_web_gate
-    assert "--profile-source-ref HEAD" in local_web_gate
+    assert '--profile-source-root "$ROOT"' in local_web_gate
+    assert "--profile-source-ref HEAD" not in local_web_gate
+    assert 'command.extend(["--source-root", str(args.profile_source_root)])' in builder
+    assert "profile_source = parser.add_mutually_exclusive_group()" in builder
     assert "--channel stable" not in workflow.split(
         "- name: Build complete asset channel preview", maxsplit=1
     )[1].split("- name: Publish immutable", maxsplit=1)[0]

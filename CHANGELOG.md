@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Made the fail-fast hardcoded release-selection guard run with Python's
+  standard library alone, so a clean qualification runner without `rg` cannot
+  burn a complete candidate gate before testing begins.
+- Removed the unused non-crossable librsvg introspection toolchain from Linux
+  package cross-builds, and pinned both VM profiles to checksum-verified
+  Antigravity CLI release artifacts after the vendor installer URL disappeared.
+- Replaced privileged Docker clock mutation with a bounded Colima VM clock
+  synchronizer, preventing both silent apt date skew and Docker clients hanging
+  after the clock-setting container exits.
+- Made local release-site graph qualification materialize profile files from
+  the candidate worktree instead of the previous `HEAD`, while production
+  release assembly retains immutable git-ref sourcing.
 - Provisioned and preflighted `zstd` in local macOS bootstrap/doctor and the
   exact-SHA Linux qualification gate, and made host-SBOM generation fail with
   a direct prerequisite error before invoking `tar`. This closes the parity

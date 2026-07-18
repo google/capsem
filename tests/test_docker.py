@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -782,13 +783,14 @@ class TestIsCi:
 class TestSyncContainerClock:
     @patch("capsem.builder.docker.sys")
     @patch("capsem.builder.docker.run_cmd")
-    def test_syncs_via_privileged_container(self, mock_run, mock_sys):
+    def test_syncs_via_bounded_shared_primitive(self, mock_run, mock_sys):
         mock_sys.platform = "darwin"
+        mock_sys.executable = sys.executable
         sync_container_clock()
         cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "docker"
-        assert "--privileged" in cmd
-        assert "date" in cmd
+        assert cmd[0] == sys.executable
+        assert cmd[1].endswith("/scripts/sync-container-clock.py")
+        assert mock_run.call_args.kwargs["timeout"] == 15
 
     @patch("capsem.builder.docker.sys")
     @patch("capsem.builder.docker.run_cmd")
@@ -799,11 +801,11 @@ class TestSyncContainerClock:
 
     @patch("capsem.builder.docker.sys")
     @patch("capsem.builder.docker.run_cmd")
-    def test_swallows_errors(self, mock_run, mock_sys):
+    def test_propagates_errors(self, mock_run, mock_sys):
         mock_sys.platform = "darwin"
         mock_run.side_effect = Exception("VM not running")
-        # Should not raise
-        sync_container_clock()
+        with pytest.raises(Exception, match="VM not running"):
+            sync_container_clock()
 
 
 # ---------------------------------------------------------------------------

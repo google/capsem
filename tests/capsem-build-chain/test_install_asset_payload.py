@@ -485,14 +485,18 @@ def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:
     assert swapped_packages == native_packages
 
 
-def test_cross_arch_tauri_swap_primes_native_introspection_provider() -> None:
-    """Ubuntu foreign GIR deps need the native Multi-Arch provider installed."""
+def test_cross_arch_tauri_swap_excludes_non_crossable_introspection_toolchain() -> None:
+    """Cross builds must not pull foreign executables that require emulation."""
     swap_script = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text()
+    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
 
-    provider = '"gobject-introspection-bin:${NATIVE_ARCH}"'
-    foreign_install = '"${FOREIGN_PKGS[@]}"'
-    assert provider in swap_script
-    assert swap_script.index(provider) < swap_script.index(foreign_install)
+    # librsvg2-dev depends on gobject-introspection for the target architecture
+    # on Ubuntu 24.04. That dependency is a target executable/Python toolchain,
+    # is not required to compile Capsem, and cannot run in the native builder.
+    assert "librsvg2-dev" not in swap_script
+    assert "librsvg2-dev" not in host_builder
+    assert "gobject-introspection" not in swap_script
+    assert "qemu" not in swap_script.lower()
 
 
 def test_cross_arch_frontend_build_precedes_foreign_dev_library_swap() -> None:
@@ -1188,6 +1192,13 @@ def test_only_systemd_package_proof_receives_kvm_devices() -> None:
     assert "--device /dev/kvm" in proof
     assert "--device /dev/vhost-vsock" in proof
     assert '"${DEVICE_ARGS[@]}"' in proof
+
+
+def test_cross_compile_clock_sync_uses_bounded_colima_command() -> None:
+    cross_compile = _just_recipe_block("cross-compile")
+
+    assert "python3 scripts/sync-container-clock.py" in cross_compile
+    assert "docker run --rm --privileged alpine date" not in cross_compile
 
 
 def test_security_event_rows_go_through_security_engine_emitter() -> None:
