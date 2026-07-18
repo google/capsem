@@ -444,7 +444,8 @@ def test_install_e2e_generates_manifest_through_admin_rail() -> None:
     assert 'create_minimal_initrd_if_missing "$ASSETS_DIR/$arch/initrd.img"' in script
     assert 'write_if_missing "$ASSETS_DIR/$arch/initrd.img"' not in script
     assert "cpio -o -H newc" not in script
-    assert "gzip.open" in script
+    assert "gzip.GzipFile" in script
+    assert "mtime=0" in script
     assert "TRAILER!!!" in script
     assert 'write_if_missing "$ASSETS_DIR/$arch/rootfs.erofs"' in script
     assert "scripts/gen_manifest.py" not in script
@@ -1021,17 +1022,21 @@ def test_cdxgen_release_tool_prerequisite_is_documented() -> None:
         _source_text("skills/dev-setup/SKILL.md"),
     ]
 
-    assert "cdxgen not found (npm install -g @cyclonedx/cdxgen)" in release_preflight
+    assert 'CDXGEN_VERSION="12.7.0"' in release_preflight
+    assert 'CDXGEN_ACTUAL_VERSION=$(cdxgen --version' in release_preflight
+    assert 'if [ "$CDXGEN_ACTUAL_VERSION" = "$CDXGEN_VERSION" ]' in release_preflight
+    assert "npm install -g @cyclonedx/cdxgen@12.7.0" in release_preflight
     assert "for tool in gh openssl cargo-sbom cdxgen" in doctor
     assert 'skip "$tool (only needed for releases)"' in doctor
-    assert "npm install -g @cyclonedx/cdxgen@latest" in asset_workflow
+    assert "npm install -g @cyclonedx/cdxgen@12.7.0" in asset_workflow
+    assert "@cyclonedx/cdxgen@latest" not in asset_workflow
     assert "CAPSEM_CDXGEN_CMD: cdxgen" in asset_workflow
 
     for source in docs_and_skills:
         normalized = " ".join(source.split())
         assert "cdxgen" in source
         assert "release-only" in normalized.lower()
-        assert "npm install -g @cyclonedx/cdxgen" in source
+        assert "npm install -g @cyclonedx/cdxgen@12.7.0" in source
         assert "check-release-workflow.sh" in source
 
 
@@ -2392,7 +2397,8 @@ def test_release_process_skill_documents_multi_channel_graph() -> None:
         "Manifest records are retained for auditability",
         "package artifacts separately from the per-binary inventory",
         "Binaries are executable files inside those packages",
-        "SHA-256, BLAKE3, HMAC",
+        "SHA-256, and BLAKE3",
+        "public release graphs never publish HMAC fields",
         "Profiles own their config files, profile images, ABOM/OBOM evidence",
         "`min_capsem_version`",
         "Binary releases are explicitly dispatched",
@@ -2433,7 +2439,8 @@ def test_docs_describe_multi_channel_release_graph() -> None:
         "package artifacts",
         "per-binary inventory",
         "Every executable inside each package must be listed",
-        "SHA-256, BLAKE3, HMAC",
+        "SHA-256, and BLAKE3",
+        "HMAC fields are not published",
         "`min_capsem_version`",
         "Profiles own profile images, config files, software inventory, and ABOM/OBOM",
         "profile-owned config, image, ABOM, and OBOM files",

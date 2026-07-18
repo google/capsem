@@ -83,6 +83,25 @@ that slice. A workflow-only build, even when another test validates its input
 schema, is an Ironbank violation because the produced artifact is unaccounted
 for.
 
+Tool and scanner parity is part of artifact parity. Pin release-only generators
+to one exact version across the local host-builder image, builder default, and
+workflow installer; a contract test must reject `@latest` and mismatched pins.
+Scan the extracted exported guest filesystem with the exact invocation proven
+against the complete Capsem image. Do not change scanner modes from a tiny
+fixture alone: cdxgen 12.7.0 `rootfs` mode passes a minimal Debian fixture but
+emits invalid CycloneDX license data for the full image, while the pinned `os`
+mode with the extracted directory as its target is the qualified rail. Bound
+successful scanner output while preserving captured diagnostics on failure.
+
+Cross-architecture artifacts do not imply cross-architecture helper tools.
+Every Docker helper that post-processes an exported artifact must pass an
+explicit host-native `--platform`; otherwise an arm64 guest build on x86 CI can
+silently run `mkfs.erofs` under QEMU, while a Mac may exercise a different path.
+Test the x86_64/amd64 and arm64/aarch64 host aliases and reject unknown hosts.
+Capture verbose successful helper output so per-file progress cannot starve a
+runner. A qualification runner blackout during an expensive tool is a missing
+local/CI resource contract, not permission to rerun unchanged.
+
 Run `scripts/check-hardcoded-release-selections.sh` at the start of `just test`.
 This source guard is a release contract, not a style check: user-facing and
 profile-scoped requests must obtain profile ids from arguments or the installed
@@ -118,6 +137,15 @@ from the same source snapshot. The local gate qualifies uncommitted candidate
 bytes from the worktree; it must never generate descriptors from the worktree
 and then fetch artifact bytes from `HEAD`. Production release workflows keep
 using an immutable git ref. Guard both modes with functional tests.
+
+Release graph contract tests must use deterministic prepared assets unless a
+test explicitly owns full-blob hashing. Never point multiple module fixtures
+at the checked-in multi-gigabyte `assets/` tree just to test JSON or HTML.
+Asset-build tests prove that one streaming pass records BLAKE3 and SHA-256;
+channel tests prove complete manifest digests avoid reopening remote blobs,
+historical releases cannot resolve through current-file paths, and local copy
+mode fails closed on byte mutation. Use an unreadable/directory blob or an
+instrumented open counter as evidence; a timing threshold alone is not a gate.
 
 Artifact accounting is literal: macOS-local `just test` builds the real
 release-mode `.pkg`, builds both Linux release-mode `.deb` architectures, and

@@ -351,6 +351,20 @@ def test_install_test_restores_host_workspace_ownership() -> None:
     assert 'docker rm -f "$CONTAINER"' in block
 
 
+def test_install_test_keeps_frontend_build_outputs_container_owned() -> None:
+    block = _just_recipe_block("test-install")
+
+    assert (
+        "-v capsem-install-frontend-node-modules:/src/frontend/node_modules"
+        in block
+    )
+    assert "-v capsem-install-frontend-dist:/src/frontend/dist" in block
+    assert (
+        "chown -R capsem:capsem /src/frontend/node_modules /src/frontend/dist"
+        in block
+    )
+
+
 def test_install_test_removes_stale_container_before_fail_closed_cache_reset() -> None:
     block = _just_recipe_block("test-install")
 
@@ -455,7 +469,8 @@ def test_local_linux_preflight_contains_asset_ci_release_tools() -> None:
     )[0]
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
 
-    assert "@cyclonedx/cdxgen@latest" in host_builder
+    assert "@cyclonedx/cdxgen@12.7.0" in host_builder
+    assert "@cyclonedx/cdxgen@latest" not in host_builder
     assert "just build-host-image" in preflight
     assert "if ! docker image inspect capsem-host-builder" not in preflight
     assert "cdxgen --version" in preflight

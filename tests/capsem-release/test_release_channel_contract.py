@@ -99,15 +99,24 @@ def _build_release_channel(
     *,
     manifest_path: Path | None = None,
     assets_dir: Path | None = None,
+    asset_source_base: str | None = None,
 ) -> None:
-    source_manifest = manifest_path or PROJECT_ROOT / "assets" / "manifest.json"
+    if manifest_path is None:
+        prepared_assets = dist.parent / "prepared-assets"
+        _run(
+            ["bash", "scripts/prepare-install-test-assets.sh"],
+            env={"CAPSEM_ASSETS_DIR": str(prepared_assets)},
+        )
+        manifest_path = prepared_assets / "manifest.json"
+        assets_dir = prepared_assets
+    source_manifest = manifest_path
     working_manifest = dist.parent / "manifest-with-binary-metadata.json"
     working_manifest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_manifest, working_manifest)
     _record_test_binary_metadata(working_manifest, dist.parent / "binary-artifacts")
     manifest_url = working_manifest.resolve().as_uri()
-    assets_dir = assets_dir or PROJECT_ROOT / "assets"
-    _run_admin(
+    assets_dir = assets_dir or manifest_path.parent
+    command = [
         "assets",
         "channel",
         "build",
@@ -119,7 +128,10 @@ def _build_release_channel(
         CHANNEL,
         "--out-dir",
         str(dist),
-    )
+    ]
+    if asset_source_base is not None:
+        command.extend(["--asset-source-base", asset_source_base])
+    _run_admin(*command)
     _run(
         ["pnpm", "--dir", "release-site", "install", "--frozen-lockfile"],
         timeout=180,
@@ -456,6 +468,122 @@ def test_fresh_install_assets_generate_release_channel_evidence(
 
     with _serve_release_channel(dist) as url:
         assert _validate_release_site(url, capsys=capsys) == 0
+
+
+def _add_sha256_to_current_assets(manifest_path: Path, assets_dir: Path) -> dict[str, Any]:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    current = manifest["assets"]["current"]
+    for arch, entries in manifest["assets"]["releases"][current]["arches"].items():
+        for logical_name, entry in entries.items():
+            entry["sha256"] = hashlib.sha256(
+                (assets_dir / arch / logical_name).read_bytes()
+            ).hexdigest()
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return manifest
+
+
+def test_channel_build_never_hydrates_historical_release_from_current_asset_paths(
+    tmp_path: Path,
+) -> None:
+    assets_dir = tmp_path / "assets"
+    dist = tmp_path / "dist"
+    _run(
+        ["bash", "scripts/prepare-install-test-assets.sh"],
+        env={"CAPSEM_ASSETS_DIR": str(assets_dir)},
+    )
+    manifest_path = assets_dir / "manifest.json"
+    manifest = _add_sha256_to_current_assets(manifest_path, assets_dir)
+    current = manifest["assets"]["current"]
+    historical = json.loads(json.dumps(manifest["assets"]["releases"][current]))
+    for entries in historical["arches"].values():
+        for entry in entries.values():
+            entry["hash"] = "f" * 64
+            entry["sha256"] = "e" * 64
+    manifest["assets"]["releases"]["2025.0101.1"] = historical
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    _build_release_channel(
+        dist,
+        manifest_path=manifest_path,
+        assets_dir=assets_dir,
+        asset_source_base="https://example.invalid/assets-v{asset_version}",
+    )
+
+
+def test_remote_channel_build_uses_manifest_digests_without_reopening_vm_blobs(
+    tmp_path: Path,
+) -> None:
+    assets_dir = tmp_path / "assets"
+    dist = tmp_path / "dist"
+    _run(
+        ["bash", "scripts/prepare-install-test-assets.sh"],
+        env={"CAPSEM_ASSETS_DIR": str(assets_dir)},
+    )
+    manifest_path = assets_dir / "manifest.json"
+    manifest = _add_sha256_to_current_assets(manifest_path, assets_dir)
+    current = manifest["assets"]["current"]
+    for arch, entries in manifest["assets"]["releases"][current]["arches"].items():
+        rootfs_name = next(name for name in entries if name.startswith("rootfs."))
+        rootfs = assets_dir / arch / rootfs_name
+        rootfs.unlink()
+        rootfs.mkdir()
+
+    _build_release_channel(
+        dist,
+        manifest_path=manifest_path,
+        assets_dir=assets_dir,
+        asset_source_base="https://example.invalid/assets-v{asset_version}",
+    )
+
+
+def test_local_channel_copy_fails_closed_on_asset_byte_mutation(tmp_path: Path) -> None:
+    assets_dir = tmp_path / "assets"
+    dist = tmp_path / "dist"
+    _run(
+        ["bash", "scripts/prepare-install-test-assets.sh"],
+        env={"CAPSEM_ASSETS_DIR": str(assets_dir)},
+    )
+    manifest_path = assets_dir / "manifest.json"
+    manifest = _add_sha256_to_current_assets(manifest_path, assets_dir)
+    current = manifest["assets"]["current"]
+    arch = next(iter(manifest["assets"]["releases"][current]["arches"]))
+    rootfs_name = next(
+        name
+        for name in manifest["assets"]["releases"][current]["arches"][arch]
+        if name.startswith("rootfs.")
+    )
+    (assets_dir / arch / rootfs_name).write_bytes(b"tampered but locally present\n")
+    _record_test_binary_metadata(manifest_path, tmp_path / "binary-artifacts")
+
+    result = subprocess.run(
+        [
+            "cargo",
+            "run",
+            "-p",
+            "capsem-admin",
+            "--quiet",
+            "--",
+            "assets",
+            "channel",
+            "build",
+            "--manifest",
+            manifest_path.resolve().as_uri(),
+            "--assets-dir",
+            str(assets_dir),
+            "--channel",
+            CHANNEL,
+            "--out-dir",
+            str(dist),
+        ],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "rootfs" in result.stderr
+    assert "mismatch" in result.stderr
 
 
 def test_release_channel_contract_rejects_swapped_manifest(

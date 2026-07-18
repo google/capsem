@@ -1789,6 +1789,8 @@ test-install:
         -v capsem-install-target:/cargo-target \
         -v capsem-install-cargo:/usr/local/cargo/registry \
         -v capsem-install-rustup:/usr/local/rustup \
+        -v capsem-install-frontend-node-modules:/src/frontend/node_modules \
+        -v capsem-install-frontend-dist:/src/frontend/dist \
         "$IMAGE" /usr/lib/systemd/systemd
     # Wait for systemd to be ready
     for i in $(seq 1 30); do
@@ -1802,7 +1804,12 @@ test-install:
     # channel = "stable") try to write /usr/local/rustup/tmp/, which is
     # root-owned in the baked image -- without this chown, cargo build as
     # the capsem user dies with `Permission denied (os error 13)`.
-    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target && chown -R capsem:capsem /cargo-target /usr/local/cargo /usr/local/rustup"
+    # Frontend dependencies and output must remain container-owned. A macOS
+    # bind mount preserves host ownership even after the best-effort /src
+    # chown below; pnpm can then install successfully while Vite fails later
+    # when it creates node_modules/.vite. Dedicated volumes make both writes
+    # behave exactly like the non-root Linux CI filesystem.
+    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target /src/frontend/node_modules /src/frontend/dist && chown -R capsem:capsem /cargo-target /usr/local/cargo /usr/local/rustup && chown -R capsem:capsem /src/frontend/node_modules /src/frontend/dist"
     # On GitHub runners the bind-mounted /src is owned by uid 1001
     # (runner), but the container builds as uid 1000 (capsem). Anything
     # that tries to write into /src (pnpm/vite temp files, Tauri build.rs

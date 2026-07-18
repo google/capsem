@@ -37,7 +37,6 @@ create_minimal_initrd_if_missing() {
     python3 - "$path" "$arch" <<'PY'
 import gzip
 import sys
-import time
 from pathlib import Path
 
 
@@ -53,7 +52,7 @@ def _newc_record(name: str, data: bytes, mode: int, ino: int) -> bytes:
         0,
         0,
         1,
-        int(time.time()),
+        0,
         len(data),
         0,
         0,
@@ -75,8 +74,9 @@ payload = _newc_record(
     1,
 )
 payload += _newc_record("TRAILER!!!", b"", 0, 2)
-with gzip.open(out, "wb", compresslevel=9) as fh:
-    fh.write(payload)
+with out.open("wb") as raw:
+    with gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=9, mtime=0) as fh:
+        fh.write(payload)
 PY
 }
 

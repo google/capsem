@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Made VM asset generation stream BLAKE3 and SHA-256 together into the
+  authoritative manifest, made channel assembly reuse those digests instead
+  of repeatedly reopening gigabyte root files, isolated historical releases
+  from current asset paths, and replaced release graph tests' real asset tree
+  with deterministic prepared fixtures while retaining fail-closed local-copy
+  mutation coverage.
+- Pinned cdxgen 12.7.0 across local and CI asset rails, captured successful
+  scanner chatter, and forced EROFS helper containers onto the Docker host's
+  native Linux platform on Intel Linux and Apple Silicon macOS so cross-guest
+  builds cannot silently compress multi-gigabyte images under QEMU or overwhelm
+  exact-SHA qualification with per-file output.
 - Made local release glow-up staging hardlink immutable package and VM blobs
   on the same filesystem on macOS and Linux, with a tested cross-filesystem
   copy fallback, so exact-SHA qualification cannot exhaust runner disk by

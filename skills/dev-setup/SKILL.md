@@ -133,7 +133,7 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` -- Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`, build VM assets, pack initrd |
 
 Release-only local preflight also needs `cdxgen`. Install it with
-`npm install -g @cyclonedx/cdxgen` before running
+`npm install -g @cyclonedx/cdxgen@12.7.0` before running
 `bash scripts/check-release-workflow.sh` or local VM asset release dry runs.
 
 ### Kernel version

@@ -195,8 +195,8 @@ The public graph is hierarchical and signed by reference:
 1. `channels.json` lists every channel, such as `stable` and `nightly`.
 2. Each channel lists versioned manifest records with exactly one `status`
    enum value: `current`, `supported`, `deprecated`, or `revoked`.
-3. Each manifest record carries `version`, `url`, SHA-256, BLAKE3, HMAC
-   metadata. The only public manifest URL for a channel is
+3. Each manifest record carries `version`, `url`, SHA-256, and BLAKE3
+   metadata; public release graphs never publish HMAC fields. The only public manifest URL for a channel is
    `/assets/<channel>/manifest.json`. Manifest records are retained for
    auditability; retained manifest records are audit rows, not alternate fetch
    URLs. Removal means the record is absent from the channel list, not marked
@@ -546,6 +546,12 @@ entrypoint with a local gate. Current required mappings are:
   Pages site with only the channel being updated. Local qualification must
   materialize profile config from the same candidate worktree used to generate
   its descriptors, while production assembly must use an immutable git ref;
+- VM asset digests: the asset build/ingest boundary streams every immutable
+  blob once and persists BLAKE3 plus SHA-256 in the authoritative manifest.
+  Channel assembly reuses those records and must not hash complete blobs once
+  per channel or test fixture. Only a legacy current entry may be hydrated;
+  historical releases never resolve through current asset paths. Local blob
+  copying hashes while copying once, and graph rendering reuses that result;
 - Linux package assembly: `just test` executes `just cross-compile arm64` and
   `just cross-compile x86_64`, so both publishable `.deb` architecture builds
   are locally accounted for before the release workflow repeats them;
@@ -572,6 +578,27 @@ approximation. The native-musl regression is the model: asset CI installs
 Docker preflight execute `linux_musl_toolchain_available`, which accepts the
 native `musl-gcc` on arm64 and x86_64 without inventing an
 `x86_64-linux-musl-gcc` requirement.
+
+Release-only generators are immutable build inputs. Pin cdxgen to the same
+exact version in the Python asset builder, `docker/Dockerfile.host-builder`, and
+`release-assets.yaml`; contract tests must reject `@latest` and version drift.
+VM OBOM generation targets the extracted guest filesystem directory, never the
+build host `/`, using the invocation qualified against the complete Capsem
+image. For cdxgen 12.7.0 that is `-t os`: its `rootfs` mode passes a minimal
+fixture but emits invalid CycloneDX license data for the full image. A scanner
+mode change therefore requires a full-image RED/green proof, not a toy fixture.
+Successful scanner chatter must be captured/bounded, and failures must still
+surface their diagnostics.
+
+Keep post-processing tools native to the Docker host even when the artifact is
+for another guest architecture. Every EROFS helper container must pass an
+explicit host-native `--platform` (`linux/amd64` for x86_64/amd64 hosts and
+`linux/arm64` for arm64/aarch64 hosts), reject unknown architectures, and
+capture successful `mkfs.erofs` output. Without this, an arm64 asset build on
+x86 CI can silently select arm64 `erofs-utils` and compress a multi-gigabyte
+rootfs under QEMU; the corresponding Mac rail then has different behavior.
+Treat runner loss during this rail as a release-blocking build-system bug
+requiring a RED regression and a new exact candidate, not as a transient rerun.
 
 The unavoidable platform boundaries are Apple signing and notarization,
 hosted-runner KVM, Cloudflare publication, and physical-Mac VZ shell proof.

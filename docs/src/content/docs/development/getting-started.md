@@ -53,7 +53,7 @@ git clone https://github.com/google/capsem.git && cd capsem
 Release-only tools are checked but not all installed by `doctor --fix`. Before
 running `bash scripts/check-release-workflow.sh` or cutting VM asset releases
 locally, install the OBOM generator with
-`npm install -g @cyclonedx/cdxgen`; the manual asset workflow installs the same
+`npm install -g @cyclonedx/cdxgen@12.7.0`; the manual asset workflow installs the same
 tool in CI.
 
 Pressing **Enter** at any prompt accepts the install (Y is the default). Type `n` to skip — bootstrap continues and surfaces the missing tool in the doctor report at the end.

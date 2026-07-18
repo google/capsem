@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs,
-    io::{ErrorKind, Read},
+    io::{ErrorKind, Read, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -1266,18 +1266,13 @@ fn build_assets_channel(
     } else {
         Some(asset_base.to_string())
     };
-    hydrate_asset_entry_sha256(&mut channel_manifest_doc, assets_dir)?;
-    let current_release = channel_manifest_doc
-        .assets
-        .releases
-        .get(&channel_manifest_doc.assets.current)
-        .ok_or_else(|| anyhow!("manifest current asset release is missing"))?;
     let channel_dir = out_dir.join("assets").join(channel);
     let copy_vm_blobs = asset_base == "/assets/releases";
+    let current_asset_version = channel_manifest_doc.assets.current.clone();
     let release_dir = out_dir
         .join("assets")
         .join("releases")
-        .join(&channel_manifest_doc.assets.current);
+        .join(&current_asset_version);
     fs::create_dir_all(out_dir).with_context(|| format!("create {}", out_dir.display()))?;
     if channel_dir.exists() {
         fs::remove_dir_all(&channel_dir)
@@ -1298,18 +1293,34 @@ fn build_assets_channel(
         fs::create_dir_all(&release_dir)
             .with_context(|| format!("create {}", release_dir.display()))?;
     }
+    let mut asset_digest_cache = AssetDigestCache::new();
     let copied_assets = if copy_vm_blobs {
+        let current_release = channel_manifest_doc
+            .assets
+            .releases
+            .get_mut(&current_asset_version)
+            .ok_or_else(|| anyhow!("manifest current asset release is missing"))?;
         copy_assets_channel_release_assets(
             assets_dir,
             &release_dir,
-            &channel_manifest_doc.assets.current,
             current_release,
+            &mut asset_digest_cache,
         )?
     } else {
+        hydrate_current_asset_entry_sha256(
+            &mut channel_manifest_doc,
+            assets_dir,
+            &mut asset_digest_cache,
+        )?;
         0
     };
-    let publishable_profiles =
-        publishable_profiles(&channel_manifest_doc, profiles_dir, asset_base, assets_dir)?;
+    let publishable_profiles = publishable_profiles(
+        &channel_manifest_doc,
+        profiles_dir,
+        asset_base,
+        assets_dir,
+        &mut asset_digest_cache,
+    )?;
     copy_profile_release_files(out_dir, &publishable_profiles.file_copies)?;
     validate_graph_manifest_version(manifest_version)?;
     let graph_manifest_version = manifest_version.to_string();
@@ -2205,47 +2216,52 @@ fn validate_release_date(date: &str) -> Result<()> {
 fn copy_assets_channel_release_assets(
     assets_dir: &Path,
     release_dir: &Path,
-    _asset_version: &str,
-    release: &capsem_core::asset_manager::AssetRelease,
+    release: &mut capsem_core::asset_manager::AssetRelease,
+    cache: &mut AssetDigestCache,
 ) -> Result<usize> {
     let mut copied = 0;
-    for (arch, assets) in &release.arches {
+    for (arch, assets) in &mut release.arches {
         for (logical_name, entry) in assets {
             let dst = release_dir.join(format!("{arch}-{logical_name}"));
-            let check = check_local_asset(assets_dir, arch, logical_name, &entry.hash, entry.size)?;
-            fail_if_local_asset_checks_failed("asset channel release asset check", &[check])?;
             let src = assets_dir.join(arch).join(logical_name);
-            fs::copy(&src, &dst)
-                .with_context(|| format!("copy {} -> {}", src.display(), dst.display()))?;
+            let (bytes, digest) = copy_file_with_digest(&src, &dst)?;
+            validate_asset_digest(arch, logical_name, entry, bytes, &digest)?;
+            if entry.sha256.is_empty() {
+                entry.sha256 = digest["sha256"].as_str().unwrap_or_default().to_string();
+            }
+            cache.insert((arch.clone(), logical_name.clone()), (bytes, digest));
             copied += 1;
         }
     }
     Ok(copied)
 }
 
-fn hydrate_asset_entry_sha256(manifest: &mut ManifestV2, assets_dir: &Path) -> Result<()> {
-    for (asset_version, release) in &mut manifest.assets.releases {
-        for (arch, assets) in &mut release.arches {
-            for (logical_name, entry) in assets {
-                let source = assets_dir.join(arch).join(logical_name);
-                if !source.exists() {
-                    continue;
-                }
-                let bytes =
-                    fs::read(&source).with_context(|| format!("read {}", source.display()))?;
-                let blake3 = blake3::hash(&bytes).to_hex().to_string();
-                if blake3 != entry.hash {
-                    return Err(anyhow!(
-                        "asset {asset_version} {arch}/{logical_name} blake3 mismatch"
-                    ));
-                }
-                if bytes.len() as u64 != entry.size {
-                    return Err(anyhow!(
-                        "asset {asset_version} {arch}/{logical_name} byte count mismatch"
-                    ));
-                }
-                entry.sha256 = format!("{:x}", Sha256::digest(&bytes));
+fn hydrate_current_asset_entry_sha256(
+    manifest: &mut ManifestV2,
+    assets_dir: &Path,
+    cache: &mut AssetDigestCache,
+) -> Result<()> {
+    let asset_version = manifest.assets.current.clone();
+    let release = manifest
+        .assets
+        .releases
+        .get_mut(&asset_version)
+        .ok_or_else(|| anyhow!("manifest current asset release is missing"))?;
+    for (arch, assets) in &mut release.arches {
+        for (logical_name, entry) in assets {
+            if !entry.sha256.is_empty() {
+                continue;
             }
+            let source = assets_dir.join(arch).join(logical_name);
+            let (bytes, digest) = file_digest(&source).with_context(|| {
+                format!(
+                    "hydrate current asset {asset_version} {arch}/{logical_name} from {}",
+                    source.display()
+                )
+            })?;
+            validate_asset_digest(arch, logical_name, entry, bytes, &digest)?;
+            entry.sha256 = digest["sha256"].as_str().unwrap_or_default().to_string();
+            cache.insert((arch.clone(), logical_name.clone()), (bytes, digest));
         }
     }
     Ok(())
@@ -4103,6 +4119,7 @@ fn publishable_profiles(
     profiles_dir: &Path,
     asset_base: &str,
     assets_dir: &Path,
+    asset_digest_cache: &mut AssetDigestCache,
 ) -> Result<PublishableProfiles> {
     let current_release = manifest
         .assets
@@ -4134,7 +4151,6 @@ fn publishable_profiles(
     let refresh_policy = profile_refresh_policy(&profiles);
     let min_binary = current_release.min_binary.clone();
     let mut file_copies = Vec::new();
-    let mut asset_digest_cache = AssetDigestCache::new();
     let mut graph_profiles = Vec::new();
     for profile in &profiles {
         graph_profiles.push(graph_profile_document(
@@ -4145,7 +4161,7 @@ fn publishable_profiles(
             asset_base,
             assets_dir,
             &mut file_copies,
-            &mut asset_digest_cache,
+            asset_digest_cache,
         )?);
     }
     Ok(PublishableProfiles {
@@ -4499,7 +4515,7 @@ fn graph_profile_images(
 type AssetDigestCache = BTreeMap<(String, String), (u64, serde_json::Value)>;
 
 fn asset_entry_digest(
-    assets_dir: &Path,
+    _assets_dir: &Path,
     arch: &str,
     logical_name: &str,
     entry: &capsem_core::asset_manager::AssetEntry,
@@ -4509,43 +4525,18 @@ fn asset_entry_digest(
     if let Some((bytes, digest)) = cache.get(&cache_key) {
         return Ok((*bytes, digest.clone()));
     }
-    let source = assets_dir.join(arch).join(logical_name);
-    let result = if source.exists() {
-        let (bytes, digest) = file_digest(&source)?;
-        if bytes != entry.size {
-            return Err(anyhow!("{arch} {logical_name} byte count mismatch"));
-        }
-        let actual_blake3 = digest
-            .get("blake3")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default();
-        if actual_blake3 != entry.hash {
-            return Err(anyhow!("{arch} {logical_name} blake3 mismatch"));
-        }
-        if !entry.sha256.is_empty() {
-            let actual_sha256 = digest
-                .get("sha256")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default();
-            if actual_sha256 != entry.sha256 {
-                return Err(anyhow!("{arch} {logical_name} sha256 mismatch"));
-            }
-        }
-        (bytes, digest)
-    } else {
-        if entry.sha256.is_empty() {
-            return Err(anyhow!(
-                "asset {arch}/{logical_name} is missing locally and manifest does not carry sha256"
-            ));
-        }
-        (
-            entry.size,
-            serde_json::json!({
-                "sha256": entry.sha256.clone(),
-                "blake3": entry.hash.clone(),
-            }),
-        )
-    };
+    if entry.sha256.is_empty() {
+        return Err(anyhow!(
+            "asset {arch}/{logical_name} manifest entry does not carry sha256"
+        ));
+    }
+    let result = (
+        entry.size,
+        serde_json::json!({
+            "sha256": entry.sha256.clone(),
+            "blake3": entry.hash.clone(),
+        }),
+    );
     cache.insert(cache_key, result.clone());
     Ok(result)
 }
@@ -4705,14 +4696,86 @@ fn copy_profile_release_files(out_dir: &Path, copies: &[ProfileReleaseFileCopy])
 }
 
 fn file_digest(path: &Path) -> Result<(u64, serde_json::Value)> {
-    let bytes = fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let mut source = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let mut sha256 = Sha256::new();
+    let mut blake3 = blake3::Hasher::new();
+    let mut bytes = 0_u64;
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let read = source
+            .read(&mut buffer)
+            .with_context(|| format!("read {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        bytes += read as u64;
+        sha256.update(&buffer[..read]);
+        blake3.update(&buffer[..read]);
+    }
     Ok((
-        bytes.len() as u64,
+        bytes,
         serde_json::json!({
-            "sha256": format!("{:x}", Sha256::digest(&bytes)),
-            "blake3": blake3::hash(&bytes).to_hex().to_string(),
+            "sha256": format!("{:x}", sha256.finalize()),
+            "blake3": blake3.finalize().to_hex().to_string(),
         }),
     ))
+}
+
+fn copy_file_with_digest(source: &Path, destination: &Path) -> Result<(u64, serde_json::Value)> {
+    let mut input = fs::File::open(source).with_context(|| format!("open {}", source.display()))?;
+    let mut output = fs::File::create(destination)
+        .with_context(|| format!("create {}", destination.display()))?;
+    let mut sha256 = Sha256::new();
+    let mut blake3 = blake3::Hasher::new();
+    let mut bytes = 0_u64;
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        let read = input
+            .read(&mut buffer)
+            .with_context(|| format!("read {}", source.display()))?;
+        if read == 0 {
+            break;
+        }
+        output
+            .write_all(&buffer[..read])
+            .with_context(|| format!("write {}", destination.display()))?;
+        bytes += read as u64;
+        sha256.update(&buffer[..read]);
+        blake3.update(&buffer[..read]);
+    }
+    output
+        .flush()
+        .with_context(|| format!("flush {}", destination.display()))?;
+    Ok((
+        bytes,
+        serde_json::json!({
+            "sha256": format!("{:x}", sha256.finalize()),
+            "blake3": blake3.finalize().to_hex().to_string(),
+        }),
+    ))
+}
+
+fn validate_asset_digest(
+    arch: &str,
+    logical_name: &str,
+    entry: &capsem_core::asset_manager::AssetEntry,
+    bytes: u64,
+    digest: &serde_json::Value,
+) -> Result<()> {
+    if bytes != entry.size {
+        return Err(anyhow!("asset {arch}/{logical_name} byte count mismatch"));
+    }
+    let actual_blake3 = digest["blake3"].as_str().unwrap_or_default();
+    if actual_blake3 != entry.hash {
+        return Err(anyhow!("asset {arch}/{logical_name} blake3 mismatch"));
+    }
+    if !entry.sha256.is_empty() {
+        let actual_sha256 = digest["sha256"].as_str().unwrap_or_default();
+        if actual_sha256 != entry.sha256 {
+            return Err(anyhow!("asset {arch}/{logical_name} sha256 mismatch"));
+        }
+    }
+    Ok(())
 }
 
 fn release_graph_id(value: &str) -> String {

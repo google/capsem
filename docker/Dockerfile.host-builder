@@ -60,7 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ---- Node.js 24 + pnpm 10 ----
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g pnpm@10 @cyclonedx/cdxgen@latest \
+    && npm install -g pnpm@10 @cyclonedx/cdxgen@12.7.0 \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Rust stable toolchain ----

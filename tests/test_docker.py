@@ -5,6 +5,7 @@ Build execution tests mock run_cmd (single subprocess seam) -- no Docker needed.
 """
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -20,10 +21,12 @@ from capsem.builder.config import load_guest_config
 from capsem.builder.models import ErofsConfig
 from capsem.builder.docker import (
     BUILD_LEDGER_NAME,
+    CDXGEN_VERSION,
     FALLBACK_KERNEL_VERSION,
     GUEST_BINARIES,
     ROOTFS_SCRIPTS,
     _append_build_ledger,
+    _cdxgen_command,
     _directory_tree_hash,
     _file_ledger_entry,
     _rootfs_config_input_record,
@@ -52,6 +55,18 @@ from capsem.builder.docker import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_cdxgen_default_is_exactly_pinned_and_override_remains_explicit(monkeypatch):
+    monkeypatch.delenv("CAPSEM_CDXGEN_CMD", raising=False)
+    assert _cdxgen_command() == [
+        "npx",
+        "--yes",
+        f"@cyclonedx/cdxgen@{CDXGEN_VERSION}",
+    ]
+
+    monkeypatch.setenv("CAPSEM_CDXGEN_CMD", "cdxgen --custom")
+    assert _cdxgen_command() == ["cdxgen", "--custom"]
 
 
 def test_run_cmd_surfaces_captured_subprocess_stderr(monkeypatch, capsys):
@@ -1029,6 +1044,54 @@ class TestAptClockSkewOptions:
 
 
 class TestCreateErofs:
+    @pytest.mark.parametrize(
+        ("host_machine", "expected_platform"),
+        [
+            ("x86_64", "linux/amd64"),
+            ("AMD64", "linux/amd64"),
+            ("arm64", "linux/arm64"),
+            ("aarch64", "linux/arm64"),
+        ],
+    )
+    @patch("capsem.builder.docker.run_cmd")
+    def test_helper_container_uses_host_native_platform_and_bounded_output(
+        self,
+        mock_run,
+        host_machine,
+        expected_platform,
+        monkeypatch,
+    ):
+        monkeypatch.setattr("capsem.builder.docker.platform.machine", lambda: host_machine)
+
+        create_erofs(
+            "docker",
+            Path("/tmp/rootfs.tar"),
+            Path("/tmp/rootfs.erofs"),
+            "lz4hc",
+            "65536",
+            "12",
+        )
+
+        command = mock_run.call_args.args[0]
+        assert command[command.index("--platform") + 1] == expected_platform
+        assert mock_run.call_args.kwargs["capture"] is True
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_helper_container_rejects_unknown_host_architecture(self, mock_run, monkeypatch):
+        monkeypatch.setattr("capsem.builder.docker.platform.machine", lambda: "riscv64")
+
+        with pytest.raises(RuntimeError, match="unsupported Docker host architecture: riscv64"):
+            create_erofs(
+                "docker",
+                Path("/tmp/rootfs.tar"),
+                Path("/tmp/rootfs.erofs"),
+                "lz4hc",
+                "65536",
+                "12",
+            )
+
+        mock_run.assert_not_called()
+
     @patch("capsem.builder.docker.run_cmd")
     def test_zstd_uses_modern_erofs_utils_image(self, mock_run):
         create_erofs(
@@ -1186,6 +1249,7 @@ class TestBuildLedger:
         cdxgen_cmd = mock_run.call_args_list[1][0][0]
         assert cdxgen_cmd[:4] == ["cdxgen", "-t", "os", "-o"]
         assert cdxgen_cmd[4] == str(output)
+        assert mock_run.call_args_list[1].kwargs["capture"] is True
 
     @patch("capsem.builder.docker.remove_image")
     @patch("capsem.builder.docker.extract_software_inventory")
@@ -1617,6 +1681,32 @@ class TestGenerateChecksums:
 
         assert second["assets"]["current"] == first["assets"]["current"]
 
+    def test_digest_enrichment_does_not_mint_a_new_asset_release(self, tmp_path):
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
+
+        generate_checksums(tmp_path, "0.13.0")
+        manifest_path = tmp_path / "manifest.json"
+        legacy = json.loads(manifest_path.read_text())
+        first_version = legacy["assets"]["current"]
+        for entries in legacy["assets"]["releases"][first_version]["arches"].values():
+            for entry in entries.values():
+                entry.pop("sha256")
+        manifest_path.write_text(json.dumps(legacy, indent=2) + "\n")
+
+        generate_checksums(tmp_path, "0.13.0")
+        enriched = json.loads(manifest_path.read_text())
+
+        assert enriched["assets"]["current"] == first_version
+        assert all(
+            entry.get("sha256")
+            for entries in enriched["assets"]["releases"][first_version]["arches"].values()
+            for entry in entries.values()
+        )
+
     def test_manifest_increments_release_for_changed_assets(self, tmp_path):
         arm64 = tmp_path / "arm64"
         arm64.mkdir()
@@ -1650,6 +1740,10 @@ class TestGenerateChecksums:
         for filename, entry in arm64_entries.items():
             assert "/" not in filename
             assert len(entry["hash"]) == 64  # blake3 hex digest
+            assert len(entry["sha256"]) == 64
+            assert entry["sha256"] == hashlib.sha256(
+                (arm64 / filename).read_bytes()
+            ).hexdigest()
             assert entry["size"] > 0
 
     def test_manifest_includes_obom_when_rootfs_build_emits_it(self, tmp_path):

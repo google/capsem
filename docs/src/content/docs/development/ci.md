@@ -312,8 +312,8 @@ calls `release-channel.yaml`.
 Local release preflight has one extra release-only OBOM prerequisite beyond the
 normal developer bootstrap path: `bash scripts/check-release-workflow.sh`
 expects `cdxgen` in `PATH`. Install it with
-`npm install -g @cyclonedx/cdxgen` before local profile image release dry runs; the
-manual asset workflow installs `@cyclonedx/cdxgen@latest` in CI before invoking
+`npm install -g @cyclonedx/cdxgen@12.7.0` before local profile image release dry runs; the
+manual asset workflow installs `@cyclonedx/cdxgen@12.7.0` in CI before invoking
 the build with `CAPSEM_CDXGEN_CMD=cdxgen`.
 
 `release.capsem.org` is the asset channel publication surface. It is generated
@@ -355,6 +355,12 @@ readiness contract, so it checks the index, `channels.json`, selected channel
 manifest records, package-owned binaries, profile-owned evidence documents,
 BLAKE3/SHA-256 content, attestation references, and cache headers rather than
 only checking that files exist.
+
+VM asset hashing is owned by the asset build boundary. One streaming pass
+records BLAKE3 and SHA-256 in `manifest.json`; stable/nightly graph assembly
+reuses that evidence and test-only graph fixtures use deterministic prepared
+assets instead of the checked-in multi-gigabyte rootfs. Local-copy mode hashes
+while copying once and fails closed on byte drift.
 
 Live profile image releases run the same Cloudflare Pages project preflight before
 the matrix builds start. Dry runs skip that API check, but `dry_run=false` must

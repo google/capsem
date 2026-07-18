@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CDXGEN_VERSION = "12.7.0"
 
 
 def _read(path: str) -> str:
@@ -17,7 +19,8 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     asset_workflow = _read(".github/workflows/release-assets.yaml")
     channel_workflow = _read(".github/workflows/release-channel.yaml")
 
-    assert "npm install -g @cyclonedx/cdxgen@latest" in asset_workflow
+    assert f"npm install -g @cyclonedx/cdxgen@{CDXGEN_VERSION}" in asset_workflow
+    assert "@cyclonedx/cdxgen@latest" not in asset_workflow
     assert "attestations: write" in asset_workflow
     assert "id-token: write" in asset_workflow
     assert "CAPSEM_CDXGEN_CMD: cdxgen" in asset_workflow
@@ -76,12 +79,34 @@ def test_builder_emits_obom_and_keeps_build_ledger_debug_scoped() -> None:
 
     assert 'OBOM_ASSET = "obom.cdx.json"' in builder
     assert 'BUILD_LEDGER_NAME = "build-ledger.log"' in builder
+    assert f'CDXGEN_VERSION = "{CDXGEN_VERSION}"' in builder
+    assert '"-t",\n            "os"' in builder
+    assert 'run_cmd([\n            *_cdxgen_command(),' in builder
+    assert '], capture=True)' in builder
     assert "def generate_cyclonedx_obom" in builder
     assert "cdxgen" in builder
     assert "CAPSEM_CDXGEN_CMD" in builder
     assert "The build ledger records declared build inputs" in builder
     assert "This OBOM is the runtime" in builder
     assert '"capsem.build_ledger.v1"' in builder
+
+
+def test_cdxgen_is_pinned_identically_across_local_and_ci_asset_rails() -> None:
+    builder = _read("src/capsem/builder/docker.py")
+    host_builder = _read("docker/Dockerfile.host-builder")
+    asset_workflow = _read(".github/workflows/release-assets.yaml")
+
+    pins = {
+        "builder": re.search(r'CDXGEN_VERSION = "([0-9.]+)"', builder),
+        "host_builder": re.search(r'@cyclonedx/cdxgen@([0-9.]+)', host_builder),
+        "asset_workflow": re.search(r'@cyclonedx/cdxgen@([0-9.]+)', asset_workflow),
+    }
+    assert all(match is not None for match in pins.values())
+    assert {match.group(1) for match in pins.values() if match is not None} == {
+        CDXGEN_VERSION
+    }
+    for text in (builder, host_builder, asset_workflow):
+        assert "@cyclonedx/cdxgen@latest" not in text
 
 
 def test_admin_materialization_and_service_routes_expose_verified_obom_evidence() -> None:

@@ -79,8 +79,10 @@ cargo sbom --output-format spdx_json_2_3 > capsem-sbom.spdx.json
 | Attestation | SBOM attested against the macOS `.pkg` artifact |
 
 VM base images publish an Operations Bill of Materials as CycloneDX JSON. CI
-generates it with `cdxgen -t os` against the exported Linux rootfs before EROFS
-cleanup, pins it in `manifest.json`, and publishes it with the profile assets.
+generates it with pinned cdxgen `-t os` against the extracted exported Linux
+rootfs directory (never the build host `/`) before EROFS cleanup, pins it in
+`manifest.json`, and publishes it with the profile assets. That exact invocation
+is qualified against the complete Capsem filesystem, not only a tiny fixture.
 
 | Field | Value |
 |-------|-------|
@@ -122,7 +124,8 @@ future release intentionally publishes them as separate evidence artifacts.
 
 ## Asset integrity
 
-VM assets (kernel, initrd, rootfs) are verified via BLAKE3 hashes at every stage
+VM assets (kernel, initrd, rootfs) are recorded with BLAKE3 and SHA-256 at the
+asset build boundary and verified via BLAKE3 identity at every stage
 from build to boot. The checked-in profile is materialized into
 `target/config/` before runtime, so the service boots from a generated profile
 whose asset URLs, hashes, and sizes come directly from `assets/manifest.json`.
@@ -139,7 +142,7 @@ supported public path.
 
 ```mermaid
 graph TD
-    A["Build assets<br/>capsem-admin manifest generate"] --> B["manifest.json<br/>(BLAKE3 hashes + sizes)"]
+    A["Build assets<br/>capsem-admin manifest generate"] --> B["manifest.json<br/>(BLAKE3 + SHA-256 + sizes)"]
     B --> C["Release<br/>packages + arch-prefixed VM assets"]
     C --> D["Download<br/>profile/corp selected URL"]
     D --> E["Verify hashes<br/>BLAKE3 per-file check"]
@@ -152,7 +155,7 @@ The public update graph starts at `https://release.capsem.org/channels.json`.
 It lists channels such as stable and nightly. Each channel contains versioned
 manifest records, and every record has exactly one `status` enum value:
 `current`, `supported`, `deprecated`, or `revoked`. Manifest records carry
-`version`, URL, SHA-256, BLAKE3, HMAC metadata. They remain present for
+`version`, URL, SHA-256, and BLAKE3 metadata. HMAC fields are not published. They remain present for
 auditability; absence from the channel list is removal.
 
 The selected manifest is the compatibility and hash authority for one channel.
@@ -170,7 +173,6 @@ to profile catalogs:
       "url": "https://github.com/google/capsem/releases/download/v1.4.0/Capsem-1.4.0.pkg",
       "sha256": "<sha256>",
       "blake3": "<blake3>",
-      "hmac": "<hmac>",
       "bytes": 12345678,
       "sbom": "https://github.com/google/capsem/releases/download/v1.4.0/capsem-sbom.spdx.json"
     }
@@ -183,7 +185,6 @@ to profile catalogs:
       "path": "/usr/local/bin/capsem",
       "sha256": "<sha256>",
       "blake3": "<blake3>",
-      "hmac": "<hmac>",
       "sbom_component": "SPDXRef-File-capsem"
     }
   ],
@@ -193,7 +194,6 @@ to profile catalogs:
       "revision": "1.0.0-stable.20260702",
       "sha256": "<sha256>",
       "blake3": "<blake3>",
-      "hmac": "<hmac>"
     }
   ]
 }
@@ -245,10 +245,13 @@ channel list. Runtime selection ignores revoked records.
 ## Manifest Role
 
 `manifest.json` is channel metadata: package artifacts, per-binary inventory,
-profile catalog references, hashes, HMACs, and compatibility. It is published
+profile catalog references, hashes, and compatibility. It is published
 with SBOM and provenance attestations. Runtime trust comes from the selected
 manifest URL, profile-owned file metadata, SHA-256/BLAKE3 verification of the
-downloaded bytes, and HMAC verification of the release graph records.
+downloaded bytes, and immutable release provenance. Channel assembly reuses
+the complete asset digests recorded at build time instead of reopening the
+same rootfs for each channel. Local blob copies hash and validate in their
+single copy stream; historical releases are never hydrated from current paths.
 
 For a custom corp package, generate and verify the manifest from the built asset
 directory before packaging:

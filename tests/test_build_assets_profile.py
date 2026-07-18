@@ -219,7 +219,8 @@ def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
     release = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
 
-    assert "npm install -g @cyclonedx/cdxgen@latest" in workflow
+    assert "npm install -g @cyclonedx/cdxgen@12.7.0" in workflow
+    assert "@cyclonedx/cdxgen@latest" not in workflow
     assert "CAPSEM_CDXGEN_CMD: cdxgen" in workflow
     upload_step = workflow.split("- name: Publish immutable GitHub asset release", maxsplit=1)[
         1

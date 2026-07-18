@@ -7,6 +7,7 @@ to produce VM boot assets. Supports multi-architecture output (arm64, x86_64).
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import os
 import platform
@@ -32,6 +33,7 @@ ZSTD_EROFS_UTILS_IMAGE = "debian:trixie-slim"
 BOOT_ASSETS = ("vmlinuz", "initrd.img")
 ROOTFS_ASSET_PREFERENCE = ("rootfs.erofs",)
 OBOM_ASSET = "obom.cdx.json"
+CDXGEN_VERSION = "12.7.0"
 SOFTWARE_INVENTORY_ASSET = "software-inventory.json"
 BUILD_LEDGER_NAME = "build-ledger.log"
 
@@ -450,6 +452,16 @@ def export_container_fs(
         run_cmd([runtime, "rm", cid])
 
 
+def _native_linux_platform() -> str:
+    """Return the Linux container platform matching the Docker host CPU."""
+    machine = platform.machine().lower()
+    if machine in {"x86_64", "amd64"}:
+        return "linux/amd64"
+    if machine in {"arm64", "aarch64"}:
+        return "linux/arm64"
+    raise RuntimeError(f"unsupported Docker host architecture: {machine}")
+
+
 def create_erofs(
     runtime: str,
     tar_path: Path,
@@ -485,9 +497,10 @@ def create_erofs(
     mkdir_output = "" if out_dir == "." else f"mkdir -p /assets/{out_dir} && "
     host_uid = os.getuid()
     host_gid = os.getgid()
+    host_platform = _native_linux_platform()
 
     run_cmd([
-        runtime, "run", "--rm",
+        runtime, "run", "--rm", "--platform", host_platform,
         "-v", f"{common_dir}:/assets",
         image, "bash", "-c",
         f"DEBIAN_FRONTEND=noninteractive apt-get "
@@ -497,7 +510,7 @@ def create_erofs(
         f"mkfs.erofs -Enosbcrc -z{compression}{level_flag}{cluster_flag} "
         f"/assets/{out_rel} /rootfs && "
         f"chown {host_uid}:{host_gid} /assets/{out_rel}",
-    ])
+    ], capture=True)
 
 
 def erofs_utils_image_for(compression: str) -> str:
@@ -838,7 +851,10 @@ def _cdxgen_command() -> list[str]:
     default uses npm's package runner so the rootfs build does not depend on a
     globally installed binary.
     """
-    configured = os.environ.get("CAPSEM_CDXGEN_CMD", "npx --yes @cyclonedx/cdxgen@latest")
+    configured = os.environ.get(
+        "CAPSEM_CDXGEN_CMD",
+        f"npx --yes @cyclonedx/cdxgen@{CDXGEN_VERSION}",
+    )
     command = shlex.split(configured)
     if not command:
         raise RuntimeError("CAPSEM_CDXGEN_CMD must not be empty")
@@ -893,6 +909,10 @@ def generate_cyclonedx_obom(rootfs_tar: Path, output_path: Path, *, repo_root: P
             "-C",
             str(rootfs_dir),
         ])
+        # The scan target is the extracted guest filesystem, never `/`. Keep
+        # cdxgen's release-qualified `os` mode: 12.7.0 `rootfs` mode emits an
+        # invalid SPDX license id for the full Capsem image. Capture successful
+        # scanner chatter; run_cmd still surfaces it when generation fails.
         run_cmd([
             *_cdxgen_command(),
             "-t",
@@ -900,7 +920,7 @@ def generate_cyclonedx_obom(rootfs_tar: Path, output_path: Path, *, repo_root: P
             "-o",
             str(output_path),
             str(rootfs_dir),
-        ])
+        ], capture=True)
     _validate_cyclonedx_obom(output_path)
     return output_path
 
@@ -913,6 +933,19 @@ def _blake3_hex(path: Path) -> str:
         while chunk := f.read(1 << 20):
             hasher.update(chunk)
     return hasher.hexdigest()
+
+
+def _asset_digest_hex(path: Path) -> tuple[str, str]:
+    """Stream one asset once and return its BLAKE3 and SHA-256 digests."""
+    import blake3
+
+    blake3_hasher = blake3.blake3()
+    sha256_hasher = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            blake3_hasher.update(chunk)
+            sha256_hasher.update(chunk)
+    return blake3_hasher.hexdigest(), sha256_hasher.hexdigest()
 
 
 def _utc_now_iso() -> str:
@@ -1120,7 +1153,9 @@ def _next_or_existing_asset_version(
     assets = existing.get("assets", {})
     releases = assets.get("releases", {})
     current = assets.get("current")
-    if current in releases and releases[current].get("arches", {}) == arch_assets:
+    if current in releases and _asset_identity(
+        releases[current].get("arches", {})
+    ) == _asset_identity(arch_assets):
         return current
     for version in releases:
         if not version.startswith(f"{date_prefix}."):
@@ -1130,6 +1165,20 @@ def _next_or_existing_asset_version(
         except ValueError:
             continue
     return f"{date_prefix}.{patch}"
+
+
+def _asset_identity(arches: dict[str, dict[str, dict]]) -> dict[str, dict[str, dict]]:
+    """Return the version-owning identity, excluding enrichable digest metadata."""
+    return {
+        arch: {
+            logical_name: {
+                "hash": entry.get("hash"),
+                "size": entry.get("size"),
+            }
+            for logical_name, entry in assets.items()
+        }
+        for arch, assets in arches.items()
+    }
 
 
 def _hash_filename(logical_name: str, digest: str) -> str:
@@ -1221,20 +1270,21 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
         if (output_dir / SOFTWARE_INVENTORY_ASSET).is_file():
             all_files.append(SOFTWARE_INVENTORY_ASSET)
 
-    # Compute BLAKE3 hashes using Python blake3 library.
+    # Compute both public digests in one streaming pass. Channel assembly owns
+    # graph rendering, not re-hashing immutable multi-gigabyte build outputs.
     b3sums_lines = []
-    hashes: dict[str, str] = {}
+    digests: dict[str, tuple[str, str]] = {}
     for filepath in all_files:
         full_path = output_dir / filepath
-        b3hash = _blake3_hex(full_path)
-        hashes[filepath] = b3hash
+        b3hash, sha256 = _asset_digest_hex(full_path)
+        digests[filepath] = (b3hash, sha256)
         b3sums_lines.append(f"{b3hash}  {filepath}")
     (output_dir / "B3SUMS").write_text("\n".join(b3sums_lines) + "\n")
 
     arch_assets: dict[str, dict[str, dict]] = {}
     for filepath in all_files:
         full_path = output_dir / filepath
-        b3hash = hashes[filepath]
+        b3hash, sha256 = digests[filepath]
         size = full_path.stat().st_size
 
         if "/" in filepath:
@@ -1244,7 +1294,7 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
             filename = filepath
 
         arch_assets.setdefault(arch_name, {})[filename] = {
-            "hash": b3hash, "size": size,
+            "hash": b3hash, "sha256": sha256, "size": size,
         }
 
     # Build v2 manifest with separate assets/binaries sections. Reuse the
