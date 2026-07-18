@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import errno
 import functools
 import hashlib
 import http.server
@@ -65,6 +66,7 @@ def main() -> int:
     manifests = args.work_dir / "manifests"
     for path in (dist, artifacts, manifests):
         path.mkdir(parents=True)
+    report_disk_capacity(args.work_dir, "local release glow-up start")
 
     stable_version = deb_version(args.input_deb)
     nightly_version = stable_version
@@ -95,6 +97,7 @@ def main() -> int:
         nightly_manifest = manifests / "nightly-assets-manifest.json"
         shutil.copy2(args.assets_dir / "manifest.json", stable_manifest)
         shutil.copy2(args.assets_dir / "manifest.json", nightly_manifest)
+        report_disk_capacity(args.work_dir, "before immutable VM blob staging")
         stage_vm_asset_blobs(stable_manifest, args.assets_dir, dist)
 
         record_binary(stable_manifest, stable_version, stable_deb, stable_sbom, stable_download_base)
@@ -172,6 +175,16 @@ def current_package_versions(manifest_path: Path) -> list[str]:
         package["version"]
         for package in manifest.get("packages", [])
         if isinstance(package, dict) and package.get("status") == "current"
+    )
+
+
+def report_disk_capacity(path: Path, label: str) -> None:
+    usage = shutil.disk_usage(path)
+    gib = 1024**3
+    print(
+        f"Disk capacity ({label}): {usage.free / gib:.1f} GiB free "
+        f"of {usage.total / gib:.1f} GiB",
+        flush=True,
     )
 
 
@@ -259,8 +272,28 @@ def build_channel(
 
 
 def copy_artifact_tree(source: Path, target: Path) -> None:
+    """Stage an immutable artifact without duplicating it when possible.
+
+    The local release server only reads these files.  A same-filesystem
+    hardlink therefore preserves the exact bytes while avoiding another copy
+    of the multi-gigabyte VM asset cohort late in ``just test``.  macOS and
+    Linux both support this path.  Filesystems that cannot hardlink across the
+    source/dist boundary retain the portable copy behavior.
+    """
     target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(source, target)
+    try:
+        os.link(source, target)
+    except OSError as error:
+        fallback_errors = {
+            errno.EACCES,
+            errno.EPERM,
+            errno.EXDEV,
+            errno.ENOTSUP,
+            errno.EOPNOTSUPP,
+        }
+        if error.errno not in fallback_errors:
+            raise
+        shutil.copy2(source, target)
 
 
 def stage_vm_asset_blobs(manifest_path: Path, assets_dir: Path, dist: Path) -> None:

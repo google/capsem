@@ -48,6 +48,15 @@ complete local `just test` immediately before committing/pushing the new exact
 candidate. A subsequent production or gate change creates a new candidate and
 therefore needs a new complete run.
 
+Treat disk capacity as a release resource on both macOS and Linux. Never copy
+an already-built multi-gigabyte immutable VM/package cohort into a second
+same-filesystem staging tree late in qualification. Use hardlink-first staging
+for immutable bytes, retain an executable cross-filesystem copy fallback, and
+cover both paths with a constrained-disk regression that fails an accidental
+copy with `ENOSPC`. Measure and report capacity before expensive artifact lanes
+and again before the final installer/glow-up tail; discovering deterministic
+disk exhaustion after the KVM and package rails is a qualification-harness bug.
+
 Keep release-harness bootstrap checks fail-fast inside that canonical recipe.
 Before expensive audits/builds/VMs/package assembly, Stage 0 must build the
 clean Linux install image and prove its container-owned uv environment can run

@@ -141,6 +141,14 @@ therefore a parity failure, not a harmless container implementation detail.
 The canonical gate also has a runtime budget. Measure full local and CI stage
 durations and keep meaningful headroom below the runner's observed lifetime;
 the workflow's declared timeout is not proof that the host will live that long.
+Disk headroom is part of the same budget. Large immutable packages and VM
+blobs that are already present in the candidate workspace must use
+hardlink-first same-filesystem staging on both macOS and Linux, with a tested
+cross-filesystem copy fallback. Add a constrained-disk executable regression
+that makes an accidental full copy fail with `ENOSPC`; a source assertion or
+an unconstrained happy-path run cannot guard a multi-gigabyte late-stage copy.
+Record disk use before every expensive artifact lane and before the final
+install/glow-up tail so capacity failures happen before hours of qualification.
 Parallel Docker gates also own a daemon-space preflight: measure free space,
 reclaim only unused builder cache when below the documented reserve, and fail
 before launching lanes if the reserve remains unavailable. Preserve each lane's

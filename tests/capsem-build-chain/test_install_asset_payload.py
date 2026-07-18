@@ -1,10 +1,13 @@
 """Install package asset-payload contract tests."""
 
+import errno
 import importlib.util
 import os
 import subprocess
-from types import ModuleType
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
+
+import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -562,6 +565,106 @@ def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:
     assert "--asset-source-base" in build_channel
     assert 'f"{base_url}/assets/releases/{{asset_version}}"' in build_channel
     assert "stage_vm_asset_blobs(stable_manifest, args.assets_dir, dist)" in script
+
+
+def test_local_release_glowup_hardlinks_same_filesystem_immutable_blobs(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Late release staging must not allocate a second multi-GB asset cohort."""
+    glowup = _load_local_release_glowup()
+    source = tmp_path / "assets" / "rootfs.erofs"
+    target = tmp_path / "dist" / "x86_64-rootfs.erofs"
+    source.parent.mkdir()
+    source.write_bytes(b"immutable-rootfs-fixture")
+
+    def reject_duplicate_copy(*_args, **_kwargs) -> None:
+        raise OSError(errno.ENOSPC, "constrained release runner")
+
+    monkeypatch.setattr(glowup.shutil, "copy2", reject_duplicate_copy)
+
+    glowup.copy_artifact_tree(source, target)
+
+    assert target.read_bytes() == source.read_bytes()
+    assert os.path.samefile(source, target)
+
+
+def test_local_release_glowup_falls_back_to_copy_across_filesystems(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    """Hardlink optimization must remain correct when source and dist differ."""
+    glowup = _load_local_release_glowup()
+    source = tmp_path / "assets" / "rootfs.erofs"
+    target = tmp_path / "dist" / "x86_64-rootfs.erofs"
+    source.parent.mkdir()
+    source.write_bytes(b"cross-filesystem-rootfs-fixture")
+
+    def reject_cross_device_link(*_args, **_kwargs) -> None:
+        raise OSError(errno.EXDEV, "cross-device link")
+
+    monkeypatch.setattr(glowup.os, "link", reject_cross_device_link)
+
+    glowup.copy_artifact_tree(source, target)
+
+    assert target.read_bytes() == source.read_bytes()
+    assert not os.path.samefile(source, target)
+
+
+def test_local_release_glowup_does_not_copy_after_real_disk_exhaustion(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    glowup = _load_local_release_glowup()
+    source = tmp_path / "assets" / "rootfs.erofs"
+    target = tmp_path / "dist" / "x86_64-rootfs.erofs"
+    source.parent.mkdir()
+    source.write_bytes(b"disk-exhaustion-rootfs-fixture")
+
+    def reject_full_filesystem(*_args, **_kwargs) -> None:
+        raise OSError(errno.ENOSPC, "no free inode or data block")
+
+    copy_attempted = False
+
+    def record_copy_attempt(*_args, **_kwargs) -> None:
+        nonlocal copy_attempted
+        copy_attempted = True
+
+    monkeypatch.setattr(glowup.os, "link", reject_full_filesystem)
+    monkeypatch.setattr(glowup.shutil, "copy2", record_copy_attempt)
+
+    with pytest.raises(OSError, match="no free inode or data block"):
+        glowup.copy_artifact_tree(source, target)
+
+    assert not copy_attempted
+
+
+def test_local_release_glowup_reports_capacity_before_late_asset_staging(
+    tmp_path: Path, monkeypatch, capsys,
+) -> None:
+    glowup = _load_local_release_glowup()
+    gib = 1024**3
+    monkeypatch.setattr(
+        glowup.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=20 * gib, used=8 * gib, free=12 * gib),
+    )
+
+    glowup.report_disk_capacity(tmp_path, "before immutable VM blob staging")
+
+    assert capsys.readouterr().out == (
+        "Disk capacity (before immutable VM blob staging): "
+        "12.0 GiB free of 20.0 GiB\n"
+    )
+
+
+def test_release_skills_require_space_efficient_immutable_staging() -> None:
+    for skill_path in (
+        PROJECT_ROOT / "skills" / "dev-testing" / "SKILL.md",
+        PROJECT_ROOT / "skills" / "release-process" / "SKILL.md",
+    ):
+        skill = skill_path.read_text(encoding="utf-8")
+        assert "hardlink-first" in skill
+        assert "same-filesystem" in skill
+        assert "cross-filesystem" in skill
+        assert "constrained-disk" in skill
 
 
 def test_local_release_glowup_rejects_root_relative_runtime_asset_urls() -> None:

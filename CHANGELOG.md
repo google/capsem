@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Made local release glow-up staging hardlink immutable package and VM blobs
+  on the same filesystem on macOS and Linux, with a tested cross-filesystem
+  copy fallback, so exact-SHA qualification cannot exhaust runner disk by
+  duplicating the multi-gigabyte asset cohort at the final install gate.
 - Made the fail-fast hardcoded release-selection guard run with Python's
   standard library alone, so a clean qualification runner without `rg` cannot
   burn a complete candidate gate before testing begins.
