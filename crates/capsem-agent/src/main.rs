@@ -74,6 +74,34 @@ fn recv_host_msg(fd: RawFd) -> io::Result<HostToGuest> {
     decode_host_msg(&payload).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
+const SYSTEM_FS_MOUNT: &str = "/dev/.capsem-system";
+
+fn fsfreeze_command(mode: &'static str) -> std::process::Command {
+    let mut command = std::process::Command::new("fsfreeze");
+    command.args([mode, SYSTEM_FS_MOUNT]);
+    command
+}
+
+fn set_system_filesystem_frozen(frozen: bool) -> io::Result<()> {
+    let mode = if frozen { "-f" } else { "-u" };
+    let status = fsfreeze_command(mode).status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "fsfreeze {mode} {SYSTEM_FS_MOUNT} exited with {status}"
+        )))
+    }
+}
+
+fn freeze_system_filesystem() -> io::Result<()> {
+    set_system_filesystem_frozen(true)
+}
+
+fn thaw_system_filesystem() -> io::Result<()> {
+    set_system_filesystem_frozen(false)
+}
+
 // ---------------------------------------------------------------------------
 // Clock sync
 // ---------------------------------------------------------------------------
@@ -573,6 +601,14 @@ fn main() {
                     }
 
                     eprintln!("[capsem-agent] reconnected successfully");
+                    // KVM restores the guest at the exact point after the
+                    // persistent ext4 upper was frozen. Thaw it before any
+                    // workspace rebinding or abbreviated BootConfig writes.
+                    if let Err(e) = thaw_system_filesystem() {
+                        eprintln!("[capsem-agent] resume: failed to thaw system filesystem: {e}");
+                        let _ = nix::sys::signal::kill(child, Signal::SIGHUP);
+                        process::exit(1);
+                    }
                     rebind_workspace_after_resume();
                     let _ = send_guest_msg(
                         c_fd,
@@ -631,12 +667,6 @@ fn main() {
                             Err(_) => break, // vsock broke again
                         }
                     }
-
-                    // Unfreeze filesystem in case we were suspended
-                    std::process::Command::new("fsfreeze")
-                        .args(["-u", "/"])
-                        .status()
-                        .ok();
                 }
 
                 // Send BootReady
@@ -1684,7 +1714,9 @@ fn control_loop(
                 // virtio-blk device (/dev/vdb) before host save_state /
                 // host-side APFS clonefile runs. sync() drains the page
                 // cache; BLKFLSBUF + fsync flush the block device's own
-                // buffers. The host then captures a coherent file.
+                // buffers. Finally freeze the ext4 upper so no new write can
+                // race between this acknowledgement and the host pausing all
+                // vCPUs. The host then captures a coherent file.
                 //
                 // /mnt/shared/system/rootfs.img is no longer the guest's
                 // data path -- the guest only writes through /dev/vdb
@@ -1719,21 +1751,24 @@ fn control_loop(
                     );
                 }
 
+                if let Err(e) = freeze_system_filesystem() {
+                    eprintln!(
+                        "[capsem-agent] PrepareSnapshot: failed to freeze system filesystem: {e}"
+                    );
+                    // Do not acknowledge an unsafe snapshot. The host timeout
+                    // path sends Unfreeze and fails the suspend closed.
+                    continue;
+                }
+
                 if ctrl_tx.send(GuestToHost::SnapshotReady).is_err() {
+                    let _ = thaw_system_filesystem();
                     break;
                 }
             }
             Ok(HostToGuest::Unfreeze) => {
-                eprintln!("[capsem-agent] Unfreeze: thawing /");
-                match std::process::Command::new("fsfreeze")
-                    .args(["-u", "/"])
-                    .status()
-                {
-                    Ok(st) if !st.success() => {
-                        eprintln!("[capsem-agent] fsfreeze -u failed: {}", st)
-                    }
-                    Err(e) => eprintln!("[capsem-agent] failed to execute fsfreeze: {e}"),
-                    _ => {}
+                eprintln!("[capsem-agent] Unfreeze: thawing {SYSTEM_FS_MOUNT}");
+                if let Err(e) = thaw_system_filesystem() {
+                    eprintln!("[capsem-agent] failed to thaw system filesystem: {e}");
                 }
             }
             Ok(msg) => {
@@ -1995,6 +2030,28 @@ mod tests {
             libc::close(read_fd);
             libc::close(write_fd);
         }
+    }
+
+    #[test]
+    fn snapshot_freeze_commands_target_the_persistent_ext4_upper() {
+        let freeze = fsfreeze_command("-f");
+        assert_eq!(freeze.get_program(), "fsfreeze");
+        assert_eq!(
+            freeze
+                .get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            ["-f", SYSTEM_FS_MOUNT]
+        );
+
+        let thaw = fsfreeze_command("-u");
+        assert_eq!(thaw.get_program(), "fsfreeze");
+        assert_eq!(
+            thaw.get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            ["-u", SYSTEM_FS_MOUNT]
+        );
     }
 
     #[test]

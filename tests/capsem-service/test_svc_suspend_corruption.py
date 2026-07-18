@@ -112,6 +112,17 @@ class TestSuspendOverlayDurability:
             )
             assert "before.txt" in r.get("stdout", ""), \
                 f"before.txt missing after resume: {r}"
+
+            # Qualification once caught a subtler EXT4 inode failure where
+            # lstat(2) still saw this fast symlink but readlink(2) returned
+            # ENOENT.  `ls -la` reported the corrupt entry and exited 1. Keep
+            # the exact signature in the runtime regression, not only the
+            # broader directory-listability assertion above.
+            link = _exec(client, resumed, "readlink /root/.venv")
+            assert link.get("exit_code") == 0, \
+                f".venv readlink failed after resume: {link}"
+            assert link.get("stdout", "").strip() == "/run/capsem-venv", \
+                f".venv target corrupted after resume: {link}"
         finally:
             client.delete(f"/vms/{name}/delete")
 

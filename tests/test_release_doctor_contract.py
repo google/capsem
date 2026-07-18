@@ -5427,6 +5427,37 @@ def test_capsem_agent_repairs_missing_default_venv() -> None:
     assert "venv activated in boot_env" not in source
 
 
+def test_suspend_snapshot_freezes_ext4_upper_before_ack_and_thaws_first_on_restore() -> None:
+    """KVM checkpoints must not race writes into the persistent ext4 upper."""
+    init = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
+    source = (PROJECT_ROOT / "crates" / "capsem-agent" / "src" / "main.rs").read_text()
+
+    # `/` is overlayfs and does not implement FIFREEZE. Expose its ext4 upper
+    # through the independently mounted devtmpfs so the agent can freeze the
+    # filesystem without creating a bind-mount cycle inside the upperdir.
+    assert "mkdir -p /newroot/dev/.capsem-system" in init
+    assert "mount --bind /mnt/system /newroot/dev/.capsem-system" in init
+    assert 'const SYSTEM_FS_MOUNT: &str = "/dev/.capsem-system";' in source
+
+    prepare = source.split("Ok(HostToGuest::PrepareSnapshot) => {", maxsplit=1)[1].split(
+        "Ok(HostToGuest::Unfreeze) => {", maxsplit=1
+    )[0]
+    assert "freeze_system_filesystem()" in prepare
+    assert prepare.index("freeze_system_filesystem()") < prepare.index(
+        "GuestToHost::SnapshotReady"
+    )
+    assert "continue;" in prepare.split("freeze_system_filesystem()", maxsplit=1)[1].split(
+        "GuestToHost::SnapshotReady", maxsplit=1
+    )[0]
+
+    reconnect = source.split('eprintln!("[capsem-agent] reconnected successfully")', maxsplit=1)[
+        1
+    ].split("// Send BootReady", maxsplit=1)[0]
+    assert reconnect.index("thaw_system_filesystem()") < reconnect.index(
+        "rebind_workspace_after_resume()"
+    )
+
+
 def test_fork_route_flushes_without_thaw_before_clone() -> None:
     """Pre-fork quiescence must not pay fsfreeze cost and thaw before clone."""
     source = (PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs").read_text()

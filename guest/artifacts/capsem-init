@@ -213,6 +213,19 @@ mount -t devtmpfs devtmpfs /newroot/dev
 mkdir -p /newroot/dev/pts
 mount -t devpts   devpts   /newroot/dev/pts
 
+# `/` is overlayfs, which does not implement FIFREEZE.  Suspend must freeze
+# the ext4 filesystem that owns the overlay upperdir before KVM snapshots
+# guest/device state.  Expose that existing mount through devtmpfs (rather
+# than anywhere inside the upperdir, which would create a bind-mount cycle)
+# so capsem-agent can address the real filesystem after chroot.
+if [ "$STORAGE_MODE" = "virtiofs" ]; then
+    mkdir -p /newroot/dev/.capsem-system
+    mount --bind /mnt/system /newroot/dev/.capsem-system || {
+        echo "[capsem-init] FATAL: cannot expose system overlay freeze mount"
+        exit 1
+    }
+fi
+
 # Mount /root workspace.
 # VirtioFS mode: bind-mount the workspace/ dir from the VirtioFS share.
 # Block mode: prefer scratch disk (virtio block device), fall back to tmpfs.
