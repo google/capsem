@@ -50,7 +50,13 @@ def _load_local_release_glowup() -> ModuleType:
 
 
 def _run_docker_space_gate(
-    tmp_path: Path, *, before_kib: int, after_kib: int, minimum_gib: int = 16
+    tmp_path: Path,
+    *,
+    before_kib: int,
+    after_kib: int,
+    after_trim_kib: int | None = None,
+    volumes: str = "",
+    minimum_gib: int = 16,
 ) -> subprocess.CompletedProcess[str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(parents=True)
@@ -60,14 +66,32 @@ def _run_docker_space_gate(
         """#!/bin/sh
 set -eu
 if [ "$1" = "run" ]; then
-    if [ -f "$FAKE_DOCKER_STATE" ]; then
-        free="$FAKE_DOCKER_AFTER_KIB"
-    else
-        free="$FAKE_DOCKER_BEFORE_KIB"
-    fi
-    printf '%s\\n' "$free"
+    case "$*" in
+        *debian:bookworm-slim*)
+            phase=$(cat "$FAKE_DOCKER_STATE" 2>/dev/null || true)
+            if [ "$phase" = "trimmed" ]; then
+                free="$FAKE_DOCKER_AFTER_TRIM_KIB"
+            elif [ "$phase" = "pruned" ]; then
+                free="$FAKE_DOCKER_AFTER_KIB"
+            else
+                free="$FAKE_DOCKER_BEFORE_KIB"
+            fi
+            printf '%s\\n' "$free"
+            ;;
+        *alpine:3.20*)
+            printf 'trimmed\\n' > "$FAKE_DOCKER_STATE"
+            ;;
+        *)
+            printf 'unexpected fake docker run: %s\\n' "$*" >&2
+            exit 97
+            ;;
+    esac
 elif [ "$1" = "builder" ] && [ "$2" = "prune" ]; then
-    : > "$FAKE_DOCKER_STATE"
+    printf 'pruned\\n' > "$FAKE_DOCKER_STATE"
+elif [ "$1" = "volume" ] && [ "$2" = "ls" ]; then
+    printf '%s\\n' "$FAKE_DOCKER_VOLUMES"
+elif [ "$1" = "ps" ]; then
+    :
 elif [ "$1" = "system" ] && [ "$2" = "df" ]; then
     printf 'fake docker disk report\\n'
 else
@@ -84,6 +108,10 @@ fi
             "FAKE_DOCKER_STATE": str(state),
             "FAKE_DOCKER_BEFORE_KIB": str(before_kib),
             "FAKE_DOCKER_AFTER_KIB": str(after_kib),
+            "FAKE_DOCKER_AFTER_TRIM_KIB": str(
+                after_kib if after_trim_kib is None else after_trim_kib
+            ),
+            "FAKE_DOCKER_VOLUMES": volumes,
         }
     )
     return subprocess.run(
@@ -132,6 +160,16 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     assert exhausted.returncode != 0
     assert "requires at least 16 GiB" in exhausted.stderr
     assert "fake docker disk report" in exhausted.stderr
+
+    trimmed = _run_docker_space_gate(
+        tmp_path / "trimmed",
+        before_kib=8 * 1024 * 1024,
+        after_kib=10 * 1024 * 1024,
+        after_trim_kib=20 * 1024 * 1024,
+        volumes="capsem-install-target",
+    )
+    assert trimmed.returncode == 0, trimmed.stderr
+    assert "trimming inactive Cargo incremental cache: capsem-install-target" in trimmed.stdout
 
 
 def test_just_install_does_not_sync_assets_after_installer() -> None:
@@ -459,9 +497,7 @@ def test_install_recipe_invokes_pytest_as_a_module_inside_container() -> None:
 
 def test_full_gate_preflights_clean_install_harness_before_expensive_stages() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
-    full_gate = justfile.split("test: _bootstrap _install-tools", maxsplit=1)[1].split(
-        "\n# Build the capsem-host-builder", maxsplit=1
-    )[0]
+    full_gate = _just_recipe_block("test:")
     preflight = justfile.split("_test-install-harness-preflight:", maxsplit=1)[1].split(
         "\ntest-install:", maxsplit=1
     )[0]
@@ -570,6 +606,54 @@ def test_cross_compile_refreshes_the_cached_host_builder_image() -> None:
     assert host_builder.index("COPY swap-dev-libs.sh") > host_builder.index(
         "cargo install tauri-cli"
     )
+
+
+def test_cross_compile_preflights_docker_capacity_after_builder_before_package() -> None:
+    """Asset lanes must not leave Linux package builds at zero Docker disk."""
+    cross_compile = _just_recipe_block("cross-compile ")
+
+    build_image = cross_compile.index("just build-host-image")
+    capacities = [
+        index
+        for index in range(len(cross_compile))
+        if cross_compile.startswith('scripts/ensure-docker-space.sh" 16', index)
+    ]
+    package = cross_compile.index("docker run --rm")
+
+    # The image build itself needs headroom, then its newly materialized layers
+    # must not leave the package container without room for apt and Tauri.
+    assert len(capacities) == 2
+    assert capacities[0] < build_image < capacities[1] < package
+
+
+def test_successful_full_gate_flushes_docker_target_artifacts() -> None:
+    full_gate = _just_recipe_block("test:")
+    cleanup = _just_recipe_block("_clean-docker-test-targets:")
+
+    assert full_gate.startswith("test: _clean-docker-test-targets ")
+    assert full_gate.index("just test-install") < full_gate.index(
+        "just _clean-docker-test-targets"
+    )
+    for volume in (
+        "capsem-agent-target-arm64",
+        "capsem-agent-target-x86_64",
+        "capsem-host-target-arm64",
+        "capsem-host-target-x86_64",
+        "capsem-install-target",
+        "capsem-linux-rust-target",
+    ):
+        assert volume in cleanup
+    assert "docker builder prune -f --keep-storage 8GB" in cleanup
+    assert "capsem-cargo-registry" not in cleanup
+    assert "capsem-rustup" not in cleanup
+    assert "docker image rm" not in cleanup
+
+
+def test_cross_compile_does_not_bypass_apt_date_validation() -> None:
+    swap_script = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text()
+
+    assert "Acquire::Check-Valid-Until=false" not in swap_script
+    assert "Acquire::Check-Date=false" not in swap_script
 
 
 def test_standalone_install_gate_preflights_privileged_helper() -> None:

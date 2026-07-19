@@ -648,7 +648,10 @@ test-artifacts:
 _bootstrap:
     sh {{justfile_directory()}}/bootstrap.sh -y
 
-test: _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-settings _check-assets _pack-initrd _materialize-config
+# Flush target artifacts left by any prior failed candidate before prerequisites
+# begin rebuilding. A failed run therefore retains cache only for its immediate
+# focused retry; it can never leak into or accumulate across canonical runs.
+test: _clean-docker-test-targets _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-settings _check-assets _pack-initrd _materialize-config
     #!/bin/bash
     set -euo pipefail
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
@@ -870,6 +873,9 @@ test: _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-sett
     # ---- Stage 8: cleanup ---------------------------------------------------
     echo "=== Pruning stale build artifacts ==="
     just _clean-stale
+    # Docker Cargo targets contain hash-suffixed compiler artifacts, not
+    # release outputs. Flush them after every successful canonical gate too.
+    just _clean-docker-test-targets
 
 # Build the capsem-host-builder Docker image (cached, only rebuilds changed layers).
 # See docker/Dockerfile.host-builder for contents.
@@ -1077,9 +1083,17 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         echo "ERROR: unsupported arch '$TARGET_ARCH' (arm64 or x86_64)"
         exit 1
     fi
+    # The image build itself materializes several GiB of layers, so it needs a
+    # capacity check before it starts as well as after it finishes.
+    "$ROOT/scripts/ensure-docker-space.sh" 16
     # Always run the cached image build so changes to the Dockerfile or helper
     # scripts cannot be hidden behind a stale local image.
     just build-host-image
+    # Asset qualification immediately before this recipe can consume the
+    # entire Docker disk. Reclaim unused BuildKit cache only after the builder
+    # image exists, preserving that image while guaranteeing apt and package
+    # assembly have working space.
+    "$ROOT/scripts/ensure-docker-space.sh" 16
     # Sync container VM clock on macOS (prevents apt "not valid yet" errors)
     if [[ "$(uname -s)" = "Darwin" ]]; then
         python3 scripts/sync-container-clock.py
@@ -2238,6 +2252,37 @@ _docker-gc:
     if command -v colima &>/dev/null && colima status &>/dev/null; then
         colima ssh -- sudo fstrim /mnt/lima-colima >/dev/null 2>&1 || true
     fi
+
+# Flush Docker compiler artifacts only after a successful canonical `just test`.
+# Registry and rustup volumes remain as bounded dependency/toolchain caches;
+# tagged builder images remain available for the next focused run.
+_clean-docker-test-targets:
+    #!/bin/bash
+    set -euo pipefail
+    volumes=(
+        capsem-agent-target-arm64
+        capsem-agent-target-x86_64
+        capsem-host-target-arm64
+        capsem-host-target-x86_64
+        capsem-install-target
+        capsem-linux-rust-target
+        capsem-linux-unit-target
+    )
+    for volume in "${volumes[@]}"; do
+        docker volume inspect "$volume" >/dev/null 2>&1 || continue
+        attached=$(docker ps -aq --filter "volume=$volume")
+        if [ -n "$attached" ]; then
+            echo "ERROR: refusing to flush active Docker target volume $volume" >&2
+            docker ps -a --filter "volume=$volume" >&2
+            exit 1
+        fi
+        echo "Flushing completed Docker target volume: $volume"
+        docker volume rm "$volume" >/dev/null
+    done
+    # Bound BuildKit instead of deleting the hot cache completely; emergency
+    # low-space recovery in ensure-docker-space.sh may still prune it all.
+    docker builder prune -f --keep-storage 8GB >/dev/null
+    echo "Flushed completed Docker compiler artifacts."
 
 # --- Internal helpers (hidden from `just --list`) ---
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ensure Docker has enough daemon-local disk for concurrent asset extraction.
+# Ensure Docker has enough daemon-local disk for build/test rails.
 set -euo pipefail
 
 MINIMUM_GIB="${1:-16}"
@@ -30,15 +30,39 @@ if (( FREE_KIB >= MINIMUM_KIB )); then
     exit 0
 fi
 
-echo "Docker has only $((FREE_KIB / 1024 / 1024)) GiB free; pruning unused builder cache before parallel asset extraction."
+echo "Docker has only $((FREE_KIB / 1024 / 1024)) GiB free; pruning unused builder cache."
 docker builder prune -af >/dev/null
 
 FREE_KIB=$(docker_free_kib)
 require_numeric_free_space "$FREE_KIB"
-if (( FREE_KIB < MINIMUM_KIB )); then
-    echo "ERROR: parallel asset extraction requires at least $MINIMUM_GIB GiB free in Docker; only $((FREE_KIB / 1024 / 1024)) GiB remains after pruning unused builder cache." >&2
-    docker system df >&2 || true
-    exit 1
+if (( FREE_KIB >= MINIMUM_KIB )); then
+    echo "Docker reclaimed enough space: $((FREE_KIB / 1024 / 1024)) GiB free."
+    exit 0
 fi
 
-echo "Docker reclaimed enough space: $((FREE_KIB / 1024 / 1024)) GiB free."
+# Cargo target volumes retain hash-suffixed artifacts forever. Preserve compiled
+# dependencies for fast focused retries, but discard incremental compiler state
+# from inactive Capsem target volumes when BuildKit pruning was insufficient.
+# Never touch a mounted volume: another rail or worktree may be using it.
+while IFS= read -r volume; do
+    [[ "$volume" == capsem-*-target* ]] || continue
+    if [ -n "$(docker ps -q --filter "volume=$volume")" ]; then
+        echo "preserving active Cargo target volume: $volume"
+        continue
+    fi
+    echo "trimming inactive Cargo incremental cache: $volume"
+    docker run --rm \
+        -v "$volume:/cargo-target" \
+        alpine:3.20 \
+        sh -c 'find /cargo-target -type d -name incremental -prune -exec rm -rf {} +'
+    FREE_KIB=$(docker_free_kib)
+    require_numeric_free_space "$FREE_KIB"
+    if (( FREE_KIB >= MINIMUM_KIB )); then
+        echo "Docker reclaimed enough space: $((FREE_KIB / 1024 / 1024)) GiB free."
+        exit 0
+    fi
+done < <(docker volume ls --format '{{.Name}}')
+
+echo "ERROR: Docker capacity gate requires at least $MINIMUM_GIB GiB free; only $((FREE_KIB / 1024 / 1024)) GiB remains after pruning BuildKit and inactive incremental caches." >&2
+docker system df -v >&2 || true
+exit 1
