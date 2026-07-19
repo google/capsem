@@ -3,6 +3,7 @@
 import errno
 import importlib.util
 import os
+import re
 import subprocess
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -11,6 +12,21 @@ import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _skill_text(skill_path: Path) -> str:
+    """Read a skill plus the reference files it explicitly links."""
+    skill_dir = skill_path.parent
+    main = skill_path.read_text(encoding="utf-8")
+    parts = [main]
+    for relative in dict.fromkeys(
+        re.findall(r"`(references/[A-Za-z0-9_./-]+\.md)`", main)
+    ):
+        reference = (skill_dir / relative).resolve()
+        assert reference.is_relative_to(skill_dir.resolve())
+        assert reference.is_file(), f"missing linked skill reference: {relative}"
+        parts.append(reference.read_text(encoding="utf-8"))
+    return "\n".join(parts)
 
 
 def _just_recipe_block(name: str) -> str:
@@ -818,7 +834,7 @@ def test_release_skills_require_space_efficient_immutable_staging() -> None:
         PROJECT_ROOT / "skills" / "dev-testing" / "SKILL.md",
         PROJECT_ROOT / "skills" / "release-process" / "SKILL.md",
     ):
-        skill = skill_path.read_text(encoding="utf-8")
+        skill = _skill_text(skill_path)
         assert "hardlink-first" in skill
         assert "same-filesystem" in skill
         assert "cross-filesystem" in skill

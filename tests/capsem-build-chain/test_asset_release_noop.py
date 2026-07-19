@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -13,6 +14,21 @@ SCRIPT = PROJECT_ROOT / "scripts" / "check-asset-release-delta.py"
 PRESERVE_BINARY_SCRIPT = (
     PROJECT_ROOT / "scripts" / "preserve-binary-channel-metadata.py"
 )
+
+
+def _skill_text(skill_path: Path) -> str:
+    """Read a skill plus the reference files it explicitly links."""
+    skill_dir = skill_path.parent
+    main = skill_path.read_text(encoding="utf-8")
+    parts = [main]
+    for relative in dict.fromkeys(
+        re.findall(r"`(references/[A-Za-z0-9_./-]+\.md)`", main)
+    ):
+        reference = (skill_dir / relative).resolve()
+        assert reference.is_relative_to(skill_dir.resolve())
+        assert reference.is_file(), f"missing linked skill reference: {relative}"
+        parts.append(reference.read_text(encoding="utf-8"))
+    return "\n".join(parts)
 
 
 def _manifest(path: Path, *, version: str, rootfs_hash: str = "a" * 64) -> Path:
@@ -634,7 +650,7 @@ def test_asset_release_noop_gate_controls_preview_and_deploy_workflow() -> None:
 def test_asset_release_upload_publishes_arch_prefixed_immutable_release_only_when_live() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release-assets.yaml").read_text()
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
-    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    release_skill = _skill_text(PROJECT_ROOT / "skills/release-process/SKILL.md")
     upload_step = workflow.split("- name: Publish immutable GitHub asset release", maxsplit=1)[
         1
     ].split("\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", maxsplit=1)[0]
