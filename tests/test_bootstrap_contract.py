@@ -76,7 +76,11 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     web_gate = _read("scripts/check-web-surface.sh")
 
     assert "_bootstrap:\n    sh {{justfile_directory()}}/bootstrap.sh -y" in justfile
-    assert "test: _bootstrap _install-tools _clean-stale _pnpm-install" in justfile
+    assert "just _test-candidate" in justfile
+    assert (
+        "_test-candidate: _clean-docker-test-targets _bootstrap _install-tools "
+        "_clean-stale _pnpm-install"
+    ) in justfile
     for command in [
         "uv run ruff check .",
         "uv run ty check src/capsem",
