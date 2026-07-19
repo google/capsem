@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1784493824] - 2026-07-19
+
 ### Added
 - Added a scheduled/manual blocking dependency-audit workflow, while keeping
   upstream RustSec clock changes out of ordinary PR and candidate gates.
