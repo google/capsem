@@ -607,6 +607,25 @@ def test_cross_arch_frontend_build_precedes_foreign_dev_library_swap() -> None:
     assert cross_compile.index(swap) < cross_compile.index(rust)
 
 
+def test_cross_compile_reasserts_pinned_rust_target_before_expensive_work() -> None:
+    """A persistent rustup volume must not mask the builder's pinned targets."""
+    cross_compile = _just_recipe_block("cross-compile ")
+
+    install = "rustup toolchain install 1.97.1 --profile minimal"
+    target = "rustup target add --toolchain 1.97.1 \\$RUST_TARGET"
+    verify = "rustup target list --toolchain 1.97.1 --installed"
+    frontend = "echo '--- Build frontend ---'"
+    swap = "swap-dev-libs \\$DPKG_ARCH"
+
+    assert install in cross_compile
+    assert target in cross_compile
+    assert verify in cross_compile
+    assert cross_compile.index(install) < cross_compile.index(target)
+    assert cross_compile.index(target) < cross_compile.index(verify)
+    assert cross_compile.index(verify) < cross_compile.index(frontend)
+    assert cross_compile.index(verify) < cross_compile.index(swap)
+
+
 def test_deb_repacker_strips_each_elf_with_its_target_tool_and_fails_closed() -> None:
     repack = (PROJECT_ROOT / "scripts/repack-deb.sh").read_text()
 

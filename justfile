@@ -1187,6 +1187,10 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         -w /src \
         capsem-host-builder:latest \
         bash -c "trap 'chown -R \"\$HOST_UID:\$HOST_GID\" /src/dist /src/frontend/node_modules /src/frontend/dist 2>/dev/null || true' EXIT && \
+               echo '--- Verify pinned Rust target ---' && \
+               rustup toolchain install 1.97.1 --profile minimal && \
+               rustup target add --toolchain 1.97.1 \$RUST_TARGET && \
+               rustup target list --toolchain 1.97.1 --installed | grep -Fx \"\$RUST_TARGET\" >/dev/null || { echo \"ERROR: pinned Rust 1.97.1 target \$RUST_TARGET is unavailable in the capsem-rustup cache\" >&2; exit 1; } && \
                echo '--- Build frontend ---' && \
                cd frontend && CI=true pnpm install && pnpm build && cd .. && \
                swap-dev-libs \$DPKG_ARCH && \
