@@ -379,15 +379,35 @@ def test_install_test_removes_stale_container_before_fail_closed_cache_reset() -
 
 
 def test_install_test_runs_local_release_glowup_from_real_package() -> None:
-    block = _just_recipe_block("test-install")
+    block = _just_recipe_block("test-install").replace(r'\"', '"').replace(r"\$", "$")
 
     assert "Running local release glow-up" in block
     assert "scripts/local-release-glowup.py" in block
     assert '--input-deb "$DEB"' in block
     assert "--bin-dir /cargo-target/debug" in block
-    assert "--assets-dir assets" in block
-    assert "--config-root target/config" in block
+    assert '--assets-dir "$INSTALL_ASSETS_DIR"' in block
+    assert '--config-root "$INSTALL_CONFIG_DIR"' in block
     assert "just test-install" in _just_recipe_block("test:")
+
+
+def test_install_test_uses_clean_isolated_asset_fixtures() -> None:
+    block = _just_recipe_block("test-install").replace(r'\"', '"').replace(r"\$", "$")
+
+    assert 'INSTALL_ASSETS_DIR="target/install-test-assets"' in block
+    assert 'INSTALL_CONFIG_DIR="target/install-test-config"' in block
+    assert 'rm -rf "$INSTALL_ASSETS_DIR" "$INSTALL_CONFIG_DIR"' in block
+    assert (
+        'CAPSEM_ASSETS_DIR="$INSTALL_ASSETS_DIR" '
+        "bash scripts/prepare-install-test-assets.sh"
+    ) in block
+    assert (
+        'CAPSEM_ASSETS_DIR="$INSTALL_ASSETS_DIR" '
+        'CAPSEM_CONFIG_OUTPUT_ROOT="/src/$INSTALL_CONFIG_DIR" '
+        "bash scripts/materialize-config.sh"
+    ) in block
+    assert '"$INSTALL_CONFIG_DIR" "$INSTALL_ASSETS_DIR"' in block
+    assert '--assets-dir "$INSTALL_ASSETS_DIR"' in block
+    assert '--config-root "$INSTALL_CONFIG_DIR"' in block
 
 
 def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> None:
@@ -584,6 +604,38 @@ def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:
     assert "--asset-source-base" in build_channel
     assert 'f"{base_url}/assets/releases/{{asset_version}}"' in build_channel
     assert "stage_vm_asset_blobs(stable_manifest, args.assets_dir, dist)" in script
+
+
+def test_local_release_glowup_repack_uses_selected_asset_fixture(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    glowup = _load_local_release_glowup()
+    commands: list[list[str]] = []
+    monkeypatch.setattr(glowup, "run", lambda command, **_kwargs: commands.append(command))
+
+    assets_dir = tmp_path / "isolated-assets"
+    glowup.repack_deb(
+        tmp_path / "input.deb",
+        tmp_path / "output.deb",
+        tmp_path / "bin",
+        tmp_path / "config",
+        assets_dir,
+        "https://release.invalid/assets/stable/manifest.json",
+    )
+
+    assert commands == [
+        [
+            "bash",
+            "scripts/repack-deb.sh",
+            "--manifest",
+            "https://release.invalid/assets/stable/manifest.json",
+            str(tmp_path / "input.deb"),
+            str(tmp_path / "bin"),
+            str(tmp_path / "config"),
+            str(assets_dir),
+            str(tmp_path / "output.deb"),
+        ]
+    ]
 
 
 def test_local_release_glowup_hardlinks_same_filesystem_immutable_blobs(

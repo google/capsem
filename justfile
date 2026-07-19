@@ -1722,6 +1722,8 @@ test-install:
     HOST_UID=$(id -u)
     HOST_GID=$(id -g)
     CONTAINER="capsem-install-test"
+    INSTALL_ASSETS_DIR="target/install-test-assets"
+    INSTALL_CONFIG_DIR="target/install-test-config"
     HOST_ROSETTA_REGISTRATION=not_applicable
     if [ "$(uname -s)" = "Darwin" ] \
         && command -v colima >/dev/null 2>&1 \
@@ -1834,13 +1836,13 @@ test-install:
         "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
     echo "Preparing install-test asset manifest..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && bash scripts/prepare-install-test-assets.sh"
+        "cd /src && rm -rf \"$INSTALL_ASSETS_DIR\" \"$INSTALL_CONFIG_DIR\" && CAPSEM_ASSETS_DIR=\"$INSTALL_ASSETS_DIR\" bash scripts/prepare-install-test-assets.sh"
     echo "Materializing runtime config..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && bash scripts/materialize-config.sh"
+        "cd /src && CAPSEM_ASSETS_DIR=\"$INSTALL_ASSETS_DIR\" CAPSEM_CONFIG_OUTPUT_ROOT=\"/src/$INSTALL_CONFIG_DIR\" bash scripts/materialize-config.sh"
     echo "Repacking .deb with companion binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh --manifest "file://$PWD/assets/manifest.json" "$DEB" /cargo-target/debug target/config assets'
+        "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh --manifest \"file://\$PWD/$INSTALL_ASSETS_DIR/manifest.json\" \"\$DEB\" /cargo-target/debug \"$INSTALL_CONFIG_DIR\" \"$INSTALL_ASSETS_DIR\""
     echo "Installing .deb via dpkg..."
     docker exec "$CONTAINER" bash -c \
         "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"
@@ -1849,7 +1851,7 @@ test-install:
         "mkdir -p /home/capsem/tmp && cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test TMPDIR=/home/capsem/tmp uv run python -m pytest tests/capsem-install/ -v --tb=short"
     echo "Running local release glow-up (install, channel switch, upgrade)..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
-        'cd /src && DEB=$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && python3 scripts/local-release-glowup.py --input-deb "$DEB" --bin-dir /cargo-target/debug --assets-dir assets --config-root target/config --work-dir target/local-release-glowup'
+        "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && python3 scripts/local-release-glowup.py --input-deb \"\$DEB\" --bin-dir /cargo-target/debug --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\" --work-dir target/local-release-glowup"
     if [ "$HOST_ROSETTA_REGISTRATION" = "required" ] \
         && ! colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1; then
         echo "ERROR: systemd install container removed Colima's Rosetta binfmt registration" >&2

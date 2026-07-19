@@ -82,8 +82,22 @@ def main() -> int:
         stable_sbom = artifacts / "stable" / f"v{stable_version}" / "capsem-sbom.spdx.json"
         nightly_sbom = artifacts / "nightly" / f"v{nightly_version}" / "capsem-sbom.spdx.json"
 
-        repack_deb(args.input_deb, stable_deb, args.bin_dir, args.config_root, stable_manifest_url)
-        repack_deb(args.input_deb, nightly_deb, args.bin_dir, args.config_root, nightly_manifest_url)
+        repack_deb(
+            args.input_deb,
+            stable_deb,
+            args.bin_dir,
+            args.config_root,
+            args.assets_dir,
+            stable_manifest_url,
+        )
+        repack_deb(
+            args.input_deb,
+            nightly_deb,
+            args.bin_dir,
+            args.config_root,
+            args.assets_dir,
+            nightly_manifest_url,
+        )
         generate_sbom(stable_sbom, stable_deb)
         generate_sbom(nightly_sbom, nightly_deb)
 
@@ -188,7 +202,14 @@ def report_disk_capacity(path: Path, label: str) -> None:
     )
 
 
-def repack_deb(input_deb: Path, output_deb: Path, bin_dir: Path, config_root: Path, manifest_url: str) -> None:
+def repack_deb(
+    input_deb: Path,
+    output_deb: Path,
+    bin_dir: Path,
+    config_root: Path,
+    assets_dir: Path,
+    manifest_url: str,
+) -> None:
     output_deb.parent.mkdir(parents=True, exist_ok=True)
     run(
         [
@@ -199,7 +220,7 @@ def repack_deb(input_deb: Path, output_deb: Path, bin_dir: Path, config_root: Pa
             str(input_deb),
             str(bin_dir),
             str(config_root),
-            str(PROJECT_ROOT / "assets"),
+            str(assets_dir),
             str(output_deb),
         ]
     )

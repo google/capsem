@@ -71,6 +71,70 @@ def _run(
     return result
 
 
+def _prepare_install_test_assets(path: Path) -> dict[str, Any]:
+    _run(
+        ["bash", "scripts/prepare-install-test-assets.sh"],
+        env={
+            "CAPSEM_ARCH": "arm64",
+            "CAPSEM_ASSETS_DIR": str(path),
+        },
+    )
+    return json.loads((path / "arm64" / "obom.cdx.json").read_text())
+
+
+def _assert_rootfs_scoped_install_test_obom(document: dict[str, Any]) -> None:
+    properties = document["metadata"]["component"].get("properties", [])
+    assert {
+        "name": "capsem:evidence:scope",
+        "value": "exported-rootfs",
+    } in properties
+    assert any(
+        isinstance(component.get("purl"), str)
+        and component["purl"].startswith("pkg:deb/debian/")
+        for component in document["components"]
+    )
+    assert "cdx:osquery:category" not in json.dumps(document)
+
+
+def test_install_test_assets_generate_rootfs_scoped_obom(tmp_path: Path) -> None:
+    _assert_rootfs_scoped_install_test_obom(
+        _prepare_install_test_assets(tmp_path / "assets")
+    )
+
+
+def test_install_test_assets_replace_stale_host_inventory_obom(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    obom = assets / "arm64" / "obom.cdx.json"
+    obom.parent.mkdir(parents=True)
+    obom.write_text(
+        json.dumps(
+            {
+                "bomFormat": "CycloneDX",
+                "specVersion": "1.6",
+                "metadata": {"component": {"name": "build-host", "type": "device"}},
+                "components": [
+                    {
+                        "name": "browser-extension-from-host",
+                        "type": "application",
+                        "properties": [
+                            {
+                                "name": "cdx:osquery:category",
+                                "value": "chrome_extensions",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    document = _prepare_install_test_assets(assets)
+
+    _assert_rootfs_scoped_install_test_obom(document)
+    assert "browser-extension-from-host" not in json.dumps(document)
+
+
 def _run_admin(
     *args: str,
     timeout: int = 180,

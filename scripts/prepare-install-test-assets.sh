@@ -80,12 +80,8 @@ with out.open("wb") as raw:
 PY
 }
 
-create_minimal_obom_if_missing() {
-    local path="${1:?create_minimal_obom_if_missing <path>}"
-    if [ -f "$path" ]; then
-        return
-    fi
-
+create_rootfs_scoped_test_obom() {
+    local path="${1:?create_rootfs_scoped_test_obom <path>}"
     install -d "$(dirname "$path")"
     python3 - "$path" "$arch" <<'PY'
 import json
@@ -94,6 +90,50 @@ from pathlib import Path
 
 out = Path(sys.argv[1])
 arch = sys.argv[2]
+
+
+def is_rootfs_scoped_obom(document: object) -> bool:
+    if not isinstance(document, dict) or document.get("bomFormat") != "CycloneDX":
+        return False
+    metadata = document.get("metadata")
+    component = metadata.get("component") if isinstance(metadata, dict) else None
+    properties = component.get("properties") if isinstance(component, dict) else None
+    if not isinstance(properties, list) or not any(
+        isinstance(prop, dict)
+        and prop.get("name") == "capsem:evidence:scope"
+        and prop.get("value") == "exported-rootfs"
+        for prop in properties
+    ):
+        return False
+    components = document.get("components")
+    if not isinstance(components, list) or not any(
+        isinstance(item, dict)
+        and isinstance(item.get("purl"), str)
+        and item["purl"].startswith("pkg:deb/debian/")
+        for item in components
+    ):
+        return False
+
+    def contains_live_host_marker(value: object) -> bool:
+        if isinstance(value, dict):
+            if value.get("name") == "cdx:osquery:category":
+                return True
+            return any(contains_live_host_marker(item) for item in value.values())
+        if isinstance(value, list):
+            return any(contains_live_host_marker(item) for item in value)
+        return False
+
+    return not contains_live_host_marker(document)
+
+
+if out.is_file():
+    try:
+        existing = json.loads(out.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        existing = None
+    if is_rootfs_scoped_obom(existing):
+        raise SystemExit(0)
+
 document = {
     "bomFormat": "CycloneDX",
     "specVersion": "1.6",
@@ -101,6 +141,11 @@ document = {
         "component": {
             "name": f"capsem-install-test-rootfs-{arch}",
             "type": "operating-system",
+            "version": "install-test",
+            "properties": [
+                {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
+                {"name": "capsem:guest:architecture", "value": arch},
+            ],
         },
         "tools": {
             "components": [
@@ -112,7 +157,14 @@ document = {
             ]
         },
     },
-    "components": [],
+    "components": [
+        {
+            "type": "library",
+            "name": "base-files",
+            "version": "install-test",
+            "purl": f"pkg:deb/debian/base-files@install-test?arch={arch}",
+        }
+    ],
 }
 out.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 PY
@@ -151,7 +203,7 @@ PY
 write_if_missing "$ASSETS_DIR/$arch/vmlinuz" "capsem install-test kernel $arch"
 create_minimal_initrd_if_missing "$ASSETS_DIR/$arch/initrd.img"
 write_if_missing "$ASSETS_DIR/$arch/rootfs.erofs" "capsem install-test rootfs $arch"
-create_minimal_obom_if_missing "$ASSETS_DIR/$arch/obom.cdx.json"
+create_rootfs_scoped_test_obom "$ASSETS_DIR/$arch/obom.cdx.json"
 create_minimal_software_inventory_if_missing "$ASSETS_DIR/$arch/software-inventory.json"
 
 rm -rf "$ASSETS_DIR/current"

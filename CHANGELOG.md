@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1784475356] - 2026-07-19
+
 ### Fixed
+- Isolated the packaged Linux install and channel glow-up harness from ignored
+  developer VM assets, forwarding the selected fixture tree through every
+  repack and channel stage so local runs cannot copy multi-gigabyte root files
+  into Docker temp storage while clean CI uses tiny fixtures.
+- Made the install/release test-asset generator emit the same rootfs-scoped
+  CycloneDX contract as production and replace stale live-host inventories,
+  preventing dirty developer assets and clean CI fixtures from diverging at
+  the public release-channel validator.
 - Replaced cdxgen's live-host `os` inventory with a deterministic scan of the
   exported Debian guest rootfs, normalized the pinned scanner's invalid
   lowercase Sendmail license and colliding certificate subset before strict
