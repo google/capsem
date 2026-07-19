@@ -82,6 +82,11 @@ or unknown shape. Every Python reader of `release.capsem.org` must send an
 explicit Capsem user agent. Cloudflare rejecting bare `urllib` while `curl`
 succeeds is a client-contract failure that must be reproduced by an adversarial
 local HTTP server and rejected by the fail-fast source guard.
+`release-qualification.yaml` must enforce that contract as a cheap two-platform
+job (macOS arm64 and Linux x86_64) on the exact candidate SHA. The canonical
+`just test` job must depend on it, so a Cloudflare HTTP-policy or live manifest
+schema failure cannot consume the multi-hour qualification budget. A local
+focused test is necessary but is not a substitute for this remote preflight.
 
 ## Installer outcome gate
 

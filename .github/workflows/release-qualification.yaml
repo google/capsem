@@ -24,7 +24,14 @@ permissions:
   contents: read
 
 jobs:
+  runtime-materialization-preflight:
+    uses: ./.github/workflows/release-runtime-preflight.yaml
+    with:
+      sha: ${{ inputs.sha }}
+      channel: ${{ inputs.channel }}
+
   qualification:
+    needs: runtime-materialization-preflight
     # TEMPORARILY DISABLED: macOS full gate. GitHub-hosted macOS runners cannot
     # provide nested Virtualization.framework access for Capsem/Colima, and the
     # repository has no physical macOS runner. Restore a parallel macOS `just

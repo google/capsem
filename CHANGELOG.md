@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Replaced cdxgen's live-host `os` inventory with a deterministic scan of the
+  exported Debian guest rootfs, normalized the pinned scanner's invalid
+  lowercase Sendmail license and colliding certificate subset before strict
+  schema validation, and made local/public release gates reject unscoped or
+  osquery-backed host OBOMs. Added an exact-SHA macOS/Linux GitHub
+  materialization preflight so Cloudflare client-policy or manifest-schema
+  failures stop before the multi-hour qualification gate.
 - Hardened release manifest consumers against Cloudflare rejecting Python's
   default HTTP identity, taught package materialization and asset-delta checks
   to distinguish the public release graph from the legacy VM asset manifest,

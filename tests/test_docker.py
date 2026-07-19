@@ -27,9 +27,12 @@ from capsem.builder.docker import (
     ROOTFS_SCRIPTS,
     _append_build_ledger,
     _cdxgen_command,
+    _cdx_validate_command,
     _directory_tree_hash,
     _file_ledger_entry,
+    _normalize_cyclonedx_obom,
     _rootfs_config_input_record,
+    _validate_cyclonedx_obom,
     build_all_architectures,
     build_version_script,
     build_image,
@@ -67,6 +70,24 @@ def test_cdxgen_default_is_exactly_pinned_and_override_remains_explicit(monkeypa
 
     monkeypatch.setenv("CAPSEM_CDXGEN_CMD", "cdxgen --custom")
     assert _cdxgen_command() == ["cdxgen", "--custom"]
+
+
+def test_cdx_validate_default_is_pinned_and_global_override_is_explicit(monkeypatch):
+    monkeypatch.delenv("CAPSEM_CDX_VALIDATE_CMD", raising=False)
+    monkeypatch.delenv("CAPSEM_CDXGEN_CMD", raising=False)
+    assert _cdx_validate_command() == [
+        "npx",
+        "--yes",
+        "--package",
+        f"@cyclonedx/cdxgen@{CDXGEN_VERSION}",
+        "cdx-validate",
+    ]
+
+    monkeypatch.setenv("CAPSEM_CDXGEN_CMD", "cdxgen")
+    assert _cdx_validate_command() == ["cdx-validate"]
+
+    monkeypatch.setenv("CAPSEM_CDX_VALIDATE_CMD", "custom-validator --strict")
+    assert _cdx_validate_command() == ["custom-validator", "--strict"]
 
 
 def test_run_cmd_surfaces_captured_subprocess_stderr(monkeypatch, capsys):
@@ -1213,7 +1234,9 @@ class TestBuildLedger:
         assert "installed_versions" not in record
 
     @patch("capsem.builder.docker.run_cmd")
-    def test_generate_cyclonedx_obom_extracts_rootfs_and_runs_cdxgen(self, mock_run, tmp_path, monkeypatch):
+    def test_generate_cyclonedx_obom_extracts_rootfs_and_runs_cdxgen(
+        self, mock_run, tmp_path, monkeypatch
+    ):
         repo_root = tmp_path
         (repo_root / "target" / "tmp").mkdir(parents=True)
         rootfs_tar = tmp_path / "rootfs.tar"
@@ -1223,22 +1246,45 @@ class TestBuildLedger:
 
         def fake_run(cmd, **_kwargs):
             if cmd[0] == "cdxgen":
+                extracted_rootfs = cmd[1]
                 output.write_text(json.dumps({
                     "bomFormat": "CycloneDX",
                     "metadata": {
+                        "timestamp": "2030-01-02T03:04:05Z",
+                        "component": {
+                            "type": "container",
+                            "name": "rootfs",
+                            "version": "latest",
+                            "purl": "pkg:container/rootfs@latest",
+                        },
                         "tools": {
                             "components": [
                                 {"name": "cdxgen", "version": "11.0.0"}
                             ]
-                        }
+                        },
                     },
-                    "components": [],
+                    "components": [
+                        {
+                            "type": "library",
+                            "name": "sendmail-bin",
+                            "purl": "pkg:deb/debian/sendmail-bin@1.0?distro=debian-12",
+                            "licenses": [{"license": {"id": "sendmail"}}],
+                            "properties": [
+                                {
+                                    "name": "source",
+                                    "value": f"{extracted_rootfs}/usr/bin/sendmail",
+                                }
+                            ],
+                        }
+                    ],
                 }))
             return MagicMock(stdout="")
 
         mock_run.side_effect = fake_run
 
-        result = generate_cyclonedx_obom(rootfs_tar, output, repo_root=repo_root)
+        result = generate_cyclonedx_obom(
+            rootfs_tar, output, repo_root=repo_root, architecture="arm64"
+        )
 
         assert result == output
         tar_cmd = mock_run.call_args_list[0][0][0]
@@ -1247,9 +1293,156 @@ class TestBuildLedger:
         assert "-xf" in tar_cmd
         assert str(rootfs_tar) in tar_cmd
         cdxgen_cmd = mock_run.call_args_list[1][0][0]
-        assert cdxgen_cmd[:4] == ["cdxgen", "-t", "os", "-o"]
-        assert cdxgen_cmd[4] == str(output)
+        assert cdxgen_cmd[0] == "cdxgen"
+        assert cdxgen_cmd[1].endswith("/rootfs")
+        assert cdxgen_cmd[2:] == [
+            "-t",
+            "rootfs",
+            "--no-validate",
+            "-o",
+            str(output),
+        ]
         assert mock_run.call_args_list[1].kwargs["capture"] is True
+        validate_cmd = mock_run.call_args_list[2][0][0]
+        assert validate_cmd == [
+            "cdx-validate",
+            "--strict",
+            "--no-deep",
+            "--fail-severity",
+            "critical",
+            "--no-include-manual",
+            "-i",
+            str(output),
+        ]
+        assert mock_run.call_args_list[2].kwargs["capture"] is True
+
+        document = json.loads(output.read_text())
+        assert "timestamp" not in document["metadata"]
+        assert "serialNumber" not in document
+        assert document["metadata"]["component"] == {
+            "type": "operating-system",
+            "name": "capsem-rootfs-arm64",
+            "version": "guest-rootfs",
+            "properties": [
+                {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
+                {"name": "capsem:guest:architecture", "value": "arm64"},
+            ],
+        }
+        assert document["components"][0]["licenses"][0]["license"]["id"] == "Sendmail"
+        assert document["components"][0]["properties"][0]["value"] == "/usr/bin/sendmail"
+
+    def test_validate_cyclonedx_obom_rejects_live_host_inventory(self, tmp_path):
+        output = tmp_path / "obom.cdx.json"
+        output.write_text(json.dumps({
+            "bomFormat": "CycloneDX",
+            "metadata": {
+                "component": {
+                    "type": "operating-system",
+                    "name": "capsem-rootfs-arm64",
+                    "properties": [
+                        {"name": "capsem:evidence:scope", "value": "exported-rootfs"}
+                    ],
+                },
+                "tools": {"components": [{"name": "cdxgen", "version": "12.7.0"}]},
+            },
+            "components": [
+                {
+                    "type": "library",
+                    "name": "apt",
+                    "purl": "pkg:deb/debian/apt@2.6.1?distro=debian-12",
+                },
+                {
+                    "type": "application",
+                    "name": "Chrome extension",
+                    "properties": [
+                        {"name": "cdx:osquery:category", "value": "chrome_extensions"}
+                    ],
+                },
+            ],
+        }))
+
+        with pytest.raises(RuntimeError, match="live-host inventory"):
+            _validate_cyclonedx_obom(output)
+
+    def test_normalize_cyclonedx_obom_removes_nondeterministic_host_context(self, tmp_path):
+        rootfs = tmp_path / "random-rootfs"
+        output = tmp_path / "obom.cdx.json"
+        output.write_text(json.dumps({
+            "bomFormat": "CycloneDX",
+            "serialNumber": "urn:uuid:random",
+            "metadata": {
+                "timestamp": "2030-01-02T03:04:05Z",
+                "component": {"type": "container", "name": "random-rootfs"},
+                "tools": {"components": [{
+                    "name": "trivy",
+                    "version": "1",
+                    "hashes": [{"alg": "SHA-256", "content": "host-binary"}],
+                    "properties": [
+                        {"name": "internal:binary_path", "value": "trivy-darwin-arm64"},
+                        {"name": "stable", "value": "kept"},
+                    ],
+                }]},
+            },
+            "annotations": [{"text": "generated today for random-rootfs"}],
+            "components": [
+                {
+                    "name": "file",
+                    "bom-ref": "pkg:generic/file",
+                    "properties": [{"name": "path", "value": f"{rootfs}/etc/os-release"}],
+                },
+                {
+                    "type": "cryptographic-asset",
+                    "name": "nondeterministic certificate",
+                    "bom-ref": "crypto/certificate/collision",
+                },
+            ],
+            "dependencies": [
+                {
+                    "ref": "pkg:generic/file",
+                    "dependsOn": ["crypto/certificate/collision"],
+                },
+                {"ref": "crypto/certificate/collision", "dependsOn": []},
+            ],
+        }))
+
+        _normalize_cyclonedx_obom(output, rootfs, architecture="x86_64")
+
+        document = json.loads(output.read_text())
+        assert "serialNumber" not in document
+        assert "timestamp" not in document["metadata"]
+        assert "annotations" not in document
+        tool = document["metadata"]["tools"]["components"][0]
+        assert "hashes" not in tool
+        assert tool["properties"] == [{"name": "stable", "value": "kept"}]
+        assert document["components"][0]["properties"][0]["value"] == "/etc/os-release"
+        assert all(item.get("type") != "cryptographic-asset" for item in document["components"])
+        assert document["dependencies"] == [{"dependsOn": [], "ref": "pkg:generic/file"}]
+
+    def test_normalize_cyclonedx_obom_is_byte_deterministic_for_set_arrays(self, tmp_path):
+        rootfs = tmp_path / "rootfs"
+        first = tmp_path / "first.json"
+        second = tmp_path / "second.json"
+        components = [
+            {"type": "library", "name": "zlib", "version": "1"},
+            {"type": "library", "name": "apt", "version": "2"},
+        ]
+
+        def document(items):
+            return {
+                "bomFormat": "CycloneDX",
+                "metadata": {
+                    "tools": {"components": [{"name": "cdxgen", "version": "12.7.0"}]}
+                },
+                "components": items,
+            }
+
+        first.write_text(json.dumps(document(components)))
+        second.write_text(json.dumps(document(list(reversed(components)))))
+
+        _normalize_cyclonedx_obom(first, rootfs, architecture="arm64")
+        _normalize_cyclonedx_obom(second, rootfs, architecture="arm64")
+
+        assert first.read_bytes() == second.read_bytes()
 
     @patch("capsem.builder.docker.remove_image")
     @patch("capsem.builder.docker.extract_software_inventory")

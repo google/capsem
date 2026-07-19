@@ -20,6 +20,30 @@ FAST_DOCTOR_FLAG = "doctor " + "--" + "fast"
 OLD_DEBUG_CRATE = "capsem-debug" + "-upstream"
 
 
+def _rootfs_obom_bytes(architecture: str = "arm64") -> bytes:
+    return (json.dumps({
+        "bomFormat": "CycloneDX",
+        "metadata": {
+            "component": {
+                "type": "operating-system",
+                "name": f"capsem-rootfs-{architecture}",
+                "version": "guest-rootfs",
+                "properties": [
+                    {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
+                    {"name": "capsem:guest:architecture", "value": architecture},
+                ],
+            },
+            "tools": {"components": [{"name": "cdxgen", "version": "12.7.0"}]},
+        },
+        "components": [{
+            "type": "library",
+            "name": "apt",
+            "version": "2.6.1",
+            "purl": "pkg:deb/debian/apt@2.6.1?distro=debian-12",
+        }],
+    }, sort_keys=True) + "\n").encode()
+
+
 def _readiness_checker_module():
     module_path = PROJECT_ROOT / "scripts/check-remote-release-readiness.py"
     spec = importlib.util.spec_from_file_location("check_remote_release_readiness", module_path)
@@ -951,7 +975,7 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
     assert "import blake3" in script
     assert "def fetch_and_verify_evidence_artifact" in script
     assert 'site, sbom, "sha256", "host SBOM evidence", "spdx"' in script
-    assert 'site, obom, "blake3", "VM OBOM evidence", "cyclonedx"' in script
+    assert 'site, obom, "blake3", "VM OBOM evidence", "rootfs_cyclonedx"' in script
     assert "data = fetch_bytes(url)" in script
     assert "health evidence host_sboms missing for published binary files" in script
     assert "health evidence vm_oboms missing for published VM assets" in script
@@ -962,6 +986,7 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
     assert "resolves published host SBOM and VM OBOM evidence artifacts from the graph" in docs_text
     assert "verifies their advertised hashes and sizes" in docs_text
     assert "validates their SPDX 2.3 or CycloneDX document shape" in docs_text
+    assert "validates attestation subjects and predicate URLs" in docs_text
     assert "validates attestation subjects and predicate URLs" in docs_text
     assert "Profile image attestations are incomplete unless" in docs_text
     assert "`github_attestations_vm_assets`" in docs_text
@@ -1761,7 +1786,7 @@ def _install_release_graph_contract_fixture(
         f"{asset_base}/{current_assets}/arm64-initrd.img": b"initrd bytes\n",
         f"{asset_base}/{current_assets}/arm64-rootfs.erofs": b"rootfs bytes\n",
         f"{asset_base}/{current_assets}/arm64-obom.cdx.json": (
-            b'{"bomFormat":"CycloneDX","components":[]}\n'
+            _rootfs_obom_bytes()
         ),
     }
 
@@ -3176,7 +3201,7 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
     sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
-    obom_bytes = b'{"bomFormat":"CycloneDX"}'
+    obom_bytes = _rootfs_obom_bytes()
     sbom_url = "https://github.com/google/capsem/releases/download/v1.0.0/capsem-sbom.spdx.json"
     obom_path = "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
     obom_url = f"https://release.capsem.test{obom_path}"
@@ -3265,7 +3290,7 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
 
     assert "def check_release_evidence" in script
     assert '"sha256", "host SBOM evidence", "spdx"' in script
-    assert '"blake3", "VM OBOM evidence", "cyclonedx"' in script
+    assert '"blake3", "VM OBOM evidence", "rootfs_cyclonedx"' in script
     assert "hashlib.sha256" in script
     assert "blake3.blake3" in script
     assert "attestation subject {subject} missing from published file lists" in script
@@ -3274,7 +3299,48 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
     assert "resolves published host SBOM and VM OBOM evidence artifacts" in docs_text
     assert "verifies their advertised hashes and sizes" in docs_text
     assert "validates their SPDX 2.3 or CycloneDX document shape" in docs_text
-    assert "validates attestation subjects and predicate URLs" in docs_text
+
+
+def test_remote_release_readiness_rejects_live_host_obom_even_with_valid_cyclonedx() -> None:
+    module = _readiness_checker_module()
+    document = json.loads(_rootfs_obom_bytes())
+    document["components"].append({
+        "type": "application",
+        "name": "host browser extension",
+        "properties": [
+            {"name": "cdx:osquery:category", "value": "chrome_extensions"}
+        ],
+    })
+
+    failure = module.validate_evidence_document(
+        json.dumps(document).encode(),
+        "rootfs_cyclonedx",
+        "VM OBOM evidence",
+        "/assets/releases/test/arm64-obom.cdx.json",
+    )
+
+    assert failure is not None
+    assert "contains live-host inventory" in failure
+
+
+def test_remote_release_readiness_rejects_unscoped_host_obom() -> None:
+    module = _readiness_checker_module()
+    document = json.loads(_rootfs_obom_bytes())
+    document["metadata"]["component"] = {
+        "type": "operating-system",
+        "name": "Ubuntu",
+        "version": "24.04",
+    }
+
+    failure = module.validate_evidence_document(
+        json.dumps(document).encode(),
+        "rootfs_cyclonedx",
+        "VM OBOM evidence",
+        "/assets/releases/test/arm64-obom.cdx.json",
+    )
+
+    assert failure is not None
+    assert "must declare exported-rootfs scope" in failure
 
 
 def test_remote_release_readiness_checker_verifies_vm_asset_file_content() -> None:
@@ -3448,7 +3514,7 @@ def test_release_rejects_sha1_only_spdx_file_checksums() -> None:
 
 def test_remote_readiness_allows_first_channel_bootstrap_without_host_evidence() -> None:
     module = _readiness_checker_module()
-    obom_bytes = b'{"bomFormat":"CycloneDX"}'
+    obom_bytes = _rootfs_obom_bytes()
     obom_path = "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
     obom_url = f"https://release.capsem.test{obom_path}"
 
@@ -3520,7 +3586,7 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
     script = (PROJECT_ROOT / "scripts/check-remote-release-readiness.py").read_text()
     workflow = _workflow_text("release-channel.yaml")
     sbom_bytes = b'{"spdxVersion":"SPDX-2.3"}'
-    obom_bytes = b'{"bomFormat":"CycloneDX"}'
+    obom_bytes = _rootfs_obom_bytes()
     sbom_url = "https://github.com/google/capsem/releases/download/v1.0.0/capsem-sbom.spdx.json"
     obom_path = "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
     obom_url = f"https://release.capsem.test{obom_path}"
@@ -3625,7 +3691,7 @@ def test_release_channel_smoke_and_remote_readiness_validate_matching_attestatio
 def test_remote_readiness_rejects_attestation_rail_drift() -> None:
     module = _readiness_checker_module()
     script = _source_text("scripts/check-remote-release-readiness.py")
-    obom_bytes = b'{"bomFormat":"CycloneDX"}'
+    obom_bytes = _rootfs_obom_bytes()
     obom_path = "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
     obom_url = f"https://release.capsem.test{obom_path}"
     module.fetch_bytes = lambda url: module.FetchBytes(

@@ -900,8 +900,10 @@ def check_release_graph_profile(
             expected_document = (
                 "software_inventory"
                 if evidence_kind == "software_inventory"
+                else "rootfs_cyclonedx"
+                if evidence_kind == "obom"
                 else "cyclonedx"
-                if evidence_kind in {"abom", "obom"}
+                if evidence_kind == "abom"
                 else None
             )
             failures.extend(
@@ -1208,7 +1210,7 @@ def check_release_evidence(site: str, release_data: dict[str, Any]) -> list[str]
             continue
         failures.extend(
             fetch_and_verify_evidence_artifact(
-                site, obom, "blake3", "VM OBOM evidence", "cyclonedx"
+                site, obom, "blake3", "VM OBOM evidence", "rootfs_cyclonedx"
             )
         )
 
@@ -1632,9 +1634,43 @@ def validate_evidence_document(
                 if not has_sha256:
                     return f"{label} {url} SPDX file {spdx_id} missing SHA256 checksum"
         return None
-    if expected_document == "cyclonedx":
+    if expected_document in {"cyclonedx", "rootfs_cyclonedx"}:
         if document.get("bomFormat") != "CycloneDX":
             return f"{label} {url} bomFormat mismatch"
+        if expected_document == "cyclonedx":
+            return None
+        metadata = document.get("metadata")
+        if not isinstance(metadata, dict):
+            return f"{label} {url} metadata missing"
+        component = metadata.get("component")
+        if not isinstance(component, dict):
+            return f"{label} {url} metadata.component missing"
+        properties = component.get("properties")
+        if not isinstance(properties, list) or not any(
+            isinstance(prop, dict)
+            and prop.get("name") == "capsem:evidence:scope"
+            and prop.get("value") == "exported-rootfs"
+            for prop in properties
+        ):
+            return f"{label} {url} must declare exported-rootfs scope"
+        components = document.get("components")
+        if not isinstance(components, list) or not components:
+            return f"{label} {url} guest rootfs components missing"
+        if not any(
+            isinstance(item, dict)
+            and str(item.get("purl", "")).startswith("pkg:deb/debian/")
+            for item in components
+        ):
+            return f"{label} {url} Debian guest packages missing"
+        for item in components:
+            if not isinstance(item, dict):
+                continue
+            item_properties = item.get("properties")
+            if isinstance(item_properties, list) and any(
+                isinstance(prop, dict) and prop.get("name") == "cdx:osquery:category"
+                for prop in item_properties
+            ):
+                return f"{label} {url} contains live-host inventory"
         return None
     if expected_document == "software_inventory":
         if document.get("schema") != "capsem.profile_software_inventory.v1":

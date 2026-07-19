@@ -204,9 +204,12 @@ root and channel pages must show the same generated timestamp, manifest URL,
 manifest version, package inventory, per-binary inventory, profile revision,
 image artifact URLs, and evidence URLs as the fetched JSON
 graph. It validates host SBOM and VM OBOM evidence document shape (SPDX 2.3 for
-the host SBOM and CycloneDX for VM OBOMs), plus attestation scope, workflow,
-subjects, and predicate URLs against the published host SBOM and VM OBOM
-evidence lists. VM asset attestations are incomplete unless
+the host SBOM and CycloneDX for VM OBOMs). VM OBOM validation is provenance
+validation, not only `bomFormat`: the document must declare
+`capsem:evidence:scope=exported-rootfs`, contain Debian guest package purls, and
+contain no `cdx:osquery:category` live-host inventory. It also validates
+attestation scope, workflow, subjects, and predicate URLs against the published
+host SBOM and VM OBOM evidence lists. VM asset attestations are incomplete unless
 `github_attestations_vm_assets` is present and its `predicate_url` points at the
 published VM OBOM evidence for the current asset release.
 The deploy smoke must also verify public `Cache-Control` headers: mutable

@@ -80,7 +80,13 @@ def test_builder_emits_obom_and_keeps_build_ledger_debug_scoped() -> None:
     assert 'OBOM_ASSET = "obom.cdx.json"' in builder
     assert 'BUILD_LEDGER_NAME = "build-ledger.log"' in builder
     assert f'CDXGEN_VERSION = "{CDXGEN_VERSION}"' in builder
-    assert '"-t",\n            "os"' in builder
+    assert '"-t",\n            "rootfs"' in builder
+    assert '"-t",\n            "os"' not in builder
+    assert '"--no-validate"' in builder
+    assert "def _normalize_cyclonedx_obom" in builder
+    assert "def _cdx_validate_command" in builder
+    assert '"capsem:evidence:scope", "value": "exported-rootfs"' in builder
+    assert 'prop.get("name") == "cdx:osquery:category"' in builder
     assert 'run_cmd([\n            *_cdxgen_command(),' in builder
     assert '], capture=True)' in builder
     assert "def generate_cyclonedx_obom" in builder

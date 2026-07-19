@@ -13,6 +13,28 @@ SCRIPT = PROJECT_ROOT / "scripts" / "check-release-qualification.py"
 SHA = "a" * 40
 
 
+def test_qualification_runs_two_platform_runtime_preflight_before_full_gate() -> None:
+    qualification_workflow = (
+        PROJECT_ROOT / ".github/workflows/release-qualification.yaml"
+    ).read_text()
+    preflight = (PROJECT_ROOT / ".github/workflows/release-runtime-preflight.yaml").read_text()
+    qualification = qualification_workflow.split("  qualification:", 1)[1]
+
+    assert "os: ubuntu-24.04" in preflight
+    assert "arch: x86_64" in preflight
+    assert "os: macos-14" in preflight
+    assert "arch: arm64" in preflight
+    assert "ref: ${{ inputs.sha }}" in preflight
+    assert 'CAPSEM_ASSET_MANIFEST="$ASSET_MANIFEST_URL"' in preflight
+    assert "bash scripts/materialize-config.sh" in preflight
+    assert "just test" not in preflight
+    assert "workflow_dispatch:" in preflight
+    assert "workflow_call:" in preflight
+    assert "uses: ./.github/workflows/release-runtime-preflight.yaml" in qualification_workflow
+    assert "needs: runtime-materialization-preflight" in qualification
+    assert "run: just test" in qualification
+
+
 def _load_module():
     spec = importlib.util.spec_from_file_location("check_release_qualification", SCRIPT)
     assert spec is not None and spec.loader is not None

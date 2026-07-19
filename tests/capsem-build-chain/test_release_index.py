@@ -18,6 +18,30 @@ from blake3 import blake3
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _rootfs_obom_bytes(architecture: str) -> bytes:
+    return (json.dumps({
+        "bomFormat": "CycloneDX",
+        "metadata": {
+            "component": {
+                "type": "operating-system",
+                "name": f"capsem-rootfs-{architecture}",
+                "version": "guest-rootfs",
+                "properties": [
+                    {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
+                    {"name": "capsem:guest:architecture", "value": architecture},
+                ],
+            },
+            "tools": {"components": [{"name": "cdxgen", "version": "12.7.0"}]},
+        },
+        "components": [{
+            "type": "library",
+            "name": "apt",
+            "version": "2.6.1",
+            "purl": "pkg:deb/debian/apt@2.6.1?distro=debian-12",
+        }],
+    }, sort_keys=True) + "\n").encode()
+
+
 def _run_admin(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     result = subprocess.run(
         ["cargo", "run", "-p", "capsem-admin", "--quiet", "--", *args],
@@ -172,7 +196,7 @@ def _write_release_manifest(
         ),
         "obom.cdx.json": _write_asset(
             arm64 / "obom.cdx.json",
-            b'{"bomFormat":"CycloneDX","metadata":{"tools":[{"name":"cdxgen"}]}}',
+            _rootfs_obom_bytes("arm64"),
         ),
         "software-inventory.json": _write_asset(
             arm64 / "software-inventory.json",
@@ -205,7 +229,7 @@ def _write_release_manifest(
             ),
             "obom.cdx.json": _write_asset(
                 x86_64 / "obom.cdx.json",
-                b'{"bomFormat":"CycloneDX","metadata":{"tools":[{"name":"cdxgen"}]}}',
+                _rootfs_obom_bytes("x86_64"),
             ),
             "software-inventory.json": _write_asset(
                 x86_64 / "software-inventory.json",

@@ -93,9 +93,15 @@ workflow installer; a contract test must reject `@latest` and mismatched pins.
 Scan the extracted exported guest filesystem with the exact invocation proven
 against the complete Capsem image. Do not change scanner modes from a tiny
 fixture alone: cdxgen 12.7.0 `rootfs` mode passes a minimal Debian fixture but
-emits invalid CycloneDX license data for the full image, while the pinned `os`
-mode with the extracted directory as its target is the qualified rail. Bound
-successful scanner output while preserving captured diagnostics on failure.
+emits Debian's lowercase `sendmail` spelling, which its own CycloneDX schema
+rejects. The qualified rail runs `rootfs --no-validate`, normalizes that known
+SPDX spelling and all build-host/temp-path nondeterminism, removes the pinned
+scanner's colliding cryptographic-asset subset, and then runs the paired strict
+schema validator. Never use cdxgen `os` mode for a staged rootfs: it inventories
+the live build host even when a directory argument is present. Require an
+`exported-rootfs` scope marker, Debian guest components, no osquery categories,
+and byte-identical output from two scans of one rootfs. Bound successful scanner
+output while preserving captured diagnostics on failure.
 
 Cross-architecture artifacts do not imply cross-architecture helper tools.
 Every Docker helper that post-processes an exported artifact must pass an

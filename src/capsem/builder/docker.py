@@ -861,8 +861,135 @@ def _cdxgen_command() -> list[str]:
     return command
 
 
+def _cdx_validate_command() -> list[str]:
+    """Return the schema validator paired with the pinned cdxgen release."""
+    configured = os.environ.get("CAPSEM_CDX_VALIDATE_CMD")
+    if configured is not None:
+        command = shlex.split(configured)
+    elif os.environ.get("CAPSEM_CDXGEN_CMD") == "cdxgen":
+        command = ["cdx-validate"]
+    else:
+        command = [
+            "npx",
+            "--yes",
+            "--package",
+            f"@cyclonedx/cdxgen@{CDXGEN_VERSION}",
+            "cdx-validate",
+        ]
+    if not command:
+        raise RuntimeError("CAPSEM_CDX_VALIDATE_CMD must not be empty")
+    return command
+
+
+def _normalize_cyclonedx_obom(
+    path: Path,
+    rootfs_dir: Path,
+    *,
+    architecture: str,
+) -> None:
+    """Remove build-host context while preserving exported-rootfs evidence."""
+    document = json.loads(path.read_text())
+    rootfs_prefixes = [str(rootfs_dir)]
+    relative_rootfs = os.path.relpath(rootfs_dir)
+    if relative_rootfs not in rootfs_prefixes:
+        rootfs_prefixes.append(relative_rootfs)
+
+    def normalize(value: Any) -> Any:
+        if isinstance(value, str):
+            normalized = value
+            for rootfs_prefix in rootfs_prefixes:
+                normalized = normalized.replace(rootfs_prefix, "")
+            return normalized or "/"
+        if isinstance(value, list):
+            normalized_items = [normalize(item) for item in value]
+            return sorted(
+                normalized_items,
+                key=lambda item: json.dumps(item, sort_keys=True, separators=(",", ":")),
+            )
+        if isinstance(value, dict):
+            normalized = {key: normalize(item) for key, item in value.items()}
+            license_value = normalized.get("license")
+            if isinstance(license_value, dict) and license_value.get("id") == "sendmail":
+                # cdxgen 12.7.0 emits Debian's lowercase spelling, while the
+                # SPDX identifier embedded in the CycloneDX schema is Sendmail.
+                license_value["id"] = "Sendmail"
+            return normalized
+        return value
+
+    document = normalize(document)
+    document.pop("serialNumber", None)
+    document.pop("annotations", None)
+    metadata = document.setdefault("metadata", {})
+    if not isinstance(metadata, dict):
+        raise RuntimeError(f"OBOM {path} has non-object metadata")
+    metadata.pop("timestamp", None)
+    metadata["component"] = {
+        "type": "operating-system",
+        "name": f"capsem-rootfs-{architecture}",
+        "version": "guest-rootfs",
+        "properties": [
+            {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
+            {"name": "capsem:guest:architecture", "value": architecture},
+        ],
+    }
+
+    components = document.get("components")
+    removed_refs: set[str] = set()
+    if isinstance(components, list):
+        retained_components = []
+        for component in components:
+            # trustinspector 2.5.1 collapses different CA certificates onto
+            # identical bom-refs and then retains a nondeterministic winner.
+            # Publishing that as evidence is misleading and changes the asset
+            # digest between identical scans, so this OS OBOM excludes that
+            # broken CBOM subset until the pinned scanner fixes the collision.
+            if isinstance(component, dict) and component.get("type") == "cryptographic-asset":
+                bom_ref = component.get("bom-ref")
+                if isinstance(bom_ref, str):
+                    removed_refs.add(bom_ref)
+                continue
+            retained_components.append(component)
+        document["components"] = retained_components
+
+    dependencies = document.get("dependencies")
+    if isinstance(dependencies, list) and removed_refs:
+        retained_dependencies = []
+        for dependency in dependencies:
+            if not isinstance(dependency, dict) or dependency.get("ref") in removed_refs:
+                continue
+            depends_on = dependency.get("dependsOn")
+            if isinstance(depends_on, list):
+                dependency["dependsOn"] = [
+                    ref for ref in depends_on if ref not in removed_refs
+                ]
+            retained_dependencies.append(dependency)
+        document["dependencies"] = retained_dependencies
+
+    tools = metadata.get("tools")
+    tool_components = tools.get("components") if isinstance(tools, dict) else None
+    if isinstance(tool_components, list):
+        for tool in tool_components:
+            if not isinstance(tool, dict):
+                continue
+            # These fields describe the scanner executable on the build host,
+            # not the exported guest rootfs, and differ across Linux/macOS.
+            tool.pop("hashes", None)
+            properties = tool.get("properties")
+            if isinstance(properties, list):
+                tool["properties"] = [
+                    prop
+                    for prop in properties
+                    if not (
+                        isinstance(prop, dict)
+                        and prop.get("name") == "internal:binary_path"
+                    )
+                ]
+
+    path.write_text(json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n")
+
+
 def _validate_cyclonedx_obom(path: Path) -> None:
-    """Validate the minimal OBOM contract consumed by capsem-admin/service."""
+    """Validate that an OBOM describes Capsem's exported Debian guest rootfs."""
     try:
         document = json.loads(path.read_text())
     except json.JSONDecodeError as exc:
@@ -884,8 +1011,45 @@ def _validate_cyclonedx_obom(path: Path) -> None:
     ):
         raise RuntimeError(f"OBOM {path} must record cdxgen name and version in metadata.tools")
 
+    component = metadata.get("component")
+    if not isinstance(component, dict):
+        raise RuntimeError(f"OBOM {path} is missing metadata.component")
+    properties = component.get("properties")
+    if not isinstance(properties, list) or not any(
+        isinstance(prop, dict)
+        and prop.get("name") == "capsem:evidence:scope"
+        and prop.get("value") == "exported-rootfs"
+        for prop in properties
+    ):
+        raise RuntimeError(f"OBOM {path} is not scoped to the exported rootfs")
 
-def generate_cyclonedx_obom(rootfs_tar: Path, output_path: Path, *, repo_root: Path) -> Path:
+    components = document.get("components")
+    if not isinstance(components, list) or not components:
+        raise RuntimeError(f"OBOM {path} must inventory guest rootfs components")
+    if not any(
+        isinstance(item, dict)
+        and str(item.get("purl", "")).startswith("pkg:deb/debian/")
+        for item in components
+    ):
+        raise RuntimeError(f"OBOM {path} does not contain Debian guest packages")
+    for item in components:
+        if not isinstance(item, dict):
+            continue
+        item_properties = item.get("properties")
+        if isinstance(item_properties, list) and any(
+            isinstance(prop, dict) and prop.get("name") == "cdx:osquery:category"
+            for prop in item_properties
+        ):
+            raise RuntimeError(f"OBOM {path} contains live-host inventory")
+
+
+def generate_cyclonedx_obom(
+    rootfs_tar: Path,
+    output_path: Path,
+    *,
+    repo_root: Path,
+    architecture: str,
+) -> Path:
     """Generate a CycloneDX OS OBOM for the exported rootfs tar.
 
     The build ledger records declared build inputs. This OBOM is the runtime
@@ -909,19 +1073,31 @@ def generate_cyclonedx_obom(rootfs_tar: Path, output_path: Path, *, repo_root: P
             "-C",
             str(rootfs_dir),
         ])
-        # The scan target is the extracted guest filesystem, never `/`. Keep
-        # cdxgen's release-qualified `os` mode: 12.7.0 `rootfs` mode emits an
-        # invalid SPDX license id for the full Capsem image. Capture successful
-        # scanner chatter; run_cmd still surfaces it when generation fails.
+        # cdxgen's rootfs mode is the only offline mode that inventories the
+        # extracted guest. Its internal validation rejects Debian's lowercase
+        # `sendmail` spelling before writing output, so emit first, normalize
+        # that known SPDX spelling, then run the paired strict schema validator.
         run_cmd([
             *_cdxgen_command(),
+            str(rootfs_dir),
             "-t",
-            "os",
+            "rootfs",
+            "--no-validate",
             "-o",
             str(output_path),
-            str(rootfs_dir),
         ], capture=True)
+        _normalize_cyclonedx_obom(output_path, rootfs_dir, architecture=architecture)
     _validate_cyclonedx_obom(output_path)
+    run_cmd([
+        *_cdx_validate_command(),
+        "--strict",
+        "--no-deep",
+        "--fail-severity",
+        "critical",
+        "--no-include-manual",
+        "-i",
+        str(output_path),
+    ], capture=True)
     return output_path
 
 
@@ -1622,7 +1798,12 @@ def build_image(
             })
             print("Generating CycloneDX OBOM...")
             obom_path = arch_output / OBOM_ASSET
-            generate_cyclonedx_obom(tar_path, obom_path, repo_root=repo_root)
+            generate_cyclonedx_obom(
+                tar_path,
+                obom_path,
+                repo_root=repo_root,
+                architecture=arch_name,
+            )
             obom_entry = _file_ledger_entry(obom_path, base=arch_output)
             _append_build_ledger(arch_output, {
                 "stage": "rootfs.obom",

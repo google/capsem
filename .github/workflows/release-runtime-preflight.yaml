@@ -1,0 +1,77 @@
+name: Release runtime preflight
+run-name: Preflight release runtime ${{ inputs.channel }} ${{ inputs.sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Exact untagged main commit to preflight
+        required: true
+        type: string
+      channel:
+        description: Exact live release channel to materialize
+        required: true
+        type: choice
+        options:
+          - stable
+          - nightly
+  workflow_call:
+    inputs:
+      sha:
+        required: true
+        type: string
+      channel:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  materialize:
+    name: Materialize (${{ matrix.os }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x86_64
+          - os: macos-14
+            arch: arm64
+    env:
+      ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+
+      - name: Verify exact preflight candidate identity
+        env:
+          EXPECTED_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git tag --points-at HEAD 'v*')"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: runtime-materialization-${{ matrix.os }}-${{ matrix.arch }}
+
+      # This is the exact public-manifest command used at the start of both
+      # tagged package jobs. It runs on both release hosts before the expensive
+      # canonical gate, so HTTP policy or graph-schema drift fails in minutes.
+      - name: Materialize live release graph with tagged-workflow command
+        env:
+          CAPSEM_ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          CAPSEM_ASSET_MANIFEST="$ASSET_MANIFEST_URL" \
+            bash scripts/materialize-config.sh
+          test -f target/config/profiles/co-work/profile.toml
+          test -f target/config/profiles/code/profile.toml
