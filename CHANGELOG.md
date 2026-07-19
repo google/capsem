@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `dev-ci` skill: CI triage procedure and stop-the-line red-gate discipline
+  (named diagnosis before any rerun, streaks are P0, failure classification).
+- Cross-agent skill index contract test (`tests/test_agent_skill_index.py`):
+  every skill must be indexed in CLAUDE.md and GEMINI.md, no dangling skill
+  references in any agent instruction file, discovery symlinks must resolve to
+  canonical `skills/`, and both indexes must carry the AGENTS.md hard-contract
+  pointer.
+
+### Changed
+- Split `release-process` and `dev-testing` skills into sub-500-line spines
+  with on-demand `references/` files (release graph, CI invariants, Apple
+  signing, post-release verification, local/CI parity, test matrix, MCP debug
+  tools) -- content moved verbatim.
+- Brought GEMINI.md's skill index to full parity with CLAUDE.md and made both
+  files' AGENTS.md pointers name the release-evidence and logger-DB hard
+  contracts; indexed the previously missing `ironbank`, `dev-bug-review`,
+  `meta-find-skills`, and `meta-skill-creation` skills.
+
 ## [1.5.1784485843] - 2026-07-19
 
 ### Fixed

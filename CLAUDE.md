@@ -2,9 +2,12 @@
 
 Sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtualization.framework. Runs as a daemon service (like Docker). Built with Rust and Astro.
 
-Shared agent invariants live in `AGENTS.md`. Read that file too; it is the
-Codex/Claude/Gemini common contract for DB boundaries, skills, and release
-discipline.
+Shared agent invariants live in `AGENTS.md`; it is the Codex/Claude/Gemini
+common contract. **Read it before any release work or any change touching
+logged data** -- it carries the two hard contracts: release evidence (only the
+successful remote `release-qualification.yaml` run on the exact candidate SHA
+counts; never a local run, a nearby commit's green, or an agent's claim) and
+the logger DB boundary (only `capsem-logger` executes ledger queries).
 
 ## Quick Start
 
@@ -89,14 +92,19 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Asset pipeline | `/asset-pipeline` | Asset manifest, hash verification, boot-time resolution |
 | Just recipes | `/dev-just` | Which just command to run for a given task |
 | Debugging | `/dev-debugging` | Bug investigation, reproduce-first workflow |
+| CI triage | `/dev-ci` | Red gates, pr-gate failures, rerun decisions, stop-the-line policy |
 | Sprints | `/dev-sprint` | Running a multi-step feature sprint |
 | Release | `/release-process` | CI, signing, notarization, changelog |
+| Release gate proof | `/ironbank` | Black-box acceptance proof for VM, network, MCP, security, or release-gate behavior |
+| Bug queue | `/dev-bug-review` | Working a queue of bug reports one-by-one (confirm, push back, fix, commit) |
 | Installation | `/dev-installation` | Setup wizard, service registration, self-update, install tests |
 | Architecture | `/site-architecture` | System design, service architecture, vsock, key files |
 | Docs site | `/site-infra` | Writing/editing docs, Starlight, sidebar, release pages |
 | Marketing site | `/site-marketing` | Marketing website (capsem.org), copy, components, theme |
 | Skills system | `/dev-skills` | How skills work, naming, discovery |
 | Skills layout | `/meta-organize-skills` | Skills directory conventions, symlinks |
+| Skill discovery | `/meta-find-skills` | Finding or installing skills from the ecosystem |
+| Skill authoring | `/meta-skill-creation` | Creating, improving, or evaluating skills |
 
 ## Desktop app (capsem-app)
 
@@ -106,7 +114,7 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 
 ## Code Style
 
-- **Warnings are errors.** Fix every compiler/linter warning before considering code done. Never leave warnings. Frontend: `pnpm run check` uses `--fail-on-warnings`. Rust: all crates use `#[deny(warnings)]` -- treat clippy and rustc warnings as build failures.
+- **Warnings are errors.** Fix every compiler/linter warning before considering code done. Never leave warnings. Frontend: `pnpm run check` uses `--fail-on-warnings`. Rust: the root `Cargo.toml` sets `[workspace.lints.rust] warnings = "deny"` and every crate inherits it via `[lints] workspace = true` -- clippy and rustc warnings are build failures. New-stable clippy fallout is absorbed by documented allows in `[workspace.lints.clippy]`, not per-file attributes.
 - **Reuse over reinvention.** Check `capsem-core` first. Extend existing abstractions.
 - **Minimize code.** Delete dead code, inline single-use helpers. Every line must earn its place.
 - **`capsem-core` is the shared library.** Service, process, CLI, and agent crates are thin shells. Business logic lives in core.
@@ -130,6 +138,13 @@ All guest binaries deployed chmod 555 (read-only). Rootfs mounted read-only. Gue
 ### Codesigning
 
 The binary must be codesigned with `com.apple.security.virtualization` or VZ calls crash. The justfile handles this.
+
+## Vocabulary and gotchas
+
+- **glowup** = installed-package release proof (`scripts/local-release-glowup.py`), run inside `just test-install`'s Docker flow. The public install/channel-switch/upgrade glowup is the e2e test of a deployed release.
+- **winterfell** = service session-ledger lifecycle fixtures in `crates/capsem-service/src/tests.rs`; AGENTS.md's gate list refers to these.
+- `just test` writes benchmark recordings under `target/test-benchmarks/`; only explicit `just bench` runs archive historical data under `benchmarks/`.
+- Rust is pinned to 1.97.1 in `rust-toolchain.toml`, bootstrap, CI, and Docker. Bump every surface together in a deliberate monthly toolchain PR and handle new-lint fallout there.
 
 ## Commits
 
