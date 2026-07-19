@@ -13,17 +13,103 @@ from pathlib import Path
 from typing import Any
 
 
+RELEASE_HTTP_USER_AGENT = "capsem-release-client/1"
+
+
 def _load_url(url: str) -> dict[str, Any]:
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme == "file":
         return json.loads(Path(urllib.request.url2pathname(parsed.path)).read_text())
     if parsed.scheme in {"http", "https"}:
-        with urllib.request.urlopen(url, timeout=60) as response:
+        request = urllib.request.Request(
+            url,
+            headers={"User-Agent": RELEASE_HTTP_USER_AGENT},
+        )
+        with urllib.request.urlopen(request, timeout=60) as response:
             return json.loads(response.read().decode("utf-8"))
     raise SystemExit(f"manifest URL must use file://, http://, or https://: {url}")
 
 
+def _release_graph_asset_fingerprint(manifest: dict[str, Any]) -> dict[str, Any]:
+    profiles = manifest.get("profiles")
+    if not isinstance(profiles, dict) or not profiles:
+        raise SystemExit("release graph profiles must be a non-empty object")
+
+    revisions: set[str] = set()
+    files: dict[str, dict[str, Any]] = {}
+    evidence_names = {
+        "obom": "obom.cdx.json",
+        "software_inventory": "software-inventory.json",
+    }
+    for profile_id, profile in sorted(profiles.items()):
+        if not isinstance(profile, dict):
+            raise SystemExit(f"release graph profile {profile_id!r} must be an object")
+        architectures = profile.get("architectures")
+        if not isinstance(architectures, list) or not architectures:
+            raise SystemExit(
+                f"release graph profile {profile_id!r} architectures must be non-empty"
+            )
+        for architecture in architectures:
+            if not isinstance(architecture, dict):
+                raise SystemExit(
+                    f"release graph profile {profile_id!r} architecture must be an object"
+                )
+            arch = architecture.get("architecture")
+            revision = architecture.get("image_revision")
+            if not isinstance(arch, str) or not arch:
+                raise SystemExit(
+                    f"release graph profile {profile_id!r} architecture is missing its name"
+                )
+            if not isinstance(revision, str) or not revision:
+                raise SystemExit(
+                    f"release graph profile {profile_id!r}/{arch} is missing image_revision"
+                )
+            revisions.add(revision)
+            records: list[tuple[str, Any]] = []
+            for image in architecture.get("images", []):
+                if isinstance(image, dict) and isinstance(image.get("name"), str):
+                    records.append((image["name"], image))
+            for evidence in architecture.get("evidence", []):
+                if not isinstance(evidence, dict):
+                    continue
+                logical_name = evidence_names.get(evidence.get("kind"))
+                if logical_name is not None:
+                    records.append((logical_name, evidence))
+            for logical_name, record in records:
+                digest = record.get("digest")
+                blake3 = digest.get("blake3") if isinstance(digest, dict) else None
+                size = record.get("bytes")
+                if not isinstance(blake3, str) or len(blake3) != 64:
+                    raise SystemExit(
+                        f"release graph asset {profile_id}/{arch}/{logical_name} "
+                        "has invalid BLAKE3"
+                    )
+                if not isinstance(size, int) or size < 0:
+                    raise SystemExit(
+                        f"release graph asset {profile_id}/{arch}/{logical_name} "
+                        "has invalid size"
+                    )
+                key = f"{arch}/{logical_name}"
+                value = {"hash": blake3, "size": size}
+                previous = files.setdefault(key, value)
+                if previous != value:
+                    raise SystemExit(
+                        f"release graph profiles disagree on asset {key}: "
+                        f"{previous} != {value}"
+                    )
+    if len(revisions) != 1:
+        raise SystemExit(
+            "release graph must declare one image revision across every profile/arch: "
+            + ", ".join(sorted(revisions))
+        )
+    if not files:
+        raise SystemExit("release graph contains no comparable VM assets")
+    return {"version": next(iter(revisions)), "files": files}
+
+
 def _current_asset_fingerprint(manifest: dict[str, Any]) -> dict[str, Any]:
+    if "assets" not in manifest and "profiles" in manifest:
+        return _release_graph_asset_fingerprint(manifest)
     current = manifest.get("assets", {}).get("current")
     releases = manifest.get("assets", {}).get("releases", {})
     if not isinstance(current, str) or not current:
@@ -64,7 +150,13 @@ def _release_metadata(release: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _asset_release_metadata(manifest: dict[str, Any]) -> dict[str, Any]:
+def _asset_release_metadata(manifest: dict[str, Any]) -> dict[str, Any] | None:
+    # Public release graphs expose the current profile/image projection but do
+    # not expose the legacy manifest's historical release and policy metadata.
+    # Returning None makes comparison conservative: identical blobs still
+    # redeploy channel metadata instead of incorrectly suppressing a change.
+    if "assets" not in manifest and "profiles" in manifest:
+        return None
     current = manifest.get("assets", {}).get("current")
     releases = manifest.get("assets", {}).get("releases", {})
     if not isinstance(current, str) or not current:
@@ -149,6 +241,14 @@ def compare_manifests(
             "changed": True,
             "asset_blobs_changed": True,
             "reason": "asset_hashes_changed",
+            "previous_assets": previous["version"],
+            "new_assets": new["version"],
+        }
+    if previous_metadata is None:
+        return {
+            "changed": True,
+            "asset_blobs_changed": False,
+            "reason": "previous_asset_metadata_unavailable",
             "previous_assets": previous["version"],
             "new_assets": new["version"],
         }

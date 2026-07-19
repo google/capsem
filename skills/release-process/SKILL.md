@@ -48,6 +48,13 @@ complete local `just test` immediately before committing/pushing the new exact
 candidate. A subsequent production or gate change creates a new candidate and
 therefore needs a new complete run.
 
+Stamp the forward-only version before that complete local gate. The real macOS
+and Linux packages, host SBOM, installer metadata, and binary-version checks
+built by `just test` must contain the exact version that will be committed,
+qualified, and tagged. `prepare-release` therefore stamps first, runs exactly
+one `just test`, and commits only after it succeeds; testing the prior version
+and stamping afterward is not candidate evidence.
+
 Treat disk capacity as a release resource on both macOS and Linux. Never copy
 an already-built multi-gigabyte immutable VM/package cohort into a second
 same-filesystem staging tree late in qualification. Use hardlink-first staging
@@ -64,6 +71,17 @@ clean Linux install image and prove its container-owned uv environment can run
 virtualenv leakage and missing runner dependencies in seconds while retaining
 the complete Docker/systemd install suite later in `just test`; the bootstrap
 proof is never accepted as a substitute for install E2E.
+
+Before paying for qualification, run the exact package materializer on macOS
+and in the Linux host-builder against the live public channel URL, using every
+release architecture and the complete checked-in profile catalog. The public
+channel document is a release graph (`profiles`/`packages`), while local asset
+inputs may still use the legacy `assets.current`/`assets.releases` schema; the
+shared materializer must accept both intentionally and reject every incomplete
+or unknown shape. Every Python reader of `release.capsem.org` must send an
+explicit Capsem user agent. Cloudflare rejecting bare `urllib` while `curl`
+succeeds is a client-contract failure that must be reproduced by an adversarial
+local HTTP server and rejected by the fail-fast source guard.
 
 ## Installer outcome gate
 

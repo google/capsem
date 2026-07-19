@@ -357,7 +357,11 @@ def check_generated_release(
     dist: Path,
     channel: str,
 ) -> None:
-    with urllib.request.urlopen(manifest_url, timeout=30) as response:
+    request = urllib.request.Request(
+        manifest_url,
+        headers={"User-Agent": "capsem-release-client/1"},
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
         manifest = json.loads(response.read())
     packages = manifest.get("packages")
     if not isinstance(packages, list) or not packages:

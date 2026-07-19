@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Hardened release manifest consumers against Cloudflare rejecting Python's
+  default HTTP identity, taught package materialization and asset-delta checks
+  to distinguish the public release graph from the legacy VM asset manifest,
+  replaced the post-deploy legacy-only URL verifier with a byte/BLAKE3 checked
+  dual-schema rail, and made release preparation stamp before the full local
+  package gate so both schemas and the exact candidate version are exercised
+  before qualification.
 - Made VM asset generation stream BLAKE3 and SHA-256 together into the
   authoritative manifest, made channel assembly reuse those digests instead
   of repeatedly reopening gigabyte root files, isolated historical releases

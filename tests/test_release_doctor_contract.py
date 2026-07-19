@@ -2223,18 +2223,15 @@ def test_binary_release_verifies_packages_hydrate_vm_assets_from_public_channel(
 
     assert "needs: [deploy-release-channel]" in verify_downloads
     assert 'curl -fsSL "$ASSET_MANIFEST_URL" -o /tmp/verify/manifest.json' in verify_downloads
-    assert "asset_base = m.get('asset_base') or '/assets/releases'" in verify_downloads
-    assert "manifest_origin = f'{manifest.scheme}://{manifest.netloc}'" in verify_downloads
-    assert "if '{asset_version}' in base:" in verify_downloads
-    assert "version_base = base.replace('{asset_version}', asset_version)" in verify_downloads
-    assert "version_base = f'{base}/{asset_version}'" in verify_downloads
-    assert "if version_base.startswith('/'):" in verify_downloads
-    assert "version_base = f'{manifest_origin}{version_base}'" in verify_downloads
-    assert "asset_url(cur, arch, name)" in verify_downloads
+    assert "scripts/list-release-manifest-assets.py" in verify_downloads
+    assert "--manifest-path /tmp/verify/manifest.json" in verify_downloads
+    assert "m['assets']['current']" not in verify_downloads
     assert 'BASE="${ASSET_MANIFEST_URL%/stable/manifest.json}/releases"' not in verify_downloads
     assert 'url="$BASE/$asset_version/$arch-$name"' not in verify_downloads
     assert 'expected_hash="${hash#blake3:}"' in verify_downloads
     assert 'curl -fsSL "$url" -o "$blob"' in verify_downloads
+    assert 'actual_bytes=$(wc -c < "$blob"' in verify_downloads
+    assert 'if [ "$actual_bytes" != "$bytes" ]; then' in verify_downloads
     assert "import blake3" in verify_downloads
     assert "actual = blake3.blake3(path.read_bytes()).hexdigest()" in verify_downloads
     assert "::error::$url blake3 mismatch" in verify_downloads
@@ -4725,6 +4722,10 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         "scripts/repack-deb.sh",
         "scripts/deb-postinst.sh",
         "scripts/pkg-scripts/postinstall",
+        "scripts/materialize-config.sh",
+        "scripts/check-asset-release-delta.py",
+        "scripts/build-complete-release-channel.py",
+        "scripts/local-release-glowup.py",
         "tests/capsem-install",
         "justfile",
     )
@@ -4963,6 +4964,16 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         assert rejected.returncode != 0, f"guard accepted legacy {legacy_sidecar}"
         assert "legacy split manifest/update sidecar" in rejected.stderr
     update.write_text(original)
+
+    release_reader = tmp_path / "scripts/check-asset-release-delta.py"
+    original_reader = release_reader.read_text()
+    release_reader.write_text(
+        original_reader + "\n# urllib.request.urlopen(url, timeout=60)\n"
+    )
+    rejected = run_guard()
+    release_reader.write_text(original_reader)
+    assert rejected.returncode != 0
+    assert "public release HTTP reader passes a bare URL" in rejected.stderr
 
 
 def test_pr_ci_python_coverage_is_not_a_monolithic_vm_tree_rerun() -> None:

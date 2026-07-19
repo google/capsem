@@ -13,16 +13,18 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import url2pathname, urlopen
+from urllib.request import Request, url2pathname, urlopen
 
 
 REQUIRED_CHANNELS = ("stable", "nightly")
+RELEASE_HTTP_USER_AGENT = "capsem-release-client/1"
 
 
 def read_json_source(source: str) -> dict[str, Any]:
     parsed = urlparse(source)
     if parsed.scheme in {"http", "https"}:
-        with urlopen(source, timeout=60) as response:
+        request = Request(source, headers={"User-Agent": RELEASE_HTTP_USER_AGENT})
+        with urlopen(request, timeout=60) as response:
             payload = response.read()
     elif parsed.scheme == "file":
         payload = Path(url2pathname(parsed.path)).read_bytes()

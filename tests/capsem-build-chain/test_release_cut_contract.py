@@ -69,7 +69,11 @@ def test_checked_in_python_lock_matches_project_version() -> None:
 def test_release_candidate_is_committed_without_minting_a_tag() -> None:
     prepare = _just_recipe_block("prepare-release:")
 
-    assert "prepare-release: test _stamp-version" in prepare
+    assert "prepare-release: _stamp-version" in prepare
+    assert "just test" in prepare
+    assert prepare.index("just test") < prepare.index(
+        'git commit -m "release candidate: v${NEW}"'
+    )
     assert 'git commit -m "release candidate: v${NEW}"' in prepare
     assert "git tag" not in prepare
     assert "gh workflow run" not in prepare

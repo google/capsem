@@ -107,6 +107,58 @@ def _add_binary_release_metadata(manifest_path: Path, *, version: str) -> None:
     manifest_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def _release_graph_from_legacy(manifest_path: Path) -> dict:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    current = manifest["assets"]["current"]
+    arches = manifest["assets"]["releases"][current]["arches"]
+    evidence_kinds = {
+        "obom.cdx.json": "obom",
+        "software-inventory.json": "software_inventory",
+    }
+    architectures = []
+    for arch, assets in sorted(arches.items()):
+        images = []
+        evidence = []
+        for name, entry in sorted(assets.items()):
+            record = {
+                "bytes": entry["size"],
+                "digest": {"blake3": entry["hash"], "sha256": "f" * 64},
+                "status": "current",
+            }
+            if name in evidence_kinds:
+                record["kind"] = evidence_kinds[name]
+                evidence.append(record)
+            else:
+                record["name"] = name
+                record["kind"] = {
+                    "vmlinuz": "kernel",
+                    "initrd.img": "initrd",
+                    "rootfs.erofs": "rootfs",
+                }[name]
+                images.append(record)
+        architectures.append(
+            {
+                "architecture": arch,
+                "image_revision": current,
+                "images": images,
+                "evidence": evidence,
+            }
+        )
+    return {
+        "channel": "stable",
+        "version": "1.0.test",
+        "status": "current",
+        "packages": [],
+        "profiles": {
+            "code": {"status": "current", "architectures": architectures},
+            "co-work": {
+                "status": "current",
+                "architectures": json.loads(json.dumps(architectures)),
+            },
+        },
+    }
+
+
 def _run_delta(
     new_manifest: Path,
     previous_manifest: Path,
@@ -158,6 +210,64 @@ def test_asset_release_noop_detects_unchanged_hashes_and_sets_outputs(tmp_path: 
     assert "asset_blobs_changed=false" in output.read_text(encoding="utf-8")
     assert "reason=asset_hashes_unchanged" in output.read_text(encoding="utf-8")
     assert "release-channel deploy will be skipped" in summary.read_text(encoding="utf-8")
+
+
+def test_asset_release_delta_compares_public_release_graph_without_republishing_blobs(
+    tmp_path: Path,
+) -> None:
+    new = _manifest(tmp_path / "new" / "manifest.json", version="2030.0101.2")
+    previous = tmp_path / "previous" / "manifest.json"
+    previous.parent.mkdir(parents=True)
+    previous.write_text(
+        json.dumps(_release_graph_from_legacy(new), indent=2) + "\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "github-output"
+    summary = tmp_path / "summary.md"
+
+    result = _run_delta(new, previous, output, summary)
+
+    assert result == {
+        "changed": True,
+        "asset_blobs_changed": False,
+        "reason": "previous_asset_metadata_unavailable",
+        "previous_assets": "2030.0101.2",
+        "new_assets": "2030.0101.2",
+    }
+    assert "immutable VM blobs will not be republished" in summary.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_asset_release_delta_detects_changed_blob_against_public_release_graph(
+    tmp_path: Path,
+) -> None:
+    previous_legacy = _manifest(
+        tmp_path / "previous-legacy" / "manifest.json",
+        version="2030.0101.1",
+    )
+    previous = tmp_path / "previous" / "manifest.json"
+    previous.parent.mkdir(parents=True)
+    previous.write_text(
+        json.dumps(_release_graph_from_legacy(previous_legacy), indent=2) + "\n",
+        encoding="utf-8",
+    )
+    new = _manifest(
+        tmp_path / "new" / "manifest.json",
+        version="2030.0101.2",
+        rootfs_hash="e" * 64,
+    )
+
+    result = _run_delta(
+        new,
+        previous,
+        tmp_path / "github-output",
+        tmp_path / "summary.md",
+    )
+
+    assert result["changed"] is True
+    assert result["asset_blobs_changed"] is True
+    assert result["reason"] == "asset_hashes_changed"
 
 
 def test_asset_release_delta_deploys_deprecation_without_republishing_blobs(

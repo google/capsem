@@ -25,6 +25,10 @@ adjacent parity fixes before paying for the complete gate. After a failed
 qualification, do not restart a 50-minute `just test` for each small edit. Run
 it once when the forward-fix candidate is ready; any later production or gate
 change invalidates that candidate and requires one new complete run.
+For a release candidate, version stamping happens before that final local run:
+the `.pkg`, both `.deb` files, SBOM, metadata, and installed binary checks must
+exercise the exact version subsequently committed and qualified. A gate on the
+previous version followed by a stamp is not local candidate evidence.
 
 ## Release CI invariant
 
@@ -114,6 +118,16 @@ Because it runs before the expensive test stages, the guard must use only
 declared bootstrap dependencies. Its scanner is Python-standard-library
 only and has an executable regression with `rg` absent; never reintroduce a
 developer-machine-only search command into this fail-fast boundary.
+
+HTTP-client behavior is part of local/CI parity. A localhost fixture returning
+200 does not qualify a reader that will fetch `release.capsem.org`: exercise the
+production reader against an adversarial local edge that rejects Python's
+default `urllib` identity, and execute it once against the live public manifest
+before the full gate. Public release readers must send an explicit Capsem user
+agent, fail loudly on malformed JSON or an unsupported manifest shape, and be
+covered by the fail-fast source guard so a bare `urlopen(url)` cannot return.
+Test both the legacy VM-asset manifest and the public release graph; they are
+distinct schemas even when they share the name `manifest.json`.
 
 This includes workspace/runtime tests, Rust and Python coverage floors,
 `capsem-doctor` and Ironbank acceptance, benchmarks, artifact completeness,

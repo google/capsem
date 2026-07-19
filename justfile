@@ -1688,7 +1688,7 @@ _test-install-harness-preflight:
             -e UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test \
             -v "$PWD":/src:ro \
             "$IMAGE" \
-            bash -lc 'set -e; sudo -n true; cd /src; cdxgen --version; source /src/scripts/doctor-linux.sh; linux_musl_toolchain_available; uv run python -m pytest --version'
+            bash -lc 'set -e; sudo -n true; cd /src; cdxgen --version; source /src/scripts/doctor-linux.sh; linux_musl_toolchain_available; uv run python -m pytest --version; uv run python -m pytest -p no:cacheprovider -q tests/test_materialize_config_http.py'
     }
     docker build -t "$IMAGE" -f docker/Dockerfile.install-test .
     if ! check_install_image; then
@@ -1952,9 +1952,12 @@ release tag="" channel="stable":
 
 # Stamp the version and commit an untagged candidate. The exact commit must be
 # pushed and remotely qualified before cut-release is allowed to mint a tag.
-prepare-release: test _stamp-version
+prepare-release: _stamp-version
     #!/usr/bin/env bash
     set -euo pipefail
+    # The canonical gate must build and install the exact stamped candidate,
+    # not the previous development version.
+    just test
     NEW=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
     TAG="v${NEW}"
     TODAY=$(date +%Y-%m-%d)

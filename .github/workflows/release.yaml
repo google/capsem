@@ -792,8 +792,8 @@ jobs:
           mkdir -p /tmp/verify
           curl -fsSL "$ASSET_MANIFEST_URL" -o /tmp/verify/manifest.json
           fail=0
-          # Iterate every (arch, logical_name, hash) the current asset release declares.
-          while IFS=$'\t' read -r asset_version arch name hash url; do
+          # Iterate every profile-owned URL declared by either supported manifest schema.
+          while IFS=$'\t' read -r asset_version arch name hash bytes url; do
             code=$(curl -sIL -o /dev/null -w "%{http_code}" "$url")
             if [ "$code" != "200" ]; then
               echo "::error::$url -> HTTP $code"
@@ -801,11 +801,16 @@ jobs:
             else
               echo "ok  $url"
             fi
-            blob="/tmp/verify/$asset_version-$arch-$name"
+            blob="/tmp/verify/${hash#blake3:}"
             if ! curl -fsSL "$url" -o "$blob"; then
               echo "::error::$url download failed"
               fail=1
               continue
+            fi
+            actual_bytes=$(wc -c < "$blob" | tr -d ' ')
+            if [ "$actual_bytes" != "$bytes" ]; then
+              echo "::error::$url byte-size mismatch: expected $bytes, got $actual_bytes"
+              fail=1
             fi
             expected_hash="${hash#blake3:}"
             if ! uv run python3 - "$blob" "$expected_hash" <<'PY'
@@ -824,31 +829,9 @@ jobs:
               echo "::error::$url blake3 mismatch"
               fail=1
             fi
-          done < <(python3 -c "
-          import json
-          import os
-          from urllib.parse import urlparse
-
-          m = json.load(open('/tmp/verify/manifest.json'))
-          manifest = urlparse(os.environ['ASSET_MANIFEST_URL'])
-          manifest_origin = f'{manifest.scheme}://{manifest.netloc}'
-          asset_base = m.get('asset_base') or '/assets/releases'
-
-          def asset_url(asset_version, arch, name):
-              base = asset_base.rstrip('/')
-              if '{asset_version}' in base:
-                  version_base = base.replace('{asset_version}', asset_version)
-              else:
-                  version_base = f'{base}/{asset_version}'
-              if version_base.startswith('/'):
-                  version_base = f'{manifest_origin}{version_base}'
-              return f'{version_base.rstrip(\"/\")}/{arch}-{name}'
-
-          cur = m['assets']['current']
-          for arch, files in m['assets']['releases'][cur]['arches'].items():
-              for name, meta in files.items():
-                  print(f'{cur}\t{arch}\t{name}\t{meta[\"hash\"]}\t{asset_url(cur, arch, name)}')
-          ")
+          done < <(python3 scripts/list-release-manifest-assets.py \
+            --manifest-path /tmp/verify/manifest.json \
+            --manifest-url "$ASSET_MANIFEST_URL")
           [ "$fail" = 0 ] || { echo '::error::one or more asset URLs are unreachable or hash-mismatched'; exit 1; }
 
       - name: Verify public release packages and installer contract

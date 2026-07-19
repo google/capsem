@@ -458,6 +458,10 @@ def test_full_gate_preflights_clean_install_harness_before_expensive_stages() ->
     )
     assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in preflight
     assert "uv run python -m pytest --version" in preflight
+    assert (
+        "uv run python -m pytest -p no:cacheprovider -q "
+        "tests/test_materialize_config_http.py"
+    ) in preflight
     assert "sudo -n true" in preflight
     assert "docker build --no-cache" in preflight
 

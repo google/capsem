@@ -168,6 +168,15 @@ reject_matches(
 )
 
 reject_matches(
+    "public release HTTP reader passes a bare URL to urllib and may be rejected by the edge",
+    r"urlopen\(\s*(?:source|url|manifest_url)\s*,",
+    "scripts/materialize-config.sh",
+    "scripts/check-asset-release-delta.py",
+    "scripts/build-complete-release-channel.py",
+    "scripts/local-release-glowup.py",
+)
+
+reject_matches(
     "installed update flow silently substitutes the stable manifest when source metadata is absent",
     r"unwrap_or(?:_else)?\([^\n]*DEFAULT_RELEASE_MANIFEST_URL",
     "crates/capsem/src/update.rs",

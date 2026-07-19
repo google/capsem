@@ -47,12 +47,15 @@ import json
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
-from urllib.request import url2pathname, urlopen
+from urllib.request import Request, url2pathname, urlopen
+
+USER_AGENT = "capsem-materialize-config/1"
 
 source = sys.argv[1]
 parsed = urlparse(source)
 if parsed.scheme in {"http", "https"}:
-    content = urlopen(source, timeout=60).read().decode("utf-8")
+    request = Request(source, headers={"User-Agent": USER_AGENT})
+    content = urlopen(request, timeout=60).read().decode("utf-8")
 elif parsed.scheme == "file":
     content = Path(url2pathname(parsed.path)).read_text()
 elif parsed.scheme:
@@ -60,8 +63,23 @@ elif parsed.scheme:
 else:
     content = Path(source).read_text()
 manifest = json.loads(content)
-current = manifest["assets"]["current"]
-arches = manifest["assets"]["releases"][current]["arches"]
+if "assets" in manifest:
+    current = manifest["assets"]["current"]
+    arches = set(manifest["assets"]["releases"][current]["arches"])
+elif "profiles" in manifest:
+    profiles = manifest["profiles"]
+    if not isinstance(profiles, dict) or not profiles:
+        raise SystemExit("release manifest profiles must be a non-empty object")
+    arches = {
+        entry["architecture"]
+        for profile in profiles.values()
+        for entry in profile.get("architectures", [])
+        if isinstance(entry, dict) and isinstance(entry.get("architecture"), str)
+    }
+    if not arches:
+        raise SystemExit("release manifest profiles contain no architectures")
+else:
+    raise SystemExit("manifest must contain legacy assets or release profiles")
 for arch in sorted(arches):
     print(arch)
 PY
