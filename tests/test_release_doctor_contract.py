@@ -112,6 +112,22 @@ def _source_text(path: str) -> str:
     return (PROJECT_ROOT / path).read_text()
 
 
+def _skill_text(path: str) -> str:
+    """Read a skill and the reference files it explicitly tells agents to load."""
+    skill_path = PROJECT_ROOT / path
+    skill_dir = skill_path.parent
+    main = skill_path.read_text()
+    parts = [main]
+    for relative in dict.fromkeys(
+        re.findall(r"`(references/[A-Za-z0-9_./-]+\.md)`", main)
+    ):
+        reference = (skill_dir / relative).resolve()
+        assert reference.is_relative_to(skill_dir.resolve())
+        assert reference.is_file(), f"missing linked skill reference: {relative}"
+        parts.append(reference.read_text())
+    return "\n".join(parts)
+
+
 def _command_attribute_prefix(source: str, struct_name: str = "Args") -> str:
     marker = f"struct {struct_name}"
     assert marker in source
@@ -546,8 +562,8 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
         in workflow
     )
     docs = _source_text("docs/src/content/docs/development/ci.md")
-    release_skill = _source_text("skills/release-process/SKILL.md")
-    asset_skill = _source_text("skills/asset-pipeline/SKILL.md")
+    release_skill = _skill_text("skills/release-process/SKILL.md")
+    asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
     for text in (docs, release_skill, asset_skill):
         normalized_text = " ".join(text.split())
         assert "metadata-only asset release changes" in text
@@ -647,8 +663,8 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     workflow = _workflow_text("release-channel-staging.yaml")
     reusable = _workflow_text("release-channel.yaml")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
-    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
-    asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
+    release_skill = _skill_text("skills/release-process/SKILL.md")
+    asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
 
     assert "workflow_dispatch:" in workflow
     assert "default: staging" in workflow
@@ -897,8 +913,8 @@ def test_release_channel_cloudflare_prerequisites_are_documented() -> None:
     release_assets = _workflow_text("release-assets.yaml")
     checker = _source_text("scripts/check-cloudflare-pages-project.py")
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
-    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
-    asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
+    release_skill = _skill_text("skills/release-process/SKILL.md")
+    asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
 
     for required in (
         "CLOUDFLARE_ACCOUNT_ID",
@@ -1021,8 +1037,8 @@ def test_release_channel_cache_header_documentation_matches_deploy_smoke() -> No
     workflow = _workflow_text("release-channel.yaml")
     ci_docs = _source_text("docs/src/content/docs/development/ci.md")
     architecture_docs = _source_text("docs/src/content/docs/architecture/asset-pipeline.md")
-    release_skill = _source_text("skills/release-process/SKILL.md")
-    asset_skill = _source_text("skills/asset-pipeline/SKILL.md")
+    release_skill = _skill_text("skills/release-process/SKILL.md")
+    asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
 
     script = _source_text("scripts/check-remote-release-readiness.py")
     assert "uv run python scripts/check-release-site-contract.py" in workflow
@@ -1432,7 +1448,7 @@ def test_binary_release_summary_names_pkg_and_deb_sbom_coverage() -> None:
 def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:
     workflow = _workflow_text("release.yaml")
     docs = _source_text("docs/src/content/docs/development/ci.md")
-    release_skill = _source_text("skills/release-process/SKILL.md")
+    release_skill = _skill_text("skills/release-process/SKILL.md")
 
     assert "latest.json" not in workflow
     assert "api.github.com/repos/google/capsem/releases/latest" not in workflow
@@ -1450,7 +1466,7 @@ def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:
 def test_binary_release_channel_policy_supports_fast_nightly_and_weekly_stable() -> None:
     workflow = _workflow_text("release.yaml")
     docs = _source_text("docs/src/content/docs/development/ci.md")
-    release_skill = _source_text("skills/release-process/SKILL.md")
+    release_skill = _skill_text("skills/release-process/SKILL.md")
 
     trigger = workflow.split("\npermissions:", maxsplit=1)[0]
     assert "workflow_dispatch:" in trigger
@@ -1472,7 +1488,7 @@ def test_untagged_release_candidate_runs_complete_canonical_gate_in_ci() -> None
     gate = _workflow_job_block("qualification", "release-qualification.yaml")
     agents = _source_text("AGENTS.md")
     testing_skill = _source_text("skills/dev-testing/SKILL.md")
-    release_skill = _source_text("skills/release-process/SKILL.md")
+    release_skill = _skill_text("skills/release-process/SKILL.md")
 
     assert "run-name: Qualify release ${{ inputs.channel }} ${{ inputs.sha }}" in qualification_workflow
     assert "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json" in qualification_workflow
@@ -1625,27 +1641,27 @@ def test_install_gate_rebuilds_missing_base_image_before_derived_image() -> None
 
 
 def test_release_skill_requires_ci_and_local_mac_installer_outcome_proof() -> None:
-    release_skill = _source_text("skills/release-process/SKILL.md")
+    release_skill = _skill_text("skills/release-process/SKILL.md")
+    normalized_release_skill = " ".join(release_skill.split())
 
     assert "Installer outcome gate" in release_skill
     assert "exact publishable `.pkg`" in release_skill
     assert "exact publishable `.deb`" in release_skill
     assert "Linux CI installed-product proof" in release_skill
     assert "macOS CI exact-package proof" in release_skill
-    assert "Final local macOS installed-product proof" in release_skill
-    assert "sudo /usr/sbin/installer -pkg" in release_skill
-    assert "capsem shell" in release_skill
-    assert "manual GUI click-through" in release_skill
-    assert "does not count as release proof" in release_skill
-    assert "forward-only release" in release_skill
-    assert "Do not call the release complete" in release_skill
+    assert "Accepted macOS VZ proof boundary" in release_skill
+    assert "complete local `just test` on the exact clean, versioned candidate" in release_skill
+    assert "hosted runners cannot repeat the VZ guest path" in normalized_release_skill
+    assert "not installed again on a physical Mac" in normalized_release_skill
+    assert "Release history is forward-only" in release_skill
+    assert "Publication must depend on both platform jobs" in release_skill
     assert "scripts/verify-installed-release.py" in release_skill
     assert "byte-for-byte" in release_skill
     assert "all manifest-declared profiles ready" in release_skill
 
 
 def test_release_skill_requires_exact_manifest_single_metadata_and_shared_status_contract() -> None:
-    release_skill = _source_text("skills/release-process/SKILL.md")
+    release_skill = _skill_text("skills/release-process/SKILL.md")
     installation_skill = _source_text("skills/dev-installation/SKILL.md")
 
     for source in (release_skill, installation_skill):
@@ -1740,7 +1756,7 @@ def test_installation_skill_documents_deb_preinstall_restart_rail() -> None:
 
 
 def test_release_skill_documents_deb_preinstall_restart_rail() -> None:
-    release_skill = _source_text("skills/release-process/SKILL.md")
+    release_skill = _skill_text("skills/release-process/SKILL.md")
     deb_preinst = _source_text("scripts/deb-preinst.sh")
     repack_deb = _source_text("scripts/repack-deb.sh")
 
@@ -2331,8 +2347,8 @@ def test_manifest_source_inputs_are_url_only() -> None:
 
 def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
-    asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
-    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
+    release_skill = _skill_text("skills/release-process/SKILL.md")
     release_skill_text = " ".join(release_skill.split())
 
     for text in (docs,):
@@ -2381,7 +2397,7 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
 
 
 def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
-    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    release_skill = _skill_text("skills/release-process/SKILL.md")
     release_skill_text = " ".join(release_skill.split())
 
     assert "asset-channel-preview" in release_skill
@@ -2413,7 +2429,7 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
 
 
 def test_release_process_skill_documents_multi_channel_graph() -> None:
-    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    release_skill = _skill_text("skills/release-process/SKILL.md")
     release_skill_text = " ".join(release_skill.split())
 
     for required in [
@@ -2487,7 +2503,7 @@ def test_docs_describe_multi_channel_release_graph() -> None:
 
 
 def test_asset_and_install_skills_document_channel_switching() -> None:
-    asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
+    asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
     install_skill = (PROJECT_ROOT / "skills/dev-installation/SKILL.md").read_text()
     combined = "\n".join([asset_skill, install_skill])
     combined_text = " ".join(combined.split())
@@ -2518,8 +2534,8 @@ def test_asset_and_install_skills_document_channel_switching() -> None:
 
 
 def test_release_skills_preserve_vm_obom_attestation_predicate_contract() -> None:
-    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
-    asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
+    release_skill = _skill_text("skills/release-process/SKILL.md")
+    asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
 
     for skill in (release_skill, asset_skill):
         skill_text = " ".join(skill.split())
@@ -2574,7 +2590,7 @@ def test_docs_do_not_teach_bare_manifest_paths_for_package_inputs() -> None:
 
 
 def test_asset_skill_documents_custom_manifest_url_contract() -> None:
-    skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
+    skill = _skill_text("skills/asset-pipeline/SKILL.md")
 
     assert "capsem update --assets --manifest <URL>" in skill
     assert "`--manifest` is URL-shaped" in skill
@@ -2678,10 +2694,10 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
 
 
 def test_release_skills_require_local_ci_execution_parity_and_record_native_musl_lesson() -> None:
-    testing = (PROJECT_ROOT / "skills/dev-testing/SKILL.md").read_text()
+    testing = _skill_text("skills/dev-testing/SKILL.md")
     skills = (PROJECT_ROOT / "skills/dev-skills/SKILL.md").read_text()
     debugging = (PROJECT_ROOT / "skills/dev-debugging/SKILL.md").read_text()
-    release = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    release = _skill_text("skills/release-process/SKILL.md")
 
     for document in (testing, debugging, release):
         assert "Local/CI execution parity" in document
@@ -2692,7 +2708,7 @@ def test_release_skills_require_local_ci_execution_parity_and_record_native_musl
     assert "native `musl-gcc`" in skills
     assert "`x86_64-linux-musl-gcc`" in skills
     assert "unavoidable platform boundary" in testing
-    assert "physical Mac" in testing
+    assert "Apple VZ is proven by the complete local gate" in testing
     assert "exact-SHA CI" in testing
     assert "release-assets.yaml" in release
     assert "linux_musl_toolchain_available" in release
@@ -2704,7 +2720,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     assets = _workflow_text("release-assets.yaml")
     ci = _workflow_text("ci.yaml")
     release = _workflow_text("release.yaml")
-    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    release_skill = _skill_text("skills/release-process/SKILL.md")
 
     assert "run: just test" in qualification
     assert "test:" in just
@@ -2730,9 +2746,10 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
         "Apple signing and notarization",
         "hosted-runner KVM",
         "Cloudflare publication",
-        "physical-Mac VZ shell proof",
     ):
         assert unavoidable_boundary in release_skill
+    assert "Apple VZ is owned by the complete" in release_skill
+    assert "complete local VZ gate for the exact candidate" in release_skill
 
 
 def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
@@ -2806,9 +2823,9 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
 def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
     just = (PROJECT_ROOT / "justfile").read_text()
     qualification = _workflow_text("release-qualification.yaml")
-    testing = (PROJECT_ROOT / "skills/dev-testing/SKILL.md").read_text()
-    ironbank = (PROJECT_ROOT / "skills/ironbank/SKILL.md").read_text()
-    release = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
+    testing = _skill_text("skills/dev-testing/SKILL.md")
+    ironbank = _skill_text("skills/ironbank/SKILL.md")
+    release = _skill_text("skills/release-process/SKILL.md")
 
     for document in (testing, ironbank, release):
         assert "Ironbank parity rule" in document
@@ -2969,8 +2986,8 @@ def test_remote_release_readiness_fetch_retries_ipv4_on_network_unreachable(monk
 
 def test_live_release_activation_order_is_documented() -> None:
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
-    release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
-    asset_skill = (PROJECT_ROOT / "skills/asset-pipeline/SKILL.md").read_text()
+    release_skill = _skill_text("skills/release-process/SKILL.md")
+    asset_skill = _skill_text("skills/asset-pipeline/SKILL.md")
 
     for text in (docs, release_skill, asset_skill):
         normalized = " ".join(text.split())
@@ -4528,7 +4545,7 @@ def test_release_docs_identify_body_blobs_as_forensic_truth() -> None:
 
 def test_release_docs_reject_old_service_routes_and_manifest_signing() -> None:
     architecture_skill = (PROJECT_ROOT / "skills" / "site-architecture" / "SKILL.md").read_text()
-    release_skill = (PROJECT_ROOT / "skills" / "release-process" / "SKILL.md").read_text()
+    release_skill = _skill_text("skills/release-process/SKILL.md")
 
     current_service_table = architecture_skill.split("### Service HTTP API", maxsplit=1)[1].split(
         "### MCP tools", maxsplit=1
