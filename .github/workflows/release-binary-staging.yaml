@@ -35,12 +35,12 @@ jobs:
     runs-on: ubuntu-latest
     name: Assemble binary channel dry run
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: pnpm
@@ -48,9 +48,11 @@ jobs:
       - name: Install release site dependencies
         run: cd release-site && pnpm install --frozen-lockfile
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           key: release-channel-binary-staging
 
@@ -129,7 +131,7 @@ jobs:
         run: |
           cargo run -p capsem-admin -- assets channel build \
             --manifest "file://$PWD/target/binary-channel-dry-run/manifest.json" \
-            --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
+            --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
             --channel "${{ inputs.channel }}" \
             --manifest-version "${{ inputs.manifest_version }}" \
             --out-dir target/release-channel
@@ -145,7 +147,7 @@ jobs:
             --channel "${{ inputs.channel }}" \
             --dist target/release-channel
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-dry-run-bundle
           path: |

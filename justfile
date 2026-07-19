@@ -31,7 +31,7 @@
 #   test-install     -> _build-host (Docker e2e: build .deb, dpkg -i, pytest)
 #   install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd + _materialize-config
 #                       (release build + frontend + Tauri bundle + .pkg/.deb installer)
-#   prepare-release  -> test + _stamp-version (commits an untagged candidate)
+#   prepare-release  -> _stamp-version + commit + test (proves the exact clean candidate)
 #   qualify-release  -> remote canonical Linux gate for the exact candidate SHA
 #   cut-release      -> verifies exact-SHA qualification, then creates local tag
 #   release [tag]    -> (waits for CI on a pushed tag)
@@ -648,14 +648,41 @@ test-artifacts:
 _bootstrap:
     sh {{justfile_directory()}}/bootstrap.sh -y
 
+# Bind the complete gate to one clean committed tree. The candidate recipe may
+# write ignored output under target/, but it must never change tracked or
+# untracked source files or move to another commit while the gate is running.
+test:
+    #!/bin/bash
+    set -euo pipefail
+    if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+        echo "just test requires a clean working tree; commit the complete candidate first." >&2
+        git status --short >&2
+        exit 1
+    fi
+    TESTED_HEAD=$(git rev-parse HEAD)
+    echo "=== Testing clean candidate $TESTED_HEAD ==="
+    just _test-candidate
+    test "$(git rev-parse HEAD)" = "$TESTED_HEAD" || {
+        echo "candidate HEAD changed while just test was running" >&2
+        exit 1
+    }
+    if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+        echo "just test changed the candidate working tree" >&2
+        git status --short >&2
+        exit 1
+    fi
+    echo "=== Verified clean candidate $TESTED_HEAD ==="
+
 # Flush target artifacts left by any prior failed candidate before prerequisites
 # begin rebuilding. A failed run therefore retains cache only for its immediate
 # focused retry; it can never leak into or accumulate across canonical runs.
-test: _clean-docker-test-targets _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-settings _check-assets _pack-initrd _materialize-config
+_test-candidate: _clean-docker-test-targets _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-settings _check-assets _pack-initrd _materialize-config
     #!/bin/bash
     set -euo pipefail
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
+    export CAPSEM_BENCHMARK_OUTPUT_ROOT="{{justfile_directory()}}/target/test-benchmarks"
+    rm -rf "$CAPSEM_BENCHMARK_OUTPUT_ROOT"
     # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
     # below. Acquired BEFORE the wipe: if a second `just test` were to run
     # past this line, the first's fd would be pinned to an unlinked inode
@@ -707,7 +734,11 @@ test: _clean-docker-test-targets _bootstrap _install-tools _clean-stale _pnpm-in
     # `set -e` does not trip on failed background jobs, so aggregate with
     # FAIL=1.
     echo "=== Audits + lint + web surfaces ==="
-    cargo audit & PID_CARGO_AUDIT=$!
+    # RustSec advisories follow an external clock. The scheduled/manual
+    # security-audit workflow owns the blocking signal; candidate qualification
+    # reports a fresh result without letting an upstream database update make an
+    # unrelated source commit red.
+    (cargo audit || echo "::warning::cargo audit reported advisories; see the security-audit workflow") & PID_CARGO_AUDIT=$!
     python3 scripts/audit-pnpm-bulk.py --project-dir frontend & PID_PNPM_AUDIT=$!
     uv run ruff check . & PID_RUFF=$!
     uv run ty check src/capsem & PID_TY=$!
@@ -730,7 +761,7 @@ test: _clean-docker-test-targets _bootstrap _install-tools _clean-stale _pnpm-in
         FAIL=1
     fi
     cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
-    wait $PID_CARGO_AUDIT || { echo "cargo audit failed"; FAIL=1; }
+    wait $PID_CARGO_AUDIT
     wait $PID_PNPM_AUDIT  || { echo "npm bulk audit failed";  FAIL=1; }
     wait $PID_CLIPPY      || { echo "cargo clippy failed (warnings = error)"; FAIL=1; }
     wait $PID_RUFF        || { echo "ruff check failed"; FAIL=1; }
@@ -843,9 +874,9 @@ test: _clean-docker-test-targets _bootstrap _install-tools _clean-stale _pnpm-in
     python3 scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
 
     echo "=== Benchmarks ==="
-    # Records /tmp/capsem-benchmark.json to benchmarks/capsem-bench/data_<ver>_<arch>.json
-    # on every run so we accumulate a baseline. No gate yet -- will grow
-    # per-category tolerances once ~5-10 clean runs are on disk per arch.
+    # Gate-owned recordings stay under target/test-benchmarks so the candidate
+    # tree remains byte-for-byte identical to the tested commit. `just bench`
+    # is the explicit historical archive operation for benchmarks/.
     CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/test_capsem_bench_baseline.py -v --tb=short
 
     # ---- Stage 7: Docker e2e ------------------------------------------------
@@ -1416,6 +1447,7 @@ bench: _ensure-dev-ready _check-assets _pack-initrd _materialize-config _ensure-
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
     acquire_exec_lock "$HOME/.capsem/run/execution.lock"
+    export CAPSEM_BENCHMARK_OUTPUT_ROOT="{{justfile_directory()}}/benchmarks"
     echo "=== In-VM benchmarks (disk, rootfs, CLI, HTTP, protocol, snapshots) ==="
     CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/test_capsem_bench_baseline.py -v --tb=short
     echo ""
@@ -1816,9 +1848,8 @@ test-install:
         sleep 0.5
     done
     # Fix ownership for capsem user builds. /usr/local/rustup is included
-    # because rustup self-updates (triggered by rust-toolchain.toml's
-    # channel = "stable") try to write /usr/local/rustup/tmp/, which is
-    # root-owned in the baked image -- without this chown, cargo build as
+    # because rustup may install pinned components/targets into its
+    # root-owned state -- without this chown, cargo build as
     # the capsem user dies with `Permission denied (os error 13)`.
     # Frontend dependencies and output must remain container-owned. A macOS
     # bind mount preserves host ownership even after the best-effort /src
@@ -1968,12 +1999,15 @@ release tag="" channel="stable":
 
 # Stamp the version and commit an untagged candidate. The exact commit must be
 # pushed and remotely qualified before cut-release is allowed to mint a tag.
-prepare-release: _stamp-version
+prepare-release:
     #!/usr/bin/env bash
     set -euo pipefail
-    # The canonical gate must build and install the exact stamped candidate,
-    # not the previous development version.
-    just test
+    if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+        echo "prepare-release requires a clean working tree" >&2
+        git status --short >&2
+        exit 1
+    fi
+    just _stamp-version
     NEW=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
     TAG="v${NEW}"
     TODAY=$(date +%Y-%m-%d)
@@ -1992,7 +2026,11 @@ prepare-release: _stamp-version
     # Commit only. A candidate is deliberately not a release tag.
     git add Cargo.toml crates/capsem-app/tauri.conf.json pyproject.toml uv.lock CHANGELOG.md LATEST_RELEASE.md
     git commit -m "release candidate: v${NEW}"
-    echo "Prepared untagged candidate $(git rev-parse HEAD)."
+    CANDIDATE_SHA=$(git rev-parse HEAD)
+    echo "=== Running the complete gate on clean candidate $CANDIDATE_SHA ==="
+    just test
+    test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+    echo "Prepared and locally verified untagged candidate $CANDIDATE_SHA."
     echo "Qualify it with:"
     echo "  git push origin HEAD:main"
     echo "  just qualify-release"

@@ -107,7 +107,8 @@ component names and versions come from the OBOM.
 
 ## SLSA attestation
 
-Release artifacts receive [SLSA build provenance](https://slsa.dev/) attestation via `actions/attest-build-provenance@v4`:
+Release artifacts receive [SLSA build provenance](https://slsa.dev/) attestation
+through a reviewed, full-commit-SHA pin of `actions/attest-build-provenance`:
 
 | Artifact | Attestation |
 |----------|-------------|
@@ -272,11 +273,11 @@ corporate channels use `https://` or `http://`.
 
 | Control | Implementation |
 |---------|---------------|
-| Rust toolchain | Stable, pinned via `dtolnay/rust-toolchain@stable` |
-| Dependency audit | `cargo audit` in CI test stage |
-| npm audit | `pnpm audit` in CI test stage |
+| Rust toolchain | Rust 1.97.1, pinned consistently in the workspace, workflows, bootstrap, and host builder |
+| Dependency audit | Blocking `cargo audit` in the scheduled/manual security workflow; report-only in the local candidate gate |
+| npm audit | Blocking bulk advisory check in the scheduled/manual security workflow and ordinary CI feedback |
 | Docker base images | Resolved by the profile-derived Docker template rail |
-| Compiler warnings | Treated as errors (`#[deny(warnings)]` in all crates) |
+| Compiler warnings | Treated as errors, with workspace `dbg_macro` and `todo` lints denied |
 | Auditable builds | `cargo-auditable` embeds dependency info in binaries |
 | Build context validation | `capsem.builder.doctor.check_source_files()` verifies completeness before release |
 | Rootfs binary verification | Release pipeline checks all required guest binaries exist in rootfs before packaging |

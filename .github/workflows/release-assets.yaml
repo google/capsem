@@ -39,7 +39,7 @@ jobs:
       DRY_RUN: ${{ inputs.dry_run }}
       RELEASE_CHANNEL_PROJECT: release
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
       - name: Verify Cloudflare Pages project for live publish
         run: |
@@ -65,15 +65,15 @@ jobs:
     runs-on: ${{ matrix.runner }}
     name: Build VM assets (${{ matrix.arch }})
     steps:
-      - uses: actions/checkout@v5
-      - uses: docker/setup-buildx-action@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync
-      - uses: extractions/setup-just@v3
-      - uses: pnpm/action-setup@v5
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: pnpm
@@ -89,8 +89,9 @@ jobs:
           npm install -g @cyclonedx/cdxgen@12.7.0
           cdxgen --version
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
+          toolchain: 1.97.1
           targets: ${{ matrix.rust-target }}
 
       - name: Build VM assets (kernel + rootfs)
@@ -104,7 +105,7 @@ jobs:
           just build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"
           just build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: vm-assets-${{ matrix.arch }}
           path: assets/${{ matrix.arch }}/
@@ -119,12 +120,12 @@ jobs:
     env:
       CHANNEL: ${{ inputs.channel }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: pnpm
@@ -132,19 +133,21 @@ jobs:
       - name: Install release site dependencies
         run: cd release-site && pnpm install --frozen-lockfile
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: vm-assets-arm64
           path: assets/arm64/
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: vm-assets-x86_64
           path: assets/x86_64/
@@ -178,7 +181,7 @@ jobs:
       - name: Build complete asset channel preview
         if: ${{ steps.asset-delta.outputs.changed == 'true' }}
         run: |
-          ASSET_BASE='https://github.com/google/capsem/releases/download/assets-v{asset_version}'
+          ASSET_BASE='https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}'
           uv run python scripts/build-complete-release-channel.py \
             --channel-source "$CHANNEL=file://$PWD/assets/manifest.json" \
             --primary-channel "$CHANNEL" \
@@ -261,7 +264,7 @@ jobs:
 
       - name: Attest VM asset provenance
         if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
           subject-path: |
             target/asset-release/assets-v*/*-vmlinuz
@@ -270,23 +273,23 @@ jobs:
             target/asset-release/assets-v*/*-obom.cdx.json
             target/asset-release/assets-v*/*-software-inventory.json
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: asset-channel-source
           path: assets/manifest.json
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: asset-release-delta
           path: target/asset-release-delta/
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: ${{ inputs.dry_run == true && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}
         with:
           name: asset-release-plan
           path: target/asset-release/
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: ${{ steps.asset-delta.outputs.changed == 'true' }}
         with:
           name: asset-channel-preview

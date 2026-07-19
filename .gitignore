@@ -55,6 +55,10 @@ codecov-*.json
 codecov-*.xml
 *-junit.xml
 
+# Benchmark recordings are generated evidence. Existing tracked files are the
+# reviewed baselines; new data must be explicitly force-added to become approved.
+benchmarks/**/data_*.json
+
 # Rust
 target/
 Cargo.lock

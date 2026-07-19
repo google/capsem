@@ -12,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
+from helpers.benchmark_output import benchmark_output_dir
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -22,11 +23,10 @@ RUNS = 1  # Long lasting test, 1 run is enough for now
 NUM_VMS = 4
 
 def _save_benchmark(category, data):
-    """Save benchmark JSON to benchmarks/{category}/data_{version}.json."""
+    """Save benchmark JSON to the configured gate or archive directory."""
     # Minimal version reading for now
     version = "1.0"
-    out_dir = PROJECT_ROOT / "benchmarks" / category
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = benchmark_output_dir(PROJECT_ROOT, category)
     out_path = out_dir / f"data_{version}.json"
     with open(out_path, "w") as f:
         json.dump(data, f, indent=2)

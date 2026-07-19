@@ -1,5 +1,5 @@
 [toolchain]
-channel = "stable"
+channel = "1.97.1"
 components = ["rustfmt", "clippy", "llvm-tools"]
 targets = [
     "aarch64-unknown-linux-musl",

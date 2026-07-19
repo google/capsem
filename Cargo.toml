@@ -75,7 +75,7 @@ strip = "symbols"
 [workspace.lints.rust]
 warnings = "deny"
 
-# clippy 1.95 introduced two lints that flag patterns we use throughout
+# clippy 1.95 introduced three lints that flag patterns we use throughout
 # the codebase intentionally. Allow them workspace-wide rather than
 # refactoring 100+ call sites:
 #   - collapsible_match: `match { Some(x) => if ... }` is clearer than
@@ -88,6 +88,8 @@ warnings = "deny"
 collapsible_match = "allow"
 unnecessary_sort_by = "allow"
 doc_overindented_list_items = "allow"
+dbg_macro = "deny"
+todo = "deny"
 
 [workspace.dependencies]
 anyhow = "1"

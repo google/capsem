@@ -35,7 +35,7 @@ jobs:
   preflight:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           fetch-depth: 0
 
@@ -122,13 +122,15 @@ jobs:
     needs: preflight
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
       - name: Select Xcode 16.2
         run: sudo xcode-select -s /Applications/Xcode_16.2.app
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           key: build-app-macos
 
@@ -138,15 +140,15 @@ jobs:
           CAPSEM_ARCH=arm64 \
             bash scripts/materialize-config.sh
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: cd frontend && pnpm install --frozen-lockfile
 
       - name: Build frontend
@@ -323,7 +325,7 @@ jobs:
           cp "packages/Capsem-$VERSION.pkg" release-artifacts/
           ls -lh release-artifacts/
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-macos
           path: release-artifacts/
@@ -342,10 +344,12 @@ jobs:
             bundles: deb
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           key: build-app-linux-${{ matrix.arch }}
 
@@ -368,10 +372,10 @@ jobs:
             xdg-utils \
             xvfb
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: pnpm
@@ -475,7 +479,7 @@ jobs:
           cp target/release/bundle/deb/*.deb release-artifacts/
           ls -lh release-artifacts/
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-linux-${{ matrix.arch }}
           path: release-artifacts/
@@ -484,18 +488,18 @@ jobs:
     needs: [build-app-macos, build-app-linux]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
       # Download the exact platform artifacts that passed their install gates.
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-macos
           path: release-artifacts/
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-linux-arm64
           path: release-artifacts/
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-linux-x86_64
           path: release-artifacts/
@@ -521,14 +525,14 @@ jobs:
             "${ARTIFACTS[@]}"
 
       - name: Attest build provenance (pkg + deb)
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
           subject-path: |
             release-artifacts/*.pkg
             release-artifacts/*.deb
 
       - name: Attest SBOM
-        uses: actions/attest@v4
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6
         with:
           subject-path: |
             release-artifacts/*.pkg
@@ -602,12 +606,12 @@ jobs:
     outputs:
       dist_artifact: binary-channel-preview
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: pnpm
@@ -615,23 +619,25 @@ jobs:
       - name: Install release site dependencies
         run: cd release-site && pnpm install --frozen-lockfile
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           key: release-channel-binary
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-macos
           path: release-artifacts/
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-linux-arm64
           path: release-artifacts/
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-linux-x86_64
           path: release-artifacts/
@@ -737,23 +743,108 @@ jobs:
             --channel-source "stable=file://$PWD/target/binary-channel/stable/manifest.json" \
             --channel-source "nightly=file://$PWD/target/binary-channel/nightly/manifest.json" \
             --primary-channel "$RELEASE_CHANNEL" \
-            --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
+            --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
             --manifest-version "1.0.${{ github.run_number }}" \
             --generated-at "$generated_at" \
             --out-dir target/release-channel
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-preview
           path: target/release-channel/
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-before
           path: target/binary-channel/*/manifest.before.json
 
+  # The GitHub release is public storage but remains undiscoverable to Capsem
+  # clients until release.capsem.org advances. Prove the public package URLs,
+  # digests, and installer selection against the candidate channel first.
+  verify-release-candidate:
+    needs: [create-release, assemble-release-channel]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-preview
+          path: candidate-release/
+
+      - name: Install prebuilt digest tool
+        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
+        with:
+          tool: b3sum@1.8.5
+
+      - name: Verify public GitHub package storage from the candidate manifest
+        run: |
+          set -euo pipefail
+          manifest="candidate-release/assets/$RELEASE_CHANNEL/manifest.json"
+          expected_prefix="https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/"
+          mkdir -p /tmp/candidate-packages
+          count=0
+          while IFS=$'\t' read -r name version sha256 blake3 url; do
+            count=$((count + 1))
+            test "$version" = "${RELEASE_TAG#v}"
+            case "$url" in
+              "$expected_prefix"*) ;;
+              *) echo "::error::$name URL is outside $expected_prefix: $url"; exit 1 ;;
+            esac
+            curl -fsSL "$url" -o "/tmp/candidate-packages/$name"
+            printf '%s  %s\n' "$sha256" "/tmp/candidate-packages/$name" | sha256sum -c -
+            printf '%s  %s\n' "$blake3" "/tmp/candidate-packages/$name" | b3sum -c -
+          done < <(python3 - "$manifest" <<'PY'
+          import json
+          import sys
+
+          manifest = json.load(open(sys.argv[1]))
+          for package in manifest.get("packages", []):
+              if package.get("status") != "current":
+                  continue
+              digest = package.get("digest", {})
+              print(
+                  package.get("name", ""),
+                  package.get("version", ""),
+                  digest.get("sha256", ""),
+                  digest.get("blake3", ""),
+                  package.get("url", ""),
+                  sep="\t",
+              )
+          PY
+          )
+          test "$count" -eq 3
+
+      - name: Prove install.sh selects and installs the candidate Linux package
+        run: |
+          set -euo pipefail
+          python3 -m http.server 8765 --directory candidate-release >/tmp/candidate-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; cat /tmp/candidate-http.log' EXIT
+          for attempt in $(seq 1 20); do
+            curl -fsSL "http://127.0.0.1:8765/assets/$RELEASE_CHANNEL/manifest.json" >/dev/null && break
+            sleep 0.25
+          done
+          candidate_manifest="http://127.0.0.1:8765/assets/$RELEASE_CHANNEL/manifest.json"
+          docker run --rm --network host \
+            -e CAPSEM_MANIFEST_URL="$candidate_manifest" \
+            -e CAPSEM_CHANNEL="$RELEASE_CHANNEL" \
+            -e EXPECTED_VERSION="${RELEASE_TAG#v}" \
+            ubuntu:24.04 bash -lc '
+              set -euo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y ca-certificates curl sudo
+              useradd -m -s /bin/bash capsemtest
+              printf "%s\n" "capsemtest ALL=(ALL) NOPASSWD:ALL" >/etc/sudoers.d/capsemtest
+              chmod 0440 /etc/sudoers.d/capsemtest
+              su capsemtest -c "curl -fsSL https://capsem.org/install.sh | CAPSEM_MANIFEST_URL=$CAPSEM_MANIFEST_URL CAPSEM_CHANNEL=$CAPSEM_CHANNEL sh"
+              dpkg-query -W -f="\${Version}" capsem | grep -Fx "$EXPECTED_VERSION"
+              su capsemtest -c "\$HOME/.capsem/bin/capsem --version" | grep -F "$EXPECTED_VERSION"
+            '
+
   deploy-release-channel:
-    needs: [assemble-release-channel]
+    needs: [verify-release-candidate]
     uses: ./.github/workflows/release-channel.yaml
     with:
       channel: ${{ inputs.channel }}
@@ -768,9 +859,9 @@ jobs:
     needs: [deploy-release-channel]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v5
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-before
           path: /tmp/binary-channel-before

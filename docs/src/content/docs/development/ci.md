@@ -11,7 +11,8 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 
 | Workflow | Trigger | What it does |
 |----------|---------|-------------|
-| `ci.yaml` | Pull requests | PR quality gate: Rust unit/integration, frontend, Python contracts, install checks, and explicit runner substitutions |
+| `ci.yaml` | Pull requests and pushes to `main` | Quality gate: Rust unit/integration, frontend, Python contracts, install checks, explicit runner substitutions, and a post-merge main signal |
+| `security-audit.yaml` | Weekly schedule or manual dispatch | Blocking RustSec and frontend dependency advisories without coupling upstream advisory publication to every PR |
 | `release.yaml` | Manual `{tag, channel}` dispatch | Run one globally serialized stable or nightly release: build apps, install-test the exact packages, publish them, update only the selected channel, and run public glow-up checks |
 | `release-assets.yaml` | Manual | Build profile images/config/evidence, generate `assets/manifest.json`, and optionally deploy the asset channel |
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
@@ -33,9 +34,11 @@ the verified manifest URLs and hashes.
 
 ## CI workflow (`ci.yaml`)
 
-Runs on every pull request. Pull requests should require the stable `pr-gate`
-status before merge. A merge to `main` does not start a second copy of full CI;
-docs and marketing retain their independent deployment workflows.
+Runs on every pull request and push to `main`. Pull requests should require the
+stable `pr-gate` status before merge. New pushes cancel superseded runs only on
+the same PR; main runs always finish so each merged commit has a post-merge
+signal and Codecov baseline. Docs and marketing retain their independent
+deployment workflows.
 
 ### test-linux (ubuntu-24.04-arm)
 
@@ -50,7 +53,7 @@ Tests the KVM backend, which only compiles on Linux:
 
 Hosted-runner quality suite on macOS:
 
-1. **Dependency audit** -- `cargo audit` + `pnpm audit`
+1. **Frontend dependency audit** -- the checked-in bulk advisory client
 2. **Rust unit tests with coverage** -- every workspace crate, including macOS-only app/tray crates
 3. **Rust integration tests** -- cross-crate tests from `tests/` directory
 4. **Frontend** -- type check (`astro check` + `svelte-check`), vitest with coverage, production build
@@ -58,6 +61,10 @@ Hosted-runner quality suite on macOS:
 6. **Python integration tests** -- bootstrap, codesign, rootfs artifact suites
 7. **Import verification** -- all test suites import cleanly
 8. **Schema drift check** -- regenerates settings schema and verifies no uncommitted changes
+
+The blocking RustSec audit runs weekly and on demand in
+`security-audit.yaml`. This keeps a new upstream advisory loud and owned
+without making every unrelated PR red at once.
 
 ### test-install (ubuntu-24.04-arm)
 

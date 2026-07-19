@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.benchmark_output import benchmark_output_dir
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready
 
@@ -45,8 +46,7 @@ def _project_version():
 def _archive(data):
     version = _project_version()
     arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
-    out_dir = PROJECT_ROOT / "benchmarks" / "mock-server-protocol"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = benchmark_output_dir(PROJECT_ROOT, "mock-server-protocol")
     out_path = out_dir / f"data_{version}_{arch}.json"
     with open(out_path, "w") as handle:
         json.dump(data, handle, indent=2)

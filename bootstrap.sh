@@ -95,7 +95,7 @@ if command -v rustup >/dev/null 2>&1; then
     printf "  [ok]   rustup\n"
 elif confirm "rustup (Rust toolchain manager, via sh.rustup.rs)"; then
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain stable --profile minimal
+        | sh -s -- -y --default-toolchain 1.97.1 --profile minimal
     # shellcheck disable=SC1091
     [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 fi

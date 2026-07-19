@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
+from helpers.benchmark_output import benchmark_output_dir
 from helpers.package_probe import (
     FORK_PROBE_COMMAND,
     FORK_PROBE_OUTPUT,
@@ -37,10 +38,9 @@ def _project_version():
 
 
 def _save_benchmark(category, data):
-    """Save benchmark JSON to benchmarks/{category}/data_{version}.json."""
+    """Save benchmark JSON to the configured gate or archive directory."""
     version = _project_version()
-    out_dir = PROJECT_ROOT / "benchmarks" / category
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = benchmark_output_dir(PROJECT_ROOT, category)
     out_path = out_dir / f"data_{version}.json"
     with open(out_path, "w") as f:
         json.dump(data, f, indent=2)

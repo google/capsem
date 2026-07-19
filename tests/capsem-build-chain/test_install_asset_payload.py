@@ -22,7 +22,10 @@ def _just_recipe_block(name: str) -> str:
         if line and not line.startswith((" ", "\t", "#")):
             end = i
             break
-    return "\n".join(lines[start:end])
+    block = "\n".join(lines[start:end])
+    if name == "test:":
+        block = f"{block}\n{_just_recipe_block('_test-candidate:')}"
+    return block
 
 
 def _workflow_job_blocks(workflow: str) -> dict[str, str]:
@@ -630,7 +633,7 @@ def test_successful_full_gate_flushes_docker_target_artifacts() -> None:
     full_gate = _just_recipe_block("test:")
     cleanup = _just_recipe_block("_clean-docker-test-targets:")
 
-    assert full_gate.startswith("test: _clean-docker-test-targets ")
+    assert "_test-candidate: _clean-docker-test-targets " in full_gate
     assert full_gate.index("just test-install") < full_gate.index(
         "just _clean-docker-test-targets"
     )
@@ -1418,7 +1421,7 @@ def test_release_workflow_sets_up_uv_before_uv_run_steps() -> None:
 
     assert jobs_with_uv
     for name, block in jobs_with_uv.items():
-        setup_pos = block.find("astral-sh/setup-uv@v5")
+        setup_pos = block.find("astral-sh/setup-uv@")
         uv_run_pos = block.find("uv run")
         assert setup_pos != -1, f"{name} uses uv run without setup-uv"
         assert setup_pos < uv_run_pos, f"{name} sets up uv after first uv run"

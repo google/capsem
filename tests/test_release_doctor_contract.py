@@ -86,7 +86,10 @@ def _recipe_block(name: str) -> str:
         if line and not line.startswith((" ", "\t", "#")):
             end = i
             break
-    return "\n".join(lines[start:end])
+    block = "\n".join(lines[start:end])
+    if name == "test:":
+        block = f"{block}\n{_recipe_block('_test-candidate:')}"
+    return block
 
 
 def _workflow_job_block(name: str, workflow_name: str = "ci.yaml") -> str:
@@ -167,7 +170,7 @@ def test_host_sbom_zstd_dependency_has_local_and_exact_sha_parity() -> None:
 def test_linux_release_qualification_enables_arm64_for_canonical_asset_gate() -> None:
     workflow = _workflow_text("release-qualification.yaml")
 
-    qemu = workflow.index("docker/setup-qemu-action@v3")
+    qemu = workflow.index("docker/setup-qemu-action@")
     canonical_gate = workflow.index("run: just test")
     assert "platforms: arm64" in workflow
     assert qemu < canonical_gate
@@ -304,7 +307,9 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     release_site_job = _workflow_job_block("release-site-build")
 
     assert "pull_request:" in workflow
-    assert "push:" not in trigger
+    assert "push:" in trigger
+    assert "branches: [main]" in trigger
+    assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in trigger
     assert (
         "needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]"
         in gate
@@ -322,7 +327,7 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     assert 'test "$DOCS_BUILD_RESULT" = success' in gate
     assert 'test "$SITE_BUILD_RESULT" = success' in gate
     assert 'test "$RELEASE_SITE_BUILD_RESULT" = success' in gate
-    assert "astral-sh/setup-uv@v5" in release_site_job
+    assert "astral-sh/setup-uv@" in release_site_job
     assert "uv sync --frozen" in release_site_job
     assert "bash scripts/check-web-surface.sh release-site" in release_site_job
 
@@ -454,7 +459,7 @@ def test_release_workflows_run_disjoint_lane_policy_gates() -> None:
 
     assert "workflow_call:" in deploy_workflow
     assert "cargo run -p capsem-admin -- assets channel build" not in deploy_workflow
-    assert "cloudflare/wrangler-action@v3" in deploy_workflow
+    assert "cloudflare/wrangler-action@" in deploy_workflow
 
     assert "tests/capsem-release/" in ci_workflow
 
@@ -573,7 +578,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "CLOUDFLARE_ACCOUNT_ID:" in workflow
     assert "CLOUDFLARE_API_TOKEN:" in workflow
     assert "required: true" in workflow
-    assert "actions/download-artifact@v8" in workflow
+    assert "actions/download-artifact@" in workflow
     assert "DIST_DIR: target/release-channel" in workflow
     assert 'test -f "$DIST_DIR/index.html"' in workflow
     assert 'test -f "$DIST_DIR/health.json"' in workflow
@@ -593,7 +598,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
         "Verify Cloudflare Pages project"
     )
     assert workflow.index("Verify Cloudflare Pages project") < workflow.index(
-        "cloudflare/wrangler-action@v3"
+        "cloudflare/wrangler-action@"
     )
     assert (
         "pages deploy target/release-channel/ --project-name=release --branch=${{ inputs.deploy_branch || 'main' }}"
@@ -611,7 +616,7 @@ def test_asset_channel_deploy_consumes_generated_dist_artifact() -> None:
     assert "--channel nightly" in workflow
     assert "--attempts 30" in workflow
     assert "--delay-seconds 20" in workflow
-    assert workflow.index("cloudflare/wrangler-action@v3") < workflow.index(
+    assert workflow.index("cloudflare/wrangler-action@") < workflow.index(
         "Validate deployed asset channel content"
     )
 
@@ -631,7 +636,7 @@ def test_release_channel_deploy_runs_python_contract_validator_after_cloudflare_
     assert '"${CHANNEL_ARGS[@]}"' in validator_step
     assert "--attempts 30" in validator_step
     assert "--delay-seconds 20" in validator_step
-    assert workflow.index("cloudflare/wrangler-action@v3") < workflow.index(
+    assert workflow.index("cloudflare/wrangler-action@") < workflow.index(
         "Validate deployed asset channel content"
     )
 
@@ -969,7 +974,7 @@ def test_asset_channel_deploy_smoke_verifies_public_evidence_artifacts() -> None
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
 
-    assert "astral-sh/setup-uv@v5" in workflow
+    assert "astral-sh/setup-uv@" in workflow
     assert "uv run python scripts/check-release-site-contract.py" in workflow
     assert "import hashlib" in script
     assert "import blake3" in script
@@ -1223,7 +1228,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert f"SITE_URL: {site_url}" in workflow
         assert 'curl -fsSLI "$SITE_URL/" -o' in workflow
         assert "grep -qi '^content-type: text/html'" in workflow
-        assert 'grep -q "The fastest way to ship with AI securely."' in workflow
+        assert "grep -qi '<main[ >]'" in workflow or "grep -q '<main id=\"main\">'" in workflow
         assert failure in workflow
         assert "release-channel.yaml" not in workflow
         assert "release.yaml" not in workflow
@@ -1279,7 +1284,7 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "release.capsem.org" in workflow
     assert "assets channel record-binary" in workflow
     assert (
-        '--asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}"'
+        '--asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}"'
         in workflow
     )
     assert "uses: ./.github/workflows/release-channel.yaml" in workflow
@@ -1490,7 +1495,7 @@ def test_untagged_release_candidate_runs_complete_canonical_gate_in_ci() -> None
     assert "runner: macos-14" not in gate
     assert "runs-on: ubuntu-24.04" in gate
     assert "strategy:" not in gate
-    assert "extractions/setup-just@v3" in gate
+    assert "extractions/setup-just@" in gate
     assert "Install Linux full-gate system dependencies" in gate
     assert "libglib2.0-dev" in gate
     assert "libwebkit2gtk-4.1-dev" in gate
@@ -3942,8 +3947,10 @@ def test_remote_release_readiness_checker_verifies_live_cache_headers() -> None:
 def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
     workflow = _workflow_job_block("test")
 
-    install_tools_pos = workflow.find("- name: Install tools")
-    b3sum_pos = workflow.find("cargo install b3sum --locked")
+    install_tools_pos = workflow.find("- name: Install prebuilt Rust tools")
+    b3sum_pos = workflow.find(
+        "tool: cargo-llvm-cov@0.8.5,cargo-nextest@0.9.137,b3sum@1.8.5"
+    )
     bootstrap_pos = workflow.find("uv run python -m pytest tests/capsem-bootstrap/")
 
     assert install_tools_pos != -1
@@ -3955,7 +3962,7 @@ def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
 def test_ci_provides_sha256sum_before_codecov_uploads_on_macos() -> None:
     workflow = _workflow_job_block("test")
 
-    install_tools_pos = workflow.find("- name: Install tools")
+    install_tools_pos = workflow.find("- name: Install sha256sum compatibility wrapper")
     sha256sum_pos = workflow.find("printf '%s\\n' '#!/bin/sh' 'exec shasum -a 256 \"$@\"'")
     codecov_pos = workflow.find("Upload Rust unit test coverage")
 
@@ -4121,7 +4128,7 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert first_frontend_build_pos != -1
     assert frontend_check_pos != -1
     assert release_gate_pos != -1
-    assert "test: _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-settings" in just
+    assert "_test-candidate: _clean-docker-test-targets _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-settings" in just
     assert "bash scripts/check-web-surface.sh frontend" in just
     assert "pnpm --dir frontend run check" in web_gate
     assert generate_pos < first_frontend_build_pos
@@ -5194,7 +5201,7 @@ def test_benchmark_release_path_wires_mock_server_and_forbids_http_skip() -> Non
     assert "validate_capsem_bench_result(data)" in baseline
     assert "capsem-bench all" in baseline
     assert "skipped" in baseline
-    assert 'benchmarks" / "capsem-bench"' in baseline
+    assert 'benchmark_output_dir(PROJECT_ROOT, "capsem-bench")' in baseline
 
 
 def test_integration_script_has_no_live_ai_provider_escape_hatch() -> None:

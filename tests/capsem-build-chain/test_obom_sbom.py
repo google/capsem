@@ -33,7 +33,7 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     assert "asset-channel-preview" in asset_workflow
     assert "Publish immutable GitHub asset release" in asset_workflow
     assert "Attest VM asset provenance" in asset_workflow
-    assert "actions/attest-build-provenance@v4" in asset_workflow
+    assert "actions/attest-build-provenance@" in asset_workflow
     assert (
         "if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}"
         in asset_workflow

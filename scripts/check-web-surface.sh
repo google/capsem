@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+require_release_site_astro() {
+    if [[ ! -x "$ROOT/release-site/node_modules/.bin/astro" ]]; then
+        echo "release-site Astro is missing; run the CI step 'Install release site dependencies' (cd release-site && pnpm install --frozen-lockfile)." >&2
+        exit 1
+    fi
+}
+
 surface="${1:-}"
 case "$surface" in
     frontend)
@@ -31,12 +38,14 @@ case "$surface" in
         pnpm --dir site run build
         ;;
     release-site-build)
+        require_release_site_astro
         : "${CAPSEM_RELEASE_CHANNEL_DIST:?CAPSEM_RELEASE_CHANNEL_DIST is required}"
         pnpm --dir release-site run build:channel
         test -s "$CAPSEM_RELEASE_CHANNEL_DIST/404.html"
         grep -q "Artifact not found" "$CAPSEM_RELEASE_CHANNEL_DIST/404.html"
         ;;
     release-site)
+        require_release_site_astro
         work="$ROOT/target/web-parity"
         fixture="$work/release-site-fixture"
         dist="$work/release-channel"

@@ -1,6 +1,14 @@
 name: CI
 on:
   pull_request:
+  push:
+    branches: [main]
+
+# A new PR push supersedes the older run for that PR. Main runs are never
+# cancelled: each merged commit keeps its own post-merge signal.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -12,15 +20,16 @@ jobs:
   test-linux:
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
-      - uses: extractions/setup-just@v3
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
+          toolchain: 1.97.1
           components: llvm-tools
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
 
       # Try to enable KVM for integration tests. GitHub-hosted runners don't
       # always expose nested virt -- when /dev/kvm is absent the udev trigger
@@ -34,10 +43,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Install tools
-        run: |
-          cargo install cargo-nextest --locked
-          cargo install cargo-llvm-cov --locked
+      - name: Install prebuilt Rust tools
+        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
+        with:
+          tool: cargo-nextest@0.9.137,cargo-llvm-cov@0.8.5
 
       # Library + service crate tests with coverage (capsem-core includes KVM backend on Linux).
       # capsem-app (Tauri shell) and capsem-tray (macOS muda menu-bar) are macOS-only; every
@@ -48,7 +57,7 @@ jobs:
 
       - name: Upload Linux coverage
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         with:
           files: codecov-linux.json
           flags: linux-unit
@@ -89,7 +98,7 @@ jobs:
       # T5: preserve test artifacts on failure (Linux job).
       - name: Upload test artifacts on failure (Linux)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: test-artifacts-linux-${{ github.run_attempt }}
           path: |
@@ -104,45 +113,46 @@ jobs:
   test:
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
+          toolchain: 1.97.1
           targets: aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
           components: llvm-tools
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: |
             frontend/pnpm-lock.yaml
             release-site/pnpm-lock.yaml
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync
       - run: bash scripts/generate-settings.sh
       - run: bash scripts/prepare-install-test-assets.sh
       - run: bash scripts/materialize-config.sh
       - run: cd frontend && pnpm install --frozen-lockfile
       - run: bash scripts/check-web-surface.sh frontend-build
-      - run: cd release-site && pnpm install --frozen-lockfile
+      - name: Install release site dependencies
+        run: cd release-site && pnpm install --frozen-lockfile
 
-      - name: Dependency audit
-        run: |
-          cargo install cargo-audit --locked
-          cargo audit
-          python3 scripts/audit-pnpm-bulk.py --project-dir frontend
+      - name: Frontend dependency audit
+        run: python3 scripts/audit-pnpm-bulk.py --project-dir frontend
 
-      - name: Install tools
+      - name: Install prebuilt Rust tools
+        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
+        with:
+          tool: cargo-llvm-cov@0.8.5,cargo-nextest@0.9.137,b3sum@1.8.5
+
+      - name: Install sha256sum compatibility wrapper
         run: |
-          cargo install cargo-llvm-cov --locked
-          cargo install cargo-nextest --locked
-          cargo install b3sum --locked
           if ! command -v sha256sum >/dev/null 2>&1; then
             mkdir -p "$HOME/.local/bin"
             printf '%s\n' '#!/bin/sh' 'exec shasum -a 256 "$@"' > "$HOME/.local/bin/sha256sum"
@@ -237,16 +247,16 @@ jobs:
       # Upload coverage with flags
       - name: Upload Rust unit test coverage
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         with:
           files: codecov-unit.json
           flags: unit
           token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: true
+          fail_ci_if_error: false
 
       - name: Upload Rust integration test coverage
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         with:
           files: codecov-integration.json
           flags: integration
@@ -255,7 +265,7 @@ jobs:
 
       - name: Upload frontend coverage
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         with:
           files: frontend/coverage/coverage-final.json
           flags: unit
@@ -264,7 +274,7 @@ jobs:
 
       - name: Upload Python coverage
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         with:
           files: codecov-python.xml
           flags: unit
@@ -274,10 +284,11 @@ jobs:
       # Upload test results for test analytics
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
-        uses: codecov/test-results-action@v1
+        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
         with:
           files: target/nextest/ci/junit.xml,frontend-junit.xml,python-junit.xml
           token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
 
       # T5: preserve every test artifact (service.log / process.log /
       # session.db etc.) on failure so PR reviewers can debug without
@@ -286,7 +297,7 @@ jobs:
       # is "ignore" so green runs don't bloat the workflow.
       - name: Upload test artifacts on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: test-artifacts-${{ runner.os }}-${{ github.run_attempt }}
           path: |
@@ -314,7 +325,7 @@ jobs:
           | Line coverage | $COV |
           | Test results | See Codecov test analytics |
           | Cross-compile | aarch64-unknown-linux-musl |
-          | Audit | cargo audit + npm bulk advisory API |
+          | Audit | npm bulk advisory API (RustSec runs in security-audit.yaml) |
 
           > Coverage covers library crates + gateway (capsem-core, agent, logger, proto, gateway).
           > Full workspace coverage runs in the release pipeline.
@@ -326,9 +337,9 @@ jobs:
   test-install:
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
-      - uses: extractions/setup-just@v3
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
 
       - name: Build host builder Docker image
         run: just build-host-image
@@ -342,12 +353,12 @@ jobs:
   docs-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: pnpm
@@ -362,12 +373,12 @@ jobs:
   site-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: pnpm
@@ -382,24 +393,26 @@ jobs:
   release-site-build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: release-site/pnpm-lock.yaml
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           key: release-site-build
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
       - name: Install Python dependencies
         run: uv sync --frozen
@@ -412,7 +425,7 @@ jobs:
 
       - name: Upload release site coverage
         if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac
         with:
           files: release-site/coverage/lcov.info
           flags: unit

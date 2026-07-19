@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from helpers.benchmark_output import benchmark_output_dir
 from tests.ironbank.test_route_health import (
     CPU_ACCOUNTING_SLACK_S,
     route_timing_summary,
@@ -35,8 +36,7 @@ def _project_version() -> str:
 
 def _save_benchmark(category: str, data: dict) -> Path:
     version = _project_version()
-    out_dir = PROJECT_ROOT / "benchmarks" / category
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir = benchmark_output_dir(PROJECT_ROOT, category)
     out_path = out_dir / f"data_{version}.json"
     out_path.write_text(json.dumps(data, indent=2) + "\n")
     print(f"{category} benchmark saved to {out_path}")

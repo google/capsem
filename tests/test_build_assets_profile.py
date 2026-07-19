@@ -17,7 +17,10 @@ def _recipe_block(name: str) -> str:
         if line and not line.startswith((" ", "\t", "#")):
             end = i
             break
-    return "\n".join(lines[start:end])
+    block = "\n".join(lines[start:end])
+    if name == "test:":
+        block = f"{block}\n{_recipe_block('_test-candidate:')}"
+    return block
 
 
 def test_build_assets_requires_profile_and_uses_capsem_admin() -> None:
@@ -226,7 +229,7 @@ def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:
         1
     ].split("\n      - name: Attest VM asset provenance", maxsplit=1)[0]
     attest_step = workflow.split("- name: Attest VM asset provenance", maxsplit=1)[1].split(
-        "\n      - uses: actions/upload-artifact@v7", maxsplit=1
+        "\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", maxsplit=1
     )[0]
     for logical_name in (
         "vmlinuz",

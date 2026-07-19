@@ -637,7 +637,7 @@ def test_asset_release_upload_publishes_arch_prefixed_immutable_release_only_whe
     release_skill = (PROJECT_ROOT / "skills/release-process/SKILL.md").read_text()
     upload_step = workflow.split("- name: Publish immutable GitHub asset release", maxsplit=1)[
         1
-    ].split("\n      - uses: actions/upload-artifact@v7", maxsplit=1)[0]
+    ].split("\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", maxsplit=1)[0]
 
     assert "contents: write" in workflow
     assert "if: ${{ steps.asset-delta.outputs.asset_blobs_changed == 'true' }}" in upload_step

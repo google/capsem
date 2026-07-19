@@ -63,13 +63,13 @@ RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
     && npm install -g pnpm@10 @cyclonedx/cdxgen@12.7.0 \
     && rm -rf /var/lib/apt/lists/*
 
-# ---- Rust stable toolchain ----
+# ---- Rust toolchain (kept identical to rust-toolchain.toml and CI) ----
 ENV RUSTUP_HOME=/usr/local/rustup
 ENV CARGO_HOME=/usr/local/cargo
 ENV PATH="/usr/local/cargo/bin:$PATH"
 
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-    sh -s -- -y --default-toolchain stable --profile minimal \
+    sh -s -- -y --default-toolchain 1.97.1 --profile minimal \
     && rustup target add \
         aarch64-unknown-linux-gnu \
         x86_64-unknown-linux-gnu \
