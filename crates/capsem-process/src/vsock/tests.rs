@@ -355,6 +355,64 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
 }
 
 #[tokio::test]
+async fn exec_done_waits_for_delayed_output_deposit_without_truncation() {
+    use crate::job_store::{JobResult, JobStore};
+    use capsem_proto::GuestToHost;
+    use std::sync::Arc;
+    use tokio::sync::oneshot;
+
+    let js = Arc::new(JobStore::new());
+    let db = Arc::new(capsem_logger::DbWriter::open_in_memory(16).unwrap());
+    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
+        capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
+    )));
+    let plugin_policy = empty_plugin_policy();
+
+    let id: u64 = 43;
+    let (tx, rx) = oneshot::channel::<JobResult>();
+    js.jobs.lock().unwrap().insert(id, tx);
+    *js.active_exec.lock().unwrap() = Some(crate::job_store::ActiveExec::new(id));
+
+    // Reproduce a loaded runner after resume: the serialized control channel
+    // delivers ExecDone promptly, while the dedicated EXEC-port reader does
+    // not get scheduled to deposit the already-produced bytes for >100 ms.
+    let js_for_deposit = Arc::clone(&js);
+    let deposit = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let notify = {
+            let mut guard = js_for_deposit.active_exec.lock().unwrap();
+            let active = guard
+                .as_mut()
+                .filter(|active| active.id == id)
+                .expect("ExecDone must not discard the capture slot before deposit");
+            active.captured = b"/run/capsem-venv\n".to_vec();
+            Arc::clone(&active.deposited)
+        };
+        notify.notify_one();
+    });
+
+    handle_guest_msg(
+        GuestToHost::ExecDone { id, exit_code: 0 },
+        &js,
+        &db,
+        &security_rules,
+        &plugin_policy,
+    )
+    .await;
+    deposit.await.unwrap();
+
+    match rx.await.expect("job oneshot must resolve") {
+        JobResult::Exec {
+            stdout, exit_code, ..
+        } => {
+            assert_eq!(stdout, b"/run/capsem-venv\n");
+            assert_eq!(exit_code, 0);
+        }
+        other => panic!("expected Exec result, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn read_file_content_emits_file_export_before_job_result() {
     use capsem_proto::GuestToHost;
     use std::sync::Arc;

@@ -28,6 +28,16 @@ type PluginPolicyHandle =
 /// retry: the guest drives retry at the transport layer.
 const HANDSHAKE_RETRY_MAX: usize = 3;
 
+/// Bound for a control-channel `ExecDone` that arrives before the dedicated
+/// EXEC-port reader deposits the command's captured bytes.
+///
+/// The guest closes the EXEC socket before queuing `ExecDone`, so a healthy
+/// transport signals the notifier immediately once the reader is scheduled.
+/// Loaded qualification runners can delay that reader well beyond 100 ms,
+/// especially just after resume. Keep a generous transport-loss bound without
+/// imposing any delay on already-deposited or genuinely empty commands.
+const EXEC_OUTPUT_DEPOSIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 fn checkpoint_complete_path(checkpoint_path: &std::path::Path) -> PathBuf {
     let marker_name = checkpoint_path
         .file_name()
@@ -1362,7 +1372,9 @@ async fn handle_guest_msg(
             // read loop + deposit. Wait on the deposit notifier so we read
             // the actual captured buffer, not a stale empty one. Short
             // timeout guards against lost connections (guest never opened
-            // the EXEC port) so we still return in bounded time.
+            // the EXEC port) so we still return in bounded time. This must be
+            // a transport-loss bound, not a scheduler-latency assumption: a
+            // loaded runner can delay the reader for hundreds of milliseconds.
             let notify = js
                 .active_exec
                 .lock()
@@ -1371,8 +1383,7 @@ async fn handle_guest_msg(
                 .filter(|a| a.id == id)
                 .map(|a| a.deposited.clone());
             if let Some(n) = notify {
-                let _ =
-                    tokio::time::timeout(std::time::Duration::from_millis(100), n.notified()).await;
+                let _ = tokio::time::timeout(EXEC_OUTPUT_DEPOSIT_TIMEOUT, n.notified()).await;
             }
             let active_exec = js.active_exec.lock().unwrap().take().filter(|a| a.id == id);
             let (event_id, duration_ms, stdout) = active_exec
