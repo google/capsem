@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every skill must be indexed in CLAUDE.md and GEMINI.md, no dangling skill
   references in any agent instruction file, discovery symlinks must resolve to
   canonical `skills/`, and both indexes must carry the AGENTS.md hard-contract
-  pointer.
+  pointer. The test runs in the PR gate's Python schema lane and in the full
+  `just test` gate.
 
 ### Changed
 - Split `release-process` and `dev-testing` skills into sub-500-line spines

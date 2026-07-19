@@ -179,6 +179,7 @@ jobs:
       - name: Python schema tests with coverage
         run: |
           uv run python -m pytest \
+            tests/test_agent_skill_index.py \
             tests/test_audit.py \
             tests/test_build_pkg.py \
             tests/test_capsem_bench_mock_server_protocol.py \
