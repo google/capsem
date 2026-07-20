@@ -96,7 +96,7 @@ wheels = [
 
 [[package]]
 name = "capsem"
-version = "1.5.1784507249"
+version = "1.5.1784567996"
 source = { editable = "." }
 dependencies = [
     { name = "blake3" },
