@@ -31,6 +31,21 @@ from .conftest import (
 
 UPDATE_CACHE = CAPSEM_DIR / "assets" / "manifest-metadata.json"
 REPO_ROOT = Path(__file__).resolve().parents[2]
+TEST_ASSET_MANIFEST = Path(
+    os.environ.get(
+        "CAPSEM_TEST_ASSET_MANIFEST",
+        REPO_ROOT / "target" / "install-test-assets" / "manifest.json",
+    )
+)
+
+
+def _load_test_asset_manifest() -> dict:
+    if not TEST_ASSET_MANIFEST.is_file():
+        raise FileNotFoundError(
+            f"install-test asset manifest missing at {TEST_ASSET_MANIFEST}; "
+            "run scripts/prepare-install-test-assets.sh before install tests"
+        )
+    return json.loads(TEST_ASSET_MANIFEST.read_text(encoding="utf-8"))
 
 
 class _HealthHandler(http.server.BaseHTTPRequestHandler):
@@ -152,7 +167,7 @@ def _update_manifest(
     binary_files: list[dict] | None = None,
     asset_base: str | None = None,
 ) -> dict:
-    manifest = json.loads((REPO_ROOT / "assets" / "manifest.json").read_text())
+    manifest = _load_test_asset_manifest()
     if asset_base is not None:
         manifest["asset_base"] = asset_base
     manifest["binaries"]["current"] = binary_version
@@ -393,7 +408,7 @@ url = "https://release.capsem.org/assets/releases/2030.0101.1/x86_64-rootfs.erof
 
 
 def _write_installed_asset_manifest(capsem_home: Path, current_assets: str) -> None:
-    manifest = json.loads((REPO_ROOT / "assets" / "manifest.json").read_text())
+    manifest = _load_test_asset_manifest()
     manifest["assets"]["current"] = current_assets
     assets_dir = capsem_home / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)

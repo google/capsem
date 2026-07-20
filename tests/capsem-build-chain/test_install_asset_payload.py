@@ -449,6 +449,9 @@ def test_install_test_runs_local_release_glowup_from_real_package() -> None:
 
 def test_install_test_uses_clean_isolated_asset_fixtures() -> None:
     block = _just_recipe_block("test-install").replace(r'\"', '"').replace(r"\$", "$")
+    update_tests = (
+        PROJECT_ROOT / "tests/capsem-install/test_update.py"
+    ).read_text()
 
     assert 'INSTALL_ASSETS_DIR="target/install-test-assets"' in block
     assert 'INSTALL_CONFIG_DIR="target/install-test-config"' in block
@@ -463,8 +466,15 @@ def test_install_test_uses_clean_isolated_asset_fixtures() -> None:
         "bash scripts/materialize-config.sh"
     ) in block
     assert '"$INSTALL_CONFIG_DIR" "$INSTALL_ASSETS_DIR"' in block
+    assert (
+        'CAPSEM_TEST_ASSET_MANIFEST="/src/$INSTALL_ASSETS_DIR/manifest.json"'
+        in block
+    )
     assert '--assets-dir "$INSTALL_ASSETS_DIR"' in block
     assert '--config-root "$INSTALL_CONFIG_DIR"' in block
+    assert '"target" / "install-test-assets" / "manifest.json"' in update_tests
+    assert 'REPO_ROOT / "assets" / "manifest.json"' not in update_tests
+    assert "run scripts/prepare-install-test-assets.sh before install tests" in update_tests
 
 
 def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> None:
