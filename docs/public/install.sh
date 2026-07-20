@@ -8,6 +8,8 @@ set -eu
 CAPSEM_CHANNEL="${CAPSEM_CHANNEL:-stable}"
 CAPSEM_RELEASE_BASE_URL="${CAPSEM_RELEASE_BASE_URL:-https://release.capsem.org}"
 CAPSEM_MANIFEST_URL="${CAPSEM_MANIFEST_URL:-${CAPSEM_RELEASE_BASE_URL}/assets/${CAPSEM_CHANNEL}/manifest.json}"
+CAPSEM_INSTALL_USER_REQUEST_DIR="/var/run/capsem"
+CAPSEM_INSTALL_USER_REQUEST="$CAPSEM_INSTALL_USER_REQUEST_DIR/install-user"
 
 # -- Testable functions ------------------------------------------------------
 # These functions can be unit-tested by sourcing this script with
@@ -249,6 +251,32 @@ fetch_release_manifest() {
     curl -fsSL "$CAPSEM_MANIFEST_URL"
 }
 
+prepare_macos_install_user() {
+    _install_user="${SUDO_USER:-$(id -un)}"
+    case "$_install_user" in
+        ""|root|*[!A-Za-z0-9._-]*)
+            echo "Error: macOS package installation requires a non-root target user." >&2
+            return 1
+            ;;
+    esac
+    id -u "$_install_user" >/dev/null 2>&1 || {
+        echo "Error: macOS target user does not exist: $_install_user" >&2
+        return 1
+    }
+    _request_source="${TMPDIR_INSTALL}/install-user"
+    printf '%s\n' "$_install_user" > "$_request_source"
+    chmod 0600 "$_request_source"
+    sudo /usr/bin/install -d -o root -g wheel -m 0700 "$CAPSEM_INSTALL_USER_REQUEST_DIR"
+    sudo /usr/bin/install -o root -g wheel -m 0600 "$_request_source" "$CAPSEM_INSTALL_USER_REQUEST"
+}
+
+clear_macos_install_user_request() {
+    if [ "${MACOS_INSTALL_USER_REQUEST_WRITTEN:-0}" = "1" ]; then
+        sudo rm -f "$CAPSEM_INSTALL_USER_REQUEST"
+        MACOS_INSTALL_USER_REQUEST_WRITTEN=0
+    fi
+}
+
 install_macos() {
     _pkg_url="$1"
     _version="$2"
@@ -260,6 +288,7 @@ install_macos() {
     PKG_PATH="${TMPDIR_INSTALL}/Capsem.pkg"
 
     cleanup_macos() {
+        clear_macos_install_user_request || true
         rm -rf "$TMPDIR_INSTALL"
     }
     trap cleanup_macos EXIT
@@ -269,7 +298,10 @@ install_macos() {
     verify_package "$PKG_PATH" "$_package_name" "$_expected_bytes" "$_expected_sha256"
 
     echo "Installing .pkg package (may prompt for sudo password)..."
+    prepare_macos_install_user
+    MACOS_INSTALL_USER_REQUEST_WRITTEN=1
     sudo /usr/sbin/installer -pkg "$PKG_PATH" -target /
+    clear_macos_install_user_request
 
     echo ""
     echo "Capsem $_version installed."

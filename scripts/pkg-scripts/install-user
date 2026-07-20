@@ -1,0 +1,77 @@
+#!/bin/bash
+# Resolve the non-root account that owns Capsem's per-user installation.
+# PackageKit runs scripts as root and does not promise to preserve sudo's
+# environment. Headless callers therefore hand off the user through a
+# root-owned, mode-0600 request file inside a root-only runtime directory
+# before invoking installer(8).
+
+capsem_install_user_is_valid() {
+    local candidate="${1:-}"
+    local uid
+    case "$candidate" in
+        ""|root|*[!A-Za-z0-9._-]*) return 1 ;;
+    esac
+    uid=$(id -u "$candidate" 2>/dev/null) || return 1
+    [ "$uid" -ne 0 ]
+}
+
+capsem_stat_owner_uid() {
+    stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1" 2>/dev/null
+}
+
+capsem_stat_mode() {
+    stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null
+}
+
+capsem_console_user() {
+    stat -f '%Su' /dev/console 2>/dev/null || true
+}
+
+capsem_requested_install_user() {
+    local request="$1"
+    local owner mode candidate line_count
+    [ -e "$request" ] || return 1
+    if [ ! -f "$request" ] || [ -L "$request" ]; then
+        echo "capsem: secure install-user request must be a regular file: $request" >&2
+        return 2
+    fi
+    owner=$(capsem_stat_owner_uid "$request") || {
+        echo "capsem: secure install-user request owner could not be read: $request" >&2
+        return 2
+    }
+    mode=$(capsem_stat_mode "$request") || {
+        echo "capsem: secure install-user request mode could not be read: $request" >&2
+        return 2
+    }
+    if [ "$owner" != "$(id -u)" ] || [ "$mode" != "600" ]; then
+        echo "capsem: secure install-user request must be owned by the package-script user with mode 0600: $request" >&2
+        return 2
+    fi
+    line_count=$(wc -l < "$request" | tr -d '[:space:]')
+    candidate=$(sed -n '1p' "$request")
+    if [ "$line_count" != "1" ] || ! capsem_install_user_is_valid "$candidate"; then
+        echo "capsem: secure install-user request does not name one existing non-root user: $request" >&2
+        return 2
+    fi
+    printf '%s\n' "$candidate"
+}
+
+capsem_resolve_install_user() {
+    local request="${1:-/var/run/capsem/install-user}"
+    local candidate requested_status
+    if [ -e "$request" ]; then
+        candidate=$(capsem_requested_install_user "$request")
+        requested_status=$?
+        [ "$requested_status" -eq 0 ] || return "$requested_status"
+        printf '%s\n' "$candidate"
+        return 0
+    fi
+    for candidate in "${SUDO_USER:-}" "${USER:-}" "$(capsem_console_user)"; do
+        if capsem_install_user_is_valid "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    echo "capsem: could not determine a non-root installing user; headless installs must create a secure install-user request" >&2
+    return 1
+}

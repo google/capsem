@@ -266,12 +266,37 @@ def test_macos_installers_apply_pkg_before_cleaning_download(tmp_path: Path) -> 
                 return 97
             }}
             sudo() {{
-                printf '%s\\n' "$*" > "{call_log}"
-                test "$1" = '/usr/sbin/installer'
-                test "$2" = '-pkg'
-                test -f "$3"
-                test "$4" = '-target'
-                test "$5" = '/'
+                case "$1" in
+                    /usr/bin/install)
+                        if [ "$2" = '-d' ]; then
+                            test "$3" = '-o'
+                            test "$4" = 'root'
+                            test "$5" = '-g'
+                            test "$6" = 'wheel'
+                            test "$7" = '-m'
+                            test "$8" = '0700'
+                        else
+                            test "$2" = '-o'
+                            test "$3" = 'root'
+                            test "$4" = '-g'
+                            test "$5" = 'wheel'
+                            test "$6" = '-m'
+                            test "$7" = '0600'
+                            test -f "$8"
+                        fi
+                        ;;
+                    /usr/sbin/installer)
+                        printf '%s\\n' "$*" > "{call_log}"
+                        test "$2" = '-pkg'
+                        test -f "$3"
+                        test "$4" = '-target'
+                        test "$5" = '/'
+                        ;;
+                    rm)
+                        test "$2" = '-f'
+                        ;;
+                    *) return 98 ;;
+                esac
             }}
             install_macos \
               'https://example.invalid/Capsem.pkg' \
@@ -289,6 +314,16 @@ def test_macos_installers_apply_pkg_before_cleaning_download(tmp_path: Path) -> 
         )
         assert not (install_root / "download").exists()
         assert "Capsem 1.5.0 installed." in result.stdout
+
+
+def test_public_macos_installer_hands_package_a_secure_target_user() -> None:
+    for install_script in (INSTALL_SH, DOCS_INSTALL_SH):
+        source = install_script.read_text(encoding="utf-8")
+        assert "prepare_macos_install_user" in source
+        assert "CAPSEM_INSTALL_USER_REQUEST" in source
+        assert "/usr/bin/install -d -o root -g wheel -m 0700" in source
+        assert "/usr/bin/install -o root -g wheel -m 0600" in source
+        assert "clear_macos_install_user_request" in source
 
 
 def test_macos_curl_pipe_entrypoint_installs_pkg_end_to_end(tmp_path: Path) -> None:
@@ -333,12 +368,37 @@ echo 'unexpected GUI installer handoff' >&2
 exit 97
 """,
         "sudo": """#!/bin/sh
-printf '%s\n' "$*" > "$INSTALLER_LOG"
-test "$1" = '/usr/sbin/installer'
-test "$2" = '-pkg'
-test -f "$3"
-test "$4" = '-target'
-test "$5" = '/'
+case "$1" in
+    /usr/bin/install)
+        if [ "$2" = '-d' ]; then
+            test "$3" = '-o'
+            test "$4" = 'root'
+            test "$5" = '-g'
+            test "$6" = 'wheel'
+            test "$7" = '-m'
+            test "$8" = '0700'
+        else
+            test "$2" = '-o'
+            test "$3" = 'root'
+            test "$4" = '-g'
+            test "$5" = 'wheel'
+            test "$6" = '-m'
+            test "$7" = '0600'
+            test -f "$8"
+        fi
+        ;;
+    /usr/sbin/installer)
+        printf '%s\n' "$*" > "$INSTALLER_LOG"
+        test "$2" = '-pkg'
+        test -f "$3"
+        test "$4" = '-target'
+        test "$5" = '/'
+        ;;
+    rm)
+        test "$2" = '-f'
+        ;;
+    *) exit 98 ;;
+esac
 """,
     }
     for name, body in commands.items():

@@ -1582,9 +1582,12 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'pkgutil --check-signature "packages/Capsem-$VERSION.pkg"' in macos
     assert 'spctl -a -vv -t install "packages/Capsem-$VERSION.pkg"' in macos
     assert 'sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /' in macos
-    assert 'test -x "$HOME/.capsem/bin/capsem"' in macos
+    assert "Write deterministic macOS install-user request" in macos
+    assert "CAPSEM_INSTALL_USER_REQUEST" in macos
+    assert 'require_path "application bundle" -d "/Applications/Capsem.app"' in macos
+    assert 'require_path "application executable" -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"' in macos
+    assert 'require_path "per-user CLI" -x "$HOME/.capsem/bin/capsem"' in macos
     assert '"$HOME/.capsem/bin/capsem" --version | grep -F "$VERSION"' in macos
-    assert 'test -d "/Applications/Capsem.app"' in macos
     assert (
         "for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui"
         in macos
@@ -1592,10 +1595,17 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'grep -F "Installed: true" /tmp/capsem-status.txt' in macos
     assert 'grep -F "Running:   true" /tmp/capsem-status.txt' in macos
     assert "scripts/verify-installed-release.py" in macos
+    assert "Collect macOS install diagnostics" in macos
+    assert "if: always()" in macos
+    assert "pkgutil --pkg-info com.capsem.pkg" in macos
+    assert "stat -f '%Su' /dev/console" in macos
+    assert "/tmp/capsem-install.log" in macos
+    assert '"$HOME/.capsem/logs/install-latest.log"' in macos
     assert (
         macos.index("Notarize and staple .pkg")
         < macos.index("Verify exact notarized package identity and Gatekeeper acceptance")
         < macos.index("Install exact notarized package")
+        < macos.index("Collect macOS install diagnostics")
         < macos.index("Collect macOS artifacts")
     )
     assert "Post-install full gate (just test)" not in macos

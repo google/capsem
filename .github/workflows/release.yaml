@@ -289,14 +289,38 @@ jobs:
           pkgutil --check-signature "packages/Capsem-$VERSION.pkg"
           spctl -a -vv -t install "packages/Capsem-$VERSION.pkg"
 
+      - name: Write deterministic macOS install-user request
+        run: |
+          set -euo pipefail
+          CAPSEM_INSTALL_USER_REQUEST="/var/run/capsem/install-user"
+          INSTALL_USER="$(id -un)"
+          bash scripts/macos-install-user-request.sh write "$INSTALL_USER"
+          sudo test "$(sudo stat -f '%u' "$CAPSEM_INSTALL_USER_REQUEST")" = 0
+          sudo test "$(sudo stat -f '%Lp' "$CAPSEM_INSTALL_USER_REQUEST")" = 600
+
       - name: Install exact notarized package
         run: |
           set -euo pipefail
           VERSION="${RELEASE_TAG#v}"
+          CAPSEM_INSTALL_USER_REQUEST="/var/run/capsem/install-user"
+          cleanup_install_user_request() {
+            bash scripts/macos-install-user-request.sh clear
+          }
+          trap cleanup_install_user_request EXIT
+          require_path() {
+            label="$1"
+            predicate="$2"
+            path="$3"
+            if ! test "$predicate" "$path"; then
+              echo "::error::$label assertion failed: $predicate $path"
+              return 1
+            fi
+            echo "$label verified: $path"
+          }
           sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /
-          test -d "/Applications/Capsem.app"
-          test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"
-          test -x "$HOME/.capsem/bin/capsem"
+          require_path "application bundle" -d "/Applications/Capsem.app"
+          require_path "application executable" -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"
+          require_path "per-user CLI" -x "$HOME/.capsem/bin/capsem"
           "$HOME/.capsem/bin/capsem" --version | grep -F "$VERSION"
           for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui; do
             test -x "$HOME/.capsem/bin/$bin"
@@ -313,6 +337,38 @@ jobs:
             --manifest-url "$ASSET_MANIFEST_URL" \
             --channel "$RELEASE_CHANNEL" \
             --package-version "$VERSION"
+
+      - name: Collect macOS install diagnostics
+        if: always()
+        run: |
+          mkdir -p release-diagnostics
+          {
+            echo "=== runner identity ==="
+            id
+            echo "HOME=$HOME USER=${USER:-} SUDO_USER=${SUDO_USER:-}"
+            echo "=== console owner ==="
+            stat -f '%Su' /dev/console || true
+            echo "=== package receipt ==="
+            pkgutil --pkg-info com.capsem.pkg || true
+            echo "=== application payload ==="
+            find /Applications -maxdepth 3 -name 'Capsem.app' -print -exec ls -ld {} \; 2>&1 || true
+            ls -la "/Applications/Capsem.app/Contents/MacOS" 2>&1 || true
+            echo "=== per-user payload ==="
+            ls -la "$HOME/.capsem" "$HOME/.capsem/bin" "$HOME/.capsem/logs" 2>&1 || true
+            echo "=== PackageKit install log ==="
+            tail -n 400 /var/log/install.log 2>&1 || true
+            echo "=== Capsem fallback install log ==="
+            tail -n 400 /tmp/capsem-install.log 2>&1 || true
+            echo "=== Capsem per-user install log ==="
+            tail -n 400 "$HOME/.capsem/logs/install-latest.log" 2>&1 || true
+          } | tee release-diagnostics/macos-install.txt
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: release-macos-install-diagnostics
+          path: release-diagnostics/
+          if-no-files-found: warn
 
       - name: Collect macOS artifacts
         run: |

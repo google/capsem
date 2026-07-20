@@ -1196,6 +1196,7 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
     pkg_preinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "preinstall").read_text()
     pkg_postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
+    pkg_install_user = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "install-user").read_text()
 
     assert "CAPSEM_PKG_ASSET_MODE" not in build_pkg
     assert "ASSET_MODE=" not in build_pkg
@@ -1236,6 +1237,7 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert 'ditto --norsrc --noextattr "$src" "$dst"' in build_pkg
     assert 'copy_tree_clean "$CONFIG_ROOT/profiles" "$SHARE_DIR/profiles"' in build_pkg
     assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/preinstall"' in build_pkg
+    assert 'install -m 0755 "$SCRIPT_DIR/pkg-scripts/install-user"' in build_pkg
     assert 'xattr -rc "$WORK_DIR/payload" "$PKG_SCRIPTS"' in build_pkg
     assert 'find "$WORK_DIR/payload" "$PKG_SCRIPTS" -name' in build_pkg
     assert '--scripts "$PKG_SCRIPTS"' in build_pkg
@@ -1255,6 +1257,8 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "install-current-run" in pkg_preinstall
     assert "install-latest.log" in pkg_preinstall
     assert 'exec > >(tee -a "$INSTALL_LOG" "$INSTALL_RUN_LOG") 2>&1' in pkg_preinstall
+    assert 'source "$(dirname "$0")/install-user"' in pkg_preinstall
+    assert "capsem_resolve_install_user" in pkg_preinstall
 
     assert "CAPSEM_DEB_ASSET_MODE" not in repack_deb
     assert "ASSET_MODE=" not in repack_deb
@@ -1370,6 +1374,11 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "event=assets_copied" not in pkg_postinstall
     assert 'echo "capsem: packaged binary missing: $src" >&2' in pkg_postinstall
     assert "event=binary_missing bin=$bin" in pkg_postinstall
+    assert 'source "$(dirname "$0")/install-user"' in pkg_postinstall
+    assert "capsem_resolve_install_user" in pkg_postinstall
+    assert "skipping per-user install" not in pkg_postinstall
+    assert "secure install-user request" in pkg_install_user
+    assert "/var/run/capsem/install-user" in pkg_install_user
     assert 'rm -rf "$CAPSEM_DIR"/bin.backup*' in pkg_postinstall
     assert "event=retired_binary_backups_removed" in pkg_postinstall
 

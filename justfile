@@ -1523,11 +1523,15 @@ install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-co
             "$VERSION"
         PKG="packages/Capsem-$VERSION.pkg"
         echo "=== Installing package ==="
+        bash scripts/macos-install-user-request.sh write "$(id -un)"
+        trap 'bash scripts/macos-install-user-request.sh clear' EXIT
         if [ "$(id -u)" -eq 0 ]; then
             installer -pkg "$PKG" -target /
         else
             sudo installer -pkg "$PKG" -target /
         fi
+        bash scripts/macos-install-user-request.sh clear
+        trap - EXIT
     else
         echo "=== Building .deb ==="
         eval cargo tauri build --bundles deb $TAURI_FLAGS
