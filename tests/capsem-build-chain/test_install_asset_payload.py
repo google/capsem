@@ -689,6 +689,7 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
 
     build_image = cross_compile.index("just build-host-image")
     release_completed_rails = cross_compile.index("just _release-completed-docker-rails")
+    release_install_target = cross_compile.index("just _release-deferred-install-target")
     release_asset_builder = cross_compile.index("docker image rm rust:slim-bookworm")
     capacity = (
         "CAPSEM_DOCKER_CACHE_KEEP_GB=2 CAPSEM_DOCKER_LINKED_KEEP_GB=2 "
@@ -704,6 +705,7 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     assert len(capacities) == 2
     assert (
         release_completed_rails
+        < release_install_target
         < release_asset_builder
         < capacities[0]
         < build_image
@@ -720,6 +722,8 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
 def test_package_boundary_releases_only_completed_docker_rail_volumes() -> None:
     release = _just_recipe_block("_release-completed-docker-rails:")
 
+    assert "capsem-agent-target-arm64" in release
+    assert "capsem-agent-target-x86_64" in release
     assert "capsem-rustup-arm64" in release
     assert "capsem-rustup-x86_64" in release
     assert "capsem-linux-rust-target" in release

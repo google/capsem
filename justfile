@@ -1112,6 +1112,8 @@ _release-completed-docker-rails:
     # Never force removal: an attached volume belongs to another active or
     # diagnostic container, and the package capacity check must then fail closed.
     volumes=(
+        capsem-agent-target-arm64
+        capsem-agent-target-x86_64
         capsem-rustup-arm64
         capsem-rustup-x86_64
         capsem-linux-rust-target
@@ -1187,6 +1189,11 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         exit 1
     fi
     just _release-completed-docker-rails
+    # A completed install target retains only top-level runtime binaries and
+    # the previous package after its post-install purge. It cannot accelerate
+    # this package build (or the later clean install rebuild), so release it
+    # before sacrificing the new host-builder or reusable registries.
+    just _release-deferred-install-target
     # The asset rail has finished every guest cross-build before package
     # assembly starts. Release its reproducible 2.2 GiB Rust base tag now;
     # non-force removal leaves an active consumer untouched and the capacity
