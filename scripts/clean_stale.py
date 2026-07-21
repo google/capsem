@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import errno
+import fnmatch
 import os
 import shutil
 import socket
@@ -27,7 +28,7 @@ TEST_TMP_BUDGET_GB = 24.0
 CARGO_AGGRESSIVE_DAYS = 2
 CARGO_MODERATE_DAYS = 3
 CARGO_PROFILES = ("target/debug", "target/release", "target/llvm-cov-target/debug")
-CARGO_DEPS_EXTS = (".o", ".rlib", ".rmeta", ".d")
+CARGO_DEPS_EXTS = (".o", ".rlib", ".rmeta", ".d", ".dylib", ".so", ".a")
 CARGO_KIND_DIRS = ("build", ".fingerprint", "incremental")
 # Per-kind size caps enforced AFTER the mtime-based prune. The age prune
 # alone is insufficient: an active dev session touches every dep/incremental
@@ -37,10 +38,31 @@ CARGO_KIND_DIRS = ("build", ".fingerprint", "incremental")
 # footprint run away.
 CARGO_KIND_BUDGETS_GB = {
     "deps": 12.0,
+    # Linked test executables have no extension under deps/. They are cheap to
+    # recreate compared with dependency rlibs, but keeping the newest cohort
+    # makes focused reruns fast. This separate budget prevents them from
+    # silently bypassing the reusable-dependency cap.
+    "linked": 8.0,
     "incremental": 3.0,
     "build": 1.0,
     ".fingerprint": 0.5,
 }
+TARGET_TRANSIENT_MAX_AGE_S = 6 * 60 * 60
+TARGET_TRANSIENT_GLOBS = (
+    "asset-release",
+    "asset-release-delta",
+    "generated-settings-*",
+    "local-release-glowup*",
+    "release-channel-local*",
+    "release-contract-artifacts*",
+    "pkg-expand-test*",
+    "*-proof-*",
+    "focused-*-rootfs-*",
+    "ironbank-assets-debug*",
+    "ironbank-assets-sequential*",
+    "s??-???-channel",
+    "s??-???-release-dist",
+)
 TMP_DIR_PREFIXES = ("capsem-test-", "capsem-e2e-", "capsem-gw-", "capsem-install-")
 LINUX_TEST_TMP_PARENT = Path("/var/tmp/capsem-tests")
 
@@ -211,9 +233,8 @@ def _test_tmp_budget_gb() -> float:
 
 
 def _tmp_fixture_entry(entry: os.DirEntry) -> bool:
-    return (
-        entry.is_dir(follow_symlinks=False)
-        and any(entry.name.startswith(p) for p in TMP_DIR_PREFIXES)
+    return entry.is_dir(follow_symlinks=False) and any(
+        entry.name.startswith(p) for p in TMP_DIR_PREFIXES
     )
 
 
@@ -260,7 +281,7 @@ def clean_tmp_fixtures_to_budget(tmp_dir: Path, dry_run: bool, verbose: bool) ->
     if not tmp_dir.is_dir():
         return StageResult("tmp-budget", 0, time.monotonic() - start, str(tmp_dir))
 
-    budget_bytes = int(budget_gb * 1024 ** 3)
+    budget_bytes = int(budget_gb * 1024**3)
     removed = _prune_to_size_budget(
         tmp_dir,
         budget_bytes,
@@ -410,9 +431,7 @@ def _target_release_has_old_content(target: Path, older_than_days: int = 1) -> b
     return False
 
 
-def clean_cargo_artifacts(
-    root: Path, dry_run: bool, verbose: bool
-) -> StageResult:
+def clean_cargo_artifacts(root: Path, dry_run: bool, verbose: bool) -> StageResult:
     """Stage D: age-based prune of cargo deps/, build/, .fingerprint/, incremental/."""
     start = time.monotonic()
     target = root / "target"
@@ -496,12 +515,20 @@ def clean_cargo_artifacts(
         if deps.is_dir():
             budget_removed += _prune_to_size_budget(
                 deps,
-                int(CARGO_KIND_BUDGETS_GB["deps"] * 1024 ** 3),
+                int(CARGO_KIND_BUDGETS_GB["deps"] * 1024**3),
                 # Only count/prune the cargo-generated artifact extensions;
                 # leave test binaries and other files alone.
                 entry_filter=lambda e: (
-                    e.is_file(follow_symlinks=False)
-                    and e.name.endswith(CARGO_DEPS_EXTS)
+                    e.is_file(follow_symlinks=False) and e.name.endswith(CARGO_DEPS_EXTS)
+                ),
+                dry_run=dry_run,
+                verbose=verbose,
+            )
+            budget_removed += _prune_to_size_budget(
+                deps,
+                int(CARGO_KIND_BUDGETS_GB["linked"] * 1024**3),
+                entry_filter=lambda e: (
+                    e.is_file(follow_symlinks=False) and Path(e.name).suffix == ""
                 ),
                 dry_run=dry_run,
                 verbose=verbose,
@@ -513,7 +540,7 @@ def clean_cargo_artifacts(
                 continue
             budget_removed += _prune_to_size_budget(
                 kind_dir,
-                int(CARGO_KIND_BUDGETS_GB[kind] * 1024 ** 3),
+                int(CARGO_KIND_BUDGETS_GB[kind] * 1024**3),
                 entry_filter=lambda e: e.is_dir(follow_symlinks=False),
                 dry_run=dry_run,
                 verbose=verbose,
@@ -525,6 +552,54 @@ def clean_cargo_artifacts(
     if budget_removed:
         detail += f", budget={budget_removed}"
     return StageResult("cargo", removed, time.monotonic() - start, detail)
+
+
+def clean_target_transients(root: Path, dry_run: bool, verbose: bool) -> StageResult:
+    """Remove old reproducible proof/debug staging without touching hot caches."""
+    start = time.monotonic()
+    target = root / "target"
+    if not target.is_dir():
+        return StageResult("target-tmp", 0, time.monotonic() - start, "target/ absent")
+
+    cutoff = time.time() - TARGET_TRANSIENT_MAX_AGE_S
+    candidates: list[Path] = []
+
+    scratch = target / "tmp"
+    if scratch.is_dir():
+        try:
+            with os.scandir(scratch) as entries:
+                candidates.extend(Path(entry.path) for entry in entries)
+        except OSError:
+            pass
+
+    try:
+        with os.scandir(target) as entries:
+            for entry in entries:
+                if entry.name == "tmp" or not entry.is_dir(follow_symlinks=False):
+                    continue
+                if any(fnmatch.fnmatch(entry.name, pattern) for pattern in TARGET_TRANSIENT_GLOBS):
+                    candidates.append(Path(entry.path))
+    except OSError:
+        pass
+
+    removed = 0
+    for path in candidates:
+        try:
+            if path.stat().st_mtime >= cutoff:
+                continue
+        except OSError:
+            continue
+        if verbose:
+            print(f"  rm {path} (old reproducible staging)")
+        if _rm(path, dry_run):
+            removed += 1
+
+    return StageResult(
+        "target-tmp",
+        removed,
+        time.monotonic() - start,
+        f"threshold={TARGET_TRANSIENT_MAX_AGE_S // 3600:g}h",
+    )
 
 
 def _dir_has_no_recent(root: Path, cutoff: float) -> bool:
@@ -585,6 +660,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verbose", "-v", action="store_true")
     parser.add_argument("--skip-cargo-prune", action="store_true")
+    parser.add_argument("--skip-target-transients", action="store_true")
     parser.add_argument("--skip-sockets", action="store_true")
     parser.add_argument("--skip-rootfs", action="store_true")
     parser.add_argument("--skip-tmp", action="store_true")
@@ -606,12 +682,14 @@ def main(argv: list[str] | None = None) -> int:
         for root_dir in _tmp_fixture_roots(tmp_dir):
             results.append(clean_tmp_fixtures(root_dir, args.dry_run, args.verbose))
             results.append(clean_tmp_fixtures_to_budget(root_dir, args.dry_run, args.verbose))
+    if not args.skip_target_transients:
+        results.append(clean_target_transients(root, args.dry_run, args.verbose))
     if not args.skip_cargo_prune:
         results.append(clean_cargo_artifacts(root, args.dry_run, args.verbose))
 
     for r in results:
         suffix = f" [{r.detail}]" if r.detail else ""
-        print(f"  {r.name:8s} removed={r.removed:<6d} {r.elapsed_s*1000:7.0f} ms{suffix}")
+        print(f"  {r.name:8s} removed={r.removed:<6d} {r.elapsed_s * 1000:7.0f} ms{suffix}")
 
     size_gb = target_size_gb(root)
     if size_gb is not None:

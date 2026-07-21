@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Bounded linked Cargo test binaries and aged reproducible `target/` staging,
+  retained useful compiler/toolchain caches under Docker pressure, reclaimed
+  abandoned created containers, and rechecked daemon capacity immediately
+  before the Linux package-install pytest tail.
+
 ## [1.5.1784567996] - 2026-07-20
 
 ## [1.5.1784507249] - 2026-07-19

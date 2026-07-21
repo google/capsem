@@ -673,10 +673,10 @@ test:
     fi
     echo "=== Verified clean candidate $TESTED_HEAD ==="
 
-# Flush target artifacts left by any prior failed candidate before prerequisites
-# begin rebuilding. A failed run therefore retains cache only for its immediate
-# focused retry; it can never leak into or accumulate across canonical runs.
-_test-candidate: _clean-docker-test-targets _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-settings _check-assets _pack-initrd _materialize-config
+# Require Docker headroom without discarding content-addressed compiler caches.
+# Cargo validates cached artifacts against the exact candidate inputs; bounded
+# reuse speeds forward candidates without weakening the clean-tree invariant.
+_test-candidate: _bound-docker-test-storage _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-settings _check-assets _pack-initrd _materialize-config
     #!/bin/bash
     set -euo pipefail
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
@@ -904,9 +904,9 @@ _test-candidate: _clean-docker-test-targets _bootstrap _install-tools _clean-sta
     # ---- Stage 8: cleanup ---------------------------------------------------
     echo "=== Pruning stale build artifacts ==="
     just _clean-stale
-    # Docker Cargo targets contain hash-suffixed compiler artifacts, not
-    # release outputs. Flush them after every successful canonical gate too.
-    just _clean-docker-test-targets
+    # Reassert the reserve after the expensive tail while retaining the hot
+    # compiler/toolchain cache for the next deliberate candidate.
+    just _bound-docker-test-storage
 
 # Build the capsem-host-builder Docker image (cached, only rebuilds changed layers).
 # See docker/Dockerfile.host-builder for contents.
@@ -1759,6 +1759,7 @@ test-install:
     # runners that lack libglib2.0-dev/libgtk-3-dev (the failure mode that
     # masked the asset-URL bug for v1.0.1777065213).
     set -euo pipefail
+    ROOT="{{justfile_directory()}}"
     just _test-install-harness-preflight
     IMAGE="capsem-install-test"
     # The derived install-test image is FROM capsem-host-builder. The cleanup
@@ -1793,22 +1794,10 @@ test-install:
     # persistent target volume. Otherwise Docker refuses the volume removal;
     # ignoring that failure allowed the cache to fill the entire Docker disk.
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-    # Durable disk cushion. Both checks are no-ops in the common case
-    # (plenty of Colima headroom, cache under 25 GB) so they don't thrash
-    # the build cache every run -- they only fire when we're about to
-    # fail anyway.
-    # (a) If Colima has <10 GB free on /var/lib/docker, reclaim dangling
-    #     images + build cache. Tagged images may belong to a concurrent
-    #     worktree and must never be deleted by an automatic gate.
-    if command -v colima >/dev/null 2>&1 && colima status >/dev/null 2>&1; then
-        FREE_GB=$(colima ssh -- df -BG /var/lib/docker </dev/null 2>/dev/null | awk 'NR==2{gsub("G","",$4); print $4}')
-        if [[ "${FREE_GB:-}" =~ ^[0-9]+$ ]] && [ "$FREE_GB" -lt 10 ]; then
-            echo "Low Colima disk (${FREE_GB} GB free) -- pruning images + build cache..."
-            docker image prune -f >/dev/null 2>&1 || true
-            docker builder prune -af >/dev/null 2>&1 || true
-        fi
-    fi
-    # (b) If the persistent cargo-target volume has grown past 25 GB,
+    # Durable disk cushion. The shared gate retains hot BuildKit and Cargo
+    # cache while requiring enough daemon-local room for the package rail.
+    "$ROOT/scripts/ensure-docker-space.sh" 16
+    # If the persistent cargo-target volume has grown past 25 GB,
     #     reset it. It caches debug artifacts across runs, but every
     #     crate version bump leaves dead code behind and the volume
     #     grows unbounded otherwise.
@@ -1899,6 +1888,10 @@ test-install:
     echo "Installing .deb via dpkg..."
     docker exec "$CONTAINER" bash -c \
         "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"
+    # Package/image assembly can consume the reserve measured at recipe start.
+    # Recheck immediately before pytest so ENOSPC fails here with diagnostics,
+    # not deep inside a fixture after hours of otherwise-green release work.
+    "$ROOT/scripts/ensure-docker-space.sh" 16
     echo "Running install e2e tests..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_BIN_SRC=/cargo-target/debug -e CAPSEM_TEST_ASSET_MANIFEST="/src/$INSTALL_ASSETS_DIR/manifest.json" "$CONTAINER" bash -c \
         "mkdir -p /home/capsem/tmp && cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test TMPDIR=/home/capsem/tmp uv run python -m pytest tests/capsem-install/ -v --tb=short"
@@ -2283,11 +2276,10 @@ _clean-stale:
 _docker-gc:
     #!/bin/bash
     if ! command -v docker &>/dev/null; then exit 0; fi
-    # Remove stopped containers
-    CONTAINERS=$(docker container ls -aq --filter status=exited 2>/dev/null)
-    if [ -n "$CONTAINERS" ]; then
-        docker container rm $CONTAINERS >/dev/null 2>&1 || true
-    fi
+    # Created debug containers never reach "exited" and used to survive
+    # forever. Reclaim all stopped containers only after a 24h diagnosis
+    # window so a concurrent lane's newly-created container is untouched.
+    docker container prune -f --filter until=24h >/dev/null 2>&1 || true
     # Remove dangling images older than 72h. Never use --all/-a here: a
     # newly tagged cached image can have an old creation timestamp and may be
     # in active use by another architecture lane or worktree.
@@ -2299,9 +2291,13 @@ _docker-gc:
         colima ssh -- sudo fstrim /mnt/lima-colima >/dev/null 2>&1 || true
     fi
 
-# Flush Docker compiler artifacts only after a successful canonical `just test`.
-# Registry and rustup volumes remain as bounded dependency/toolchain caches;
-# tagged builder images remain available for the next focused run.
+# Enforce release-rail headroom while preserving content-addressed Cargo,
+# registry, rustup, and recent BuildKit caches that make forward fixes fast.
+_bound-docker-test-storage:
+    @bash {{justfile_directory()}}/scripts/ensure-docker-space.sh 16
+
+# Explicit deep cleanup for a human-requested cold rebuild. The canonical gate
+# deliberately does not call this recipe.
 _clean-docker-test-targets:
     #!/bin/bash
     set -euo pipefail

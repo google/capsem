@@ -19,9 +19,7 @@ def _skill_text(skill_path: Path) -> str:
     skill_dir = skill_path.parent
     main = skill_path.read_text(encoding="utf-8")
     parts = [main]
-    for relative in dict.fromkeys(
-        re.findall(r"`(references/[A-Za-z0-9_./-]+\.md)`", main)
-    ):
+    for relative in dict.fromkeys(re.findall(r"`(references/[A-Za-z0-9_./-]+\.md)`", main)):
         reference = (skill_dir / relative).resolve()
         assert reference.is_relative_to(skill_dir.resolve())
         assert reference.is_file(), f"missing linked skill reference: {relative}"
@@ -80,10 +78,12 @@ def _run_docker_space_gate(
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(parents=True)
     state = tmp_path / "pruned"
+    commands = tmp_path / "docker-commands"
     docker = fake_bin / "docker"
     docker.write_text(
         """#!/bin/sh
 set -eu
+printf '%s\\n' "$*" >> "$FAKE_DOCKER_COMMANDS"
 if [ "$1" = "run" ]; then
     case "$*" in
         *debian:bookworm-slim*)
@@ -131,6 +131,7 @@ fi
                 after_kib if after_trim_kib is None else after_trim_kib
             ),
             "FAKE_DOCKER_VOLUMES": volumes,
+            "FAKE_DOCKER_COMMANDS": str(commands),
         }
     )
     return subprocess.run(
@@ -152,13 +153,9 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
 
     preflight = 'scripts/ensure-docker-space.sh" 16'
     assert preflight in recipe
-    assert recipe.index(preflight) < recipe.index(
-        "build_arch_lane arm64"
-    )
+    assert recipe.index(preflight) < recipe.index("build_arch_lane arm64")
 
-    enough = _run_docker_space_gate(
-        tmp_path / "enough", before_kib=20 * 1024 * 1024, after_kib=0
-    )
+    enough = _run_docker_space_gate(tmp_path / "enough", before_kib=20 * 1024 * 1024, after_kib=0)
     assert enough.returncode == 0, enough.stderr
     assert "already has" in enough.stdout
 
@@ -170,6 +167,9 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     assert reclaimed.returncode == 0, reclaimed.stderr
     assert "pruning unused builder cache" in reclaimed.stdout
     assert "reclaimed enough space" in reclaimed.stdout
+    reclaimed_commands = (tmp_path / "reclaimed" / "docker-commands").read_text()
+    assert "builder prune -f --keep-storage 8GB" in reclaimed_commands
+    assert "builder prune -af" not in reclaimed_commands
 
     exhausted = _run_docker_space_gate(
         tmp_path / "exhausted",
@@ -240,14 +240,7 @@ def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
     assert validate_pos != -1
     assert copy_pos != -1
     assert proof_pos != -1
-    assert (
-        companion_pos
-        < tauri_pos
-        < repack_pos
-        < validate_pos
-        < copy_pos
-        < proof_pos
-    )
+    assert companion_pos < tauri_pos < repack_pos < validate_pos < copy_pos < proof_pos
     assert 'dpkg -i \\"\\$DEB\\"' not in block
     assert "CAPSEM_REQUIRE_LINUX_DEB_PROOF" in block
     assert "scripts/select-linux-deb-proof.sh" in block
@@ -259,7 +252,7 @@ def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
     assert 'MANIFEST_CHANNEL="${CAPSEM_INSTALL_CHANNEL:-stable}"' in block
     assert '-e "CAPSEM_INSTALL_MANIFEST_URL=$MANIFEST_URL"' in block
     assert 'scripts/repack-deb.sh --manifest \\"\\$CAPSEM_INSTALL_MANIFEST_URL\\"' in block
-    assert 'file://\\$PWD/assets/manifest.json' not in block
+    assert "file://\\$PWD/assets/manifest.json" not in block
     assert 'CAPSEM_PROOF_MANIFEST_URL="$MANIFEST_URL"' in block
     assert 'CAPSEM_PROOF_MANIFEST_CHANNEL="$MANIFEST_CHANNEL"' in block
     assert 'CAPSEM_PROOF_DEB="$DEB"' in block
@@ -309,14 +302,16 @@ def test_exact_linux_deb_proof_uses_systemd_and_proves_guest_shell() -> None:
     assert "CAPSEM_QUALIFIED_DEB_SHELL_OK" in block
     assert "scripts/verify-installed-release.py" in block
     assert 'MANIFEST_URL="${CAPSEM_PROOF_MANIFEST_URL:?exact package proof requires' in block
-    assert 'MANIFEST_CHANNEL="${CAPSEM_PROOF_MANIFEST_CHANNEL:?exact package proof requires' in block
+    assert (
+        'MANIFEST_CHANNEL="${CAPSEM_PROOF_MANIFEST_CHANNEL:?exact package proof requires' in block
+    )
     assert 'DEB_INPUT="${CAPSEM_PROOF_DEB:?exact package proof requires' in block
     assert "{{deb}}" not in block
     assert '--manifest-url "$MANIFEST_URL"' in block
     assert '--channel "$MANIFEST_CHANNEL"' in block
     assert '--package-version "$EXPECTED_VERSION"' in block
     assert "trap cleanup EXIT" in block
-    assert "dpkg -i \"$CONTAINER_DEB\" 2>/dev/null || true" not in block
+    assert 'dpkg -i "$CONTAINER_DEB" 2>/dev/null || true' not in block
 
 
 def test_systemd_install_image_cannot_flush_host_binfmt_registrations() -> None:
@@ -411,32 +406,26 @@ def test_install_test_restores_host_workspace_ownership() -> None:
 def test_install_test_keeps_frontend_build_outputs_container_owned() -> None:
     block = _just_recipe_block("test-install")
 
-    assert (
-        "-v capsem-install-frontend-node-modules:/src/frontend/node_modules"
-        in block
-    )
+    assert "-v capsem-install-frontend-node-modules:/src/frontend/node_modules" in block
     assert "-v capsem-install-frontend-dist:/src/frontend/dist" in block
-    assert (
-        "chown -R capsem:capsem /src/frontend/node_modules /src/frontend/dist"
-        in block
-    )
+    assert "chown -R capsem:capsem /src/frontend/node_modules /src/frontend/dist" in block
 
 
 def test_install_test_removes_stale_container_before_fail_closed_cache_reset() -> None:
     block = _just_recipe_block("test-install")
 
     remove_stale = block.index('docker rm -f "$CONTAINER"')
-    inspect_cache = block.index('VOLUME_LINE=$(docker system df -v')
-    reset_cache = block.index('docker volume rm capsem-install-target')
+    inspect_cache = block.index("VOLUME_LINE=$(docker system df -v")
+    reset_cache = block.index("docker volume rm capsem-install-target")
 
     assert remove_stale < inspect_cache < reset_cache
-    assert 'docker volume rm capsem-install-target >/dev/null 2>&1 || true' not in block
-    assert 'Failed to reset oversized capsem-install-target volume' in block
-    assert 'docker ps -a --filter volume=capsem-install-target' in block
+    assert "docker volume rm capsem-install-target >/dev/null 2>&1 || true" not in block
+    assert "Failed to reset oversized capsem-install-target volume" in block
+    assert "docker ps -a --filter volume=capsem-install-target" in block
 
 
 def test_install_test_runs_local_release_glowup_from_real_package() -> None:
-    block = _just_recipe_block("test-install").replace(r'\"', '"').replace(r"\$", "$")
+    block = _just_recipe_block("test-install").replace(r"\"", '"').replace(r"\$", "$")
 
     assert "Running local release glow-up" in block
     assert "scripts/local-release-glowup.py" in block
@@ -448,17 +437,14 @@ def test_install_test_runs_local_release_glowup_from_real_package() -> None:
 
 
 def test_install_test_uses_clean_isolated_asset_fixtures() -> None:
-    block = _just_recipe_block("test-install").replace(r'\"', '"').replace(r"\$", "$")
-    update_tests = (
-        PROJECT_ROOT / "tests/capsem-install/test_update.py"
-    ).read_text()
+    block = _just_recipe_block("test-install").replace(r"\"", '"').replace(r"\$", "$")
+    update_tests = (PROJECT_ROOT / "tests/capsem-install/test_update.py").read_text()
 
     assert 'INSTALL_ASSETS_DIR="target/install-test-assets"' in block
     assert 'INSTALL_CONFIG_DIR="target/install-test-config"' in block
     assert 'rm -rf "$INSTALL_ASSETS_DIR" "$INSTALL_CONFIG_DIR"' in block
     assert (
-        'CAPSEM_ASSETS_DIR="$INSTALL_ASSETS_DIR" '
-        "bash scripts/prepare-install-test-assets.sh"
+        'CAPSEM_ASSETS_DIR="$INSTALL_ASSETS_DIR" bash scripts/prepare-install-test-assets.sh'
     ) in block
     assert (
         'CAPSEM_ASSETS_DIR="$INSTALL_ASSETS_DIR" '
@@ -466,10 +452,7 @@ def test_install_test_uses_clean_isolated_asset_fixtures() -> None:
         "bash scripts/materialize-config.sh"
     ) in block
     assert '"$INSTALL_CONFIG_DIR" "$INSTALL_ASSETS_DIR"' in block
-    assert (
-        'CAPSEM_TEST_ASSET_MANIFEST="/src/$INSTALL_ASSETS_DIR/manifest.json"'
-        in block
-    )
+    assert 'CAPSEM_TEST_ASSET_MANIFEST="/src/$INSTALL_ASSETS_DIR/manifest.json"' in block
     assert '--assets-dir "$INSTALL_ASSETS_DIR"' in block
     assert '--config-root "$INSTALL_CONFIG_DIR"' in block
     assert '"target" / "install-test-assets" / "manifest.json"' in update_tests
@@ -494,9 +477,7 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     assert "update --assets --channel stable" in script
     assert "update --yes --channel nightly" not in script
     assert "update --yes --channel stable" not in script
-    transition_gate = (
-        PROJECT_ROOT / "scripts" / "check-public-binary-release.py"
-    ).read_text()
+    transition_gate = (PROJECT_ROOT / "scripts" / "check-public-binary-release.py").read_text()
     assert "run_docker_binary_transition_smoke" in transition_gate
     assert "update --yes --channel nightly" in transition_gate
     assert "update --yes --channel stable" in transition_gate
@@ -544,8 +525,7 @@ def test_full_gate_preflights_clean_install_harness_before_expensive_stages() ->
     assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in preflight
     assert "uv run python -m pytest --version" in preflight
     assert (
-        "uv run python -m pytest -p no:cacheprovider -q "
-        "tests/test_materialize_config_http.py"
+        "uv run python -m pytest -p no:cacheprovider -q tests/test_materialize_config_http.py"
     ) in preflight
     assert "sudo -n true" in preflight
     assert "docker build --no-cache" in preflight
@@ -571,12 +551,10 @@ def test_local_linux_preflight_contains_asset_ci_release_tools() -> None:
 def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
     swap_script = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text()
-    native_block = host_builder.split(
-        "# ---- Native-arch Tauri dev libraries ----", maxsplit=1
-    )[1].split("# ---- Helper script", maxsplit=1)[0]
-    swap_block = swap_script.split("DEV_PACKAGES=(", maxsplit=1)[1].split(
-        ")", maxsplit=1
-    )[0]
+    native_block = host_builder.split("# ---- Native-arch Tauri dev libraries ----", maxsplit=1)[
+        1
+    ].split("# ---- Helper script", maxsplit=1)[0]
+    swap_block = swap_script.split("DEV_PACKAGES=(", maxsplit=1)[1].split(")", maxsplit=1)[0]
 
     native_packages = {
         line.strip().removesuffix("\\").strip()
@@ -674,27 +652,31 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     assert capacities[0] < build_image < capacities[1] < package
 
 
-def test_successful_full_gate_flushes_docker_target_artifacts() -> None:
+def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> None:
     full_gate = _just_recipe_block("test:")
-    cleanup = _just_recipe_block("_clean-docker-test-targets:")
+    bound = _just_recipe_block("_bound-docker-test-storage:")
 
-    assert "_test-candidate: _clean-docker-test-targets " in full_gate
-    assert full_gate.index("just test-install") < full_gate.index(
-        "just _clean-docker-test-targets"
-    )
-    for volume in (
-        "capsem-agent-target-arm64",
-        "capsem-agent-target-x86_64",
-        "capsem-host-target-arm64",
-        "capsem-host-target-x86_64",
-        "capsem-install-target",
-        "capsem-linux-rust-target",
-    ):
-        assert volume in cleanup
-    assert "docker builder prune -f --keep-storage 8GB" in cleanup
-    assert "capsem-cargo-registry" not in cleanup
-    assert "capsem-rustup" not in cleanup
-    assert "docker image rm" not in cleanup
+    assert "_test-candidate: _bound-docker-test-storage " in full_gate
+    assert full_gate.index("just test-install") < full_gate.index("just _bound-docker-test-storage")
+    assert "scripts/ensure-docker-space.sh" in bound
+    assert "docker volume rm" not in bound
+
+
+def test_docker_gc_reclaims_old_created_debug_containers() -> None:
+    cleanup = _just_recipe_block("_docker-gc:")
+
+    assert "docker container prune -f --filter until=24h" in cleanup
+    assert "--filter status=exited" not in cleanup
+
+
+def test_install_gate_rechecks_capacity_immediately_before_pytest() -> None:
+    block = _just_recipe_block("test-install")
+
+    package_install = block.index("Installing .deb via dpkg")
+    final_capacity = block.index('scripts/ensure-docker-space.sh" 16', package_install)
+    pytest_launch = block.index("Running install e2e tests")
+
+    assert package_install < final_capacity < pytest_launch
 
 
 def test_cross_compile_does_not_bypass_apt_date_validation() -> None:
@@ -739,7 +721,8 @@ def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:
 
 
 def test_local_release_glowup_repack_uses_selected_asset_fixture(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     glowup = _load_local_release_glowup()
     commands: list[list[str]] = []
@@ -771,7 +754,8 @@ def test_local_release_glowup_repack_uses_selected_asset_fixture(
 
 
 def test_local_release_glowup_hardlinks_same_filesystem_immutable_blobs(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Late release staging must not allocate a second multi-GB asset cohort."""
     glowup = _load_local_release_glowup()
@@ -792,7 +776,8 @@ def test_local_release_glowup_hardlinks_same_filesystem_immutable_blobs(
 
 
 def test_local_release_glowup_falls_back_to_copy_across_filesystems(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Hardlink optimization must remain correct when source and dist differ."""
     glowup = _load_local_release_glowup()
@@ -813,7 +798,8 @@ def test_local_release_glowup_falls_back_to_copy_across_filesystems(
 
 
 def test_local_release_glowup_does_not_copy_after_real_disk_exhaustion(
-    tmp_path: Path, monkeypatch,
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     glowup = _load_local_release_glowup()
     source = tmp_path / "assets" / "rootfs.erofs"
@@ -840,7 +826,9 @@ def test_local_release_glowup_does_not_copy_after_real_disk_exhaustion(
 
 
 def test_local_release_glowup_reports_capacity_before_late_asset_staging(
-    tmp_path: Path, monkeypatch, capsys,
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
 ) -> None:
     glowup = _load_local_release_glowup()
     gib = 1024**3
@@ -853,8 +841,7 @@ def test_local_release_glowup_reports_capacity_before_late_asset_staging(
     glowup.report_disk_capacity(tmp_path, "before immutable VM blob staging")
 
     assert capsys.readouterr().out == (
-        "Disk capacity (before immutable VM blob staging): "
-        "12.0 GiB free of 20.0 GiB\n"
+        "Disk capacity (before immutable VM blob staging): 12.0 GiB free of 20.0 GiB\n"
     )
 
 
@@ -1042,7 +1029,7 @@ def test_local_release_glowup_installed_path_asserts_channel_round_trip_and_prov
         "check_update_log asset_update_complete http://127.0.0.1:1234/assets/nightly/manifest.json"
         in script
     )
-    assert "CAPSEM_RELEASE_CHANNELS_URL=\"$release_channels_url\"" in script
+    assert 'CAPSEM_RELEASE_CHANNELS_URL="$release_channels_url"' in script
     assert "binary_update_failed" not in script
     assert "binary_update_complete" not in script
     assert "update --yes" not in script
@@ -1067,7 +1054,9 @@ def test_local_release_glowup_installed_path_asserts_channel_round_trip_and_prov
     assert "check_binary_versions 1.5.100" in script
     assert "CAPSEM_CHANNEL=nightly" in script
     assert "http://127.0.0.1:1234/corp/manifest.json" in script
-    assert "check_update_log asset_update_complete http://127.0.0.1:1234/corp/manifest.json" in script
+    assert (
+        "check_update_log asset_update_complete http://127.0.0.1:1234/corp/manifest.json" in script
+    )
     assert "corporate channel is locked" in script
     assert "corp_escape_status" in script
 
@@ -1319,7 +1308,10 @@ def test_package_builders_stage_manifest_only_not_vm_asset_payload() -> None:
     assert "MANIFEST_METADATA=$(tr" in deb_postinst
     assert "event=manifest_metadata" in deb_postinst
     assert "MANIFEST_SOURCE=$(sed" in deb_postinst
-    assert 'MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"' not in deb_postinst
+    assert (
+        'MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"'
+        not in deb_postinst
+    )
     assert "packaged manifest-metadata.json missing" in deb_postinst
     assert "packaged manifest-metadata.json has no manifest_url" in deb_postinst
     assert "event=manifest_source" in deb_postinst

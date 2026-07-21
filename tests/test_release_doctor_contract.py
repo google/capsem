@@ -4155,7 +4155,7 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert first_frontend_build_pos != -1
     assert frontend_check_pos != -1
     assert release_gate_pos != -1
-    assert "_test-candidate: _clean-docker-test-targets _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-settings" in just
+    assert "_test-candidate: _bound-docker-test-storage _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-settings" in just
     assert "bash scripts/check-web-surface.sh frontend" in just
     assert "pnpm --dir frontend run check" in web_gate
     assert generate_pos < first_frontend_build_pos

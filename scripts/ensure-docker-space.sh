@@ -30,8 +30,8 @@ if (( FREE_KIB >= MINIMUM_KIB )); then
     exit 0
 fi
 
-echo "Docker has only $((FREE_KIB / 1024 / 1024)) GiB free; pruning unused builder cache."
-docker builder prune -af >/dev/null
+echo "Docker has only $((FREE_KIB / 1024 / 1024)) GiB free; pruning unused builder cache while retaining the hottest 8 GiB."
+docker builder prune -f --keep-storage 8GB >/dev/null
 
 FREE_KIB=$(docker_free_kib)
 require_numeric_free_space "$FREE_KIB"
