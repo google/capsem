@@ -384,7 +384,9 @@ test-assets: _bootstrap _install-tools _generate-settings _sign
     # Docker daemon. Earlier `just test` stages also populate large Rust build
     # caches, so reclaim unused builder layers before the opaque overlay write
     # fails halfway through EROFS creation.
-    bash "$ROOT/scripts/ensure-docker-space.sh" 16
+    # Asset creation needs two concurrent rootfs expansion lanes. Keep a
+    # smaller rail-local BuildKit floor while preserving named compile caches.
+    CAPSEM_DOCKER_CACHE_KEEP_GB=4 "$ROOT/scripts/ensure-docker-space.sh" 16
     rm -rf "$TEST_ROOT"
     mkdir -p "$TEST_ROOT"
 

@@ -154,7 +154,7 @@ fi
 def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     recipe = _just_recipe_block("test-assets:")
 
-    preflight = 'scripts/ensure-docker-space.sh" 16'
+    preflight = 'CAPSEM_DOCKER_CACHE_KEEP_GB=4 "$ROOT/scripts/ensure-docker-space.sh" 16'
     assert preflight in recipe
     assert recipe.index(preflight) < recipe.index("build_arch_lane arm64")
 
