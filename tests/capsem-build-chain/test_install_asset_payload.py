@@ -726,7 +726,7 @@ def test_package_boundary_releases_only_completed_docker_rail_volumes() -> None:
     assert "capsem-agent-target-x86_64" in release
     assert "capsem-rustup-arm64" in release
     assert "capsem-rustup-x86_64" in release
-    assert "capsem-linux-rust-target" in release
+    assert "capsem-linux-rust-target" not in release
     assert "docker ps -aq" in release
     assert 'docker volume rm "$volume"' in release
     assert "docker volume rm -f" not in release
@@ -739,6 +739,22 @@ def test_package_boundary_releases_only_completed_docker_rail_volumes() -> None:
         "capsem-install-rustup",
     ):
         assert retained not in release
+
+
+def test_linux_rust_target_is_released_before_asset_capacity_preflight() -> None:
+    candidate = _just_recipe_block("_test-candidate:")
+    release = _just_recipe_block("_release-completed-linux-rust-target:")
+
+    linux_rust = candidate.index("just test-linux-rust")
+    release_call = candidate.index("just _release-completed-linux-rust-target")
+    release_builder = candidate.index("docker image rm capsem-host-builder:latest")
+    asset_gate = candidate.index("just test-assets")
+
+    assert linux_rust < release_call < release_builder < asset_gate
+    assert "capsem-linux-rust-target" in release
+    assert "docker ps -aq" in release
+    assert 'docker volume rm "$volume"' in release
+    assert "docker volume rm -f" not in release
 
 
 def test_install_boundary_releases_only_completed_package_targets() -> None:

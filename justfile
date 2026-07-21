@@ -791,6 +791,7 @@ _test-candidate: _bound-docker-test-storage _bootstrap _install-tools _clean-sta
     if [ "$(uname -s)" = "Darwin" ]; then
         echo "=== Linux Rust platform tests + coverage (Docker) ==="
         just test-linux-rust
+        just _release-completed-linux-rust-target
         # The asset rail follows and needs the daemon reserve more than it
         # needs this disposable 6 GiB final image. Keep BuildKit and named
         # Cargo/rustup volumes hot; the package rail rebuilds the tag later.
@@ -1103,6 +1104,23 @@ _clean-host-image:
 #   - CI runs on bare ubuntu runners; this runs in capsem-host-builder via docker
 #   - Tauri signing keys: CI from secrets, local from private/tauri/
 #   - See: .github/workflows/release.yaml build-app-linux job
+_release-completed-linux-rust-target:
+    #!/bin/bash
+    set -euo pipefail
+    # Linux cfg coverage is complete before VM assets begin. Its multi-GiB
+    # compiler target cannot accelerate any later rail in this candidate, so
+    # release it at the ownership boundary instead of carrying it until package
+    # assembly. Never disturb an attached diagnostic or concurrent consumer.
+    volume=capsem-linux-rust-target
+    docker volume inspect "$volume" >/dev/null 2>&1 || exit 0
+    attached=$(docker ps -aq --filter "volume=$volume")
+    if [ -n "$attached" ]; then
+        echo "preserving attached completed Linux Rust target: $volume"
+        exit 0
+    fi
+    echo "releasing completed Linux Rust target: $volume"
+    docker volume rm "$volume" >/dev/null
+
 _release-completed-docker-rails:
     #!/bin/bash
     set -euo pipefail
@@ -1116,7 +1134,6 @@ _release-completed-docker-rails:
         capsem-agent-target-x86_64
         capsem-rustup-arm64
         capsem-rustup-x86_64
-        capsem-linux-rust-target
     )
     for volume in "${volumes[@]}"; do
         docker volume inspect "$volume" >/dev/null 2>&1 || continue
