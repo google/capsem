@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1784673252] - 2026-07-21
+
 ### Fixed
 - Kept unattended macOS candidate gates awake, ran the release benchmark once,
   and preserved service/VM logs when exception teardown precedes pytest's

@@ -1,6 +1,6 @@
-version: 1.5.1784663414
+version: 1.5.1784673252
 ---
 ### Fixed
-- Honored virtqueue interrupt suppression in the KVM VirtioFS worker and
-  stopped raising interrupts for empty post-resume queue notifications,
-  preventing lost completion wakeups during restored workspace bursts.
+- Kept unattended macOS candidate gates awake, ran the release benchmark once,
+  and preserved service/VM logs when exception teardown precedes pytest's
+  failure report.
