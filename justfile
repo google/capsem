@@ -2314,7 +2314,16 @@ _docker-gc:
 # Enforce release-rail headroom while preserving content-addressed Cargo,
 # registry, rustup, and recent BuildKit caches that make forward fixes fast.
 _bound-docker-test-storage:
-    @bash {{justfile_directory()}}/scripts/ensure-docker-space.sh 16
+    #!/bin/bash
+    set -euo pipefail
+    # A failed package/install rail can leave one of these final stage tags
+    # behind. They are recreated by their owning rail and pin ~6 GiB each,
+    # so release only unreferenced tags before measuring the next candidate.
+    # No force: an active or diagnostic container keeps its image and makes
+    # the capacity gate fail closed instead of disrupting another consumer.
+    docker image rm capsem-host-builder:latest >/dev/null 2>&1 || true
+    docker image rm capsem-install-test:latest >/dev/null 2>&1 || true
+    bash {{justfile_directory()}}/scripts/ensure-docker-space.sh 16
 
 # Explicit deep cleanup for a human-requested cold rebuild. The canonical gate
 # deliberately does not call this recipe.

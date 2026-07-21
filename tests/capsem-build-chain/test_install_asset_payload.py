@@ -692,7 +692,11 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
 
     assert "_test-candidate: _bound-docker-test-storage " in full_gate
     assert full_gate.index("just test-install") < full_gate.index("just _bound-docker-test-storage")
-    assert "scripts/ensure-docker-space.sh" in bound
+    capacity = bound.index("scripts/ensure-docker-space.sh")
+    release_host = bound.index("docker image rm capsem-host-builder:latest")
+    release_install = bound.index("docker image rm capsem-install-test:latest")
+    assert release_host < release_install < capacity
+    assert "docker image rm -f" not in bound
     assert "docker volume rm" not in bound
 
 
