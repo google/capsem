@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   done and calibrated the Linux package reserve separately from the larger
   asset-expansion and installed-package reserves.
 - Released disposable install-gate incremental objects after package linking
-  while retaining dependency caches, linked binaries, and package bundles, and
-  sized the runtime-only pytest reserve separately from compilation reserves.
+  while retaining dependency caches, linked binaries, and package bundles;
+  removed its derived stage image on every exit; and sized the runtime-only
+  pytest reserve separately from compilation reserves.
 - Kept Rust and npm advisory failures blocking in the scheduled/manual security
   audit while making candidate, smoke, and PR gates report external-clock
   advisory changes without reddening unrelated source commits.

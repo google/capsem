@@ -401,6 +401,8 @@ def test_install_test_restores_host_workspace_ownership() -> None:
     assert "chown -R $HOST_UID:$HOST_GID /src" in block
     assert "trap cleanup EXIT" in block
     assert 'docker rm -f "$CONTAINER"' in block
+    cleanup = block.split("cleanup() {", maxsplit=1)[1].split("}", maxsplit=1)[0]
+    assert 'docker image rm "$IMAGE:latest"' in cleanup
 
 
 def test_install_test_keeps_frontend_build_outputs_container_owned() -> None:

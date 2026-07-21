@@ -1824,6 +1824,10 @@ test-install:
     cleanup() {
         docker exec "$CONTAINER" bash -c "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" >/dev/null 2>&1 || true
         docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+        # The derived install image is a disposable stage output. Remove its
+        # tag on both success and failure; bounded BuildKit cache keeps the
+        # reusable layers without pinning another ~6 GiB final image.
+        docker image rm "$IMAGE:latest" >/dev/null 2>&1 || true
         just _docker-gc >/dev/null 2>&1 || true
     }
     trap cleanup EXIT
