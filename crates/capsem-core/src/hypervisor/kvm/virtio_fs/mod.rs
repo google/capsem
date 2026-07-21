@@ -173,17 +173,23 @@ fn worker_loop(
         match command {
             WorkerCommand::Notify(0) => {
                 drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
-                signal_irq(irq_fd, &interrupt_status);
+                if hiprio_queue.prepare_kick() {
+                    signal_irq(irq_fd, &interrupt_status);
+                }
             }
             WorkerCommand::Notify(1) => {
                 drain_request_queue(&mut proc, &mut request_queue, &mem);
-                signal_irq(irq_fd, &interrupt_status);
+                if request_queue.prepare_kick() {
+                    signal_irq(irq_fd, &interrupt_status);
+                }
             }
             WorkerCommand::Notify(_) => {}
             WorkerCommand::Drain(done) => {
                 let hiprio = drain_hiprio_queue(&mut proc, &mut hiprio_queue, &mem);
                 let request = drain_request_queue(&mut proc, &mut request_queue, &mem);
-                if hiprio > 0 || request > 0 {
+                let hiprio_interrupt = hiprio_queue.prepare_kick();
+                let request_interrupt = request_queue.prepare_kick();
+                if hiprio_interrupt || request_interrupt {
                     signal_irq(irq_fd, &interrupt_status);
                 }
                 debug!(

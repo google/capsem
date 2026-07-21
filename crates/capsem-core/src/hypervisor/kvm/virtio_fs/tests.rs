@@ -1,5 +1,8 @@
 use super::*;
+use crate::hypervisor::kvm::memory::{GuestMemory, RAM_BASE};
+use crate::hypervisor::kvm::virtio_queue::VirtqDesc;
 use std::io::{Seek, SeekFrom};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
@@ -23,6 +26,184 @@ fn test_processor(dir: &Path) -> FuseProcessor {
 
 fn test_device(dir: &Path) -> VirtioFsDevice {
     VirtioFsDevice::new("capsem", dir, false, -1, Arc::new(AtomicU32::new(0))).unwrap()
+}
+
+const TEST_QUEUE_SIZE: u16 = 8;
+
+struct WorkerHarness {
+    mem: GuestMemory,
+    hiprio: VirtQueue,
+    request: VirtQueue,
+    irq_fd: OwnedFd,
+    interrupt_status: Arc<AtomicU32>,
+}
+
+fn worker_harness() -> WorkerHarness {
+    let mem = GuestMemory::new(1024 * 1024).unwrap();
+    let memref = mem.clone_ref(RAM_BASE);
+    let hiprio = VirtQueue::new(
+        memref.clone(),
+        RAM_BASE,
+        RAM_BASE + 0x100,
+        RAM_BASE + 0x200,
+        TEST_QUEUE_SIZE,
+    );
+    let request = VirtQueue::new(
+        memref,
+        RAM_BASE + 0x400,
+        RAM_BASE + 0x500,
+        RAM_BASE + 0x600,
+        TEST_QUEUE_SIZE,
+    );
+    let raw_fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
+    assert!(raw_fd >= 0);
+    WorkerHarness {
+        mem,
+        hiprio,
+        request,
+        irq_fd: unsafe { OwnedFd::from_raw_fd(raw_fd) },
+        interrupt_status: Arc::new(AtomicU32::new(0)),
+    }
+}
+
+fn write_test_descriptor(mem: &GuestMemory, desc: VirtqDesc) {
+    let mut bytes = [0u8; 16];
+    bytes[0..8].copy_from_slice(&desc.addr.to_le_bytes());
+    bytes[8..12].copy_from_slice(&desc.len.to_le_bytes());
+    bytes[12..14].copy_from_slice(&desc.flags.to_le_bytes());
+    bytes[14..16].copy_from_slice(&desc.next.to_le_bytes());
+    mem.write_at(0, &bytes).unwrap();
+}
+
+fn run_worker_notification(harness: WorkerHarness, dir: &Path, queue_index: u32) -> WorkerHarness {
+    let WorkerHarness {
+        mem,
+        hiprio,
+        request,
+        irq_fd,
+        interrupt_status,
+    } = harness;
+    let (tx, rx) = mpsc::channel();
+    let proc = test_processor(dir);
+    let memref = mem.clone_ref(RAM_BASE);
+    let irq_raw_fd = irq_fd.as_raw_fd();
+    let worker_status = Arc::clone(&interrupt_status);
+    let handle = std::thread::spawn(move || {
+        worker_loop(proc, request, hiprio, memref, rx, irq_raw_fd, worker_status)
+    });
+
+    tx.send(WorkerCommand::Notify(queue_index)).unwrap();
+    let (done_tx, done_rx) = mpsc::channel();
+    tx.send(WorkerCommand::Drain(done_tx)).unwrap();
+    done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    drop(tx);
+    handle.join().unwrap();
+
+    let memref = mem.clone_ref(RAM_BASE);
+    WorkerHarness {
+        mem,
+        hiprio: VirtQueue::new(
+            memref.clone(),
+            RAM_BASE,
+            RAM_BASE + 0x100,
+            RAM_BASE + 0x200,
+            TEST_QUEUE_SIZE,
+        ),
+        request: VirtQueue::new(
+            memref,
+            RAM_BASE + 0x400,
+            RAM_BASE + 0x500,
+            RAM_BASE + 0x600,
+            TEST_QUEUE_SIZE,
+        ),
+        irq_fd,
+        interrupt_status,
+    }
+}
+
+fn assert_irq_not_signaled(harness: &WorkerHarness) {
+    assert_eq!(harness.interrupt_status.load(Ordering::SeqCst), 0);
+    let mut value = 0u64;
+    let ret = unsafe {
+        libc::read(
+            harness.irq_fd.as_raw_fd(),
+            &mut value as *mut u64 as *mut libc::c_void,
+            std::mem::size_of::<u64>(),
+        )
+    };
+    assert_eq!(ret, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
+
+fn assert_irq_signaled(harness: &WorkerHarness) {
+    assert_eq!(harness.interrupt_status.load(Ordering::SeqCst), 1);
+    let mut value = 0u64;
+    let ret = unsafe {
+        libc::read(
+            harness.irq_fd.as_raw_fd(),
+            &mut value as *mut u64 as *mut libc::c_void,
+            std::mem::size_of::<u64>(),
+        )
+    };
+    assert_eq!(ret, std::mem::size_of::<u64>() as isize);
+    assert_eq!(value, 1);
+}
+
+fn enqueue_hiprio_request(harness: &WorkerHarness, avail_flags: u16) {
+    let header = make_header(0, 1, 1);
+    let request = fuse::as_bytes(&header);
+    harness.mem.write_at(0x1000, request).unwrap();
+    write_test_descriptor(
+        &harness.mem,
+        VirtqDesc {
+            addr: RAM_BASE + 0x1000,
+            len: request.len() as u32,
+            flags: 0,
+            next: 0,
+        },
+    );
+    harness
+        .mem
+        .write_at(0x100, &avail_flags.to_le_bytes())
+        .unwrap();
+    harness.mem.write_at(0x102, &1u16.to_le_bytes()).unwrap();
+    harness.mem.write_at(0x104, &0u16.to_le_bytes()).unwrap();
+}
+
+#[test]
+fn empty_queue_notification_does_not_raise_irq() {
+    let dir = temp_share("empty-notify");
+    let harness = run_worker_notification(worker_harness(), &dir, 1);
+    assert_irq_not_signaled(&harness);
+}
+
+#[test]
+fn completed_queue_honors_driver_interrupt_suppression() {
+    let dir = temp_share("suppressed-notify");
+    let harness = worker_harness();
+    enqueue_hiprio_request(&harness, 1);
+
+    let harness = run_worker_notification(harness, &dir, 0);
+    let mut used_idx = [0u8; 2];
+    harness.mem.read_at(0x202, &mut used_idx).unwrap();
+    assert_eq!(u16::from_le_bytes(used_idx), 1);
+    assert_irq_not_signaled(&harness);
+}
+
+#[test]
+fn completed_queue_raises_irq_when_driver_requests_it() {
+    let dir = temp_share("interrupt-notify");
+    let harness = worker_harness();
+    enqueue_hiprio_request(&harness, 0);
+
+    let harness = run_worker_notification(harness, &dir, 0);
+    let mut used_idx = [0u8; 2];
+    harness.mem.read_at(0x202, &mut used_idx).unwrap();
+    assert_eq!(u16::from_le_bytes(used_idx), 1);
+    assert_irq_signaled(&harness);
 }
 
 #[test]
