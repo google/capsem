@@ -724,7 +724,11 @@ _test-candidate: _bound-docker-test-storage _bootstrap _install-tools _clean-sta
     # Stage 7 still runs the complete real install suite; this is only the
     # cheap fail-fast proof of the harness itself.
     echo "=== Install harness preflight (clean container) ==="
-    just _test-install-harness-preflight
+    CAPSEM_KEEP_HOST_BUILDER=1 just _test-install-harness-preflight
+    # The derived image is not needed again until the final install tail.
+    # Release its multi-gigabyte stage output now; BuildKit retains bounded
+    # content-addressed layers for the later rebuild.
+    docker image rm capsem-install-test:latest >/dev/null
 
     # ---- Stage 1: fast-fail (audits + lint + frontend) ---------------------
     # Cheap, independent, most-common failure class. Clippy (not cargo check)
@@ -1114,9 +1118,11 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         echo "ERROR: unsupported arch '$TARGET_ARCH' (arm64 or x86_64)"
         exit 1
     fi
-    # The image build itself materializes several GiB of layers, so it needs a
-    # capacity check before it starts as well as after it finishes.
-    "$ROOT/scripts/ensure-docker-space.sh" 16
+    # Package assembly has a measured ~1 GiB high-water delta once the current
+    # builder image exists. Keep 14 GiB free here so the 15 GiB hot-cache state
+    # is used instead of self-destructively pruned; asset/install rails retain
+    # their larger 16 GiB reserve.
+    "$ROOT/scripts/ensure-docker-space.sh" 14
     # Always run the cached image build so changes to the Dockerfile or helper
     # scripts cannot be hidden behind a stale local image.
     just build-host-image
@@ -1124,7 +1130,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     # entire Docker disk. Reclaim unused BuildKit cache only after the builder
     # image exists, preserving that image while guaranteeing apt and package
     # assembly have working space.
-    "$ROOT/scripts/ensure-docker-space.sh" 16
+    "$ROOT/scripts/ensure-docker-space.sh" 14
     # Sync container VM clock on macOS (prevents apt "not valid yet" errors)
     if [[ "$(uname -s)" = "Darwin" ]]; then
         python3 scripts/sync-container-clock.py
@@ -1750,6 +1756,12 @@ _test-install-harness-preflight:
         docker build --no-cache -t "$IMAGE" -f docker/Dockerfile.install-test .
         check_install_image
     fi
+    # Stage 0 retains the base for the two immediately-following cross-compile
+    # lanes. Other callers execute only the verified derived image, so release
+    # the separate ~6 GiB base tag before their package/runtime work.
+    if [ "${CAPSEM_KEEP_HOST_BUILDER:-0}" != "1" ]; then
+        docker image rm capsem-host-builder:latest >/dev/null
+    fi
 
 test-install:
     #!/bin/bash
@@ -1762,18 +1774,8 @@ test-install:
     ROOT="{{justfile_directory()}}"
     just _test-install-harness-preflight
     IMAGE="capsem-install-test"
-    # The derived install-test image is FROM capsem-host-builder. The cleanup
-    # trap and low-disk recovery may remove both images, so the standalone gate
-    # must restore the base image before attempting to rebuild the derived one.
-    if ! docker image inspect capsem-host-builder:latest >/dev/null 2>&1; then
-        echo "Building missing capsem-host-builder base image..."
-        just build-host-image
-    fi
-    # Build the Docker image if needed
-    if ! docker image inspect "$IMAGE" >/dev/null 2>&1; then
-        echo "Building $IMAGE Docker image..."
-        docker build -t "$IMAGE" -f docker/Dockerfile.install-test .
-    fi
+    # The preflight has already built and executed this exact derived image;
+    # its separate base tag was released to keep the daemon below its cap.
     HOST_UID=$(id -u)
     HOST_GID=$(id -g)
     CONTAINER="capsem-install-test"

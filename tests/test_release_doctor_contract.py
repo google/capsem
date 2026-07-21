@@ -1639,15 +1639,17 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "continue-on-error: true" not in create_release
 
 
-def test_install_gate_rebuilds_missing_base_image_before_derived_image() -> None:
+def test_install_preflight_releases_base_after_derived_image_is_verified() -> None:
+    preflight = _recipe_block("_test-install-harness-preflight:")
     recipe = _recipe_block("test-install:")
 
-    base_check = "docker image inspect capsem-host-builder:latest"
-    base_build = "just build-host-image"
     derived_build = 'docker build -t "$IMAGE" -f docker/Dockerfile.install-test .'
-    assert base_check in recipe
-    assert base_build in recipe
-    assert recipe.index(base_check) < recipe.index(base_build) < recipe.index(derived_build)
+    release_base = "docker image rm capsem-host-builder:latest"
+    assert derived_build in preflight
+    assert release_base in preflight
+    assert preflight.index(derived_build) < preflight.index(release_base)
+    assert "Building missing capsem-host-builder base image" not in recipe
+    assert 'docker image inspect "$IMAGE"' not in recipe
 
 
 def test_release_skill_requires_ci_and_local_mac_installer_outcome_proof() -> None:

@@ -546,6 +546,10 @@ def test_local_linux_preflight_contains_asset_ci_release_tools() -> None:
     assert preflight.index("cdxgen --version") < preflight.index(
         "uv run python -m pytest --version"
     )
+    verify = "check_install_image"
+    release_base = "docker image rm capsem-host-builder:latest"
+    assert release_base in preflight
+    assert preflight.rindex(verify) < preflight.index(release_base)
 
 
 def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:
@@ -642,7 +646,7 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     capacities = [
         index
         for index in range(len(cross_compile))
-        if cross_compile.startswith('scripts/ensure-docker-space.sh" 16', index)
+        if cross_compile.startswith('scripts/ensure-docker-space.sh" 14', index)
     ]
     package = cross_compile.index("docker run --rm")
 
@@ -650,6 +654,7 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     # must not leave the package container without room for apt and Tauri.
     assert len(capacities) == 2
     assert capacities[0] < build_image < capacities[1] < package
+    assert 'scripts/ensure-docker-space.sh" 16' not in cross_compile
 
 
 def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> None:
@@ -660,6 +665,23 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
     assert full_gate.index("just test-install") < full_gate.index("just _bound-docker-test-storage")
     assert "scripts/ensure-docker-space.sh" in bound
     assert "docker volume rm" not in bound
+
+
+def test_full_gate_releases_stage_final_images_without_flushing_hot_cache() -> None:
+    candidate = _just_recipe_block("_test-candidate:")
+
+    install_preflight = candidate.index(
+        "CAPSEM_KEEP_HOST_BUILDER=1 just _test-install-harness-preflight"
+    )
+    release_install = candidate.index("docker image rm capsem-install-test:latest")
+    arm_package = candidate.index("just cross-compile arm64")
+    x86_package = candidate.index("just cross-compile x86_64")
+    install_tail = candidate.rindex("just test-install")
+
+    assert install_preflight < release_install < arm_package
+    assert arm_package < x86_package < install_tail
+    assert "docker image rm capsem-host-builder:latest" not in candidate
+    assert "docker builder prune -af" not in candidate
 
 
 def test_docker_gc_reclaims_old_created_debug_containers() -> None:
