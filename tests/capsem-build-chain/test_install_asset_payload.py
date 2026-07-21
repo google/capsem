@@ -691,13 +691,11 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     release_completed_rails = cross_compile.index("just _release-completed-docker-rails")
     release_asset_builder = cross_compile.index("docker image rm rust:slim-bookworm")
     capacity = (
-        'CAPSEM_DOCKER_CACHE_KEEP_GB=2 CAPSEM_DOCKER_LINKED_KEEP_GB=2 '
+        "CAPSEM_DOCKER_CACHE_KEEP_GB=2 CAPSEM_DOCKER_LINKED_KEEP_GB=2 "
         '"$ROOT/scripts/ensure-docker-space.sh" 14'
     )
     capacities = [
-        index
-        for index in range(len(cross_compile))
-        if cross_compile.startswith(capacity, index)
+        index for index in range(len(cross_compile)) if cross_compile.startswith(capacity, index)
     ]
     package = cross_compile.index("docker run --rm")
 
@@ -825,17 +823,23 @@ def test_docker_gc_reclaims_old_created_debug_containers() -> None:
     assert "--filter status=exited" not in cleanup
 
 
-def test_install_gate_releases_disposable_incremental_state_before_pytest() -> None:
+def test_install_gate_releases_disposable_build_state_before_pytest() -> None:
     block = _just_recipe_block("test-install")
 
     package_install = block.index("Installing .deb via dpkg")
-    trim_incremental = block.index(
-        "rm -rf /cargo-target/debug/incremental", package_install
+    trim_build_state = block.index(
+        "rm -rf /cargo-target/debug/incremental /cargo-target/debug/deps "
+        "/cargo-target/debug/build /cargo-target/debug/.fingerprint "
+        "/cargo-target/debug/examples",
+        package_install,
     )
     final_capacity = block.index('scripts/ensure-docker-space.sh" 12', package_install)
     pytest_launch = block.index("Running install e2e tests")
 
-    assert package_install < trim_incremental < final_capacity < pytest_launch
+    assert package_install < trim_build_state < final_capacity < pytest_launch
+    cleanup = block[trim_build_state:final_capacity]
+    assert "/cargo-target/debug/bundle" not in cleanup
+    assert "rm -rf /cargo-target/debug/*" not in cleanup
 
 
 def test_cross_compile_does_not_bypass_apt_date_validation() -> None:
@@ -848,10 +852,15 @@ def test_cross_compile_does_not_bypass_apt_date_validation() -> None:
 def test_standalone_install_gate_preflights_privileged_helper() -> None:
     block = _just_recipe_block("test-install")
 
+    release_install_target = block.index("just _release-deferred-install-target")
+    capacity = block.index(
+        "CAPSEM_DOCKER_CACHE_KEEP_GB=2 CAPSEM_DOCKER_LINKED_KEEP_GB=2 "
+        '"$ROOT/scripts/ensure-docker-space.sh" 22'
+    )
     preflight = block.index("just _test-install-harness-preflight")
     start_container = block.index('echo "Starting systemd container..."')
 
-    assert preflight < start_container
+    assert release_install_target < capacity < preflight < start_container
 
 
 def test_binary_release_sbom_jobs_install_zstd_for_deb_payloads() -> None:
@@ -877,6 +886,23 @@ def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:
     assert "--asset-source-base" in build_channel
     assert 'f"{base_url}/assets/releases/{{asset_version}}"' in build_channel
     assert "stage_vm_asset_blobs(stable_manifest, args.assets_dir, dist)" in script
+
+
+def test_local_release_glowup_uses_preserved_admin_binary_without_rebuild() -> None:
+    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    record_binary = script.split("def record_binary(", maxsplit=1)[1].split(
+        "\ndef build_channel", maxsplit=1
+    )[0]
+    build_channel = script.split("def build_channel(", maxsplit=1)[1].split(
+        "\ndef copy_artifact_tree", maxsplit=1
+    )[0]
+
+    assert 'admin = args.bin_dir / "capsem-admin"' in script
+    assert "os.access(admin, os.X_OK)" in script
+    assert "str(admin)" in record_binary
+    assert "str(admin)" in build_channel
+    assert '"cargo"' not in record_binary
+    assert '"cargo"' not in build_channel
 
 
 def test_local_release_glowup_repack_uses_selected_asset_fixture(

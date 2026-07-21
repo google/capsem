@@ -1848,6 +1848,15 @@ test-install:
     # masked the asset-URL bug for v1.0.1777065213).
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
+    # A completed install target retains only top-level runtime binaries and
+    # the previous package after the post-install purge below; it no longer
+    # contains the dependency graph needed for the next build. Release that
+    # inactive lower-priority state before sacrificing reusable builder layers.
+    just _release-deferred-install-target
+    # The verified derived image pins roughly 6 GiB until the install proof
+    # finishes. Reserve that image budget before materializing it, bounding
+    # private BuildKit state only if completed install state was insufficient.
+    CAPSEM_DOCKER_CACHE_KEEP_GB=2 CAPSEM_DOCKER_LINKED_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 22
     just _test-install-harness-preflight
     IMAGE="capsem-install-test"
     # The preflight has already built and executed this exact derived image;
@@ -1973,13 +1982,13 @@ test-install:
     echo "Installing .deb via dpkg..."
     docker exec "$CONTAINER" bash -c \
         "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"
-    # The package is linked and installed, so incremental object graphs are no
+    # The package is linked and installed, so compiler object graphs are no
     # longer needed by pytest or the glow-up. They account for several GiB in
     # the active target volume and the global cleaner correctly refuses to
-    # touch a mounted volume. Release them here while retaining linked binaries,
-    # dependency artifacts, build scripts, and the exact package bundle.
+    # touch a mounted volume. Release them here while retaining the top-level
+    # linked binaries and exact package bundle consumed by the runtime proofs.
     docker exec "$CONTAINER" bash -c \
-        "rm -rf /cargo-target/debug/incremental"
+        "rm -rf /cargo-target/debug/incremental /cargo-target/debug/deps /cargo-target/debug/build /cargo-target/debug/.fingerprint /cargo-target/debug/examples"
     # Package/image assembly can consume the reserve measured at recipe start.
     # The remaining runtime-only tail needs far less room than compilation, but
     # still keeps a 12 GiB cushion so ENOSPC fails here with diagnostics instead

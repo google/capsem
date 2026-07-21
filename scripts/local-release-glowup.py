@@ -53,8 +53,12 @@ def main() -> int:
     parser.add_argument("--bin-dir", required=True, type=Path)
     parser.add_argument("--assets-dir", required=True, type=Path)
     parser.add_argument("--config-root", required=True, type=Path)
-    parser.add_argument("--install-script", default=PROJECT_ROOT / "site/public/install.sh", type=Path)
-    parser.add_argument("--work-dir", default=PROJECT_ROOT / "target/local-release-glowup", type=Path)
+    parser.add_argument(
+        "--install-script", default=PROJECT_ROOT / "site/public/install.sh", type=Path
+    )
+    parser.add_argument(
+        "--work-dir", default=PROJECT_ROOT / "target/local-release-glowup", type=Path
+    )
     parser.add_argument("--skip-install", action="store_true")
     args = parser.parse_args()
 
@@ -71,14 +75,21 @@ def main() -> int:
     stable_version = deb_version(args.input_deb)
     nightly_version = stable_version
     arch = deb_arch(args.input_deb)
+    admin = args.bin_dir / "capsem-admin"
+    if not admin.is_file() or not os.access(admin, os.X_OK):
+        raise SystemExit(f"local release glow-up requires executable {admin}")
 
     with local_release_server(dist) as base_url:
         stable_manifest_url = f"{base_url}/assets/stable/manifest.json"
         nightly_manifest_url = f"{base_url}/assets/nightly/manifest.json"
         stable_download_base = f"{base_url}/releases/download/stable"
         nightly_download_base = f"{base_url}/releases/download/nightly"
-        stable_deb = artifacts / "stable" / f"v{stable_version}" / f"Capsem_{stable_version}_{arch}.deb"
-        nightly_deb = artifacts / "nightly" / f"v{nightly_version}" / f"Capsem_{nightly_version}_{arch}.deb"
+        stable_deb = (
+            artifacts / "stable" / f"v{stable_version}" / f"Capsem_{stable_version}_{arch}.deb"
+        )
+        nightly_deb = (
+            artifacts / "nightly" / f"v{nightly_version}" / f"Capsem_{nightly_version}_{arch}.deb"
+        )
         stable_sbom = artifacts / "stable" / f"v{stable_version}" / "capsem-sbom.spdx.json"
         nightly_sbom = artifacts / "nightly" / f"v{nightly_version}" / "capsem-sbom.spdx.json"
 
@@ -102,10 +113,22 @@ def main() -> int:
         generate_sbom(nightly_sbom, nightly_deb)
 
         # Serve release artifacts from the exact URL shape used by release metadata.
-        copy_artifact_tree(stable_deb, dist / "releases" / "download" / "stable" / f"v{stable_version}" / stable_deb.name)
-        copy_artifact_tree(stable_sbom, dist / "releases" / "download" / "stable" / f"v{stable_version}" / stable_sbom.name)
-        copy_artifact_tree(nightly_deb, dist / "releases" / "download" / "nightly" / f"v{nightly_version}" / nightly_deb.name)
-        copy_artifact_tree(nightly_sbom, dist / "releases" / "download" / "nightly" / f"v{nightly_version}" / nightly_sbom.name)
+        copy_artifact_tree(
+            stable_deb,
+            dist / "releases" / "download" / "stable" / f"v{stable_version}" / stable_deb.name,
+        )
+        copy_artifact_tree(
+            stable_sbom,
+            dist / "releases" / "download" / "stable" / f"v{stable_version}" / stable_sbom.name,
+        )
+        copy_artifact_tree(
+            nightly_deb,
+            dist / "releases" / "download" / "nightly" / f"v{nightly_version}" / nightly_deb.name,
+        )
+        copy_artifact_tree(
+            nightly_sbom,
+            dist / "releases" / "download" / "nightly" / f"v{nightly_version}" / nightly_sbom.name,
+        )
 
         stable_manifest = manifests / "stable-assets-manifest.json"
         nightly_manifest = manifests / "nightly-assets-manifest.json"
@@ -114,16 +137,44 @@ def main() -> int:
         report_disk_capacity(args.work_dir, "before immutable VM blob staging")
         stage_vm_asset_blobs(stable_manifest, args.assets_dir, dist)
 
-        record_binary(stable_manifest, stable_version, stable_deb, stable_sbom, stable_download_base)
-        record_binary(nightly_manifest, nightly_version, nightly_deb, nightly_sbom, nightly_download_base)
-        build_channel(stable_manifest, args.assets_dir, args.config_root / "profiles", "stable", dist, base_url)
+        record_binary(
+            admin, stable_manifest, stable_version, stable_deb, stable_sbom, stable_download_base
+        )
+        record_binary(
+            admin,
+            nightly_manifest,
+            nightly_version,
+            nightly_deb,
+            nightly_sbom,
+            nightly_download_base,
+        )
+        build_channel(
+            admin,
+            stable_manifest,
+            args.assets_dir,
+            args.config_root / "profiles",
+            "stable",
+            dist,
+            base_url,
+        )
         stable_channel_manifest = dist / "assets" / "stable" / "manifest.json"
         stable_channel_sha_before_nightly = file_sha256(stable_channel_manifest)
         stable_channel_packages_before_nightly = current_package_versions(stable_channel_manifest)
-        build_channel(nightly_manifest, args.assets_dir, args.config_root / "profiles", "nightly", dist, base_url)
+        build_channel(
+            admin,
+            nightly_manifest,
+            args.assets_dir,
+            args.config_root / "profiles",
+            "nightly",
+            dist,
+            base_url,
+        )
         if file_sha256(stable_channel_manifest) != stable_channel_sha_before_nightly:
             raise SystemExit("nightly channel build mutated stable manifest")
-        if current_package_versions(stable_channel_manifest) != stable_channel_packages_before_nightly:
+        if (
+            current_package_versions(stable_channel_manifest)
+            != stable_channel_packages_before_nightly
+        ):
             raise SystemExit("nightly channel build mutated stable package records")
 
         install_script_url = f"{base_url}/install.sh"
@@ -196,8 +247,7 @@ def report_disk_capacity(path: Path, label: str) -> None:
     usage = shutil.disk_usage(path)
     gib = 1024**3
     print(
-        f"Disk capacity ({label}): {usage.free / gib:.1f} GiB free "
-        f"of {usage.total / gib:.1f} GiB",
+        f"Disk capacity ({label}): {usage.free / gib:.1f} GiB free of {usage.total / gib:.1f} GiB",
         flush=True,
     )
 
@@ -231,14 +281,17 @@ def generate_sbom(output: Path, deb: Path) -> None:
     run(["python3", "scripts/generate-host-binary-sbom.py", "--output", str(output), str(deb)])
 
 
-def record_binary(manifest: Path, version: str, deb: Path, sbom: Path, release_download_base: str) -> None:
+def record_binary(
+    admin: Path,
+    manifest: Path,
+    version: str,
+    deb: Path,
+    sbom: Path,
+    release_download_base: str,
+) -> None:
     run(
         [
-            "cargo",
-            "run",
-            "-p",
-            "capsem-admin",
-            "--",
+            str(admin),
             "assets",
             "channel",
             "record-binary",
@@ -256,6 +309,7 @@ def record_binary(manifest: Path, version: str, deb: Path, sbom: Path, release_d
 
 
 def build_channel(
+    admin: Path,
     manifest: Path,
     assets_dir: Path,
     profiles_dir: Path,
@@ -265,11 +319,7 @@ def build_channel(
 ) -> None:
     run(
         [
-            "cargo",
-            "run",
-            "-p",
-            "capsem-admin",
-            "--",
+            str(admin),
             "assets",
             "channel",
             "build",
@@ -406,8 +456,7 @@ def check_generated_release(
             missing_assets.append(url)
     if missing_assets:
         raise SystemExit(
-            f"generated {channel} release is missing VM asset blob(s): "
-            + ", ".join(missing_assets)
+            f"generated {channel} release is missing VM asset blob(s): " + ", ".join(missing_assets)
         )
 
 
@@ -470,7 +519,7 @@ verify_installed_release() {{
 }}
 check_binary_versions() {{
   expected="$1"
-  for bin in {' '.join(HOST_BINARIES)}; do
+  for bin in {" ".join(HOST_BINARIES)}; do
     test -x "$HOME/.capsem/bin/$bin"
     if [ "$bin" = "capsem" ]; then
       "$HOME/.capsem/bin/$bin" version > "$HOME/.capsem/$bin.version" 2>&1
