@@ -688,7 +688,12 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     cross_compile = _just_recipe_block("cross-compile ")
 
     build_image = cross_compile.index("just build-host-image")
-    capacity = 'CAPSEM_DOCKER_CACHE_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 14'
+    release_completed_rails = cross_compile.index("just _release-completed-docker-rails")
+    release_asset_builder = cross_compile.index("docker image rm rust:slim-bookworm")
+    capacity = (
+        'CAPSEM_DOCKER_CACHE_KEEP_GB=2 CAPSEM_DOCKER_LINKED_KEEP_GB=2 '
+        '"$ROOT/scripts/ensure-docker-space.sh" 14'
+    )
     capacities = [
         index
         for index in range(len(cross_compile))
@@ -699,11 +704,62 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     # The image build itself needs headroom, then its newly materialized layers
     # must not leave the package container without room for apt and Tauri.
     assert len(capacities) == 2
-    assert capacities[0] < build_image < capacities[1] < package
+    assert (
+        release_completed_rails
+        < release_asset_builder
+        < capacities[0]
+        < build_image
+        < capacities[1]
+        < package
+    )
     assert cross_compile.count(capacity) == 2
+    assert "docker image rm -f rust:slim-bookworm" not in cross_compile
     post_builder = cross_compile[build_image:package]
-    assert 'CAPSEM_DOCKER_CACHE_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 14' in post_builder
+    assert capacity in post_builder
     assert 'scripts/ensure-docker-space.sh" 16' not in cross_compile
+
+
+def test_package_boundary_releases_only_completed_docker_rail_volumes() -> None:
+    release = _just_recipe_block("_release-completed-docker-rails:")
+
+    assert "capsem-rustup-arm64" in release
+    assert "capsem-rustup-x86_64" in release
+    assert "capsem-linux-rust-target" in release
+    assert "docker ps -aq" in release
+    assert 'docker volume rm "$volume"' in release
+    assert "docker volume rm -f" not in release
+    for retained in (
+        "capsem-linux-rust-rustup",
+        "capsem-linux-rust-cargo-registry",
+        "capsem-host-target-arm64",
+        "capsem-host-target-x86_64",
+        "capsem-install-target",
+        "capsem-install-rustup",
+    ):
+        assert retained not in release
+
+
+def test_install_boundary_releases_only_completed_package_targets() -> None:
+    release = _just_recipe_block("_release-completed-package-rails:")
+    install = _just_recipe_block("test-install:")
+
+    assert "capsem-host-target-arm64" in release
+    assert "capsem-host-target-x86_64" in release
+    assert "docker ps -aq" in release
+    assert 'docker volume rm "$volume"' in release
+    assert "docker volume rm -f" not in release
+    for retained in (
+        "capsem-cargo-registry",
+        "capsem-rustup",
+        "capsem-install-target",
+        "capsem-install-rustup",
+    ):
+        assert retained not in release
+
+    cleanup_trap = install.index("trap cleanup EXIT")
+    release_call = install.index("just _release-completed-package-rails")
+    capacity = install.index('scripts/ensure-docker-space.sh" 16')
+    assert cleanup_trap < release_call < capacity
 
 
 def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> None:

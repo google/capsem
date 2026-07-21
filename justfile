@@ -1102,6 +1102,48 @@ _clean-host-image:
 #   - CI runs on bare ubuntu runners; this runs in capsem-host-builder via docker
 #   - Tauri signing keys: CI from secrets, local from private/tauri/
 #   - See: .github/workflows/release.yaml build-app-linux job
+_release-completed-docker-rails:
+    #!/bin/bash
+    set -euo pipefail
+    # Package assembly cannot reuse these earlier-rail outputs. Keep the
+    # registries and Linux rustup toolchain that accelerate the next candidate,
+    # but release duplicate agent toolchains and completed coverage objects.
+    # Never force removal: an attached volume belongs to another active or
+    # diagnostic container, and the package capacity check must then fail closed.
+    volumes=(
+        capsem-rustup-arm64
+        capsem-rustup-x86_64
+        capsem-linux-rust-target
+    )
+    for volume in "${volumes[@]}"; do
+        docker volume inspect "$volume" >/dev/null 2>&1 || continue
+        attached=$(docker ps -aq --filter "volume=$volume")
+        if [ -n "$attached" ]; then
+            echo "preserving attached completed-rail volume: $volume"
+            continue
+        fi
+        echo "releasing completed-rail volume: $volume"
+        docker volume rm "$volume" >/dev/null
+    done
+
+_release-completed-package-rails:
+    #!/bin/bash
+    set -euo pipefail
+    # Both release packages already exist before the install rail. Their
+    # architecture-specific link outputs cannot accelerate install testing;
+    # retain the shared registry and rustup volumes, but release these finished
+    # package targets so the exact package has room to install and execute.
+    for volume in capsem-host-target-arm64 capsem-host-target-x86_64; do
+        docker volume inspect "$volume" >/dev/null 2>&1 || continue
+        attached=$(docker ps -aq --filter "volume=$volume")
+        if [ -n "$attached" ]; then
+            echo "preserving attached completed-package volume: $volume"
+            continue
+        fi
+        echo "releasing completed-package volume: $volume"
+        docker volume rm "$volume" >/dev/null
+    done
+
 cross-compile arch="": _clean-stale _check-assets _generate-settings
     #!/bin/bash
     set -euo pipefail
@@ -1125,12 +1167,18 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         echo "ERROR: unsupported arch '$TARGET_ARCH' (arm64 or x86_64)"
         exit 1
     fi
+    just _release-completed-docker-rails
+    # The asset rail has finished every guest cross-build before package
+    # assembly starts. Release its reproducible 2.2 GiB Rust base tag now;
+    # non-force removal leaves an active consumer untouched and the capacity
+    # check below fails closed. The next asset rail pulls it again as needed.
+    docker image rm rust:slim-bookworm >/dev/null 2>&1 || true
     # Package assembly has a measured ~1 GiB high-water delta once the current
     # builder image exists. Asset qualification can leave its newly-created
     # private BuildKit cache hot but disposable; apply the same package-local
     # 2 GiB floor before and after building the final image. Named compile
     # caches remain preserved, and other rails keep the default 8 GiB floor.
-    CAPSEM_DOCKER_CACHE_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 14
+    CAPSEM_DOCKER_CACHE_KEEP_GB=2 CAPSEM_DOCKER_LINKED_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 14
     # Always run the cached image build so changes to the Dockerfile or helper
     # scripts cannot be hidden behind a stale local image.
     just build-host-image
@@ -1139,7 +1187,7 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     # the named Cargo/rustup/target volumes own the useful rebuild state. Keep
     # only 2 GiB of private BuildKit cache so apt and package assembly retain
     # their measured reserve without deleting the final image.
-    CAPSEM_DOCKER_CACHE_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 14
+    CAPSEM_DOCKER_CACHE_KEEP_GB=2 CAPSEM_DOCKER_LINKED_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 14
     # Sync container VM clock on macOS (prevents apt "not valid yet" errors)
     if [[ "$(uname -s)" = "Darwin" ]]; then
         python3 scripts/sync-container-clock.py
@@ -1791,6 +1839,18 @@ test-install:
     INSTALL_ASSETS_DIR="target/install-test-assets"
     INSTALL_CONFIG_DIR="target/install-test-config"
     HOST_ROSETTA_REGISTRATION=not_applicable
+    cleanup() {
+        docker exec "$CONTAINER" bash -c "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" >/dev/null 2>&1 || true
+        docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+        # The derived install image is a disposable stage output. Remove its
+        # tag on both success and failure; bounded BuildKit cache keeps the
+        # reusable layers without pinning another ~6 GiB final image.
+        docker image rm "$IMAGE:latest" >/dev/null 2>&1 || true
+        just _docker-gc >/dev/null 2>&1 || true
+    }
+    # Install preflight has already created the disposable image. Own its
+    # cleanup before any later capacity, platform, or container check can fail.
+    trap cleanup EXIT
     if [ "$(uname -s)" = "Darwin" ] \
         && command -v colima >/dev/null 2>&1 \
         && colima status >/dev/null 2>&1; then
@@ -1805,6 +1865,7 @@ test-install:
     # persistent target volume. Otherwise Docker refuses the volume removal;
     # ignoring that failure allowed the cache to fill the entire Docker disk.
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    just _release-completed-package-rails
     # Durable disk cushion. The shared gate retains hot BuildKit and Cargo
     # cache while requiring enough daemon-local room for the package rail.
     "$ROOT/scripts/ensure-docker-space.sh" 16
@@ -1828,18 +1889,8 @@ test-install:
     fi
     # Stable container name + preemptive rm -f handles any container leaked
     # by a previous run that aborted before reaching cleanup (e.g. cargo
-    # SIGTERM under Colima OOM). The EXIT trap below guarantees cleanup on
-    # any exit path of *this* run so the leak can't start over.
-    cleanup() {
-        docker exec "$CONTAINER" bash -c "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" >/dev/null 2>&1 || true
-        docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-        # The derived install image is a disposable stage output. Remove its
-        # tag on both success and failure; bounded BuildKit cache keeps the
-        # reusable layers without pinning another ~6 GiB final image.
-        docker image rm "$IMAGE:latest" >/dev/null 2>&1 || true
-        just _docker-gc >/dev/null 2>&1 || true
-    }
-    trap cleanup EXIT
+    # SIGTERM under Colima OOM). The EXIT trap above guarantees cleanup on any
+    # exit path of this run so the leak cannot start over.
     echo "Starting systemd container..."
     docker run -d --name "$CONTAINER" \
         --privileged --cgroupns=host \
