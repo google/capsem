@@ -38,6 +38,25 @@ def test_just_test_binds_clean_tree_to_one_commit_without_archiving_benchmarks()
     assert "benchmarks/**/data_*.json" in _read(".gitignore")
 
 
+def test_full_gate_runs_capsem_bench_baseline_exactly_once() -> None:
+    justfile = _read("justfile")
+    candidate = justfile.split("\n_test-candidate:", maxsplit=1)[1].split(
+        "\nbuild-host-image:", maxsplit=1
+    )[0]
+
+    assert candidate.count("tests/capsem-serial/test_capsem_bench_baseline.py") == 1
+
+
+def test_macos_full_gate_holds_a_system_sleep_assertion() -> None:
+    justfile = _read("justfile")
+    wrapper = justfile.split("\ntest:", maxsplit=1)[1].split(
+        "\n_test-candidate:", maxsplit=1
+    )[0]
+
+    assert "caffeinate" in wrapper
+    assert "CAPSEM_TEST_CAFFEINATED" in wrapper
+
+
 def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
     toolchain = tomllib.loads(_read("rust-toolchain.toml"))
     assert toolchain["toolchain"]["channel"] == PINNED_RUST

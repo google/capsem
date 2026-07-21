@@ -656,6 +656,14 @@ _bootstrap:
 test:
     #!/bin/bash
     set -euo pipefail
+    if [ "$(uname -s)" = "Darwin" ] && [ -z "${CAPSEM_TEST_CAFFEINATED:-}" ]; then
+        command -v caffeinate >/dev/null || {
+            echo "macOS just test requires caffeinate to prevent an unattended release gate from sleeping" >&2
+            exit 1
+        }
+        echo "=== Holding macOS awake for the complete candidate gate ==="
+        exec caffeinate -dimsu env CAPSEM_TEST_CAFFEINATED=1 just test
+    fi
     if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
         echo "just test requires a clean working tree; commit the complete candidate first." >&2
         git status --short >&2
@@ -874,7 +882,7 @@ _test-candidate: _bound-docker-test-storage _bootstrap _install-tools _clean-sta
     CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
         tests/capsem-serial/ \
         tests/ironbank/test_route_health.py \
-        -v --tb=short -m serial
+        -v --tb=short -m serial -k 'not test_capsem_bench_baseline'
 
     echo "=== Python: Build chain and release tests (serial) ==="
     CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/capsem-build-chain/ tests/capsem-release/ -v --tb=short

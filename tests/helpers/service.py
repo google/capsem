@@ -97,7 +97,7 @@ def materialize_test_profiles(tmp_dir: Path) -> Path:
     return profiles_dir
 
 
-def preserve_tmp_dir_on_failure(tmp_dir):
+def preserve_tmp_dir_on_failure(tmp_dir, *, force: bool = False):
     """Copy tmp_dir to test-artifacts/ when this worker saw any failure.
 
     Called by integration-test fixture teardowns BEFORE they rmtree the
@@ -132,7 +132,7 @@ def preserve_tmp_dir_on_failure(tmp_dir):
     # tmp_dir regardless of that worker's own failure state. Used during
     # concurrency investigations where a failure on worker B needs to be
     # correlated against what worker A was doing at the same time.
-    force = os.environ.get("CAPSEM_TEST_PRESERVE_ALWAYS")
+    force = force or bool(os.environ.get("CAPSEM_TEST_PRESERVE_ALWAYS"))
     if not force and not FAILED_NODEIDS:
         return
     import stat as statmod
@@ -346,7 +346,14 @@ class ServiceInstance:
         if not cleanup:
             return
 
-        preserve_tmp_dir_on_failure(self.home_dir)
+        # Tests commonly stop the service from a ``finally`` block.  That
+        # happens before pytest's makereport hook records FAILED_NODEIDS, so
+        # use the actively-propagating exception as authoritative failure
+        # evidence instead of deleting the only service/process logs.
+        if sys.exc_info()[0] is not None:
+            preserve_tmp_dir_on_failure(self.home_dir, force=True)
+        else:
+            preserve_tmp_dir_on_failure(self.home_dir)
 
         if self.home_dir.exists():
             shutil.rmtree(self.home_dir, ignore_errors=True)

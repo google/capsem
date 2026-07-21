@@ -83,3 +83,28 @@ def test_service_instance_can_keep_shutdown_flushed_state_for_assertions(
 
     service.stop()
     assert not home.exists()
+
+
+def test_service_instance_preserves_artifacts_during_exception_teardown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failure active inside ``finally`` must survive pre-report teardown."""
+    home = tmp_path / "capsem-home"
+    home.mkdir()
+    monkeypatch.setattr(service_helper, "make_capsem_tmp_dir", lambda _prefix: home)
+    preserved: list[tuple[Path, bool]] = []
+
+    def record_preserve(path: Path, *, force: bool = False) -> None:
+        preserved.append((Path(path), force))
+
+    monkeypatch.setattr(service_helper, "preserve_tmp_dir_on_failure", record_preserve)
+    service = service_helper.ServiceInstance()
+
+    with pytest.raises(RuntimeError, match="benchmark failed"):
+        try:
+            raise RuntimeError("benchmark failed")
+        finally:
+            service.stop()
+
+    assert preserved == [(home, True)]
+    assert not home.exists()
