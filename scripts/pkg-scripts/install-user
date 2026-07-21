@@ -16,11 +16,13 @@ capsem_install_user_is_valid() {
 }
 
 capsem_stat_owner_uid() {
-    stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1" 2>/dev/null
+    # GNU stat accepts -f as filesystem mode, so it can succeed while emitting
+    # a filesystem report. Try GNU's file format first; BSD stat rejects -c.
+    stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1" 2>/dev/null
 }
 
 capsem_stat_mode() {
-    stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
 }
 
 capsem_console_user() {
