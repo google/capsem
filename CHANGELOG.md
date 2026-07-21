@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   abandoned created containers, and rechecked daemon capacity immediately
   before the Linux package-install pytest tail.
 - Released multi-gigabyte Docker stage images as soon as their consumers were
-  done and calibrated the Linux package reserve separately from the larger
+  done—including the preflight host builder before the intervening asset
+  rail—and calibrated the Linux package reserve separately from the larger
   asset-expansion and installed-package reserves.
 - Released disposable install-gate incremental objects after package linking
   while retaining dependency caches, linked binaries, and package bundles;

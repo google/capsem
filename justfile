@@ -724,10 +724,11 @@ _test-candidate: _bound-docker-test-storage _bootstrap _install-tools _clean-sta
     # Stage 7 still runs the complete real install suite; this is only the
     # cheap fail-fast proof of the harness itself.
     echo "=== Install harness preflight (clean container) ==="
-    CAPSEM_KEEP_HOST_BUILDER=1 just _test-install-harness-preflight
-    # The derived image is not needed again until the final install tail.
-    # Release its multi-gigabyte stage output now; BuildKit retains bounded
-    # content-addressed layers for the later rebuild.
+    just _test-install-harness-preflight
+    # Neither final image is needed again until later rails: assets precede
+    # Linux packaging, and the install tail is last. The preflight releases
+    # the base; release the derived image here too. Bounded BuildKit keeps
+    # reusable content-addressed layers without pinning ~12 GiB of images.
     docker image rm capsem-install-test:latest >/dev/null
 
     # ---- Stage 1: fast-fail (audits + lint + frontend) ---------------------

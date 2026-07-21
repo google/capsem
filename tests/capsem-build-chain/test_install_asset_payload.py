@@ -672,9 +672,7 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
 def test_full_gate_releases_stage_final_images_without_flushing_hot_cache() -> None:
     candidate = _just_recipe_block("_test-candidate:")
 
-    install_preflight = candidate.index(
-        "CAPSEM_KEEP_HOST_BUILDER=1 just _test-install-harness-preflight"
-    )
+    install_preflight = candidate.index("just _test-install-harness-preflight")
     release_install = candidate.index("docker image rm capsem-install-test:latest")
     arm_package = candidate.index("just cross-compile arm64")
     x86_package = candidate.index("just cross-compile x86_64")
@@ -682,6 +680,7 @@ def test_full_gate_releases_stage_final_images_without_flushing_hot_cache() -> N
 
     assert install_preflight < release_install < arm_package
     assert arm_package < x86_package < install_tail
+    assert "CAPSEM_KEEP_HOST_BUILDER=1" not in candidate
     assert "docker image rm capsem-host-builder:latest" not in candidate
     assert "docker builder prune -af" not in candidate
 
