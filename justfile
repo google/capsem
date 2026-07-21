@@ -793,8 +793,9 @@ _test-candidate: _bound-docker-test-storage _bootstrap _install-tools _clean-sta
         just test-linux-rust
         just _release-completed-linux-rust-target
         # The asset rail follows and needs the daemon reserve more than it
-        # needs this disposable 6 GiB final image. Keep BuildKit and named
-        # Cargo/rustup volumes hot; the package rail rebuilds the tag later.
+        # needs this disposable 6 GiB final image. Named Cargo/rustup volumes
+        # remain hot; the completed BuildKit graph is bounded at the package
+        # ownership boundary after the asset rail has consumed it.
         docker image rm capsem-host-builder:latest >/dev/null
     fi
 
@@ -893,6 +894,7 @@ _test-candidate: _bound-docker-test-storage _bootstrap _install-tools _clean-sta
 
     # ---- Stage 7: Docker e2e ------------------------------------------------
     echo "=== Cross-compile Linux releases (Docker, both arches) ==="
+    just _release-completed-buildkit-graph
     just cross-compile arm64
     just _release-deferred-install-target
     just cross-compile x86_64
@@ -1145,6 +1147,28 @@ _release-completed-docker-rails:
         echo "releasing completed-rail volume: $volume"
         docker volume rm "$volume" >/dev/null
     done
+
+_release-completed-buildkit-graph:
+    #!/bin/bash
+    set -euo pipefail
+    # The VM asset rail is complete before Linux package assembly. Docker's
+    # containerd image store can keep every earlier BuildKit snapshot pinned
+    # behind the final host-builder tag (72 GiB observed), even though those
+    # snapshots cannot accelerate the package's named Cargo target volumes.
+    # Release only this reproducible Capsem image, then retain a bounded 2 GiB
+    # cache cohort. Named registry, rustup, and target volumes are untouched.
+    image=capsem-host-builder:latest
+    if docker image inspect "$image" >/dev/null 2>&1; then
+        attached=$(docker ps -aq --filter "ancestor=$image")
+        if [ -n "$attached" ]; then
+            echo "ERROR: refusing to release completed BuildKit graph while $image has attached containers" >&2
+            docker ps -a --filter "ancestor=$image" >&2
+            exit 1
+        fi
+        echo "releasing completed BuildKit graph pinned by: $image"
+        docker image rm "$image" >/dev/null
+    fi
+    docker buildx prune --all --force --reserved-space 2GB >/dev/null
 
 _release-completed-package-rails:
     #!/bin/bash

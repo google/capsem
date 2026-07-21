@@ -803,6 +803,23 @@ def test_full_gate_releases_deferred_install_target_between_package_arches() -> 
         assert retained not in release
 
 
+def test_full_gate_releases_completed_buildkit_graph_before_packages() -> None:
+    candidate = _just_recipe_block("_test-candidate:")
+    release = _just_recipe_block("_release-completed-buildkit-graph:")
+
+    benchmark = candidate.index("test_capsem_bench_baseline.py")
+    release_call = candidate.index("just _release-completed-buildkit-graph")
+    arm_package = candidate.index("just cross-compile arm64")
+
+    assert benchmark < release_call < arm_package
+    assert "capsem-host-builder:latest" in release
+    assert 'docker ps -aq --filter "ancestor=$image"' in release
+    assert 'docker image rm "$image"' in release
+    assert "docker buildx prune --all --force --reserved-space 2GB" in release
+    assert "docker image rm -f" not in release
+    assert "docker volume rm" not in release
+
+
 def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> None:
     full_gate = _just_recipe_block("test:")
     bound = _just_recipe_block("_bound-docker-test-storage:")
@@ -817,7 +834,7 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
     assert "docker volume rm" not in bound
 
 
-def test_full_gate_releases_stage_final_images_without_flushing_hot_cache() -> None:
+def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> None:
     candidate = _just_recipe_block("_test-candidate:")
 
     install_preflight = candidate.index("just _test-install-harness-preflight")
@@ -825,15 +842,15 @@ def test_full_gate_releases_stage_final_images_without_flushing_hot_cache() -> N
     linux_parity = candidate.index("just test-linux-rust")
     release_host_builder = candidate.index("docker image rm capsem-host-builder:latest")
     asset_gate = candidate.index("just test-assets")
+    release_buildkit = candidate.index("just _release-completed-buildkit-graph")
     arm_package = candidate.index("just cross-compile arm64")
     x86_package = candidate.index("just cross-compile x86_64")
     install_tail = candidate.rindex("just test-install")
 
     assert install_preflight < release_install < arm_package
     assert linux_parity < release_host_builder < asset_gate
-    assert arm_package < x86_package < install_tail
+    assert asset_gate < release_buildkit < arm_package < x86_package < install_tail
     assert "CAPSEM_KEEP_HOST_BUILDER=1" not in candidate
-    assert "docker builder prune -af" not in candidate
 
 
 def test_docker_gc_reclaims_old_created_debug_containers() -> None:
