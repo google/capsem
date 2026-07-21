@@ -691,14 +691,17 @@ def test_docker_gc_reclaims_old_created_debug_containers() -> None:
     assert "--filter status=exited" not in cleanup
 
 
-def test_install_gate_rechecks_capacity_immediately_before_pytest() -> None:
+def test_install_gate_releases_disposable_incremental_state_before_pytest() -> None:
     block = _just_recipe_block("test-install")
 
     package_install = block.index("Installing .deb via dpkg")
-    final_capacity = block.index('scripts/ensure-docker-space.sh" 16', package_install)
+    trim_incremental = block.index(
+        "rm -rf /cargo-target/debug/incremental", package_install
+    )
+    final_capacity = block.index('scripts/ensure-docker-space.sh" 12', package_install)
     pytest_launch = block.index("Running install e2e tests")
 
-    assert package_install < final_capacity < pytest_launch
+    assert package_install < trim_incremental < final_capacity < pytest_launch
 
 
 def test_cross_compile_does_not_bypass_apt_date_validation() -> None:

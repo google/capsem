@@ -1890,10 +1890,18 @@ test-install:
     echo "Installing .deb via dpkg..."
     docker exec "$CONTAINER" bash -c \
         "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"
+    # The package is linked and installed, so incremental object graphs are no
+    # longer needed by pytest or the glow-up. They account for several GiB in
+    # the active target volume and the global cleaner correctly refuses to
+    # touch a mounted volume. Release them here while retaining linked binaries,
+    # dependency artifacts, build scripts, and the exact package bundle.
+    docker exec "$CONTAINER" bash -c \
+        "rm -rf /cargo-target/debug/incremental"
     # Package/image assembly can consume the reserve measured at recipe start.
-    # Recheck immediately before pytest so ENOSPC fails here with diagnostics,
-    # not deep inside a fixture after hours of otherwise-green release work.
-    "$ROOT/scripts/ensure-docker-space.sh" 16
+    # The remaining runtime-only tail needs far less room than compilation, but
+    # still keeps a 12 GiB cushion so ENOSPC fails here with diagnostics instead
+    # of deep inside a fixture after hours of otherwise-green release work.
+    "$ROOT/scripts/ensure-docker-space.sh" 12
     echo "Running install e2e tests..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_BIN_SRC=/cargo-target/debug -e CAPSEM_TEST_ASSET_MANIFEST="/src/$INSTALL_ASSETS_DIR/manifest.json" "$CONTAINER" bash -c \
         "mkdir -p /home/capsem/tmp && cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test TMPDIR=/home/capsem/tmp uv run python -m pytest tests/capsem-install/ -v --tb=short"
