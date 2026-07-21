@@ -762,6 +762,29 @@ def test_install_boundary_releases_only_completed_package_targets() -> None:
     assert cleanup_trap < release_call < capacity
 
 
+def test_full_gate_releases_deferred_install_target_between_package_arches() -> None:
+    candidate = _just_recipe_block("_test-candidate:")
+    release = _just_recipe_block("_release-deferred-install-target:")
+
+    arm_package = candidate.index("just cross-compile arm64")
+    release_call = candidate.index("just _release-deferred-install-target")
+    x86_package = candidate.index("just cross-compile x86_64")
+
+    assert arm_package < release_call < x86_package
+    assert "capsem-install-target" in release
+    assert "docker ps -aq" in release
+    assert 'docker volume rm "$volume"' in release
+    assert "docker volume rm -f" not in release
+    for retained in (
+        "capsem-cargo-registry",
+        "capsem-rustup",
+        "capsem-host-target-arm64",
+        "capsem-host-target-x86_64",
+        "capsem-install-rustup",
+    ):
+        assert retained not in release
+
+
 def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> None:
     full_gate = _just_recipe_block("test:")
     bound = _just_recipe_block("_bound-docker-test-storage:")

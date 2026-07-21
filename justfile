@@ -893,6 +893,7 @@ _test-candidate: _bound-docker-test-storage _bootstrap _install-tools _clean-sta
     # ---- Stage 7: Docker e2e ------------------------------------------------
     echo "=== Cross-compile Linux releases (Docker, both arches) ==="
     just cross-compile arm64
+    just _release-deferred-install-target
     just cross-compile x86_64
 
     # ---- Stage 7b: publishable host packages + host SBOM -------------------
@@ -1143,6 +1144,24 @@ _release-completed-package-rails:
         echo "releasing completed-package volume: $volume"
         docker volume rm "$volume" >/dev/null
     done
+
+_release-deferred-install-target:
+    #!/bin/bash
+    set -euo pipefail
+    # The install target is useful only to the final install rail. Once the
+    # first release package is complete, retaining an old candidate's large
+    # debug target can starve the second architecture while providing it no
+    # reusable inputs. Rebuild that lower-priority cache after both exact
+    # packages exist. Never force removal or disturb an attached diagnostic.
+    volume=capsem-install-target
+    docker volume inspect "$volume" >/dev/null 2>&1 || exit 0
+    attached=$(docker ps -aq --filter "volume=$volume")
+    if [ -n "$attached" ]; then
+        echo "preserving attached deferred-install volume: $volume"
+        exit 0
+    fi
+    echo "releasing deferred-install volume before second package: $volume"
+    docker volume rm "$volume" >/dev/null
 
 cross-compile arch="": _clean-stale _check-assets _generate-settings
     #!/bin/bash
