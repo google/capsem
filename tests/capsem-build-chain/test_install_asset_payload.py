@@ -75,6 +75,7 @@ def _run_docker_space_gate(
     volumes: str = "",
     minimum_gib: int = 16,
     cache_keep_gib: int | str | None = None,
+    linked_keep_gib: int | str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(parents=True)
@@ -137,6 +138,8 @@ fi
     )
     if cache_keep_gib is not None:
         env["CAPSEM_DOCKER_CACHE_KEEP_GB"] = str(cache_keep_gib)
+    if linked_keep_gib is not None:
+        env["CAPSEM_DOCKER_LINKED_KEEP_GB"] = str(linked_keep_gib)
     return subprocess.run(
         [
             "bash",
@@ -195,6 +198,15 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     assert invalid_floor.returncode == 2
     assert "cache floor must be a positive GiB integer" in invalid_floor.stderr
 
+    invalid_linked_floor = _run_docker_space_gate(
+        tmp_path / "invalid-linked-floor",
+        before_kib=20 * 1024 * 1024,
+        after_kib=0,
+        linked_keep_gib="all",
+    )
+    assert invalid_linked_floor.returncode == 2
+    assert "linked-artifact floor must be a positive GiB integer" in invalid_linked_floor.stderr
+
     exhausted = _run_docker_space_gate(
         tmp_path / "exhausted",
         before_kib=8 * 1024 * 1024,
@@ -213,6 +225,13 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     )
     assert trimmed.returncode == 0, trimmed.stderr
     assert "trimming inactive Cargo incremental cache: capsem-install-target" in trimmed.stdout
+
+    storage_script = (PROJECT_ROOT / "scripts" / "ensure-docker-space.sh").read_text()
+    assert "trimming inactive Cargo linked artifacts" in storage_script
+    assert '[[ "$volume" == capsem-*-target* ]]' in storage_script
+    assert 'docker ps -q --filter "volume=$volume"' in storage_script
+    assert 'find "$deps" -maxdepth 1 -type f ! -name "*.*"' in storage_script
+    assert "Dependency libraries (.rlib/.rmeta/etc.) are deliberately untouched" in storage_script
 
 
 def test_just_install_does_not_sync_assets_after_installer() -> None:

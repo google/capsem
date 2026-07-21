@@ -12,6 +12,11 @@ if [[ ! "$CACHE_KEEP_GIB" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: Docker cache floor must be a positive GiB integer (got: $CACHE_KEEP_GIB)" >&2
     exit 2
 fi
+LINKED_KEEP_GIB="${CAPSEM_DOCKER_LINKED_KEEP_GB:-4}"
+if [[ ! "$LINKED_KEEP_GIB" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: Docker linked-artifact floor must be a positive GiB integer (got: $LINKED_KEEP_GIB)" >&2
+    exit 2
+fi
 
 docker_free_kib() {
     docker run --rm debian:bookworm-slim sh -c \
@@ -68,6 +73,50 @@ while IFS= read -r volume; do
     fi
 done < <(docker volume ls --format '{{.Name}}')
 
-echo "ERROR: Docker capacity gate requires at least $MINIMUM_GIB GiB free; only $((FREE_KIB / 1024 / 1024)) GiB remains after pruning BuildKit and inactive incremental caches." >&2
+# Linked test/application executables have no extension under Cargo deps/ and
+# are cheap to recreate, but they can silently accumulate across hash changes
+# (6.4 GiB observed in capsem-install-target). If cache and incremental pruning
+# were insufficient, retain only the newest cohort in inactive target volumes.
+# Dependency libraries (.rlib/.rmeta/etc.) are deliberately untouched.
+while IFS= read -r volume; do
+    [[ "$volume" == capsem-*-target* ]] || continue
+    if [ -n "$(docker ps -q --filter "volume=$volume")" ]; then
+        echo "preserving active Cargo target volume: $volume"
+        continue
+    fi
+    echo "trimming inactive Cargo linked artifacts: $volume (keeping newest $LINKED_KEEP_GIB GiB)"
+    docker run --rm \
+        -e LINKED_KEEP_GIB="$LINKED_KEEP_GIB" \
+        -v "$volume:/cargo-target" \
+        alpine:3.20 \
+        sh -ceu '
+            keep_bytes=$((LINKED_KEEP_GIB * 1024 * 1024 * 1024))
+            for deps in \
+                /cargo-target/debug/deps \
+                /cargo-target/release/deps \
+                /cargo-target/llvm-cov-target/debug/deps
+            do
+                [ -d "$deps" ] || continue
+                listing=$(mktemp)
+                find "$deps" -maxdepth 1 -type f ! -name "*.*" \
+                    -exec stat -c "%Y %s %n" {} + | sort -n > "$listing"
+                total=$(awk "{ total += \$2 } END { print total + 0 }" "$listing")
+                while read -r _mtime size path; do
+                    [ "$total" -gt "$keep_bytes" ] || break
+                    rm -f "$path"
+                    total=$((total - size))
+                done < "$listing"
+                rm -f "$listing"
+            done
+        '
+    FREE_KIB=$(docker_free_kib)
+    require_numeric_free_space "$FREE_KIB"
+    if (( FREE_KIB >= MINIMUM_KIB )); then
+        echo "Docker reclaimed enough space: $((FREE_KIB / 1024 / 1024)) GiB free."
+        exit 0
+    fi
+done < <(docker volume ls --format '{{.Name}}')
+
+echo "ERROR: Docker capacity gate requires at least $MINIMUM_GIB GiB free; only $((FREE_KIB / 1024 / 1024)) GiB remains after pruning BuildKit and inactive incremental/linked artifacts." >&2
 docker system df -v >&2 || true
 exit 1
