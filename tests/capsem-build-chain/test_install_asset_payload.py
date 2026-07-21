@@ -74,6 +74,7 @@ def _run_docker_space_gate(
     after_trim_kib: int | None = None,
     volumes: str = "",
     minimum_gib: int = 16,
+    cache_keep_gib: int | str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(parents=True)
@@ -134,6 +135,8 @@ fi
             "FAKE_DOCKER_COMMANDS": str(commands),
         }
     )
+    if cache_keep_gib is not None:
+        env["CAPSEM_DOCKER_CACHE_KEEP_GB"] = str(cache_keep_gib)
     return subprocess.run(
         [
             "bash",
@@ -170,6 +173,27 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     reclaimed_commands = (tmp_path / "reclaimed" / "docker-commands").read_text()
     assert "builder prune -f --keep-storage 8GB" in reclaimed_commands
     assert "builder prune -af" not in reclaimed_commands
+
+    package_reclaimed = _run_docker_space_gate(
+        tmp_path / "package-reclaimed",
+        before_kib=10 * 1024 * 1024,
+        after_kib=16 * 1024 * 1024,
+        minimum_gib=14,
+        cache_keep_gib=2,
+    )
+    assert package_reclaimed.returncode == 0, package_reclaimed.stderr
+    assert "hottest 2 GiB" in package_reclaimed.stdout
+    package_commands = (tmp_path / "package-reclaimed" / "docker-commands").read_text()
+    assert "builder prune -f --keep-storage 2GB" in package_commands
+
+    invalid_floor = _run_docker_space_gate(
+        tmp_path / "invalid-floor",
+        before_kib=20 * 1024 * 1024,
+        after_kib=0,
+        cache_keep_gib="all",
+    )
+    assert invalid_floor.returncode == 2
+    assert "cache floor must be a positive GiB integer" in invalid_floor.stderr
 
     exhausted = _run_docker_space_gate(
         tmp_path / "exhausted",
@@ -645,10 +669,11 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     cross_compile = _just_recipe_block("cross-compile ")
 
     build_image = cross_compile.index("just build-host-image")
+    capacity = 'scripts/ensure-docker-space.sh" 14'
     capacities = [
         index
         for index in range(len(cross_compile))
-        if cross_compile.startswith('scripts/ensure-docker-space.sh" 14', index)
+        if cross_compile.startswith(capacity, index)
     ]
     package = cross_compile.index("docker run --rm")
 
@@ -656,6 +681,8 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     # must not leave the package container without room for apt and Tauri.
     assert len(capacities) == 2
     assert capacities[0] < build_image < capacities[1] < package
+    post_builder = cross_compile[build_image:package]
+    assert 'CAPSEM_DOCKER_CACHE_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 14' in post_builder
     assert 'scripts/ensure-docker-space.sh" 16' not in cross_compile
 
 

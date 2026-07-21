@@ -17,7 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Released multi-gigabyte Docker stage images as soon as their consumers were
   done—including both preflight and Linux-parity host builders before the
   intervening asset rail—and calibrated the Linux package reserve separately
-  from the larger asset-expansion and installed-package reserves.
+  from the larger asset-expansion and installed-package reserves, retaining a
+  smaller private BuildKit floor once the final package builder exists.
 - Released disposable install-gate incremental objects after package linking
   while retaining dependency caches, linked binaries, and package bundles;
   removed its derived stage image on every exit; and sized the runtime-only

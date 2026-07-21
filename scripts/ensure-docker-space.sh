@@ -7,6 +7,11 @@ if [[ ! "$MINIMUM_GIB" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: Docker minimum space must be a positive GiB integer (got: $MINIMUM_GIB)" >&2
     exit 2
 fi
+CACHE_KEEP_GIB="${CAPSEM_DOCKER_CACHE_KEEP_GB:-8}"
+if [[ ! "$CACHE_KEEP_GIB" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: Docker cache floor must be a positive GiB integer (got: $CACHE_KEEP_GIB)" >&2
+    exit 2
+fi
 
 docker_free_kib() {
     docker run --rm debian:bookworm-slim sh -c \
@@ -30,8 +35,8 @@ if (( FREE_KIB >= MINIMUM_KIB )); then
     exit 0
 fi
 
-echo "Docker has only $((FREE_KIB / 1024 / 1024)) GiB free; pruning unused builder cache while retaining the hottest 8 GiB."
-docker builder prune -f --keep-storage 8GB >/dev/null
+echo "Docker has only $((FREE_KIB / 1024 / 1024)) GiB free; pruning unused builder cache while retaining the hottest $CACHE_KEEP_GIB GiB."
+docker builder prune -f --keep-storage "${CACHE_KEEP_GIB}GB" >/dev/null
 
 FREE_KIB=$(docker_free_kib)
 require_numeric_free_space "$FREE_KIB"

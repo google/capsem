@@ -1132,10 +1132,11 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     # scripts cannot be hidden behind a stale local image.
     just build-host-image
     # Asset qualification immediately before this recipe can consume the
-    # entire Docker disk. Reclaim unused BuildKit cache only after the builder
-    # image exists, preserving that image while guaranteeing apt and package
-    # assembly have working space.
-    "$ROOT/scripts/ensure-docker-space.sh" 14
+    # entire Docker disk. Once the final builder exists, its shared layers and
+    # the named Cargo/rustup/target volumes own the useful rebuild state. Keep
+    # only 2 GiB of private BuildKit cache so apt and package assembly retain
+    # their measured reserve without deleting the final image.
+    CAPSEM_DOCKER_CACHE_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 14
     # Sync container VM clock on macOS (prevents apt "not valid yet" errors)
     if [[ "$(uname -s)" = "Darwin" ]]; then
         python3 scripts/sync-container-clock.py
