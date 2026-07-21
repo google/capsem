@@ -674,14 +674,17 @@ def test_full_gate_releases_stage_final_images_without_flushing_hot_cache() -> N
 
     install_preflight = candidate.index("just _test-install-harness-preflight")
     release_install = candidate.index("docker image rm capsem-install-test:latest")
+    linux_parity = candidate.index("just test-linux-rust")
+    release_host_builder = candidate.index("docker image rm capsem-host-builder:latest")
+    asset_gate = candidate.index("just test-assets")
     arm_package = candidate.index("just cross-compile arm64")
     x86_package = candidate.index("just cross-compile x86_64")
     install_tail = candidate.rindex("just test-install")
 
     assert install_preflight < release_install < arm_package
+    assert linux_parity < release_host_builder < asset_gate
     assert arm_package < x86_package < install_tail
     assert "CAPSEM_KEEP_HOST_BUILDER=1" not in candidate
-    assert "docker image rm capsem-host-builder:latest" not in candidate
     assert "docker builder prune -af" not in candidate
 
 

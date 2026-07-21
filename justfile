@@ -789,6 +789,10 @@ _test-candidate: _bound-docker-test-storage _bootstrap _install-tools _clean-sta
     if [ "$(uname -s)" = "Darwin" ]; then
         echo "=== Linux Rust platform tests + coverage (Docker) ==="
         just test-linux-rust
+        # The asset rail follows and needs the daemon reserve more than it
+        # needs this disposable 6 GiB final image. Keep BuildKit and named
+        # Cargo/rustup volumes hot; the package rail rebuilds the tag later.
+        docker image rm capsem-host-builder:latest >/dev/null
     fi
 
     # ---- Stage 3: Rust tests + coverage -------------------------------------
