@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1784663414] - 2026-07-21
+
 ### Fixed
 - Honored virtqueue interrupt suppression in the KVM VirtioFS worker and
   stopped raising interrupts for empty post-resume queue notifications,
