@@ -669,7 +669,7 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     cross_compile = _just_recipe_block("cross-compile ")
 
     build_image = cross_compile.index("just build-host-image")
-    capacity = 'scripts/ensure-docker-space.sh" 14'
+    capacity = 'CAPSEM_DOCKER_CACHE_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 14'
     capacities = [
         index
         for index in range(len(cross_compile))
@@ -681,6 +681,7 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     # must not leave the package container without room for apt and Tauri.
     assert len(capacities) == 2
     assert capacities[0] < build_image < capacities[1] < package
+    assert cross_compile.count(capacity) == 2
     post_builder = cross_compile[build_image:package]
     assert 'CAPSEM_DOCKER_CACHE_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 14' in post_builder
     assert 'scripts/ensure-docker-space.sh" 16' not in cross_compile

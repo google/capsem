@@ -1126,10 +1126,11 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
         exit 1
     fi
     # Package assembly has a measured ~1 GiB high-water delta once the current
-    # builder image exists. Keep 14 GiB free here so the 15 GiB hot-cache state
-    # is used instead of self-destructively pruned; asset/install rails retain
-    # their larger 16 GiB reserve.
-    "$ROOT/scripts/ensure-docker-space.sh" 14
+    # builder image exists. Asset qualification can leave its newly-created
+    # private BuildKit cache hot but disposable; apply the same package-local
+    # 2 GiB floor before and after building the final image. Named compile
+    # caches remain preserved, and other rails keep the default 8 GiB floor.
+    CAPSEM_DOCKER_CACHE_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 14
     # Always run the cached image build so changes to the Dockerfile or helper
     # scripts cannot be hidden behind a stale local image.
     just build-host-image
