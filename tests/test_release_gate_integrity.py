@@ -30,11 +30,11 @@ def test_just_test_binds_clean_tree_to_one_commit_without_archiving_benchmarks()
     wrapper = justfile.split("\ntest:", maxsplit=1)[1].split("\n_test-candidate:", maxsplit=1)[0]
 
     assert "git status --porcelain" in wrapper
-    assert 'TESTED_HEAD=$(git rev-parse HEAD)' in wrapper
+    assert "TESTED_HEAD=$(git rev-parse HEAD)" in wrapper
     assert 'test "$(git rev-parse HEAD)" = "$TESTED_HEAD"' in wrapper
     assert "just _test-candidate" in wrapper
     assert "CAPSEM_BENCHMARK_OUTPUT_ROOT" in justfile
-    assert 'target/test-benchmarks' in justfile
+    assert "target/test-benchmarks" in justfile
     assert "benchmarks/**/data_*.json" in _read(".gitignore")
 
 
@@ -85,6 +85,7 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
     assert "cron:" in security_audit
     assert "workflow_dispatch:" in security_audit
     assert "run: cargo audit" in security_audit
+    assert "run: python3 scripts/audit-pnpm-bulk.py --project-dir frontend" in security_audit
 
 
 def test_public_release_storage_is_verified_before_channel_deployment() -> None:

@@ -734,12 +734,12 @@ _test-candidate: _bound-docker-test-storage _bootstrap _install-tools _clean-sta
     # `set -e` does not trip on failed background jobs, so aggregate with
     # FAIL=1.
     echo "=== Audits + lint + web surfaces ==="
-    # RustSec advisories follow an external clock. The scheduled/manual
+    # Dependency advisories follow an external clock. The scheduled/manual
     # security-audit workflow owns the blocking signal; candidate qualification
     # reports a fresh result without letting an upstream database update make an
     # unrelated source commit red.
     (cargo audit || echo "::warning::cargo audit reported advisories; see the security-audit workflow") & PID_CARGO_AUDIT=$!
-    python3 scripts/audit-pnpm-bulk.py --project-dir frontend & PID_PNPM_AUDIT=$!
+    (python3 scripts/audit-pnpm-bulk.py --project-dir frontend || echo "::warning::npm audit reported advisories; see the security-audit workflow") & PID_PNPM_AUDIT=$!
     uv run ruff check . & PID_RUFF=$!
     uv run ty check src/capsem & PID_TY=$!
     uv run capsem-builder validate-skills skills & PID_SKILLS=$!
@@ -762,7 +762,7 @@ _test-candidate: _bound-docker-test-storage _bootstrap _install-tools _clean-sta
     fi
     cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
     wait $PID_CARGO_AUDIT
-    wait $PID_PNPM_AUDIT  || { echo "npm bulk audit failed";  FAIL=1; }
+    wait $PID_PNPM_AUDIT
     wait $PID_CLIPPY      || { echo "cargo clippy failed (warnings = error)"; FAIL=1; }
     wait $PID_RUFF        || { echo "ruff check failed"; FAIL=1; }
     wait $PID_TY          || { echo "ty check failed"; FAIL=1; }
@@ -1350,16 +1350,16 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     uv run ruff check . & RUFF_PID=$!
     uv run ty check src/capsem & TY_PID=$!
     uv run capsem-builder validate-skills skills & SKILLS_PID=$!
-    cargo audit & AUDIT_PID=$!
-    python3 scripts/audit-pnpm-bulk.py --project-dir frontend & PNPM_AUDIT_PID=$!
+    (cargo audit || echo "::warning::cargo audit reported advisories; see the security-audit workflow") & AUDIT_PID=$!
+    (python3 scripts/audit-pnpm-bulk.py --project-dir frontend || echo "::warning::npm audit reported advisories; see the security-audit workflow") & PNPM_AUDIT_PID=$!
     (cd frontend && pnpm run check) & FE_CHECK_PID=$!
     FAIL=0
     wait $CLIPPY_PID     || { echo "cargo clippy failed"; FAIL=1; }
     wait $RUFF_PID       || { echo "ruff check failed"; FAIL=1; }
     wait $TY_PID         || { echo "ty check failed"; FAIL=1; }
     wait $SKILLS_PID     || { echo "skill validation failed"; FAIL=1; }
-    wait $AUDIT_PID      || { echo "cargo audit failed";  FAIL=1; }
-    wait $PNPM_AUDIT_PID || { echo "npm bulk audit failed";   FAIL=1; }
+    wait $AUDIT_PID
+    wait $PNPM_AUDIT_PID
     wait $FE_CHECK_PID   || { echo "pnpm check failed";   FAIL=1; }
     [ $FAIL -eq 0 ] || exit 1
     step_done

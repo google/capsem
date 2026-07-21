@@ -144,6 +144,7 @@ jobs:
         run: cd release-site && pnpm install --frozen-lockfile
 
       - name: Frontend dependency audit
+        continue-on-error: true
         run: python3 scripts/audit-pnpm-bulk.py --project-dir frontend
 
       - name: Install prebuilt Rust tools

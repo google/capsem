@@ -29,18 +29,14 @@ def test_bulk_audit_collects_complete_recursive_dependency_versions() -> None:
                 "alpha": {
                     "from": "alpha",
                     "version": "2.0.0",
-                    "dependencies": {
-                        "shared": {"from": "shared", "version": "3.0.0"}
-                    },
+                    "dependencies": {"shared": {"from": "shared", "version": "3.0.0"}},
                 }
             },
             "devDependencies": {
                 "beta": {
                     "from": "beta",
                     "version": "4.0.0",
-                    "optionalDependencies": {
-                        "shared": {"from": "shared", "version": "3.1.0"}
-                    },
+                    "optionalDependencies": {"shared": {"from": "shared", "version": "3.1.0"}},
                 }
             },
         }
@@ -70,9 +66,7 @@ def test_bulk_audit_rejects_every_returned_advisory() -> None:
 
     failures = audit.advisory_failures(advisories)
 
-    assert failures == [
-        "alpha: high: unsafe alpha (<=2.0.0) https://example.test/advisories/123"
-    ]
+    assert failures == ["alpha: high: unsafe alpha (<=2.0.0) https://example.test/advisories/123"]
 
 
 def test_bulk_audit_rejects_malformed_registry_response() -> None:
@@ -86,11 +80,29 @@ def test_bulk_audit_rejects_malformed_registry_response() -> None:
         raise AssertionError("malformed advisory response was accepted")
 
 
-def test_all_release_gates_use_bulk_audit_without_registry_error_bypass() -> None:
+def test_scheduled_workflow_owns_blocking_bulk_audit_signal() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
     ci = (PROJECT_ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8")
+    scheduled = (PROJECT_ROOT / ".github/workflows/security-audit.yaml").read_text(encoding="utf-8")
 
-    for source in (justfile, ci):
+    for source in (justfile, ci, scheduled):
         assert "scripts/audit-pnpm-bulk.py" in source
         assert "pnpm audit" not in source
         assert "--ignore-registry-errors" not in source
+
+    assert "npm bulk advisory audit (blocking security signal)" in scheduled
+    assert "run: python3 scripts/audit-pnpm-bulk.py --project-dir frontend" in scheduled
+
+    # The explicit audit recipe remains a blocking, developer-invoked check.
+    audit_recipe = justfile.split("audit: _install-tools _pnpm-install", 1)[1].split(
+        "update-deps:", 1
+    )[0]
+    assert "python3 scripts/audit-pnpm-bulk.py --project-dir frontend" in audit_recipe
+    assert "||" not in audit_recipe
+
+    # Candidate/smoke/PR gates report advisories without letting the external
+    # publication clock turn an unrelated source candidate red.
+    assert justfile.count("cargo audit reported advisories; see the security-audit workflow") >= 2
+    assert justfile.count("npm audit reported advisories; see the security-audit workflow") >= 2
+    ci_audit_step = ci.split("- name: Frontend dependency audit", 1)[1].split("- name:", 1)[0]
+    assert "continue-on-error: true" in ci_audit_step

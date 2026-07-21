@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   retained useful compiler/toolchain caches under Docker pressure, reclaimed
   abandoned created containers, and rechecked daemon capacity immediately
   before the Linux package-install pytest tail.
+- Kept Rust and npm advisory failures blocking in the scheduled/manual security
+  audit while making candidate, smoke, and PR gates report external-clock
+  advisory changes without reddening unrelated source commits.
 
 ## [1.5.1784567996] - 2026-07-20
 
