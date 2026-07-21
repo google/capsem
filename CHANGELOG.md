@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1784597803] - 2026-07-20
+
 ### Fixed
 - Bounded linked Cargo test binaries and aged reproducible `target/` staging,
   retained useful compiler/toolchain caches under Docker pressure, reclaimed
