@@ -1,7 +1,8 @@
-version: 1.5.1784693563
+version: 1.5.1784695365
 ---
 ### Fixed
-- Restored Colima to its pre-gate state after local release qualification,
-  including failed gates, and set the three-resident-VM macOS average
-  create-to-exec budget to two seconds while retaining the stricter single-VM
-  latency gate.
+- Made headless macOS package installs prove the exact non-root target user and
+  package receipt with labeled assertions, while retaining unconditional user,
+  app-path, receipt, and Installer diagnostics for failed release jobs.
+- Started the local Docker backend before release-gate storage preflight so a
+  correctly stopped Colima daemon cannot fail qualification before bootstrap.
