@@ -78,7 +78,7 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     assert "_bootstrap:\n    sh {{justfile_directory()}}/bootstrap.sh -y" in justfile
     assert "just _test-candidate" in justfile
     assert (
-        "_test-candidate: _bound-docker-test-storage _bootstrap _install-tools "
+        "_test-candidate: _bootstrap _bound-docker-test-storage _install-tools "
         "_clean-stale _pnpm-install"
     ) in justfile
     for command in [
