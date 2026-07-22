@@ -32,7 +32,7 @@ def test_just_test_binds_clean_tree_to_one_commit_without_archiving_benchmarks()
     assert "git status --porcelain" in wrapper
     assert "TESTED_HEAD=$(git rev-parse HEAD)" in wrapper
     assert 'test "$(git rev-parse HEAD)" = "$TESTED_HEAD"' in wrapper
-    assert "just _test-candidate" in wrapper
+    assert "scripts/with-gate-colima.sh just _test-candidate" in wrapper
     assert "CAPSEM_BENCHMARK_OUTPUT_ROOT" in justfile
     assert "target/test-benchmarks" in justfile
     assert "benchmarks/**/data_*.json" in _read(".gitignore")

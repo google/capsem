@@ -671,7 +671,7 @@ test:
     fi
     TESTED_HEAD=$(git rev-parse HEAD)
     echo "=== Testing clean candidate $TESTED_HEAD ==="
-    just _test-candidate
+    scripts/with-gate-colima.sh just _test-candidate
     test "$(git rev-parse HEAD)" = "$TESTED_HEAD" || {
         echo "candidate HEAD changed while just test was running" >&2
         exit 1

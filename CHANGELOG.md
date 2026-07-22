@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Restored Colima to its pre-gate state after local release qualification,
+  including failed gates, and set the three-resident-VM macOS average
+  create-to-exec budget to two seconds while retaining the stricter single-VM
+  latency gate.
+
 ## [1.5.1784689174] - 2026-07-21
 
 ## [1.5.1784673252] - 2026-07-21

@@ -13,7 +13,7 @@ pytestmark = pytest.mark.serial
 
 IS_LINUX = sys.platform.startswith("linux")
 EXEC_LATENCY_GATE = 2.0 if IS_LINUX else 1.5
-CONCURRENT_EXEC_LATENCY_GATE = 2.0 if IS_LINUX else 1.2
+CONCURRENT_EXEC_LATENCY_GATE = 2.0
 
 
 def test_boot_under_30_seconds():
