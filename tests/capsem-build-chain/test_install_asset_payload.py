@@ -889,6 +889,7 @@ def test_cross_compile_does_not_bypass_apt_date_validation() -> None:
 
 def test_cross_compile_apt_sources_are_encrypted_retried_and_fail_closed() -> None:
     sources = (PROJECT_ROOT / "docker/sources-multiarch.sh").read_text()
+    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
 
     mirror_assignments = [
         line.strip()
@@ -903,6 +904,26 @@ def test_cross_compile_apt_sources_are_encrypted_retried_and_fail_closed() -> No
     assert 'Acquire::https::Timeout "30";' in sources
     assert 'APT::Update::Error-Mode "any";' in sources
 
+    trust_stage = (
+        "FROM alpine:3.22@sha256:"
+        "14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce "
+        "AS truststore"
+    )
+    trust_copy = (
+        "COPY --from=truststore /etc/ssl/certs/ca-certificates.crt "
+        "/etc/ssl/certs/ca-certificates.crt"
+    )
+    sources_copy = "COPY sources-multiarch.sh /tmp/"
+    first_update = "RUN apt-get update && apt-get install"
+    assert trust_stage in host_builder
+    assert host_builder.index(trust_stage) < host_builder.index("FROM ubuntu:24.04")
+    assert (
+        host_builder.index("FROM ubuntu:24.04")
+        < host_builder.index(trust_copy)
+        < host_builder.index(sources_copy)
+        < host_builder.index(first_update)
+    )
+
 
 def test_cross_arch_tauri_swap_refreshes_indexes_before_removing_native_libs() -> None:
     swap_script = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text()
@@ -912,6 +933,36 @@ def test_cross_arch_tauri_swap_refreshes_indexes_before_removing_native_libs() -
     install = swap_script.index("apt-get install -y --no-install-recommends")
     assert update < remove < install
     assert swap_script.count("apt-get update -qq") == 1
+
+
+def test_host_builder_does_not_refetch_multiarch_indexes_for_python() -> None:
+    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    native_tools = host_builder.split(
+        "# ---- Native build tools + cross-compilation toolchains ----", maxsplit=1
+    )[1].split("# ---- Node.js 24 + pnpm 10 ----", maxsplit=1)[0]
+    python = host_builder.split("# ---- Python 3 + uv", maxsplit=1)[1].split(
+        "# ---- Helper script", maxsplit=1
+    )[0]
+
+    assert "python3 \\" in native_tools
+    assert "python3-venv \\" in native_tools
+    assert native_tools.count("apt-get update") == 1
+    assert host_builder.count("apt-get update") == 1
+    assert "apt-get update" not in python
+    assert "astral.sh/uv/install.sh" in python
+
+
+def test_host_builder_uses_digest_pinned_prebuilt_node_runtime() -> None:
+    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+
+    node_stage = (
+        "FROM node:24-bookworm-slim@sha256:"
+        "6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d "
+        "AS node-runtime"
+    )
+    assert node_stage in host_builder
+    assert "COPY --from=node-runtime /usr/local/ /usr/local/" in host_builder
+    assert "deb.nodesource.com" not in host_builder
 
 
 def test_standalone_install_gate_preflights_privileged_helper() -> None:

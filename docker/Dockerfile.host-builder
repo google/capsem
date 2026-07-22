@@ -16,7 +16,16 @@
 # We install native -dev first, then swap in foreign -dev for cross builds.
 # The justfile recipe handles this swap at container runtime.
 
+FROM node:24-bookworm-slim@sha256:6f7b03f7c2c8e2e784dcf9295400527b9b1270fd37b7e9a7285cf83b6951452d AS node-runtime
+
+FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce AS truststore
+
 FROM ubuntu:24.04
+
+# Ubuntu's minimal base has no system CA bundle, but every configured package
+# source is HTTPS. Bootstrap trust from a tiny immutable official image; the
+# first Ubuntu package layer then installs Ubuntu's own ca-certificates package.
+COPY --from=truststore /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -27,6 +36,10 @@ COPY sources-multiarch.sh /tmp/
 RUN bash /tmp/sources-multiarch.sh && rm /tmp/sources-multiarch.sh
 
 # ---- Native build tools + cross-compilation toolchains ----
+# Native-arch Tauri dev libraries are installed in the same transaction so
+# the complete multiarch indexes are fetched exactly once. Cross builds swap
+# these packages at container runtime (see swap-dev-libs.sh).
+# ---- Native-arch Tauri dev libraries ----
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -38,18 +51,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     musl-tools \
     xdg-utils \
     sqlite3 \
+    python3 \
+    python3-venv \
     # Cross-compilation toolchains (both directions)
     gcc-x86-64-linux-gnu \
     g++-x86-64-linux-gnu \
     gcc-aarch64-linux-gnu \
     g++-aarch64-linux-gnu \
-    && rm -rf /var/lib/apt/lists/*
-
-# ---- Native-arch Tauri dev libraries ----
-# These are the -dev packages for the image's native architecture.
-# For cross-compilation, the recipe swaps these for the target arch
-# at container runtime (see swap-dev-libs.sh).
-RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     libgtk-3-dev \
     libwebkit2gtk-4.1-dev \
@@ -58,10 +66,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Node.js 24 + pnpm 10 ----
-RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g pnpm@10 @cyclonedx/cdxgen@12.7.0 \
-    && rm -rf /var/lib/apt/lists/*
+# Copy the complete runtime tree from an immutable official image. Keeping the
+# tree intact preserves npm/npx's relative symlink targets while avoiding a
+# NodeSource setup script that performs another full multiarch apt refresh.
+COPY --from=node-runtime /usr/local/ /usr/local/
+RUN npm install -g pnpm@10 @cyclonedx/cdxgen@12.7.0
 
 # ---- Rust toolchain (kept identical to rust-toolchain.toml and CI) ----
 ENV RUSTUP_HOME=/usr/local/rustup
@@ -84,9 +93,7 @@ RUN installed=0; for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo
     [ "$installed" = 1 ] && rm -rf /usr/local/cargo/registry/cache /usr/local/cargo/registry/src
 
 # ---- Python 3 + uv (for capsem-builder scripts) ----
-RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv \
-    && rm -rf /var/lib/apt/lists/* \
-    && curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh \
+RUN curl -LsSf https://astral.sh/uv/install.sh | env INSTALLER_NO_MODIFY_PATH=1 sh \
     && install -m 555 /root/.local/bin/uv /usr/local/bin/uv \
     && install -m 555 /root/.local/bin/uvx /usr/local/bin/uvx
 
