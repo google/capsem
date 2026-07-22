@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Started the local Docker backend before release-gate storage preflight so a
+  correctly stopped Colima daemon cannot fail qualification before bootstrap.
+
 ## [1.5.1784693563] - 2026-07-22
 
 ### Fixed

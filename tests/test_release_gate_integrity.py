@@ -47,6 +47,17 @@ def test_full_gate_runs_capsem_bench_baseline_exactly_once() -> None:
     assert candidate.count("tests/capsem-serial/test_capsem_bench_baseline.py") == 1
 
 
+def test_local_gate_bootstraps_docker_before_storage_preflight() -> None:
+    justfile = _read("justfile")
+    dependency_line = next(
+        line for line in justfile.splitlines() if line.startswith("_test-candidate:")
+    )
+
+    assert dependency_line.index("_bootstrap") < dependency_line.index(
+        "_bound-docker-test-storage"
+    )
+
+
 def test_macos_full_gate_holds_a_system_sleep_assertion() -> None:
     justfile = _read("justfile")
     wrapper = justfile.split("\ntest:", maxsplit=1)[1].split(

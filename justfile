@@ -686,7 +686,7 @@ test:
 # Require Docker headroom without discarding content-addressed compiler caches.
 # Cargo validates cached artifacts against the exact candidate inputs; bounded
 # reuse speeds forward candidates without weakening the clean-tree invariant.
-_test-candidate: _bound-docker-test-storage _bootstrap _install-tools _clean-stale _pnpm-install _check-generated-settings _check-assets _pack-initrd _materialize-config
+_test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-stale _pnpm-install _check-generated-settings _check-assets _pack-initrd _materialize-config
     #!/bin/bash
     set -euo pipefail
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
