@@ -58,6 +58,17 @@ capsem_requested_install_user() {
     printf '%s\n' "$candidate"
 }
 
+capsem_install_user_resolution_report() {
+    local request="${1:-/var/run/capsem/install-user}"
+    local owner mode candidate uid
+    candidate=$(capsem_requested_install_user "$request") || return $?
+    owner=$(capsem_stat_owner_uid "$request") || return $?
+    mode=$(capsem_stat_mode "$request") || return $?
+    uid=$(id -u "$candidate") || return $?
+    printf 'source=secure-request request=%s request_owner_uid=%s request_mode=%s user=%s uid=%s\n' \
+        "$request" "$owner" "$mode" "$candidate" "$uid"
+}
+
 capsem_resolve_install_user() {
     local request="${1:-/var/run/capsem/install-user}"
     local candidate requested_status

@@ -294,9 +294,38 @@ jobs:
           set -euo pipefail
           CAPSEM_INSTALL_USER_REQUEST="/var/run/capsem/install-user"
           INSTALL_USER="$(id -un)"
+          require_equal() {
+            label="$1"
+            expected="$2"
+            actual="$3"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::$label assertion failed: expected '$expected', got '$actual'"
+              return 1
+            fi
+            echo "$label verified: $actual"
+          }
+          require_contains() {
+            label="$1"
+            needle="$2"
+            value="$3"
+            if [[ "$value" != *"$needle"* ]]; then
+              echo "::error::$label assertion failed: expected '$needle' in '$value'"
+              return 1
+            fi
+            echo "$label verified: $needle"
+          }
           bash scripts/macos-install-user-request.sh write "$INSTALL_USER"
-          sudo test "$(sudo stat -f '%u' "$CAPSEM_INSTALL_USER_REQUEST")" = 0
-          sudo test "$(sudo stat -f '%Lp' "$CAPSEM_INSTALL_USER_REQUEST")" = 600
+          REQUEST_OWNER="$(sudo stat -f '%u' "$CAPSEM_INSTALL_USER_REQUEST")"
+          REQUEST_MODE="$(sudo stat -f '%Lp' "$CAPSEM_INSTALL_USER_REQUEST")"
+          RESOLVER="$PWD/scripts/pkg-scripts/install-user"
+          if ! RESOLUTION_REPORT="$(sudo bash -c 'source "$1"; capsem_install_user_resolution_report "$2"' bash "$RESOLVER" "$CAPSEM_INSTALL_USER_REQUEST")"; then
+            echo "::error::resolved install user assertion failed: secure resolver rejected $CAPSEM_INSTALL_USER_REQUEST"
+            exit 1
+          fi
+          printf '%s\n' "$RESOLUTION_REPORT" | tee "$RUNNER_TEMP/capsem-install-user-resolution.txt"
+          require_equal "install-user request owner" "0" "$REQUEST_OWNER"
+          require_equal "install-user request mode" "600" "$REQUEST_MODE"
+          require_contains "resolved install user" "user=$INSTALL_USER" "$RESOLUTION_REPORT"
 
       - name: Install exact notarized package
         run: |
@@ -317,21 +346,42 @@ jobs:
             fi
             echo "$label verified: $path"
           }
+          require_contains() {
+            label="$1"
+            needle="$2"
+            value="$3"
+            if [[ "$value" != *"$needle"* ]]; then
+              echo "::error::$label assertion failed: expected '$needle' in '$value'"
+              return 1
+            fi
+            echo "$label verified: $needle"
+          }
           sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /
+          PACKAGE_RECEIPT="$(pkgutil --pkg-info com.capsem.pkg)"
+          printf '%s\n' "$PACKAGE_RECEIPT" | tee "$RUNNER_TEMP/capsem-package-receipt.txt"
+          require_contains "package receipt id" "package-id: com.capsem.pkg" "$PACKAGE_RECEIPT"
+          require_contains "package receipt version" "version: $VERSION" "$PACKAGE_RECEIPT"
           require_path "application bundle" -d "/Applications/Capsem.app"
           require_path "application executable" -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"
           require_path "per-user CLI" -x "$HOME/.capsem/bin/capsem"
-          "$HOME/.capsem/bin/capsem" --version | grep -F "$VERSION"
+          CAPSEM_VERSION_OUTPUT="$("$HOME/.capsem/bin/capsem" --version)"
+          require_contains "per-user CLI version" "$VERSION" "$CAPSEM_VERSION_OUTPUT"
           for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui; do
-            test -x "$HOME/.capsem/bin/$bin"
-            "$HOME/.capsem/bin/$bin" --version | grep -F "$VERSION"
+            require_path "host binary $bin" -x "$HOME/.capsem/bin/$bin"
+            BIN_VERSION_OUTPUT="$("$HOME/.capsem/bin/$bin" --version)"
+            require_contains "host binary $bin version" "$VERSION" "$BIN_VERSION_OUTPUT"
           done
-          "$HOME/.capsem/bin/capsem" status | tee /tmp/capsem-status.txt
-          grep -F "Installed: true" /tmp/capsem-status.txt
-          grep -F "Running:   true" /tmp/capsem-status.txt
-          grep -F "Service:   ok" /tmp/capsem-status.txt
-          grep -F "Gateway:   ok" /tmp/capsem-status.txt
-          pgrep -x capsem-tray
+          STATUS_OUTPUT="$("$HOME/.capsem/bin/capsem" status)"
+          printf '%s\n' "$STATUS_OUTPUT" | tee /tmp/capsem-status.txt
+          require_contains "installed status" "Installed: true" "$STATUS_OUTPUT"
+          require_contains "running status" "Running:   true" "$STATUS_OUTPUT"
+          require_contains "service status" "Service:   ok" "$STATUS_OUTPUT"
+          require_contains "gateway status" "Gateway:   ok" "$STATUS_OUTPUT"
+          if ! pgrep -x capsem-tray; then
+            echo "::error::tray process assertion failed: capsem-tray is not running"
+            exit 1
+          fi
+          echo "tray process verified: capsem-tray"
           python3 scripts/verify-installed-release.py \
             --capsem "$HOME/.capsem/bin/capsem" \
             --manifest-url "$ASSET_MANIFEST_URL" \
@@ -346,6 +396,11 @@ jobs:
             echo "=== runner identity ==="
             id
             echo "HOME=$HOME USER=${USER:-} SUDO_USER=${SUDO_USER:-}"
+            echo "=== target-user resolution ==="
+            cat "$RUNNER_TEMP/capsem-install-user-resolution.txt" 2>&1 || true
+            echo "=== target-user request ==="
+            sudo ls -lde /var/run/capsem /var/run/capsem/install-user 2>&1 || true
+            sudo cat /var/run/capsem/install-user 2>&1 || true
             echo "=== console owner ==="
             stat -f '%Su' /dev/console || true
             echo "=== package receipt ==="
@@ -362,6 +417,7 @@ jobs:
             echo "=== Capsem per-user install log ==="
             tail -n 400 "$HOME/.capsem/logs/install-latest.log" 2>&1 || true
           } | tee release-diagnostics/macos-install.txt
+          bash scripts/macos-install-user-request.sh clear || true
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()

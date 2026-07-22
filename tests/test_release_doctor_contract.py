@@ -1584,19 +1584,30 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /' in macos
     assert "Write deterministic macOS install-user request" in macos
     assert "CAPSEM_INSTALL_USER_REQUEST" in macos
+    assert 'require_equal "install-user request owner" "0"' in macos
+    assert 'require_equal "install-user request mode" "600"' in macos
+    assert "capsem_install_user_resolution_report" in macos
+    assert "capsem-install-user-resolution.txt" in macos
+    assert 'require_contains "resolved install user" "user=$INSTALL_USER"' in macos
+    assert 'require_contains "package receipt id" "package-id: com.capsem.pkg"' in macos
+    assert 'require_contains "package receipt version" "version: $VERSION"' in macos
     assert 'require_path "application bundle" -d "/Applications/Capsem.app"' in macos
     assert 'require_path "application executable" -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"' in macos
     assert 'require_path "per-user CLI" -x "$HOME/.capsem/bin/capsem"' in macos
-    assert '"$HOME/.capsem/bin/capsem" --version | grep -F "$VERSION"' in macos
+    assert 'require_contains "per-user CLI version" "$VERSION"' in macos
     assert (
         "for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui"
         in macos
     )
-    assert 'grep -F "Installed: true" /tmp/capsem-status.txt' in macos
-    assert 'grep -F "Running:   true" /tmp/capsem-status.txt' in macos
+    assert 'require_path "host binary $bin" -x "$HOME/.capsem/bin/$bin"' in macos
+    assert 'require_contains "host binary $bin version" "$VERSION"' in macos
+    assert 'require_contains "installed status" "Installed: true"' in macos
+    assert 'require_contains "running status" "Running:   true"' in macos
     assert "scripts/verify-installed-release.py" in macos
     assert "Collect macOS install diagnostics" in macos
     assert "if: always()" in macos
+    assert "=== target-user resolution ===" in macos
+    assert 'cat "$RUNNER_TEMP/capsem-install-user-resolution.txt"' in macos
     assert "pkgutil --pkg-info com.capsem.pkg" in macos
     assert "stat -f '%Su' /dev/console" in macos
     assert "/tmp/capsem-install.log" in macos

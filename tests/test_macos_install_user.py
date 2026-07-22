@@ -104,3 +104,63 @@ def test_missing_headless_user_is_a_hard_failure(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "could not determine a non-root installing user" in result.stderr
+
+
+def test_root_owned_headless_request_has_auditable_resolution(
+    tmp_path: Path,
+) -> None:
+    """PackageKit's root context must leave exact target-user evidence."""
+    request = tmp_path / "install-user"
+    request.write_text(f"{os.environ['USER']}\n", encoding="utf-8")
+    request.chmod(0o600)
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "id").write_text(
+        """#!/bin/bash
+if [ "$#" -eq 1 ] && [ "$1" = "-u" ]; then
+    printf '0\\n'
+elif [ "$1" = "-u" ]; then
+    exec /usr/bin/id -u "$2"
+else
+    exec /usr/bin/id "$@"
+fi
+""",
+        encoding="utf-8",
+    )
+    (fake_bin / "stat").write_text(
+        """#!/bin/bash
+if [ "$1" = "-c" ] && [ "$2" = "%u" ]; then
+    printf '0\\n'
+elif [ "$1" = "-c" ] && [ "$2" = "%a" ]; then
+    printf '600\\n'
+else
+    exit 1
+fi
+""",
+        encoding="utf-8",
+    )
+    (fake_bin / "id").chmod(0o755)
+    (fake_bin / "stat").chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; capsem_install_user_resolution_report "$2"',
+            "bash",
+            str(RESOLVER),
+            str(request),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "source=secure-request" in result.stdout
+    assert f"user={os.environ['USER']}" in result.stdout
+    assert "request_owner_uid=0" in result.stdout
+    assert "request_mode=600" in result.stdout
