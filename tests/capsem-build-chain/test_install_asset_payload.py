@@ -887,6 +887,33 @@ def test_cross_compile_does_not_bypass_apt_date_validation() -> None:
     assert "Acquire::Check-Date=false" not in swap_script
 
 
+def test_cross_compile_apt_sources_are_encrypted_retried_and_fail_closed() -> None:
+    sources = (PROJECT_ROOT / "docker/sources-multiarch.sh").read_text()
+
+    mirror_assignments = [
+        line.strip()
+        for line in sources.splitlines()
+        if line.strip().startswith(
+            ("NATIVE_MIRROR=", "NATIVE_SECURITY=", "FOREIGN_MIRROR=", "FOREIGN_SECURITY=")
+        )
+    ]
+    assert mirror_assignments
+    assert all('="https://' in line for line in mirror_assignments)
+    assert 'Acquire::Retries "5";' in sources
+    assert 'Acquire::https::Timeout "30";' in sources
+    assert 'APT::Update::Error-Mode "any";' in sources
+
+
+def test_cross_arch_tauri_swap_refreshes_indexes_before_removing_native_libs() -> None:
+    swap_script = (PROJECT_ROOT / "docker/swap-dev-libs.sh").read_text()
+
+    update = swap_script.index("apt-get update -qq")
+    remove = swap_script.index('apt-get remove -y "${DEV_PACKAGES[@]}"')
+    install = swap_script.index("apt-get install -y --no-install-recommends")
+    assert update < remove < install
+    assert swap_script.count("apt-get update -qq") == 1
+
+
 def test_standalone_install_gate_preflights_privileged_helper() -> None:
     block = _just_recipe_block("test-install")
 

@@ -27,7 +27,12 @@ DEV_PACKAGES=(
 
 echo "Swapping -dev libs: $NATIVE_ARCH -> $TARGET_ARCH"
 
-# Remove native-arch -dev packages
+# Prove every architecture-scoped index is fresh before mutating the installed
+# toolchain. The image-level apt policy retries transient downloads and makes a
+# partial update fatal.
+apt-get update -qq
+
+# Remove native-arch -dev packages only after the foreign indexes are usable.
 apt-get remove -y "${DEV_PACKAGES[@]}" >/dev/null 2>&1 || true
 
 # Install foreign-arch -dev packages
@@ -36,7 +41,6 @@ for pkg in "${DEV_PACKAGES[@]}"; do
     FOREIGN_PKGS+=("${pkg}:${TARGET_ARCH}")
 done
 
-apt-get update -qq
 apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-overwrite" "${FOREIGN_PKGS[@]}"
 rm -rf /var/lib/apt/lists/*
 
