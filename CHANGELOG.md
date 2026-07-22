@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1784693563] - 2026-07-22
+
 ### Fixed
 - Restored Colima to its pre-gate state after local release qualification,
   including failed gates, and set the three-resident-VM macOS average
