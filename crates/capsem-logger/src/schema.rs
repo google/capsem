@@ -405,7 +405,8 @@ pub const CREATE_SCHEMA: &str = "
         event_json TEXT NOT NULL CHECK (json_valid(event_json)),
         resolver TEXT,
         reason TEXT,
-        trace_id TEXT
+        trace_id TEXT,
+        turn_id TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_security_ask_events_timestamp
         ON security_ask_events(timestamp_unix_ms);
@@ -1663,7 +1664,8 @@ pub fn migrate(conn: &Connection) {
             event_json TEXT NOT NULL CHECK (json_valid(event_json)),
             resolver TEXT,
             reason TEXT,
-            trace_id TEXT
+            trace_id TEXT,
+            turn_id TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_security_ask_events_timestamp
             ON security_ask_events(timestamp_unix_ms);
@@ -1771,6 +1773,49 @@ mod tests {
                 "{MEMORY_SCHEMA}.{table} must mirror main.{table}; memory schema is derived from the canonical disk schema"
             );
         }
+    }
+
+    #[test]
+    fn fresh_create_schema_has_no_migration_only_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        let before = READY_SCHEMA_COLUMNS
+            .iter()
+            .map(|(table, _)| (*table, columns_for_schema(&conn, "main", table)))
+            .collect::<BTreeMap<_, _>>();
+
+        migrate(&conn);
+
+        for (table, columns_before_migrate) in before {
+            assert_eq!(
+                columns_before_migrate,
+                columns_for_schema(&conn, "main", table),
+                "fresh CREATE_SCHEMA must publish the final {table} shape; migrations are only for existing databases"
+            );
+        }
+    }
+
+    #[test]
+    fn fresh_schema_is_final_before_external_memory_rehydrate() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        create_memory_tables(
+            &conn,
+            &memory_uri_for_name("fresh_schema_is_final_before_external_memory_rehydrate"),
+        )
+        .unwrap();
+
+        // Reproduce the production ordering window: an external reader mirrors
+        // the freshly published schema before the writer runs legacy migrations.
+        migrate(&conn);
+        sync_memory_tables_from_disk(&conn, ["security_ask_events"])
+            .expect("fresh canonical DDL must already match its post-migration shape");
+
+        assert_eq!(
+            columns_for_schema(&conn, MEMORY_SCHEMA, "security_ask_events"),
+            columns_for_schema(&conn, "main", "security_ask_events"),
+            "a fresh DB must not publish a pre-migration table shape to external readers"
+        );
     }
 
     #[test]
