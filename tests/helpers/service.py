@@ -133,12 +133,18 @@ def preserve_tmp_dir_on_failure(tmp_dir, *, force: bool = False):
     # concurrency investigations where a failure on worker B needs to be
     # correlated against what worker A was doing at the same time.
     force = force or bool(os.environ.get("CAPSEM_TEST_PRESERVE_ALWAYS"))
-    if not force and not FAILED_NODEIDS:
-        return
+    current_test = os.environ.get("PYTEST_CURRENT_TEST", "").rsplit(" (", 1)[0]
+    if not force:
+        if current_test and current_test not in FAILED_NODEIDS:
+            return
+        if not FAILED_NODEIDS:
+            return
     import stat as statmod
     import time
     worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
-    if FAILED_NODEIDS:
+    if current_test:
+        tag = current_test.replace("/", "_").replace(":", "_")[:80]
+    elif FAILED_NODEIDS:
         tag = FAILED_NODEIDS[-1].replace("/", "_").replace(":", "_")[:80]
     else:
         tag = "no-failures-on-this-worker"

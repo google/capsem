@@ -65,7 +65,10 @@ def test_codex_sandbox_prerequisite_bubblewrap_available():
 
 def test_npm_prefix_is_opt_ai_clis():
     """npm global prefix must point to /opt/ai-clis."""
-    result = run("npm config get prefix")
+    # A four-VM qualification run can make Node startup exceed the generic
+    # 10-second command budget even though npm is healthy. Keep this explicit
+    # and bounded so the prerequisite still fails fast with load diagnostics.
+    result = run("npm config get prefix", timeout=30)
     assert result.returncode == 0, f"npm config get prefix failed: {result.stderr}"
     assert "/opt/ai-clis" in result.stdout.strip(), (
         f"npm prefix wrong: {result.stdout.strip()}"

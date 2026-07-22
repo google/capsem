@@ -20,11 +20,11 @@ from tests import conftest as tests_conftest
 
 
 @pytest.fixture
-def artifact_env(tmp_path, monkeypatch):
+def artifact_env(tmp_path, monkeypatch, request):
     """Point ARTIFACTS_ROOT at tmp_path and seed a single failed nodeid."""
     monkeypatch.setattr(tests_conftest, "ARTIFACTS_ROOT", tmp_path / "test-artifacts")
     # Replace, don't mutate -- other tests may run in the same process.
-    monkeypatch.setattr(tests_conftest, "FAILED_NODEIDS", ["tests/fake/test_x.py::test_thing"])
+    monkeypatch.setattr(tests_conftest, "FAILED_NODEIDS", [request.node.nodeid])
     return tmp_path / "test-artifacts"
 
 
@@ -119,6 +119,42 @@ def test_no_op_when_no_failures(artifact_env, tmp_path, monkeypatch):
     assert not artifact_env.exists(), (
         "ARTIFACTS_ROOT should not be created when no tests failed"
     )
+
+
+def test_forced_preserve_uses_current_test_not_prior_worker_failure(
+    artifact_env, tmp_path, monkeypatch
+):
+    src = _seed_tmp_dir(tmp_path)
+    monkeypatch.setattr(
+        tests_conftest, "FAILED_NODEIDS", ["tests/fake/test_x.py::test_thing"]
+    )
+    monkeypatch.setenv(
+        "PYTEST_CURRENT_TEST",
+        "tests/ironbank/test_doctor_ledger.py::test_doctor_timeout (call)",
+    )
+
+    svc_mod.preserve_tmp_dir_on_failure(src, force=True)
+
+    archives = [path.name for path in artifact_env.iterdir() if path.is_dir()]
+    assert len(archives) == 1
+    assert "tests_ironbank_test_doctor_ledger.py__test_doctor_timeout" in archives[0]
+    assert "tests_fake_test_x.py__test_thing" not in archives[0]
+
+
+def test_prior_worker_failure_does_not_archive_later_passing_test(
+    artifact_env, tmp_path, monkeypatch
+):
+    src = _seed_tmp_dir(tmp_path)
+    monkeypatch.setattr(
+        tests_conftest, "FAILED_NODEIDS", ["tests/fake/test_x.py::test_thing"]
+    )
+    monkeypatch.setenv(
+        "PYTEST_CURRENT_TEST", "tests/ironbank/test_later.py::test_passes (teardown)"
+    )
+
+    svc_mod.preserve_tmp_dir_on_failure(src)
+
+    assert not artifact_env.exists()
 
 
 def test_preserve_survives_concurrent_unlink(artifact_env, tmp_path, monkeypatch):

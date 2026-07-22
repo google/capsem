@@ -302,7 +302,13 @@ impl DbHandle {
                 "session db handle operation failed"
             ),
         }
-        *self.inner.ready_cache.lock().unwrap() = Some(result.clone());
+        // A writer in another process can still be completing canonical DDL
+        // when an external reader first checks readiness.  Cache only success:
+        // a transient partial-schema error must be retryable on the same
+        // DB-owned handle, while a real broken schema still fails loudly.
+        if result.is_ok() {
+            *self.inner.ready_cache.lock().unwrap() = Some(Ok(()));
+        }
         result
     }
 
@@ -607,7 +613,14 @@ fn reader_loop(path: PathBuf, rx: mpsc::Receiver<ReadRequest>, sync_from_disk_be
         match request {
             ReadRequest::Ready { reply } => {
                 let started = Instant::now();
-                let result = reader.ready();
+                let result = if sync_from_disk_before_query {
+                    reader
+                        .sync_from_disk()
+                        .map_err(|error| error.to_string())
+                        .and_then(|()| reader.ready())
+                } else {
+                    reader.ready()
+                };
                 match &result {
                     Ok(()) => tracing::debug!(
                         db_path = %path.display(),

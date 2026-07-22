@@ -478,6 +478,17 @@ pub(crate) fn with_memory_schema_lock<T>(
 
 pub fn create_memory_tables(conn: &Connection, memory_uri: &str) -> rusqlite::Result<()> {
     attach_memory_schema(conn, memory_uri)?;
+    reconcile_memory_tables_from_disk(conn)
+}
+
+/// Reconcile the attached DB-owned memory schema with the current disk schema.
+///
+/// An external reader can observe `session.db` after SQLite creates the file but
+/// before the writer process finishes its canonical DDL.  The reader must not
+/// freeze that partial snapshot for the rest of the service lifetime.  This
+/// function is intentionally DB-owned: route callers neither inspect nor repair
+/// ledger schema.
+pub fn reconcile_memory_tables_from_disk(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(&format!(
         "CREATE TABLE IF NOT EXISTS {MEMORY_SCHEMA}.__capsem_memory_state (
             key TEXT PRIMARY KEY,
@@ -492,14 +503,24 @@ pub fn create_memory_tables(conn: &Connection, memory_uri: &str) -> rusqlite::Re
            AND name NOT LIKE 'sqlite_%'
          ORDER BY name",
     )?;
-    let tables = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
+    let tables = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     for table in tables {
-        let (name, sql) = table?;
+        let (name, sql) = table;
         if is_disk_only_table(&name) {
             continue;
+        }
+        let disk_columns = table_column_names(conn, "main", &name)?;
+        let memory_columns = table_column_names(conn, MEMORY_SCHEMA, &name)?;
+        if !memory_columns.is_empty() && memory_columns != disk_columns {
+            conn.execute_batch(&format!(
+                "DROP VIEW IF EXISTS temp.{name};
+                 DROP TABLE {MEMORY_SCHEMA}.{name};"
+            ))?;
         }
         let mem_sql = memory_table_sql(&name, &sql)
             .ok_or_else(|| rusqlite::Error::InvalidParameterName(name.clone()))?;
@@ -507,6 +528,18 @@ pub fn create_memory_tables(conn: &Connection, memory_uri: &str) -> rusqlite::Re
     }
 
     Ok(())
+}
+
+fn table_column_names(
+    conn: &Connection,
+    schema: &str,
+    table: &str,
+) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA {schema}.table_info({table})"))?;
+    let columns = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(columns)
 }
 
 pub fn create_memory_read_views(conn: &Connection) -> rusqlite::Result<()> {

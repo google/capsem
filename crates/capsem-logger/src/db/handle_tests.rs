@@ -1625,6 +1625,42 @@ async fn db_handle_ready_valid_schema() {
 }
 
 #[tokio::test]
+async fn external_reader_recovers_when_writer_finishes_schema_after_registration() {
+    let p = temp_db_path("external-reader-partial-schema-race");
+    {
+        let conn = rusqlite::Connection::open(&p).expect("open fixture DB");
+        crate::schema::create_tables(&conn).expect("create canonical fixture schema");
+        conn.execute("DROP TABLE model_calls", [])
+            .expect("simulate writer between canonical DDL statements");
+    }
+
+    let db = DbHandle::open_external_reader(&p).expect("register external reader early");
+    let first_error = db
+        .ready()
+        .await
+        .expect_err("partial disk schema must still fail loudly");
+    assert!(
+        first_error.contains("main.model_calls"),
+        "readiness must name the genuinely missing disk table: {first_error}"
+    );
+
+    {
+        let conn = rusqlite::Connection::open(&p).expect("reopen writer fixture");
+        crate::schema::create_tables(&conn).expect("writer finishes canonical schema");
+    }
+
+    db.ready()
+        .await
+        .expect("the same external handle must reconcile after canonical DDL finishes");
+    let raw = db
+        .query("SELECT COUNT(*) AS count FROM model_calls", &[])
+        .await
+        .expect("reconciled memory view must serve the newly-created table");
+    let value: serde_json::Value = serde_json::from_str(&raw).expect("query JSON");
+    assert_eq!(value["rows"], json!([[0]]));
+}
+
+#[tokio::test]
 async fn db_handle_ready_rejects_broken_schema() {
     let p = temp_db_path("ready-broken-schema");
     {

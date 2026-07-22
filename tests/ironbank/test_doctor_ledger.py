@@ -7,18 +7,27 @@ import re
 import shlex
 import sqlite3
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready, vm_name
+from helpers.service import (
+    ServiceInstance,
+    preserve_tmp_dir_on_failure,
+    vm_session_db_path,
+    wait_exec_ready,
+    vm_name,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ASSETS_DIR = PROJECT_ROOT / "assets"
 PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
+DOCTOR_EXEC_TIMEOUT_SECONDS = 420
+DOCTOR_CLIENT_TIMEOUT_SECONDS = 440
 
 pytestmark = pytest.mark.integration
 
@@ -174,6 +183,23 @@ def _post_bytes_with_status(
     return int(result.stdout[idx + len(sep) :].decode(errors="replace")), result.stdout[:idx]
 
 
+def _doctor_failure_diagnostics(service: ServiceInstance) -> str:
+    """Return bounded service/VM tails for an opaque doctor IPC failure."""
+    candidates = [service.tmp_dir / "service.log"]
+    for name in ("process.log", "serial.log", "pty.log"):
+        candidates.extend(sorted(service.tmp_dir.glob(f"sessions/**/{name}")))
+    sections = []
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(errors="replace")[-16_000:]
+        except OSError as error:
+            text = f"unable to read diagnostic: {error}"
+        sections.append(f"--- {path.relative_to(service.home_dir)} (tail) ---\n{text}")
+    return "\n".join(sections) or "no service/VM diagnostic logs were readable"
+
+
 def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
     assert MOCK_SERVER_BINARY.exists(), f"{MOCK_SERVER_BINARY} missing; build capsem-mock-server"
     assert ASSETS_DIR.exists(), f"{ASSETS_DIR} missing; build VM assets before Ironbank"
@@ -213,14 +239,22 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
                     "export CAPSEM_MOCK_SERVER_BASE_URL="
                     f"{shlex.quote(mock_base_url)}; capsem-doctor"
                 ),
-                "timeout_secs": 220,
+                # Match the canonical E2E doctor budget. Under the release
+                # gate's intentional four-VM load, the same complete doctor
+                # has measured between 110s and 220s; 420s remains bounded
+                # while avoiding a false red exactly at the old ceiling.
+                "timeout_secs": DOCTOR_EXEC_TIMEOUT_SECONDS,
             },
-            timeout=240,
+            timeout=DOCTOR_CLIENT_TIMEOUT_SECONDS,
         )
         assert exec_resp is not None, "doctor exec returned no body"
         stdout = exec_resp.get("stdout", "")
         stderr = exec_resp.get("stderr", "")
         output = stdout + stderr
+        assert not exec_resp.get("error"), (
+            f"capsem-doctor IPC failed: {exec_resp.get('error')}\n"
+            f"response={exec_resp!r}\n{_doctor_failure_diagnostics(service)}"
+        )
         assert exec_resp.get("exit_code") == 0, (
             f"capsem-doctor failed with exit {exec_resp.get('exit_code')}\n"
             f"STDOUT:\n{stdout}\n"
@@ -577,6 +611,10 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
         conn.close()
     finally:
         stop_process(mock_proc)
+        if sys.exc_info()[0] is not None:
+            # Preserve while the failed VM still exists. The normal cleanup
+            # below deletes it before ServiceInstance.stop() can archive it.
+            preserve_tmp_dir_on_failure(service.home_dir, force=True)
         if client is not None:
             try:
                 client.delete(f"/vms/{vm_id or session_id}/delete", timeout=60)
