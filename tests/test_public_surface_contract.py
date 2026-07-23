@@ -42,7 +42,7 @@ def test_declared_count_drift_fails_closed(tmp_path: Path) -> None:
         checker.check_policy(broken)
 
 
-def test_unapproved_allowlist_entry_fails_closed(tmp_path: Path) -> None:
+def test_rejects_unapproved_allowlist_entry(tmp_path: Path) -> None:
     checker = _load_checker()
     policy = (ROOT / "config" / "public-surface.toml").read_text()
     broken = tmp_path / "public-surface.toml"
