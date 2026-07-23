@@ -1,0 +1,108 @@
+version = 1
+
+[docker]
+# Two architecture-specific IronBank root filesystems, release packages, and
+# their reusable compiler layers need more room than Colima's historical
+# 100 GiB default. Bootstrap/doctor report this recommendation; they do not
+# resize an existing VM behind the developer's back.
+recommended_disk_gib = 192
+minimum_free_gib = 24
+buildkit_keep_gib = 24
+linked_keep_gib = 4
+
+[rails.default]
+minimum_free_gib = 24
+buildkit_keep_gib = 24
+linked_keep_gib = 4
+
+[rails.assets]
+minimum_free_gib = 24
+buildkit_keep_gib = 24
+linked_keep_gib = 4
+
+[rails.package]
+minimum_free_gib = 24
+buildkit_keep_gib = 24
+linked_keep_gib = 4
+
+[rails.install-preflight]
+minimum_free_gib = 24
+buildkit_keep_gib = 24
+linked_keep_gib = 4
+
+[rails.install]
+minimum_free_gib = 24
+buildkit_keep_gib = 24
+linked_keep_gib = 4
+
+[resources.capsem-linux-rust-target]
+kind = "volume"
+owner = "linux-rust"
+last_consumer = "linux-rust"
+release_boundary = "after-linux-rust"
+
+[resources.capsem-agent-target-arm64]
+kind = "volume"
+owner = "assets"
+last_consumer = "assets"
+release_boundary = "after-assets"
+
+[resources.capsem-agent-target-x86_64]
+kind = "volume"
+owner = "assets"
+last_consumer = "assets"
+release_boundary = "after-assets"
+
+[resources.capsem-rustup-arm64]
+kind = "volume"
+owner = "assets"
+last_consumer = "assets"
+release_boundary = "after-assets"
+
+[resources.capsem-rustup-x86_64]
+kind = "volume"
+owner = "assets"
+last_consumer = "assets"
+release_boundary = "after-assets"
+
+[resources.capsem-host-builder]
+kind = "image"
+docker_name = "capsem-host-builder:latest"
+owner = "packages"
+last_consumer = "package-x86_64"
+release_boundary = "after-packages"
+
+[resources.capsem-host-target-arm64]
+kind = "volume"
+owner = "package-arm64"
+last_consumer = "package-arm64"
+release_boundary = "after-packages"
+
+[resources.capsem-host-target-x86_64]
+kind = "volume"
+owner = "package-x86_64"
+last_consumer = "package-x86_64"
+release_boundary = "after-packages"
+
+[resources.capsem-install-target]
+kind = "volume"
+owner = "install"
+last_consumer = "install"
+release_boundary = "after-install"
+maximum_gib = 25
+
+[debug_artifacts]
+root = "test-artifacts"
+minimum_runs = 5
+maximum_runs = 30
+maximum_age_days = 14
+maximum_total_gib = 8
+maximum_file_mib = 25
+skip_names = [
+  "rootfs.img",
+  "scratch.img",
+  "disk.img",
+  "rootfs.erofs",
+  "vmlinuz",
+  "initrd.img",
+]

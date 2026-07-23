@@ -44,17 +44,28 @@ sidebar:
 
 Docker builds (kernel, rootfs, cross-compile, install tests) accumulate images and build cache inside the Colima VM. The VM disk only grows -- freed space isn't returned to macOS without `fstrim`.
 
-The build system auto-prunes after Docker-heavy recipes (`_docker-gc`: stale images/cache >72h + fstrim). If your disk is already full:
+The release gate reads `config/storage-policy.toml`: it retains 24GB of hot
+BuildKit data, keeps 24GB free for the active rail, and requires a 192GB Colima
+disk. Cache/image release happens only after the declared last consumer.
+`just test` preserves a bounded storage report and IronBank logs under
+`test-artifacts/` on failure.
+
+If an existing Colima disk is below 192GB, expand it before qualification:
 
 ```bash
-# One-time recovery
-docker system prune -af --volumes           # free space inside VM
-colima ssh -- sudo fstrim /mnt/lima-colima  # release it to macOS
+colima stop
+colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 192
 
 # Check current state
 du -sh ~/.colima                            # host disk usage
-colima ssh -- docker system df              # Docker usage inside VM
+docker system df
+uv run python scripts/docker-storage-policy.py show --rail assets
 ```
+
+Use `just clean all` only for an intentional cold rebuild. Do not use a broad
+manual `docker system prune -af --volumes` during a release investigation; it
+deletes the compiler caches and stopped-container evidence needed to diagnose
+the failure.
 
 ## Running diagnostics
 

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Centralized release-gate Docker capacity, cache retention, resource
+  ownership, and debug-artifact limits in `config/storage-policy.toml`;
+  retained a 24 GiB BuildKit cohort, moved host-builder eviction after both
+  package consumers, and captured bounded Docker/IronBank evidence on failure.
+
 ## [1.5.1784808246] - 2026-07-23
 
 ### Fixed

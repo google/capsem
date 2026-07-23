@@ -7,6 +7,19 @@
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DOCKER_DISK_GIB=$(awk -F= '
+    /^\[docker\]$/ { in_docker=1; next }
+    /^\[/ { in_docker=0 }
+    in_docker && $1 ~ /^[[:space:]]*recommended_disk_gib[[:space:]]*$/ {
+        gsub(/[[:space:]]/, "", $2); print $2; exit
+    }
+' "$SCRIPT_DIR/config/storage-policy.toml")
+case "$DOCKER_DISK_GIB" in
+    ''|*[!0-9]*)
+        printf "invalid docker.recommended_disk_gib in config/storage-policy.toml\n" >&2
+        exit 2
+        ;;
+esac
 
 ASSUME_YES=0
 for arg in "$@"; do
@@ -232,8 +245,8 @@ case "$(uname -s)" in
             # Start Colima if installed but not running. Doctor's fix can't
             # do this -- it would just print the suggestion and fail.
             if command -v colima >/dev/null 2>&1 && ! colima status >/dev/null 2>&1; then
-                if confirm "start Colima now (vz, 16 GB, 8 CPU -- needed for build-assets + tauri install-test)"; then
-                    colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
+                if confirm "start Colima now (vz, 16 GB RAM, 8 CPU, ${DOCKER_DISK_GIB} GB disk -- release-gate profile)"; then
+                    colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk "$DOCKER_DISK_GIB"
                 fi
             fi
             # The persistent config can say Rosetta is enabled while the
@@ -254,7 +267,7 @@ case "$(uname -s)" in
                     fi
                 elif confirm "restart Colima with VZ Rosetta for amd64 release builds"; then
                     colima stop
-                    colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
+                    colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk "$DOCKER_DISK_GIB"
                 fi
             fi
             if command -v docker >/dev/null 2>&1; then

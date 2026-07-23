@@ -73,9 +73,7 @@ def _run_docker_space_gate(
     after_kib: int,
     after_trim_kib: int | None = None,
     volumes: str = "",
-    minimum_gib: int = 16,
-    cache_keep_gib: int | str | None = None,
-    linked_keep_gib: int | str | None = None,
+    rail: str = "assets",
 ) -> subprocess.CompletedProcess[str]:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir(parents=True)
@@ -136,15 +134,11 @@ fi
             "FAKE_DOCKER_COMMANDS": str(commands),
         }
     )
-    if cache_keep_gib is not None:
-        env["CAPSEM_DOCKER_CACHE_KEEP_GB"] = str(cache_keep_gib)
-    if linked_keep_gib is not None:
-        env["CAPSEM_DOCKER_LINKED_KEEP_GB"] = str(linked_keep_gib)
     return subprocess.run(
         [
             "bash",
             str(PROJECT_ROOT / "scripts" / "ensure-docker-space.sh"),
-            str(minimum_gib),
+            rail,
         ],
         cwd=PROJECT_ROOT,
         env=env,
@@ -157,55 +151,36 @@ fi
 def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     recipe = _just_recipe_block("test-assets:")
 
-    preflight = 'CAPSEM_DOCKER_CACHE_KEEP_GB=4 "$ROOT/scripts/ensure-docker-space.sh" 16'
+    preflight = '"$ROOT/scripts/ensure-docker-space.sh" assets'
     assert preflight in recipe
     assert recipe.index(preflight) < recipe.index("build_arch_lane arm64")
 
-    enough = _run_docker_space_gate(tmp_path / "enough", before_kib=20 * 1024 * 1024, after_kib=0)
+    enough = _run_docker_space_gate(tmp_path / "enough", before_kib=30 * 1024 * 1024, after_kib=0)
     assert enough.returncode == 0, enough.stderr
-    assert "already has" in enough.stdout
+    assert "rail 'assets' has" in enough.stdout
 
     reclaimed = _run_docker_space_gate(
         tmp_path / "reclaimed",
         before_kib=8 * 1024 * 1024,
-        after_kib=20 * 1024 * 1024,
+        after_kib=30 * 1024 * 1024,
     )
     assert reclaimed.returncode == 0, reclaimed.stderr
     assert "pruning unused builder cache" in reclaimed.stdout
     assert "reclaimed enough space" in reclaimed.stdout
     reclaimed_commands = (tmp_path / "reclaimed" / "docker-commands").read_text()
-    assert "builder prune -f --keep-storage 8GB" in reclaimed_commands
+    assert "builder prune -f --keep-storage 25769803776" in reclaimed_commands
     assert "builder prune -af" not in reclaimed_commands
 
     package_reclaimed = _run_docker_space_gate(
         tmp_path / "package-reclaimed",
         before_kib=10 * 1024 * 1024,
-        after_kib=16 * 1024 * 1024,
-        minimum_gib=14,
-        cache_keep_gib=2,
+        after_kib=30 * 1024 * 1024,
+        rail="package",
     )
     assert package_reclaimed.returncode == 0, package_reclaimed.stderr
-    assert "hottest 2 GiB" in package_reclaimed.stdout
+    assert "hottest 24 GiB" in package_reclaimed.stdout
     package_commands = (tmp_path / "package-reclaimed" / "docker-commands").read_text()
-    assert "builder prune -f --keep-storage 2GB" in package_commands
-
-    invalid_floor = _run_docker_space_gate(
-        tmp_path / "invalid-floor",
-        before_kib=20 * 1024 * 1024,
-        after_kib=0,
-        cache_keep_gib="all",
-    )
-    assert invalid_floor.returncode == 2
-    assert "cache floor must be a positive GiB integer" in invalid_floor.stderr
-
-    invalid_linked_floor = _run_docker_space_gate(
-        tmp_path / "invalid-linked-floor",
-        before_kib=20 * 1024 * 1024,
-        after_kib=0,
-        linked_keep_gib="all",
-    )
-    assert invalid_linked_floor.returncode == 2
-    assert "linked-artifact floor must be a positive GiB integer" in invalid_linked_floor.stderr
+    assert "builder prune -f --keep-storage 25769803776" in package_commands
 
     exhausted = _run_docker_space_gate(
         tmp_path / "exhausted",
@@ -213,14 +188,14 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
         after_kib=10 * 1024 * 1024,
     )
     assert exhausted.returncode != 0
-    assert "requires at least 16 GiB" in exhausted.stderr
+    assert "requires at least 24 GiB" in exhausted.stderr
     assert "fake docker disk report" in exhausted.stderr
 
     trimmed = _run_docker_space_gate(
         tmp_path / "trimmed",
         before_kib=8 * 1024 * 1024,
         after_kib=10 * 1024 * 1024,
-        after_trim_kib=20 * 1024 * 1024,
+        after_trim_kib=30 * 1024 * 1024,
         volumes="capsem-install-target",
     )
     assert trimmed.returncode == 0, trimmed.stderr
@@ -690,11 +665,7 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     build_image = cross_compile.index("just build-host-image")
     release_completed_rails = cross_compile.index("just _release-completed-docker-rails")
     release_install_target = cross_compile.index("just _release-deferred-install-target")
-    release_asset_builder = cross_compile.index("docker image rm rust:slim-bookworm")
-    capacity = (
-        "CAPSEM_DOCKER_CACHE_KEEP_GB=2 CAPSEM_DOCKER_LINKED_KEEP_GB=2 "
-        '"$ROOT/scripts/ensure-docker-space.sh" 14'
-    )
+    capacity = '"$ROOT/scripts/ensure-docker-space.sh" package'
     capacities = [
         index for index in range(len(cross_compile)) if cross_compile.startswith(capacity, index)
     ]
@@ -706,14 +677,13 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     assert (
         release_completed_rails
         < release_install_target
-        < release_asset_builder
         < capacities[0]
         < build_image
         < capacities[1]
         < package
     )
     assert cross_compile.count(capacity) == 2
-    assert "docker image rm -f rust:slim-bookworm" not in cross_compile
+    assert "docker image rm rust:slim-bookworm" not in cross_compile
     post_builder = cross_compile[build_image:package]
     assert capacity in post_builder
     assert 'scripts/ensure-docker-space.sh" 16' not in cross_compile
@@ -776,7 +746,7 @@ def test_install_boundary_releases_only_completed_package_targets() -> None:
 
     cleanup_trap = install.index("trap cleanup EXIT")
     release_call = install.index("just _release-completed-package-rails")
-    capacity = install.index('scripts/ensure-docker-space.sh" 16')
+    capacity = install.index('scripts/ensure-docker-space.sh" install', release_call)
     assert cleanup_trap < release_call < capacity
 
 
@@ -803,19 +773,19 @@ def test_full_gate_releases_deferred_install_target_between_package_arches() -> 
         assert retained not in release
 
 
-def test_full_gate_releases_completed_buildkit_graph_before_packages() -> None:
+def test_full_gate_releases_completed_buildkit_graph_after_packages() -> None:
     candidate = _just_recipe_block("_test-candidate:")
     release = _just_recipe_block("_release-completed-buildkit-graph:")
 
-    benchmark = candidate.index("test_capsem_bench_baseline.py")
-    release_call = candidate.index("just _release-completed-buildkit-graph")
     arm_package = candidate.index("just cross-compile arm64")
+    x86_package = candidate.index("just cross-compile x86_64")
+    release_call = candidate.index("just _release-completed-buildkit-graph")
 
-    assert benchmark < release_call < arm_package
+    assert arm_package < x86_package < release_call
     assert "capsem-host-builder:latest" in release
     assert 'docker ps -aq --filter "ancestor=$image"' in release
     assert 'docker image rm "$image"' in release
-    assert "docker buildx prune --all --force --reserved-space 2GB" in release
+    assert "docker buildx prune" not in release
     assert "docker image rm -f" not in release
     assert "docker volume rm" not in release
 
@@ -828,9 +798,9 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
     assert "_bound-docker-test-storage" in dependencies
     assert candidate.index("just test-install") < candidate.index("just _bound-docker-test-storage")
     capacity = bound.index("scripts/ensure-docker-space.sh")
-    release_host = bound.index("docker image rm capsem-host-builder:latest")
     release_install = bound.index("docker image rm capsem-install-test:latest")
-    assert release_host < release_install < capacity
+    assert release_install < capacity
+    assert "docker image rm capsem-host-builder:latest" not in bound
     assert "docker image rm -f" not in bound
     assert "docker volume rm" not in bound
 
@@ -841,7 +811,6 @@ def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> N
     install_preflight = candidate.index("just _test-install-harness-preflight")
     release_install = candidate.index("docker image rm capsem-install-test:latest")
     linux_parity = candidate.index("just test-linux-rust")
-    release_host_builder = candidate.index("docker image rm capsem-host-builder:latest")
     asset_gate = candidate.index("just test-assets")
     release_buildkit = candidate.index("just _release-completed-buildkit-graph")
     arm_package = candidate.index("just cross-compile arm64")
@@ -849,8 +818,8 @@ def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> N
     install_tail = candidate.rindex("just test-install")
 
     assert install_preflight < release_install < arm_package
-    assert linux_parity < release_host_builder < asset_gate
-    assert asset_gate < release_buildkit < arm_package < x86_package < install_tail
+    assert linux_parity < asset_gate
+    assert asset_gate < arm_package < x86_package < release_buildkit < install_tail
     assert "CAPSEM_KEEP_HOST_BUILDER=1" not in candidate
 
 
@@ -871,7 +840,7 @@ def test_install_gate_releases_disposable_build_state_before_pytest() -> None:
         "/cargo-target/debug/examples",
         package_install,
     )
-    final_capacity = block.index('scripts/ensure-docker-space.sh" 12', package_install)
+    final_capacity = block.index('scripts/ensure-docker-space.sh" install', package_install)
     pytest_launch = block.index("Running install e2e tests")
 
     assert package_install < trim_build_state < final_capacity < pytest_launch
@@ -969,10 +938,7 @@ def test_standalone_install_gate_preflights_privileged_helper() -> None:
     block = _just_recipe_block("test-install")
 
     release_install_target = block.index("just _release-deferred-install-target")
-    capacity = block.index(
-        "CAPSEM_DOCKER_CACHE_KEEP_GB=2 CAPSEM_DOCKER_LINKED_KEEP_GB=2 "
-        '"$ROOT/scripts/ensure-docker-space.sh" 22'
-    )
+    capacity = block.index('"$ROOT/scripts/ensure-docker-space.sh" install-preflight')
     preflight = block.index("just _test-install-harness-preflight")
     start_container = block.index('echo "Starting systemd container..."')
 

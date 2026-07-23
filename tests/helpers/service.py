@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import uuid
 
 from pathlib import Path
@@ -24,8 +25,11 @@ PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 LINUX_TEST_TMP_PARENT = Path("/var/tmp/capsem-tests")
 
 
-ARTIFACT_MAX_FILE_BYTES = 25 * 1024 * 1024  # 25 MB hard cap per file
-ARTIFACT_SKIP_NAMES = frozenset({
+with (PROJECT_ROOT / "config" / "storage-policy.toml").open("rb") as _policy_stream:
+    _DEBUG_ARTIFACT_POLICY = tomllib.load(_policy_stream)["debug_artifacts"]
+
+ARTIFACT_MAX_FILE_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_file_mib"]) * 1024 * 1024
+ARTIFACT_SKIP_NAMES = frozenset(_DEBUG_ARTIFACT_POLICY["skip_names"]) | frozenset({
     # Multi-GB VM disk images -- regenerable from the build, would burn
     # disk at ~2 GB per failure and we've been there.
     "rootfs.img",
@@ -34,7 +38,10 @@ ARTIFACT_SKIP_NAMES = frozenset({
     # The logs in the same directory are what we need for debugging.
     "checkpoint.vzsave",
 })
-ARTIFACT_MAX_KEPT_DIRS = 20  # rotate: keep only the N most-recent failure dirs
+ARTIFACT_MIN_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["minimum_runs"])
+ARTIFACT_MAX_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["maximum_runs"])
+ARTIFACT_MAX_AGE_S = int(_DEBUG_ARTIFACT_POLICY["maximum_age_days"]) * 24 * 60 * 60
+ARTIFACT_MAX_TOTAL_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_total_gib"]) * 1024**3
 
 
 def capsem_test_tmp_parent() -> Path:
@@ -217,13 +224,30 @@ def preserve_tmp_dir_on_failure(tmp_dir, *, force: bool = False):
         )
         for err in errors[:10]:
             print(f"  ! {err}", file=sys.stderr)
-        _rotate_artifacts(ARTIFACTS_ROOT, ARTIFACT_MAX_KEPT_DIRS)
+        _rotate_artifacts(
+            ARTIFACTS_ROOT,
+            keep=ARTIFACT_MAX_KEPT_DIRS,
+            minimum=ARTIFACT_MIN_KEPT_DIRS,
+            maximum_age_s=ARTIFACT_MAX_AGE_S,
+            maximum_total_bytes=ARTIFACT_MAX_TOTAL_BYTES,
+        )
     except Exception as e:
         print(f"ARTIFACT: preserve fatal for {tmp_dir}: {e}", file=sys.stderr)
 
 
-def _rotate_artifacts(root, keep):
-    """Delete oldest `test-artifacts/<...>` dirs beyond `keep` most-recent."""
+def _artifact_tree_size(path: Path) -> int:
+    total = 0
+    for candidate in path.rglob("*"):
+        try:
+            if candidate.is_file():
+                total += candidate.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _rotate_artifacts(root, keep, minimum, maximum_age_s, maximum_total_bytes):
+    """Bound failure evidence while always retaining the newest minimum."""
     if not root.exists():
         return
     try:
@@ -231,8 +255,28 @@ def _rotate_artifacts(root, keep):
             (p for p in root.iterdir() if p.is_dir()),
             key=lambda p: p.name,  # names begin with YYYYMMDD-HHMMSS so string sort == chronological
         )
-        for stale in dirs[:-keep] if keep > 0 else []:
+        protected = set(dirs[-minimum:]) if minimum > 0 else set()
+        now = time.time()
+        stale_dirs = list(dirs[:-keep] if keep > 0 else dirs)
+        stale_dirs.extend(
+            path
+            for path in dirs
+            if path not in protected and now - path.stat().st_mtime > maximum_age_s
+        )
+        for stale in dict.fromkeys(stale_dirs):
             shutil.rmtree(stale, ignore_errors=True)
+        dirs = [path for path in dirs if path.exists()]
+        sizes = {path: _artifact_tree_size(path) for path in dirs}
+        total = sum(sizes.values())
+        remaining_count = len(dirs)
+        for stale in dirs:
+            if total <= maximum_total_bytes or remaining_count <= minimum:
+                break
+            if stale in protected:
+                continue
+            shutil.rmtree(stale, ignore_errors=True)
+            total -= sizes[stale]
+            remaining_count -= 1
     except OSError as e:
         print(f"ARTIFACT: rotation skipped: {e}", file=sys.stderr)
 

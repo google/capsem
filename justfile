@@ -378,13 +378,10 @@ test-assets: _bootstrap _install-tools _generate-settings _sign
         fi
         exit 1
     fi
-    # Two rootfs lanes expand multi-gigabyte tarballs concurrently inside the
-    # Docker daemon. Earlier `just test` stages also populate large Rust build
-    # caches, so reclaim unused builder layers before the opaque overlay write
-    # fails halfway through EROFS creation.
-    # Asset creation needs two concurrent rootfs expansion lanes. Keep a
-    # smaller rail-local BuildKit floor while preserving named compile caches.
-    CAPSEM_DOCKER_CACHE_KEEP_GB=4 "$ROOT/scripts/ensure-docker-space.sh" 16
+    # Resolve the asset rail from the single checked-in storage policy. This
+    # preserves the dual-architecture BuildKit cohort unless the daemon falls
+    # below the declared capacity reserve.
+    "$ROOT/scripts/ensure-docker-space.sh" assets
     rm -rf "$TEST_ROOT"
     mkdir -p "$TEST_ROOT"
 
@@ -669,7 +666,18 @@ test:
     fi
     TESTED_HEAD=$(git rev-parse HEAD)
     echo "=== Testing clean candidate $TESTED_HEAD ==="
+    capture_candidate_failure() {
+        status=$?
+        if [ "$status" -ne 0 ]; then
+            uv run python scripts/docker-storage-policy.py capture-failure \
+                --rail default \
+                --label "${TESTED_HEAD:0:12}" || true
+        fi
+        return "$status"
+    }
+    trap capture_candidate_failure EXIT
     scripts/with-gate-colima.sh just _test-candidate
+    trap - EXIT
     test "$(git rev-parse HEAD)" = "$TESTED_HEAD" || {
         echo "candidate HEAD changed while just test was running" >&2
         exit 1
@@ -919,10 +927,13 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
 
     # ---- Stage 7: Docker e2e ------------------------------------------------
     echo "=== Cross-compile Linux releases (Docker, both arches) ==="
-    just _release-completed-buildkit-graph
     just cross-compile arm64
     just _release-deferred-install-target
     just cross-compile x86_64
+    # capsem-host-builder is a dependency of both package builds. Release its
+    # final tag only after the second/last consumer, never between assets and
+    # package assembly. The reusable 24 GiB BuildKit cohort remains warm.
+    just _release-completed-buildkit-graph
 
     # ---- Stage 7b: publishable host packages + host SBOM -------------------
     # Linux release packages above are real release-mode .debs. On macOS,
@@ -1149,12 +1160,9 @@ _release-completed-docker-rails:
 _release-completed-buildkit-graph:
     #!/bin/bash
     set -euo pipefail
-    # The VM asset rail is complete before Linux package assembly. Docker's
-    # containerd image store can keep every earlier BuildKit snapshot pinned
-    # behind the final host-builder tag (72 GiB observed), even though those
-    # snapshots cannot accelerate the package's named Cargo target volumes.
-    # Release only this reproducible Capsem image, then retain a bounded 2 GiB
-    # cache cohort. Named registry, rustup, and target volumes are untouched.
+    # Both Linux packages have consumed the host builder. Release the final tag
+    # at its declarative last-consumer boundary; do not force-prune the reusable
+    # BuildKit cohort needed by the next candidate.
     image=capsem-host-builder:latest
     if docker image inspect "$image" >/dev/null 2>&1; then
         attached=$(docker ps -aq --filter "ancestor=$image")
@@ -1166,7 +1174,6 @@ _release-completed-buildkit-graph:
         echo "releasing completed BuildKit graph pinned by: $image"
         docker image rm "$image" >/dev/null
     fi
-    docker buildx prune --all --force --reserved-space 2GB >/dev/null
 
 _release-completed-package-rails:
     #!/bin/bash
@@ -1233,26 +1240,14 @@ cross-compile arch="": _clean-stale _check-assets _generate-settings
     # this package build (or the later clean install rebuild), so release it
     # before sacrificing the new host-builder or reusable registries.
     just _release-deferred-install-target
-    # The asset rail has finished every guest cross-build before package
-    # assembly starts. Release its reproducible 2.2 GiB Rust base tag now;
-    # non-force removal leaves an active consumer untouched and the capacity
-    # check below fails closed. The next asset rail pulls it again as needed.
-    docker image rm rust:slim-bookworm >/dev/null 2>&1 || true
-    # Package assembly has a measured ~1 GiB high-water delta once the current
-    # builder image exists. Asset qualification can leave its newly-created
-    # private BuildKit cache hot but disposable; apply the same package-local
-    # 2 GiB floor before and after building the final image. Named compile
-    # caches remain preserved, and other rails keep the default 8 GiB floor.
-    CAPSEM_DOCKER_CACHE_KEEP_GB=2 CAPSEM_DOCKER_LINKED_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 14
+    # The package rail owns one named policy. Keep the Rust base image and
+    # BuildKit cohort warm across candidates; capacity failure reports the
+    # explicit disk recommendation instead of silently creating a cold build.
+    "$ROOT/scripts/ensure-docker-space.sh" package
     # Always run the cached image build so changes to the Dockerfile or helper
     # scripts cannot be hidden behind a stale local image.
     just build-host-image
-    # Asset qualification immediately before this recipe can consume the
-    # entire Docker disk. Once the final builder exists, its shared layers and
-    # the named Cargo/rustup/target volumes own the useful rebuild state. Keep
-    # only 2 GiB of private BuildKit cache so apt and package assembly retain
-    # their measured reserve without deleting the final image.
-    CAPSEM_DOCKER_CACHE_KEEP_GB=2 CAPSEM_DOCKER_LINKED_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 14
+    "$ROOT/scripts/ensure-docker-space.sh" package
     # Sync container VM clock on macOS (prevents apt "not valid yet" errors)
     if [[ "$(uname -s)" = "Darwin" ]]; then
         python3 scripts/sync-container-clock.py
@@ -1902,7 +1897,7 @@ test-install:
     # The verified derived image pins roughly 6 GiB until the install proof
     # finishes. Reserve that image budget before materializing it, bounding
     # private BuildKit state only if completed install state was insufficient.
-    CAPSEM_DOCKER_CACHE_KEEP_GB=2 CAPSEM_DOCKER_LINKED_KEEP_GB=2 "$ROOT/scripts/ensure-docker-space.sh" 22
+    "$ROOT/scripts/ensure-docker-space.sh" install-preflight
     just _test-install-harness-preflight
     IMAGE="capsem-install-test"
     # The preflight has already built and executed this exact derived image;
@@ -1942,17 +1937,17 @@ test-install:
     just _release-completed-package-rails
     # Durable disk cushion. The shared gate retains hot BuildKit and Cargo
     # cache while requiring enough daemon-local room for the package rail.
-    "$ROOT/scripts/ensure-docker-space.sh" 16
-    # If the persistent cargo-target volume has grown past 25 GB,
-    #     reset it. It caches debug artifacts across runs, but every
-    #     crate version bump leaves dead code behind and the volume
-    #     grows unbounded otherwise.
+    "$ROOT/scripts/ensure-docker-space.sh" install
+    # Reset an oversized persistent install target at its configured resource
+    # budget. It caches debug artifacts across runs, but every crate version
+    # bump leaves dead code behind and the volume otherwise grows unbounded.
+    INSTALL_TARGET_MAX_GIB=$(uv run python "$ROOT/scripts/docker-storage-policy.py" resource --name capsem-install-target --field maximum_gib)
     VOLUME_LINE=$(docker system df -v 2>/dev/null | grep "^capsem-install-target " || true)
     if [ -n "$VOLUME_LINE" ]; then
         VOLUME_SIZE=$(echo "$VOLUME_LINE" | awk '{print $NF}')
         VOLUME_GB=$(echo "$VOLUME_SIZE" | grep -oE '^[0-9]+' | head -1)
-        if [[ "${VOLUME_GB:-}" =~ ^[0-9]+$ ]] && echo "$VOLUME_SIZE" | grep -q "GB$" && [ "$VOLUME_GB" -gt 25 ]; then
-            echo "capsem-install-target is ${VOLUME_SIZE} -- resetting (>25 GB threshold)..."
+        if [[ "${VOLUME_GB:-}" =~ ^[0-9]+$ ]] && echo "$VOLUME_SIZE" | grep -q "GB$" && [ "$VOLUME_GB" -gt "$INSTALL_TARGET_MAX_GIB" ]; then
+            echo "capsem-install-target is ${VOLUME_SIZE} -- resetting (>${INSTALL_TARGET_MAX_GIB} GiB policy)..."
             if ! docker volume rm capsem-install-target >/dev/null; then
                 echo "Error: Failed to reset oversized capsem-install-target volume." >&2
                 echo "Containers still attached to the gate-owned volume:" >&2
@@ -2039,7 +2034,7 @@ test-install:
     # The remaining runtime-only tail needs far less room than compilation, but
     # still keeps a 12 GiB cushion so ENOSPC fails here with diagnostics instead
     # of deep inside a fixture after hours of otherwise-green release work.
-    "$ROOT/scripts/ensure-docker-space.sh" 12
+    "$ROOT/scripts/ensure-docker-space.sh" install
     echo "Running install e2e tests..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_BIN_SRC=/cargo-target/debug -e CAPSEM_TEST_ASSET_MANIFEST="/src/$INSTALL_ASSETS_DIR/manifest.json" "$CONTAINER" bash -c \
         "mkdir -p /home/capsem/tmp && cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test TMPDIR=/home/capsem/tmp uv run python -m pytest tests/capsem-install/ -v --tb=short"
@@ -2350,14 +2345,11 @@ _docker-gc:
 _bound-docker-test-storage:
     #!/bin/bash
     set -euo pipefail
-    # A failed package/install rail can leave one of these final stage tags
-    # behind. They are recreated by their owning rail and pin ~6 GiB each,
-    # so release only unreferenced tags before measuring the next candidate.
-    # No force: an active or diagnostic container keeps its image and makes
-    # the capacity gate fail closed instead of disrupting another consumer.
-    docker image rm capsem-host-builder:latest >/dev/null 2>&1 || true
+    # Preserve the host-builder tag: it is an input to both package consumers,
+    # and build-host-image already invalidates changed Dockerfile/context
+    # layers. The disposable install image has no cross-candidate consumer.
     docker image rm capsem-install-test:latest >/dev/null 2>&1 || true
-    bash {{justfile_directory()}}/scripts/ensure-docker-space.sh 16
+    bash {{justfile_directory()}}/scripts/ensure-docker-space.sh default
 
 # Explicit deep cleanup for a human-requested cold rebuild. The canonical gate
 # deliberately does not call this recipe.
@@ -2384,9 +2376,11 @@ _clean-docker-test-targets:
         echo "Flushing completed Docker target volume: $volume"
         docker volume rm "$volume" >/dev/null
     done
-    # Bound BuildKit instead of deleting the hot cache completely; emergency
-    # low-space recovery in ensure-docker-space.sh may still prune it all.
-    docker builder prune -f --keep-storage 8GB >/dev/null
+    # Explicit human-requested cold cleanup still retains the policy's warm
+    # BuildKit floor rather than embedding another independent magic number.
+    KEEP_GIB=$(uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py shell --rail default | awk -F= '/CAPSEM_DOCKER_BUILDKIT_KEEP_GIB/ { print $2 }')
+    KEEP_BYTES=$((KEEP_GIB * 1024 * 1024 * 1024))
+    docker builder prune -f --keep-storage "$KEEP_BYTES" >/dev/null
     echo "Flushed completed Docker compiler artifacts."
 
 # --- Internal helpers (hidden from `just --list`) ---

@@ -9,6 +9,7 @@ in CI rather than on the next `just test` run.
 """
 
 from pathlib import Path
+import tomllib
 
 import pytest
 
@@ -55,6 +56,16 @@ def _copied_files(archive_root: Path) -> set[str]:
         for p in archive_root.rglob("*")
         if p.is_file()
     }
+
+
+def test_failure_artifact_limits_come_from_storage_policy() -> None:
+    with (svc_mod.PROJECT_ROOT / "config" / "storage-policy.toml").open("rb") as stream:
+        debug = tomllib.load(stream)["debug_artifacts"]
+
+    assert svc_mod.ARTIFACT_MIN_KEPT_DIRS == debug["minimum_runs"]
+    assert svc_mod.ARTIFACT_MAX_KEPT_DIRS == debug["maximum_runs"]
+    assert svc_mod.ARTIFACT_MAX_TOTAL_BYTES == debug["maximum_total_gib"] * 1024**3
+    assert svc_mod.ARTIFACT_MAX_FILE_BYTES == debug["maximum_file_mib"] * 1024**2
 
 
 def test_make_capsem_tmp_dir_honors_configured_parent(tmp_path, monkeypatch):
@@ -225,6 +236,7 @@ def test_preserve_logs_survive_oversize_sibling(artifact_env, tmp_path):
 def test_rotation_keeps_only_most_recent_n(artifact_env, tmp_path, monkeypatch):
     # Shrink the cap for a fast test.
     monkeypatch.setattr(svc_mod, "ARTIFACT_MAX_KEPT_DIRS", 3)
+    monkeypatch.setattr(svc_mod, "ARTIFACT_MIN_KEPT_DIRS", 1)
 
     # Seed 5 pre-existing failure dirs with timestamps.
     artifact_env.mkdir(parents=True)
@@ -250,3 +262,26 @@ def test_rotation_keeps_only_most_recent_n(artifact_env, tmp_path, monkeypatch):
     assert "20260101-000002-gw0-fail-2" not in remaining
     assert "20260101-000005-gw0-fail-5" in remaining
     assert "20260101-000004-gw0-fail-4" in remaining
+
+
+def test_rotation_size_budget_never_discards_minimum_recent_failures(tmp_path):
+    root = tmp_path / "test-artifacts"
+    root.mkdir()
+    for index in range(4):
+        failure = root / f"20260101-00000{index}-failure"
+        failure.mkdir()
+        (failure / "evidence.log").write_bytes(b"x" * 32)
+
+    svc_mod._rotate_artifacts(
+        root,
+        keep=10,
+        minimum=2,
+        maximum_age_s=10**9,
+        maximum_total_bytes=1,
+    )
+
+    remaining = sorted(path.name for path in root.iterdir())
+    assert remaining == [
+        "20260101-000002-failure",
+        "20260101-000003-failure",
+    ]

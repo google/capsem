@@ -1,22 +1,18 @@
 #!/usr/bin/env bash
-# Ensure Docker has enough daemon-local disk for build/test rails.
+# Enforce the named rail from config/storage-policy.toml.
 set -euo pipefail
 
-MINIMUM_GIB="${1:-16}"
-if [[ ! "$MINIMUM_GIB" =~ ^[1-9][0-9]*$ ]]; then
-    echo "ERROR: Docker minimum space must be a positive GiB integer (got: $MINIMUM_GIB)" >&2
-    exit 2
-fi
-CACHE_KEEP_GIB="${CAPSEM_DOCKER_CACHE_KEEP_GB:-8}"
-if [[ ! "$CACHE_KEEP_GIB" =~ ^[1-9][0-9]*$ ]]; then
-    echo "ERROR: Docker cache floor must be a positive GiB integer (got: $CACHE_KEEP_GIB)" >&2
-    exit 2
-fi
-LINKED_KEEP_GIB="${CAPSEM_DOCKER_LINKED_KEEP_GB:-4}"
-if [[ ! "$LINKED_KEEP_GIB" =~ ^[1-9][0-9]*$ ]]; then
-    echo "ERROR: Docker linked-artifact floor must be a positive GiB integer (got: $LINKED_KEEP_GIB)" >&2
-    exit 2
-fi
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+POLICY_SCRIPT="$SCRIPT_DIR/docker-storage-policy.py"
+RAIL="${1:-default}"
+
+# The helper emits only validated integer assignments from the checked-in
+# policy. Keeping resolution out of this shell script prevents per-call magic
+# numbers and makes `show --offline --json` a side-effect-free review surface.
+eval "$(uv run python "$POLICY_SCRIPT" shell --rail "$RAIL")"
+MINIMUM_GIB="$CAPSEM_DOCKER_MINIMUM_FREE_GIB"
+CACHE_KEEP_GIB="$CAPSEM_DOCKER_BUILDKIT_KEEP_GIB"
+LINKED_KEEP_GIB="$CAPSEM_DOCKER_LINKED_KEEP_GIB"
 
 docker_free_kib() {
     docker run --rm debian:bookworm-slim sh -c \
@@ -36,12 +32,13 @@ FREE_KIB=$(docker_free_kib)
 require_numeric_free_space "$FREE_KIB"
 
 if (( FREE_KIB >= MINIMUM_KIB )); then
-    echo "Docker already has $((FREE_KIB / 1024 / 1024)) GiB free (minimum: $MINIMUM_GIB GiB)."
+    echo "Docker rail '$RAIL' has $((FREE_KIB / 1024 / 1024)) GiB free (minimum: $MINIMUM_GIB GiB; BuildKit floor: $CACHE_KEEP_GIB GiB)."
     exit 0
 fi
 
-echo "Docker has only $((FREE_KIB / 1024 / 1024)) GiB free; pruning unused builder cache while retaining the hottest $CACHE_KEEP_GIB GiB."
-docker builder prune -f --keep-storage "${CACHE_KEEP_GIB}GB" >/dev/null
+echo "Docker rail '$RAIL' has only $((FREE_KIB / 1024 / 1024)) GiB free; pruning unused builder cache while retaining the hottest $CACHE_KEEP_GIB GiB."
+CACHE_KEEP_BYTES=$((CACHE_KEEP_GIB * 1024 * 1024 * 1024))
+docker builder prune -f --keep-storage "$CACHE_KEEP_BYTES" >/dev/null
 
 FREE_KIB=$(docker_free_kib)
 require_numeric_free_space "$FREE_KIB"
@@ -117,6 +114,7 @@ while IFS= read -r volume; do
     fi
 done < <(docker volume ls --format '{{.Name}}')
 
-echo "ERROR: Docker capacity gate requires at least $MINIMUM_GIB GiB free; only $((FREE_KIB / 1024 / 1024)) GiB remains after pruning BuildKit and inactive incremental/linked artifacts." >&2
+echo "ERROR: Docker rail '$RAIL' requires at least $MINIMUM_GIB GiB free; only $((FREE_KIB / 1024 / 1024)) GiB remains after preserving the configured $CACHE_KEEP_GIB GiB BuildKit floor and trimming inactive incremental/linked artifacts." >&2
+echo "Recommended Docker disk: $CAPSEM_DOCKER_RECOMMENDED_DISK_GIB GiB." >&2
 docker system df -v >&2 || true
 exit 1

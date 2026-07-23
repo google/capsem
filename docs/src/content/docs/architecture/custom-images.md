@@ -294,6 +294,6 @@ path from `build.sh` and verify with `capsem-doctor`.
 | `warn[W001] no npm registry` | npm packages declared but no registry config | Add a registry entry to the profile build config |
 | `warn[W005] API key in config` | Hardcoded key in TOML | Remove it; credentials must be brokered at runtime |
 | Build fails: "container runtime not found" | No Docker | Install Docker (`brew install colima docker` on macOS, `sudo apt install docker.io` on Linux) |
-| Build fails: exit 137 (OOM) or exit 143 (SIGTERM mid-build) | Container runtime VM out of memory -- Tauri install-test cold build needs >12GB | Bump Colima to 16GB: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` |
+| Build fails: exit 137 (OOM), exit 143, or ENOSPC | Container runtime is below the release-gate memory/disk profile | Run `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 192` |
 | Build fails: "Release file not valid yet" | Container VM clock drift | Builder handles this automatically via `Acquire::Check-Valid-Until=false` |
 | CLI not found at runtime | Installer put binary in `/root/` which is tmpfs | Copy binary to `/usr/local/bin/` in the Dockerfile template |

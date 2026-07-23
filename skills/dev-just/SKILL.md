@@ -107,6 +107,24 @@ Docker builds (`build-assets`, `cross-compile`, `test-install`) accumulate image
 - Prunes build cache older than 72h
 - Runs `fstrim` on the Colima VM disk to release freed space back to macOS
 
+Release-gate capacity is declared once in `config/storage-policy.toml`.
+`scripts/ensure-docker-space.sh <rail>` accepts a named rail, never numeric
+limits. The default policy requires 24 GiB free, preserves a 24 GiB BuildKit
+cohort, and recommends a 192 GiB Colima disk. Resource entries declare owners,
+last consumers, and release boundaries; do not release an image or volume
+before its declared last consumer. Review the resolved policy without
+mutation using:
+
+```bash
+uv run python scripts/docker-storage-policy.py show --rail assets --offline
+```
+
+On a red `just test`, Docker usage, image/container metadata, build logs, and
+bounded IronBank failure logs are captured under `test-artifacts/` before the
+next candidate can clean its staging directory. The same policy keeps at least
+five recent failures, caps retention at 30 runs/14 days/8 GiB, and excludes
+regenerable VM disk/kernel payloads.
+
 The Docker daemon is shared by concurrent lanes and worktrees. Never add
 `docker image prune -a` to an automatic path or call `_docker-gc` from an
 internal primitive used in parallel. A cached image can be newly tagged while

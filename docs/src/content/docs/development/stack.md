@@ -183,12 +183,14 @@ uv run capsem-builder doctor --profile code --config-root config # check prerequ
 
 The builder needs Docker.
 
-**macOS** -- Docker runs inside a Colima VM. Minimum 12GB RAM, recommended 16GB (Tauri install-test build OOMs below 12GB).
+**macOS** -- Docker runs inside a Colima VM. Minimum 12GB RAM, recommended
+16GB. The dual-architecture release gate additionally requires a 192GB Docker
+disk so it can retain a 24GB warm BuildKit cohort and 24GB active-rail reserve.
 
 ```bash
 # Colima setup (recommended on macOS)
 brew install colima docker
-colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
+colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 192
 ```
 
 **Linux** -- Docker runs natively, no memory tuning needed.
