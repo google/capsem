@@ -28,7 +28,7 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
         "- name: Build VM assets"
     )
     assert asset_workflow.index("CAPSEM_CDXGEN_CMD: cdxgen") < asset_workflow.index(
-        "just build-rootfs"
+        "just _build-rootfs"
     )
     assert "asset-channel-preview" in asset_workflow
     assert "Publish immutable GitHub asset release" in asset_workflow

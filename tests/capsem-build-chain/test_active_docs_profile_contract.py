@@ -16,6 +16,12 @@ ALLOWED_CONFIG_DIRS = {
     "settings",
 }
 
+ALLOWED_CONFIG_FILES = {
+    "README.md",
+    "public-surface.toml",
+    "storage-policy.toml",
+}
+
 FORBIDDEN_CONFIG_DIRS = {
     "admin",
     "default",
@@ -209,12 +215,12 @@ def test_config_root_has_only_declared_authority_directories() -> None:
     }
     assert actual_dirs == ALLOWED_CONFIG_DIRS
 
-    unexpected_files = [
+    actual_files = {
         path.name
         for path in CONFIG_ROOT.iterdir()
-        if path.is_file() and path.name != "README.md" and not path.name.startswith(".")
-    ]
-    assert unexpected_files == []
+        if path.is_file() and not path.name.startswith(".")
+    }
+    assert actual_files == ALLOWED_CONFIG_FILES
 
     forbidden_present = sorted(FORBIDDEN_CONFIG_DIRS & actual_dirs)
     assert forbidden_present == []
