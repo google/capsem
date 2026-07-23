@@ -262,9 +262,40 @@ if command -v xattr >/dev/null 2>&1; then
 fi
 find "$WORK_DIR/payload" "$PKG_SCRIPTS" -name '._*' -delete
 
+# pkgbuild otherwise infers Capsem.app as relocatable. On a build machine where
+# the signed source bundle still exists, PackageKit then redirects the payload
+# back into target/release/bundle/macos instead of installing /Applications.
+COMPONENT_PLIST="$WORK_DIR/component.plist"
+pkgbuild --analyze --root "$WORK_DIR/payload" "$COMPONENT_PLIST"
+python3 - "$COMPONENT_PLIST" <<'PY'
+import pathlib
+import plistlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+with path.open("rb") as fh:
+    components = plistlib.load(fh)
+
+app_path = "Applications/Capsem.app"
+matches = [
+    component
+    for component in components
+    if component.get("RootRelativeBundlePath") == app_path
+]
+if len(matches) != 1:
+    raise SystemExit(
+        f"expected exactly one {app_path} component, found {len(matches)}"
+    )
+matches[0]["BundleIsRelocatable"] = False
+
+with path.open("wb") as fh:
+    plistlib.dump(components, fh, sort_keys=True)
+PY
+
 # Build the component .pkg with package-owned preinstall/postinstall scripts.
 pkgbuild \
     --root "$WORK_DIR/payload" \
+    --component-plist "$COMPONENT_PLIST" \
     --scripts "$PKG_SCRIPTS" \
     --identifier "com.capsem.pkg" \
     --version "$VERSION" \

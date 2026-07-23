@@ -267,6 +267,41 @@ jobs:
             "$VERSION" \
             "${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}"
 
+      - name: Verify macOS package installation path policy
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          EXPANDED_ROOT="$(mktemp -d "$RUNNER_TEMP/capsem-pkg-policy.XXXXXX")"
+          pkgutil --expand-full \
+            "packages/Capsem-$VERSION.pkg" \
+            "$EXPANDED_ROOT/expanded"
+          python3 - "$EXPANDED_ROOT/expanded" <<'PY'
+          import pathlib
+          import sys
+          import xml.etree.ElementTree as ET
+
+          expanded = pathlib.Path(sys.argv[1])
+          package_infos = list(expanded.rglob("PackageInfo"))
+          if len(package_infos) != 1:
+              raise SystemExit(
+                  f"expected exactly one PackageInfo, found {package_infos}"
+              )
+          root = ET.parse(package_infos[0]).getroot()
+          relocations = root.findall("./relocate/bundle")
+          if relocations:
+              ids = [bundle.get("id", "<missing>") for bundle in relocations]
+              raise SystemExit(
+                  "PackageKit bundle relocation must be disabled; "
+                  f"relocatable bundle ids: {ids}"
+              )
+          apps = list(expanded.rglob("Applications/Capsem.app"))
+          if len(apps) != 1:
+              raise SystemExit(
+                  f"expected one /Applications/Capsem.app payload, found {apps}"
+              )
+          print("package path policy verified: fixed /Applications/Capsem.app")
+          PY
+
       - name: Notarize and staple .pkg
         env:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -408,6 +443,8 @@ jobs:
             echo "=== application payload ==="
             find /Applications -maxdepth 3 -name 'Capsem.app' -print -exec ls -ld {} \; 2>&1 || true
             ls -la "/Applications/Capsem.app/Contents/MacOS" 2>&1 || true
+            echo "=== build-output application bundle ==="
+            ls -lde "target/release/bundle/macos/Capsem.app" 2>&1 || true
             echo "=== per-user payload ==="
             ls -la "$HOME/.capsem" "$HOME/.capsem/bin" "$HOME/.capsem/logs" 2>&1 || true
             echo "=== PackageKit install log ==="

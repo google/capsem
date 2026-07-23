@@ -1595,6 +1595,9 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "needs: preflight" in linux
     assert "continue-on-error: true" not in linux
     assert "Install exact notarized package" in macos
+    assert "Verify macOS package installation path policy" in macos
+    assert "PackageKit bundle relocation must be disabled" in macos
+    assert "package path policy verified: fixed /Applications/Capsem.app" in macos
     assert "Verify exact notarized package identity and Gatekeeper acceptance" in macos
     assert 'pkgutil --check-signature "packages/Capsem-$VERSION.pkg"' in macos
     assert 'spctl -a -vv -t install "packages/Capsem-$VERSION.pkg"' in macos
@@ -1629,8 +1632,12 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "stat -f '%Su' /dev/console" in macos
     assert "/tmp/capsem-install.log" in macos
     assert '"$HOME/.capsem/logs/install-latest.log"' in macos
+    assert "=== build-output application bundle ===" in macos
+    assert 'ls -lde "target/release/bundle/macos/Capsem.app"' in macos
     assert (
-        macos.index("Notarize and staple .pkg")
+        macos.index("Build .pkg installer")
+        < macos.index("Verify macOS package installation path policy")
+        < macos.index("Notarize and staple .pkg")
         < macos.index("Verify exact notarized package identity and Gatekeeper acceptance")
         < macos.index("Install exact notarized package")
         < macos.index("Collect macOS install diagnostics")

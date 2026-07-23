@@ -8,6 +8,7 @@ import plistlib
 import shutil
 import subprocess
 import threading
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -207,6 +208,15 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
             (app_payloads[0] / "Contents" / "Info.plist").read_bytes()
         )
         assert app_info["CFBundleShortVersionString"] == version
+        package_infos = list(expanded.rglob("PackageInfo"))
+        assert len(package_infos) == 1, package_infos
+        package_info = ET.parse(package_infos[0]).getroot()
+        relocatable_bundles = package_info.findall("./relocate/bundle")
+        assert relocatable_bundles == [], (
+            "PackageKit bundle relocation must be disabled so an existing "
+            "build-output Capsem.app cannot redirect installation away from "
+            f"/Applications: {relocatable_bundles}"
+        )
 
         assets = share / "assets"
         assert sorted(path.name for path in assets.iterdir()) == ["manifest-metadata.json"]
