@@ -60,9 +60,14 @@ branching, reporting, cleanup, or resource ownership.
 - Linux parity and both `.deb` architectures;
 - host package SBOM;
 - Linux systemd install plus channel glow-up;
-- on macOS, signed exact `.pkg` install in Tart and physical Apple VZ boot.
+- on macOS, an unsigned local `.pkg` install in Tart, ad-hoc signature checks
+  on the installed executable payload, and physical Apple VZ boot from that
+  exact package.
 
 Do not fork or approximate this graph in another public recipe.
+Local qualification must not import, unlock, or use Apple Developer
+certificates. Developer ID package signing, notarization, and stapling belong
+only to the tagged publication workflow.
 
 ## Public-surface gate
 

@@ -65,6 +65,11 @@ production assembler, installs that exact file in a disposable headless Tart
 guest, verifies the receipt, app bundle, complete binary cohort, service and
 gateway health, then extracts the same package on the physical Mac and boots a
 real Capsem guest VM from its exact binary/profile payload to a shell marker.
+The local package is unsigned; its postinstall ad-hoc signs the installed
+Mach-O payload with the required entitlements. Local qualification must not
+load Developer ID material or create a signing keychain. The tagged publication
+workflow alone signs, notarizes, staples, and installs the final publishable
+package.
 Tart macOS guests do not support nested virtualization, so these are two
 explicit halves of one script rather than a claimed nested proof. `just smoke`
 deliberately excludes Tart; pulling a 25 GB

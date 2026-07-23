@@ -1,5 +1,9 @@
 #!/bin/bash
-# Build and inspect the exact macOS candidate package consumed by the Tart gate.
+# Build the unsigned local macOS candidate package consumed by the Tart gate.
+#
+# The installer postinstall ad-hoc signs the installed Mach-O payload with the
+# required entitlements. Developer ID signing, notarization, and stapling belong
+# only to the tagged publication workflow.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -42,31 +46,8 @@ cargo build --release \
     -p capsem-gateway \
     -p capsem-tray \
     -p capsem-admin
-if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
-    for binary in \
-        capsem \
-        capsem-service \
-        capsem-process \
-        capsem-tui \
-        capsem-mcp \
-        capsem-mcp-aggregator \
-        capsem-mcp-builtin \
-        capsem-gateway \
-        capsem-tray \
-        capsem-admin
-    do
-        codesign \
-            --sign "$APPLE_SIGNING_IDENTITY" \
-            --options runtime \
-            --timestamp \
-            --entitlements "$ROOT/entitlements.plist" \
-            --force \
-            "$ROOT/target/release/$binary"
-    done
-fi
 bash scripts/build-pkg.sh \
     --manifest "$MANIFEST_URL" \
-    --signing-identity "${CAPSEM_INSTALLER_SIGNING_IDENTITY:?missing installer identity}" \
     "$ROOT/target/release/bundle/macos/Capsem.app" \
     "$ROOT/target/release" \
     "$ROOT/assets" \
@@ -75,8 +56,6 @@ bash scripts/build-pkg.sh \
 
 PKG="$ROOT/packages/Capsem-$VERSION.pkg"
 test -s "$PKG"
-/usr/sbin/pkgutil --check-signature "$PKG" | grep -F "Developer ID Installer"
-codesign --verify --deep --strict --verbose=2 "$ROOT/target/release/bundle/macos/Capsem.app"
 SBOM="$ROOT/target/macos-package-sbom.spdx.json"
 python3 scripts/generate-host-binary-sbom.py --output "$SBOM" "$PKG"
 python3 - "$SBOM" <<'PY'

@@ -15,6 +15,9 @@ HARNESS = PROJECT_ROOT / "scripts" / "macos_tart_glowup.py"
 GLOWUP = PROJECT_ROOT / "scripts" / "macos_release_glowup.py"
 GUEST = PROJECT_ROOT / "scripts" / "macos_tart_guest.sh"
 HOST_BOOT = PROJECT_ROOT / "scripts" / "prove-macos-package-boot.sh"
+LOCAL_PACKAGE_BUILD = PROJECT_ROOT / "scripts" / "build-test-macos-package.sh"
+LOCAL_SIGNING = PROJECT_ROOT / "scripts" / "macos_signing.py"
+RELEASE_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "release.yaml"
 
 
 def _load_harness():
@@ -24,7 +27,12 @@ def _load_harness():
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
+    scripts_dir = str(PROJECT_ROOT / "scripts")
+    sys.path.insert(0, scripts_dir)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(scripts_dir)
     return module
 
 
@@ -226,6 +234,31 @@ def test_standalone_glowup_owns_build_tart_install_and_physical_boot() -> None:
     assert '"scripts/macos_tart_glowup.py"' in source
     assert '"scripts/prove-macos-package-boot.sh"' in source
     assert '"scripts/materialize-config.sh"' in source
+
+
+def test_local_package_proof_uses_ad_hoc_payload_signing_without_release_keys() -> None:
+    glowup = GLOWUP.read_text()
+    build = LOCAL_PACKAGE_BUILD.read_text()
+    guest = GUEST.read_text()
+    release = RELEASE_WORKFLOW.read_text()
+
+    assert not LOCAL_SIGNING.exists()
+    assert "macos_signing" not in glowup
+    assert "ephemeral_signing_environment" not in glowup
+    assert "private/apple-certificate" not in glowup
+    assert "APPLE_SIGNING_IDENTITY" not in build
+    assert "CAPSEM_INSTALLER_SIGNING_IDENTITY" not in build
+    assert "--signing-identity" not in build
+    assert "Developer ID Installer" not in build
+    assert "codesign --verify --strict" in guest
+    assert 'grep -F "Signature=adhoc"' in guest
+
+    # Production publication still owns Developer ID signing and package proof.
+    assert "APPLE_SIGNING_IDENTITY" in release
+    assert "APPLE_INSTALLER_SIGNING_IDENTITY" in release
+    assert "notarytool submit" in release
+    assert "stapler staple" in release
+    assert 'pkgutil --check-signature "packages/Capsem-$VERSION.pkg"' in release
 
 
 def test_public_release_dispatch_recipe_is_gone() -> None:

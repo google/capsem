@@ -219,6 +219,13 @@ GitHub-hosted macOS job separately builds, signs, notarizes, staples, installs,
 and verifies the exact publishable `.pkg`, but hosted runners cannot repeat the
 VZ guest path because nested virtualization is unavailable.
 
+The local package is intentionally unsigned. Its postinstall ad-hoc signs the
+installed Mach-O payload with the required entitlements, so local qualification
+needs no release certificate, private key, or temporary keychain. Developer ID
+signing, notarization, stapling, Gatekeeper verification, and installation of
+that final signed artifact remain owned exclusively by the tagged publication
+workflow.
+
 The accepted release risk is explicit: the published `.pkg` is not installed
 again on a physical Mac for a second VZ guest-shell run after publication. Do
 not claim that missing post-publication combination as evidence; record the

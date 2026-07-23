@@ -76,7 +76,7 @@ for binary in "${BINARIES[@]}"; do
     "$path" --version | grep -F "$VERSION"
     codesign --verify --strict "$path"
     codesign -d --verbose=4 "$path" 2>&1 \
-        | grep -F "Authority=Developer ID Application:"
+        | grep -F "Signature=adhoc"
 done
 
 verify_channel() {
@@ -121,6 +121,7 @@ report = {
         "architecture": sys.argv[6],
         "clean_precondition": True,
         "app_bundle": True,
+        "installed_binary_signature": "ad-hoc",
     },
 }
 Path(sys.argv[1]).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")

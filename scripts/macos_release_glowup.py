@@ -18,10 +18,6 @@ try:
     from release_glowup import ArtifactIdentity, assert_manifest_artifact
 except ModuleNotFoundError:
     from scripts.release_glowup import ArtifactIdentity, assert_manifest_artifact
-try:
-    from macos_signing import ephemeral_signing_environment
-except ModuleNotFoundError:
-    from scripts.macos_signing import ephemeral_signing_environment
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -215,18 +211,16 @@ def main() -> int:
         env=frontend_env,
     )
     run(["bash", "scripts/materialize-config.sh"])
-    with ephemeral_signing_environment(ROOT / "private" / "apple-certificate") as signing_env:
-        run(
-            [
-                "bash",
-                "scripts/build-test-macos-package.sh",
-                "--version",
-                args.version,
-                "--manifest-url",
-                manifest_url,
-            ],
-            env=signing_env,
-        )
+    run(
+        [
+            "bash",
+            "scripts/build-test-macos-package.sh",
+            "--version",
+            args.version,
+            "--manifest-url",
+            manifest_url,
+        ]
+    )
     package = ROOT / "packages" / f"Capsem-{args.version}.pkg"
     sbom = ROOT / "target" / "macos-package-sbom.spdx.json"
     manifest_path, asset_share, profile_share = prepare_candidate_manifest(

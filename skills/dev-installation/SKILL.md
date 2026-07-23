@@ -158,6 +158,13 @@ same package on the physical Mac and boots a real Capsem guest from its exact
 binary/profile payload to a shell marker. Both focused scripts remain
 debugging tools; `just test` is the release gate that owns them.
 
+The local `.pkg` is intentionally unsigned. Its installer postinstall applies
+ad-hoc signatures and the required entitlements to executable payloads, which
+the Tart guest verifies before service and gateway checks. Local installation
+tests must not import or unlock an Apple Developer certificate or mutate the
+user's keychain. Developer ID signing, notarization, and stapling are
+publication-workflow responsibilities.
+
 ## Key files
 
 ```
