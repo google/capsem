@@ -1750,6 +1750,7 @@ _prove-linux-deb: _test-install-harness-preflight
 _test-install-harness-preflight:
     #!/bin/bash
     set -euo pipefail
+    ROOT="{{justfile_directory()}}"
     IMAGE="capsem-install-test"
     # Always refresh the base from its checked-in Dockerfile. Docker keeps
     # unchanged layers cached; merely checking whether the tag exists lets a

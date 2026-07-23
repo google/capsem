@@ -2,17 +2,18 @@
 # Install and exercise the shared Capsem package inside a clean Tart macOS VM.
 set -euo pipefail
 
-VERSION="${1:?usage: macos_tart_guest.sh VERSION MANIFEST_URL CHANNEL}"
+VERSION="${1:?usage: macos_tart_guest.sh VERSION MANIFEST_URL CHANNEL PACKAGE}"
 MANIFEST_URL="${2:?missing manifest URL}"
 CHANNEL="${3:?missing channel}"
+PKG="${4:?missing exact package path}"
 SHARE="/Volumes/My Shared Files/capsem-release"
-PKG="/Volumes/My Shared Files/capsem-release/Capsem.pkg"
 CAPSEM_HOME="$HOME/.capsem"
 CAPSEM_BIN_DIR="$CAPSEM_HOME/bin"
 CAPSEM="$CAPSEM_BIN_DIR/capsem"
 VERIFY="$SHARE/verify-installed-release.py"
 INSTALL_USER_REQUEST="$SHARE/macos-install-user-request.sh"
 REPORT="$SHARE/report.json"
+INSTALLED_EVIDENCE="$SHARE/installed-evidence.json"
 BINARIES=(
     capsem
     capsem-service
@@ -38,6 +39,15 @@ test -s "$PKG"
 test -f "$VERIFY"
 test -f "$INSTALL_USER_REQUEST"
 rm -f "$REPORT"
+rm -f "$INSTALLED_EVIDENCE"
+
+echo "=== Verifying clean guest precondition ==="
+if /usr/sbin/pkgutil --pkg-info com.capsem.pkg >/dev/null 2>&1; then
+    echo "ERROR: Tart base image already has the Capsem package receipt" >&2
+    exit 1
+fi
+test ! -e "/Applications/Capsem.app"
+test ! -e "$CAPSEM_HOME"
 
 clear_install_user_request() {
     bash "$INSTALL_USER_REQUEST" clear >/dev/null 2>&1 || true
@@ -64,6 +74,9 @@ for binary in "${BINARIES[@]}"; do
     path="$CAPSEM_BIN_DIR/$binary"
     test -x "$path"
     "$path" --version | grep -F "$VERSION"
+    codesign --verify --strict "$path"
+    codesign -d --verbose=4 "$path" 2>&1 \
+        | grep -F "Authority=Developer ID Application:"
 done
 
 verify_channel() {
@@ -73,7 +86,11 @@ verify_channel() {
         --capsem "$CAPSEM" \
         --manifest-url "$manifest_url" \
         --channel "$channel" \
-        --package-version "$VERSION"
+        --package-version "$VERSION" \
+        --artifact "$PKG" \
+        --platform macos \
+        --architecture arm64 \
+        --evidence-out "$INSTALLED_EVIDENCE"
 }
 
 echo "=== Verifying initially installed channel ==="
@@ -83,23 +100,28 @@ echo "=== Final installed-product status ==="
 STATUS=$(capsem status)
 printf '%s\n' "$STATUS"
 
-python3 - "$REPORT" "$VERSION" "$CHANNEL" \
+python3 - "$REPORT" "$INSTALLED_EVIDENCE" "$PKG" \
     "$APP_VERSION" "$(uname -r)" "$(uname -m)" <<'PY'
+import hashlib
 import json
 from pathlib import Path
 import sys
 
+installed = json.loads(Path(sys.argv[2]).read_text())
+installed["package_receipt"] = True
+installed["binary_cohort"] = True
+package_sha256 = hashlib.sha256(Path(sys.argv[3]).read_bytes()).hexdigest()
 report = {
-    "schema": "capsem.macos_tart_glowup.v1",
-    "package_version": sys.argv[2],
-    "initial_channel": sys.argv[3],
-    "app_version": sys.argv[4],
-    "guest_kernel": sys.argv[5],
-    "guest_arch": sys.argv[6],
-    "package_receipt": True,
-    "app_bundle": True,
-    "binary_cohort": True,
-    "installed_status": True,
+    "schema": "capsem.release_glowup.guest.v1",
+    "artifact_sha256": package_sha256,
+    "installed": installed,
+    "guest": {
+        "app_version": sys.argv[4],
+        "kernel": sys.argv[5],
+        "architecture": sys.argv[6],
+        "clean_precondition": True,
+        "app_bundle": True,
+    },
 }
 Path(sys.argv[1]).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
 PY

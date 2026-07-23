@@ -17,6 +17,25 @@ import sys
 import time
 from typing import Callable, Sequence
 
+try:
+    from release_glowup import (
+        ArtifactIdentity,
+        GlowupContractError,
+        assert_manifest_artifact,
+        build_report,
+        load_manifest_bytes,
+        validate_installed_evidence,
+    )
+except ModuleNotFoundError:
+    from scripts.release_glowup import (
+        ArtifactIdentity,
+        GlowupContractError,
+        assert_manifest_artifact,
+        build_report,
+        load_manifest_bytes,
+        validate_installed_evidence,
+    )
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 STORAGE_POLICY = PROJECT_ROOT / "config" / "storage-policy.toml"
@@ -49,12 +68,22 @@ def tart_clone_command(image: str, vm_name: str) -> list[str]:
     return ["tart", "clone", image, vm_name]
 
 
-def tart_run_command(vm_name: str, share: Path) -> list[str]:
+def tart_run_command(
+    vm_name: str,
+    share: Path,
+    asset_share: Path | None = None,
+    profile_share: Path | None = None,
+) -> list[str]:
+    directories = [f"--dir=capsem-release:{share}"]
+    if asset_share is not None:
+        directories.append(f"--dir=capsem-assets:{asset_share}")
+    if profile_share is not None:
+        directories.append(f"--dir=capsem-profiles:{profile_share}")
     return [
         "tart",
         "run",
         "--no-graphics",
-        f"--dir=capsem-release:{share}",
+        *directories,
         vm_name,
     ]
 
@@ -145,6 +174,7 @@ def run_checked(
 
 
 def stage_file(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
     destination.unlink(missing_ok=True)
     # Do not hard-link or copy macOS provenance/resource-fork metadata into the
     # VirtioFS share. Tart guests can intermittently receive EACCES when Python
@@ -219,18 +249,22 @@ def validate_host() -> None:
             )
 
 
-def validate_report(report_path: Path) -> dict[str, object]:
+def validate_report(
+    report_path: Path,
+    *,
+    artifact: ArtifactIdentity,
+) -> dict[str, object]:
     if not report_path.is_file():
         raise RuntimeError(f"Tart guest did not write its report: {report_path}")
     report = json.loads(report_path.read_text())
-    for field in (
-        "package_receipt",
-        "app_bundle",
-        "binary_cohort",
-        "installed_status",
-    ):
-        if report.get(field) is not True:
-            raise RuntimeError(f"Tart guest report did not prove {field}")
+    if report.get("schema") != "capsem.release_glowup.guest.v1":
+        raise RuntimeError("Tart guest wrote an unsupported glow-up evidence schema")
+    if report.get("artifact_sha256") != artifact.sha256:
+        raise RuntimeError("Tart guest package SHA does not match the host candidate")
+    installed = report.get("installed")
+    if not isinstance(installed, dict):
+        raise RuntimeError("Tart guest report has no normalized installed evidence")
+    validate_installed_evidence(installed)
     return report
 
 
@@ -252,11 +286,50 @@ def terminate_runner(
         log_stream.close()  # type: ignore[union-attr]
 
 
+def capture_guest_diagnostics(ip: str, work_dir: Path) -> None:
+    """Persist bounded installer evidence before the failed VM is destroyed."""
+
+    remote_script = r"""
+set +e
+echo '=== /var/log/install.log (tail) ==='
+sudo tail -n 300 /var/log/install.log
+echo '=== ~/.capsem/logs/install.log ==='
+cat "$HOME/.capsem/logs/install.log"
+echo '=== ~/.capsem/logs/install-failure.txt ==='
+cat "$HOME/.capsem/logs/install-failure.txt"
+echo '=== ~/.capsem/logs listing ==='
+ls -la "$HOME/.capsem/logs"
+echo '=== package script log events ==='
+sudo log show --last 15m --style compact \
+  --predicate 'process == "installer" OR process == "package_script_service"' \
+  | tail -n 400
+"""
+    command = ssh_command(ip, [shlex.join(["bash", "-lc", remote_script])])
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        contents = (
+            f"diagnostic_status={result.returncode}\n{result.stdout}\n{result.stderr}"
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        contents = f"diagnostic_capture_failed={error}\n"
+    (work_dir / "guest-diagnostics.log").write_text(contents, encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--package", required=True, type=Path)
     parser.add_argument("--version", required=True)
     parser.add_argument("--manifest-url", required=True)
+    parser.add_argument("--manifest-file", required=True, type=Path)
+    parser.add_argument("--sbom", required=True, type=Path)
+    parser.add_argument("--asset-share", required=True, type=Path)
+    parser.add_argument("--profile-share", required=True, type=Path)
     parser.add_argument("--channel", choices=("stable", "nightly"), required=True)
     parser.add_argument(
         "--image",
@@ -274,13 +347,48 @@ def main() -> int:
     package = args.package.resolve()
     if not package.is_file() or package.stat().st_size == 0:
         raise RuntimeError(f"package is missing or empty: {package}")
+    artifact = ArtifactIdentity.from_path(
+        package,
+        version=args.version,
+        platform="macos",
+        architecture="arm64",
+    )
+    manifest_file = args.manifest_file.resolve()
+    asset_share = args.asset_share.resolve()
+    if not asset_share.is_dir():
+        raise RuntimeError(f"candidate asset share is missing: {asset_share}")
+    profile_share = args.profile_share.resolve()
+    if not profile_share.is_dir():
+        raise RuntimeError(f"candidate profile share is missing: {profile_share}")
+    manifest = load_manifest_bytes(manifest_file.read_bytes())
+    assert_manifest_artifact(manifest, artifact)
 
     work_dir = args.work_dir.resolve()
     share = work_dir / "share"
+    if share.exists():
+        shutil.rmtree(share)
     share.mkdir(parents=True, exist_ok=True)
+    (work_dir / "report.json").unlink(missing_ok=True)
+    (work_dir / "guest-diagnostics.log").unlink(missing_ok=True)
     report_path = share / "report.json"
     report_path.unlink(missing_ok=True)
-    stage_file(package, share / "Capsem.pkg")
+    candidate_dir = share / "candidate"
+    if candidate_dir.exists():
+        shutil.rmtree(candidate_dir)
+    release_dir = (
+        candidate_dir
+        / "releases"
+        / "download"
+        / args.channel
+        / f"v{args.version}"
+    )
+    guest_package = release_dir / package.name
+    stage_file(package, guest_package)
+    stage_file(args.sbom.resolve(), release_dir / "capsem-sbom.spdx.json")
+    stage_file(
+        manifest_file,
+        candidate_dir / "assets" / args.channel / "manifest.json",
+    )
     stage_file(PROJECT_ROOT / "scripts" / "macos_tart_guest.sh", share / "guest.sh")
     stage_file(
         PROJECT_ROOT / "scripts" / "verify-installed-release.py",
@@ -290,11 +398,16 @@ def main() -> int:
         PROJECT_ROOT / "scripts" / "macos-install-user-request.sh",
         share / "macos-install-user-request.sh",
     )
+    stage_file(
+        PROJECT_ROOT / "scripts" / "release_glowup.py",
+        share / "release_glowup.py",
+    )
 
     vm_name = f"{OWNED_VM_PREFIX}{os.getpid()}-{int(time.time())}"
     require_owned_vm(vm_name)
     runner: subprocess.Popen[str] | None = None
     log_stream = None
+    ip: str | None = None
     try:
         run_checked(tart_clone_command(args.image, vm_name), timeout=3600)
         run_checked(
@@ -312,7 +425,7 @@ def main() -> int:
         )
         tart_log = work_dir / "tart-run.log"
         log_stream = tart_log.open("w")
-        command = tart_run_command(vm_name, share)
+        command = tart_run_command(vm_name, share, asset_share, profile_share)
         print("+", shlex.join(command), flush=True)
         runner = subprocess.Popen(
             command,
@@ -329,25 +442,27 @@ def main() -> int:
                 args.version,
                 args.manifest_url,
                 args.channel,
+                f"/Volumes/My Shared Files/capsem-release/{guest_package.relative_to(share)}",
             ]
         )
         run_checked(ssh_command(ip, [remote]), timeout=1800)
-        report = validate_report(report_path)
-        report.update(
-            {
-                "tart_image": args.image,
-                "tart_vm": vm_name,
-                "package": str(package),
-                "package_sha256": sha256(package),
-                "tested_commit": subprocess.run(
-                    ["git", "rev-parse", "HEAD"],
-                    cwd=PROJECT_ROOT,
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                ).stdout.strip(),
-            }
+        guest_report = validate_report(report_path, artifact=artifact)
+        report = build_report(
+            adapter="macos-tart-launchd",
+            artifact=artifact,
+            installed=guest_report["installed"],
+            capabilities={
+                "native_install": True,
+                "package_receipt": True,
+                "launchd": True,
+                "physical_vz_boot": False,
+            },
         )
+        report["adapter_evidence"] = {
+            "tart_image": args.image,
+            "tart_vm": vm_name,
+            "guest": guest_report.get("guest", {}),
+        }
         rendered_report = json.dumps(report, indent=2, sort_keys=True) + "\n"
         report_path.write_text(rendered_report)
         final_report_path = work_dir / "report.json"
@@ -356,6 +471,8 @@ def main() -> int:
         return 0
     finally:
         primary_error = sys.exc_info()[0] is not None
+        if primary_error and ip is not None:
+            capture_guest_diagnostics(ip, work_dir)
         cleanup_vm(vm_name)
         terminate_runner(runner, log_stream)
         final_control = run_storage_control(
@@ -370,6 +487,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+    except (GlowupContractError, OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Tart macOS installed-package proof failed: {error}", file=sys.stderr)
         raise SystemExit(1)

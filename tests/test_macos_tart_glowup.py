@@ -33,12 +33,21 @@ def test_tart_commands_are_headless_isolated_and_share_only_gate_inputs(
 ) -> None:
     module = _load_harness()
     share = tmp_path / "share"
+    asset_share = tmp_path / "asset-share"
+    profile_share = tmp_path / "profile-share"
 
-    assert module.tart_run_command("capsem-glowup-123", share) == [
+    assert module.tart_run_command(
+        "capsem-glowup-123",
+        share,
+        asset_share,
+        profile_share,
+    ) == [
         "tart",
         "run",
         "--no-graphics",
         f"--dir=capsem-release:{share}",
+        f"--dir=capsem-assets:{asset_share}",
+        f"--dir=capsem-profiles:{profile_share}",
         "capsem-glowup-123",
     ]
     assert module.tart_clone_command(
@@ -137,12 +146,18 @@ def test_tart_share_inputs_are_copied_not_hard_linked(tmp_path: Path) -> None:
 def test_guest_installs_and_verifies_the_exact_shared_package() -> None:
     source = GUEST.read_text()
 
-    assert '"/Volumes/My Shared Files/capsem-release/Capsem.pkg"' in source
+    assert 'PKG="${4:?missing exact package path}"' in source
+    assert 'test ! -e "/Applications/Capsem.app"' in source
+    assert 'test ! -e "$CAPSEM_HOME"' in source
     assert "/usr/sbin/installer -pkg" in source
     assert "pkgutil --pkg-info com.capsem.pkg" in source
     assert "/Applications/Capsem.app" in source
     assert 'CAPSEM_BIN_DIR="$CAPSEM_HOME/bin"' in source
     assert "verify-installed-release.py" in source
+    assert "--artifact" in source
+    assert "--platform macos" in source
+    assert "--architecture arm64" in source
+    assert "capsem.release_glowup.guest.v1" in source
     assert "macos-install-user-request.sh" in source
     assert "capsem status" in source
     for binary in (

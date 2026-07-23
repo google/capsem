@@ -25,11 +25,26 @@ import http.server
 import json
 import os
 from pathlib import Path
+import re
 import shutil
+import shlex
 import socketserver
 import subprocess
 import threading
 import urllib.request
+
+try:
+    from release_glowup import (
+        ArtifactIdentity,
+        assert_manifest_artifact,
+        build_report,
+    )
+except ModuleNotFoundError:
+    from scripts.release_glowup import (
+        ArtifactIdentity,
+        assert_manifest_artifact,
+        build_report,
+    )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -184,17 +199,26 @@ def main() -> int:
         corp_manifest = corp_dir / "manifest.json"
         shutil.copy2(stable_channel_manifest, corp_manifest)
         corp_manifest_url = f"{base_url}/corp/manifest.json"
-        write_report(
-            args.work_dir / "report.json",
+        stable_artifact = check_generated_release(
             base_url,
-            stable_version,
-            nightly_version,
             stable_manifest_url,
-            nightly_manifest_url,
+            stable_deb,
+            dist,
+            "stable",
+            expected_version=stable_version,
+            expected_architecture=arch,
         )
-        check_generated_release(base_url, stable_manifest_url, stable_deb, dist, "stable")
-        check_generated_release(base_url, nightly_manifest_url, nightly_deb, dist, "nightly")
+        nightly_artifact = check_generated_release(
+            base_url,
+            nightly_manifest_url,
+            nightly_deb,
+            dist,
+            "nightly",
+            expected_version=nightly_version,
+            expected_architecture=arch,
+        )
         if not args.skip_install:
+            evidence_path = args.work_dir / "installed-evidence.json"
             run_installed_glowup(
                 install_script_url=install_script_url,
                 release_base_url=base_url,
@@ -202,6 +226,31 @@ def main() -> int:
                 nightly_manifest_url=nightly_manifest_url,
                 corp_manifest_url=corp_manifest_url,
                 package_version=stable_version,
+                evidence_out=evidence_path,
+            )
+            installed = json.loads(evidence_path.read_text(encoding="utf-8"))
+            installed["package_receipt"] = True
+            installed["binary_cohort"] = True
+            report = build_report(
+                adapter="linux-docker-systemd",
+                artifact=nightly_artifact,
+                installed=installed,
+                capabilities={
+                    "native_install": True,
+                    "systemd": True,
+                    "stable_nightly_round_trip": True,
+                    "corporate_channel_lock": True,
+                },
+            )
+            report["adapter_evidence"] = {
+                "base_url": base_url,
+                "stable_manifest_url": stable_manifest_url,
+                "nightly_manifest_url": nightly_manifest_url,
+                "stable_artifact": stable_artifact.as_report(),
+            }
+            (args.work_dir / "report.json").write_text(
+                json.dumps(report, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
             )
 
     print(
@@ -395,39 +444,16 @@ def stage_vm_asset_blobs(manifest_path: Path, assets_dir: Path, dist: Path) -> N
             copy_artifact_tree(source, release_dir / f"{arch}-{logical_name}")
 
 
-def write_report(
-    path: Path,
-    base_url: str,
-    stable_version: str,
-    nightly_version: str,
-    stable_manifest_url: str,
-    nightly_manifest_url: str,
-) -> None:
-    path.write_text(
-        json.dumps(
-            {
-                "schema": "capsem.local_release_glowup.v1",
-                "base_url": base_url,
-                "stable_version": stable_version,
-                "nightly_version": nightly_version,
-                "stable_manifest_url": stable_manifest_url,
-                "nightly_manifest_url": nightly_manifest_url,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-
 def check_generated_release(
     base_url: str,
     manifest_url: str,
     expected_deb: Path,
     dist: Path,
     channel: str,
-) -> None:
+    *,
+    expected_version: str | None = None,
+    expected_architecture: str | None = None,
+) -> ArtifactIdentity:
     request = urllib.request.Request(
         manifest_url,
         headers={"User-Agent": "capsem-release-client/1"},
@@ -446,6 +472,17 @@ def check_generated_release(
     package_path = dist / package_url.removeprefix(f"{base_url}/")
     if not package_path.is_file():
         raise SystemExit(f"generated {channel} package URL is not served: {package_url}")
+    inferred = re.fullmatch(r"Capsem_(.+)_(amd64|arm64)\.deb", expected_deb.name)
+    if inferred is None:
+        raise SystemExit(f"cannot infer release identity from {expected_deb.name}")
+    artifact = ArtifactIdentity.from_path(
+        expected_deb if expected_deb.is_file() else package_path,
+        version=expected_version or inferred.group(1),
+        platform="linux",
+        architecture=expected_architecture or inferred.group(2),
+    )
+    if expected_version is not None and expected_architecture is not None:
+        package = assert_manifest_artifact(manifest, artifact)
     missing_assets: list[str] = []
     for url in release_asset_urls(manifest):
         if url.startswith(f"{base_url}/"):
@@ -458,6 +495,7 @@ def check_generated_release(
         raise SystemExit(
             f"generated {channel} release is missing VM asset blob(s): " + ", ".join(missing_assets)
         )
+    return artifact
 
 
 def release_asset_urls(manifest: dict[str, object]) -> list[str]:
@@ -496,7 +534,11 @@ def run_installed_glowup(
     nightly_manifest_url: str,
     corp_manifest_url: str,
     package_version: str,
+    evidence_out: Path | None = None,
 ) -> None:
+    evidence_arg = shlex.quote(
+        str(evidence_out or PROJECT_ROOT / "target" / "local-release-glowup-evidence.json")
+    )
     script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -511,11 +553,17 @@ verify_installed_release() {{
   manifest_url="$1"
   channel="$2"
   package_version="$3"
+  evidence_out="${{4:-}}"
+  evidence_args=()
+  if [ -n "$evidence_out" ]; then
+    evidence_args=(--evidence-out "$evidence_out")
+  fi
   python3 scripts/verify-installed-release.py \
     --capsem "$HOME/.capsem/bin/capsem" \
     --manifest-url "$manifest_url" \
     --channel "$channel" \
-    --package-version "$package_version"
+    --package-version "$package_version" \
+    "${{evidence_args[@]}}"
 }}
 check_binary_versions() {{
   expected="$1"
@@ -622,7 +670,7 @@ grep -F '"package_version": "{package_version}"' "$HOME/.capsem/assets/manifest-
 dpkg-query -W -f='${{Version}}' capsem | grep -Fx {package_version}
 check_binary_versions {package_version}
 check_service_installed
-verify_installed_release {nightly_manifest_url} nightly {package_version}
+verify_installed_release {nightly_manifest_url} nightly {package_version} {evidence_arg}
 """
     run(["bash", "-lc", script])
 

@@ -88,16 +88,23 @@ codesign_identifier_for_bin() {
     esac
 }
 
-# Codesign all binaries with virtualization entitlements
+# Preserve production Developer ID signatures. Development packages may carry
+# unsigned binaries; sign those ad hoc with the same virtualization
+# entitlements instead of hiding a failed signing attempt.
 CAPSEM_INSTALL_PHASE="codesign_binaries"
 if [ -f "$PKG_SHARE/entitlements.plist" ]; then
     for bin in "$CAPSEM_DIR/bin"/capsem*; do
         identifier=$(codesign_identifier_for_bin "$bin" || true)
         if [ -n "$identifier" ]; then
-            codesign --sign - --identifier "$identifier" --entitlements "$PKG_SHARE/entitlements.plist" --force "$bin" 2>/dev/null || true
+            if codesign --verify --strict "$bin" 2>/dev/null; then
+                echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binary_signature_preserved bin=$(basename "$bin")"
+            else
+                codesign --sign - --identifier "$identifier" --entitlements "$PKG_SHARE/entitlements.plist" --force "$bin"
+                echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binary_signed_ad_hoc bin=$(basename "$bin")"
+            fi
         fi
     done
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binaries_codesigned identity_prefix=org.capsem"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binary_signatures_ready identity_prefix=org.capsem"
 fi
 
 CAPSEM_INSTALL_PHASE="install_manifest_provenance"

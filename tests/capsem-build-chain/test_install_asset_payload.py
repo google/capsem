@@ -1135,14 +1135,11 @@ def test_local_release_glowup_validates_vm_asset_blobs_are_served() -> None:
 def test_local_release_glowup_preflights_stable_and_nightly_manifests() -> None:
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
 
-    assert (
-        'check_generated_release(base_url, stable_manifest_url, stable_deb, dist, "stable")'
-        in script
-    )
-    assert (
-        'check_generated_release(base_url, nightly_manifest_url, nightly_deb, dist, "nightly")'
-        in script
-    )
+    assert "stable_artifact = check_generated_release(" in script
+    assert "nightly_artifact = check_generated_release(" in script
+    assert "expected_version=stable_version" in script
+    assert "expected_version=nightly_version" in script
+    assert "assert_manifest_artifact(manifest, artifact)" in script
 
 
 def test_local_release_glowup_generated_release_checker_rejects_missing_asset_blob(
