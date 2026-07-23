@@ -45,7 +45,13 @@ Boot timing is measured independently from `capsem-bench`. The guest init script
 
 ### Invariant
 
-The diagnostic suite enforces that total boot time stays under 1 second (`test_environment.py::test_boot_time_under_1s`). Stages exceeding 500ms are flagged as slow. The most common regression is `venv` -- if `uv` is missing from the rootfs, Python falls back to `python3 -m venv` which is ~10x slower.
+The diagnostic suite enforces that every attributable init stage stays at or
+below 500ms (`test_environment.py::test_boot_stages_within_budget`). Aggregate
+first-boot time is still reported, but it is not a deterministic gate on shared
+CI hosts because guest wall time includes periods when the host deschedules the
+VM. Runtime diagnostics independently prove that `uv` exists and that the
+default Python virtualenv is active, so the slower `python3 -m venv` fallback
+cannot pass silently.
 
 ## Benchmark categories
 

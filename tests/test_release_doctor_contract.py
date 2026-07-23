@@ -77,6 +77,23 @@ def _cloudflare_pages_project_module():
     return module
 
 
+def _boot_timing_module():
+    module_path = (
+        PROJECT_ROOT
+        / "guest"
+        / "artifacts"
+        / "diagnostics"
+        / "boot_timing.py"
+    )
+    spec = importlib.util.spec_from_file_location("capsem_doctor_boot_timing", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def _recipe_block(name: str) -> str:
     lines = (PROJECT_ROOT / "justfile").read_text().splitlines()
     start = next(i for i, line in enumerate(lines) if line == name or line.startswith(f"{name} "))
@@ -5542,6 +5559,47 @@ def test_capsem_init_keeps_default_venv_out_of_workspace() -> None:
     assert "python3 -m venv --system-site-packages /run/capsem-venv" in init
     assert "uv venv --system-site-packages /root/.venv" not in init
     assert "python3 -m venv --system-site-packages /root/.venv" not in init
+
+
+def test_boot_timing_gate_attributes_regressions_to_one_stage() -> None:
+    """Shared-runner jitter must not masquerade as a product boot regression."""
+    module = _boot_timing_module()
+    doctor_source = (
+        PROJECT_ROOT
+        / "guest"
+        / "artifacts"
+        / "diagnostics"
+        / "test_environment.py"
+    ).read_text()
+    jittered_stages = [
+        {"name": "erofs", "duration_ms": 30},
+        {"name": "virtiofs", "duration_ms": 30},
+        {"name": "overlayfs", "duration_ms": 60},
+        {"name": "workspace", "duration_ms": 60},
+        {"name": "profile_root_seed", "duration_ms": 210},
+        {"name": "network", "duration_ms": 270},
+        {"name": "net_proxy", "duration_ms": 120},
+        {"name": "dns_proxy", "duration_ms": 130},
+        {"name": "deploy", "duration_ms": 70},
+        {"name": "audit", "duration_ms": 140},
+        {"name": "venv", "duration_ms": 10},
+        {"name": "agent_start", "duration_ms": 10},
+    ]
+
+    assessment = module.assess_boot_timing(jittered_stages)
+    assert assessment.total_ms == 1140
+    assert assessment.slow_stages == ()
+
+    regressed = module.assess_boot_timing(
+        [{"name": "network", "duration_ms": module.MAX_BOOT_STAGE_MS + 10}]
+    )
+    assert regressed.slow_stages == (
+        {"name": "network", "duration_ms": module.MAX_BOOT_STAGE_MS + 10},
+    )
+    assert "assessment = assess_boot_timing(stages)" in doctor_source
+    assert "assert stages" in doctor_source
+    assert "assert not assessment.slow_stages" in doctor_source
+    assert "total <= 1000" not in doctor_source
 
 
 def test_capsem_agent_repairs_missing_default_venv() -> None:
