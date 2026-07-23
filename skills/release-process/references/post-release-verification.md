@@ -62,7 +62,7 @@ already contains the updater and package apply path.
 For a demo-facing macOS release, also prove the installer path users see:
 
 ```bash
-just install
+just test
 test -d /Applications/Capsem.app
 open -a Capsem
 pgrep -x capsem-service

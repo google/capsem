@@ -22,11 +22,11 @@ session/download selection skips releases marked `deprecated: true`.
 
 | Command | When to use |
 |---------|-------------|
-| `just build-assets` | Full rebuild: kernel + rootfs + checksums (slow, needs docker) |
+| `just _build-assets` | Full rebuild: kernel + rootfs + checksums (slow, needs docker) |
 | `just shell` | Daily driver: repack initrd, build, sign, boot (~10s) |
 | `just shell "capsem-doctor"` | Verify VM boots correctly after changes |
 
-On macOS, `just build-assets`, `just _pack-initrd`, and any Docker-backed
+On macOS, `just _build-assets`, `just _pack-initrd`, and any Docker-backed
 asset recipe depend on Colima. If Docker cannot connect but Colima appears to
 be running, follow `/dev-setup`'s Colima recovery discipline before treating
 the asset build as blocked: check `colima list`, `docker version`, and

@@ -112,14 +112,14 @@ def test_exact_sha_release_qualification_uses_fail_closed_workspace_clippy_gate(
     assert "run: cargo check --workspace" not in workflow
 
 
-def test_frontend_release_gate_recipe_exists_and_is_complete() -> None:
+def test_frontend_release_gate_is_owned_by_the_canonical_test() -> None:
     justfile = _read("justfile")
     web_gate = _read("scripts/check-web-surface.sh")
 
-    assert "\ntest-frontend: _pnpm-install _generate-settings\n" in justfile
-    block = justfile.split(
-        "\ntest-frontend: _pnpm-install _generate-settings\n", 1
-    )[1].split("\n\n", 1)[0]
+    assert "\ntest-frontend:" not in justfile
+    block = justfile.split("\n_test-candidate:", 1)[1].split(
+        "\n_build-host-image:", 1
+    )[0]
     assert "bash scripts/check-web-surface.sh frontend" in block
     assert "pnpm --dir frontend run check" in web_gate
     assert "pnpm --dir frontend run test" in web_gate

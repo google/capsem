@@ -104,8 +104,8 @@ def test_justfile_uses_named_rails_and_keeps_builder_until_packages_finish() -> 
     assert 'scripts/ensure-docker-space.sh" install-preflight' in justfile
     assert 'scripts/ensure-docker-space.sh" install' in justfile
 
-    arm64 = justfile.index("just cross-compile arm64")
-    x86_64 = justfile.index("just cross-compile x86_64")
+    arm64 = justfile.index("just _cross-compile arm64")
+    x86_64 = justfile.index("just _cross-compile x86_64")
     release = justfile.index("just _release-completed-buildkit-graph", arm64)
     assert arm64 < x86_64 < release
 

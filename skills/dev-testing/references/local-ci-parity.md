@@ -73,9 +73,9 @@ This includes workspace/runtime tests, Rust and Python coverage floors,
 `capsem-doctor` and Ironbank acceptance, benchmarks, artifact completeness,
 frontend/docs/marketing/release-site validation, and the Docker/systemd Linux
 package install and guest-shell proof. It also includes the full profile-owned
-VM asset matrix: `just test` calls `just test-assets`, which rebuilds every
-checked-in profile for arm64 and x86_64 through `just build-kernel` and
-`just build-rootfs`, validates the release payload and manifest, and boots each
+VM asset matrix: `just test` calls `just _gate-assets`, which rebuilds every
+checked-in profile for arm64 and x86_64 through `just _build-kernel` and
+`just _build-rootfs`, validates the release payload and manifest, and boots each
 host-architecture result to a real guest-shell marker. Truly non-portable
 boundaries remain explicit final gates: Apple signing/notarization, hosted KVM,
 and Cloudflare publication. Apple VZ is proven by the complete local gate on

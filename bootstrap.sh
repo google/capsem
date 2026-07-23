@@ -196,6 +196,17 @@ if [ "$(uname -s)" = "Darwin" ] \
     fi
 fi
 
+# Bootstrap owns the one-time OCI pull and proves the VM really boots. Doctor
+# repeats the clone/boot/SSH proof from the cache and fails if the base is
+# missing, so release qualification never discovers a dead Tart setup late.
+if [ "$(uname -s)" = "Darwin" ] \
+    && command -v tart >/dev/null 2>&1 \
+    && command -v sshpass >/dev/null 2>&1; then
+    printf "  Tart base image + boot readiness...\n"
+    uv run python "$SCRIPT_DIR/scripts/tart_readiness.py"
+    export CAPSEM_BOOTSTRAP_TART_PROVEN=1
+fi
+
 if command -v pnpm >/dev/null 2>&1; then
     printf "  Frontend deps (pnpm install)...\n"
     (cd frontend && CI=true pnpm install --frozen-lockfile)

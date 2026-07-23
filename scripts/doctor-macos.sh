@@ -72,6 +72,17 @@ check_platform() {
         else
             pass "no leaked Capsem-owned Tart VMs"
         fi
+        if command -v sshpass &>/dev/null; then
+            if [[ "${CAPSEM_BOOTSTRAP_TART_PROVEN:-0}" = "1" ]] \
+                && python3 -c 'import json; p=json.load(open("target/tart-readiness/report.json")); assert p["booted"] and p["ssh_ready"]' 2>/dev/null; then
+                pass "Tart base image cached, cloned, booted, and SSH-ready (bootstrap proof)"
+            elif uv run python "$PROJECT_ROOT/scripts/tart_readiness.py" \
+                --require-cache >/dev/null; then
+                pass "Tart base image cached, cloned, booted, and SSH-ready"
+            else
+                fail "Tart base image did not boot -- rerun bootstrap, then inspect target/tart-readiness/tart-run.log"
+            fi
+        fi
     fi
 
     section "Container Runtime (macOS)"

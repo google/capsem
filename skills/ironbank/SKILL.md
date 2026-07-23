@@ -31,9 +31,9 @@ with its authoritative final gate.
 
 `just test` is the strict superset of portable CI work. CI workflows may run a
 smaller relevant slice, but no portable artifact may be built only in workflow
-YAML. In particular, VM asset publication uses the same `just build-kernel`
-and `just build-rootfs` primitives owned by `just test` through
-`just test-assets`; the canonical gate rebuilds every profile for arm64 and
+YAML. In particular, VM asset publication uses the same `just _build-kernel`
+and `just _build-rootfs` primitives owned by `just test` through
+`just _gate-assets`; the canonical gate rebuilds every profile for arm64 and
 x86_64, validates every required artifact and manifest, and boots each rebuilt
 host-architecture image to a guest-shell marker. Input-contract tests are not
 a substitute for testing the artifact that was actually built.

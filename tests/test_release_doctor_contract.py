@@ -163,13 +163,13 @@ def test_doctor_fix_builds_assets_for_each_checked_in_profile() -> None:
     source = (PROJECT_ROOT / "scripts" / "doctor-common.sh").read_text()
 
     assert "for profile in config/profiles/*/profile.toml" in source
-    assert 'just build-assets "$(basename "$(dirname "$profile")")" "$arch"' in source
-    assert '"touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just build-assets"' not in source
+    assert 'just _build-assets "$(basename "$(dirname "$profile")")" "$arch"' in source
+    assert '"touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just _build-assets"' not in source
 
 
 def test_macos_doctor_requires_live_rosetta_registration() -> None:
     source = _source_text("scripts/doctor-macos.sh")
-    asset_gate = _recipe_block("test-assets:")
+    asset_gate = _recipe_block("_gate-assets:")
 
     assert "/proc/sys/fs/binfmt_misc/rosetta" in source
     assert "colima rosetta configured but not registered" in source
@@ -178,6 +178,21 @@ def test_macos_doctor_requires_live_rosetta_registration() -> None:
     assert "CROSS_PLATFORM=linux/arm64" in asset_gate
     assert 'docker run --rm --platform "$CROSS_PLATFORM"' in asset_gate
     assert "Docker cannot execute $CROSS_PLATFORM containers" in asset_gate
+
+
+def test_bootstrap_and_doctor_prove_tart_cache_clone_boot_and_ssh() -> None:
+    bootstrap = _source_text("bootstrap.sh")
+    doctor = _source_text("scripts/doctor-macos.sh")
+    readiness = _source_text("scripts/tart_readiness.py")
+
+    assert 'uv run python "$SCRIPT_DIR/scripts/tart_readiness.py"' in bootstrap
+    assert "--require-cache" in doctor
+    assert "cached, cloned, booted, and SSH-ready" in doctor
+    assert '"tart", "clone"' in readiness
+    assert '"tart",\n                "run",' in readiness
+    assert "wait_for_guest_ip" in readiness
+    assert "wait_for_ssh" in readiness
+    assert "cleanup_vm(vm_name)" in readiness
 
 
 def test_host_sbom_zstd_dependency_has_local_and_exact_sha_parity() -> None:
@@ -210,7 +225,7 @@ def test_linux_release_qualification_enables_arm64_for_canonical_asset_gate() ->
 
 
 def test_parallel_asset_gate_preserves_and_names_failed_architecture_logs() -> None:
-    gate = _recipe_block("test-assets:")
+    gate = _recipe_block("_gate-assets:")
 
     assert 'ARM64_BUILD_LOG="$TEST_ROOT/build-arm64.log"' in gate
     assert 'X86_64_BUILD_LOG="$TEST_ROOT/build-x86_64.log"' in gate
@@ -226,7 +241,7 @@ def test_parallel_asset_gate_preserves_and_names_failed_architecture_logs() -> N
 
 
 def test_asset_gate_interrupt_cleanup_only_reaps_owned_mounts(tmp_path: Path) -> None:
-    gate = _recipe_block("test-assets:")
+    gate = _recipe_block("_gate-assets:")
     assert 'cleanup-docker-containers-by-mount.sh" "$TEST_ROOT"' in gate
 
     mount_root = tmp_path / "asset-root"
@@ -284,15 +299,15 @@ fi
 def test_canonical_gate_builds_both_linux_release_architectures() -> None:
     canonical_gate = _recipe_block("test:")
 
-    arm64 = canonical_gate.index("just cross-compile arm64")
-    x86_64 = canonical_gate.index("just cross-compile x86_64")
-    install = canonical_gate.rindex("just test-install")
+    arm64 = canonical_gate.index("just _cross-compile arm64")
+    x86_64 = canonical_gate.index("just _cross-compile x86_64")
+    install = canonical_gate.rindex("just _gate-install")
     assert arm64 < x86_64 < install
-    assert "just cross-compile\n" not in canonical_gate
+    assert "just _cross-compile\n" not in canonical_gate
 
 
 def test_install_e2e_materializes_config_before_repacking_package() -> None:
-    block = _recipe_block("test-install:")
+    block = _recipe_block("_gate-install:")
 
     prepare_pos = block.find("bash scripts/prepare-install-test-assets.sh")
     materialize_pos = block.find("bash scripts/materialize-config.sh")
@@ -479,8 +494,8 @@ def test_release_workflows_run_disjoint_lane_policy_gates() -> None:
     assert "Verify binary release lane policy" in binary_workflow
     assert "tests/capsem-release/test_binary_lane_gate.py" in binary_workflow
     assert "tests/capsem-release/test_release_lane_diff_policy.py" in binary_workflow
-    assert "just build-kernel" not in binary_workflow
-    assert "just build-rootfs" not in binary_workflow
+    assert "just _build-kernel" not in binary_workflow
+    assert "just _build-rootfs" not in binary_workflow
 
     assert "workflow_dispatch:" in asset_workflow
     assert "profile:" in asset_workflow
@@ -532,8 +547,8 @@ def test_vm_asset_release_is_manual_and_deploys_asset_channel() -> None:
     assert "needs: cloudflare-release-site-preflight" in workflow
     assert workflow.index("cloudflare-release-site-preflight:") < workflow.index("build-assets:")
     assert workflow.index("Cloudflare release site preflight") < workflow.index("Build VM assets")
-    assert "just build-kernel" in workflow
-    assert "just build-rootfs" in workflow
+    assert "just _build-kernel" in workflow
+    assert "just _build-rootfs" in workflow
     assert "cargo run -p capsem-admin -- manifest generate assets" in workflow
     assert "binary_version:" not in workflow
     assert "BINARY_VERSION" not in workflow
@@ -686,11 +701,11 @@ def test_release_channel_staging_workflow_exercises_reusable_deploy_without_rele
     assert "workflow_dispatch:" in workflow
     assert "default: staging" in workflow
     assert "default: https://staging.release-eq7.pages.dev" in workflow
-    assert "build-assets:" not in workflow
+    assert "_build-assets:" not in workflow
     assert "build-app-macos:" not in workflow
     assert "build-app-linux:" not in workflow
-    assert "just build-kernel" not in workflow
-    assert "just build-rootfs" not in workflow
+    assert "just _build-kernel" not in workflow
+    assert "just _build-rootfs" not in workflow
     assert "scripts/write-release-site-ci-fixture.py" in workflow
     assert "--without-binary-files" in workflow
     assert "--assets-dir target/release-channel-staging-fixture/assets" in workflow
@@ -1306,8 +1321,8 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "Complete canonical release gate (just test)" in qualification
     assert "run: just test" not in workflow
     assert "scripts/check-release-qualification.py" in workflow
-    assert "just build-kernel" not in workflow
-    assert "just build-rootfs" not in workflow
+    assert "just _build-kernel" not in workflow
+    assert "just _build-rootfs" not in workflow
     assert "cargo run -p capsem-admin -- manifest generate assets" not in workflow
     assert "generate_checksums(Path('unified-assets')" not in workflow
     assert 'gh release upload ${{ github.ref_name }} "release-artifacts/$arch' not in workflow
@@ -1425,10 +1440,10 @@ def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
     assert "pages deploy" not in workflow
     assert "gh release create" not in workflow
     assert "gh release upload" not in workflow
-    assert "just build-kernel" not in workflow
-    assert "just build-rootfs" not in workflow
+    assert "just _build-kernel" not in workflow
+    assert "just _build-rootfs" not in workflow
     assert "cargo run -p capsem-admin -- manifest generate assets" not in workflow
-    assert "build-assets:" not in workflow
+    assert "_build-assets:" not in workflow
     for logical_name in (
         "vmlinuz",
         "initrd.img",
@@ -1688,13 +1703,13 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "Post-install full gate (just test)" not in linux
     assert "run: just test" not in linux
     assert "needs: [build-app-macos, build-app-linux]" in create_release
-    assert "test-install" not in create_release
+    assert "_gate-install" not in create_release
     assert "continue-on-error: true" not in create_release
 
 
 def test_install_preflight_releases_base_after_derived_image_is_verified() -> None:
     preflight = _recipe_block("_test-install-harness-preflight:")
-    recipe = _recipe_block("test-install:")
+    recipe = _recipe_block("_gate-install:")
 
     derived_build = 'docker build -t "$IMAGE" -f docker/Dockerfile.install-test .'
     release_base = "--boundary after-linux-rust-builder"
@@ -1746,14 +1761,13 @@ def test_release_skill_requires_exact_manifest_single_metadata_and_shared_status
 def test_release_dispatch_is_not_a_forked_just_recipe() -> None:
     justfile = _source_text("justfile")
     workflow = _workflow_text("release.yaml")
-    cut = _recipe_block("cut-release")
 
     assert '\nrelease tag="" channel="stable":' not in f"\n{justfile}"
+    assert "\nprepare-release:" not in justfile
+    assert "\nqualify-release " not in justfile
+    assert "\ncut-release " not in justfile
     assert "workflow_dispatch:" in workflow
     assert "Verify exact commit passed remote qualification" in workflow
-    assert "just release" not in cut
-    assert "gh run watch" not in cut
-    assert "Publish the qualified tag, then dispatch release.yaml" in cut
 
 
 def test_self_update_docs_match_verified_package_execution() -> None:
@@ -2772,6 +2786,7 @@ def test_release_skills_require_local_ci_execution_parity_and_record_native_musl
 
 def test_release_critical_workflows_share_local_entrypoints_or_name_platform_boundaries() -> None:
     just = (PROJECT_ROOT / "justfile").read_text()
+    macos_glowup = _source_text("scripts/macos_release_glowup.py")
     qualification = _workflow_text("release-qualification.yaml")
     assets = _workflow_text("release-assets.yaml")
     ci = _workflow_text("ci.yaml")
@@ -2781,13 +2796,13 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     assert "run: just test" in qualification
     assert "test:" in just
 
-    for command in ("just build-kernel", "just build-rootfs"):
+    for command in ("just _build-kernel", "just _build-rootfs"):
         assert command in assets
-    assert "build-kernel arch" in just
-    assert "build-rootfs arch" in just
+    assert "_build-kernel arch" in just
+    assert "_build-rootfs arch" in just
 
-    assert "run: just test-install" in ci
-    assert "test-install:" in just
+    assert "run: just _gate-install" in ci
+    assert "_gate-install:" in just
 
     for shared_script in (
         "scripts/build-pkg.sh",
@@ -2796,6 +2811,12 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
         "scripts/prove-installed-shell.py",
     ):
         assert shared_script in release
+    assert "scripts/build-test-macos-package.sh" in macos_glowup
+    for shared_script in (
+        "scripts/repack-deb.sh",
+        "scripts/verify-installed-release.py",
+        "scripts/prove-installed-shell.py",
+    ):
         assert shared_script in just
 
     for unavoidable_boundary in (
@@ -2897,7 +2918,7 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
     assert "scripts/integration_test.py" in just
     assert "=== Benchmarks ===" in just
     assert "tests/capsem-serial/test_capsem_bench_baseline.py" in just
-    assert "just test-install" in just
+    assert "just _gate-install" in just
     for surface in ("frontend", "docs", "site", "release-site"):
         assert f"bash scripts/check-web-surface.sh {surface}" in just
 
@@ -4208,9 +4229,9 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert "bash scripts/generate-settings.sh" in just
     generated_gate = _recipe_block("_check-generated-settings:")
     assert 'bash "$ROOT/scripts/check-generated-settings.sh"' in generated_gate
-    assert "dev-frontend: _pnpm-install _generate-settings" in just
-    assert 'build-ui profile="debug": _pnpm-install _generate-settings' in just
-    assert "test-frontend: _pnpm-install _generate-settings" in just
+    assert "_dev-frontend: _pnpm-install _generate-settings" in just
+    assert '_build-ui profile="debug": _pnpm-install _generate-settings' in just
+    assert "\ntest-frontend:" not in just
     assert "uv run python scripts/generate_schema.py" not in just
 
 
@@ -4686,7 +4707,7 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
     slow_timeout = nextest["profile"]["ci"]["slow-timeout"]
 
     assert "timeout-minutes:" in coverage_step
-    assert "run: just test-linux-rust" in coverage_step
+    assert "run: just _gate-linux-rust" in coverage_step
     assert "cargo llvm-cov nextest" in runner
     report_block = runner.split("cargo llvm-cov report", maxsplit=1)[1]
     assert "--bins" not in report_block
@@ -4703,13 +4724,13 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
 
 def test_just_test_owns_linux_rust_platform_coverage_through_docker() -> None:
     canonical_gate = _recipe_block("test:")
-    linux_rust_gate = _recipe_block("test-linux-rust:")
+    linux_rust_gate = _recipe_block("_gate-linux-rust:")
     linux_ci = _workflow_job_block("test-linux")
     runner = _source_text("scripts/test-linux-rust.sh")
     host_builder = _source_text("docker/Dockerfile.host-builder")
 
-    assert "just test-linux-rust" in canonical_gate
-    assert "test-linux-rust: _generate-settings" not in _source_text("justfile")
+    assert "just _gate-linux-rust" in canonical_gate
+    assert "_gate-linux-rust: _generate-settings" not in _source_text("justfile")
     assert "scripts/test-linux-rust.sh" in linux_rust_gate
     assert "capsem-host-builder:latest" in linux_rust_gate
     assert "docker run --rm" in linux_rust_gate
@@ -4719,8 +4740,8 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker() -> None:
     assert "capsem-linux-rust-cargo-registry" in linux_rust_gate
     assert "capsem-linux-rust-rustup" in linux_rust_gate
     assert 'if [ "$(uname -s)" = "Linux" ]' in linux_rust_gate
-    assert linux_rust_gate.index("exit 0") < linux_rust_gate.index("just build-host-image")
-    assert "run: just test-linux-rust" in linux_ci
+    assert linux_rust_gate.index("exit 0") < linux_rust_gate.index("just _build-host-image")
+    assert "run: just _gate-linux-rust" in linux_ci
     assert "cargo llvm-cov nextest" not in linux_ci
     assert "cargo llvm-cov nextest" in runner
     assert "capsem-service" in runner
@@ -4735,14 +4756,14 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker() -> None:
 def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     canonical_gate = _recipe_block("test:")
     mac_glowup = _source_text("scripts/macos_release_glowup.py")
-    host_sbom = _recipe_block("test-host-package-sbom:")
+    host_sbom = _recipe_block("_gate-host-package-sbom:")
     release = _source_text(".github/workflows/release.yaml")
 
-    assert "just cross-compile arm64" in canonical_gate
-    assert "just cross-compile x86_64" in canonical_gate
+    assert "just _cross-compile arm64" in canonical_gate
+    assert "just _cross-compile x86_64" in canonical_gate
     assert "python3 scripts/macos_release_glowup.py" in canonical_gate
     assert "test-macos-install:" not in _source_text("justfile")
-    assert "just test-host-package-sbom" in canonical_gate
+    assert "just _gate-host-package-sbom" in canonical_gate
     assert "pytest tests/capsem-recipes/" in canonical_gate
     assert "scripts/build-test-macos-package.sh" in mac_glowup
     assert "scripts/macos_tart_glowup.py" in mac_glowup
@@ -5246,13 +5267,13 @@ def test_serial_benchmark_release_proofs_are_not_env_gated() -> None:
 
 
 def test_benchmark_release_path_wires_mock_server_and_forbids_http_skip() -> None:
-    bench = _recipe_block("bench:")
+    candidate = _recipe_block("_test-candidate:")
     baseline = (
         PROJECT_ROOT / "tests" / "capsem-serial" / "test_capsem_bench_baseline.py"
     ).read_text()
 
-    assert "tests/capsem-serial/test_capsem_bench_baseline.py" in bench
-    assert '{{cli_binary}} run "capsem-bench"' not in bench
+    assert "tests/capsem-serial/test_capsem_bench_baseline.py" in candidate
+    assert '{{cli_binary}} run "capsem-bench"' not in candidate
     assert "from helpers.mock_server import start_mock_server, stop_process" in baseline
     assert "CAPSEM_MOCK_SERVER_BASE_URL" in baseline
     assert "CAPSEM_MOCK_SERVER_HTTPS_BASE_URL" in baseline

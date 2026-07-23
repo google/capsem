@@ -112,5 +112,5 @@ Read these for the exact SSE format, request/response shapes, and telemetry extr
 
 - Unit tests: `cargo test -p capsem-core net` (policy evaluation, SNI parsing, cert minting)
 - In-VM: `just exec "capsem-doctor -k network"` (TLS trust chain, port blocking, domain filtering)
-- Telemetry: `just exec "curl -s https://api.anthropic.com/"` then `just inspect-session` (check net_events)
+- Telemetry: `just exec "curl -s https://api.anthropic.com/"` then `python3 scripts/check_session.py` (check net_events)
 - Adversarial: test with blocked domains, overlapping wildcards, malformed SNI, huge request bodies

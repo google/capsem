@@ -23,7 +23,7 @@ just exec "<command that triggers the bug>"
 
 For telemetry issues, use session inspection:
 ```bash
-just inspect-session
+python3 scripts/check_session.py
 ```
 
 ## Step 2: Diagnose the root cause
@@ -74,10 +74,10 @@ materialization. Do not debug by adding credential handling to formatters,
 routes, DB readers, frontend transforms, or harnesses. Use session DB to see
 what actually happened:
 ```bash
-just inspect-session   # Check net_events for domain, decision, status_code
+python3 scripts/check_session.py   # Check net_events for domain, decision, status_code
 ```
 
-**Frontend issues**: Run `just ui`, open Chrome DevTools, check console errors, use `take_screenshot` to capture state. See dev-testing-frontend for the full visual verification workflow.
+**Frontend issues**: Run `just dev ui`, open Chrome DevTools, check console errors, use `take_screenshot` to capture state. See dev-testing-frontend for the full visual verification workflow.
 
 **Build pipeline issues**: Check `target/build.log` -- all build infrastructure (runner, code signing, generation scripts) logs here. The runner (`scripts/run_signed.sh`) and `_generate-settings` recipe both append to this file. Never write diagnostics to stdout from build scripts (it contaminates binary output like `mcp-export`).
 
@@ -140,7 +140,7 @@ Now that you understand the root cause, write the fix. The fix should:
 After the fix, run the full validation:
 1. `just test` -- unit + cross-compile + frontend
 2. `just exec "capsem-doctor"` -- VM smoke test
-3. If the bug touched telemetry: `just inspect-session` after a real session
+3. If the bug touched telemetry: `python3 scripts/check_session.py` after a real session
 
 ## Local/CI execution parity
 

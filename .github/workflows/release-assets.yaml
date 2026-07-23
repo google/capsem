@@ -102,8 +102,8 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: |
-          just build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"
-          just build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"
+          just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"
+          just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

@@ -13,10 +13,10 @@ the logger DB boundary (only `capsem-logger` executes ledger queries).
 
 ```bash
 just doctor        # Check tools (first time)
-just build-assets  # Build kernel + rootfs (first time, needs docker via Colima on macOS)
+just doctor fix    # Install prerequisites and materialize missing VM assets
 just shell         # Build + boot VM (~10s)
 just smoke         # Fast path: doctor + integration tests
-just install       # Build release .pkg/.deb and install to ~/.capsem/
+just test          # Complete release qualification, including native install glow-up
 just test          # ALL tests: unit + integration + cross-compile + Docker e2e. No shortcuts.
 ```
 
@@ -109,7 +109,7 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 ## Desktop app (capsem-app)
 
 - Thin Tauri webview shell -- only IPC commands are `log_frontend`, `open_url`, `check_for_app_update`. No VM logic, no capsem-core dep. All UI state flows through the gateway at `http://127.0.0.1:19222`.
-- **The frontend is embedded in the Rust binary at cargo build time** via `tauri::generate_context!()`. Running `pnpm run build` alone does **nothing** to a compiled binary. After any frontend change meant for the desktop app, run `just build-ui` (frontend build + `cargo build -p capsem-app`). The toolbar shows `build <timestamp>` -- if it's stale, you forgot to rebuild the Rust binary.
+- **The frontend is embedded in the Rust binary at cargo build time** via `tauri::generate_context!()`. Running `pnpm run build` alone does **nothing** to a compiled binary. After any frontend change meant for the desktop app, run `just build` (frontend build + `cargo build -p capsem-app`). The toolbar shows `build <timestamp>` -- if it's stale, you forgot to rebuild the Rust binary.
 - Iframe `src` for bundled pages must be explicit (`/vm/terminal/index.html`). The Tauri custom protocol on macOS does not auto-append `index.html` the way dev servers do.
 
 ## Code Style
@@ -141,9 +141,9 @@ The binary must be codesigned with `com.apple.security.virtualization` or VZ cal
 
 ## Vocabulary and gotchas
 
-- **glowup** = installed-package release proof (`scripts/local-release-glowup.py`), run inside `just test-install`'s Docker flow. The public install/channel-switch/upgrade glowup is the e2e test of a deployed release.
+- **glowup** = installed-package release proof owned by `just test`: Linux runs `scripts/local-release-glowup.py` in Docker/systemd; macOS installs the signed exact package in Tart and boots it through physical Apple VZ.
 - **winterfell** = service session-ledger lifecycle fixtures in `crates/capsem-service/src/tests.rs`; AGENTS.md's gate list refers to these.
-- `just test` writes benchmark recordings under `target/test-benchmarks/`; only explicit `just bench` runs archive historical data under `benchmarks/`.
+- `just test` writes benchmark recordings under `target/test-benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
 - Rust is pinned to 1.97.1 in `rust-toolchain.toml`, bootstrap, CI, and Docker. Bump every surface together in a deliberate monthly toolchain PR and handle new-lint fallout there.
 
 ## Commits

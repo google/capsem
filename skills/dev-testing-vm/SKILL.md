@@ -36,8 +36,8 @@ just exec "capsem-doctor -x"           # Stop on first failure
 1. Add test functions to the appropriate `guest/artifacts/diagnostics/test_*.py` or create `test_<category>.py`
 2. Use `from conftest import run` for shell commands, `output_dir` fixture for temp files
 3. Tests auto-skip outside the capsem VM (conftest checks for root + writable /root)
-4. Rebuild rootfs with `just build-assets` to bake new test files into the image
-5. For fast iteration during development, tests in `diagnostics/` are also repacked into the initrd by `just run`, so `just exec "capsem-doctor"` picks up changes without a full rootfs rebuild
+4. Rebuild rootfs with `just _build-assets` to bake new test files into the image
+5. For fast iteration during development, tests in `diagnostics/` are also repacked into the initrd by `just exec`, so `just exec "capsem-doctor"` picks up changes without a full rootfs rebuild
 6. Verify: `just exec "capsem-doctor -k <your_test>"`
 
 ## Session inspection
@@ -45,10 +45,10 @@ just exec "capsem-doctor -x"           # Stop on first failure
 After running a VM session, inspect the telemetry database:
 
 ```bash
-just inspect-session              # Latest session
-just inspect-session <session-id> # Specific session
-just inspect-session --list       # List recent sessions
-just inspect-session -n 10        # Show 10 preview rows per table
+python3 scripts/check_session.py              # Latest session
+python3 scripts/check_session.py <session-id> # Specific session
+python3 scripts/check_session.py --list       # List recent sessions
+python3 scripts/check_session.py -n 10        # Show 10 preview rows per table
 ```
 
 Checks: session ledgers exist (net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, security_rule_events), row counts, orphaned tool_calls, AI-provider consistency.
@@ -57,7 +57,7 @@ Checks: session ledgers exist (net_events, model_calls, tool_calls, tool_respons
 
 Each pipeline can be tested with a targeted VM command:
 
-- **fs_events**: `just exec 'touch /root/test.txt && sleep 1'` then `just inspect-session`
+- **fs_events**: `just exec 'touch /root/test.txt && sleep 1'` then `python3 scripts/check_session.py`
 - **net_events**: `just exec 'curl -s https://api.anthropic.com/ && sleep 1'`
 - **model_calls/tool_calls**: boot interactively, run `claude -p "what is 2+2"`
 - **MCP-origin tool_calls**: boot interactively, run `claude -p "use fetch to get https://example.com"` and query `tool_calls WHERE origin = 'mcp'`
@@ -75,10 +75,10 @@ The fixture (`data/fixtures/test.db`) is a real session DB shared by frontend mo
 python3 scripts/integration_test.py --binary target/debug/capsem --assets assets
 
 # 2. Inspect completeness
-just inspect-session <session-id>
+python3 scripts/check_session.py <session-id>
 
-# 3. Update (scrubs API keys, copies to both data/ and frontend/)
-just update-fixture ~/.capsem/sessions/<id>/session.db
+# 3. Fixture refresh has no Just convenience command. Copy, checkpoint, and
+# scrub the selected DB using the procedure in /dev-session-debug.
 
 # 4. Verify
 cargo test --workspace

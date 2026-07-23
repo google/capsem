@@ -98,7 +98,7 @@ capsem_exec { id: "vm-1", command: "chmod +x /tmp/test.sh && /tmp/test.sh" }
 | Run capsem-doctor diagnostics | `capsem_exec` with `capsem-doctor` |
 | Full regression suite | `just test` |
 | Build + boot + validate in one shot | `just smoke` |
-| Benchmark performance | `just benchmark` |
+| Benchmark performance | `just test` |
 
 MCP tools are for fast, targeted checks during development. Just recipes are for comprehensive validation before committing.
 
@@ -281,7 +281,7 @@ Read `references/mcp-wire.md` for the full wire format details.
 
 The MCP integration tests (`tests/capsem-mcp/`) are black-box tests that boot a real service + VM and exercise the full MCP protocol over stdio.
 
-**Run with:** `just test-mcp` (or `pytest tests/capsem-mcp/ -m mcp -v`)
+**Run with:** `uv run pytest tests/capsem-mcp/ -m mcp -v`
 
 **Test files:**
 
@@ -318,7 +318,7 @@ Boot interactively, run a workload, then inspect telemetry:
 ```bash
 just shell
 # (in another terminal)
-just inspect-session <vm_id> "SELECT * FROM tool_calls WHERE origin = 'mcp'"
+python3 scripts/check_session.py <vm_id> "SELECT * FROM tool_calls WHERE origin = 'mcp'"
 ```
 
 Or use MCP tools directly (see "Fast debugging" section above) for the same workflow without leaving Claude Code.

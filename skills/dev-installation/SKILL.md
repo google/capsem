@@ -150,7 +150,7 @@ Docker-based e2e tests in `tests/capsem-install/`:
 | test_reinstall.py | Binary replacement verification |
 | test_error_paths.py | Failure scenarios with actionable errors |
 
-Run `just test-install` for the Linux Docker/systemd boundary. On Apple Silicon
+Run `just _gate-install` for the Linux Docker/systemd boundary. On Apple Silicon
 macOS, run `python3 scripts/macos_release_glowup.py` for the exact `.pkg` build, clean Tart
 install, receipt/app/binary verification, and service health. Because Tart
 macOS guests cannot expose nested virtualization, the recipe then extracts the

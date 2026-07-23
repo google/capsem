@@ -25,8 +25,8 @@ Every portable release-critical workflow must share the same production
 entrypoint with a local gate. Current required mappings are:
 
 - candidate qualification: local and CI both execute `just test`;
-- VM assets: `just test` owns `just test-assets`, which executes the same
-  `just build-kernel` and `just build-rootfs` primitives as
+- VM assets: `just test` owns `just _gate-assets`, which executes the same
+  `just _build-kernel` and `just _build-rootfs` primitives as
   `release-assets.yaml` for every checked-in profile and both published
   architectures, validates the full payload and manifest, and proves a real
   guest shell from each rebuilt host-architecture image;
@@ -43,12 +43,12 @@ entrypoint with a local gate. Current required mappings are:
   per channel or test fixture. Only a legacy current entry may be hydrated;
   historical releases never resolve through current asset paths. Local blob
   copying hashes while copying once, and graph rendering reuses that result;
-- Linux package assembly: `just test` executes `just cross-compile arm64` and
-  `just cross-compile x86_64`, so both publishable `.deb` architecture builds
+- Linux package assembly: `just test` executes `just _cross-compile arm64` and
+  `just _cross-compile x86_64`, so both publishable `.deb` architecture builds
   are locally accounted for before the release workflow repeats them;
-- Linux package E2E: local and PR CI both execute `just test-install`;
+- Linux package E2E: local and PR CI both execute `just _gate-install`;
 - Linux platform branches: macOS-local `just test` executes
-  `just test-linux-rust` in the checked-in host-builder container as a non-root
+  `just _gate-linux-rust` in the checked-in host-builder container as a non-root
   user, while Linux CI calls the same runner natively;
 - generated settings: `just test` regenerates the tracked settings outputs and
   fails if their before/after contents drift, matching CI's generation drift
@@ -59,13 +59,13 @@ entrypoint with a local gate. Current required mappings are:
   `scripts/prove-installed-shell.py`; macOS-local `just test` builds the real
   release-mode app and unsigned `.pkg`, both Linux release-mode `.deb`
   architectures, and runs `scripts/generate-host-binary-sbom.py` over those
-  exact artifacts. `just install` must finish with the same installed-manifest
-  verification and real guest-shell proof before success.
+  exact artifacts. The native glow-up must finish with the same
+  installed-manifest verification and real guest-shell proof before success.
 
 Run portable Linux prerequisites in Docker before spending CI. The container
 must execute the same production entrypoint or shared predicate, not a copied
 approximation. The native-musl regression is the model: asset CI installs
-`musl-tools`, so both `just build-kernel`/`just build-rootfs` and the local
+`musl-tools`, so both `just _build-kernel`/`just _build-rootfs` and the local
 Docker preflight execute `linux_musl_toolchain_available`, which accepts the
 native `musl-gcc` on arm64 and x86_64 without inventing an
 `x86_64-linux-musl-gcc` requirement.
@@ -153,7 +153,7 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   `assets/releases/<asset-version>/<arch>-<logical_name>`. The v2 manifest keeps
   bare filenames in per-arch `arches` maps.
 - **Manual asset CI uses justfile recipes.** `.github/workflows/release-assets.yaml`
-  must call `just build-kernel` and `just build-rootfs`, not reimplement the
+  must call `just _build-kernel` and `just _build-rootfs`, not reimplement the
   builder commands. Drift between the justfile and CI caused v0.14.2-v0.14.4
   to ship without vmlinuz/initrd.img.
 - **Manual asset releases build both kernel and rootfs.** The builder defaults
@@ -164,7 +164,7 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   `CC_x86_64_unknown_linux_musl=musl-gcc`,
   `CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc`, and
   `CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc` into the
-  `just build-kernel` / `just build-rootfs` step. Crates such as `ring` compile
+  `just _build-kernel` / `just _build-rootfs` step. Crates such as `ring` compile
   C/ASM during guest binary builds; `rustup target add` alone is not enough.
 - **App packaging cargo-tool installs must be retryable and independent.**
   GitHub-hosted runners can hit transient crates.io DNS timeouts while
@@ -173,7 +173,10 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   progress. Install each tool separately with `CARGO_NET_RETRY=10` and a small
   shell retry loop so a single registry lookup hiccup does not fail the release.
 - **`Cargo.lock` is gitignored.** CI resolves a fresh lockfile each build. This means dependency versions can drift between builds. Acceptable for now but a reproducibility risk.
-- **Three files hold the binary version.** `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`. `just _stamp-version` handles all three automatically. `just prepare-release` and `just install` call it; `just cut-release` must never stamp or commit.
+- **Three files hold the binary version.** `Cargo.toml` (workspace),
+  `crates/capsem-app/tauri.conf.json`, and `pyproject.toml`. Candidate
+  preparation keeps all three aligned before `just test`; qualification and
+  tagging never stamp or commit.
 - **Do not resurrect local VM manifest signing.** VM asset integrity is the
   profile manifest plus BLAKE3 hashes, manifest metadata/hash reporting, and
   SBOM/OBOM/build-ledger evidence. Local `manifest-sign.pub` keys and minisign
@@ -210,9 +213,9 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   `|| true`, coverage summary pipes must use `set -o pipefail`, and Codecov
   test analytics should use `codecov/codecov-action@v5` with
   `report_type: test_results`.
-- **No AppImage on any platform.** linuxdeploy cannot run on GitHub CI runners -- Ubuntu 24.04 lacks FUSE2, and neither `libfuse2` nor `APPIMAGE_EXTRACT_AND_RUN=1` fixes it reliably. All Linux platforms ship `.deb` only. CI matrix passes `bundles: deb` for both arm64 and x86_64. `just cross-compile` matches this. This cost 14 consecutive failed releases (v0.12.1 through v0.14.14) to discover.
+- **No AppImage on any platform.** linuxdeploy cannot run on GitHub CI runners -- Ubuntu 24.04 lacks FUSE2, and neither `libfuse2` nor `APPIMAGE_EXTRACT_AND_RUN=1` fixes it reliably. All Linux platforms ship `.deb` only. CI matrix passes `bundles: deb` for both arm64 and x86_64. `just _cross-compile` matches this. This cost 14 consecutive failed releases (v0.12.1 through v0.14.14) to discover.
 - **Tauri signing keys on all platforms.** `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` must be passed to every `cargo tauri build` step (macOS and Linux). Missing keys cause "public key found but no private key" failure. The macOS job had them from the start; the Linux job was missing them until v0.14.11.
-- **`just cross-compile` is not a perfect CI replica.** It runs in a Docker
+- **`just _cross-compile` is not a perfect CI replica.** It runs in a Docker
   container on macOS and catches compile errors plus most `.deb` packaging
   issues, but environment differences can still slip through. Always verify the
   first CI run of a new Linux packaging change.
@@ -236,4 +239,3 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   rail is `.deb`-only and macOS ships a `.pkg`; there is no AppImage updater
   bundle. Do not make release creation depend on `latest.json`.
 - **AppImage was dropped after 14 failed releases.** linuxdeploy (a FUSE2 AppImage) cannot run on Ubuntu 24.04 CI runners (FUSE3 only). Tested: `libfuse2` install, `APPIMAGE_EXTRACT_AND_RUN=1` env var, both together -- none worked reliably. If AppImage support is needed in the future, the approach would be to pre-extract linuxdeploy (`--appimage-extract`) and run the extracted binary directly, bypassing FUSE entirely.
-

@@ -41,7 +41,7 @@ def test_just_test_binds_clean_tree_to_one_commit_without_archiving_benchmarks()
 def test_full_gate_runs_capsem_bench_baseline_exactly_once() -> None:
     justfile = _read("justfile")
     candidate = justfile.split("\n_test-candidate:", maxsplit=1)[1].split(
-        "\nbuild-host-image:", maxsplit=1
+        "\n_build-host-image:", maxsplit=1
     )[0]
 
     assert candidate.count("tests/capsem-serial/test_capsem_bench_baseline.py") == 1
@@ -50,7 +50,7 @@ def test_full_gate_runs_capsem_bench_baseline_exactly_once() -> None:
 def test_full_gate_serializes_host_snapshot_files_without_dropping_coverage() -> None:
     justfile = _read("justfile")
     candidate = justfile.split("\n_test-candidate:", maxsplit=1)[1].split(
-        "\nbuild-host-image:", maxsplit=1
+        "\n_build-host-image:", maxsplit=1
     )[0]
     snapshot_files = (
         "tests/capsem-mcp/test_state_transitions.py",

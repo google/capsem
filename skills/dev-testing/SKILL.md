@@ -32,8 +32,9 @@ files, SBOM, metadata, and installed binary checks therefore exercise the exact
 clean commit subsequently pushed and qualified. A gate on uncommitted bytes or
 on the previous version followed by a stamp is not local candidate evidence.
 Automatic gate benchmark output belongs under ignored
-`target/test-benchmarks/`; only explicit `just bench` archives historical data
-under `benchmarks/`.
+`target/test-benchmarks/`. Historical benchmark publication uses the owning
+pytest/benchmark command and an explicit review; it is not a Just convenience
+recipe.
 
 ## Release CI invariant
 
@@ -379,7 +380,15 @@ All Python integration tests live under `tests/capsem-*/` and use pytest markers
 | Session exhaustive | `capsem-session-exhaustive/` | `session_exhaustive` | Yes | Per-table data validation, cross-table FK integrity |
 | Install | `capsem-install/` | `install` | No | Native package installer: layout, auto-launch, service install, manifest placement, update, uninstall, lifecycle, reinstall, error paths |
 
-Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign + serial + session-lifecycle + config-runtime + recovery. `just test-install` runs the install suite in Docker with systemd. `just test` runs everything.
+`just test` is the only public complete gate and `just smoke` is the only
+public focused composite. Suite-specific and install/package rails are private
+implementation details; run an individual pytest/cargo command directly for
+focused diagnosis instead of adding a public `test-*` recipe.
+
+Public Just recipes, Capsem CLI command paths, and service HTTP method/path
+pairs are exact approval-gated surfaces. Any change must pass
+`tests/test_public_surface_contract.py` and requires explicit approval before
+editing `config/public-surface.toml`.
 
 ## Test matrix: what runs where
 
@@ -417,7 +426,7 @@ for comprehensive validation before committing.
 After any change touching guest binaries, network policy, telemetry, MCP, or VM lifecycle:
 
 1. `just exec "capsem-doctor"` -- verifies sandbox integrity inside the VM
-2. After telemetry/logging changes: run a real session and verify with `just inspect-session` that net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, and security_rule_events are populated correctly for the exercised protocols
+2. After telemetry/logging changes: run a real session and verify with `python3 scripts/check_session.py` that net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, and security_rule_events are populated correctly for the exercised protocols
 
 ## When tests fail
 

@@ -181,7 +181,7 @@ fi
 
 
 def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
-    recipe = _just_recipe_block("test-assets:")
+    recipe = _just_recipe_block("_gate-assets:")
 
     preflight = '"$ROOT/scripts/ensure-docker-space.sh" assets'
     assert preflight in recipe
@@ -229,41 +229,18 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     assert '"buildkit-pressure-prune"' in controller
 
 
-def test_just_install_does_not_sync_assets_after_installer() -> None:
-    install_body = _just_recipe_block("install:")
+def test_native_install_is_owned_by_glowup_not_a_forked_just_recipe() -> None:
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+    macos_glowup = (PROJECT_ROOT / "scripts" / "macos_release_glowup.py").read_text()
 
-    assert "Syncing local dev assets" not in install_body
-    assert "scripts/sync-dev-assets.sh" not in install_body
-    assert "CAPSEM_PKG_ASSET_MODE=current-arch bash scripts/build-pkg.sh" not in install_body
-    assert "CAPSEM_DEB_ASSET_MODE=current-arch bash scripts/repack-deb.sh" not in install_body
-    assert "bash scripts/build-pkg.sh" in install_body
-    assert "bash scripts/repack-deb.sh --manifest" in install_body
-    assert (
-        'MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"'
-        in install_body
-    )
-    assert '--manifest "$MANIFEST_URL"' in install_body
-    assert "file://$PWD/{{assets_dir}}/manifest.json" not in install_body
-    assert '"target/config"' in install_body
-    assert (
-        "install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-config"
-        in install_body
-    )
-    assert "pkill -9 -x capsem-app" in install_body
-
-
-def test_just_install_invokes_package_without_gui_installer_block() -> None:
-    install_body = _just_recipe_block("install:")
-
-    assert 'PKG="packages/Capsem-$VERSION.pkg"' in install_body
-    assert 'open -W "$PKG"' not in install_body
-    assert 'installer -pkg "$PKG"' in install_body
-    assert '"$HOME/.capsem/bin/capsem" status' in install_body
-    assert '"$HOME/.capsem/bin/capsem" debug' in install_body
+    assert "\ninstall:" not in justfile
+    assert "build-test-macos-package.sh" in macos_glowup
+    assert "macos_tart_glowup.py" in macos_glowup
+    assert "prove-macos-package-boot.sh" in macos_glowup
 
 
 def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
-    block = _just_recipe_block("cross-compile")
+    block = _just_recipe_block("_cross-compile")
 
     companion_pos = block.find("--- Build companion host binaries ---")
     tauri_pos = block.find("cargo tauri build --target")
@@ -354,7 +331,7 @@ def test_exact_linux_deb_proof_uses_systemd_and_proves_guest_shell() -> None:
 
 def test_systemd_install_image_cannot_flush_host_binfmt_registrations() -> None:
     dockerfile = (PROJECT_ROOT / "docker/Dockerfile.install-test").read_text()
-    install_gate = _just_recipe_block("test-install:")
+    install_gate = _just_recipe_block("_gate-install:")
 
     assert "/etc/systemd/system/systemd-binfmt.service" in dockerfile
     assert "ln -s /dev/null" in dockerfile
@@ -432,7 +409,7 @@ def test_release_matrix_installs_both_architectures_and_keeps_kvm_proof_mandator
 
 
 def test_install_test_restores_host_workspace_ownership() -> None:
-    block = _just_recipe_block("test-install")
+    block = _just_recipe_block("_gate-install")
 
     assert "HOST_UID=$(id -u)" in block
     assert "HOST_GID=$(id -g)" in block
@@ -445,7 +422,7 @@ def test_install_test_restores_host_workspace_ownership() -> None:
 
 
 def test_install_test_keeps_frontend_build_outputs_container_owned() -> None:
-    block = _just_recipe_block("test-install")
+    block = _just_recipe_block("_gate-install")
 
     assert "-v capsem-install-frontend-node-modules:/src/frontend/node_modules" in block
     assert "-v capsem-install-frontend-dist:/src/frontend/dist" in block
@@ -453,7 +430,7 @@ def test_install_test_keeps_frontend_build_outputs_container_owned() -> None:
 
 
 def test_install_test_removes_stale_container_before_controller_preflight() -> None:
-    block = _just_recipe_block("test-install")
+    block = _just_recipe_block("_gate-install")
 
     remove_stale = block.index('docker rm -f "$CONTAINER"')
     release_working = block.index("just _release-completed-package-rails")
@@ -465,7 +442,7 @@ def test_install_test_removes_stale_container_before_controller_preflight() -> N
 
 
 def test_install_test_runs_local_release_glowup_from_real_package() -> None:
-    block = _just_recipe_block("test-install").replace(r"\"", '"').replace(r"\$", "$")
+    block = _just_recipe_block("_gate-install").replace(r"\"", '"').replace(r"\$", "$")
 
     assert "Running local release glow-up" in block
     assert "scripts/local-release-glowup.py" in block
@@ -473,11 +450,11 @@ def test_install_test_runs_local_release_glowup_from_real_package() -> None:
     assert "--bin-dir /cargo-target/debug" in block
     assert '--assets-dir "$INSTALL_ASSETS_DIR"' in block
     assert '--config-root "$INSTALL_CONFIG_DIR"' in block
-    assert "just test-install" in _just_recipe_block("test:")
+    assert "just _gate-install" in _just_recipe_block("test:")
 
 
 def test_install_test_uses_clean_isolated_asset_fixtures() -> None:
-    block = _just_recipe_block("test-install").replace(r"\"", '"').replace(r"\$", "$")
+    block = _just_recipe_block("_gate-install").replace(r"\"", '"').replace(r"\$", "$")
     update_tests = (PROJECT_ROOT / "tests/capsem-install/test_update.py").read_text()
 
     assert 'INSTALL_ASSETS_DIR="target/install-test-assets"' in block
@@ -533,7 +510,7 @@ def test_local_release_glowup_has_zstd_extraction_support_in_install_image() -> 
 
 def test_install_recipe_invokes_pytest_as_a_module_inside_container() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
-    recipe = justfile.split("test-install:", maxsplit=1)[1].split(
+    recipe = justfile.split("_gate-install:", maxsplit=1)[1].split(
         "\n# Dispatch one serialized release workflow", maxsplit=1
     )[0]
 
@@ -580,7 +557,7 @@ def test_local_linux_preflight_contains_asset_ci_release_tools() -> None:
 
     assert "@cyclonedx/cdxgen@12.7.0" in host_builder
     assert "@cyclonedx/cdxgen@latest" not in host_builder
-    assert "just build-host-image" in preflight
+    assert "just _build-host-image" in preflight
     assert "if ! docker image inspect capsem-host-builder" not in preflight
     assert "cdxgen --version" in preflight
     assert preflight.index("cdxgen --version") < preflight.index(
@@ -630,7 +607,7 @@ def test_cross_arch_tauri_swap_excludes_non_crossable_introspection_toolchain() 
 
 def test_cross_arch_frontend_build_precedes_foreign_dev_library_swap() -> None:
     """The foreign GTK graph removes native Node; build static UI first."""
-    cross_compile = _just_recipe_block("cross-compile ")
+    cross_compile = _just_recipe_block("_cross-compile ")
 
     frontend = "echo '--- Build frontend ---'"
     swap = "swap-dev-libs \\$DPKG_ARCH"
@@ -641,7 +618,7 @@ def test_cross_arch_frontend_build_precedes_foreign_dev_library_swap() -> None:
 
 def test_cross_compile_reasserts_pinned_rust_target_before_expensive_work() -> None:
     """A persistent rustup volume must not mask the builder's pinned targets."""
-    cross_compile = _just_recipe_block("cross-compile ")
+    cross_compile = _just_recipe_block("_cross-compile ")
 
     install = "rustup toolchain install 1.97.1 --profile minimal"
     target = "rustup target add --toolchain 1.97.1 \\$RUST_TARGET"
@@ -668,10 +645,10 @@ def test_deb_repacker_strips_each_elf_with_its_target_tool_and_fails_closed() ->
 
 
 def test_cross_compile_refreshes_the_cached_host_builder_image() -> None:
-    cross_compile = _just_recipe_block("cross-compile ")
+    cross_compile = _just_recipe_block("_cross-compile ")
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
 
-    assert "just build-host-image" in cross_compile
+    assert "just _build-host-image" in cross_compile
     assert "docker image inspect capsem-host-builder:latest" not in cross_compile
     assert host_builder.index("COPY swap-dev-libs.sh") > host_builder.index(
         "cargo install tauri-cli"
@@ -680,9 +657,9 @@ def test_cross_compile_refreshes_the_cached_host_builder_image() -> None:
 
 def test_cross_compile_preflights_docker_capacity_after_builder_before_package() -> None:
     """Asset lanes must not leave Linux package builds at zero Docker disk."""
-    cross_compile = _just_recipe_block("cross-compile ")
+    cross_compile = _just_recipe_block("_cross-compile ")
 
-    build_image = cross_compile.index("just build-host-image")
+    build_image = cross_compile.index("just _build-host-image")
     release_completed_rails = cross_compile.index("just _release-completed-docker-rails")
     release_install_target = cross_compile.index("just _release-deferred-install-target")
     capacity = '"$ROOT/scripts/ensure-docker-space.sh" package'
@@ -726,10 +703,10 @@ def test_linux_rust_target_is_released_before_asset_capacity_preflight() -> None
     candidate = _just_recipe_block("_test-candidate:")
     release = _just_recipe_block("_release-completed-linux-rust-target:")
 
-    linux_rust = candidate.index("just test-linux-rust")
+    linux_rust = candidate.index("just _gate-linux-rust")
     release_call = candidate.index("just _release-completed-linux-rust-target")
     release_builder = candidate.index("--boundary after-linux-rust-builder")
-    asset_gate = candidate.index("just test-assets")
+    asset_gate = candidate.index("just _gate-assets")
 
     assert linux_rust < release_call < release_builder < asset_gate
     assert "--boundary after-linux-rust" in release
@@ -738,7 +715,7 @@ def test_linux_rust_target_is_released_before_asset_capacity_preflight() -> None
 
 def test_install_boundary_releases_only_completed_package_targets() -> None:
     release = _just_recipe_block("_release-completed-package-rails:")
-    install = _just_recipe_block("test-install:")
+    install = _just_recipe_block("_gate-install:")
 
     assert "--boundary after-package-arm64" in release
     assert "--boundary after-package-x86_64" in release
@@ -754,9 +731,9 @@ def test_full_gate_releases_deferred_install_target_between_package_arches() -> 
     candidate = _just_recipe_block("_test-candidate:")
     release = _just_recipe_block("_release-deferred-install-target:")
 
-    arm_package = candidate.index("just cross-compile arm64")
+    arm_package = candidate.index("just _cross-compile arm64")
     release_call = candidate.index("just _release-deferred-install-target")
-    x86_package = candidate.index("just cross-compile x86_64")
+    x86_package = candidate.index("just _cross-compile x86_64")
 
     assert arm_package < release_call < x86_package
     assert "--boundary before-packages" in release
@@ -767,8 +744,8 @@ def test_full_gate_releases_completed_buildkit_graph_after_packages() -> None:
     candidate = _just_recipe_block("_test-candidate:")
     release = _just_recipe_block("_release-completed-buildkit-graph:")
 
-    arm_package = candidate.index("just cross-compile arm64")
-    x86_package = candidate.index("just cross-compile x86_64")
+    arm_package = candidate.index("just _cross-compile arm64")
+    x86_package = candidate.index("just _cross-compile x86_64")
     release_call = candidate.index("just _release-completed-buildkit-graph")
 
     assert arm_package < x86_package < release_call
@@ -783,7 +760,7 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
 
     dependencies = candidate.splitlines()[0].split(":", 1)[1].split()
     assert "_bound-docker-test-storage" in dependencies
-    assert candidate.index("just test-install") < candidate.index("just _bound-docker-test-storage")
+    assert candidate.index("just _gate-install") < candidate.index("just _bound-docker-test-storage")
     capacity = bound.index("scripts/ensure-docker-space.sh")
     release_install = bound.index("--boundary candidate-boundary")
     assert release_install < capacity
@@ -797,12 +774,12 @@ def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> N
 
     install_preflight = candidate.index("just _test-install-harness-preflight")
     release_install = candidate.index("--boundary after-install-preflight")
-    linux_parity = candidate.index("just test-linux-rust")
-    asset_gate = candidate.index("just test-assets")
+    linux_parity = candidate.index("just _gate-linux-rust")
+    asset_gate = candidate.index("just _gate-assets")
     release_buildkit = candidate.index("just _release-completed-buildkit-graph")
-    arm_package = candidate.index("just cross-compile arm64")
-    x86_package = candidate.index("just cross-compile x86_64")
-    install_tail = candidate.rindex("just test-install")
+    arm_package = candidate.index("just _cross-compile arm64")
+    x86_package = candidate.index("just _cross-compile x86_64")
+    install_tail = candidate.rindex("just _gate-install")
 
     assert install_preflight < release_install < arm_package
     assert linux_parity < asset_gate
@@ -821,7 +798,7 @@ def test_docker_gc_reclaims_old_created_debug_containers() -> None:
 
 
 def test_install_gate_releases_disposable_build_state_before_pytest() -> None:
-    block = _just_recipe_block("test-install")
+    block = _just_recipe_block("_gate-install")
 
     package_install = block.index("Installing .deb via dpkg")
     trim_build_state = block.index(
@@ -925,7 +902,7 @@ def test_host_builder_uses_digest_pinned_prebuilt_node_runtime() -> None:
 
 
 def test_standalone_install_gate_preflights_privileged_helper() -> None:
-    block = _just_recipe_block("test-install")
+    block = _just_recipe_block("_gate-install")
 
     release_install_target = block.index("just _release-deferred-install-target")
     capacity = block.index('"$ROOT/scripts/ensure-docker-space.sh" install-preflight')
@@ -1336,29 +1313,14 @@ def test_local_release_glowup_forbids_metadata_only_binary_cohorts() -> None:
     assert "without recompiling a second binary cohort" not in script
 
 
-def test_local_native_install_uses_public_manifest_contract_by_default() -> None:
-    justfile = (PROJECT_ROOT / "justfile").read_text()
-    install = justfile.split(
-        "install: _pnpm-install _stamp-version _check-assets _pack-initrd _materialize-config",
-        maxsplit=1,
-    )[1].split("\n# Run install e2e tests", maxsplit=1)[0]
+def test_native_glowup_owns_exact_manifest_and_installed_shell_evidence() -> None:
+    macos = (PROJECT_ROOT / "scripts" / "macos_release_glowup.py").read_text()
+    linux = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
 
-    assert (
-        'MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"'
-        in install
-    )
-    assert '--manifest "$MANIFEST_URL"' in install
-    assert '--manifest "file://$PWD/' not in install
-    assert 'MANIFEST_CHANNEL="${CAPSEM_INSTALL_CHANNEL:-stable}"' in install
-    assert "scripts/verify-installed-release.py" in install
-    assert '--manifest-url "$MANIFEST_URL"' in install
-    assert '--channel "$MANIFEST_CHANNEL"' in install
-    assert '--package-version "$VERSION"' in install
-    assert "scripts/prove-installed-shell.py" in install
-    assert "CAPSEM_LOCAL_NATIVE_INSTALL_SHELL_OK" in install
-    assert install.index("scripts/verify-installed-release.py") < install.index(
-        "scripts/prove-installed-shell.py"
-    )
+    assert "assert_manifest_artifact" in macos
+    assert "assert_manifest_artifact" in linux
+    assert "prove-macos-package-boot.sh" in macos
+    assert "verify-installed-release.py" in linux
 
 
 def test_dev_service_does_not_replace_installed_assets_with_worktree_symlink() -> None:
@@ -1671,8 +1633,8 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
     assert "Complete canonical release gate (just test)" in qualification
     assert "run: just test" not in workflow
     assert "scripts/check-release-qualification.py" in workflow
-    assert "just build-kernel" not in workflow
-    assert "just build-rootfs" not in workflow
+    assert "just _build-kernel" not in workflow
+    assert "just _build-rootfs" not in workflow
     assert "RELEASE_CHANNEL: ${{ inputs.channel }}" in workflow
     assert (
         "ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json"
@@ -1734,7 +1696,7 @@ def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
     assert "CAPSEM_SKIP_KVM_CHECK" in doctor_linux
     assert 'skip "/dev/kvm (CAPSEM_SKIP_KVM_CHECK set)"' in doctor_linux
 
-    for recipe in ("build-kernel", "build-rootfs", "build-assets"):
+    for recipe in ("_build-kernel", "_build-rootfs", "_build-assets"):
         block = justfile.split(f"\n{recipe} ", 1)[1].split("\n# ", 1)[0]
         assert "CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor" in block
 
@@ -1743,7 +1705,7 @@ def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
 
 
 def test_only_systemd_package_proof_receives_kvm_devices() -> None:
-    cross_compile = _just_recipe_block("cross-compile")
+    cross_compile = _just_recipe_block("_cross-compile")
     proof = _just_recipe_block("_prove-linux-deb")
 
     assert "DOCKER_KVM_ARGS" not in cross_compile
@@ -1756,7 +1718,7 @@ def test_only_systemd_package_proof_receives_kvm_devices() -> None:
 
 
 def test_cross_compile_clock_sync_uses_bounded_colima_command() -> None:
-    cross_compile = _just_recipe_block("cross-compile")
+    cross_compile = _just_recipe_block("_cross-compile")
 
     assert "python3 scripts/sync-container-clock.py" in cross_compile
     assert "docker run --rm --privileged alpine date" not in cross_compile

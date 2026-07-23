@@ -38,15 +38,12 @@ def test_release_contract_rejects_wrong_case_even_on_macos() -> None:
         _read_text_exact_case("Justfile")
 
 
-def test_version_stamp_refreshes_frozen_lock_before_release_cut() -> None:
+def test_version_stamp_refreshes_frozen_lock() -> None:
     stamp = _just_recipe_block("_stamp-version:")
-    prepare = _just_recipe_block("prepare-release:")
 
     assert 'pyproject.toml' in stamp
     assert "uv lock --offline" in stamp
     assert stamp.index('pyproject.toml') < stamp.index("uv lock --offline")
-    assert "git add " in prepare
-    assert "uv.lock" in prepare.split("git add ", 1)[1].splitlines()[0]
 
 
 def test_checked_in_python_lock_matches_project_version() -> None:
@@ -66,41 +63,18 @@ def test_checked_in_python_lock_matches_project_version() -> None:
     assert locked_version == project_version
 
 
-def test_release_candidate_is_committed_without_minting_a_tag() -> None:
-    prepare = _just_recipe_block("prepare-release:")
+def test_release_commands_are_not_a_parallel_just_surface() -> None:
+    justfile = _read_text_exact_case("justfile")
 
-    assert "prepare-release:" in prepare
-    assert "just _stamp-version" in prepare
-    assert "just test" in prepare
-    assert prepare.index(
-        'git commit -m "release candidate: v${NEW}"'
-    ) < prepare.index("just test")
-    assert 'CANDIDATE_SHA=$(git rev-parse HEAD)' in prepare
-    assert 'git commit -m "release candidate: v${NEW}"' in prepare
-    assert "git tag" not in prepare
-    assert "gh workflow run" not in prepare
-    assert "gh release" not in prepare
+    for retired in ("prepare-release", "qualify-release", "cut-release", "release"):
+        assert f"\n{retired}:" not in justfile
+        assert f"\n{retired} " not in justfile
 
 
-def test_release_tag_is_minted_only_after_exact_head_qualification() -> None:
-    cut = _just_recipe_block("cut-release ")
+def test_release_workflow_verifies_qualification_before_publication() -> None:
+    release = _read_text_exact_case(".github/workflows/release.yaml")
 
-    assert "test" not in cut.splitlines()[0]
-    assert "_stamp-version" not in cut
-    assert 'SHA=$(git rev-parse HEAD)' in cut
-    qualification = 'scripts/check-release-qualification.py --sha "$SHA" --channel "$CHANNEL"'
-    assert qualification in cut
-    assert cut.index(qualification) < cut.index(
-        'git tag "$TAG"'
-    )
-    assert "git commit" not in cut
-
-
-def test_remote_qualification_dispatches_the_exact_published_head() -> None:
-    qualify = _just_recipe_block("qualify-release ")
-
-    assert 'SHA=$(git rev-parse HEAD)' in qualify
-    assert 'test "$(git rev-parse origin/main)" = "$SHA"' in qualify
-    assert 'gh workflow run release-qualification.yaml --ref main -f "sha=$SHA" -f "channel=$CHANNEL"' in qualify
-    assert 'scripts/check-release-qualification.py --sha "$SHA" --channel "$CHANNEL"' in qualify
-    assert 'git tag "$TAG"' not in qualify
+    verify = release.index("Verify exact commit passed remote qualification")
+    package = release.index("build-app-macos:")
+    assert verify < package
+    assert "scripts/check-release-qualification.py" in release

@@ -30,11 +30,11 @@ import { describe, it, expect } from 'vitest';
 
 ## Mock mode
 
-When `window.__TAURI_INTERNALS__` is absent (browser via `just ui`), `api.ts` auto-switches all IPC calls to return fake data from `mock.ts`. Settings data comes from `mock-settings.generated.ts` (auto-generated from `config/settings/ui-metadata.generated.json` by the builder). Other mock data (MCP servers, VM state, logs) lives in `mock.ts`.
+When `window.__TAURI_INTERNALS__` is absent (browser via `just dev ui`), `api.ts` auto-switches all IPC calls to return fake data from `mock.ts`. Settings data comes from `mock-settings.generated.ts` (auto-generated from `config/settings/ui-metadata.generated.json` by the builder). Other mock data (MCP servers, VM state, logs) lives in `mock.ts`.
 
-This means you can test the full UI without a VM by running `just ui`.
+This means you can test the full UI without a VM by running `just dev ui`.
 
-**Generated mock data**: `mock-settings.generated.ts` is produced by `scripts/generate_schema.py` from `config/settings/ui-metadata.generated.json`. It runs as part of `just run` and `just test` via the `_generate-settings` recipe. Never hand-edit this file.
+**Generated mock data**: `mock-settings.generated.ts` is produced by `scripts/generate_schema.py` from `config/settings/ui-metadata.generated.json`. It runs as part of `just exec` and `just test` via the `_generate-settings` recipe. Never hand-edit this file.
 
 ## Visual verification with Chrome DevTools MCP
 
@@ -42,7 +42,7 @@ This means you can test the full UI without a VM by running `just ui`.
 
 ### Workflow for every UI change
 
-1. Start `just ui` (if not already running)
+1. Start `just dev ui` (if not already running)
 2. `navigate_page` to `http://localhost:5173`
 3. `list_console_messages` types=["error","warn"] -- expect zero
 4. Navigate to the view(s) affected by your change
@@ -65,8 +65,8 @@ Click through every section (AI Providers, Repositories, Security, VM, Appearanc
 ### After changing TOML configs or generated mock data
 
 When modifying `config/settings/ui-metadata.generated.json` or regenerating `mock-settings.generated.ts`:
-1. Run `just _generate-settings` (or let `just run`/`just test` do it)
-2. Start `just ui`
+1. Run `just _generate-settings` (or let `just exec`/`just test` do it)
+2. Start `just dev ui`
 3. Navigate to Settings view
 4. Screenshot and verify new/changed settings appear correctly
 5. Check that setting counts match (grep `mockSettings.find` in generated file)

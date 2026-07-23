@@ -212,7 +212,7 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke() 
     assert "python3 scripts/macos_release_glowup.py" in canonical_gate
 
     smoke_start = justfile.index("smoke:")
-    smoke_end = justfile.index("\n# Gateway unit", smoke_start)
+    smoke_end = justfile.index("\n# Run install e2e tests", smoke_start)
     smoke = justfile[smoke_start:smoke_end]
     assert "tart run" not in smoke.lower()
     assert "macos_tart_glowup.py" not in smoke
@@ -240,5 +240,5 @@ def test_public_release_dispatch_recipe_is_gone() -> None:
 
     assert '\nrelease tag="" channel="stable":' not in f"\n{justfile}"
     assert "    release " not in listed
-    assert "qualify-release" in listed
-    assert "cut-release" in listed
+    assert "qualify-release" not in listed
+    assert "cut-release" not in listed

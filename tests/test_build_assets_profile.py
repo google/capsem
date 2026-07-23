@@ -24,10 +24,10 @@ def _recipe_block(name: str) -> str:
 
 
 def test_build_assets_requires_profile_and_uses_capsem_admin() -> None:
-    block = _recipe_block("build-assets")
+    block = _recipe_block("_build-assets")
 
     assert 'if [[ -z "$PROFILE_ARG" ]]' in block
-    assert "profile id required" in block
+    assert "internal _build-assets requires" in block
     assert block.index('if [[ -z "$PROFILE_ARG" ]]') < block.index("just _install-tools")
     assert "cargo run -p capsem-admin -- image build" in block
     assert '--profile "config/profiles/${PROFILE_ARG}/profile.toml"' in block
@@ -36,11 +36,11 @@ def test_build_assets_requires_profile_and_uses_capsem_admin() -> None:
 
 
 def test_asset_build_primitives_accept_an_isolated_output_root() -> None:
-    for recipe in ("build-kernel", "build-rootfs", "build-assets"):
+    for recipe in ("_build-kernel", "_build-rootfs", "_build-assets"):
         block = _recipe_block(recipe)
         assert "output=assets_dir" in block
         assert 'OUTPUT_ARG="{{output}}"' in block
-        if recipe == "build-assets":
+        if recipe == "_build-assets":
             assert '--output "$OUTPUT_ARG"' in block
         else:
             assert '"$OUTPUT_ARG"' in block
@@ -52,9 +52,9 @@ def test_asset_build_primitives_accept_an_isolated_output_root() -> None:
 
 def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
     test = _recipe_block("test:")
-    asset_gate = _recipe_block("test-assets:")
+    asset_gate = _recipe_block("_gate-assets:")
 
-    assert "just test-assets" in test
+    assert "just _gate-assets" in test
     assert "profile_paths=(config/profiles/*/profile.toml)" in asset_gate
     assert 'for profile_path in "${profile_paths[@]}"; do' in asset_gate
     assert "for arch in arm64 x86_64; do" in asset_gate
@@ -78,9 +78,9 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
 
 
 def test_asset_gate_runs_architecture_lanes_in_parallel_before_boot_proofs() -> None:
-    asset_gate = _recipe_block("test-assets:")
+    asset_gate = _recipe_block("_gate-assets:")
 
-    assert asset_gate.startswith("test-assets: _bootstrap ")
+    assert asset_gate.startswith("_gate-assets: _bootstrap ")
     assert "build_arch_lane()" in asset_gate
     assert 'build_arch_lane arm64 2>&1 | tee "$ARM64_BUILD_LOG"' in asset_gate
     assert 'build_arch_lane x86_64 2>&1 | tee "$X86_64_BUILD_LOG"' in asset_gate
@@ -97,7 +97,7 @@ def test_asset_gate_runs_architecture_lanes_in_parallel_before_boot_proofs() -> 
 
 
 def test_asset_gate_reaps_gateway_and_service_between_profile_proofs() -> None:
-    asset_gate = _recipe_block("test-assets:")
+    asset_gate = _recipe_block("_gate-assets:")
 
     assert "stop_gate_pidfile" in asset_gate
     assert "gate_pid_running" in asset_gate
@@ -115,17 +115,17 @@ def test_asset_gate_reaps_gateway_and_service_between_profile_proofs() -> None:
 
 def test_asset_ci_uses_primitives_owned_by_just_test() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
-    asset_gate = _recipe_block("test-assets:")
+    asset_gate = _recipe_block("_gate-assets:")
 
-    assert 'just build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
-    assert 'just build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
+    assert 'just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
+    assert 'just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
     assert "just _build-image-template" in asset_gate
 
 
 def test_asset_matrix_preflights_once_and_reuses_the_public_build_primitive() -> None:
-    asset_gate = _recipe_block("test-assets:")
-    kernel = _recipe_block("build-kernel")
-    rootfs = _recipe_block("build-rootfs")
+    asset_gate = _recipe_block("_gate-assets:")
+    kernel = _recipe_block("_build-kernel")
+    rootfs = _recipe_block("_build-rootfs")
     primitive = _recipe_block("_build-image-template")
 
     assert 'just _build-image-template "{{arch}}" "$PROFILE_ARG" "$OUTPUT_ARG" kernel' in kernel
@@ -133,7 +133,7 @@ def test_asset_matrix_preflights_once_and_reuses_the_public_build_primitive() ->
     assert "cargo run -p capsem-admin -- image build" in primitive
     assert "just _install-tools" not in primitive
     assert "just doctor" not in primitive
-    assert asset_gate.startswith("test-assets: _bootstrap ")
+    assert asset_gate.startswith("_gate-assets: _bootstrap ")
     assert "CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor" not in asset_gate
 
 
@@ -141,12 +141,12 @@ def test_check_assets_recovers_by_iterating_checked_in_profiles() -> None:
     block = _recipe_block("_check-assets:")
 
     assert "for profile in config/profiles/*/profile.toml; do" in block
-    assert 'just build-assets "$(basename "$(dirname "$profile")")" "$arch"' in block
-    assert "just build-assets code" not in block
+    assert 'just _build-assets "$(basename "$(dirname "$profile")")" "$arch"' in block
+    assert "just _build-assets code" not in block
 
 
 def test_runtime_recipes_materialize_generated_config_before_service() -> None:
-    for recipe in ["shell:", "run-service:", "smoke:", "bench:", "install:"]:
+    for recipe in ["shell:", "run-service:", "smoke:"]:
         block = _recipe_block(recipe)
         assert "_pack-initrd" in block
         assert "_materialize-config" in block

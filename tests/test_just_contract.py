@@ -20,7 +20,7 @@ def test_justfile_routes_assets_through_profile_admin_rail() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
     materialize_config = (PROJECT_ROOT / "scripts" / "materialize-config.sh").read_text()
 
-    assert 'echo "ERROR: profile id required. Use: just build-assets <profile-id> [arm64|x86_64]"' in justfile
+    assert 'echo "ERROR: internal _build-assets requires <profile-id> [arm64|x86_64]"' in justfile
     assert '--profile "config/profiles/${PROFILE_ARG}/profile.toml"' in justfile
     assert "--config-root config" in justfile
     assert "cargo run -p capsem-admin -- image build" in justfile
@@ -82,11 +82,11 @@ def test_active_docs_and_skills_do_not_teach_retired_just_run() -> None:
     )
 
 
-def test_justfile_exposes_docs_release_gate() -> None:
+def test_justfile_exposes_one_docs_build() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
 
-    assert "\ndocs: _pnpm-install\n" in justfile
-    docs_block = justfile.split("\ndocs: _pnpm-install\n", maxsplit=1)[1].split(
+    assert "\nbuild-docs: _pnpm-install\n" in justfile
+    docs_block = justfile.split("\nbuild-docs: _pnpm-install\n", maxsplit=1)[1].split(
         "\n\n", maxsplit=1
     )[0]
     assert "bash scripts/check-web-surface.sh docs" in docs_block

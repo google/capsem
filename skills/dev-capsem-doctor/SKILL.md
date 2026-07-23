@@ -63,7 +63,7 @@ def output_dir():
 2. Use `from conftest import run` for shell commands, `output_dir` fixture for temp files
 3. Tests auto-skip outside the capsem VM (no special guards needed)
 4. `just exec "capsem-doctor"` picks up changes immediately (diagnostics repacked into initrd)
-5. For rootfs-baked changes: `just build-assets` then `just exec "capsem-doctor"`
+5. For rootfs-baked changes: `just _build-assets` then `just exec "capsem-doctor"`
 
 ## Where tests live on disk
 

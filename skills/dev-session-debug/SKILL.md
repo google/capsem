@@ -30,15 +30,15 @@ identity bug until proven otherwise.
 ### Listing sessions
 
 ```bash
-just list-sessions                    # Recent non-vacuumed sessions
-just list-sessions -n 20              # Show more
-just list-sessions --with-model       # Only sessions with AI model calls
-just list-sessions --with-db          # Only sessions with session.db on disk
-just list-sessions --with-net         # Only sessions with network events
-just list-sessions --with-mcp         # Only sessions with MCP calls
-just list-sessions --min-cost 0.01    # Only sessions that cost money
-just list-sessions --all              # Include vacuumed sessions
-just list-sessions --all --with-model # Combine filters
+python3 scripts/list_sessions.py                    # Recent non-vacuumed sessions
+python3 scripts/list_sessions.py -n 20              # Show more
+python3 scripts/list_sessions.py --with-model       # Only sessions with AI model calls
+python3 scripts/list_sessions.py --with-db          # Only sessions with session.db on disk
+python3 scripts/list_sessions.py --with-net         # Only sessions with network events
+python3 scripts/list_sessions.py --with-mcp         # Only sessions with MCP calls
+python3 scripts/list_sessions.py --min-cost 0.01    # Only sessions that cost money
+python3 scripts/list_sessions.py --all              # Include vacuumed sessions
+python3 scripts/list_sessions.py --all --with-model # Combine filters
 ```
 
 Output columns: ID, Created (MM-DD HH:MM:SS), Duration, Cost, net events, tokens (in+out), tool calls, MCP calls, fs events. Sessions with `*` after the ID still have a `session.db` on disk (queryable).
@@ -48,9 +48,9 @@ Stats come from the main.db rollup, so they're always available even after the s
 ### Deep inspection
 
 ```bash
-just inspect-session              # Full integrity check on latest session
-just inspect-session <id>         # Specific session (use full ID from list)
-just inspect-session -n 10        # Show 10 preview rows per table
+python3 scripts/check_session.py              # Full integrity check on latest session
+python3 scripts/check_session.py <id>         # Specific session (use full ID from list)
+python3 scripts/check_session.py -n 10        # Show 10 preview rows per table
 ```
 
 Checks: table existence, row counts, tool lifecycle integrity (orphaned tool_calls/tool_responses), AI provider correlation (net_events vs model_calls), NULL detection in critical fields, and optional MCP transport correlation.
@@ -335,7 +335,7 @@ Rollup happens when a session ends.
 ### tool_calls without matching tool_responses
 - The model invoked a tool but the next turn's tool results weren't captured
 - Check if the VM session ended before the tool result was sent back
-- `just inspect-session` reports orphaned tool_calls automatically
+- `python3 scripts/check_session.py` reports orphaned tool_calls automatically
 
 ### Empty fs_events
 - `capsem-fs-watch` didn't start (check boot logs for `[capsem-fs-watch] starting`)
@@ -352,11 +352,12 @@ Rollup happens when a session ends.
 
 ### Cost is zero
 - Model not found in pricing table (`config/data/genai-prices.json`)
-- Run `just update-prices` to refresh pricing data
+- Download the reviewed upstream pricing JSON and invoke
+  `python3 scripts/update_genai_prices.py <source.json> config/data/genai-prices.json`.
 
 ## When to inspect sessions
 
-**Always** run `just inspect-session` after changes to:
+**Always** run `python3 scripts/check_session.py` after changes to:
 - Guest MCP endpoint (tool routing, policy, response format)
 - MITM proxy (SSE parsing, body preview, Content-Encoding)
 - File monitor (VirtioFS events, debouncer)
@@ -367,32 +368,32 @@ The inspect output now includes a tool usage breakdown from `tool_calls` plus MC
 
 ## Ad-hoc SQL queries
 
-Use `just query-session` to run SQL against session DBs. Auto-selects the latest non-vacuumed session with a DB on disk. Pass a session ID as second argument to target a specific session.
+Use `sqlite3 "$HOME/.capsem/sessions/<id>/session.db"` to run SQL against session DBs. Auto-selects the latest non-vacuumed session with a DB on disk. Pass a session ID as second argument to target a specific session.
 
 ```bash
 # Decisions breakdown
-just query-session "SELECT decision, COUNT(*) FROM net_events GROUP BY decision"
+sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT decision, COUNT(*) FROM net_events GROUP BY decision"
 
 # Token totals by provider
-just query-session "SELECT provider, SUM(input_tokens) as in_tok, SUM(output_tokens) as out_tok, SUM(estimated_cost_usd) as cost FROM model_calls GROUP BY provider"
+sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT provider, SUM(input_tokens) as in_tok, SUM(output_tokens) as out_tok, SUM(estimated_cost_usd) as cost FROM model_calls GROUP BY provider"
 
 # Find orphaned tool calls
-just query-session "SELECT tc.call_id, tc.tool_name FROM tool_calls tc LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id WHERE tr.id IS NULL"
+sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT tc.call_id, tc.tool_name FROM tool_calls tc LEFT JOIN tool_responses tr ON tc.call_id = tr.call_id WHERE tr.id IS NULL"
 
 # MCP-origin user tool usage breakdown (snapshot, http, etc.)
-just query-session "SELECT tool_name, decision, COUNT(*) as cnt, ROUND(AVG(duration_ms),1) as avg_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name IS NOT NULL GROUP BY tool_name, decision ORDER BY cnt DESC"
+sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT tool_name, decision, COUNT(*) as cnt, ROUND(AVG(duration_ms),1) as avg_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name IS NOT NULL GROUP BY tool_name, decision ORDER BY cnt DESC"
 
 # MCP-origin tool usage breakdown
-just query-session "SELECT method, tool_name, decision, COUNT(*) as cnt FROM tool_calls WHERE origin = 'mcp' GROUP BY method, tool_name, decision ORDER BY cnt DESC"
+sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT method, tool_name, decision, COUNT(*) as cnt FROM tool_calls WHERE origin = 'mcp' GROUP BY method, tool_name, decision ORDER BY cnt DESC"
 
 # Check fs_events actions
-just query-session "SELECT action, COUNT(*) FROM fs_events GROUP BY action"
+sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT action, COUNT(*) FROM fs_events GROUP BY action"
 
 # Trace a tool call chain
-just query-session "SELECT id, model, stop_reason, trace_id FROM model_calls WHERE trace_id = '<trace_id>' ORDER BY timestamp"
+sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT id, model, stop_reason, trace_id FROM model_calls WHERE trace_id = '<trace_id>' ORDER BY timestamp"
 
-# Query a specific session (use full ID from just list-sessions)
-just query-session "SELECT COUNT(*) FROM net_events" 20260327-154418-f907
+# Query a specific session (use full ID from python3 scripts/list_sessions.py)
+sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT COUNT(*) FROM net_events" 20260327-154418-f907
 ```
 
-Tip: use `just list-sessions --with-db --with-model` to find sessions worth querying.
+Tip: use `python3 scripts/list_sessions.py --with-db --with-model` to find sessions worth querying.

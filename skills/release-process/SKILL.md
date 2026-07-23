@@ -5,6 +5,18 @@ description: Capsem release process, CI pipeline, Apple code signing, notarizati
 
 # Release Process
 
+## Public command discipline
+
+`just test` is the sole release-qualification command. There are no public
+`prepare-release`, `qualify-release`, `cut-release`, `release`, `install`, or
+`test-*` recipes. Candidate/tag/publication mechanics remain workflow-owned;
+native install proof remains glow-up-owned. Do not recreate a parallel Just
+release path.
+
+`config/public-surface.toml` locks the exact Just, Capsem CLI, and service HTTP
+surfaces. Updating the ledger requires explicit product/API approval and must
+be reviewed as a public contract change.
+
 ## Pre-release checklist
 
 ```bash
@@ -54,14 +66,13 @@ or gate change creates a new candidate and therefore needs a new complete run.
 Stamp the forward-only version before that complete local gate. The real macOS
 and Linux packages, host SBOM, installer metadata, and binary-version checks
 built by `just test` must contain the exact version that will be committed,
-qualified, and tagged. `prepare-release` therefore starts clean, stamps the
-version and release notes, commits the untagged candidate, and only then runs
-exactly one `just test` on that clean commit; testing the prior version and
-stamping afterward is not candidate evidence.
+qualified, and tagged. Version/changelog preparation is an explicit candidate
+operation, not a public Just recipe.
 
 Automatic benchmark recordings from `just test` belong under
-`target/test-benchmarks/`, which is ignored and disposable. Only an explicit
-`just bench` archives versioned history under `benchmarks/`. Never weaken the
+`target/test-benchmarks/`, which is ignored and disposable. Intentional
+historical benchmark publication uses the owning pytest/benchmark tools and an
+explicit review; there is no benchmark convenience recipe. Never weaken the
 clean-tree invariant by allowlisting benchmark source paths.
 
 Rust is pinned to `1.97.1` in `rust-toolchain.toml`, every workflow toolchain
@@ -244,32 +255,30 @@ checkouts disagreeing about what was actually shipped.
 ### Prepare and remotely qualify an untagged candidate
 
 ```bash
-just prepare-release
+just test
 git push origin HEAD:main
-just qualify-release stable
+gh workflow run release-qualification.yaml --ref main \
+  -f "sha=$(git rev-parse HEAD)" -f channel=stable
 ```
 
-`prepare-release` stamps the version and changelog, creates an ordinary
-candidate commit, then runs the local gate on that exact clean `HEAD`. It must not create a
-tag, GitHub Release, or channel mutation. Push that ordinary commit, then `qualify-release` dispatches
-the canonical Linux gate for its exact SHA. If qualification fails, add a
-normal forward fix commit and qualify the new exact SHA. Qualification is bound
-to both the exact SHA and the exact channel: a stable run cannot authorize a
-nightly release, or vice versa. Do not mint failure
-tags and do not stamp a new version merely to obtain another CI attempt.
+Prepare the version and changelog explicitly, commit the ordinary candidate,
+then run the complete local gate on that clean `HEAD`. It must not create a
+tag, GitHub Release, or channel mutation. Push that ordinary commit, then
+dispatch the canonical Linux qualification workflow. If qualification fails,
+add a normal forward fix commit and qualify the new candidate. Do not mint
+failure tags or stamp a new version merely to obtain another CI attempt.
 
 ### Mint the immutable tag after qualification
 
 ```bash
-just cut-release stable
+python3 scripts/check-release-qualification.py \
+  --sha "$(git rev-parse HEAD)" --channel stable
+git tag "v$(sed -n 's/^version = \"\\([^\"]*\\)\"/\\1/p' Cargo.toml | head -1)"
 ```
 
-`cut-release` performs no stamping and creates no commit. It compares `HEAD`
-with `origin/main`, requires a successful completed
-`release-qualification.yaml` run whose display title, `headSha`, and channel all
-match that exact SHA/channel pair, rejects existing local or remote tag names,
-and only then
-creates the local `vX.Y.Z` tag. Missing, pending, failed, malformed, or nearby
+Tagging performs no stamping and creates no commit. First compare `HEAD` with
+`origin/main`, require a successful completed qualification, and reject
+existing local or remote tag names. Missing, pending, failed, or malformed
 qualification results are hard failures.
 
 ### Manual publish
@@ -283,11 +292,10 @@ qualification results are hard failures.
    `gh workflow run release.yaml --ref vX.Y.Z -f tag=vX.Y.Z -f channel=stable`
 5. Watch that exact run with `gh run watch --exit-status`.
 
-There is deliberately no `just release` wrapper. Publication is not a second
+There is deliberately no Just release wrapper. Publication is not a second
 test gate, and hiding tag selection, workflow dispatch, polling, and retry
 semantics behind a large recipe created a fork from the canonical `just test`
-path. Qualification and tag creation stay in `qualify-release` and
-`cut-release`; the final workflow dispatch remains explicit.
+path. Qualification, tag creation, and final workflow dispatch remain explicit.
 
 Never reuse or move a tag. Always increment the version number, and always tag
 forward.
@@ -441,7 +449,9 @@ removed, fixed, and security groups.
 
 Binary and asset versions are **orthogonal**:
 
-- **Binary**: `1.3.{unix_timestamp}` for the current release line -- auto-stamped by `just _stamp-version` on every `just install` and `just prepare-release`. `just cut-release` only tags an already qualified exact commit. Set `CAPSEM_RELEASE_VERSION=x.y.z` when you need an exact preselected stamp.
+- **Binary**: `1.3.{unix_timestamp}` for the current release line. Select it
+  before committing and qualifying the candidate; tagging never changes it.
+  Set `CAPSEM_RELEASE_VERSION=x.y.z` when an exact preselected stamp is needed.
 - **Assets**: `YYYY.MMDD.patch` -- derived by `capsem-admin manifest generate` from the build date
 
 Three files hold the binary version (kept in sync by `_stamp-version`): `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`.

@@ -47,7 +47,7 @@ When the capsem MCP server is configured, Claude Code has direct VM control via 
 | Verify telemetry was recorded correctly | typed stats/timeline/security routes or Ironbank direct ledger reads |
 | Full regression suite | `just test` |
 | Build + boot + validate in one shot | `just smoke` |
-| Benchmark performance | `just benchmark` |
+| Benchmark performance | `just test` |
 
 MCP tools are for fast, targeted checks during development. Just recipes are for comprehensive validation before committing.
 

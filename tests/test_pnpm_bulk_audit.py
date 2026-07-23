@@ -93,12 +93,8 @@ def test_scheduled_workflow_owns_blocking_bulk_audit_signal() -> None:
     assert "npm bulk advisory audit (blocking security signal)" in scheduled
     assert "run: python3 scripts/audit-pnpm-bulk.py --project-dir frontend" in scheduled
 
-    # The explicit audit recipe remains a blocking, developer-invoked check.
-    audit_recipe = justfile.split("audit: _install-tools _pnpm-install", 1)[1].split(
-        "update-deps:", 1
-    )[0]
-    assert "python3 scripts/audit-pnpm-bulk.py --project-dir frontend" in audit_recipe
-    assert "||" not in audit_recipe
+    # Audit-only convenience is not a public Just fork.
+    assert "\naudit:" not in justfile
 
     # Candidate/smoke/PR gates report advisories without letting the external
     # publication clock turn an unrelated source candidate red.

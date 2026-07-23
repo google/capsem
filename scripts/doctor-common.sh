@@ -37,7 +37,7 @@ _doctor_build_assets_all_profiles() {
     arch="$(uname -m | sed 's/aarch64/arm64/;s/arm64/arm64/;s/x86_64/x86_64/')"
     local profile
     for profile in config/profiles/*/profile.toml; do
-        just build-assets "$(basename "$(dirname "$profile")")" "$arch"
+        just _build-assets "$(basename "$(dirname "$profile")")" "$arch"
     done
 }
 

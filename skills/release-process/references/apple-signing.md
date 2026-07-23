@@ -43,8 +43,7 @@ Tell the user:
 - exactly what to do (sign in to the two Apple pages above and accept any
   pending agreements or banking/tax terms)
 - when to retry (after the agreement is accepted and 1-5 minutes have passed)
-- what was intentionally not done (`just cut-release` was not run, so no
-  release commit/tag/push happened)
+- what was intentionally not done (no release commit/tag/push happened)
 
 If a timed retry is useful, offer or create a heartbeat retry. Keep the release
 paused until `notarytool history` succeeds locally.
@@ -83,4 +82,3 @@ and smokes `https://release.capsem.org/`, `/channels.json`, and the channel
 manifest through the public custom domain after Cloudflare publishes the
 generated site. Live VM asset releases use the same project preflight before
 the expensive asset build matrix starts.
-
