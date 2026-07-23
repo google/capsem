@@ -298,7 +298,7 @@ Before deployment, `just test` owns both native install boundaries. Linux uses
 `just test-install`: the gate serves generated stable and nightly release
 channels from package and manifest artifacts built in Docker, then proves
 `install.sh`, `capsem update --assets --manifest`, and `capsem update --yes`.
-On Apple Silicon macOS, `just test-macos-install` builds the real `.pkg`, mounts
+On Apple Silicon macOS, `scripts/macos_release_glowup.py` builds the real `.pkg`, mounts
 that exact file into a disposable Tart Mac, installs it, verifies the receipt,
 app bundle, binary cohort, and service/gateway status. Tart macOS guests cannot
 expose nested virtualization, so the recipe then extracts the same package on

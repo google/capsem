@@ -200,7 +200,7 @@ not prove channel switching and must never satisfy this gate.
 
 The complete local `just test` on the exact clean, versioned candidate is the
 authoritative Apple Virtualization.framework guest-shell proof.
-`test-macos-install` first installs the exact package in a disposable Tart Mac,
+`scripts/macos_release_glowup.py` first installs the exact package in a disposable Tart Mac,
 then extracts that same package on the physical host and boots a guest from the
 packaged binaries and profiles. This split is required because Tart macOS
 guests explicitly reject nested virtualization. The tagged

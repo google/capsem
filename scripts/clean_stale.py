@@ -10,15 +10,16 @@ probes liveness via socket.connect() instead (~4 us per socket).
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict, dataclass
 import errno
 import fnmatch
+import json
 import os
 import shutil
 import socket
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -73,6 +74,12 @@ class StageResult:
     removed: int
     elapsed_s: float
     detail: str = ""
+    bytes_before: int = 0
+    bytes_after: int = 0
+
+    @property
+    def bytes_reclaimed(self) -> int:
+        return max(0, self.bytes_before - self.bytes_after)
 
 
 def _rm(path: Path, dry_run: bool) -> bool:
@@ -437,6 +444,7 @@ def clean_cargo_artifacts(root: Path, dry_run: bool, verbose: bool) -> StageResu
     target = root / "target"
     if not target.is_dir():
         return StageResult("cargo", 0, time.monotonic() - start, "target/ absent")
+    bytes_before = target_size_bytes(root) or 0
 
     aggressive = _target_release_has_old_content(target, older_than_days=1)
     days = CARGO_AGGRESSIVE_DAYS if aggressive else CARGO_MODERATE_DAYS
@@ -551,7 +559,15 @@ def clean_cargo_artifacts(root: Path, dry_run: bool, verbose: bool) -> StageResu
     detail = f"threshold={days}d {'aggressive' if aggressive else 'moderate'}"
     if budget_removed:
         detail += f", budget={budget_removed}"
-    return StageResult("cargo", removed, time.monotonic() - start, detail)
+    bytes_after = target_size_bytes(root) or 0
+    return StageResult(
+        "cargo",
+        removed,
+        time.monotonic() - start,
+        detail,
+        bytes_before,
+        bytes_after,
+    )
 
 
 def clean_target_transients(root: Path, dry_run: bool, verbose: bool) -> StageResult:
@@ -631,7 +647,7 @@ def _dir_has_no_recent(root: Path, cutoff: float) -> bool:
     return True
 
 
-def target_size_gb(root: Path) -> float | None:
+def target_size_bytes(root: Path) -> int | None:
     target = root / "target"
     if not target.is_dir():
         return None
@@ -649,7 +665,20 @@ def target_size_gb(root: Path) -> float | None:
         kb = int(out.stdout.split()[0])
     except (ValueError, IndexError):
         return None
-    return kb / 1024 / 1024
+    return kb * 1024
+
+
+def target_size_gb(root: Path) -> float | None:
+    size = target_size_bytes(root)
+    return None if size is None else size / 1024**3
+
+
+def _human_bytes(value: int) -> str:
+    if value >= 1024**3:
+        return f"{value / 1024**3:.1f} GiB"
+    if value >= 1024**2:
+        return f"{value / 1024**2:.1f} MiB"
+    return f"{value} B"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -664,6 +693,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skip-sockets", action="store_true")
     parser.add_argument("--skip-rootfs", action="store_true")
     parser.add_argument("--skip-tmp", action="store_true")
+    parser.add_argument(
+        "--report",
+        help="JSONL cleanup ledger (default: <root>/target/storage/host-cleanup.jsonl)",
+    )
     args = parser.parse_args(argv)
 
     root = Path(args.root).resolve()
@@ -672,6 +705,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print("=== Pruning stale build artifacts ===")
     total_start = time.monotonic()
+    target_before = target_size_bytes(root) or 0
     results: list[StageResult] = []
 
     if not args.skip_rootfs:
@@ -689,13 +723,45 @@ def main(argv: list[str] | None = None) -> int:
 
     for r in results:
         suffix = f" [{r.detail}]" if r.detail else ""
-        print(f"  {r.name:8s} removed={r.removed:<6d} {r.elapsed_s * 1000:7.0f} ms{suffix}")
+        byte_delta = ""
+        if r.bytes_before or r.bytes_after:
+            byte_delta = (
+                f" bytes={_human_bytes(r.bytes_before)}->{_human_bytes(r.bytes_after)}"
+                f" reclaimed={_human_bytes(r.bytes_reclaimed)}"
+            )
+        print(
+            f"  {r.name:8s} removed={r.removed:<6d} "
+            f"{r.elapsed_s * 1000:7.0f} ms{byte_delta}{suffix}"
+        )
 
-    size_gb = target_size_gb(root)
-    if size_gb is not None:
-        print(f"  target/ now {size_gb:.1f} GB")
+    target_after = target_size_bytes(root) or 0
+    if target_before or target_after:
+        print(
+            f"  target/: {_human_bytes(target_before)} -> {_human_bytes(target_after)} "
+            f"(reclaimed {_human_bytes(max(0, target_before - target_after))})"
+        )
 
     total = time.monotonic() - total_start
+    ledger = Path(args.report) if args.report else root / "target/storage/host-cleanup.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "schema": "capsem.host_cleanup.v1",
+        "timestamp": time.time(),
+        "root": str(root),
+        "dry_run": args.dry_run,
+        "target": {
+            "before_bytes": target_before,
+            "after_bytes": target_after,
+            "reclaimed_bytes": max(0, target_before - target_after),
+        },
+        "stages": [
+            {**asdict(result), "bytes_reclaimed": result.bytes_reclaimed} for result in results
+        ],
+        "elapsed_s": total,
+    }
+    with ledger.open("a") as stream:
+        stream.write(json.dumps(payload, sort_keys=True) + "\n")
+    print(f"  ledger: {ledger}")
     print(f"=== Done in {total:.1f}s ===")
     return 0
 

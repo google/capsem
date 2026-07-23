@@ -21,27 +21,35 @@ OLD_DEBUG_CRATE = "capsem-debug" + "-upstream"
 
 
 def _rootfs_obom_bytes(architecture: str = "arm64") -> bytes:
-    return (json.dumps({
-        "bomFormat": "CycloneDX",
-        "metadata": {
-            "component": {
-                "type": "operating-system",
-                "name": f"capsem-rootfs-{architecture}",
-                "version": "guest-rootfs",
-                "properties": [
-                    {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
-                    {"name": "capsem:guest:architecture", "value": architecture},
+    return (
+        json.dumps(
+            {
+                "bomFormat": "CycloneDX",
+                "metadata": {
+                    "component": {
+                        "type": "operating-system",
+                        "name": f"capsem-rootfs-{architecture}",
+                        "version": "guest-rootfs",
+                        "properties": [
+                            {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
+                            {"name": "capsem:guest:architecture", "value": architecture},
+                        ],
+                    },
+                    "tools": {"components": [{"name": "cdxgen", "version": "12.7.0"}]},
+                },
+                "components": [
+                    {
+                        "type": "library",
+                        "name": "apt",
+                        "version": "2.6.1",
+                        "purl": "pkg:deb/debian/apt@2.6.1?distro=debian-12",
+                    }
                 ],
             },
-            "tools": {"components": [{"name": "cdxgen", "version": "12.7.0"}]},
-        },
-        "components": [{
-            "type": "library",
-            "name": "apt",
-            "version": "2.6.1",
-            "purl": "pkg:deb/debian/apt@2.6.1?distro=debian-12",
-        }],
-    }, sort_keys=True) + "\n").encode()
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode()
 
 
 def _readiness_checker_module():
@@ -78,13 +86,7 @@ def _cloudflare_pages_project_module():
 
 
 def _boot_timing_module():
-    module_path = (
-        PROJECT_ROOT
-        / "guest"
-        / "artifacts"
-        / "diagnostics"
-        / "boot_timing.py"
-    )
+    module_path = PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "boot_timing.py"
     spec = importlib.util.spec_from_file_location("capsem_doctor_boot_timing", module_path)
     assert spec is not None
     assert spec.loader is not None
@@ -135,9 +137,7 @@ def _skill_text(path: str) -> str:
     skill_dir = skill_path.parent
     main = skill_path.read_text()
     parts = [main]
-    for relative in dict.fromkeys(
-        re.findall(r"`(references/[A-Za-z0-9_./-]+\.md)`", main)
-    ):
+    for relative in dict.fromkeys(re.findall(r"`(references/[A-Za-z0-9_./-]+\.md)`", main)):
         reference = (skill_dir / relative).resolve()
         assert reference.is_relative_to(skill_dir.resolve())
         assert reference.is_file(), f"missing linked skill reference: {relative}"
@@ -191,9 +191,9 @@ def test_host_sbom_zstd_dependency_has_local_and_exact_sha_parity() -> None:
     assert 'confirm "zstd (Debian package/SBOM archive support, via brew)"' in bootstrap
     assert "brew install zstd" in bootstrap
     assert "for tool in cargo rustup node python3 uv pnpm sqlite3 git b3sum flock zstd" in doctor
-    assert 'zstd)' in macos_doctor
+    assert "zstd)" in macos_doctor
     assert 'echo "brew install zstd"' in macos_doctor
-    assert 'zstd)' in linux_doctor
+    assert "zstd)" in linux_doctor
 
     install = qualification.index("Install Linux full-gate system dependencies")
     canonical_gate = qualification.index("run: just test")
@@ -1086,7 +1086,7 @@ def test_cdxgen_release_tool_prerequisite_is_documented() -> None:
     ]
 
     assert 'CDXGEN_VERSION="12.7.0"' in release_preflight
-    assert 'CDXGEN_ACTUAL_VERSION=$(cdxgen --version' in release_preflight
+    assert "CDXGEN_ACTUAL_VERSION=$(cdxgen --version" in release_preflight
     assert 'if [ "$CDXGEN_ACTUAL_VERSION" = "$CDXGEN_VERSION" ]' in release_preflight
     assert "npm install -g @cyclonedx/cdxgen@12.7.0" in release_preflight
     assert "for tool in gh openssl cargo-sbom cdxgen" in doctor
@@ -1357,8 +1357,14 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "generated_at=\"$(date -u +'%Y-%m-%dT%H:%M:%SZ')\"" in build_channels
     assert '--generated-at "$generated_at"' in build_channels
     assert "scripts/build-complete-release-channel.py" in build_channels
-    assert '--channel-source "stable=file://$PWD/target/binary-channel/stable/manifest.json"' in build_channels
-    assert '--channel-source "nightly=file://$PWD/target/binary-channel/nightly/manifest.json"' in build_channels
+    assert (
+        '--channel-source "stable=file://$PWD/target/binary-channel/stable/manifest.json"'
+        in build_channels
+    )
+    assert (
+        '--channel-source "nightly=file://$PWD/target/binary-channel/nightly/manifest.json"'
+        in build_channels
+    )
     assert '--primary-channel "$RELEASE_CHANNEL"' in build_channels
     assert build_channels.index('generated_at="$(date -u') < build_channels.index(
         "scripts/build-complete-release-channel.py"
@@ -1507,8 +1513,14 @@ def test_untagged_release_candidate_runs_complete_canonical_gate_in_ci() -> None
     testing_skill = _source_text("skills/dev-testing/SKILL.md")
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
-    assert "run-name: Qualify release ${{ inputs.channel }} ${{ inputs.sha }}" in qualification_workflow
-    assert "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json" in qualification_workflow
+    assert (
+        "run-name: Qualify release ${{ inputs.channel }} ${{ inputs.sha }}"
+        in qualification_workflow
+    )
+    assert (
+        "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json"
+        in qualification_workflow
+    )
     assert "CAPSEM_INSTALL_CHANNEL: ${{ inputs.channel }}" in qualification_workflow
     assert "sha:" in qualification_workflow
     assert "ref: ${{ inputs.sha }}" in qualification_workflow
@@ -1566,7 +1578,10 @@ def test_untagged_release_candidate_runs_complete_canonical_gate_in_ci() -> None
     assert "needs: preflight" in _workflow_job_block("build-app-linux", "release.yaml")
     preflight = _workflow_job_block("preflight", "release.yaml")
     assert "Verify exact commit passed remote qualification" in preflight
-    assert 'scripts/check-release-qualification.py --sha "$GITHUB_SHA" --channel "$RELEASE_CHANNEL"' in preflight
+    assert (
+        'scripts/check-release-qualification.py --sha "$GITHUB_SHA" --channel "$RELEASE_CHANNEL"'
+        in preflight
+    )
     assert "fetch-depth: 0" in preflight
     assert "git fetch origin main" in preflight
     assert 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' in preflight
@@ -1612,7 +1627,10 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'require_contains "package receipt id" "package-id: com.capsem.pkg"' in macos
     assert 'require_contains "package receipt version" "version: $VERSION"' in macos
     assert 'require_path "application bundle" -d "/Applications/Capsem.app"' in macos
-    assert 'require_path "application executable" -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"' in macos
+    assert (
+        'require_path "application executable" -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"'
+        in macos
+    )
     assert 'require_path "per-user CLI" -x "$HOME/.capsem/bin/capsem"' in macos
     assert 'require_contains "per-user CLI version" "$VERSION"' in macos
     assert (
@@ -1679,7 +1697,7 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
     recipe = _recipe_block("test-install:")
 
     derived_build = 'docker build -t "$IMAGE" -f docker/Dockerfile.install-test .'
-    release_base = "docker image rm capsem-host-builder:latest"
+    release_base = "--boundary after-linux-rust-builder"
     assert derived_build in preflight
     assert release_base in preflight
     assert preflight.index(derived_build) < preflight.index(release_base)
@@ -1846,9 +1864,7 @@ def _install_release_graph_contract_fixture(
         f"{asset_base}/{current_assets}/arm64-vmlinuz": b"kernel bytes\n",
         f"{asset_base}/{current_assets}/arm64-initrd.img": b"initrd bytes\n",
         f"{asset_base}/{current_assets}/arm64-rootfs.erofs": b"rootfs bytes\n",
-        f"{asset_base}/{current_assets}/arm64-obom.cdx.json": (
-            _rootfs_obom_bytes()
-        ),
+        f"{asset_base}/{current_assets}/arm64-obom.cdx.json": (_rootfs_obom_bytes()),
     }
 
     def file_record(kind: str, name: str, url: str) -> dict[str, object]:
@@ -3366,13 +3382,13 @@ def test_remote_release_readiness_checker_verifies_public_evidence_artifacts() -
 def test_remote_release_readiness_rejects_live_host_obom_even_with_valid_cyclonedx() -> None:
     module = _readiness_checker_module()
     document = json.loads(_rootfs_obom_bytes())
-    document["components"].append({
-        "type": "application",
-        "name": "host browser extension",
-        "properties": [
-            {"name": "cdx:osquery:category", "value": "chrome_extensions"}
-        ],
-    })
+    document["components"].append(
+        {
+            "type": "application",
+            "name": "host browser extension",
+            "properties": [{"name": "cdx:osquery:category", "value": "chrome_extensions"}],
+        }
+    )
 
     failure = module.validate_evidence_document(
         json.dumps(document).encode(),
@@ -4005,9 +4021,7 @@ def test_ci_installs_b3sum_before_bootstrap_asset_hash_checks() -> None:
     workflow = _workflow_job_block("test")
 
     install_tools_pos = workflow.find("- name: Install prebuilt Rust tools")
-    b3sum_pos = workflow.find(
-        "tool: cargo-llvm-cov@0.8.5,cargo-nextest@0.9.137,b3sum@1.8.5"
-    )
+    b3sum_pos = workflow.find("tool: cargo-llvm-cov@0.8.5,cargo-nextest@0.9.137,b3sum@1.8.5")
     bootstrap_pos = workflow.find("uv run python -m pytest tests/capsem-bootstrap/")
 
     assert install_tools_pos != -1
@@ -4175,9 +4189,7 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     web_gate = _source_text("scripts/check-web-surface.sh")
 
     generate_pos = workflow.find("bash scripts/generate-settings.sh")
-    first_frontend_build_pos = workflow.find(
-        "bash scripts/check-web-surface.sh frontend-build"
-    )
+    first_frontend_build_pos = workflow.find("bash scripts/check-web-surface.sh frontend-build")
     frontend_check_pos = workflow.find("bash scripts/check-web-surface.sh frontend")
     release_gate_pos = release_qualification.find("run: just test")
 
@@ -4185,14 +4197,17 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert first_frontend_build_pos != -1
     assert frontend_check_pos != -1
     assert release_gate_pos != -1
-    assert "_test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-stale _pnpm-install _check-generated-settings" in just
+    assert (
+        "_test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-stale _pnpm-install _check-generated-settings"
+        in just
+    )
     assert "bash scripts/check-web-surface.sh frontend" in just
     assert "pnpm --dir frontend run check" in web_gate
     assert generate_pos < first_frontend_build_pos
     assert generate_pos < frontend_check_pos
     assert "bash scripts/generate-settings.sh" in just
     generated_gate = _recipe_block("_check-generated-settings:")
-    assert "bash \"$ROOT/scripts/check-generated-settings.sh\"" in generated_gate
+    assert 'bash "$ROOT/scripts/check-generated-settings.sh"' in generated_gate
     assert "dev-frontend: _pnpm-install _generate-settings" in just
     assert 'build-ui profile="debug": _pnpm-install _generate-settings' in just
     assert "test-frontend: _pnpm-install _generate-settings" in just
@@ -4258,8 +4273,7 @@ fi
     )
     assert missing.returncode != 0
     assert (
-        "settings generator did not create: "
-        "frontend/src/lib/mock-settings.generated.ts"
+        "settings generator did not create: frontend/src/lib/mock-settings.generated.ts"
     ) in missing.stderr
 
     drift_env = os.environ.copy()
@@ -4272,9 +4286,7 @@ fi
         check=False,
     )
     assert drifted.returncode != 0
-    assert "generated settings drifted: config/settings/schema.generated.json" in (
-        drifted.stderr
-    )
+    assert "generated settings drifted: config/settings/schema.generated.json" in (drifted.stderr)
 
 
 def test_settings_generator_uses_current_config_authority() -> None:
@@ -4707,9 +4719,7 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker() -> None:
     assert "capsem-linux-rust-cargo-registry" in linux_rust_gate
     assert "capsem-linux-rust-rustup" in linux_rust_gate
     assert 'if [ "$(uname -s)" = "Linux" ]' in linux_rust_gate
-    assert linux_rust_gate.index("exit 0") < linux_rust_gate.index(
-        "just build-host-image"
-    )
+    assert linux_rust_gate.index("exit 0") < linux_rust_gate.index("just build-host-image")
     assert "run: just test-linux-rust" in linux_ci
     assert "cargo llvm-cov nextest" not in linux_ci
     assert "cargo llvm-cov nextest" in runner
@@ -4724,18 +4734,19 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker() -> None:
 
 def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     canonical_gate = _recipe_block("test:")
-    mac_package = _recipe_block("test-macos-install:")
+    mac_glowup = _source_text("scripts/macos_release_glowup.py")
     host_sbom = _recipe_block("test-host-package-sbom:")
     release = _source_text(".github/workflows/release.yaml")
 
     assert "just cross-compile arm64" in canonical_gate
     assert "just cross-compile x86_64" in canonical_gate
-    assert "just test-macos-install" in canonical_gate
+    assert "python3 scripts/macos_release_glowup.py" in canonical_gate
+    assert "test-macos-install:" not in _source_text("justfile")
     assert "just test-host-package-sbom" in canonical_gate
     assert "pytest tests/capsem-recipes/" in canonical_gate
-    assert "scripts/build-test-macos-package.sh" in mac_package
-    assert "scripts/macos_tart_glowup.py" in mac_package
-    assert "scripts/prove-macos-package-boot.sh" in mac_package
+    assert "scripts/build-test-macos-package.sh" in mac_glowup
+    assert "scripts/macos_tart_glowup.py" in mac_glowup
+    assert "scripts/prove-macos-package-boot.sh" in mac_glowup
     assert "scripts/generate-host-binary-sbom.py" in host_sbom
     assert 'DEBS=("$ROOT"/dist/*"$VERSION"*.deb)' in host_sbom
     assert "scripts/build-pkg.sh" in release
@@ -4779,9 +4790,9 @@ def test_all_quick_session_entrypoints_preserve_profile_selection() -> None:
     assert "launch_ui(None)" in new_session
     assert "provision_temp" not in new_session
     assert "provision_temp" not in tray_gateway
-    assert "profile_id\":\"code" not in tray_gateway
+    assert 'profile_id":"code' not in tray_gateway
     assert "profile_id: profile.clone()" in cli
-    assert 'params.profile.as_deref().unwrap_or(DEFAULT_PROFILE_ID)' in mcp
+    assert "params.profile.as_deref().unwrap_or(DEFAULT_PROFILE_ID)" in mcp
 
 
 def test_just_test_runs_grep_guardrails_for_hardcoded_release_selections() -> None:
@@ -4917,8 +4928,7 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
     postinstall = tmp_path / "scripts/deb-postinst.sh"
     original = postinstall.read_text()
     postinstall.write_text(
-        original
-        + "\n# MANIFEST_SOURCE='https://release.capsem.org/assets/nightly/manifest.json'\n"
+        original + "\n# MANIFEST_SOURCE='https://release.capsem.org/assets/nightly/manifest.json'\n"
     )
     rejected = run_guard()
     postinstall.write_text(original)
@@ -4950,9 +4960,7 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
         assert rejected.returncode != 0, f"guard accepted unembedded profile {future_name}"
         assert "builtin_profile_configs does not exactly mirror" in rejected.stderr
 
-    profile_contract = (
-        tmp_path / "crates/capsem-core/src/net/policy_config/profile_contract.rs"
-    )
+    profile_contract = tmp_path / "crates/capsem-core/src/net/policy_config/profile_contract.rs"
     original = profile_contract.read_text()
     profile_contract.write_text(
         original + '\n// include_str!("../../../../../config/profiles/gui/profile.toml")\n'
@@ -5002,7 +5010,9 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
     ):
         original = workflow.read_text()
         input_name = "channel" if selection in {"stable", "nightly"} else "profile"
-        workflow.write_text(original + f"\nregression:\n  {input_name}:\n    default: {selection}\n")
+        workflow.write_text(
+            original + f"\nregression:\n  {input_name}:\n    default: {selection}\n"
+        )
         rejected = run_guard()
         workflow.write_text(original)
         assert rejected.returncode != 0, f"guard accepted workflow default {selection}"
@@ -5096,9 +5106,7 @@ def test_hardcoded_release_selection_guard_rejects_each_regression(tmp_path: Pat
 
     release_reader = tmp_path / "scripts/check-asset-release-delta.py"
     original_reader = release_reader.read_text()
-    release_reader.write_text(
-        original_reader + "\n# urllib.request.urlopen(url, timeout=60)\n"
-    )
+    release_reader.write_text(original_reader + "\n# urllib.request.urlopen(url, timeout=60)\n")
     rejected = run_guard()
     release_reader.write_text(original_reader)
     assert rejected.returncode != 0
@@ -5564,11 +5572,7 @@ def test_boot_timing_gate_attributes_regressions_to_one_stage() -> None:
     """Shared-runner jitter must not masquerade as a product boot regression."""
     module = _boot_timing_module()
     doctor_source = (
-        PROJECT_ROOT
-        / "guest"
-        / "artifacts"
-        / "diagnostics"
-        / "test_environment.py"
+        PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_environment.py"
     ).read_text()
     jittered_stages = [
         {"name": "erofs", "duration_ms": 30},
@@ -5631,12 +5635,13 @@ def test_suspend_snapshot_freezes_ext4_upper_before_ack_and_thaws_first_on_resto
         "Ok(HostToGuest::Unfreeze) => {", maxsplit=1
     )[0]
     assert "freeze_system_filesystem()" in prepare
-    assert prepare.index("freeze_system_filesystem()") < prepare.index(
-        "GuestToHost::SnapshotReady"
+    assert prepare.index("freeze_system_filesystem()") < prepare.index("GuestToHost::SnapshotReady")
+    assert (
+        "continue;"
+        in prepare.split("freeze_system_filesystem()", maxsplit=1)[1].split(
+            "GuestToHost::SnapshotReady", maxsplit=1
+        )[0]
     )
-    assert "continue;" in prepare.split("freeze_system_filesystem()", maxsplit=1)[1].split(
-        "GuestToHost::SnapshotReady", maxsplit=1
-    )[0]
 
     reconnect = source.split('eprintln!("[capsem-agent] reconnected successfully")', maxsplit=1)[
         1
@@ -5805,17 +5810,22 @@ def test_automatic_docker_gc_never_prunes_tagged_images() -> None:
             if unsafe.search(line):
                 violations.append(f"{path.relative_to(PROJECT_ROOT)}:{line_number}: {line.strip()}")
 
-    assert not violations, "automatic Docker cleanup may not prune tagged images:\n" + "\n".join(violations)
+    assert not violations, "automatic Docker cleanup may not prune tagged images:\n" + "\n".join(
+        violations
+    )
 
 
 def test_parallel_asset_primitive_does_not_run_docker_gc() -> None:
     """The two test-assets lanes must not run destructive cleanup against each other."""
     justfile = (PROJECT_ROOT / "justfile").read_text()
-    primitive = justfile.split("_build-image-template arch profile output template:", maxsplit=1)[1].split(
-        "\n# VM asset rebuild", maxsplit=1
-    )[0]
+    primitive = justfile.split("_build-image-template arch profile output template:", maxsplit=1)[
+        1
+    ].split("\n# VM asset rebuild", maxsplit=1)[0]
     assert "_docker-gc" not in primitive
 
-    for recipe in ("build-kernel arch profile=\"\" output=assets_dir:", "build-rootfs arch profile=\"\" output=assets_dir:"):
+    for recipe in (
+        'build-kernel arch profile="" output=assets_dir:',
+        'build-rootfs arch profile="" output=assets_dir:',
+    ):
         body = justfile.split(recipe, maxsplit=1)[1].split("\n#", maxsplit=1)[0]
         assert "just _docker-gc" in body

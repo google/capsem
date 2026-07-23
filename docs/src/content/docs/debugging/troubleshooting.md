@@ -45,16 +45,16 @@ sidebar:
 Docker builds (kernel, rootfs, cross-compile, install tests) accumulate images and build cache inside the Colima VM. The VM disk only grows -- freed space isn't returned to macOS without `fstrim`.
 
 The release gate reads `config/storage-policy.toml`: it retains 24GB of hot
-BuildKit data, keeps 24GB free for the active rail, and requires a 192GB Colima
-disk. Cache/image release happens only after the declared last consumer.
-`just test` preserves a bounded storage report and IronBank logs under
-`test-artifacts/` on failure.
+BuildKit data, keeps 24GB free for the active rail, supports existing 96GB
+Colima disks, and recommends 128GB for new runtimes. Cache/image release
+happens only after the declared last consumer. `just test` preserves a bounded
+storage report and IronBank logs under `test-artifacts/` on failure.
 
-If an existing Colima disk is below 192GB, expand it before qualification:
+If an existing Colima disk is below 96GB, expand it before qualification:
 
 ```bash
 colima stop
-colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 192
+colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 128
 
 # Check current state
 du -sh ~/.colima                            # host disk usage

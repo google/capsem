@@ -745,7 +745,8 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
     # Linux packaging, and the install tail is last. The preflight releases
     # the base; release the derived image here too. Bounded BuildKit keeps
     # reusable content-addressed layers without pinning ~12 GiB of images.
-    docker image rm capsem-install-test:latest >/dev/null
+    uv run python scripts/docker-storage-policy.py release \
+        --boundary after-install-preflight --rail install-preflight
 
     # ---- Stage 1: fast-fail (audits + lint + frontend) ---------------------
     # Cheap, independent, most-common failure class. Clippy (not cargo check)
@@ -810,7 +811,8 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
         # needs this disposable 6 GiB final image. Named Cargo/rustup volumes
         # remain hot; the completed BuildKit graph is bounded at the package
         # ownership boundary after the asset rail has consumed it.
-        docker image rm capsem-host-builder:latest >/dev/null
+        uv run python scripts/docker-storage-policy.py release \
+            --boundary after-linux-rust-builder --rail assets
     fi
 
     # ---- Stage 3: Rust tests + coverage -------------------------------------
@@ -928,8 +930,12 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
     # ---- Stage 7: Docker e2e ------------------------------------------------
     echo "=== Cross-compile Linux releases (Docker, both arches) ==="
     just cross-compile arm64
+    uv run python scripts/docker-storage-policy.py release \
+        --boundary after-package-arm64 --rail package
     just _release-deferred-install-target
     just cross-compile x86_64
+    uv run python scripts/docker-storage-policy.py release \
+        --boundary after-package-x86_64 --rail package
     # capsem-host-builder is a dependency of both package builds. Release its
     # final tag only after the second/last consumer, never between assets and
     # package assembly. The reusable 24 GiB BuildKit cohort remains warm.
@@ -941,7 +947,7 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
     # then install and exercise that exact package in a disposable Tart Mac.
     if [ "$(uname -s)" = "Darwin" ]; then
         echo "=== macOS clean-VM package install and glow-up ==="
-        just test-macos-install
+        python3 scripts/macos_release_glowup.py
     fi
     echo "=== Host package SBOM artifact ==="
     just test-host-package-sbom
@@ -1024,35 +1030,6 @@ test-linux-rust:
         -v "$OUTPUT_DIR:/linux-rust-output" \
         alpine chown -R "$HOST_UID:$HOST_GID" /linux-rust-output
 
-# Build the actual unsigned macOS release package using the same Tauri and
-# scripts/build-pkg.sh primitives as release.yaml, then install and exercise
-# that exact package in a clean Tart macOS VM.
-test-macos-install: _pnpm-install _materialize-config
-    #!/bin/bash
-    set -euo pipefail
-    [ "$(uname -s)" = "Darwin" ] || {
-        echo "ERROR: Tart macOS install proof requires macOS" >&2
-        exit 1
-    }
-    ROOT="{{justfile_directory()}}"
-    VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    CHANNEL="${CAPSEM_INSTALL_CHANNEL:-stable}"
-    case "$CHANNEL" in
-        stable|nightly) ;;
-        *) echo "ERROR: CAPSEM_INSTALL_CHANNEL must be stable or nightly" >&2; exit 2 ;;
-    esac
-    MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/$CHANNEL/manifest.json}"
-    bash scripts/build-test-macos-package.sh \
-        --version "$VERSION" \
-        --manifest-url "$MANIFEST_URL"
-    PKG="$ROOT/packages/Capsem-$VERSION.pkg"
-    python3 scripts/macos_tart_glowup.py \
-        --package "$PKG" \
-        --version "$VERSION" \
-        --manifest-url "$MANIFEST_URL" \
-        --channel "$CHANNEL"
-    bash scripts/prove-macos-package-boot.sh "$PKG" "$VERSION"
-
 # Run the production release SBOM generator over the exact current-version
 # packages built by the canonical gate. Mac runs cover one .pkg plus both .deb
 # architectures; native Linux qualification covers both .deb architectures.
@@ -1093,14 +1070,7 @@ test-host-package-sbom:
 
 # Remove cross-compilation image and cached volumes.
 _clean-host-image:
-    #!/bin/bash
-    set -euo pipefail
-    docker rmi capsem-host-builder:latest 2>/dev/null || true
-    docker rmi capsem-install-test:latest 2>/dev/null || true
-    for vol in capsem-cargo-registry capsem-cargo-git capsem-linux-rust-cargo-registry capsem-linux-rust-cargo-git capsem-linux-rust-rustup capsem-linux-rust-target capsem-host-target-arm64 capsem-host-target-x86_64 capsem-rustup capsem-install-target capsem-install-cargo capsem-install-rustup; do
-        docker volume rm "$vol" 2>/dev/null || true
-    done
-    echo "Cleaned host builder image and volumes."
+    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py clean --scope all
 
 # Build the full Linux release in a container (agent + deb).
 # Uses the pre-built capsem-host-builder image (just build-host-image).
@@ -1116,100 +1086,26 @@ _clean-host-image:
 #   - Tauri signing keys: CI from secrets, local from private/tauri/
 #   - See: .github/workflows/release.yaml build-app-linux job
 _release-completed-linux-rust-target:
-    #!/bin/bash
-    set -euo pipefail
-    # Linux cfg coverage is complete before VM assets begin. Its multi-GiB
-    # compiler target cannot accelerate any later rail in this candidate, so
-    # release it at the ownership boundary instead of carrying it until package
-    # assembly. Never disturb an attached diagnostic or concurrent consumer.
-    volume=capsem-linux-rust-target
-    docker volume inspect "$volume" >/dev/null 2>&1 || exit 0
-    attached=$(docker ps -aq --filter "volume=$volume")
-    if [ -n "$attached" ]; then
-        echo "preserving attached completed Linux Rust target: $volume"
-        exit 0
-    fi
-    echo "releasing completed Linux Rust target: $volume"
-    docker volume rm "$volume" >/dev/null
+    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
+        --boundary after-linux-rust --rail assets
 
 _release-completed-docker-rails:
-    #!/bin/bash
-    set -euo pipefail
-    # Package assembly cannot reuse these earlier-rail outputs. Keep the
-    # registries and Linux rustup toolchain that accelerate the next candidate,
-    # but release duplicate agent toolchains and completed coverage objects.
-    # Never force removal: an attached volume belongs to another active or
-    # diagnostic container, and the package capacity check must then fail closed.
-    volumes=(
-        capsem-agent-target-arm64
-        capsem-agent-target-x86_64
-        capsem-rustup-arm64
-        capsem-rustup-x86_64
-    )
-    for volume in "${volumes[@]}"; do
-        docker volume inspect "$volume" >/dev/null 2>&1 || continue
-        attached=$(docker ps -aq --filter "volume=$volume")
-        if [ -n "$attached" ]; then
-            echo "preserving attached completed-rail volume: $volume"
-            continue
-        fi
-        echo "releasing completed-rail volume: $volume"
-        docker volume rm "$volume" >/dev/null
-    done
+    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
+        --boundary after-assets --rail package
 
 _release-completed-buildkit-graph:
-    #!/bin/bash
-    set -euo pipefail
-    # Both Linux packages have consumed the host builder. Release the final tag
-    # at its declarative last-consumer boundary; do not force-prune the reusable
-    # BuildKit cohort needed by the next candidate.
-    image=capsem-host-builder:latest
-    if docker image inspect "$image" >/dev/null 2>&1; then
-        attached=$(docker ps -aq --filter "ancestor=$image")
-        if [ -n "$attached" ]; then
-            echo "ERROR: refusing to release completed BuildKit graph while $image has attached containers" >&2
-            docker ps -a --filter "ancestor=$image" >&2
-            exit 1
-        fi
-        echo "releasing completed BuildKit graph pinned by: $image"
-        docker image rm "$image" >/dev/null
-    fi
+    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
+        --boundary after-packages --rail package
 
 _release-completed-package-rails:
-    #!/bin/bash
-    set -euo pipefail
-    # Both release packages already exist before the install rail. Their
-    # architecture-specific link outputs cannot accelerate install testing;
-    # retain the shared registry and rustup volumes, but release these finished
-    # package targets so the exact package has room to install and execute.
-    for volume in capsem-host-target-arm64 capsem-host-target-x86_64; do
-        docker volume inspect "$volume" >/dev/null 2>&1 || continue
-        attached=$(docker ps -aq --filter "volume=$volume")
-        if [ -n "$attached" ]; then
-            echo "preserving attached completed-package volume: $volume"
-            continue
-        fi
-        echo "releasing completed-package volume: $volume"
-        docker volume rm "$volume" >/dev/null
-    done
+    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
+        --boundary after-package-arm64 --rail install
+    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
+        --boundary after-package-x86_64 --rail install
 
 _release-deferred-install-target:
-    #!/bin/bash
-    set -euo pipefail
-    # The install target is useful only to the final install rail. Once the
-    # first release package is complete, retaining an old candidate's large
-    # debug target can starve the second architecture while providing it no
-    # reusable inputs. Rebuild that lower-priority cache after both exact
-    # packages exist. Never force removal or disturb an attached diagnostic.
-    volume=capsem-install-target
-    docker volume inspect "$volume" >/dev/null 2>&1 || exit 0
-    attached=$(docker ps -aq --filter "volume=$volume")
-    if [ -n "$attached" ]; then
-        echo "preserving attached deferred-install volume: $volume"
-        exit 0
-    fi
-    echo "releasing deferred-install volume before second package: $volume"
-    docker volume rm "$volume" >/dev/null
+    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
+        --boundary before-packages --rail package
 
 cross-compile arch="": _clean-stale _check-assets _generate-settings
     #!/bin/bash
@@ -1877,7 +1773,8 @@ _test-install-harness-preflight:
     # lanes. Other callers execute only the verified derived image, so release
     # the separate ~6 GiB base tag before their package/runtime work.
     if [ "${CAPSEM_KEEP_HOST_BUILDER:-0}" != "1" ]; then
-        docker image rm capsem-host-builder:latest >/dev/null
+        uv run python "$ROOT/scripts/docker-storage-policy.py" release \
+            --boundary after-linux-rust-builder --rail install-preflight
     fi
 
 test-install:
@@ -1911,11 +1808,10 @@ test-install:
     cleanup() {
         docker exec "$CONTAINER" bash -c "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" >/dev/null 2>&1 || true
         docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-        # The derived install image is a disposable stage output. Remove its
-        # tag on both success and failure; bounded BuildKit cache keeps the
-        # reusable layers without pinning another ~6 GiB final image.
-        docker image rm "$IMAGE:latest" >/dev/null 2>&1 || true
-        just _docker-gc >/dev/null 2>&1 || true
+        uv run python "$ROOT/scripts/docker-storage-policy.py" release \
+            --boundary after-install --rail install || true
+        uv run python "$ROOT/scripts/docker-storage-policy.py" gc \
+            --rail install || true
     }
     # Install preflight has already created the disposable image. Own its
     # cleanup before any later capacity, platform, or container check can fail.
@@ -1938,24 +1834,8 @@ test-install:
     # Durable disk cushion. The shared gate retains hot BuildKit and Cargo
     # cache while requiring enough daemon-local room for the package rail.
     "$ROOT/scripts/ensure-docker-space.sh" install
-    # Reset an oversized persistent install target at its configured resource
-    # budget. It caches debug artifacts across runs, but every crate version
-    # bump leaves dead code behind and the volume otherwise grows unbounded.
-    INSTALL_TARGET_MAX_GIB=$(uv run python "$ROOT/scripts/docker-storage-policy.py" resource --name capsem-install-target --field maximum_gib)
-    VOLUME_LINE=$(docker system df -v 2>/dev/null | grep "^capsem-install-target " || true)
-    if [ -n "$VOLUME_LINE" ]; then
-        VOLUME_SIZE=$(echo "$VOLUME_LINE" | awk '{print $NF}')
-        VOLUME_GB=$(echo "$VOLUME_SIZE" | grep -oE '^[0-9]+' | head -1)
-        if [[ "${VOLUME_GB:-}" =~ ^[0-9]+$ ]] && echo "$VOLUME_SIZE" | grep -q "GB$" && [ "$VOLUME_GB" -gt "$INSTALL_TARGET_MAX_GIB" ]; then
-            echo "capsem-install-target is ${VOLUME_SIZE} -- resetting (>${INSTALL_TARGET_MAX_GIB} GiB policy)..."
-            if ! docker volume rm capsem-install-target >/dev/null; then
-                echo "Error: Failed to reset oversized capsem-install-target volume." >&2
-                echo "Containers still attached to the gate-owned volume:" >&2
-                docker ps -a --filter volume=capsem-install-target >&2 || true
-                exit 1
-            fi
-        fi
-    fi
+    # The one-shot install target was released declaratively before this rail.
+    # Dependency downloads live in separate retained registry/rustup volumes.
     # Stable container name + preemptive rm -f handles any container leaked
     # by a previous run that aborted before reaching cleanup (e.g. cargo
     # SIGTERM under Colima OOM). The EXIT trap above guarantees cleanup on any
@@ -2209,11 +2089,6 @@ clean all="":
     fi
     if [[ "{{all}}" == "all" ]]; then
         just _clean-host-image
-        if command -v docker &>/dev/null; then
-            echo ""
-            echo "=== Docker cleanup ==="
-            docker system prune -af --volumes
-        fi
     fi
     AFTER=$(du -sk . 2>/dev/null | cut -f1)
     FREED_KB=$((BEFORE - AFTER))
@@ -2323,65 +2198,20 @@ _clean-stale:
 # Auto-prune Docker after builds: stopped containers, dangling images, build cache >7d.
 # Keeps named volumes (cross-compile cargo caches) and recent build cache for fast rebuilds.
 _docker-gc:
-    #!/bin/bash
-    if ! command -v docker &>/dev/null; then exit 0; fi
-    # Created debug containers never reach "exited" and used to survive
-    # forever. Reclaim all stopped containers only after a 24h diagnosis
-    # window so a concurrent lane's newly-created container is untouched.
-    docker container prune -f --filter until=24h >/dev/null 2>&1 || true
-    # Remove dangling images older than 72h. Never use --all/-a here: a
-    # newly tagged cached image can have an old creation timestamp and may be
-    # in active use by another architecture lane or worktree.
-    docker image prune -f --filter until=72h >/dev/null 2>&1 || true
-    # Prune build cache older than 72h
-    docker builder prune -f --filter until=72h >/dev/null 2>&1 || true
-    # Reclaim sparse disk space from Colima VM (fstrim punches holes in the raw disk)
-    if command -v colima &>/dev/null && colima status &>/dev/null; then
-        colima ssh -- sudo fstrim /mnt/lima-colima >/dev/null 2>&1 || true
-    fi
+    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py gc
 
 # Enforce release-rail headroom while preserving content-addressed Cargo,
 # registry, rustup, and recent BuildKit caches that make forward fixes fast.
 _bound-docker-test-storage:
-    #!/bin/bash
-    set -euo pipefail
-    # Preserve the host-builder tag: it is an input to both package consumers,
-    # and build-host-image already invalidates changed Dockerfile/context
-    # layers. The disposable install image has no cross-candidate consumer.
-    docker image rm capsem-install-test:latest >/dev/null 2>&1 || true
-    bash {{justfile_directory()}}/scripts/ensure-docker-space.sh default
+    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
+        --boundary candidate-boundary --rail default
+    @bash {{justfile_directory()}}/scripts/ensure-docker-space.sh default candidate-boundary
 
 # Explicit deep cleanup for a human-requested cold rebuild. The canonical gate
 # deliberately does not call this recipe.
 _clean-docker-test-targets:
-    #!/bin/bash
-    set -euo pipefail
-    volumes=(
-        capsem-agent-target-arm64
-        capsem-agent-target-x86_64
-        capsem-host-target-arm64
-        capsem-host-target-x86_64
-        capsem-install-target
-        capsem-linux-rust-target
-        capsem-linux-unit-target
-    )
-    for volume in "${volumes[@]}"; do
-        docker volume inspect "$volume" >/dev/null 2>&1 || continue
-        attached=$(docker ps -aq --filter "volume=$volume")
-        if [ -n "$attached" ]; then
-            echo "ERROR: refusing to flush active Docker target volume $volume" >&2
-            docker ps -a --filter "volume=$volume" >&2
-            exit 1
-        fi
-        echo "Flushing completed Docker target volume: $volume"
-        docker volume rm "$volume" >/dev/null
-    done
-    # Explicit human-requested cold cleanup still retains the policy's warm
-    # BuildKit floor rather than embedding another independent magic number.
-    KEEP_GIB=$(uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py shell --rail default | awk -F= '/CAPSEM_DOCKER_BUILDKIT_KEEP_GIB/ { print $2 }')
-    KEEP_BYTES=$((KEEP_GIB * 1024 * 1024 * 1024))
-    docker builder prune -f --keep-storage "$KEEP_BYTES" >/dev/null
-    echo "Flushed completed Docker compiler artifacts."
+    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py clean \
+        --scope working --rail default
 
 # --- Internal helpers (hidden from `just --list`) ---
 

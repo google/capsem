@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shlex
 import shutil
 import subprocess
@@ -18,8 +19,29 @@ from typing import Callable, Sequence
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-OWNED_VM_PREFIX = "capsem-glowup-"
-DEFAULT_IMAGE = "ghcr.io/cirruslabs/macos-sequoia-base:latest"
+STORAGE_POLICY = PROJECT_ROOT / "config" / "storage-policy.toml"
+STORAGE_CONTROLLER = PROJECT_ROOT / "scripts" / "docker-storage-policy.py"
+
+
+def storage_policy_string(section: str, key: str) -> str:
+    text = STORAGE_POLICY.read_text()
+    section_match = re.search(
+        rf"(?ms)^\[{re.escape(section)}\]\s*(.*?)(?=^\[|\Z)",
+        text,
+    )
+    if section_match is None:
+        raise RuntimeError(f"storage policy is missing [{section}]")
+    value_match = re.search(
+        rf'(?m)^{re.escape(key)}\s*=\s*"([^"]+)"\s*$',
+        section_match.group(1),
+    )
+    if value_match is None:
+        raise RuntimeError(f"storage policy [{section}] is missing {key}")
+    return value_match.group(1)
+
+
+OWNED_VM_PREFIX = storage_policy_string("tart", "owned_vm_prefix")
+DEFAULT_IMAGE = storage_policy_string("tart", "base_image")
 Run = Callable[..., subprocess.CompletedProcess[str]]
 
 
@@ -39,6 +61,34 @@ def tart_run_command(vm_name: str, share: Path) -> list[str]:
 
 def tart_ip_command(vm_name: str, wait_seconds: int = 300) -> list[str]:
     return ["tart", "ip", vm_name, "--wait", str(wait_seconds)]
+
+
+def storage_control_command(command: str, label: str) -> list[str]:
+    return [
+        "uv",
+        "run",
+        "python",
+        str(STORAGE_CONTROLLER),
+        command,
+        "--label",
+        label,
+    ]
+
+
+def run_storage_control(
+    command: str,
+    label: str,
+    *,
+    strict: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    control = storage_control_command(command, label)
+    print("+", shlex.join(control), flush=True)
+    result = subprocess.run(control, check=False, text=True)
+    if strict and result.returncode != 0:
+        raise RuntimeError(
+            f"Tart storage controller failed at {label} (status {result.returncode})"
+        )
+    return result
 
 
 def ssh_command(ip: str, remote_args: Sequence[str]) -> list[str]:
@@ -220,6 +270,7 @@ def main() -> int:
     args = parser.parse_args()
 
     validate_host()
+    run_storage_control("tart-clean", "macos-glowup-preflight")
     package = args.package.resolve()
     if not package.is_file() or package.stat().st_size == 0:
         raise RuntimeError(f"package is missing or empty: {package}")
@@ -304,8 +355,16 @@ def main() -> int:
         print(f"Tart macOS installed-package proof passed: {final_report_path}")
         return 0
     finally:
+        primary_error = sys.exc_info()[0] is not None
         cleanup_vm(vm_name)
         terminate_runner(runner, log_stream)
+        final_control = run_storage_control(
+            "tart-clean",
+            "macos-glowup-final",
+            strict=False,
+        )
+        if final_control.returncode != 0 and not primary_error:
+            raise RuntimeError("Tart storage controller found leaked or running glow-up VMs")
 
 
 if __name__ == "__main__":

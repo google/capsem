@@ -1,14 +1,22 @@
 version = 1
 
 [docker]
-# Two architecture-specific IronBank root filesystems, release packages, and
-# their reusable compiler layers need more room than Colima's historical
-# 100 GiB default. Bootstrap/doctor report this recommendation; they do not
-# resize an existing VM behind the developer's back.
-recommended_disk_gib = 192
+# The existing 100 GiB Colima disk is a supported minimum. New runtimes get
+# 128 GiB for working headroom. Capacity guidance must be revised from the
+# byte-accounted release ledger, never from host target/ anecdotes.
+minimum_disk_gib = 96
+recommended_disk_gib = 128
 minimum_free_gib = 24
 buildkit_keep_gib = 24
 linked_keep_gib = 4
+container_max_age_hours = 24
+cache_max_age_hours = 72
+report_path = "target/storage/docker-storage.jsonl"
+
+[tart]
+base_image = "ghcr.io/cirruslabs/macos-sequoia-base:latest"
+owned_vm_prefix = "capsem-glowup-"
+report_path = "target/storage/tart-storage.jsonl"
 
 [rails.default]
 minimum_free_gib = 24
@@ -37,59 +45,158 @@ linked_keep_gib = 4
 
 [resources.capsem-linux-rust-target]
 kind = "volume"
+retention = "working"
 owner = "linux-rust"
 last_consumer = "linux-rust"
 release_boundary = "after-linux-rust"
+reason = "Linux coverage compiler output has no later consumer."
 
 [resources.capsem-agent-target-arm64]
 kind = "volume"
+retention = "working"
 owner = "assets"
 last_consumer = "assets"
 release_boundary = "after-assets"
+reason = "Agent compiler output is consumed by the completed asset rail."
 
 [resources.capsem-agent-target-x86_64]
 kind = "volume"
+retention = "working"
 owner = "assets"
 last_consumer = "assets"
 release_boundary = "after-assets"
+reason = "Agent compiler output is consumed by the completed asset rail."
 
 [resources.capsem-rustup-arm64]
 kind = "volume"
+retention = "cache"
 owner = "assets"
-last_consumer = "assets"
-release_boundary = "after-assets"
+reason = "Architecture-native Rust toolchain avoids a repeated toolchain download."
 
 [resources.capsem-rustup-x86_64]
 kind = "volume"
+retention = "cache"
 owner = "assets"
-last_consumer = "assets"
-release_boundary = "after-assets"
+reason = "Architecture-native Rust toolchain avoids a repeated toolchain download."
 
 [resources.capsem-host-builder]
 kind = "image"
 docker_name = "capsem-host-builder:latest"
+retention = "working"
 owner = "packages"
 last_consumer = "package-x86_64"
 release_boundary = "after-packages"
+release_boundaries = ["after-linux-rust-builder", "after-packages"]
+reason = "Final tag is needed by both package builds; BuildKit retains reusable layers."
 
 [resources.capsem-host-target-arm64]
 kind = "volume"
+retention = "working"
 owner = "package-arm64"
 last_consumer = "package-arm64"
-release_boundary = "after-packages"
+release_boundary = "after-package-arm64"
+reason = "The exact arm64 package is copied to dist before this compiler output is released."
 
 [resources.capsem-host-target-x86_64]
 kind = "volume"
+retention = "working"
 owner = "package-x86_64"
 last_consumer = "package-x86_64"
-release_boundary = "after-packages"
+release_boundary = "after-package-x86_64"
+reason = "The exact x86_64 package is copied to dist before this compiler output is released."
 
 [resources.capsem-install-target]
 kind = "volume"
+retention = "working"
 owner = "install"
 last_consumer = "install"
 release_boundary = "after-install"
+release_boundaries = ["before-packages", "after-install"]
 maximum_gib = 25
+reason = "Install compiler output is one-shot; the installed package and logs are the evidence."
+
+[resources.capsem-install-frontend-dist]
+kind = "volume"
+retention = "working"
+owner = "install"
+last_consumer = "install"
+release_boundary = "after-install"
+reason = "Generated frontend output is rebuilt and is not a dependency cache."
+
+[resources.capsem-install-test]
+kind = "image"
+docker_name = "capsem-install-test:latest"
+retention = "working"
+owner = "install"
+last_consumer = "install"
+release_boundaries = ["after-install-preflight", "after-install", "candidate-boundary"]
+reason = "Derived systemd test image is rebuilt from retained BuildKit layers."
+
+[resources.capsem-cargo-registry]
+kind = "volume"
+retention = "cache"
+owner = "shared-rust"
+reason = "Downloaded Cargo registry content is reused by asset and package rails."
+
+[resources.capsem-cargo-git]
+kind = "volume"
+retention = "cache"
+owner = "shared-rust"
+reason = "Downloaded Cargo git sources are reused by asset and package rails."
+
+[resources.capsem-rustup]
+kind = "volume"
+retention = "cache"
+owner = "packages"
+reason = "Pinned Rust toolchains and targets are reused by both package architectures."
+
+[resources.capsem-linux-rust-cargo-registry]
+kind = "volume"
+retention = "cache"
+owner = "linux-rust"
+reason = "Downloaded Cargo registry content is reused by the next Linux parity run."
+
+[resources.capsem-linux-rust-cargo-git]
+kind = "volume"
+retention = "cache"
+owner = "linux-rust"
+reason = "Downloaded Cargo git sources are reused by the next Linux parity run."
+
+[resources.capsem-linux-rust-rustup]
+kind = "volume"
+retention = "cache"
+owner = "linux-rust"
+reason = "Pinned Linux Rust toolchain is reused by the next Linux parity run."
+
+[resources.capsem-install-cargo]
+kind = "volume"
+retention = "cache"
+owner = "install"
+reason = "Downloaded Cargo registry content is reused by install builds."
+
+[resources.capsem-install-rustup]
+kind = "volume"
+retention = "cache"
+owner = "install"
+reason = "Pinned Rust toolchain is reused by install builds."
+
+[resources.capsem-install-frontend-node-modules]
+kind = "volume"
+retention = "cache"
+owner = "install"
+reason = "Resolved pnpm dependencies are reused; generated dist is tracked separately."
+
+[resources.capsem-linux-python-venv]
+kind = "volume"
+retention = "obsolete"
+owner = "none"
+reason = "No production recipe mounts this legacy volume."
+
+[resources.capsem-linux-unit-target]
+kind = "volume"
+retention = "obsolete"
+owner = "none"
+reason = "No production recipe mounts this legacy target volume."
 
 [debug_artifacts]
 root = "test-artifacts"

@@ -7,6 +7,11 @@ recommended_docker_disk_gib() {
         | awk -F= '/CAPSEM_DOCKER_RECOMMENDED_DISK_GIB/ { print $2 }'
 }
 
+minimum_docker_disk_gib() {
+    uv run python "$PROJECT_ROOT/scripts/docker-storage-policy.py" shell --rail default \
+        | awk -F= '/CAPSEM_DOCKER_MINIMUM_DISK_GIB/ { print $2 }'
+}
+
 tool_hint() {
     case "$1" in
         rustup)        echo "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh" ;;
@@ -53,6 +58,21 @@ check_platform() {
     else
         fail "sshpass not found -- install: $(tool_hint sshpass)"
     fi
+    if command -v tart &>/dev/null; then
+        local tart_snapshot
+        tart_snapshot=$(uv run python "$PROJECT_ROOT/scripts/docker-storage-policy.py" \
+            tart-snapshot --label doctor 2>&1 || true)
+        if printf '%s\n' "$tart_snapshot" | grep -q "retain-base-image-cache"; then
+            pass "Tart base image cache present"
+        else
+            pass "Tart base image cache not present (first glow-up will pull it)"
+        fi
+        if printf '%s\n' "$tart_snapshot" | grep -q "delete-owned-working-vm"; then
+            fail "stale Capsem-owned Tart VM found -- run: uv run python scripts/docker-storage-policy.py tart-clean --label doctor"
+        else
+            pass "no leaked Capsem-owned Tart VMs"
+        fi
+    fi
 
     section "Container Runtime (macOS)"
 
@@ -87,7 +107,7 @@ check_platform() {
 
         # Resources
         if command -v docker &>/dev/null; then
-            local mem_mb cpus disk_total_kib disk_total_gib recommended_disk_gib
+            local mem_mb cpus disk_total_kib disk_total_gib minimum_disk_gib recommended_disk_gib
             mem_mb=$(docker info --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('MemTotal',0) // 1024 // 1024)" 2>/dev/null || echo 0)
             cpus=$(docker info --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin).get('NCPU',0))" 2>/dev/null || echo 0)
             if [[ "$mem_mb" -gt 0 ]]; then
@@ -99,12 +119,15 @@ check_platform() {
                     pass "Colima: ${mem_mb}MB RAM, ${cpus} CPUs"
                 fi
             fi
+            minimum_disk_gib=$(minimum_docker_disk_gib)
             recommended_disk_gib=$(recommended_docker_disk_gib)
             disk_total_kib=$(colima ssh -- sh -c "df -Pk /var/lib/docker | awk 'NR == 2 { print \$2 }'" 2>/dev/null || echo 0)
             if [[ "$disk_total_kib" =~ ^[0-9]+$ ]] && [[ "$disk_total_kib" -gt 0 ]]; then
                 disk_total_gib=$((disk_total_kib / 1024 / 1024))
-                if [[ "$disk_total_gib" -lt "$recommended_disk_gib" ]]; then
-                    fail "Colima Docker disk: ${disk_total_gib}GiB (release gate requires ${recommended_disk_gib}GiB) -- expand: colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk ${recommended_disk_gib}"
+                if [[ "$disk_total_gib" -lt "$minimum_disk_gib" ]]; then
+                    fail "Colima Docker disk: ${disk_total_gib}GiB (minimum ${minimum_disk_gib}GiB) -- expand: colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk ${recommended_disk_gib}"
+                elif [[ "$disk_total_gib" -lt "$recommended_disk_gib" ]]; then
+                    pass "Colima Docker disk: ${disk_total_gib}GiB (supported; ${recommended_disk_gib}GiB recommended for new runtimes)"
                 else
                     pass "Colima Docker disk: ${disk_total_gib}GiB"
                 fi

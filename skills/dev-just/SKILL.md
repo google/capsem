@@ -26,7 +26,6 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just test-gateway` | Gateway unit + mock-UDS tests (no VM needed) |
 | `just test-gateway-e2e` | Gateway E2E tests (real service + VMs) |
 | `just test-install` | Install e2e in Docker + systemd, then hermetic local release glow-up from generated stable/nightly channels |
-| `just test-macos-install` | Exact `.pkg` build/SBOM; clean Tart install/status proof; physical-Mac guest boot from that package payload |
 | `just coverage` | HTML coverage report across all Rust crates (opens `target/llvm-cov/html/index.html`) |
 | `just cross-compile [arch]` | Full Linux build in container (agent + deb) |
 | `just benchmark` | Standard artifact-recording benchmark suite across host-native, in-VM, lifecycle/fork/parallel, and Security Engine lanes |
@@ -63,7 +62,7 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | Gateway code | `just test-gateway` (unit) or `just test-gateway-e2e` (real VMs) |
 | Service HTTP API / CLI / MCP | `just smoke` (parallel pytest groups cover all three) |
 | Linux install / postinst / systemd / release glow-up flow | `just test-install` |
-| macOS package / postinstall / installed-product glow-up flow | `just test-macos-install` |
+| macOS package / postinstall / installed-product glow-up flow | `python3 scripts/macos_release_glowup.py` |
 | Pre-release | `just test` |
 | Prepare candidate | `just prepare-release`, then manually push only `main` |
 | Qualify candidate | `just qualify-release` (no tag or publication) |
@@ -84,7 +83,7 @@ test             -> _install-tools + _clean-stale + _frontend-dist + _generate-s
 bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
 test-gateway-e2e -> _check-assets + _pack-initrd + _sign
 test-install     -> Docker package install + generated local stable/nightly glow-up
-test-macos-install -> production package + clean Tart install + physical-host exact-payload VZ boot
+scripts/macos_release_glowup.py -> production package + clean Tart install + physical-host exact-payload VZ boot
 install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd
 prepare-release  -> test + _stamp-version (commit only, no tag)
 qualify-release  -> exact origin/main SHA + release-qualification.yaml
@@ -110,10 +109,11 @@ Docker builds (`build-assets`, `cross-compile`, `test-install`) accumulate image
 Release-gate capacity is declared once in `config/storage-policy.toml`.
 `scripts/ensure-docker-space.sh <rail>` accepts a named rail, never numeric
 limits. The default policy requires 24 GiB free, preserves a 24 GiB BuildKit
-cohort, and recommends a 192 GiB Colima disk. Resource entries declare owners,
-last consumers, and release boundaries; do not release an image or volume
-before its declared last consumer. Review the resolved policy without
-mutation using:
+cohort, supports existing 96 GiB Colima disks, and recommends 128 GiB for new
+runtimes. Resource entries declare owners, last consumers, and release
+boundaries; do not release an image or volume before its declared last
+consumer. Docker and Tart actions append byte-accounted JSONL ledgers under
+`target/storage/`. Review the resolved policy without mutation using:
 
 ```bash
 uv run python scripts/docker-storage-policy.py show --rail assets --offline

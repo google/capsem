@@ -10,8 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Centralized release-gate Docker capacity, cache retention, resource
   ownership, and debug-artifact limits in `config/storage-policy.toml`;
-  retained a 24 GiB BuildKit cohort, moved host-builder eviction after both
-  package consumers, and captured bounded Docker/IronBank evidence on failure.
+  retained a measured 24 GiB BuildKit cohort, released one-shot compiler
+  outputs at their last consumer, recorded byte-accounted cleanup ledgers,
+  and put both Docker and Tart working resources under the Python controller.
 
 ## [1.5.1784808246] - 2026-07-23
 

@@ -59,13 +59,13 @@ as the end-to-end deployed-release test. Do not duplicate `just test` after
 tagging or packaging.
 
 On Apple Silicon macOS, `just test` owns the pre-publication macOS package
-boundary through `just test-macos-install`: it builds the package with the
+boundary through `scripts/macos_release_glowup.py`: it builds the package with the
 production assembler, installs that exact file in a disposable headless Tart
 guest, verifies the receipt, app bundle, complete binary cohort, service and
 gateway health, then extracts the same package on the physical Mac and boots a
 real Capsem guest VM from its exact binary/profile payload to a shell marker.
 Tart macOS guests do not support nested virtualization, so these are two
-explicit halves of one recipe rather than a claimed nested proof. `just smoke`
+explicit halves of one script rather than a claimed nested proof. `just smoke`
 deliberately excludes Tart; pulling a 25 GB
 macOS image and rebuilding a release package would destroy its fast feedback
 contract and create another partial release tier.

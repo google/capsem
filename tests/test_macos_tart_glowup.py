@@ -12,6 +12,7 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 HARNESS = PROJECT_ROOT / "scripts" / "macos_tart_glowup.py"
+GLOWUP = PROJECT_ROOT / "scripts" / "macos_release_glowup.py"
 GUEST = PROJECT_ROOT / "scripts" / "macos_tart_guest.sh"
 HOST_BOOT = PROJECT_ROOT / "scripts" / "prove-macos-package-boot.sh"
 
@@ -56,6 +57,22 @@ def test_tart_commands_are_headless_isolated_and_share_only_gate_inputs(
         "--wait",
         "300",
     ]
+    assert module.storage_control_command("tart-clean", "preflight") == [
+        "uv",
+        "run",
+        "python",
+        str(PROJECT_ROOT / "scripts" / "docker-storage-policy.py"),
+        "tart-clean",
+        "--label",
+        "preflight",
+    ]
+
+
+def test_tart_harness_uses_the_declared_storage_policy() -> None:
+    module = _load_harness()
+
+    assert module.DEFAULT_IMAGE == "ghcr.io/cirruslabs/macos-sequoia-base:latest"
+    assert module.OWNED_VM_PREFIX == "capsem-glowup-"
 
 
 def test_tart_ssh_command_uses_quick_start_noninteractive_contract() -> None:
@@ -158,6 +175,8 @@ def test_tart_harness_promotes_guest_evidence_to_a_durable_report() -> None:
 
     assert 'final_report_path = work_dir / "report.json"' in source
     assert "final_report_path.write_text(rendered_report)" in source
+    assert 'run_storage_control("tart-clean", "macos-glowup-preflight")' in source
+    assert '"macos-glowup-final"' in source
 
 
 def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke() -> None:
@@ -165,18 +184,17 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke() 
     doctor = (PROJECT_ROOT / "scripts" / "doctor-macos.sh").read_text()
     justfile = (PROJECT_ROOT / "justfile").read_text()
 
-    assert 'brew install cirruslabs/cli/tart cirruslabs/cli/sshpass' in bootstrap
+    assert "brew install cirruslabs/cli/tart cirruslabs/cli/sshpass" in bootstrap
     assert "brew trust --formula cirruslabs/cli/softnet" in bootstrap
     assert "tart --version" in doctor
     assert "sshpass" in doctor
-    assert "test-macos-install:" in justfile
-    assert "python3 scripts/macos_tart_glowup.py" in justfile
-    assert "bash scripts/prove-macos-package-boot.sh" in justfile
+    assert "test-macos-install:" not in justfile
+    assert "python3 scripts/macos_release_glowup.py" in justfile
 
     test_start = justfile.index("test:")
     test_end = justfile.index("\n# Build the capsem-host-builder", test_start)
     canonical_gate = justfile[test_start:test_end]
-    assert "just test-macos-install" in canonical_gate
+    assert "python3 scripts/macos_release_glowup.py" in canonical_gate
 
     smoke_start = justfile.index("smoke:")
     smoke_end = justfile.index("\n# Gateway unit", smoke_start)
@@ -184,6 +202,15 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke() 
     assert "tart run" not in smoke.lower()
     assert "macos_tart_glowup.py" not in smoke
     assert "test-macos-install" not in smoke
+
+
+def test_standalone_glowup_owns_build_tart_install_and_physical_boot() -> None:
+    source = GLOWUP.read_text()
+
+    assert '"scripts/build-test-macos-package.sh"' in source
+    assert '"scripts/macos_tart_glowup.py"' in source
+    assert '"scripts/prove-macos-package-boot.sh"' in source
+    assert '"scripts/materialize-config.sh"' in source
 
 
 def test_public_release_dispatch_recipe_is_gone() -> None:

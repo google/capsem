@@ -256,16 +256,17 @@ build runs apt, npm, and profile install steps, requiring substantial memory.
 ```bash
 # Colima (macOS): configure VM resources
 colima stop
-colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 192
+colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 128
 
 # Linux: Docker runs natively, no memory tuning needed
 # sudo apt install docker.io
 ```
 
-The release-gate storage policy also requires a 192 GiB Colima disk, keeps a
-24 GiB BuildKit cache cohort, and reserves 24 GiB free for the active rail.
-The source of truth is `config/storage-policy.toml`; `just doctor` reports an
-undersized existing Colima disk before an expensive gate begins.
+The release-gate storage policy supports existing Colima disks from 96 GiB,
+recommends 128 GiB for new runtimes, keeps a 24 GiB BuildKit cache cohort, and
+reserves 24 GiB free for the active rail. The source of truth is
+`config/storage-policy.toml`; `just doctor` reports an undersized existing
+Colima disk before an expensive gate begins.
 
 ## Install Manager Types
 

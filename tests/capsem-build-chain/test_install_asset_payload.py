@@ -5,6 +5,7 @@ import importlib.util
 import os
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
@@ -88,14 +89,14 @@ if [ "$1" = "run" ]; then
     case "$*" in
         *debian:bookworm-slim*)
             phase=$(cat "$FAKE_DOCKER_STATE" 2>/dev/null || true)
-            if [ "$phase" = "trimmed" ]; then
-                free="$FAKE_DOCKER_AFTER_TRIM_KIB"
-            elif [ "$phase" = "pruned" ]; then
+            if [ "$phase" = "pruned" ]; then
                 free="$FAKE_DOCKER_AFTER_KIB"
             else
                 free="$FAKE_DOCKER_BEFORE_KIB"
             fi
-            printf '%s\\n' "$free"
+            total=$((100 * 1024 * 1024))
+            used=$((total - free))
+            printf '%s %s %s\\n' "$total" "$used" "$free"
             ;;
         *alpine:3.20*)
             printf 'trimmed\\n' > "$FAKE_DOCKER_STATE"
@@ -107,12 +108,31 @@ if [ "$1" = "run" ]; then
     esac
 elif [ "$1" = "builder" ] && [ "$2" = "prune" ]; then
     printf 'pruned\\n' > "$FAKE_DOCKER_STATE"
-elif [ "$1" = "volume" ] && [ "$2" = "ls" ]; then
-    printf '%s\\n' "$FAKE_DOCKER_VOLUMES"
+elif [ "$1" = "volume" ] && [ "$2" = "inspect" ]; then
+    case " $FAKE_DOCKER_VOLUMES " in
+        *" $3 "*) printf '{}\\n' ;;
+        *) exit 1 ;;
+    esac
+elif [ "$1" = "volume" ] && [ "$2" = "rm" ]; then
+    :
+elif [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
+    exit 1
 elif [ "$1" = "ps" ]; then
     :
 elif [ "$1" = "system" ] && [ "$2" = "df" ]; then
-    printf 'fake docker disk report\\n'
+    if [ "$3" = "--format" ]; then
+        printf '%s\\n' \
+          '{"Active":"0","Reclaimable":"1GB (50%)","Size":"2GB","TotalCount":"2","Type":"Images"}' \
+          '{"Active":"0","Reclaimable":"0B","Size":"0B","TotalCount":"0","Type":"Containers"}' \
+          '{"Active":"0","Reclaimable":"0B","Size":"0B","TotalCount":"0","Type":"Local Volumes"}' \
+          '{"Active":"0","Reclaimable":"8GB","Size":"10GB","TotalCount":"10","Type":"Build Cache"}'
+    else
+        printf 'Local Volumes space usage:\\n\\nVOLUME NAME LINKS SIZE\\n'
+        for volume in $FAKE_DOCKER_VOLUMES; do
+            printf '%s 0 1GB\\n' "$volume"
+        done
+        printf '\\nBuild cache usage:\\n'
+    fi
 else
     printf 'unexpected fake docker command: %s\\n' "$*" >&2
     exit 97
@@ -120,6 +140,20 @@ fi
 """
     )
     docker.chmod(0o755)
+    colima = fake_bin / "colima"
+    colima.write_text(
+        """#!/bin/sh
+set -eu
+if [ "$1" = "status" ]; then
+    printf 'running\\n'
+elif [ "$1" = "ssh" ]; then
+    printf '/mnt/lima-colima: 1 GiB (1073741824 bytes) trimmed\\n'
+else
+    exit 97
+fi
+"""
+    )
+    colima.chmod(0o755)
     env = os.environ.copy()
     env.update(
         {
@@ -127,11 +161,9 @@ fi
             "FAKE_DOCKER_STATE": str(state),
             "FAKE_DOCKER_BEFORE_KIB": str(before_kib),
             "FAKE_DOCKER_AFTER_KIB": str(after_kib),
-            "FAKE_DOCKER_AFTER_TRIM_KIB": str(
-                after_kib if after_trim_kib is None else after_trim_kib
-            ),
             "FAKE_DOCKER_VOLUMES": volumes,
             "FAKE_DOCKER_COMMANDS": str(commands),
+            "CAPSEM_STORAGE_REPORT_PATH": str(tmp_path / "storage.jsonl"),
         }
     )
     return subprocess.run(
@@ -157,7 +189,7 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
 
     enough = _run_docker_space_gate(tmp_path / "enough", before_kib=30 * 1024 * 1024, after_kib=0)
     assert enough.returncode == 0, enough.stderr
-    assert "rail 'assets' has" in enough.stdout
+    assert "Docker storage control [enforce/preflight]" in enough.stdout
 
     reclaimed = _run_docker_space_gate(
         tmp_path / "reclaimed",
@@ -165,10 +197,10 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
         after_kib=30 * 1024 * 1024,
     )
     assert reclaimed.returncode == 0, reclaimed.stderr
-    assert "pruning unused builder cache" in reclaimed.stdout
-    assert "reclaimed enough space" in reclaimed.stdout
+    assert "buildkit-pressure-prune" in reclaimed.stdout
+    assert "8.0 GiB -> 30.0 GiB" in reclaimed.stdout
     reclaimed_commands = (tmp_path / "reclaimed" / "docker-commands").read_text()
-    assert "builder prune -f --keep-storage 25769803776" in reclaimed_commands
+    assert "builder prune --force --keep-storage 24GB" in reclaimed_commands
     assert "builder prune -af" not in reclaimed_commands
 
     package_reclaimed = _run_docker_space_gate(
@@ -178,9 +210,9 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
         rail="package",
     )
     assert package_reclaimed.returncode == 0, package_reclaimed.stderr
-    assert "hottest 24 GiB" in package_reclaimed.stdout
+    assert "retain 24 GiB" in package_reclaimed.stdout
     package_commands = (tmp_path / "package-reclaimed" / "docker-commands").read_text()
-    assert "builder prune -f --keep-storage 25769803776" in package_commands
+    assert "builder prune --force --keep-storage 24GB" in package_commands
 
     exhausted = _run_docker_space_gate(
         tmp_path / "exhausted",
@@ -188,25 +220,13 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
         after_kib=10 * 1024 * 1024,
     )
     assert exhausted.returncode != 0
-    assert "requires at least 24 GiB" in exhausted.stderr
-    assert "fake docker disk report" in exhausted.stderr
-
-    trimmed = _run_docker_space_gate(
-        tmp_path / "trimmed",
-        before_kib=8 * 1024 * 1024,
-        after_kib=10 * 1024 * 1024,
-        after_trim_kib=30 * 1024 * 1024,
-        volumes="capsem-install-target",
-    )
-    assert trimmed.returncode == 0, trimmed.stderr
-    assert "trimming inactive Cargo incremental cache: capsem-install-target" in trimmed.stdout
+    assert "requires 24.0 GiB free" in exhausted.stderr
 
     storage_script = (PROJECT_ROOT / "scripts" / "ensure-docker-space.sh").read_text()
-    assert "trimming inactive Cargo linked artifacts" in storage_script
-    assert '[[ "$volume" == capsem-*-target* ]]' in storage_script
-    assert 'docker ps -q --filter "volume=$volume"' in storage_script
-    assert 'find "$deps" -maxdepth 1 -type f ! -name "*.*"' in storage_script
-    assert "Dependency libraries (.rlib/.rmeta/etc.) are deliberately untouched" in storage_script
+    controller = (PROJECT_ROOT / "scripts" / "docker-storage-policy.py").read_text()
+    assert "docker " not in storage_script
+    assert '"retained-active"' in controller
+    assert '"buildkit-pressure-prune"' in controller
 
 
 def test_just_install_does_not_sync_assets_after_installer() -> None:
@@ -420,7 +440,8 @@ def test_install_test_restores_host_workspace_ownership() -> None:
     assert "trap cleanup EXIT" in block
     assert 'docker rm -f "$CONTAINER"' in block
     cleanup = block.split("cleanup() {", maxsplit=1)[1].split("}", maxsplit=1)[0]
-    assert 'docker image rm "$IMAGE:latest"' in cleanup
+    assert 'docker-storage-policy.py" release' in cleanup
+    assert "--boundary after-install" in cleanup
 
 
 def test_install_test_keeps_frontend_build_outputs_container_owned() -> None:
@@ -431,17 +452,16 @@ def test_install_test_keeps_frontend_build_outputs_container_owned() -> None:
     assert "chown -R capsem:capsem /src/frontend/node_modules /src/frontend/dist" in block
 
 
-def test_install_test_removes_stale_container_before_fail_closed_cache_reset() -> None:
+def test_install_test_removes_stale_container_before_controller_preflight() -> None:
     block = _just_recipe_block("test-install")
 
     remove_stale = block.index('docker rm -f "$CONTAINER"')
-    inspect_cache = block.index("VOLUME_LINE=$(docker system df -v")
-    reset_cache = block.index("docker volume rm capsem-install-target")
+    release_working = block.index("just _release-completed-package-rails")
+    capacity = block.index('scripts/ensure-docker-space.sh" install', release_working)
 
-    assert remove_stale < inspect_cache < reset_cache
-    assert "docker volume rm capsem-install-target >/dev/null 2>&1 || true" not in block
-    assert "Failed to reset oversized capsem-install-target volume" in block
-    assert "docker ps -a --filter volume=capsem-install-target" in block
+    assert remove_stale < release_working < capacity
+    assert "docker system df -v" not in block
+    assert "docker volume rm" not in block
 
 
 def test_install_test_runs_local_release_glowup_from_real_package() -> None:
@@ -567,7 +587,7 @@ def test_local_linux_preflight_contains_asset_ci_release_tools() -> None:
         "uv run python -m pytest --version"
     )
     verify = "check_install_image"
-    release_base = "docker image rm capsem-host-builder:latest"
+    release_base = "--boundary after-linux-rust-builder"
     assert release_base in preflight
     assert preflight.rindex(verify) < preflight.index(release_base)
 
@@ -691,24 +711,15 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
 
 def test_package_boundary_releases_only_completed_docker_rail_volumes() -> None:
     release = _just_recipe_block("_release-completed-docker-rails:")
+    policy = tomllib.loads((PROJECT_ROOT / "config/storage-policy.toml").read_text())
 
-    assert "capsem-agent-target-arm64" in release
-    assert "capsem-agent-target-x86_64" in release
-    assert "capsem-rustup-arm64" in release
-    assert "capsem-rustup-x86_64" in release
-    assert "capsem-linux-rust-target" not in release
-    assert "docker ps -aq" in release
-    assert 'docker volume rm "$volume"' in release
-    assert "docker volume rm -f" not in release
-    for retained in (
-        "capsem-linux-rust-rustup",
-        "capsem-linux-rust-cargo-registry",
-        "capsem-host-target-arm64",
-        "capsem-host-target-x86_64",
-        "capsem-install-target",
-        "capsem-install-rustup",
-    ):
-        assert retained not in release
+    assert "--boundary after-assets" in release
+    resources = policy["resources"]
+    assert resources["capsem-agent-target-arm64"]["release_boundary"] == "after-assets"
+    assert resources["capsem-agent-target-x86_64"]["release_boundary"] == "after-assets"
+    assert resources["capsem-rustup-arm64"]["retention"] == "cache"
+    assert resources["capsem-rustup-x86_64"]["retention"] == "cache"
+    assert "docker volume rm" not in release
 
 
 def test_linux_rust_target_is_released_before_asset_capacity_preflight() -> None:
@@ -717,32 +728,21 @@ def test_linux_rust_target_is_released_before_asset_capacity_preflight() -> None
 
     linux_rust = candidate.index("just test-linux-rust")
     release_call = candidate.index("just _release-completed-linux-rust-target")
-    release_builder = candidate.index("docker image rm capsem-host-builder:latest")
+    release_builder = candidate.index("--boundary after-linux-rust-builder")
     asset_gate = candidate.index("just test-assets")
 
     assert linux_rust < release_call < release_builder < asset_gate
-    assert "capsem-linux-rust-target" in release
-    assert "docker ps -aq" in release
-    assert 'docker volume rm "$volume"' in release
-    assert "docker volume rm -f" not in release
+    assert "--boundary after-linux-rust" in release
+    assert "docker volume rm" not in release
 
 
 def test_install_boundary_releases_only_completed_package_targets() -> None:
     release = _just_recipe_block("_release-completed-package-rails:")
     install = _just_recipe_block("test-install:")
 
-    assert "capsem-host-target-arm64" in release
-    assert "capsem-host-target-x86_64" in release
-    assert "docker ps -aq" in release
-    assert 'docker volume rm "$volume"' in release
-    assert "docker volume rm -f" not in release
-    for retained in (
-        "capsem-cargo-registry",
-        "capsem-rustup",
-        "capsem-install-target",
-        "capsem-install-rustup",
-    ):
-        assert retained not in release
+    assert "--boundary after-package-arm64" in release
+    assert "--boundary after-package-x86_64" in release
+    assert "docker volume rm" not in release
 
     cleanup_trap = install.index("trap cleanup EXIT")
     release_call = install.index("just _release-completed-package-rails")
@@ -759,18 +759,8 @@ def test_full_gate_releases_deferred_install_target_between_package_arches() -> 
     x86_package = candidate.index("just cross-compile x86_64")
 
     assert arm_package < release_call < x86_package
-    assert "capsem-install-target" in release
-    assert "docker ps -aq" in release
-    assert 'docker volume rm "$volume"' in release
-    assert "docker volume rm -f" not in release
-    for retained in (
-        "capsem-cargo-registry",
-        "capsem-rustup",
-        "capsem-host-target-arm64",
-        "capsem-host-target-x86_64",
-        "capsem-install-rustup",
-    ):
-        assert retained not in release
+    assert "--boundary before-packages" in release
+    assert "docker volume rm" not in release
 
 
 def test_full_gate_releases_completed_buildkit_graph_after_packages() -> None:
@@ -782,11 +772,8 @@ def test_full_gate_releases_completed_buildkit_graph_after_packages() -> None:
     release_call = candidate.index("just _release-completed-buildkit-graph")
 
     assert arm_package < x86_package < release_call
-    assert "capsem-host-builder:latest" in release
-    assert 'docker ps -aq --filter "ancestor=$image"' in release
-    assert 'docker image rm "$image"' in release
+    assert "--boundary after-packages" in release
     assert "docker buildx prune" not in release
-    assert "docker image rm -f" not in release
     assert "docker volume rm" not in release
 
 
@@ -798,9 +785,9 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
     assert "_bound-docker-test-storage" in dependencies
     assert candidate.index("just test-install") < candidate.index("just _bound-docker-test-storage")
     capacity = bound.index("scripts/ensure-docker-space.sh")
-    release_install = bound.index("docker image rm capsem-install-test:latest")
+    release_install = bound.index("--boundary candidate-boundary")
     assert release_install < capacity
-    assert "docker image rm capsem-host-builder:latest" not in bound
+    assert "--boundary after-linux-rust-builder" not in bound
     assert "docker image rm -f" not in bound
     assert "docker volume rm" not in bound
 
@@ -809,7 +796,7 @@ def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> N
     candidate = _just_recipe_block("_test-candidate:")
 
     install_preflight = candidate.index("just _test-install-harness-preflight")
-    release_install = candidate.index("docker image rm capsem-install-test:latest")
+    release_install = candidate.index("--boundary after-install-preflight")
     linux_parity = candidate.index("just test-linux-rust")
     asset_gate = candidate.index("just test-assets")
     release_buildkit = candidate.index("just _release-completed-buildkit-graph")
@@ -825,9 +812,12 @@ def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> N
 
 def test_docker_gc_reclaims_old_created_debug_containers() -> None:
     cleanup = _just_recipe_block("_docker-gc:")
+    controller = (PROJECT_ROOT / "scripts/docker-storage-policy.py").read_text()
 
-    assert "docker container prune -f --filter until=24h" in cleanup
-    assert "--filter status=exited" not in cleanup
+    assert "docker-storage-policy.py gc" in cleanup
+    assert '"container",\n                    "prune"' in controller
+    assert 'f"until={container_age}h"' in controller
+    assert "--filter status=exited" not in controller
 
 
 def test_install_gate_releases_disposable_build_state_before_pytest() -> None:

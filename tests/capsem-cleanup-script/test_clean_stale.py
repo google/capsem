@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shutil
 import socket
@@ -591,3 +592,46 @@ def test_target_missing(tmp_path: Path):
     rd = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
     assert ra.removed == 0
     assert rd.removed == 0
+
+
+def test_cargo_cleanup_reports_real_before_after_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "incremental", 0.000_01)
+    incremental = tmp_path / "target" / "debug" / "incremental"
+    old = incremental / "old"
+    new = incremental / "new"
+    old.mkdir(parents=True)
+    new.mkdir()
+    (old / "blob").write_bytes(b"x" * 16_384)
+    (new / "blob").write_bytes(b"x" * 8_192)
+    old_time = time.time() - 5 * 86400
+    os.utime(old, (old_time, old_time))
+
+    result = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
+
+    assert result.bytes_before > result.bytes_after
+    assert result.bytes_reclaimed == result.bytes_before - result.bytes_after
+    assert result.bytes_reclaimed > 0
+
+
+def test_main_persists_cleanup_ledger(tmp_path: Path):
+    report = tmp_path / "cleanup.jsonl"
+    rc = clean_stale.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--tmp-dir",
+            str(tmp_path / "tmp"),
+            "--sockets-dir",
+            str(tmp_path / "sockets"),
+            "--report",
+            str(report),
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(report.read_text().splitlines()[-1])
+    assert payload["schema"] == "capsem.host_cleanup.v1"
+    assert payload["target"]["before_bytes"] >= payload["target"]["after_bytes"]
+    assert any(stage["name"] == "cargo" for stage in payload["stages"])

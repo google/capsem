@@ -31,7 +31,6 @@ quick checks. After frontend changes intended for the desktop app, use
 | `just test-gateway` | Gateway unit and mock-UDS tests | No |
 | `just test-gateway-e2e` | Gateway E2E tests with real service and VMs | Yes |
 | `just test-install` | Installer E2E plus local release glow-up in Docker/systemd | No host VM |
-| `just test-macos-install` | Exact `.pkg` build/SBOM, clean Tart install/status, then a physical-Mac guest boot from that package payload | Tart + host VZ |
 | `just bench` | In-VM and host lifecycle benchmarks | Yes |
 
 `just test` is the source of truth. Targeted commands are for iteration, not
@@ -158,7 +157,7 @@ smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initr
 test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings + _check-assets + _pack-initrd
 build-assets     -> _install-tools + _clean-stale + doctor + capsem-admin image build
 test-install     -> Docker package install + generated local stable/nightly glow-up
-test-macos-install -> production .pkg + clean Tart install + physical-host exact-payload VZ boot
+scripts/macos_release_glowup.py -> production .pkg + clean Tart install + physical-host exact-payload VZ boot
 prepare-release  -> _stamp-version + candidate commit + test
 qualify-release  -> exact origin/main SHA + release-qualification.yaml
 cut-release      -> exact successful qualification + local tag
