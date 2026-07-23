@@ -10,6 +10,7 @@ description: Setting up a Capsem development environment from scratch. Use when 
 - **macOS 13+** (Ventura or later) -- required for Virtualization.framework
 - **Apple Silicon** (arm64) -- primary target. Intel Macs are not supported for VM features.
 - **Docker (via Colima on macOS)** -- needed for `just build-assets` (kernel + rootfs builds)
+- **Tart + sshpass (macOS)** -- needed for the clean-macOS package install owned by `just test`
 
 ## Required tools
 
@@ -24,6 +25,7 @@ Run `just doctor` to check all of these:
 | uv | Python package manager | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | Docker (via Colima on macOS) | VM image builds | `brew install colima docker` (macOS) or `sudo apt install docker.io` (Linux) |
 | Docker BuildKit (buildx) | Cross-arch container builds | `brew install docker-buildx` (macOS) or `sudo apt install docker-buildx-plugin` (Linux) |
+| Tart + sshpass (macOS) | Disposable clean-Mac package install gate | `brew trust --formula cirruslabs/cli/softnet && brew install cirruslabs/cli/tart cirruslabs/cli/sshpass` |
 
 Rust targets (auto-installed by `just doctor-fix`):
 - `aarch64-unknown-linux-musl` -- guest binaries (arm64)
@@ -127,6 +129,7 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 2 | `uv` | `astral.sh/uv` -> `~/.local/bin` |
 | 2 | Python deps | `uv sync` |
 | 2 (macOS) | `flock`, `pnpm` | `brew` |
+| 2 (macOS) | `tart`, `sshpass` | `brew` |
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` (+ symlink into `~/.docker/cli-plugins`) |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` |
 | 2 | Frontend deps | `pnpm install --frozen-lockfile` |
@@ -160,7 +163,7 @@ If step 4 prints "hello from capsem" and exits cleanly, you're set.
 ```bash
 just shell            # Build + boot VM interactively (~10s)
 just exec "CMD"        # Build + boot + run command + exit
-just test             # Unit tests + cross-compile + frontend check
+just test             # Full release gate, including clean Tart .pkg install on macOS
 just ui               # Frontend dev server (mock mode, no VM)
 just dev              # Full Tauri app with hot-reload
 ```
@@ -303,7 +306,7 @@ The doctor system is three bash scripts:
 ```
 scripts/
   doctor-common.sh    # Entry point, cross-platform checks, fix registry, recap
-  doctor-macos.sh     # macOS: Colima, Rosetta, codesigning, brew hints
+  doctor-macos.sh     # macOS: Tart, Colima, Rosetta, codesigning, brew hints
   doctor-linux.sh     # Linux: KVM, apt/dnf hints
 ```
 

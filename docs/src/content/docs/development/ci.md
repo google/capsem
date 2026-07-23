@@ -294,11 +294,17 @@ packaged `assets/manifest.json`, checks `manifest-metadata.json` points at the
 selected channel manifest URL, then runs Docker install, stable/nightly asset
 switching, and the binary updater path against the public channel.
 
-Before deployment, `just test` runs the same class of glow-up locally through
+Before deployment, `just test` owns both native install boundaries. Linux uses
 `just test-install`: the gate serves generated stable and nightly release
-channels from the package and manifest artifacts just built in Docker, then
-proves `install.sh`, `capsem update --assets --manifest`, and
-`capsem update --yes` against that local release.
+channels from package and manifest artifacts built in Docker, then proves
+`install.sh`, `capsem update --assets --manifest`, and `capsem update --yes`.
+On Apple Silicon macOS, `just test-macos-install` builds the real `.pkg`, mounts
+that exact file into a disposable Tart Mac, installs it, verifies the receipt,
+app bundle, binary cohort, and service/gateway status. Tart macOS guests cannot
+expose nested virtualization, so the recipe then extracts the same package on
+the physical Mac and boots a real Capsem guest from its exact binary/profile
+payload to a shell marker. Tart stays out of `just smoke` so smoke remains a
+fast feedback tier rather than a partial release gate.
 
 Release packaging materializes runtime profiles through the same profile-derived build rail as
 local development: `capsem-admin profile materialize` copies checked-in config

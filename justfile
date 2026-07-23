@@ -21,10 +21,9 @@
 #   test-frontend    -> frontend check + vitest + production build
 #   smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initrd + _materialize-config + _ensure-service
 #                       (audit, full doctor, injection, integration, parallel pytest groups)
-#   test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings
-#                       + _check-assets + _pack-initrd + _materialize-config (everything: audit, cov, cross-compile,
-#                       all web surfaces, full dual-arch VM asset builds, python, injection, integration,
-#                       bench, test-install)
+#   test             -> canonical release gate: audit, coverage, web surfaces,
+#                       dual-arch assets, VM suites, benchmarks, Linux install,
+#                       and exact-package Tart macOS install/glow-up
 #   bench            -> _ensure-dev-ready + _check-assets + _pack-initrd + _materialize-config + _ensure-service
 #   test-gateway     -> (no deps; unit + mock UDS tests)
 #   test-gateway-e2e -> _check-assets + _pack-initrd + _materialize-config + _sign (real service + VMs)
@@ -34,7 +33,6 @@
 #   prepare-release  -> _stamp-version + commit + test (proves the exact clean candidate)
 #   qualify-release  -> remote canonical Linux gate for the exact candidate SHA
 #   cut-release      -> verifies exact-SHA qualification, then creates local tag
-#   release [tag]    -> (waits for CI on a pushed tag)
 #
 # First-time dev readiness:
 #   just doctor       (shows what's missing; `just doctor fix` auto-installs)
@@ -928,11 +926,11 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
 
     # ---- Stage 7b: publishable host packages + host SBOM -------------------
     # Linux release packages above are real release-mode .debs. On macOS,
-    # build the real release-mode app and .pkg with the production assembler.
-    # Then run the production host-SBOM generator over those exact artifacts.
+    # build the real release-mode app and .pkg with the production assembler,
+    # then install and exercise that exact package in a disposable Tart Mac.
     if [ "$(uname -s)" = "Darwin" ]; then
-        echo "=== macOS release package artifact ==="
-        just test-macos-release-package
+        echo "=== macOS clean-VM package install and glow-up ==="
+        just test-macos-install
     fi
     echo "=== Host package SBOM artifact ==="
     just test-host-package-sbom
@@ -1015,61 +1013,34 @@ test-linux-rust:
         -v "$OUTPUT_DIR:/linux-rust-output" \
         alpine chown -R "$HOST_UID:$HOST_GID" /linux-rust-output
 
-# Build the actual unsigned macOS release package using the same Tauri release
-# build and scripts/build-pkg.sh primitive as release.yaml. Signing,
-# notarization, Gatekeeper, and system installation remain explicit final Mac
-# boundaries; package assembly and payload/SBOM validation do not.
-test-macos-release-package: _pnpm-install _materialize-config
+# Build the actual unsigned macOS release package using the same Tauri and
+# scripts/build-pkg.sh primitives as release.yaml, then install and exercise
+# that exact package in a clean Tart macOS VM.
+test-macos-install: _pnpm-install _materialize-config
     #!/bin/bash
     set -euo pipefail
     [ "$(uname -s)" = "Darwin" ] || {
-        echo "ERROR: macOS package proof requires macOS" >&2
+        echo "ERROR: Tart macOS install proof requires macOS" >&2
         exit 1
     }
     ROOT="{{justfile_directory()}}"
     VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"
-    bash "$ROOT/scripts/check-web-surface.sh" frontend-build
-    cargo tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
-    cargo build --release \
-        -p capsem \
-        -p capsem-service \
-        -p capsem-process \
-        -p capsem-tui \
-        -p capsem-mcp \
-        -p capsem-mcp-aggregator \
-        -p capsem-mcp-builtin \
-        -p capsem-gateway \
-        -p capsem-tray \
-        -p capsem-admin
-    bash "$ROOT/scripts/build-pkg.sh" \
-        --manifest "$MANIFEST_URL" \
-        "$ROOT/target/release/bundle/macos/Capsem.app" \
-        "$ROOT/target/release" \
-        "$ROOT/assets" \
-        "$ROOT/target/config" \
-        "$VERSION"
+    CHANNEL="${CAPSEM_INSTALL_CHANNEL:-stable}"
+    case "$CHANNEL" in
+        stable|nightly) ;;
+        *) echo "ERROR: CAPSEM_INSTALL_CHANNEL must be stable or nightly" >&2; exit 2 ;;
+    esac
+    MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/$CHANNEL/manifest.json}"
+    bash scripts/build-test-macos-package.sh \
+        --version "$VERSION" \
+        --manifest-url "$MANIFEST_URL"
     PKG="$ROOT/packages/Capsem-$VERSION.pkg"
-    test -s "$PKG"
-    python3 "$ROOT/scripts/generate-host-binary-sbom.py" \
-        --output "$ROOT/target/macos-package-sbom.spdx.json" \
-        "$PKG"
-    python3 - "$ROOT/target/macos-package-sbom.spdx.json" <<'PY'
-    import json
-    import pathlib
-    import sys
-
-    expected = {
-        "capsem", "capsem-admin", "capsem-app", "capsem-gateway",
-        "capsem-mcp", "capsem-mcp-aggregator", "capsem-mcp-builtin",
-        "capsem-process", "capsem-service", "capsem-tray", "capsem-tui",
-    }
-    document = json.loads(pathlib.Path(sys.argv[1]).read_text())
-    actual = {pathlib.Path(row["fileName"]).name for row in document["files"]}
-    missing = sorted(expected - actual)
-    if missing:
-        raise SystemExit(f"macOS package SBOM missing executables: {missing}")
-    PY
+    python3 scripts/macos_tart_glowup.py \
+        --package "$PKG" \
+        --version "$VERSION" \
+        --manifest-url "$MANIFEST_URL" \
+        --channel "$CHANNEL"
+    bash scripts/prove-macos-package-boot.sh "$PKG" "$VERSION"
 
 # Run the production release SBOM generator over the exact current-version
 # packages built by the canonical gate. Mac runs cover one .pkg plus both .deb
@@ -2081,100 +2052,6 @@ test-install:
         exit 1
     fi
 
-# Dispatch one serialized release workflow and wait for publication.
-# Usage: just release                       (latest tag on HEAD, stable)
-#        just release v0.9.13 stable        (explicit stable release)
-#        just release v0.9.14-nightly nightly
-release tag="" channel="stable":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    CHANNEL="{{channel}}"
-    case "$CHANNEL" in
-        stable|nightly) ;;
-        *)
-            echo "Error: channel must be stable or nightly (got: $CHANNEL)"
-            exit 1
-            ;;
-    esac
-    if [ -n "{{tag}}" ]; then
-        TAG="{{tag}}"
-    else
-        TAG=$(git tag --points-at HEAD 'v*' | sort -V | tail -1)
-        if [ -z "$TAG" ]; then
-            echo "Error: HEAD has no v* tag. Pass one explicitly: just release v0.9.13"
-            exit 1
-        fi
-    fi
-    case "$TAG" in
-        v*) ;;
-        *)
-            echo "Error: release tag must start with v (got: $TAG)"
-            exit 1
-            ;;
-    esac
-    if ! git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-        echo "Error: tag $TAG is not published to origin"
-        echo "Push it first: git push origin $TAG"
-        exit 1
-    fi
-    LOCAL_TAG_SHA=$(git rev-parse "$TAG^{commit}")
-    REMOTE_TAG_SHA=$(git ls-remote --tags origin "refs/tags/$TAG" "refs/tags/$TAG^{}" | \
-        awk '$2 ~ /\^\{\}$/ { peeled=$1 } $2 !~ /\^\{\}$/ { direct=$1 } END { print peeled ? peeled : direct }')
-    if ! test "$LOCAL_TAG_SHA" = "$REMOTE_TAG_SHA"; then
-        echo "Error: local $TAG resolves to $LOCAL_TAG_SHA but origin resolves to $REMOTE_TAG_SHA" >&2
-        echo "Never dispatch a release for a mismatched tag." >&2
-        exit 1
-    fi
-    python3 scripts/check-release-qualification.py --sha "$LOCAL_TAG_SHA" --channel "$CHANNEL"
-
-    RUN_TITLE="Release $CHANNEL $TAG"
-    echo "=== $RUN_TITLE ==="
-    RUN_ID=$(gh run list --workflow=release.yaml --event workflow_dispatch --limit 50 \
-        --json databaseId,displayTitle,status,conclusion \
-        --jq ".[] | select(.displayTitle==\"$RUN_TITLE\") | .databaseId" | head -1)
-    if [ -n "$RUN_ID" ]; then
-        STATUS=$(gh run view "$RUN_ID" --json status --jq .status)
-        CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq .conclusion)
-        if [ "$STATUS" = "completed" ] && [ "$CONCLUSION" = "success" ]; then
-            echo "=== $RUN_TITLE already published ==="
-            echo "https://github.com/google/capsem/releases/tag/$TAG"
-            exit 0
-        fi
-        if [ "$STATUS" = "completed" ]; then
-            RUN_ID=""
-        fi
-    fi
-    if [ -z "$RUN_ID" ]; then
-        gh workflow run release.yaml --ref "$TAG" \
-            -f "tag=$TAG" \
-            -f "channel=$CHANNEL"
-        for _ in $(seq 1 30); do
-            RUN_ID=$(gh run list --workflow=release.yaml --event workflow_dispatch --limit 50 \
-                --json databaseId,displayTitle \
-                --jq ".[] | select(.displayTitle==\"$RUN_TITLE\") | .databaseId" | head -1)
-            [ -n "$RUN_ID" ] && break
-            sleep 2
-        done
-    fi
-    if [ -z "$RUN_ID" ]; then
-        echo "Error: dispatched workflow did not appear for $RUN_TITLE"
-        exit 1
-    fi
-    echo "CI run: $RUN_ID"
-    STATUS=$(gh run view "$RUN_ID" --json status --jq .status)
-    if [ "$STATUS" != "completed" ]; then
-        echo "Waiting for CI..."
-        gh run watch "$RUN_ID"
-    fi
-    CONCLUSION=$(gh run view "$RUN_ID" --json conclusion --jq .conclusion)
-    if [ "$CONCLUSION" != "success" ]; then
-        echo "Error: CI run $RUN_ID failed ($CONCLUSION)"
-        echo "Check: gh run view $RUN_ID --log-failed"
-        exit 1
-    fi
-    echo "=== $RUN_TITLE published ==="
-    echo "https://github.com/google/capsem/releases/tag/$TAG"
-
 # Stamp the version and commit an untagged candidate. The exact commit must be
 # pushed and remotely qualified before cut-release is allowed to mint a tag.
 prepare-release:
@@ -2285,9 +2162,9 @@ cut-release channel="stable":
     python3 scripts/check-release-qualification.py --sha "$SHA" --channel "$CHANNEL"
     git tag "$TAG"
     echo "Created qualified local tag $TAG at $SHA."
-    echo "Publish with:"
+    echo "Publish the qualified tag, then dispatch release.yaml:"
     echo "  git push origin $TAG"
-    echo "  just release $TAG $CHANNEL"
+    echo "  gh workflow run release.yaml --ref $TAG -f tag=$TAG -f channel=$CHANNEL"
 
 # Check dev tools and dependencies. Pass "fix" to auto-fix.
 doctor fix="": _pnpm-install

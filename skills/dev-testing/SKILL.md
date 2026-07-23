@@ -14,7 +14,7 @@ Three tiers, fast to thorough. Every change must pass all three before it ships.
 
 | Command | What | VM? |
 |---------|------|-----|
-| `just test` | Everything: unit tests (llvm-cov, warnings-as-errors for service crates) + cross-compile + frontend + all Python integration tests + injection + benchmarks | Yes |
+| `just test` | Everything: unit/coverage, cross-compile, frontend, Python/VM integration, injection, benchmarks, Linux install, and exact-package clean-Tart macOS install/glow-up | Yes |
 | `just smoke` | Quick end-to-end: repack + sign + boot + capsem-doctor + MCP + service integration (~30s) | Yes |
 
 `just test` is the single source of truth. There is no "fast" tier that skips integration tests -- that's how the "Connection refused" bug shipped while tests said green. Individual `test-*` recipes exist for targeted debugging but `just test` is the gate.
@@ -57,6 +57,18 @@ including their real post-install scripts, before publication. Notarization and
 the public stable-to-nightly switch/upgrade glow-up remain mandatory afterward
 as the end-to-end deployed-release test. Do not duplicate `just test` after
 tagging or packaging.
+
+On Apple Silicon macOS, `just test` owns the pre-publication macOS package
+boundary through `just test-macos-install`: it builds the package with the
+production assembler, installs that exact file in a disposable headless Tart
+guest, verifies the receipt, app bundle, complete binary cohort, service and
+gateway health, then extracts the same package on the physical Mac and boots a
+real Capsem guest VM from its exact binary/profile payload to a shell marker.
+Tart macOS guests do not support nested virtualization, so these are two
+explicit halves of one recipe rather than a claimed nested proof. `just smoke`
+deliberately excludes Tart; pulling a 25 GB
+macOS image and rebuilding a release package would destroy its fast feedback
+contract and create another partial release tier.
 
 Rust is pinned to `1.97.1` across the workspace file, workflow steps,
 host-builder, and bootstrap. Change all pin surfaces together in a deliberate

@@ -16,6 +16,8 @@ tool_hint() {
         b3sum)         echo "cargo install b3sum --locked" ;;
         flock)         echo "brew install flock (multi-agent lock on ~/.capsem/run/execution.lock)" ;;
         zstd)          echo "brew install zstd" ;;
+        tart)          echo "brew trust --formula cirruslabs/cli/softnet && brew install cirruslabs/cli/tart" ;;
+        sshpass)       echo "brew install cirruslabs/cli/sshpass" ;;
         docker)        echo "brew install colima docker (CLI + Colima backend) && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8" ;;
         docker-daemon) echo "start Colima: colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8" ;;
         docker-buildx) echo "brew install docker-buildx && ln -sf \$(brew --prefix docker-buildx)/bin/docker-buildx ~/.docker/cli-plugins/docker-buildx" ;;
@@ -23,6 +25,30 @@ tool_hint() {
 }
 
 check_platform() {
+    section "Tart macOS Install VM"
+
+    if [[ "$(uname -m)" = "arm64" ]]; then
+        pass "Apple Silicon host (Tart supported)"
+    else
+        fail "Tart requires an Apple Silicon macOS host"
+    fi
+    if command -v tart &>/dev/null; then
+        local tart_version
+        tart_version=$(tart --version 2>&1 || true)
+        if [[ -n "$tart_version" ]]; then
+            pass "tart ($tart_version)"
+        else
+            fail "tart --version failed -- reinstall: $(tool_hint tart)"
+        fi
+    else
+        fail "tart not found -- install: $(tool_hint tart)"
+    fi
+    if command -v sshpass &>/dev/null; then
+        pass "sshpass (Tart noninteractive SSH)"
+    else
+        fail "sshpass not found -- install: $(tool_hint sshpass)"
+    fi
+
     section "Container Runtime (macOS)"
 
     # Colima

@@ -1725,24 +1725,17 @@ def test_release_skill_requires_exact_manifest_single_metadata_and_shared_status
     assert "the UI must not synthesize publication state" in release_normalized
 
 
-def test_release_recipe_dispatches_one_parameterized_workflow() -> None:
-    recipe = _recipe_block("release")
+def test_release_dispatch_is_not_a_forked_just_recipe() -> None:
+    justfile = _source_text("justfile")
+    workflow = _workflow_text("release.yaml")
+    cut = _recipe_block("cut-release")
 
-    assert 'release tag="" channel="stable":' in recipe
-    assert 'case "$CHANNEL" in' in recipe
-    assert "stable|nightly" in recipe
-    assert 'gh workflow run release.yaml --ref "$TAG"' in recipe
-    assert '-f "tag=$TAG"' in recipe
-    assert '-f "channel=$CHANNEL"' in recipe
-    assert 'RUN_TITLE="Release $CHANNEL $TAG"' in recipe
-    assert "displayTitle" in recipe
-    assert "headBranch" not in recipe
-    assert 'LOCAL_TAG_SHA=$(git rev-parse "$TAG^{commit}")' in recipe
-    assert 'REMOTE_TAG_SHA=$(git ls-remote --tags origin' in recipe
-    assert 'test "$LOCAL_TAG_SHA" = "$REMOTE_TAG_SHA"' in recipe
-    assert recipe.index('test "$LOCAL_TAG_SHA" = "$REMOTE_TAG_SHA"') < recipe.index(
-        'scripts/check-release-qualification.py --sha "$LOCAL_TAG_SHA" --channel "$CHANNEL"'
-    )
+    assert '\nrelease tag="" channel="stable":' not in f"\n{justfile}"
+    assert "workflow_dispatch:" in workflow
+    assert "Verify exact commit passed remote qualification" in workflow
+    assert "just release" not in cut
+    assert "gh run watch" not in cut
+    assert "Publish the qualified tag, then dispatch release.yaml" in cut
 
 
 def test_self_update_docs_match_verified_package_execution() -> None:
@@ -4731,19 +4724,18 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker() -> None:
 
 def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     canonical_gate = _recipe_block("test:")
-    mac_package = _recipe_block("test-macos-release-package:")
+    mac_package = _recipe_block("test-macos-install:")
     host_sbom = _recipe_block("test-host-package-sbom:")
     release = _source_text(".github/workflows/release.yaml")
 
     assert "just cross-compile arm64" in canonical_gate
     assert "just cross-compile x86_64" in canonical_gate
-    assert "just test-macos-release-package" in canonical_gate
+    assert "just test-macos-install" in canonical_gate
     assert "just test-host-package-sbom" in canonical_gate
     assert "pytest tests/capsem-recipes/" in canonical_gate
-    assert "cargo tauri build --bundles app" in mac_package
-    assert "cargo build --release" in mac_package
-    assert "scripts/build-pkg.sh" in mac_package
-    assert "scripts/generate-host-binary-sbom.py" in mac_package
+    assert "scripts/build-test-macos-package.sh" in mac_package
+    assert "scripts/macos_tart_glowup.py" in mac_package
+    assert "scripts/prove-macos-package-boot.sh" in mac_package
     assert "scripts/generate-host-binary-sbom.py" in host_sbom
     assert 'DEBS=("$ROOT"/dist/*"$VERSION"*.deb)' in host_sbom
     assert "scripts/build-pkg.sh" in release

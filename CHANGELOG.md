@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.5.1784808246] - 2026-07-23
 
+### Fixed
+- Made the canonical macOS gate install its exact package in a clean Tart VM,
+  verify the installed app/binaries/service, and boot a real Capsem guest from
+  that package payload on the physical Mac; removed the forked `just release`
+  dispatcher.
+
 ## [1.5.1784785930] - 2026-07-23
 
 ## [1.5.1784768556] - 2026-07-22

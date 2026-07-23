@@ -22,10 +22,11 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just run-ui -- [args]` | `build-ui` then launch `./target/debug/capsem-app` with args (e.g. `--connect <id>`) |
 | `just build-assets [arch]` | Full VM asset rebuild through capsem-admin/profile materialization and the private Python builder backend. Default: both arches. |
 | `just smoke` | Hermetic smoke gate: audit + doctor + injection + integration + parallel pytest groups |
-| `just test` | ALL tests: unit (warnings-as-errors) + cov + cross-compile + frontend + python + injection + integration + bench + install e2e |
+| `just test` | Canonical release gate: unit + coverage + VM suites + both Linux packages + Docker/systemd install + exact `.pkg` install/glow-up in a clean Tart Mac |
 | `just test-gateway` | Gateway unit + mock-UDS tests (no VM needed) |
 | `just test-gateway-e2e` | Gateway E2E tests (real service + VMs) |
 | `just test-install` | Install e2e in Docker + systemd, then hermetic local release glow-up from generated stable/nightly channels |
+| `just test-macos-install` | Exact `.pkg` build/SBOM; clean Tart install/status proof; physical-Mac guest boot from that package payload |
 | `just coverage` | HTML coverage report across all Rust crates (opens `target/llvm-cov/html/index.html`) |
 | `just cross-compile [arch]` | Full Linux build in container (agent + deb) |
 | `just benchmark` | Standard artifact-recording benchmark suite across host-native, in-VM, lifecycle/fork/parallel, and Security Engine lanes |
@@ -43,7 +44,6 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | `just prepare-release` | Run local full gate, stamp version/changelog, and commit an untagged candidate |
 | `just qualify-release` | Run and wait for the remote canonical Linux gate on exact published `HEAD` |
 | `just cut-release` | Verify exact-SHA remote qualification, then create the local immutable tag |
-| `just release [tag]` | Verify qualification again, then wait for CI package proofs and publication |
 | `just clean` | Remove all build artifacts |
 | `just clean all` | clean + Docker prune (full reset) |
 
@@ -62,11 +62,12 @@ All workflows use `just` (not make). The justfile is the single entry point.
 | Telemetry pipelines | `just exec "<cmd>"` then `just inspect-session` |
 | Gateway code | `just test-gateway` (unit) or `just test-gateway-e2e` (real VMs) |
 | Service HTTP API / CLI / MCP | `just smoke` (parallel pytest groups cover all three) |
-| Install / postinst / systemd / release glow-up flow | `just test-install` |
+| Linux install / postinst / systemd / release glow-up flow | `just test-install` |
+| macOS package / postinstall / installed-product glow-up flow | `just test-macos-install` |
 | Pre-release | `just test` |
 | Prepare candidate | `just prepare-release`, then manually push only `main` |
 | Qualify candidate | `just qualify-release` (no tag or publication) |
-| Ship qualified candidate | `just cut-release`, push the tag, then `just release <tag> <channel>` |
+| Ship qualified candidate | `just cut-release`, push the tag, then manually dispatch `release.yaml` for that exact tag/channel |
 
 ## Dependency chains
 
@@ -83,6 +84,7 @@ test             -> _install-tools + _clean-stale + _frontend-dist + _generate-s
 bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
 test-gateway-e2e -> _check-assets + _pack-initrd + _sign
 test-install     -> Docker package install + generated local stable/nightly glow-up
+test-macos-install -> production package + clean Tart install + physical-host exact-payload VZ boot
 install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd
 prepare-release  -> test + _stamp-version (commit only, no tag)
 qualify-release  -> exact origin/main SHA + release-qualification.yaml

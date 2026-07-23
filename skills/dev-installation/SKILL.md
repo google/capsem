@@ -150,7 +150,13 @@ Docker-based e2e tests in `tests/capsem-install/`:
 | test_reinstall.py | Binary replacement verification |
 | test_error_paths.py | Failure scenarios with actionable errors |
 
-Run: `just test-install` (Docker with systemd PID 1)
+Run `just test-install` for the Linux Docker/systemd boundary. On Apple Silicon
+macOS, run `just test-macos-install` for the exact `.pkg` build, clean Tart
+install, receipt/app/binary verification, and service health. Because Tart
+macOS guests cannot expose nested virtualization, the recipe then extracts the
+same package on the physical Mac and boots a real Capsem guest from its exact
+binary/profile payload to a shell marker. Both focused recipes remain
+debugging tools; `just test` is the release gate that owns them.
 
 ## Key files
 

@@ -27,10 +27,11 @@ quick checks. After frontend changes intended for the desktop app, use
 | Recipe | What it does | Boots VM? |
 |--------|-------------|-----------|
 | `just smoke` | Fast end-to-end gate: audit, doctor, injection, service/CLI/MCP/gateway tests | Yes |
-| `just test` | Full gate: unit, coverage, cross-compile, frontend, Python, injection, integration, benchmarks, install E2E | Yes |
+| `just test` | Full gate: unit/coverage, VM suites, cross-compile, both Linux packages, Docker install, and a clean-Tart exact `.pkg` install/glow-up on macOS | Yes |
 | `just test-gateway` | Gateway unit and mock-UDS tests | No |
 | `just test-gateway-e2e` | Gateway E2E tests with real service and VMs | Yes |
 | `just test-install` | Installer E2E plus local release glow-up in Docker/systemd | No host VM |
+| `just test-macos-install` | Exact `.pkg` build/SBOM, clean Tart install/status, then a physical-Mac guest boot from that package payload | Tart + host VZ |
 | `just bench` | In-VM and host lifecycle benchmarks | Yes |
 
 `just test` is the source of truth. Targeted commands are for iteration, not
@@ -131,8 +132,9 @@ the current-build runtime profile under `target/config/` from checked-in
 
 | Recipe | What it does |
 |--------|-------------|
-| `just cut-release` | Run tests, bump version, stamp changelog, commit, and create a local tag |
-| `just release [tag]` | Wait for CI to build + publish a pushed tag |
+| `just prepare-release` | Stamp and commit an untagged candidate, then run the complete local gate |
+| `just qualify-release` | Run the canonical remote gate for the exact published candidate SHA |
+| `just cut-release` | Verify exact-SHA qualification and create the immutable local tag |
 | `just install` | Build release package and install locally |
 
 ## Cleanup
@@ -156,7 +158,10 @@ smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initr
 test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings + _check-assets + _pack-initrd
 build-assets     -> _install-tools + _clean-stale + doctor + capsem-admin image build
 test-install     -> Docker package install + generated local stable/nightly glow-up
-cut-release      -> test + _stamp-version
+test-macos-install -> production .pkg + clean Tart install + physical-host exact-payload VZ boot
+prepare-release  -> _stamp-version + candidate commit + test
+qualify-release  -> exact origin/main SHA + release-qualification.yaml
+cut-release      -> exact successful qualification + local tag
 ```
 
 `_`-prefixed recipes are internal (hidden from `just --list`). Key internal recipes:

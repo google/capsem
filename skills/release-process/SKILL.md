@@ -32,9 +32,10 @@ and Linux package jobs fan out only after preflight. Restore a parallel macOS
 full gate once a physical runner exists.
 
 `just test` includes Winterfell/MCP persistence, the four-VM concurrency
-canary, IronBank, integration and injection, benchmarks, cross-compilation, and
-Docker/systemd install tests. Run it exactly once in the release workflow, not
-again after packaging. The exact final `.pkg`/`.deb` must
+canary, IronBank, integration and injection, benchmarks, cross-compilation,
+Docker/systemd install tests, and on an Apple Silicon Mac an exact-package
+install/glow-up in a disposable Tart guest. Run it exactly once in the release
+workflow, not again after packaging. The exact final `.pkg`/`.deb` must
 then be installed on macOS and Linux to exercise the real native installer and
 post-install scripts before publication. Notarization and public
 channel-switch/upgrade glow-up verification remain additional requirements and
@@ -198,7 +199,11 @@ not prove channel switching and must never satisfy this gate.
 ### Accepted macOS VZ proof boundary
 
 The complete local `just test` on the exact clean, versioned candidate is the
-authoritative Apple Virtualization.framework guest-shell proof. The tagged
+authoritative Apple Virtualization.framework guest-shell proof.
+`test-macos-install` first installs the exact package in a disposable Tart Mac,
+then extracts that same package on the physical host and boots a guest from the
+packaged binaries and profiles. This split is required because Tart macOS
+guests explicitly reject nested virtualization. The tagged
 GitHub-hosted macOS job separately builds, signs, notarizes, staples, installs,
 and verifies the exact publishable `.pkg`, but hosted runners cannot repeat the
 VZ guest path because nested virtualization is unavailable.
@@ -274,7 +279,15 @@ qualification results are hard failures.
 2. Confirm exact-SHA qualification again:
    `python3 scripts/check-release-qualification.py --sha "$(git rev-parse HEAD)" --channel stable`
 3. Push the immutable tag: `git push origin vX.Y.Z`
-4. Dispatch and watch one channel workflow: `just release vX.Y.Z stable`
+4. Dispatch the one channel workflow:
+   `gh workflow run release.yaml --ref vX.Y.Z -f tag=vX.Y.Z -f channel=stable`
+5. Watch that exact run with `gh run watch --exit-status`.
+
+There is deliberately no `just release` wrapper. Publication is not a second
+test gate, and hiding tag selection, workflow dispatch, polling, and retry
+semantics behind a large recipe created a fork from the canonical `just test`
+path. Qualification and tag creation stay in `qualify-release` and
+`cut-release`; the final workflow dispatch remains explicit.
 
 Never reuse or move a tag. Always increment the version number, and always tag
 forward.

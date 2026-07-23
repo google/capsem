@@ -165,6 +165,24 @@ if [ "$(uname -s)" = "Darwin" ] && ! command -v zstd >/dev/null 2>&1; then
     fi
 fi
 
+# The canonical macOS gate installs the exact package in a disposable Tart
+# guest. Bootstrap installs only the small host-side tools; the 25 GB macOS
+# image remains an explicit `just test` cost and is cached by Tart thereafter.
+if [ "$(uname -s)" = "Darwin" ] \
+    && { ! command -v tart >/dev/null 2>&1 || ! command -v sshpass >/dev/null 2>&1; }; then
+    if command -v brew >/dev/null 2>&1; then
+        if confirm "Tart + sshpass (clean macOS package install gate, via brew)"; then
+            # Tart 2.32 depends on softnet from the same official Cirrus Labs
+            # tap. Current Homebrew requires that dependency to be trusted
+            # explicitly before it will evaluate the Tart formula.
+            brew trust --formula cirruslabs/cli/softnet
+            brew install cirruslabs/cli/tart cirruslabs/cli/sshpass
+        fi
+    else
+        printf "  [SKIP] Tart install gate (Homebrew not installed -- install brew, then Tart + sshpass)\n"
+    fi
+fi
+
 if command -v pnpm >/dev/null 2>&1; then
     printf "  Frontend deps (pnpm install)...\n"
     (cd frontend && CI=true pnpm install --frozen-lockfile)
