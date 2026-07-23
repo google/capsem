@@ -297,8 +297,11 @@ def main() -> int:
                 ).stdout.strip(),
             }
         )
-        report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
-        print(f"Tart macOS installed-package proof passed: {report_path}")
+        rendered_report = json.dumps(report, indent=2, sort_keys=True) + "\n"
+        report_path.write_text(rendered_report)
+        final_report_path = work_dir / "report.json"
+        final_report_path.write_text(rendered_report)
+        print(f"Tart macOS installed-package proof passed: {final_report_path}")
         return 0
     finally:
         cleanup_vm(vm_name)

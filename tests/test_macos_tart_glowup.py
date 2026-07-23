@@ -153,6 +153,13 @@ def test_physical_mac_boots_a_guest_from_the_exact_package_payload() -> None:
     assert '"guest_vm_booted": True' in source
 
 
+def test_tart_harness_promotes_guest_evidence_to_a_durable_report() -> None:
+    source = HARNESS.read_text()
+
+    assert 'final_report_path = work_dir / "report.json"' in source
+    assert "final_report_path.write_text(rendered_report)" in source
+
+
 def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke() -> None:
     bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
     doctor = (PROJECT_ROOT / "scripts" / "doctor-macos.sh").read_text()
