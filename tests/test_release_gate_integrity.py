@@ -47,6 +47,34 @@ def test_full_gate_runs_capsem_bench_baseline_exactly_once() -> None:
     assert candidate.count("tests/capsem-serial/test_capsem_bench_baseline.py") == 1
 
 
+def test_full_gate_serializes_host_snapshot_files_without_dropping_coverage() -> None:
+    justfile = _read("justfile")
+    candidate = justfile.split("\n_test-candidate:", maxsplit=1)[1].split(
+        "\nbuild-host-image:", maxsplit=1
+    )[0]
+    snapshot_files = (
+        "tests/capsem-mcp/test_state_transitions.py",
+        "tests/capsem-service/test_svc_resume_paths.py",
+        "tests/capsem-service/test_svc_suspend_corruption.py",
+        "tests/capsem-service/test_svc_loop_device_after_resume.py",
+    )
+
+    declaration = candidate.split("HOST_SNAPSHOT_SERIAL=(", maxsplit=1)[1].split(
+        ")", maxsplit=1
+    )[0]
+    for path in snapshot_files:
+        assert f'"{path}"' in declaration
+        assert candidate.count(path) == 1
+
+    parallel = candidate.index("=== Python: non-serial tests (n=4 parallel) ===")
+    serial = candidate.index("=== Python: host snapshot tests (serial) ===")
+    timing = candidate.index("=== Python: serial timing and benchmark tests ===")
+    assert parallel < serial < timing
+    assert '"${HOST_SNAPSHOT_IGNORE_ARGS[@]}"' in candidate[parallel:serial]
+    assert "--maxfail=1" in candidate[parallel:serial]
+    assert '"${HOST_SNAPSHOT_SERIAL[@]}"' in candidate[serial:timing]
+
+
 def test_local_gate_bootstraps_docker_before_storage_preflight() -> None:
     justfile = _read("justfile")
     dependency_line = next(

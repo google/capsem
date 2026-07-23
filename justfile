@@ -831,8 +831,10 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
 
     # ---- Stage 5: Python pytest ---------------------------------------------
     # Dogfooding canary: 4 concurrent VMs. --dist=loadfile keeps per-file
-    # fixtures on the same worker. Any concurrency flake here is a Capsem-side
-    # bug.
+    # fixtures on the same worker. Host snapshot/restore is the one exception:
+    # each xdist worker owns a separate service, while the production host has
+    # one service and one service-scoped save/restore lock. Mirror the smoke
+    # gate by running those files only after the parallel workers have exited.
     #
     # Tests marked `serial` are benchmark/timing probes. They run after the
     # n=4 canary so their numbers measure Capsem, not another benchmark file
@@ -846,6 +848,17 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
     #   build -p capsem` from within pytest. This directory is owned by
     #   Stage 7's `just test-install`, which runs it inside Docker with
     #   CAPSEM_DEB_INSTALLED=1 (the live-system opt-in tests respect).
+    HOST_SNAPSHOT_SERIAL=(
+        "tests/capsem-mcp/test_state_transitions.py"
+        "tests/capsem-service/test_svc_resume_paths.py"
+        "tests/capsem-service/test_svc_suspend_corruption.py"
+        "tests/capsem-service/test_svc_loop_device_after_resume.py"
+    )
+    HOST_SNAPSHOT_IGNORE_ARGS=()
+    for snapshot_file in "${HOST_SNAPSHOT_SERIAL[@]}"; do
+        HOST_SNAPSHOT_IGNORE_ARGS+=("--ignore=$snapshot_file")
+    done
+
     echo "=== Python: non-serial tests (n=4 parallel) ==="
     # CAPSEM_REQUIRE_ARTIFACTS=1: fail the suite if any of assets/<arch>/
     # manifest.json, initrd.img, entitlements.plist, or target/linux-agent/
@@ -854,8 +867,9 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
     # absent it means an earlier stage silently dropped its output, and
     # we want that to fail loudly here rather than manifest as a pile of
     # individually-omitted tests whose absence goes unnoticed.
-    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short -n 4 --dist=loadfile \
+    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short --maxfail=1 -n 4 --dist=loadfile \
         -m "not serial" \
+        "${HOST_SNAPSHOT_IGNORE_ARGS[@]}" \
         --ignore=tests/capsem-recipes \
         --ignore=tests/capsem-install \
         --ignore=tests/capsem-build-chain \
@@ -867,6 +881,11 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
         --ignore=tests/test_release_site_html_contract.py \
         --ignore=tests/test_release_site_review_regressions.py \
         --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
+
+    echo "=== Python: host snapshot tests (serial) ==="
+    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
+        "${HOST_SNAPSHOT_SERIAL[@]}" \
+        -v --tb=short --maxfail=1 -m "not serial"
 
     echo "=== Python: release site shared-dist tests (serial) ==="
     CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
