@@ -257,7 +257,7 @@ def test_profile_mutation_routes_persist_profile_files_hashes_and_ledger() -> No
         )
         assert (
             rows_by_key[("plugin", "plugin", "dummy_pre_eicar", "edit")]["affected_path"]
-            == "profiles/code/profile.toml"
+            == f"profiles/{CODE_PROFILE_ID}/profile.toml"
         )
 
     finally:
