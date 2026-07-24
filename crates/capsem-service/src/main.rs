@@ -46,6 +46,10 @@ const RESUME_CHECKPOINT_NAME: &str = "checkpoint.vzsave";
 const RESUME_CHECKPOINT_COMPLETE_NAME: &str = "checkpoint.vzsave.complete";
 const SUSPEND_CONFIRM_TIMEOUT_SECS: u64 = 45;
 const UPDATE_CACHE_TTL_SECS: u64 = 24 * 3600;
+const AUTOMATIC_UPDATE_INITIAL_DELAY_SECS: u64 = 60;
+const AUTOMATIC_UPDATE_POLL_SECS: u64 = 60 * 60;
+const AUTOMATIC_UPDATE_BUSY_RETRY_SECS: u64 = 5 * 60;
+const AUTOMATIC_UPDATE_MAX_BACKOFF_SECS: u64 = 24 * 60 * 60;
 
 fn checkpoint_complete_path(checkpoint_path: &StdPath) -> PathBuf {
     let marker_name = checkpoint_path
@@ -12489,6 +12493,110 @@ enum UpdateRuntimeDisposition {
     RestartRequested,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AutomaticUpdateOutcome {
+    Disabled,
+    Busy,
+    Succeeded(UpdateRuntimeDisposition),
+    Failed(String),
+}
+
+fn automatic_updates_enabled() -> bool {
+    let (user, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    let resolved = capsem_core::net::policy_config::resolve_settings(&user, &corp);
+    automatic_updates_enabled_from_resolved(&resolved)
+}
+
+fn automatic_updates_enabled_from_resolved(
+    settings: &[capsem_core::net::policy_config::ResolvedSetting],
+) -> bool {
+    settings
+        .iter()
+        .find(|setting| setting.id == "app.auto_update")
+        .and_then(|setting| setting.effective_value.as_bool())
+        .unwrap_or(true)
+}
+
+fn automatic_update_failure_backoff(consecutive_failures: u32) -> std::time::Duration {
+    let exponent = consecutive_failures.saturating_sub(1).min(8);
+    let seconds = AUTOMATIC_UPDATE_POLL_SECS
+        .saturating_mul(1_u64 << exponent)
+        .min(AUTOMATIC_UPDATE_MAX_BACKOFF_SECS);
+    std::time::Duration::from_secs(seconds)
+}
+
+async fn run_automatic_update_once(state: &ServiceState) -> AutomaticUpdateOutcome {
+    if !automatic_updates_enabled() {
+        return AutomaticUpdateOutcome::Disabled;
+    }
+    let Ok(_update_guard) = state.update_lock.try_lock() else {
+        return AutomaticUpdateOutcome::Busy;
+    };
+    let plan = update_command_plan(UpdateCommandKind::Apply);
+    let response = match execute_update_command_unlocked(plan).await {
+        Ok(response) => response,
+        Err(error) => return AutomaticUpdateOutcome::Failed(error.1),
+    };
+    if response.status != "succeeded" {
+        let detail = response
+            .stderr
+            .as_deref()
+            .map(str::trim)
+            .filter(|detail| !detail.is_empty())
+            .unwrap_or("update command returned a non-zero exit status");
+        return AutomaticUpdateOutcome::Failed(format!("exit {:?}: {detail}", response.exit_code));
+    }
+    match reload_activated_update_runtime(state) {
+        Ok(disposition) => AutomaticUpdateOutcome::Succeeded(disposition),
+        Err(error) => AutomaticUpdateOutcome::Failed(error.1),
+    }
+}
+
+async fn run_automatic_update_loop(state: Arc<ServiceState>) {
+    let mut delay = std::time::Duration::from_secs(AUTOMATIC_UPDATE_INITIAL_DELAY_SECS);
+    let mut consecutive_failures = 0_u32;
+    loop {
+        tokio::time::sleep(delay).await;
+        match run_automatic_update_once(&state).await {
+            AutomaticUpdateOutcome::Disabled => {
+                consecutive_failures = 0;
+                delay = std::time::Duration::from_secs(AUTOMATIC_UPDATE_POLL_SECS);
+                info!("automatic release polling is disabled by app.auto_update");
+            }
+            AutomaticUpdateOutcome::Busy => {
+                delay = std::time::Duration::from_secs(AUTOMATIC_UPDATE_BUSY_RETRY_SECS);
+                info!("automatic release polling skipped because an explicit update owns the lock");
+            }
+            AutomaticUpdateOutcome::Succeeded(disposition) => {
+                consecutive_failures = 0;
+                delay = std::time::Duration::from_secs(AUTOMATIC_UPDATE_POLL_SECS);
+                info!(
+                    ?disposition,
+                    next_poll_secs = AUTOMATIC_UPDATE_POLL_SECS,
+                    "automatic release update completed"
+                );
+            }
+            AutomaticUpdateOutcome::Failed(error) => {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                delay = automatic_update_failure_backoff(consecutive_failures);
+                warn!(
+                    error = %error,
+                    consecutive_failures,
+                    retry_secs = delay.as_secs(),
+                    "automatic release update failed"
+                );
+            }
+        }
+    }
+}
+
+fn should_start_automatic_update_loop(parent_pid: Option<u32>) -> bool {
+    // `--parent-pid` is the explicit bounded-test harness rail. Production
+    // services never receive it, while long VM suites must not gain an
+    // unrelated network/package mutation one minute into a test process.
+    parent_pid.is_none()
+}
+
 fn reload_activated_update_runtime(
     state: &ServiceState,
 ) -> Result<UpdateRuntimeDisposition, AppError> {
@@ -12934,6 +13042,15 @@ async fn main() -> Result<()> {
     // Socket is bound; release the startup lock so any peer starter still in
     // its flock wait can fast-probe us and exit 0.
     drop(startup_lock_guard);
+
+    if should_start_automatic_update_loop(args.parent_pid) {
+        let state_for_updates = Arc::clone(&state);
+        tokio::spawn(async move {
+            run_automatic_update_loop(state_for_updates).await;
+        });
+    } else {
+        info!("automatic release polling is disabled for the bounded test service");
+    }
 
     // Spawn companion processes (gateway + tray) in the background so the UDS
     // starts accepting immediately. The previous .await here delayed accept()

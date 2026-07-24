@@ -241,8 +241,8 @@ def generate_defaults_json(config: GuestImageConfig) -> dict:
         "description": "Application settings",
         "collapsed": False,
         "auto_update": {
-            "name": "Auto-check for updates",
-            "description": "Check for new Capsem versions on launch",
+            "name": "Automatic updates",
+            "description": "Poll for and apply verified Capsem release updates",
             "type": "bool",
             "default": True,
         },

@@ -1227,6 +1227,185 @@ fn update_runtime_rejects_invalid_manifest_without_replacing_cached_graph() {
     );
 }
 
+fn resolved_automatic_update(
+    value: capsem_core::net::policy_config::SettingValue,
+) -> capsem_core::net::policy_config::ResolvedSetting {
+    capsem_core::net::policy_config::ResolvedSetting {
+        id: "app.auto_update".to_string(),
+        category: "App".to_string(),
+        name: "Automatic updates".to_string(),
+        description: String::new(),
+        setting_type: capsem_core::net::policy_config::SettingType::Bool,
+        default_value: capsem_core::net::policy_config::SettingValue::Bool(true),
+        effective_value: value,
+        source: capsem_core::net::policy_config::PolicySource::User,
+        modified: Some("test".to_string()),
+        corp_locked: false,
+        enabled_by: None,
+        enabled: true,
+        metadata: capsem_core::net::policy_config::SettingMetadata::default(),
+        collapsed: false,
+        history: Vec::new(),
+    }
+}
+
+#[test]
+fn automatic_update_setting_defaults_on_and_honors_false() {
+    use capsem_core::net::policy_config::SettingValue;
+
+    assert!(automatic_updates_enabled_from_resolved(&[]));
+    assert!(automatic_updates_enabled_from_resolved(&[
+        resolved_automatic_update(SettingValue::Bool(true))
+    ]));
+    assert!(!automatic_updates_enabled_from_resolved(&[
+        resolved_automatic_update(SettingValue::Bool(false))
+    ]));
+    assert!(automatic_updates_enabled_from_resolved(&[
+        resolved_automatic_update(SettingValue::Text("false".to_string()))
+    ]));
+}
+
+#[test]
+fn automatic_update_failure_backoff_is_bounded() {
+    assert_eq!(
+        automatic_update_failure_backoff(1),
+        std::time::Duration::from_secs(AUTOMATIC_UPDATE_POLL_SECS)
+    );
+    assert_eq!(
+        automatic_update_failure_backoff(2),
+        std::time::Duration::from_secs(AUTOMATIC_UPDATE_POLL_SECS * 2)
+    );
+    assert_eq!(
+        automatic_update_failure_backoff(100),
+        std::time::Duration::from_secs(AUTOMATIC_UPDATE_MAX_BACKOFF_SECS)
+    );
+}
+
+#[test]
+fn automatic_update_loop_runs_only_for_the_unbounded_installed_service() {
+    assert!(should_start_automatic_update_loop(None));
+    assert!(!should_start_automatic_update_loop(Some(1234)));
+}
+
+#[tokio::test]
+async fn automatic_update_disabled_setting_skips_command_execution() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("home");
+    std::fs::create_dir_all(&capsem_home).unwrap();
+    std::fs::write(
+        capsem_home.join("settings.toml"),
+        "[settings.\"app.auto_update\"]\nvalue = false\nmodified = \"test\"\n",
+    )
+    .unwrap();
+    let previous_home = std::env::var_os("CAPSEM_HOME");
+    std::env::set_var("CAPSEM_HOME", &capsem_home);
+    let state = make_test_state();
+
+    let outcome = run_automatic_update_once(&state).await;
+
+    match previous_home {
+        Some(value) => std::env::set_var("CAPSEM_HOME", value),
+        None => std::env::remove_var("CAPSEM_HOME"),
+    }
+    assert_eq!(outcome, AutomaticUpdateOutcome::Disabled);
+}
+
+#[tokio::test]
+async fn automatic_update_skips_without_queueing_when_explicit_update_is_active() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let previous_home = std::env::var_os("CAPSEM_HOME");
+    std::env::set_var("CAPSEM_HOME", dir.path());
+    let state = make_test_state();
+    let explicit_guard = state.update_lock.lock().await;
+
+    let outcome = run_automatic_update_once(&state).await;
+
+    drop(explicit_guard);
+    match previous_home {
+        Some(value) => std::env::set_var("CAPSEM_HOME", value),
+        None => std::env::remove_var("CAPSEM_HOME"),
+    }
+    assert_eq!(outcome, AutomaticUpdateOutcome::Busy);
+}
+
+#[tokio::test]
+async fn automatic_update_runs_one_complete_apply_and_reloads_runtime() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("home");
+    let assets_dir = capsem_home.join("assets");
+    let cli = dir.path().join("capsem");
+    let log = dir.path().join("automatic.log");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-2");
+    std::fs::write(
+        &cli,
+        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\n", log.display()),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&cli).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&cli, permissions).unwrap();
+    let previous_home = std::env::var_os("CAPSEM_HOME");
+    let previous_cli = std::env::var_os("CAPSEM_CLI");
+    std::env::set_var("CAPSEM_HOME", &capsem_home);
+    std::env::set_var("CAPSEM_CLI", &cli);
+    let state = make_asset_state(assets_dir);
+
+    let outcome = run_automatic_update_once(&state).await;
+
+    match previous_home {
+        Some(value) => std::env::set_var("CAPSEM_HOME", value),
+        None => std::env::remove_var("CAPSEM_HOME"),
+    }
+    match previous_cli {
+        Some(value) => std::env::set_var("CAPSEM_CLI", value),
+        None => std::env::remove_var("CAPSEM_CLI"),
+    }
+    assert_eq!(
+        outcome,
+        AutomaticUpdateOutcome::Succeeded(UpdateRuntimeDisposition::Reloaded)
+    );
+    assert_eq!(std::fs::read_to_string(log).unwrap(), "update --yes\n");
+}
+
+#[tokio::test]
+async fn automatic_update_reports_command_failure_for_backoff() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cli = dir.path().join("capsem");
+    std::fs::write(
+        &cli,
+        "#!/bin/sh\nprintf 'network unavailable\\n' >&2\nexit 7\n",
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&cli).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&cli, permissions).unwrap();
+    let previous_home = std::env::var_os("CAPSEM_HOME");
+    let previous_cli = std::env::var_os("CAPSEM_CLI");
+    std::env::set_var("CAPSEM_HOME", dir.path());
+    std::env::set_var("CAPSEM_CLI", &cli);
+    let state = make_test_state();
+
+    let outcome = run_automatic_update_once(&state).await;
+
+    match previous_home {
+        Some(value) => std::env::set_var("CAPSEM_HOME", value),
+        None => std::env::remove_var("CAPSEM_HOME"),
+    }
+    match previous_cli {
+        Some(value) => std::env::set_var("CAPSEM_CLI", value),
+        None => std::env::remove_var("CAPSEM_CLI"),
+    }
+    let AutomaticUpdateOutcome::Failed(error) = outcome else {
+        panic!("expected automatic update failure");
+    };
+    assert!(error.contains("exit Some(7)"), "{error}");
+    assert!(error.contains("network unavailable"), "{error}");
+}
+
 async fn decode_response_json<T: serde::de::DeserializeOwned>(
     response: axum::response::Response,
 ) -> T {
