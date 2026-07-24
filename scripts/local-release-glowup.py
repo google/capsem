@@ -408,20 +408,20 @@ def validate_exact_release_pairing(
         Path(args.input_deb),
     )
     if args.release_transition == "auto":
-        transition, selected_profile = classify_pairing_inputs(
+        transition, changed_profiles = classify_pairing_inputs(
             channel=channel,
             before_manifest_bytes=before_manifest_bytes,
             after_manifest_bytes=after_manifest_bytes,
             before_artifact=before_artifact,
             after_artifact=after_artifact,
         )
-        if args.profile is not None and args.profile != selected_profile:
+        if args.profile is not None and changed_profiles != (args.profile,):
             raise SystemExit(
                 "exact pairing selected profile does not match the classified manifest delta"
             )
     else:
         transition = TransitionKind(str(args.release_transition))
-        selected_profile = str(args.profile) if args.profile is not None else None
+        changed_profiles = (str(args.profile),) if args.profile is not None else ()
 
     changed_profile = transition in {
         TransitionKind.PROFILE_ONLY,
@@ -461,13 +461,15 @@ def validate_exact_release_pairing(
                 "exact pairing candidate profile publication failed verification"
             ) from error
     elif transition is TransitionKind.PROFILE_THEN_BINARY:
-        if selected_profile is None:
-            raise SystemExit("profile_then_binary exact pairing requires one selected profile")
+        if not changed_profiles:
+            raise SystemExit("profile_then_binary exact pairing requires staged profiles")
         if supplied_publication_fields and len(supplied_publication_fields) != 2:
             raise SystemExit(
                 "candidate profile publication base and directory must be supplied together"
             )
         if len(supplied_publication_fields) == 2:
+            if args.profile is None:
+                raise SystemExit("a local candidate publication requires its selected profile")
             try:
                 run(
                     [
@@ -476,7 +478,7 @@ def validate_exact_release_pairing(
                         "--manifest",
                         str(after_manifest),
                         "--profile",
-                        selected_profile,
+                        str(args.profile),
                         "--publication-base",
                         str(args.publication_base),
                         "--release-dir",
@@ -499,7 +501,7 @@ def validate_exact_release_pairing(
         after_manifest_bytes=after_manifest_bytes,
         before_artifact=before_artifact,
         after_artifact=after_artifact,
-        selected_profile=selected_profile if changed_profile else None,
+        changed_profiles=changed_profiles if changed_profile else (),
     )
 
 

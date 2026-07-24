@@ -43,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and profiles, staged and verified its immutable candidate publication once,
   and reused those same bytes for compatibility testing and publication.
 
+- Allowed a composed binary release to validate and activate the complete set
+  of previously staged profiles while still requiring every unchanged profile
+  to remain byte-for-byte identical.
+
 - Moved binary candidate manifest authoring and host SBOM generation ahead of
   complete pairing tests, then reused that exact tested source manifest for
   immutable publication and final channel assembly without a second mutation.

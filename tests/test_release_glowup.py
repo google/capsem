@@ -637,7 +637,7 @@ def test_exact_profile_pairing_allows_only_the_selected_profile_to_change(
         after_manifest_bytes=json.dumps(after_manifest, sort_keys=True).encode(),
         before_artifact=artifact,
         after_artifact=artifact,
-        selected_profile="experimental",
+        changed_profiles=("experimental",),
     )
 
     after_manifest["profiles"]["code"]["revision"] = "code-2"
@@ -649,7 +649,7 @@ def test_exact_profile_pairing_allows_only_the_selected_profile_to_change(
             after_manifest_bytes=json.dumps(after_manifest, sort_keys=True).encode(),
             before_artifact=artifact,
             after_artifact=artifact,
-            selected_profile="experimental",
+            changed_profiles=("experimental",),
         )
 
 
@@ -687,7 +687,7 @@ def test_exact_pairing_classifier_distinguishes_binary_and_staged_profile(
         after_artifact=after_artifact,
     )
     assert kind is module.TransitionKind.BINARY_ONLY
-    assert profile is None
+    assert profile == ()
 
     after_manifest["profiles"]["experimental"]["revision"] = "experimental-2"
     kind, profile = module.classify_pairing_inputs(
@@ -698,17 +698,18 @@ def test_exact_pairing_classifier_distinguishes_binary_and_staged_profile(
         after_artifact=after_artifact,
     )
     assert kind is module.TransitionKind.PROFILE_THEN_BINARY
-    assert profile == "experimental"
+    assert profile == ("experimental",)
 
     after_manifest["profiles"]["code"]["revision"] = "code-2"
-    with pytest.raises(module.GlowupContractError, match="exactly one staged profile"):
-        module.classify_pairing_inputs(
-            channel="nightly",
-            before_manifest_bytes=json.dumps(before_manifest).encode(),
-            after_manifest_bytes=json.dumps(after_manifest).encode(),
-            before_artifact=before_artifact,
-            after_artifact=after_artifact,
-        )
+    kind, profiles = module.classify_pairing_inputs(
+        channel="nightly",
+        before_manifest_bytes=json.dumps(before_manifest).encode(),
+        after_manifest_bytes=json.dumps(after_manifest).encode(),
+        before_artifact=before_artifact,
+        after_artifact=after_artifact,
+    )
+    assert kind is module.TransitionKind.PROFILE_THEN_BINARY
+    assert profiles == ("code", "experimental")
 
 
 def test_exact_pairing_rejects_manifest_channel_or_package_mismatch(
@@ -746,7 +747,7 @@ def test_exact_pairing_rejects_manifest_channel_or_package_mismatch(
             after_manifest_bytes=contents,
             before_artifact=mismatched,
             after_artifact=mismatched,
-            selected_profile="work",
+            changed_profiles=("work",),
         )
 
 

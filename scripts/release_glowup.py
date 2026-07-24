@@ -328,7 +328,7 @@ def validate_pairing_inputs(
     after_manifest_bytes: bytes,
     before_artifact: ArtifactIdentity,
     after_artifact: ArtifactIdentity,
-    selected_profile: str | None = None,
+    changed_profiles: Sequence[str] = (),
 ) -> tuple[PairingIdentity, PairingIdentity]:
     """Validate an exact public-before/candidate-after release-lane pairing."""
 
@@ -372,20 +372,26 @@ def validate_pairing_inputs(
         raise GlowupContractError("release pairing manifests must contain profile objects")
     before_profile_map = cast(Mapping[str, object], before_profiles)
     after_profile_map = cast(Mapping[str, object], after_profiles)
+    changed_profile_ids = tuple(changed_profiles)
+    if len(changed_profile_ids) != len(set(changed_profile_ids)):
+        raise GlowupContractError("release pairing changed profile ids must be unique")
     if transition_kind is TransitionKind.BINARY_ONLY:
-        if selected_profile is not None:
+        if changed_profile_ids:
             raise GlowupContractError("binary_only release pairing cannot select a changed profile")
     else:
-        if not selected_profile:
+        if not changed_profile_ids:
             raise GlowupContractError(
-                f"{transition_kind.value} release pairing requires one selected profile"
+                f"{transition_kind.value} release pairing requires changed profiles"
             )
-        if selected_profile not in after_profile_map:
-            raise GlowupContractError(
-                f"candidate-after manifest lacks selected profile {selected_profile!r}"
-            )
+        if transition_kind is TransitionKind.PROFILE_ONLY and len(changed_profile_ids) != 1:
+            raise GlowupContractError("profile_only release pairing requires exactly one profile")
+        for profile_id in changed_profile_ids:
+            if profile_id not in after_profile_map:
+                raise GlowupContractError(
+                    f"candidate-after manifest lacks changed profile {profile_id!r}"
+                )
         profile_ids = set(before_profile_map) | set(after_profile_map)
-        for profile_id in profile_ids - {selected_profile}:
+        for profile_id in profile_ids - set(changed_profile_ids):
             if before_profile_map.get(profile_id) != after_profile_map.get(profile_id):
                 raise GlowupContractError(
                     f"{transition_kind.value} release pairing changed unselected profile "
@@ -412,8 +418,8 @@ def classify_pairing_inputs(
     after_manifest_bytes: bytes,
     before_artifact: ArtifactIdentity,
     after_artifact: ArtifactIdentity,
-) -> tuple[TransitionKind, str | None]:
-    """Classify a binary lane as binary-only or one staged-profile composition."""
+) -> tuple[TransitionKind, tuple[str, ...]]:
+    """Classify a binary lane and return its complete staged profile set."""
 
     before_manifest = load_manifest_bytes(before_manifest_bytes)
     after_manifest = load_manifest_bytes(after_manifest_bytes)
@@ -435,14 +441,8 @@ def classify_pairing_inputs(
     )
     if not changed:
         transition_kind = TransitionKind.BINARY_ONLY
-        selected_profile = None
-    elif len(changed) == 1:
-        transition_kind = TransitionKind.PROFILE_THEN_BINARY
-        selected_profile = changed[0]
     else:
-        raise GlowupContractError(
-            f"binary release pairing may activate exactly one staged profile; changed={changed}"
-        )
+        transition_kind = TransitionKind.PROFILE_THEN_BINARY
     validate_pairing_inputs(
         kind=transition_kind,
         channel=channel,
@@ -450,9 +450,9 @@ def classify_pairing_inputs(
         after_manifest_bytes=after_manifest_bytes,
         before_artifact=before_artifact,
         after_artifact=after_artifact,
-        selected_profile=selected_profile,
+        changed_profiles=changed,
     )
-    return transition_kind, selected_profile
+    return transition_kind, tuple(changed)
 
 
 def validate_installed_evidence(

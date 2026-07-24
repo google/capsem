@@ -323,8 +323,10 @@ pair is rejected by the declared minimum and the profile remains staged until
 `release-binaries` supplies and tests the required binary.
 
 For a binary release, CI MUST pull and test every channel/profile revision in
-the resulting selected channel, including a profile previously staged by
-`release-profile`. It MUST NOT rebuild any of those profiles.
+the resulting selected channel, including every profile previously staged by
+one or more `release-profile` runs. It MUST NOT rebuild any of those profiles.
+The composed transition is the complete staged profile set; it MUST NOT impose
+an artificial one-profile activation limit.
 
 These release gates prove the graph being activated. They do not claim that
 every historical binary ever published remains supported.
@@ -866,11 +868,11 @@ still points to an incompatible binary.
 
 #### Phase B: build the binary candidate
 
-1. Reacquire the same channel lock and consume the already-published immutable
-   profile candidate as a read-only compatibility input.
+1. Reacquire the same channel lock and consume every already-published
+   immutable staged profile candidate as a read-only compatibility input.
 2. Build the binary and exact native packages.
 3. Test the candidate binary against:
-   - The staged candidate profile.
+   - Every staged candidate profile.
    - Every unchanged existing profile in the selected channel.
    - Any existing profile revision that must remain valid during update.
 4. Install and verify the exact packages.
