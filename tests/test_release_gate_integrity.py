@@ -25,26 +25,36 @@ def _job_block(workflow: str, name: str) -> str:
     return match.group(0)
 
 
-def test_just_test_binds_clean_tree_to_one_commit_without_archiving_benchmarks() -> None:
+def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> None:
     justfile = _read("justfile")
     wrapper = justfile.split("\ntest:", maxsplit=1)[1].split("\n_test-candidate:", maxsplit=1)[0]
 
-    assert "git status --porcelain" in wrapper
     assert "TESTED_HEAD=$(git rev-parse HEAD)" in wrapper
+    assert "TESTED_SOURCE=$(uv run python scripts/source-state-digest.py)" in wrapper
     assert 'test "$(git rev-parse HEAD)" = "$TESTED_HEAD"' in wrapper
+    assert "AFTER_SOURCE=$(uv run python scripts/source-state-digest.py)" in wrapper
+    assert 'if [ "$AFTER_SOURCE" != "$TESTED_SOURCE" ]' in wrapper
     assert "scripts/with-gate-colima.sh just _test-candidate" in wrapper
     assert "CAPSEM_BENCHMARK_OUTPUT_ROOT" in justfile
     assert "target/test-benchmarks" in justfile
     assert "benchmarks/**/data_*.json" in _read(".gitignore")
 
 
-def test_full_gate_runs_capsem_bench_baseline_exactly_once() -> None:
+def test_full_gate_runs_capsem_bench_baseline_for_every_selected_profile() -> None:
     justfile = _read("justfile")
     candidate = justfile.split("\n_test-candidate:", maxsplit=1)[1].split(
         "\n_build-host-image:", maxsplit=1
     )[0]
+    base_profile, remaining_profiles = candidate.split(
+        'for TEST_PROFILE in "${TEST_PROFILES[@]:1}"; do',
+        maxsplit=1,
+    )
+    benchmark = "tests/capsem-serial/test_capsem_bench_baseline.py"
 
-    assert candidate.count("tests/capsem-serial/test_capsem_bench_baseline.py") == 1
+    assert base_profile.count(benchmark) == 1
+    assert remaining_profiles.count(benchmark) == 1
+    assert 'CAPSEM_TEST_PROFILE="$BASE_PROFILE"' in base_profile
+    assert 'CAPSEM_TEST_PROFILE="$TEST_PROFILE"' in remaining_profiles
 
 
 def test_full_gate_serializes_host_snapshot_files_without_dropping_coverage() -> None:
