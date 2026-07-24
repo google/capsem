@@ -623,12 +623,37 @@ def build_transition_evidence(
     return evidence
 
 
+def _expected_transition_values(
+    expected_transitions: Sequence[TransitionKind | str] | None,
+) -> list[str]:
+    if expected_transitions is None:
+        return [kind.value for kind in TransitionKind]
+    try:
+        expected = [TransitionKind(kind).value for kind in expected_transitions]
+    except ValueError as error:
+        raise GlowupContractError(f"unsupported expected release transition: {error}") from error
+    if not expected:
+        raise GlowupContractError("declared transition scope must not be empty")
+    if expected[0] != TransitionKind.FRESH_INSTALL.value:
+        raise GlowupContractError("declared transition scope must begin with fresh_install")
+    if len(expected) != len(set(expected)):
+        raise GlowupContractError("declared transition scope must not contain duplicates")
+    if (
+        TransitionKind.TAMPER_REJECTION.value in expected
+        and expected[-1] != TransitionKind.TAMPER_REJECTION.value
+    ):
+        raise GlowupContractError("tamper_rejection must be the final declared transition")
+    return expected
+
+
 def validate_transition_sequence(
     transitions: Sequence[Mapping[str, object]],
+    *,
+    expected_transitions: Sequence[TransitionKind | str] | None = None,
 ) -> list[dict[str, object]]:
-    """Require one ordered proof for every installed release transition."""
+    """Require ordered proof for the complete or explicitly lane-scoped transition set."""
 
-    expected = [kind.value for kind in TransitionKind]
+    expected = _expected_transition_values(expected_transitions)
     actual = [transition.get("kind") for transition in transitions]
     if actual != expected:
         raise GlowupContractError(f"transition sequence must contain exactly {expected} in order")
@@ -675,6 +700,7 @@ def build_report(
     installed: Mapping[str, object],
     capabilities: Mapping[str, object],
     transitions: Sequence[Mapping[str, object]] | None = None,
+    expected_transitions: Sequence[TransitionKind | str] | None = None,
 ) -> dict[str, object]:
     if not adapter:
         raise GlowupContractError("glow-up adapter name must not be empty")
@@ -686,8 +712,18 @@ def build_report(
         "installed": dict(installed),
         "capabilities": dict(capabilities),
     }
-    if transitions is not None:
-        report["transitions"] = validate_transition_sequence(transitions)
+    if transitions is None:
+        if expected_transitions is not None:
+            raise GlowupContractError(
+                "declared transition scope requires transition evidence"
+            )
+    else:
+        transition_scope = _expected_transition_values(expected_transitions)
+        report["transition_scope"] = transition_scope
+        report["transitions"] = validate_transition_sequence(
+            transitions,
+            expected_transitions=transition_scope,
+        )
     return report
 
 

@@ -423,6 +423,85 @@ def test_transition_sequence_proves_each_required_installed_state() -> None:
     assert all(row["probes"] == {"doctor": True, "winterfell": True} for row in report)
 
 
+def test_lane_scoped_transition_report_requires_declared_exact_order(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    artifact = _artifact(tmp_path, module)
+    initial = _pairing(
+        module,
+        channel="nightly",
+        manifest_sha256="0" * 64,
+        package_version="1.5.99",
+        package_sha256="0" * 64,
+        profiles_sha256="2" * 64,
+    )
+    candidate = _pairing(
+        module,
+        channel="nightly",
+        manifest_sha256="1" * 64,
+        package_version=artifact.version,
+        package_sha256=artifact.sha256,
+        profiles_sha256="2" * 64,
+    )
+    fresh = _transition(
+        module,
+        module.TransitionKind.FRESH_INSTALL,
+        before=None,
+        after=initial,
+    )
+    binary = _transition(
+        module,
+        module.TransitionKind.BINARY_ONLY,
+        before=initial,
+        after=candidate,
+    )
+    installed = {
+        "package_version": artifact.version,
+        "channel": "nightly",
+        "manifest_url": "https://release.test/assets/nightly/manifest.json",
+        "package_receipt": True,
+        "binary_cohort": True,
+        "installed": True,
+        "running": True,
+        "service": "ok",
+        "gateway": "ok",
+        "profiles_ready": 1,
+        "profiles_total": 1,
+    }
+
+    report = module.build_report(
+        adapter="linux-docker-systemd",
+        artifact=artifact,
+        installed=installed,
+        capabilities={"native_install": True},
+        transitions=[fresh, binary],
+        expected_transitions=[
+            module.TransitionKind.FRESH_INSTALL,
+            module.TransitionKind.BINARY_ONLY,
+        ],
+    )
+
+    assert report["transition_scope"] == ["fresh_install", "binary_only"]
+    assert [row["kind"] for row in report["transitions"]] == report["transition_scope"]
+
+    for invalid_rows, invalid_scope in (
+        ([binary, fresh], ["fresh_install", "binary_only"]),
+        ([fresh], ["fresh_install", "binary_only"]),
+        ([fresh, binary], ["fresh_install", "fresh_install"]),
+        ([binary], ["binary_only"]),
+    ):
+        with pytest.raises(module.GlowupContractError, match="transition"):
+            module.build_report(
+                adapter="linux-docker-systemd",
+                artifact=artifact,
+                installed=installed,
+                capabilities={"native_install": True},
+                transitions=invalid_rows,
+                expected_transitions=invalid_scope,
+            )
+
+
 @pytest.mark.parametrize(
     ("kind", "before_updates", "after_updates", "error"),
     [
