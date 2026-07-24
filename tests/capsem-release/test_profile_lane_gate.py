@@ -56,19 +56,27 @@ def test_removed_profile_image_is_absent_not_status_removed() -> None:
     assert "removed is represented by absence, not by a status enum" in source
 
 
-def test_admin_profile_publish_report_is_lane_scoped() -> None:
+def test_admin_profile_release_is_one_lane_scoped_command() -> None:
     admin_source = (PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs").read_text(
         encoding="utf-8"
     )
 
-    assert "ProfileReleaseSubcommand" in admin_source
-    assert "Publish(ProfileReleaseTargetArgs)" in admin_source
-    assert "Deprecate(ProfileReleaseTargetArgs)" in admin_source
-    assert "Revoke(ProfileReleaseTargetArgs)" in admin_source
+    assert "Validate(ReleaseValidateArgs)" in admin_source
+    assert "Release(ReleaseArgs)" in admin_source
+    assert "ProfileReleaseSubcommand" not in admin_source
+    assert "Publish(ProfileReleaseTargetArgs)" not in admin_source
+    assert "Deprecate(ProfileReleaseTargetArgs)" not in admin_source
+    assert "Revoke(ProfileReleaseTargetArgs)" not in admin_source
     assert "ProfileReleaseStatusArg" in admin_source
     assert "changed_channels: Vec<String>" in admin_source
     assert "changed_manifests: Vec<String>" in admin_source
     assert "changed_profiles: Vec<String>" in admin_source
+    assert "compatible_with_current_binary: bool" in admin_source
+    assert "release_command_has_one_operator_shape" in admin_source
+    assert (
+        "profile_release_merges_only_selected_profile_and_reports_compatibility"
+        in admin_source
+    )
     assert "profile_release_commands_publish_report_is_lane_scoped" in admin_source
     assert 'vec!["nightly"]' in admin_source
     assert "publishing nightly co-work must not mutate stable" in admin_source
