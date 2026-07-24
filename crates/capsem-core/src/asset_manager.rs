@@ -15,7 +15,7 @@
 //! (`vmlinuz-{hash16}`, `rootfs-{hash16}.erofs`). Same hash = same file =
 //! natural dedup across asset versions.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -232,6 +232,28 @@ pub struct ExpectedAssetHashes {
     pub kernel: String,
     pub initrd: String,
     pub rootfs: String,
+}
+
+/// Comparable state for every profile carried by one public release graph.
+///
+/// The installed public manifest remains the authority on disk. This in-memory
+/// view gives the updater and service deterministic identities without
+/// flattening distinct profile revisions or image sets into one default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseGraphProfileState {
+    pub catalog_revision: String,
+    pub images_revision: String,
+    pub profiles: BTreeMap<String, ReleaseGraphProfileIdentity>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseGraphProfileIdentity {
+    pub revision: String,
+    pub status: String,
+    pub config_revision: String,
+    pub evidence_revision: String,
+    pub images_revision: String,
+    pub architectures: Vec<String>,
 }
 
 /// Map `std::env::consts::ARCH` names to the keys used under
@@ -459,6 +481,9 @@ impl ManifestV2 {
 /// adapter exists only because the boot resolver needs the compact v2 asset
 /// index; it must never be serialized back over the installed manifest.
 fn manifest_v2_from_release_graph(value: &serde_json::Value) -> Result<ManifestV2> {
+    // Validate and retain the complete graph state before deriving the compact
+    // compatibility view used by legacy boot-resolution callers.
+    release_graph_profile_state(value)?;
     let profiles = value
         .get("profiles")
         .and_then(serde_json::Value::as_object)
@@ -605,6 +630,281 @@ fn manifest_v2_from_release_graph(value: &serde_json::Value) -> Result<ManifestV
             )]),
         },
     })
+}
+
+/// Parse and fingerprint every profile-owned identity in a public graph.
+///
+/// Object keys and semantically unordered artifact lists are canonicalized so
+/// formatting or JSON key order cannot manufacture an update. Membership,
+/// revisions, config, evidence, and image identity all participate in the
+/// catalog revision; only profile/image identity participates in the image
+/// revision.
+pub fn release_graph_profile_state(value: &serde_json::Value) -> Result<ReleaseGraphProfileState> {
+    let profiles = value
+        .get("profiles")
+        .and_then(serde_json::Value::as_object)
+        .context("release graph is missing profiles")?;
+    if profiles.is_empty() {
+        bail!("release graph contains no profiles");
+    }
+
+    let mut identities = BTreeMap::new();
+    let mut catalog_scope = BTreeMap::new();
+    let mut images_scope = BTreeMap::new();
+    let mut usable_profiles = 0usize;
+
+    for (profile_id, profile) in profiles {
+        validate_version(profile_id)
+            .with_context(|| format!("release graph profile id {profile_id} is invalid"))?;
+        let revision = profile
+            .get("revision")
+            .and_then(serde_json::Value::as_str)
+            .context("release graph profile is missing revision")?
+            .to_string();
+        validate_version(&revision).with_context(|| {
+            format!("release graph profile {profile_id} has invalid revision {revision}")
+        })?;
+        let status = profile
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("current")
+            .to_string();
+        let revoked = status.eq_ignore_ascii_case("revoked");
+        if !revoked {
+            usable_profiles += 1;
+        }
+
+        let architectures = profile
+            .get("architectures")
+            .and_then(serde_json::Value::as_array)
+            .context("release graph profile is missing architectures")?;
+        if architectures.is_empty() && !revoked {
+            bail!("release graph profile {profile_id} contains no architectures");
+        }
+
+        let mut architecture_names = BTreeSet::new();
+        let mut config_scope = BTreeMap::new();
+        let mut evidence_scope = BTreeMap::new();
+        let mut profile_images_scope = BTreeMap::new();
+        for architecture in architectures {
+            let arch = architecture
+                .get("architecture")
+                .and_then(serde_json::Value::as_str)
+                .context("release graph profile architecture is missing architecture")?;
+            if !architecture_names.insert(arch.to_string()) {
+                bail!("release graph profile {profile_id} repeats architecture {arch}");
+            }
+            let image_revision = architecture
+                .get("image_revision")
+                .and_then(serde_json::Value::as_str)
+                .context("release graph profile architecture is missing image_revision")?;
+            validate_version(image_revision).with_context(|| {
+                format!(
+                    "release graph profile {profile_id} architecture {arch} has invalid image revision"
+                )
+            })?;
+
+            let configs = canonical_active_artifacts(
+                architecture.get("config"),
+                &format!("release graph profile {profile_id} architecture {arch} config"),
+                false,
+            )?;
+            let evidence = canonical_active_artifacts(
+                architecture.get("evidence"),
+                &format!("release graph profile {profile_id} architecture {arch} evidence"),
+                false,
+            )?;
+            let images = canonical_active_artifacts(
+                architecture.get("images"),
+                &format!("release graph profile {profile_id} architecture {arch} images"),
+                true,
+            )?;
+            if !revoked {
+                let image_kinds: BTreeSet<&str> = images
+                    .iter()
+                    .filter_map(|image| image.get("kind").and_then(serde_json::Value::as_str))
+                    .collect();
+                for required in ["kernel", "initrd", "rootfs"] {
+                    if !image_kinds.contains(required) {
+                        bail!(
+                            "release graph profile {profile_id} architecture {arch} is missing {required} image"
+                        );
+                    }
+                }
+            }
+
+            config_scope.insert(arch.to_string(), configs);
+            evidence_scope.insert(arch.to_string(), evidence);
+            profile_images_scope.insert(
+                arch.to_string(),
+                serde_json::json!({
+                    "image_revision": image_revision,
+                    "images": images,
+                }),
+            );
+        }
+
+        let config_revision = state_revision(
+            "config",
+            &serde_json::to_value(&config_scope).context("serialize profile config state")?,
+        );
+        let evidence_revision = state_revision(
+            "evidence",
+            &serde_json::to_value(&evidence_scope).context("serialize profile evidence state")?,
+        );
+        let profile_images_revision = state_revision(
+            "images",
+            &serde_json::to_value(&profile_images_scope)
+                .context("serialize profile image state")?,
+        );
+        let identity = ReleaseGraphProfileIdentity {
+            revision: revision.clone(),
+            status: status.clone(),
+            config_revision: config_revision.clone(),
+            evidence_revision: evidence_revision.clone(),
+            images_revision: profile_images_revision.clone(),
+            architectures: architecture_names.into_iter().collect(),
+        };
+        let mut metadata = profile.clone();
+        if let Some(object) = metadata.as_object_mut() {
+            object.remove("architectures");
+        }
+        catalog_scope.insert(
+            profile_id.clone(),
+            serde_json::json!({
+                "metadata": metadata,
+                "config_revision": config_revision,
+                "evidence_revision": evidence_revision,
+                "images_revision": profile_images_revision,
+            }),
+        );
+        images_scope.insert(
+            profile_id.clone(),
+            serde_json::json!({
+                "status": status,
+                "architectures": profile_images_scope,
+            }),
+        );
+        identities.insert(profile_id.clone(), identity);
+    }
+    if usable_profiles == 0 {
+        bail!("release graph contains no usable profile");
+    }
+
+    Ok(ReleaseGraphProfileState {
+        catalog_revision: state_revision(
+            "catalog",
+            &serde_json::to_value(catalog_scope)
+                .context("serialize release graph profile catalog state")?,
+        ),
+        images_revision: state_revision(
+            "images",
+            &serde_json::to_value(images_scope)
+                .context("serialize release graph image catalog state")?,
+        ),
+        profiles: identities,
+    })
+}
+
+fn canonical_active_artifacts(
+    value: Option<&serde_json::Value>,
+    context: &str,
+    validate_images: bool,
+) -> Result<Vec<serde_json::Value>> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let artifacts = value
+        .as_array()
+        .with_context(|| format!("{context} must be an array"))?;
+    let mut canonical = Vec::new();
+    for artifact in artifacts.iter().filter(|artifact| {
+        artifact
+            .get("status")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(|status| !status.eq_ignore_ascii_case("revoked"))
+    }) {
+        let digest = artifact
+            .get("digest")
+            .with_context(|| format!("{context} artifact is missing digest"))?;
+        let blake3 = digest
+            .get("blake3")
+            .and_then(serde_json::Value::as_str)
+            .with_context(|| format!("{context} artifact is missing BLAKE3"))?;
+        validate_hash(blake3)?;
+        let sha256 = digest
+            .get("sha256")
+            .and_then(serde_json::Value::as_str)
+            .with_context(|| format!("{context} artifact is missing SHA-256"))?;
+        validate_sha256(sha256)?;
+        artifact
+            .get("bytes")
+            .and_then(serde_json::Value::as_u64)
+            .with_context(|| format!("{context} artifact is missing byte size"))?;
+        if validate_images {
+            artifact
+                .get("kind")
+                .and_then(serde_json::Value::as_str)
+                .with_context(|| format!("{context} image is missing kind"))?;
+            artifact
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .with_context(|| format!("{context} image is missing name"))?;
+        }
+        canonical.push(artifact.clone());
+    }
+    canonical.sort_by_key(canonical_json);
+    Ok(canonical)
+}
+
+fn state_revision(prefix: &str, value: &serde_json::Value) -> String {
+    let hash = blake3::hash(canonical_json(value).as_bytes())
+        .to_hex()
+        .to_string();
+    format!("{prefix}-{}", &hash[..16])
+}
+
+fn canonical_json(value: &serde_json::Value) -> String {
+    fn write(value: &serde_json::Value, output: &mut String) {
+        match value {
+            serde_json::Value::Null => output.push_str("null"),
+            serde_json::Value::Bool(value) => {
+                output.push_str(if *value { "true" } else { "false" })
+            }
+            serde_json::Value::Number(value) => output.push_str(&value.to_string()),
+            serde_json::Value::String(value) => {
+                output.push_str(&serde_json::to_string(value).expect("JSON strings serialize"));
+            }
+            serde_json::Value::Array(values) => {
+                output.push('[');
+                for (index, value) in values.iter().enumerate() {
+                    if index > 0 {
+                        output.push(',');
+                    }
+                    write(value, output);
+                }
+                output.push(']');
+            }
+            serde_json::Value::Object(values) => {
+                output.push('{');
+                let mut entries = values.iter().collect::<Vec<_>>();
+                entries.sort_by_key(|(key, _)| key.as_str());
+                for (index, (key, value)) in entries.into_iter().enumerate() {
+                    if index > 0 {
+                        output.push(',');
+                    }
+                    output.push_str(&serde_json::to_string(key).expect("JSON keys serialize"));
+                    output.push(':');
+                    write(value, output);
+                }
+                output.push('}');
+            }
+        }
+    }
+
+    let mut output = String::new();
+    write(value, &mut output);
+    output
 }
 
 // ---------------------------------------------------------------------------
@@ -1345,6 +1645,113 @@ mod tests {
             raw["profiles"]["co-work"]["description"]
         );
         assert_eq!(unchanged["packages"], raw["packages"]);
+    }
+
+    #[test]
+    fn public_release_graph_retains_every_profile_state_identity() {
+        let images = |seed: char| {
+            serde_json::json!([
+                {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":seed.to_string().repeat(64),"sha256":"1".repeat(64)}},
+                {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":"b".repeat(64),"sha256":"2".repeat(64)}},
+                {"kind":"rootfs","name":"rootfs.erofs","bytes":30,"status":"current","digest":{"blake3":"c".repeat(64),"sha256":"3".repeat(64)}}
+            ])
+        };
+        let graph = serde_json::json!({
+            "profiles": {
+                "co-work": {
+                    "revision": "2030.0101.1",
+                    "status": "current",
+                    "architectures": [{
+                        "architecture": "arm64",
+                        "image_revision": "2030.0101.10",
+                        "config": [{"kind":"profile","path":"profiles/co-work/profile.toml","bytes":1,"digest":{"blake3":"d".repeat(64),"sha256":"4".repeat(64)}}],
+                        "images": images('a'),
+                        "evidence": [{"kind":"obom","bytes":1,"digest":{"blake3":"e".repeat(64),"sha256":"5".repeat(64)}}]
+                    }]
+                },
+                "code": {
+                    "revision": "2030.0101.2",
+                    "status": "current",
+                    "architectures": [{
+                        "architecture": "arm64",
+                        "image_revision": "2030.0101.20",
+                        "config": [{"kind":"profile","path":"profiles/code/profile.toml","bytes":1,"digest":{"blake3":"f".repeat(64),"sha256":"6".repeat(64)}}],
+                        "images": images('9'),
+                        "evidence": [{"kind":"obom","bytes":1,"digest":{"blake3":"8".repeat(64),"sha256":"7".repeat(64)}}]
+                    }]
+                }
+            }
+        });
+
+        let state = release_graph_profile_state(&graph).unwrap();
+
+        assert_eq!(
+            state.profiles.keys().cloned().collect::<Vec<_>>(),
+            ["co-work", "code"]
+        );
+        assert_eq!(state.profiles["co-work"].revision, "2030.0101.1");
+        assert_eq!(state.profiles["code"].revision, "2030.0101.2");
+        assert!(state.catalog_revision.starts_with("catalog-"));
+        assert!(state.images_revision.starts_with("images-"));
+
+        let mut config_changed = graph.clone();
+        config_changed["profiles"]["code"]["architectures"][0]["config"][0]["digest"]["blake3"] =
+            serde_json::json!("0".repeat(64));
+        let config_state = release_graph_profile_state(&config_changed).unwrap();
+        assert_ne!(config_state.catalog_revision, state.catalog_revision);
+        assert_eq!(config_state.images_revision, state.images_revision);
+
+        let mut revision_changed = graph.clone();
+        revision_changed["profiles"]["code"]["revision"] = serde_json::json!("2030.0101.3");
+        let revision_state = release_graph_profile_state(&revision_changed).unwrap();
+        assert_ne!(revision_state.catalog_revision, state.catalog_revision);
+        assert_eq!(revision_state.images_revision, state.images_revision);
+
+        let mut evidence_changed = graph.clone();
+        evidence_changed["profiles"]["code"]["architectures"][0]["evidence"][0]["digest"]
+            ["blake3"] = serde_json::json!("1".repeat(64));
+        let evidence_state = release_graph_profile_state(&evidence_changed).unwrap();
+        assert_ne!(evidence_state.catalog_revision, state.catalog_revision);
+        assert_eq!(evidence_state.images_revision, state.images_revision);
+
+        let mut image_changed = graph;
+        image_changed["profiles"]["code"]["architectures"][0]["images"][0]["digest"]["blake3"] =
+            serde_json::json!("2".repeat(64));
+        let image_state = release_graph_profile_state(&image_changed).unwrap();
+        assert_ne!(image_state.catalog_revision, state.catalog_revision);
+        assert_ne!(image_state.images_revision, state.images_revision);
+    }
+
+    #[test]
+    fn public_release_graph_rejects_an_incomplete_sibling_profile() {
+        let complete_images = serde_json::json!([
+            {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":"a".repeat(64),"sha256":"1".repeat(64)}},
+            {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":"b".repeat(64),"sha256":"2".repeat(64)}},
+            {"kind":"rootfs","name":"rootfs.erofs","bytes":30,"status":"current","digest":{"blake3":"c".repeat(64),"sha256":"3".repeat(64)}}
+        ]);
+        let graph = serde_json::json!({
+            "packages": [{"version": "1.5.0", "status": "current"}],
+            "profiles": {
+                "default": {
+                    "revision": "2030.0101.1",
+                    "status": "current",
+                    "architectures": [{"architecture":"arm64","image_revision":"2030.0101.1","images":complete_images}]
+                },
+                "code": {
+                    "revision": "2030.0101.2",
+                    "status": "current",
+                    "architectures": [{"architecture":"arm64","image_revision":"2030.0101.2","images":[
+                        {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":"a".repeat(64),"sha256":"1".repeat(64)}},
+                        {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":"b".repeat(64),"sha256":"2".repeat(64)}}
+                    ]}]
+                }
+            }
+        });
+
+        let error = ManifestV2::from_json(&graph.to_string()).unwrap_err();
+
+        assert!(format!("{error:#}").contains("profile code"));
+        assert!(format!("{error:#}").contains("rootfs"));
     }
 
     #[test]

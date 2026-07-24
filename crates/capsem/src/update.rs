@@ -258,38 +258,48 @@ struct ReleaseChannelProfileManifest {
     profiles: BTreeMap<String, ReleaseChannelProfileDocument>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct ReleaseChannelProfileDocument {
     revision: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     status: String,
     #[serde(default)]
     architectures: Vec<ReleaseChannelProfileArchitecture>,
+    #[serde(flatten)]
+    extra: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 struct ReleaseChannelProfileArchitecture {
     architecture: Architecture,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     image_revision: Option<String>,
     #[serde(default)]
     config: Vec<ReleaseChannelProfileConfig>,
     #[serde(default, rename = "images")]
     artifacts: Vec<ReleaseChannelProfileImage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    evidence: Vec<serde_json::Value>,
+    #[serde(flatten)]
+    extra: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ReleaseChannelProfileConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    kind: String,
     path: String,
     url: String,
     #[serde(rename = "bytes")]
     size: u64,
     digest: ReleaseChannelProfileDigest,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     status: String,
+    #[serde(flatten)]
+    extra: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ReleaseChannelProfileImage {
     kind: String,
     name: String,
@@ -297,11 +307,13 @@ struct ReleaseChannelProfileImage {
     #[serde(rename = "bytes")]
     size: u64,
     digest: ReleaseChannelProfileDigest,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     status: String,
+    #[serde(flatten)]
+    extra: BTreeMap<String, serde_json::Value>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct ReleaseChannelProfileDigest {
     sha256: String,
     blake3: String,
@@ -1014,6 +1026,9 @@ fn release_manifest_url_from_manifest_url(manifest_url: &str) -> Option<String> 
 }
 
 fn local_current_asset_version() -> Option<String> {
+    if let Some(state) = local_release_graph_profile_state() {
+        return Some(state.images_revision);
+    }
     let assets_dir = capsem_core::asset_manager::default_assets_dir()?;
     let manifest_path = assets_dir.join("manifest.json");
     let manifest_bytes = std::fs::read_to_string(manifest_path).ok()?;
@@ -1035,8 +1050,19 @@ fn local_current_binary_version() -> String {
 }
 
 fn local_current_profile_catalog_revision() -> Option<String> {
+    if let Some(state) = local_release_graph_profile_state() {
+        return Some(state.catalog_revision);
+    }
     let catalog = capsem_core::net::policy_config::ProfileCatalog::load_default().ok()?;
     profile_catalog_revision(catalog.profiles().collect::<Vec<_>>().as_slice()).ok()
+}
+
+fn local_release_graph_profile_state(
+) -> Option<capsem_core::asset_manager::ReleaseGraphProfileState> {
+    let assets_dir = capsem_core::asset_manager::default_assets_dir()?;
+    let manifest = std::fs::read(assets_dir.join("manifest.json")).ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&manifest).ok()?;
+    capsem_core::asset_manager::release_graph_profile_state(&value).ok()
 }
 
 fn profile_catalog_revision(
@@ -1198,6 +1224,7 @@ fn update_check_from_release_graph_manifest(
     source: &str,
     channel_hash: Option<String>,
 ) -> Result<UpdateCheck> {
+    let profile_state = release_graph_profile_state(manifest)?;
     let latest_version = graph_current_binary_version(&manifest.packages)?;
     let update_available = latest_version
         .as_deref()
@@ -1207,8 +1234,17 @@ fn update_check_from_release_graph_manifest(
     } else {
         None
     };
-    let latest_assets = graph_current_image_revision(manifest);
+    let latest_assets = profile_state
+        .as_ref()
+        .map(|state| state.images_revision.clone());
     let assets_differ = match (latest_assets.as_deref(), current_assets) {
+        (Some(latest), Some(current)) => latest != current,
+        _ => false,
+    };
+    let latest_profiles = profile_state
+        .as_ref()
+        .map(|state| state.catalog_revision.clone());
+    let profiles_differ = match (latest_profiles.as_deref(), current_profiles) {
         (Some(latest), Some(current)) => latest != current,
         _ => false,
     };
@@ -1222,16 +1258,16 @@ fn update_check_from_release_graph_manifest(
         assets_update_available: assets_differ,
         assets_state: latest_assets.as_ref().map(|_| "current".to_string()),
         assets_blocked_reason: None,
-        latest_profiles: graph_current_profile_revision(manifest),
+        latest_profiles: latest_profiles.clone(),
         current_profiles: current_profiles.map(ToOwned::to_owned),
-        profiles_update_available: false,
-        profiles_state: None,
+        profiles_update_available: profiles_differ,
+        profiles_state: latest_profiles.as_ref().map(|_| "current".to_string()),
         profiles_blocked_reason: None,
         profile_catalog_source: None,
         profile_catalog_hash: None,
         latest_images: latest_assets,
-        images_update_available: false,
-        images_state: None,
+        images_update_available: assets_differ,
+        images_state: profile_state.as_ref().map(|_| "current".to_string()),
         images_blocked_reason: None,
         source: Some(source.to_string()),
         channel_hash,
@@ -1256,32 +1292,14 @@ fn graph_current_binary_version(packages: &[ReleaseGraphPackage]) -> Result<Opti
     }
 }
 
-fn graph_current_image_revision(manifest: &ReleaseGraphManifest) -> Option<String> {
-    let revisions: BTreeSet<String> = manifest
-        .profiles
-        .values()
-        .flat_map(|profile| profile.architectures.iter())
-        .filter_map(|architecture| architecture.image_revision.clone())
-        .collect();
-    if revisions.len() == 1 {
-        revisions.into_iter().next()
-    } else {
-        None
+fn release_graph_profile_state(
+    manifest: &ReleaseGraphManifest,
+) -> Result<Option<capsem_core::asset_manager::ReleaseGraphProfileState>> {
+    if manifest.profiles.is_empty() {
+        return Ok(None);
     }
-}
-
-fn graph_current_profile_revision(manifest: &ReleaseGraphManifest) -> Option<String> {
-    let revisions: BTreeSet<String> = manifest
-        .profiles
-        .values()
-        .filter(|profile| profile.status.is_empty() || profile.status == "current")
-        .map(|profile| profile.revision.clone())
-        .collect();
-    if revisions.len() == 1 {
-        revisions.into_iter().next()
-    } else {
-        None
-    }
+    let value = serde_json::json!({"profiles": &manifest.profiles});
+    capsem_core::asset_manager::release_graph_profile_state(&value).map(Some)
 }
 
 fn graph_binary_installer_for_layout(
@@ -2079,9 +2097,17 @@ pub async fn run_update(
         let latest_profiles = check.latest_profiles.as_deref().unwrap_or("unknown");
         println!("Profile catalog update available: {current_profiles} -> {latest_profiles}");
         if yes {
-            apply_profile_catalog_update(&check).await?;
-            println!("Profile catalog update applied. New sessions will use {latest_profiles}.");
-            did_update = true;
+            if check.profile_catalog_source.is_some() && check.profile_catalog_hash.is_some() {
+                apply_profile_catalog_update(&check).await?;
+                println!(
+                    "Profile catalog update applied. New sessions will use {latest_profiles}."
+                );
+                did_update = true;
+            } else {
+                println!(
+                    "Profile graph update will be applied with the verified manifest refresh."
+                );
+            }
         } else {
             println!("Re-run with --yes to apply the profile catalog update.");
         }
@@ -2098,6 +2124,18 @@ pub async fn run_update(
                 "Release channel switched to {} and its VM assets were verified.",
                 selection.channel
             );
+            did_update = true;
+        } else if (check.profiles_update_available
+            || check.assets_update_available
+            || check.images_update_available)
+            && check.profile_catalog_source.is_none()
+        {
+            let source = check
+                .source
+                .as_deref()
+                .context("release graph update is missing its manifest source")?;
+            refresh_assets(Some(source), None, None).await?;
+            println!("Release graph profiles and VM assets were verified and refreshed.");
             did_update = true;
         }
     }
@@ -4517,19 +4555,7 @@ mod tests {
                     "digest": {"sha256": "3".repeat(64), "blake3": "c".repeat(64)}
                 }
             ],
-            "profiles": {
-                "code": {
-                    "revision": "profiles-2026.0709.7",
-                    "status": "current",
-                    "architectures": [
-                        {
-                            "architecture": machine_architecture(),
-                            "image_revision": "2026.0709.7",
-                            "images": []
-                        }
-                    ]
-                }
-            }
+            "profiles": {}
         }))
         .unwrap();
 
@@ -4556,12 +4582,9 @@ mod tests {
         assert_eq!(installer.sha256, "2".repeat(64));
         assert_eq!(installer.size, 222);
         assert_eq!(installer.install_layout, "linux_deb");
-        assert_eq!(check.latest_assets, Some("2026.0709.7".to_string()));
-        assert!(check.assets_update_available);
-        assert_eq!(
-            check.latest_profiles,
-            Some("profiles-2026.0709.7".to_string())
-        );
+        assert_eq!(check.latest_assets, None);
+        assert!(!check.assets_update_available);
+        assert_eq!(check.latest_profiles, None);
         assert_eq!(check.channel_hash, Some("f".repeat(64)));
         assert_eq!(check.validation_status, Some("valid".to_string()));
     }
@@ -4783,8 +4806,14 @@ mod tests {
         .expect("profiles-only public graph payload");
 
         assert_eq!(check.latest_version, None);
-        assert_eq!(check.latest_assets.as_deref(), Some("2030.0101.7"));
-        assert_eq!(check.latest_profiles.as_deref(), Some("2030.0101.2"));
+        assert!(check
+            .latest_assets
+            .as_deref()
+            .is_some_and(|revision| revision.starts_with("images-")));
+        assert!(check
+            .latest_profiles
+            .as_deref()
+            .is_some_and(|revision| revision.starts_with("catalog-")));
         assert_eq!(
             binary_installer_from_release_payload(
                 &body,
@@ -4794,6 +4823,88 @@ mod tests {
             .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn release_graph_update_compares_independent_multi_profile_state() {
+        let profile = |revision: &str, image_revision: &str, seed: char| {
+            serde_json::json!({
+                "revision": revision,
+                "status": "current",
+                "architectures": [{
+                    "architecture": machine_architecture(),
+                    "image_revision": image_revision,
+                    "config": [{
+                        "kind": "profile",
+                        "path": format!("profiles/{revision}/profile.toml"),
+                        "url": format!("https://release.example/{revision}/profile.toml"),
+                        "bytes": 1,
+                        "digest": {"sha256": "1".repeat(64), "blake3": seed.to_string().repeat(64)}
+                    }],
+                    "images": [
+                        {"kind":"kernel","name":"vmlinuz","url":"https://release.example/vmlinuz","bytes":1,"status":"current","digest":{"sha256":"2".repeat(64),"blake3":"b".repeat(64)}},
+                        {"kind":"initrd","name":"initrd.img","url":"https://release.example/initrd.img","bytes":1,"status":"current","digest":{"sha256":"3".repeat(64),"blake3":"c".repeat(64)}},
+                        {"kind":"rootfs","name":"rootfs.erofs","url":"https://release.example/rootfs.erofs","bytes":1,"status":"current","digest":{"sha256":"4".repeat(64),"blake3":"d".repeat(64)}}
+                    ],
+                    "evidence": [{
+                        "kind": "obom",
+                        "url": format!("https://release.example/{revision}/obom.cdx.json"),
+                        "bytes": 1,
+                        "digest": {"sha256": "5".repeat(64), "blake3": "e".repeat(64)}
+                    }]
+                }]
+            })
+        };
+        let graph_value = serde_json::json!({
+            "packages": [],
+            "profiles": {
+                "co-work": profile("2030.0101.1", "2030.0101.10", 'a'),
+                "code": profile("2030.0101.2", "2030.0101.20", 'f')
+            }
+        });
+        let installed_state =
+            capsem_core::asset_manager::release_graph_profile_state(&graph_value).unwrap();
+        let graph: ReleaseGraphManifest = serde_json::from_value(graph_value.clone()).unwrap();
+        assert_eq!(
+            serde_json::json!({"profiles": &graph.profiles})["profiles"],
+            graph_value["profiles"]
+        );
+
+        let first = update_check_from_release_graph_manifest(
+            &graph,
+            1718444400,
+            "1.5.0",
+            None,
+            None,
+            &InstallLayout::LinuxDeb,
+            "https://release.capsem.org/assets/nightly/manifest.json",
+            None,
+        )
+        .unwrap();
+
+        let latest_profiles = first.latest_profiles.as_deref().unwrap();
+        let latest_images = first.latest_images.as_deref().unwrap();
+        assert_eq!(latest_profiles, installed_state.catalog_revision);
+        assert_eq!(latest_images, installed_state.images_revision);
+        assert!(latest_profiles.starts_with("catalog-"));
+        assert!(latest_images.starts_with("images-"));
+        assert_eq!(first.latest_assets.as_deref(), Some(latest_images));
+
+        let unchanged = update_check_from_release_graph_manifest(
+            &graph,
+            1718444401,
+            "1.5.0",
+            Some(latest_images),
+            Some(latest_profiles),
+            &InstallLayout::LinuxDeb,
+            "https://release.capsem.org/assets/nightly/manifest.json",
+            None,
+        )
+        .unwrap();
+
+        assert!(!unchanged.assets_update_available);
+        assert!(!unchanged.profiles_update_available);
+        assert!(!unchanged.images_update_available);
     }
 
     #[test]

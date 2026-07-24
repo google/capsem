@@ -146,6 +146,45 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
 }
 
 #[test]
+fn current_asset_state_keeps_independent_release_graph_profiles() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    let images = |seed: char| {
+        serde_json::json!([
+            {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":seed.to_string().repeat(64),"sha256":"1".repeat(64)}},
+            {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":"b".repeat(64),"sha256":"2".repeat(64)}},
+            {"kind":"rootfs","name":"rootfs.erofs","bytes":30,"status":"current","digest":{"blake3":"c".repeat(64),"sha256":"3".repeat(64)}}
+        ])
+    };
+    let manifest = serde_json::json!({
+        "profiles": {
+            "co-work": {
+                "revision": "2030.0101.1",
+                "status": "current",
+                "architectures": [{"architecture":"arm64","image_revision":"2030.0101.10","images":images('a')}]
+            },
+            "code": {
+                "revision": "2030.0101.2",
+                "status": "current",
+                "architectures": [{"architecture":"arm64","image_revision":"2030.0101.20","images":images('9')}]
+            }
+        }
+    });
+    std::fs::write(
+        assets_dir.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let expected = capsem_core::asset_manager::release_graph_profile_state(&manifest).unwrap();
+
+    assert_eq!(
+        current_asset_version_from_manifest(&assets_dir),
+        Some(expected.images_revision)
+    );
+}
+
+#[test]
 fn update_status_reports_profile_and_image_tracks_from_release_cache() {
     let dir = tempfile::tempdir().unwrap();
     let assets_dir = dir.path().join("assets");
@@ -510,7 +549,12 @@ async fn system_status_route_returns_exact_installed_documents_in_one_response()
                     {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":digest('b'),"sha256":digest('2')}},
                     {"kind":"rootfs","name":"rootfs.erofs","bytes":30,"status":"current","digest":{"blake3":digest('c'),"sha256":digest('3')}}
                 ],
-                "evidence": [{"kind":"obom","url":"https://example.test/obom.json"}]
+                "evidence": [{
+                    "kind":"obom",
+                    "url":"https://example.test/obom.json",
+                    "bytes":40,
+                    "digest":{"blake3":digest('d'),"sha256":digest('4')}
+                }]
             }]
         }}
     });
