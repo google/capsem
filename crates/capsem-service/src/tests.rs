@@ -822,7 +822,7 @@ fn make_test_state() -> Arc<ServiceState> {
         assets_dir: PathBuf::from("/nonexistent/assets"),
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        manifest: None,
+        manifest: RwLock::new(None),
         current_version: "0.0.0".into(),
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -851,6 +851,7 @@ fn make_test_state() -> Arc<ServiceState> {
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
+        update_restart: tokio::sync::Notify::new(),
         _test_tempdir: Some(test_tempdir),
     })
 }
@@ -941,7 +942,9 @@ async fn update_route_check_live_executes_non_mutating_cli_check() {
     let previous = std::env::var_os("CAPSEM_CLI");
     std::env::set_var("CAPSEM_CLI", &cli);
 
-    let app = build_service_router(make_test_state());
+    let assets_dir = dir.path().join("assets");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    let app = build_service_router(make_asset_state(assets_dir));
     let (status, body) = route_request(
         app,
         axum::http::Method::POST,
@@ -1036,7 +1039,9 @@ async fn update_route_apply_confirmed_dispatches_one_atomic_update() {
     let previous = std::env::var_os("CAPSEM_CLI");
     std::env::set_var("CAPSEM_CLI", &cli);
 
-    let app = build_service_router(make_test_state());
+    let assets_dir = dir.path().join("assets");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    let app = build_service_router(make_asset_state(assets_dir));
     let (status, body) = route_request(
         app,
         axum::http::Method::POST,
@@ -1085,7 +1090,9 @@ async fn update_route_live_commands_share_one_serial_lock() {
     let previous = std::env::var_os("CAPSEM_CLI");
     std::env::set_var("CAPSEM_CLI", &cli);
 
-    let app = build_service_router(make_test_state());
+    let assets_dir = dir.path().join("assets");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    let app = build_service_router(make_asset_state(assets_dir));
     let first = route_request(
         app.clone(),
         axum::http::Method::POST,
@@ -1113,6 +1120,113 @@ async fn update_route_live_commands_share_one_serial_lock() {
     assert_eq!(execution, "start\nend\nstart\nend\n");
 }
 
+fn write_update_runtime_manifest(assets_dir: &StdPath, binary: &str, assets: &str) {
+    std::fs::create_dir_all(assets_dir).unwrap();
+    let manifest = capsem_core::asset_manager::ManifestV2 {
+        format: 2,
+        refresh_policy: "24h".to_string(),
+        asset_base: None,
+        assets: capsem_core::asset_manager::AssetsSection {
+            current: assets.to_string(),
+            releases: HashMap::new(),
+        },
+        binaries: capsem_core::asset_manager::BinariesSection {
+            current: binary.to_string(),
+            releases: HashMap::new(),
+        },
+    };
+    std::fs::write(
+        assets_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn update_runtime_reloads_profile_only_activation_without_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    let state = make_asset_state(assets_dir.clone());
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-2");
+
+    let disposition = reload_activated_update_runtime(&state).unwrap();
+
+    assert_eq!(disposition, UpdateRuntimeDisposition::Reloaded);
+    assert_eq!(
+        state
+            .manifest
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .assets
+            .current,
+        "profiles-2"
+    );
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(10),
+            state.update_restart.notified()
+        )
+        .await
+        .is_err(),
+        "profile-only activation must not restart a current binary"
+    );
+}
+
+#[tokio::test]
+async fn update_runtime_requests_restart_after_binary_activation() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    let state = make_asset_state(assets_dir.clone());
+    write_update_runtime_manifest(&assets_dir, "9.9.9", "profiles-2");
+
+    let disposition = reload_activated_update_runtime(&state).unwrap();
+
+    assert_eq!(disposition, UpdateRuntimeDisposition::RestartRequested);
+    tokio::time::timeout(
+        std::time::Duration::from_millis(10),
+        state.update_restart.notified(),
+    )
+    .await
+    .expect("binary activation must request a managed service restart");
+    assert_eq!(
+        state
+            .manifest
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .binaries
+            .current,
+        "9.9.9"
+    );
+}
+
+#[test]
+fn update_runtime_rejects_invalid_manifest_without_replacing_cached_graph() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    let state = make_asset_state(assets_dir.clone());
+    std::fs::write(assets_dir.join("manifest.json"), b"{not-json").unwrap();
+
+    let error = reload_activated_update_runtime(&state).unwrap_err();
+
+    assert!(error.1.contains("validate activated update manifest"));
+    assert_eq!(
+        state
+            .manifest
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .assets
+            .current,
+        "profiles-1"
+    );
+}
+
 async fn decode_response_json<T: serde::de::DeserializeOwned>(
     response: axum::response::Response,
 ) -> T {
@@ -1138,7 +1252,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         assets_dir,
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        manifest,
+        manifest: RwLock::new(manifest),
         current_version: "0.0.0".into(),
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -1167,6 +1281,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
+        update_restart: tokio::sync::Notify::new(),
         _test_tempdir: None,
     })
 }
@@ -6943,7 +7058,7 @@ fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
         assets_dir: PathBuf::from("/nonexistent/assets"),
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        manifest: None,
+        manifest: RwLock::new(None),
         current_version: "0.0.0".into(),
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -6972,6 +7087,7 @@ fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
+        update_restart: tokio::sync::Notify::new(),
         _test_tempdir: None,
     })
 }
@@ -7493,7 +7609,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         assets_dir: dir.path().join("assets"),
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        manifest: None,
+        manifest: RwLock::new(None),
         current_version: "0.0.0".into(),
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -7522,6 +7638,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
+        update_restart: tokio::sync::Notify::new(),
         _test_tempdir: None,
     });
     (state, dir)
@@ -10233,7 +10350,7 @@ fn make_test_state_with_tempdir_at(
         assets_dir: run_dir.join("assets"),
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        manifest: None,
+        manifest: RwLock::new(None),
         current_version: "0.0.0".into(),
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -10262,6 +10379,7 @@ fn make_test_state_with_tempdir_at(
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
+        update_restart: tokio::sync::Notify::new(),
         _test_tempdir: None,
     });
     (state, dir)

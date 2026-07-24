@@ -33,7 +33,7 @@ use serde_json::json;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use tokio::net::UnixListener;
 use tokio::process::Command;
 use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
@@ -157,7 +157,7 @@ struct ServiceState {
     run_dir: PathBuf,
     job_counter: AtomicU64,
     /// v2 manifest (None in dev mode where assets use logical names)
-    manifest: Option<Arc<capsem_core::asset_manager::ManifestV2>>,
+    manifest: RwLock<Option<Arc<capsem_core::asset_manager::ManifestV2>>>,
     current_version: String,
     /// In-memory asset reconciliation progress. Service startup and explicit
     /// /profiles/{profile_id}/assets/ensure shares this single rail with
@@ -265,6 +265,10 @@ struct ServiceState {
     /// together, so the service must never launch split or overlapping
     /// mutations.
     update_lock: tokio::sync::Mutex<()>,
+    /// Requests a managed service shutdown after a package update selects a
+    /// different binary. LaunchAgent/systemd then starts the newly installed
+    /// service instead of leaving the old process attached to the new graph.
+    update_restart: tokio::sync::Notify,
     /// Keeps the unique filesystem root alive for helpers that return only a
     /// service state. Test constructors that return their TempDir separately
     /// leave this empty.
@@ -2021,7 +2025,7 @@ impl ServiceState {
 
         // Resolve from v2 manifest (works for both dev and installed --
         // dev creates hash-named symlinks, installed has hash-named files)
-        if let Some(ref manifest) = self.manifest {
+        if let Some(manifest) = self.manifest.read().unwrap().as_ref().cloned() {
             return manifest.resolve(&self.current_version, arch, &self.assets_dir);
         }
 
@@ -5151,9 +5155,10 @@ fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
             obj.insert("packaged_at".to_string(), json!(packaged_at));
         }
     }
+    let installed_manifest = state.manifest.read().unwrap();
     let manifest = manifest_validation.manifest.as_ref().or_else(|| {
         if manifest_validation.status == "missing" {
-            state.manifest.as_deref()
+            installed_manifest.as_deref()
         } else {
             None
         }
@@ -5690,7 +5695,7 @@ async fn ensure_assets_for_state(state: Arc<ServiceState>) -> Result<usize, Stri
     }
 
     let result: Result<usize, String> = async {
-        let Some(manifest) = state.manifest.as_ref().cloned() else {
+        let Some(manifest) = state.manifest.read().unwrap().as_ref().cloned() else {
             return Ok(0);
         };
         update_asset_reconcile_state(&state, |status| {
@@ -12386,7 +12391,7 @@ async fn handle_update_apply(
             "update apply requires confirmed=true or dry_run=true".to_string(),
         ));
     }
-    execute_update_command(&state, plan).await.map(Json)
+    execute_update_apply(&state, plan).await.map(Json)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12436,6 +12441,24 @@ async fn execute_update_command(
     plan: api::UpdateCommandPlan,
 ) -> Result<api::UpdateActionResponse, AppError> {
     let _update_guard = state.update_lock.lock().await;
+    execute_update_command_unlocked(plan).await
+}
+
+async fn execute_update_apply(
+    state: &ServiceState,
+    plan: api::UpdateCommandPlan,
+) -> Result<api::UpdateActionResponse, AppError> {
+    let _update_guard = state.update_lock.lock().await;
+    let response = execute_update_command_unlocked(plan).await?;
+    if response.status == "succeeded" {
+        reload_activated_update_runtime(state)?;
+    }
+    Ok(response)
+}
+
+async fn execute_update_command_unlocked(
+    plan: api::UpdateCommandPlan,
+) -> Result<api::UpdateActionResponse, AppError> {
     let output = Command::new(&plan.program)
         .args(&plan.args)
         .output()
@@ -12458,6 +12481,67 @@ async fn execute_update_command(
         stdout: Some(String::from_utf8_lossy(&output.stdout).to_string()),
         stderr: Some(String::from_utf8_lossy(&output.stderr).to_string()),
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateRuntimeDisposition {
+    Reloaded,
+    RestartRequested,
+}
+
+fn reload_activated_update_runtime(
+    state: &ServiceState,
+) -> Result<UpdateRuntimeDisposition, AppError> {
+    let path = state.assets_dir.join("manifest.json");
+    let content = std::fs::read_to_string(&path).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("read activated update manifest {}: {error}", path.display()),
+        )
+    })?;
+    let manifest =
+        capsem_core::asset_manager::ManifestV2::from_json(&content).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!(
+                    "validate activated update manifest {}: {error:#}",
+                    path.display()
+                ),
+            )
+        })?;
+    let selected_binary = manifest.binaries.current.clone();
+    let previous_manifest = {
+        let mut installed = state.manifest.write().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("installed manifest lock poisoned: {error}"),
+            )
+        })?;
+        installed.replace(Arc::new(manifest))
+    };
+
+    if let Err(error) = refresh_profile_route_caches(state) {
+        if let Ok(mut installed) = state.manifest.write() {
+            *installed = previous_manifest;
+        }
+        return Err(error);
+    }
+
+    if selected_binary != state.current_version {
+        info!(
+            running = %state.current_version,
+            selected = %selected_binary,
+            "activated binary differs from the running service; requesting managed restart"
+        );
+        state.update_restart.notify_one();
+        Ok(UpdateRuntimeDisposition::RestartRequested)
+    } else {
+        info!(
+            selected = %selected_binary,
+            "reloaded activated manifest and profile caches in the running service"
+        );
+        Ok(UpdateRuntimeDisposition::Reloaded)
+    }
 }
 
 async fn handle_service_status(
@@ -12743,7 +12827,7 @@ async fn main() -> Result<()> {
         assets_dir: assets_base_dir,
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        manifest,
+        manifest: RwLock::new(manifest),
         current_version,
         asset_reconcile: Mutex::new(asset_reconcile),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -12772,6 +12856,7 @@ async fn main() -> Result<()> {
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
         update_lock: tokio::sync::Mutex::new(()),
+        update_restart: tokio::sync::Notify::new(),
         #[cfg(test)]
         _test_tempdir: None,
     });
@@ -12891,7 +12976,12 @@ async fn main() -> Result<()> {
     let companions_for_shutdown = Arc::clone(&companions);
     axum::serve(uds, app)
         .with_graceful_shutdown(async move {
-            shutdown_signal().await;
+            tokio::select! {
+                _ = shutdown_signal() => {}
+                _ = shutdown_state.update_restart.notified() => {
+                    info!("service restart requested after binary update");
+                }
+            }
             info!("service shutting down, killing companions and VM processes");
             // Companions FIRST. kill_all_vm_processes has an unconditional
             // 500ms SIGTERM grace sleep; if companion-kill ran after it, a
