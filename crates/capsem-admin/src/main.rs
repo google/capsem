@@ -9905,7 +9905,7 @@ decision = "block"
         let artifacts_dir = temp.path().join("release-artifacts");
         fs::create_dir_all(&artifacts_dir).expect("artifacts dir");
         let pkg_path = artifacts_dir.join("Capsem-1.4.1234567890.pkg");
-        let deb_path = artifacts_dir.join("Capsem_1.4.1234567890_arm64.deb");
+        let deb_path = artifacts_dir.join("Capsem_1.4.1234567890_amd64.deb");
         let sbom_path = artifacts_dir.join("capsem-sbom.spdx.json");
         write_minimal_pkg_with_file(
             &pkg_path,
@@ -9963,8 +9963,9 @@ decision = "block"
         );
         assert_eq!(
             updated["packages"][1]["name"],
-            "Capsem_1.4.1234567890_arm64.deb"
+            "Capsem_1.4.1234567890_amd64.deb"
         );
+        assert_eq!(updated["packages"][1]["architecture"], "x86_64");
     }
 
     #[test]

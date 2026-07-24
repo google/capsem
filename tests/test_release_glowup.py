@@ -58,6 +58,27 @@ def test_candidate_artifact_must_match_manifest_exactly(tmp_path: Path) -> None:
     assert artifact.sha256 == hashlib.sha256(b"exact candidate package").hexdigest()
 
 
+def test_debian_amd64_identity_matches_canonical_x86_64_graph(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    package = tmp_path / "Capsem_1.5.100_amd64.deb"
+    package.write_bytes(b"exact linux candidate package")
+    artifact = module.ArtifactIdentity.from_path(
+        package,
+        version="1.5.100",
+        platform="linux",
+        architecture="amd64",
+    )
+    manifest = _manifest(artifact)
+    manifest["packages"][0]["architecture"] = "x86_64"
+
+    matched = module.assert_manifest_artifact(manifest, artifact)
+
+    assert artifact.architecture == "x86_64"
+    assert matched["architecture"] == "x86_64"
+
+
 @pytest.mark.parametrize(
     ("field", "bad_value"),
     [

@@ -98,8 +98,8 @@ def normalize_architecture(value: str) -> str:
     normalized = {
         "aarch64": "arm64",
         "arm64": "arm64",
-        "amd64": "amd64",
-        "x86_64": "amd64",
+        "amd64": "x86_64",
+        "x86_64": "x86_64",
     }.get(value)
     if normalized is None:
         raise GlowupContractError(f"unsupported package architecture: {value}")
