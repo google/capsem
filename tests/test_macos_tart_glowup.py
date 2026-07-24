@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import importlib.util
 from pathlib import Path
 import subprocess
@@ -18,11 +19,15 @@ HOST_BOOT = PROJECT_ROOT / "scripts" / "prove-macos-package-boot.sh"
 LOCAL_PACKAGE_BUILD = PROJECT_ROOT / "scripts" / "build-test-macos-package.sh"
 LOCAL_SIGNING = PROJECT_ROOT / "scripts" / "macos_signing.py"
 RELEASE_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "release.yaml"
+PINNED_TART_IMAGE = (
+    "ghcr.io/cirruslabs/macos-sequoia-base"
+    "@sha256:fdd8b72a6ee46fc8ad35dc1b9f3b1f162b6607b82a584947d20bb28d3dcb99ed"
+)
 
 
-def _load_harness():
-    assert HARNESS.is_file(), "missing Tart macOS install harness"
-    spec = importlib.util.spec_from_file_location("macos_tart_glowup", HARNESS)
+def _load_script(path: Path, name: str):
+    assert path.is_file(), f"missing script: {path}"
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -34,6 +39,14 @@ def _load_harness():
     finally:
         sys.path.remove(scripts_dir)
     return module
+
+
+def _load_harness():
+    return _load_script(HARNESS, "macos_tart_glowup")
+
+
+def _load_glowup():
+    return _load_script(GLOWUP, "macos_release_glowup")
 
 
 def test_tart_commands_are_headless_isolated_and_share_only_gate_inputs(
@@ -59,12 +72,12 @@ def test_tart_commands_are_headless_isolated_and_share_only_gate_inputs(
         "capsem-glowup-123",
     ]
     assert module.tart_clone_command(
-        "ghcr.io/cirruslabs/macos-sequoia-base:latest",
+        PINNED_TART_IMAGE,
         "capsem-glowup-123",
     ) == [
         "tart",
         "clone",
-        "ghcr.io/cirruslabs/macos-sequoia-base:latest",
+        PINNED_TART_IMAGE,
         "capsem-glowup-123",
     ]
     assert module.tart_ip_command("capsem-glowup-123") == [
@@ -88,7 +101,7 @@ def test_tart_commands_are_headless_isolated_and_share_only_gate_inputs(
 def test_tart_harness_uses_the_declared_storage_policy() -> None:
     module = _load_harness()
 
-    assert module.DEFAULT_IMAGE == "ghcr.io/cirruslabs/macos-sequoia-base:latest"
+    assert module.DEFAULT_IMAGE == PINNED_TART_IMAGE
     assert module.OWNED_VM_PREFIX == "capsem-glowup-"
 
 
@@ -151,6 +164,51 @@ def test_tart_share_inputs_are_copied_not_hard_linked(tmp_path: Path) -> None:
     assert destination.stat().st_mode & 0o777 == 0o755
 
 
+def test_asset_staging_copies_across_filesystems(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_glowup()
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.write_bytes(b"immutable candidate asset")
+
+    def cross_device_link(_source: Path, _destination: Path) -> None:
+        raise OSError(errno.EXDEV, "cross-device link")
+
+    monkeypatch.setattr(module.os, "link", cross_device_link)
+    module.hardlink_or_copy(source, destination)
+
+    assert destination.read_bytes() == source.read_bytes()
+    assert destination.stat().st_ino != source.stat().st_ino
+
+
+def test_asset_staging_does_not_mask_non_cross_filesystem_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_glowup()
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.write_bytes(b"immutable candidate asset")
+
+    def denied_link(_source: Path, _destination: Path) -> None:
+        raise PermissionError(errno.EACCES, "permission denied")
+
+    monkeypatch.setattr(module.os, "link", denied_link)
+    with pytest.raises(PermissionError):
+        module.hardlink_or_copy(source, destination)
+
+
+def test_local_tart_report_disclaims_signing_and_gatekeeper() -> None:
+    module = _load_harness()
+
+    capabilities = module.local_tart_capabilities()
+
+    assert capabilities["signed"] is False
+    assert capabilities["gatekeeper"] is False
+
+
 def test_guest_installs_and_verifies_the_exact_shared_package() -> None:
     source = GUEST.read_text()
 
@@ -209,10 +267,16 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke() 
 
     assert "brew install cirruslabs/cli/tart cirruslabs/cli/sshpass" in bootstrap
     assert "brew trust --formula cirruslabs/cli/softnet" in bootstrap
+    assert 'uv run python "$SCRIPT_DIR/scripts/tart_readiness.py"' in bootstrap
     assert "tart --version" in doctor
     assert "sshpass" in doctor
+    assert 'uv run python "$PROJECT_ROOT/scripts/tart_readiness.py"' in doctor
     assert "test-macos-install:" not in justfile
     assert "python3 scripts/macos_release_glowup.py" in justfile
+    dependency_line = next(
+        line for line in justfile.splitlines() if line.startswith("_test-candidate:")
+    )
+    assert dependency_line.split()[1] == "_bootstrap"
 
     test_start = justfile.index("test:")
     test_end = justfile.index("\n# Build the capsem-host-builder", test_start)

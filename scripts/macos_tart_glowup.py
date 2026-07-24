@@ -268,6 +268,19 @@ def validate_report(
     return report
 
 
+def local_tart_capabilities() -> dict[str, bool]:
+    """Describe only the evidence produced by the unsigned local Tart rail."""
+
+    return {
+        "native_install": True,
+        "package_receipt": True,
+        "launchd": True,
+        "physical_vz_boot": False,
+        "signed": False,
+        "gatekeeper": False,
+    }
+
+
 def terminate_runner(
     runner: subprocess.Popen[str] | None,
     log_stream: object | None,
@@ -451,12 +464,7 @@ def main() -> int:
             adapter="macos-tart-launchd",
             artifact=artifact,
             installed=guest_report["installed"],
-            capabilities={
-                "native_install": True,
-                "package_receipt": True,
-                "launchd": True,
-                "physical_vz_boot": False,
-            },
+            capabilities=local_tart_capabilities(),
         )
         report["adapter_evidence"] = {
             "tart_image": args.image,

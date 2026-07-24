@@ -146,6 +146,34 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
     assert "run: python3 scripts/audit-pnpm-bulk.py --project-dir frontend" in security_audit
 
 
+def test_remote_storage_images_are_immutable() -> None:
+    policy = tomllib.loads(_read("config/storage-policy.toml"))
+    floating: list[str] = []
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+        elif (
+            isinstance(value, str)
+            and value.endswith(":latest")
+            and not value.startswith("capsem-")
+        ):
+            floating.append(value)
+
+    visit(policy)
+    assert floating == []
+
+    tart_image = policy["tart"]["base_image"]
+    assert re.fullmatch(
+        r"ghcr\.io/cirruslabs/macos-sequoia-base@sha256:[0-9a-f]{64}",
+        tart_image,
+    )
+
+
 def test_public_release_storage_is_verified_before_channel_deployment() -> None:
     workflow = _read(".github/workflows/release.yaml")
     create = _job_block(workflow, "create-release")

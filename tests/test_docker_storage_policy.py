@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -125,6 +126,52 @@ def test_shell_space_guard_is_only_a_python_controller_entrypoint() -> None:
 
     assert "docker " not in guard
     assert 'docker-storage-policy.py" enforce' in guard
+
+
+def test_shell_space_guard_does_not_enter_the_project_uv_environment(
+    tmp_path: Path,
+) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    python_args = tmp_path / "python-args"
+    fake_python = fake_bin / "python"
+    fake_python.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPSEM_TEST_PYTHON_ARGS"\n'
+    )
+    fake_python.chmod(0o755)
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text(
+        """#!/bin/sh
+test "$1" = "run" && test "$2" = "--no-project" || exit 97
+shift 2
+test "$1" = "--python" && test "$2" = "3.12" || exit 98
+shift 2
+exec "$@"
+"""
+    )
+    fake_uv.chmod(0o755)
+
+    result = subprocess.run(
+        [str(ROOT / "scripts" / "ensure-docker-space.sh"), "install", "contract"],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:/usr/bin:/bin",
+            "CAPSEM_TEST_PYTHON_ARGS": str(python_args),
+        },
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert python_args.read_text().splitlines() == [
+        str(POLICY_SCRIPT),
+        "enforce",
+        "--rail",
+        "install",
+        "--label",
+        "contract",
+    ]
 
 
 def test_size_parser_and_system_df_are_byte_exact() -> None:

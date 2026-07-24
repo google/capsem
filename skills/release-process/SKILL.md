@@ -81,6 +81,14 @@ deliberate monthly toolchain PR and resolve new lint fallout there. Do not use
 `stable`, `latest`, or an independently floating Docker compiler. Workspace
 lints deny `dbg_macro` and `todo` so debugging placeholders cannot ship.
 
+The Tart macOS base image is pinned by registry digest in
+`config/storage-policy.toml`. Review and bump that digest deliberately with the
+monthly toolchain update, then prove the replacement through bootstrap,
+doctor, the standalone macOS glow-up, and their contract tests. A remote
+`:latest` image is never valid release-gate infrastructure; locally built
+`capsem-*:latest` images remain allowed because checked-in Dockerfiles own
+their bytes.
+
 `cargo audit` is an external-clock security signal, not a per-diff compiler
 gate. The scheduled/manual `security-audit.yaml` workflow owns the blocking
 RustSec result and gets a named owner and remediation. The local complete gate

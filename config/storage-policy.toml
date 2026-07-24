@@ -14,7 +14,7 @@ cache_max_age_hours = 72
 report_path = "target/storage/docker-storage.jsonl"
 
 [tart]
-base_image = "ghcr.io/cirruslabs/macos-sequoia-base:latest"
+base_image = "ghcr.io/cirruslabs/macos-sequoia-base@sha256:fdd8b72a6ee46fc8ad35dc1b9f3b1f162b6607b82a584947d20bb28d3dcb99ed"
 owned_vm_prefix = "capsem-glowup-"
 report_path = "target/storage/tart-storage.jsonl"
 

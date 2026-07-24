@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 from pathlib import Path
@@ -126,6 +127,17 @@ def prepare_candidate_manifest(
     return manifest_path, asset_share, dist
 
 
+def hardlink_or_copy(source: Path, destination: Path) -> None:
+    """Stage immutable bytes cheaply, copying only across filesystems."""
+
+    try:
+        os.link(source, destination)
+    except OSError as error:
+        if error.errno != errno.EXDEV:
+            raise
+        shutil.copyfile(source, destination)
+
+
 def stage_candidate_assets(
     manifest_path: Path,
     *,
@@ -153,7 +165,10 @@ def stage_candidate_assets(
                 raise RuntimeError(f"candidate asset is missing: {source}")
             if source.stat().st_size != descriptor.get("size"):
                 raise RuntimeError(f"candidate asset size mismatch: {source}")
-            os.link(source, release_dir / f"{architecture}-{logical_name}")
+            hardlink_or_copy(
+                source,
+                release_dir / f"{architecture}-{logical_name}",
+            )
     return destination_root
 
 
