@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to its exact public-before manifest, candidate-after manifest, native package
   bytes, verified profile inputs, and selected profile publication.
 
+- Added digest-verified candidate profile resolution that combines one locally
+  staged immutable profile publication with unchanged manifest-hosted profiles
+  without publishing or rebuilding either input.
+
 - Added one cross-platform installed-transition evidence contract for fresh
   installs, orthogonal updates, staged profile-then-binary activation, channel
   switches, tamper rejection, full doctor, and Winterfell proofs.

@@ -101,9 +101,7 @@ def test_latest_channel_source_manifest_is_selected_without_parallel_state() -> 
 
 
 def test_channel_source_manifest_validation_is_channel_scoped() -> None:
-    payload = json.dumps(
-        {"channel": "nightly", "profiles": {"code": {}}, "packages": []}
-    ).encode()
+    payload = json.dumps({"channel": "nightly", "profiles": {"code": {}}, "packages": []}).encode()
 
     assert SOURCE.validate_source_manifest(payload, "nightly")["channel"] == "nightly"
     with pytest.raises(ValueError, match="expected 'stable'"):
@@ -219,9 +217,9 @@ def test_fetches_only_current_packages_and_verifies_both_digests(
         "capsem.deb",
         "package-evidence/package-0/package.spdx.json",
     }
-    assert (
-        output / "package-evidence/package-0/package.spdx.json"
-    ).read_bytes() == artifacts["package.spdx.json"]
+    assert (output / "package-evidence/package-0/package.spdx.json").read_bytes() == artifacts[
+        "package.spdx.json"
+    ]
 
 
 def test_fetches_every_profile_owned_input(tmp_path: Path) -> None:
@@ -238,21 +236,115 @@ def test_fetches_every_profile_owned_input(tmp_path: Path) -> None:
         "profiles/code/x86_64/images/rootfs.erofs",
         "profiles/code/x86_64/evidence/obom.cdx.json",
     }
-    assert (
-        output / "profiles/code/x86_64/images/rootfs.erofs"
-    ).read_bytes() == artifacts["rootfs.erofs"]
+    assert (output / "profiles/code/x86_64/images/rootfs.erofs").read_bytes() == artifacts[
+        "rootfs.erofs"
+    ]
+
+
+def _stage_local_profile_publication(
+    manifest_path: Path,
+    publication_dir: Path,
+) -> str:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    publication_base = "https://github.test/releases/download/profile-nightly-code-code-1"
+    publication_dir.mkdir()
+    profile = manifest["profiles"]["code"]
+    for architecture in profile["architectures"]:
+        arch = architecture["architecture"]
+        for section in ("config", "images", "evidence"):
+            for row in architecture[section]:
+                source = manifest_path.parent / Path(row["url"]).name
+                name = f"{arch}-{source.name}"
+                row["url"] = f"{publication_base}/{name}"
+                (publication_dir / name).write_bytes(source.read_bytes())
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    (publication_dir / "channel-source-nightly.json").write_bytes(manifest_path.read_bytes())
+    return publication_base
+
+
+def test_candidate_profile_inputs_mix_staged_publication_with_manifest_urls(
+    tmp_path: Path,
+) -> None:
+    manifest_path, artifacts = _write_manifest(tmp_path)
+    publication_dir = tmp_path / "publication"
+    publication_base = _stage_local_profile_publication(
+        manifest_path,
+        publication_dir,
+    )
+    output = tmp_path / "candidate-profiles"
+
+    report = FETCH.fetch_release_inputs(
+        manifest_path.as_uri(),
+        "profiles",
+        output,
+        local_publication_base=publication_base,
+        local_publication_dir=publication_dir,
+    )
+
+    assert (output / "manifest.json").read_bytes() == manifest_path.read_bytes()
+    assert {row["url"] for row in report["artifacts"]} == {
+        f"{publication_base}/x86_64-profile.toml",
+        f"{publication_base}/x86_64-vmlinuz",
+        f"{publication_base}/x86_64-initrd.img",
+        f"{publication_base}/x86_64-rootfs.erofs",
+        f"{publication_base}/x86_64-obom.cdx.json",
+    }
+    assert (output / "profiles/code/x86_64/images/x86_64-rootfs.erofs").read_bytes() == artifacts[
+        "rootfs.erofs"
+    ]
+    VERIFY.verify_release_inputs(output)
+
+
+def test_candidate_profile_override_is_all_or_nothing_and_exact(
+    tmp_path: Path,
+) -> None:
+    manifest_path, _ = _write_manifest(tmp_path)
+    publication_dir = tmp_path / "publication"
+    publication_base = _stage_local_profile_publication(
+        manifest_path,
+        publication_dir,
+    )
+
+    with pytest.raises(ValueError, match="supplied together"):
+        FETCH.fetch_release_inputs(
+            manifest_path.as_uri(),
+            "profiles",
+            tmp_path / "partial",
+            local_publication_base=publication_base,
+        )
+
+    (publication_dir / "unexpected").write_bytes(b"extra")
+    with pytest.raises(ValueError, match="file set mismatch"):
+        FETCH.fetch_release_inputs(
+            manifest_path.as_uri(),
+            "profiles",
+            tmp_path / "extra",
+            local_publication_base=publication_base,
+            local_publication_dir=publication_dir,
+        )
+    (publication_dir / "unexpected").unlink()
+
+    (publication_dir / "x86_64-rootfs.erofs").write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="byte size mismatch"):
+        FETCH.fetch_release_inputs(
+            manifest_path.as_uri(),
+            "profiles",
+            tmp_path / "tampered",
+            local_publication_base=publication_base,
+            local_publication_dir=publication_dir,
+        )
 
 
 @pytest.mark.parametrize("field", ["sha256", "blake3"])
 def test_rejects_tampered_profile_digest(tmp_path: Path, field: str) -> None:
     manifest, _ = _write_manifest(tmp_path)
     document = json.loads(manifest.read_text(encoding="utf-8"))
-    document["profiles"]["code"]["architectures"][0]["images"][0]["digest"][
-        field
-    ] = "0" * 64
+    document["profiles"]["code"]["architectures"][0]["images"][0]["digest"][field] = "0" * 64
     manifest.write_text(json.dumps(document), encoding="utf-8")
 
-    with pytest.raises(ValueError, match=field.replace("sha256", "SHA-256").replace("blake3", "BLAKE3")):
+    with pytest.raises(
+        ValueError, match=field.replace("sha256", "SHA-256").replace("blake3", "BLAKE3")
+    ):
         FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", tmp_path / "out")
 
 
@@ -391,16 +483,10 @@ def test_stages_every_verified_profile_image_and_exact_config(
     staged_manifest = STAGE.stage_profiles(inputs, assets, config_root)
 
     document = json.loads(staged_manifest.read_text(encoding="utf-8"))
-    image_url = document["profiles"]["code"]["architectures"][0]["images"][0][
-        "url"
-    ]
+    image_url = document["profiles"]["code"]["architectures"][0]["images"][0]["url"]
     assert image_url.startswith("file://")
-    assert (config_root / "profiles/code/profile.toml").read_bytes() == artifacts[
-        "profile.toml"
-    ]
-    assert (
-        config_root / "profiles/co-work/profile.toml"
-    ).read_bytes() == co_work["co-work.toml"]
+    assert (config_root / "profiles/code/profile.toml").read_bytes() == artifacts["profile.toml"]
+    assert (config_root / "profiles/co-work/profile.toml").read_bytes() == co_work["co-work.toml"]
     assert (assets / "x86_64/vmlinuz").read_bytes() == artifacts["vmlinuz"]
     assert (assets / "x86_64/initrd.img").read_bytes() == artifacts["initrd.img"]
     assert (assets / "x86_64/rootfs.erofs").read_bytes() == artifacts["rootfs.erofs"]
