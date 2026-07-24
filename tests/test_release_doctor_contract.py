@@ -547,7 +547,10 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "cancel-in-progress: false" in workflow
     assert "deployments: write" in workflow
     assert "Fetch latest selected channel source manifest" in workflow
-    assert "Fetch selected channel binary packages" in workflow
+    assert "--kind packages" in workflow
+    assert "--output target/profile-public-before/packages" in workflow
+    assert "--input-dir target/profile-public-before/packages" in workflow
+    assert "--print-package-path" in workflow
     assert "just _build-kernel ${{ matrix.arch }} \"${{ inputs.profile }}\"" in workflow
     assert "just _build-rootfs ${{ matrix.arch }} \"${{ inputs.profile }}\"" in workflow
     assert "- arch: arm64" in workflow
@@ -1189,6 +1192,42 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     assert "applyUpdateAction" not in frontend_api
 
 
+def test_installed_service_owns_one_serial_automatic_update_path() -> None:
+    service = _source_text("crates/capsem-service/src/main.rs")
+    api = _source_text("crates/capsem-service/src/api.rs")
+    route_tests = _source_text("tests/capsem-service/test_update_routes.py")
+    apply_request = api.split("pub struct UpdateApplyRequest", maxsplit=1)[1].split(
+        "}", maxsplit=1
+    )[0]
+
+    check_executor = service.split(
+        "async fn execute_update_command(", maxsplit=1
+    )[1].split("async fn execute_update_apply(", maxsplit=1)[0]
+    apply_executor = service.split(
+        "async fn execute_update_apply(", maxsplit=1
+    )[1].split("async fn execute_update_command_unlocked(", maxsplit=1)[0]
+    automatic_executor = service.split(
+        "async fn run_automatic_update_once(", maxsplit=1
+    )[1].split("async fn run_automatic_update_loop(", maxsplit=1)[0]
+
+    assert "update_lock: tokio::sync::Mutex<()>" in service
+    assert "run_automatic_update_loop(state_for_updates)" in service
+    assert "automatic_updates_enabled()" in automatic_executor
+    assert "state.update_lock.try_lock()" in automatic_executor
+    assert "state.update_lock.lock().await" in check_executor
+    assert "state.update_lock.lock().await" in apply_executor
+    assert service.count("execute_update_command_unlocked(plan).await") == 3
+
+    assert "UpdateCommandKind::Apply" in service
+    assert 'vec!["update".to_string(), "--yes".to_string()]' in service
+    assert "UpdateCommandKind::Assets" not in service
+    assert '"--assets".to_string()' not in service
+    assert "UpdateApplyAction" not in api
+    assert "action" not in apply_request
+    assert '["update", "--yes"]' in route_tests
+    assert '["update", "--assets"]' not in route_tests
+
+
 def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
     ci_workflow = _workflow_text("ci.yaml")
     expectations = [
@@ -1291,7 +1330,10 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert """echo '{"releases":{}}'""" not in workflow
     assert "run: just test" not in workflow
     assert "Fetch latest selected channel source manifest" in workflow
-    assert "Fetch selected channel manifest and profiles" in workflow
+    assert "--kind profiles" in workflow
+    assert "--output target/binary-public-before/profiles" in workflow
+    assert "--output target/candidate-profile-inputs" in workflow
+    assert "--input-dir target/candidate-profile-inputs" in workflow
     assert "just _test-static" in workflow
     assert "just _test-artifacts" in workflow
     assert "just _test-functional" in workflow
