@@ -4,10 +4,15 @@ Single source of truth for VM resources, timeouts, and other values
 used across capsem-mcp and capsem-service test suites.
 """
 
+import os
+
+
 # Default VM resources
 DEFAULT_RAM_MB = 2048
 DEFAULT_CPUS = 2
-CODE_PROFILE_ID = "code"
+# Release CI runs the complete VM suite once for every selected manifest
+# profile. Local/default test behavior remains the canonical code profile.
+CODE_PROFILE_ID = os.environ.get("CAPSEM_TEST_PROFILE", "code")
 
 # Timeouts (seconds)
 EXEC_READY_TIMEOUT = 60    # Max seconds to wait for a VM to become exec-ready

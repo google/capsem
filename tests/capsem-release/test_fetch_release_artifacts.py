@@ -34,6 +34,13 @@ SOURCE_SPEC = importlib.util.spec_from_file_location(
 assert SOURCE_SPEC is not None and SOURCE_SPEC.loader is not None
 SOURCE = importlib.util.module_from_spec(SOURCE_SPEC)
 SOURCE_SPEC.loader.exec_module(SOURCE)
+PROFILE_AXIS_SPEC = importlib.util.spec_from_file_location(
+    "release_test_profiles",
+    ROOT / "scripts" / "release-test-profiles.py",
+)
+assert PROFILE_AXIS_SPEC is not None and PROFILE_AXIS_SPEC.loader is not None
+PROFILE_AXIS = importlib.util.module_from_spec(PROFILE_AXIS_SPEC)
+PROFILE_AXIS_SPEC.loader.exec_module(PROFILE_AXIS)
 
 
 def _digest(payload: bytes) -> dict[str, str]:
@@ -115,6 +122,7 @@ def _record(url: str, payload: bytes, **extra: object) -> dict[str, object]:
 def _write_manifest(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
     artifacts = {
         "capsem.deb": b"package",
+        "package.spdx.json": b'{"spdxVersion":"SPDX-2.3"}',
         "profile.toml": b"[profile]\nid='code'\n",
         "vmlinuz": b"kernel",
         "initrd.img": b"initrd",
@@ -134,6 +142,14 @@ def _write_manifest(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
                 artifacts["capsem.deb"],
                 name="capsem.deb",
                 status="current",
+                evidence=[
+                    _record(
+                        "package.spdx.json",
+                        artifacts["package.spdx.json"],
+                        kind="sbom",
+                        status="current",
+                    )
+                ],
             )
         ],
         "profiles": {
@@ -199,7 +215,13 @@ def test_fetches_only_current_packages_and_verifies_both_digests(
     assert (output / "capsem.deb").read_bytes() == artifacts["capsem.deb"]
     assert (output / "manifest.json").read_bytes() == manifest.read_bytes()
     assert (output / "release-inputs.json").is_file()
-    assert len(report["artifacts"]) == 1
+    assert {row["path"] for row in report["artifacts"]} == {
+        "capsem.deb",
+        "package-evidence/package-0/package.spdx.json",
+    }
+    assert (
+        output / "package-evidence/package-0/package.spdx.json"
+    ).read_bytes() == artifacts["package.spdx.json"]
 
 
 def test_fetches_every_profile_owned_input(tmp_path: Path) -> None:
@@ -252,22 +274,315 @@ def test_verifier_rejects_a_tampered_resolved_input(tmp_path: Path) -> None:
         VERIFY.verify_release_inputs(output)
 
 
-def test_stages_verified_profile_manifest_and_host_boot_images(
+def test_verifier_rejects_an_artifact_omitted_from_its_manifest_derivation(
+    tmp_path: Path,
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    output = tmp_path / "profiles"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", output)
+    report_path = output / "release-inputs.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["artifacts"].pop()
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="does not match the resolved manifest"):
+        VERIFY.verify_release_inputs(output)
+
+
+def test_verifier_rejects_a_report_identity_substituted_after_resolution(
+    tmp_path: Path,
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    output = tmp_path / "profiles"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", output)
+    report_path = output / "release-inputs.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    report["artifacts"][0]["url"] = "https://attacker.invalid/substitute"
+    report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="does not match the resolved manifest"):
+        VERIFY.verify_release_inputs(output)
+
+
+def test_fetch_rejects_profile_identity_path_traversal(tmp_path: Path) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    document["profiles"]["../../outside"] = document["profiles"].pop("code")
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unsafe profile identity"):
+        FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", tmp_path / "out")
+
+    assert not (tmp_path / "outside").exists()
+
+
+def _add_distinct_profile(
+    manifest: Path,
+    tmp_path: Path,
+) -> dict[str, bytes]:
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    artifacts = {
+        "co-work.toml": b"[profile]\nid='co-work'\n",
+        "co-work-vmlinuz": b"co-work-kernel",
+        "co-work-initrd.img": b"co-work-initrd",
+        "co-work-rootfs.erofs": b"co-work-rootfs",
+        "co-work-obom.cdx.json": b'{"bomFormat":"CycloneDX","profile":"co-work"}',
+    }
+    for name, payload in artifacts.items():
+        (tmp_path / name).write_bytes(payload)
+    document["profiles"]["co-work"] = {
+        "version": "co-work-1",
+        "id": "co-work",
+        "name": "Co-work",
+        "revision": "co-work-1",
+        "status": "current",
+        "architectures": [
+            {
+                "architecture": "x86_64",
+                "config": [
+                    _record(
+                        "co-work.toml",
+                        artifacts["co-work.toml"],
+                        kind="profile",
+                        path="profiles/co-work/profile.toml",
+                        status="current",
+                    )
+                ],
+                "images": [
+                    _record(
+                        name,
+                        artifacts[name],
+                        kind=kind,
+                        name=logical_name,
+                        status="current",
+                    )
+                    for name, kind, logical_name in (
+                        ("co-work-vmlinuz", "kernel", "vmlinuz"),
+                        ("co-work-initrd.img", "initrd", "initrd.img"),
+                        ("co-work-rootfs.erofs", "rootfs", "rootfs.erofs"),
+                    )
+                ],
+                "evidence": [
+                    _record(
+                        "co-work-obom.cdx.json",
+                        artifacts["co-work-obom.cdx.json"],
+                        kind="obom",
+                        status="current",
+                    )
+                ],
+            }
+        ],
+    }
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    return artifacts
+
+
+def test_stages_every_verified_profile_image_and_exact_config(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest, artifacts = _write_manifest(tmp_path)
+    co_work = _add_distinct_profile(manifest, tmp_path)
     inputs = tmp_path / "profile-inputs"
     FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
     monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
     assets = tmp_path / "assets"
+    config_root = tmp_path / "release-config"
 
-    staged_manifest = STAGE.stage_profiles(inputs, assets)
+    staged_manifest = STAGE.stage_profiles(inputs, assets, config_root)
 
     document = json.loads(staged_manifest.read_text(encoding="utf-8"))
     image_url = document["profiles"]["code"]["architectures"][0]["images"][0][
         "url"
     ]
     assert image_url.startswith("file://")
+    assert (config_root / "profiles/code/profile.toml").read_bytes() == artifacts[
+        "profile.toml"
+    ]
+    assert (
+        config_root / "profiles/co-work/profile.toml"
+    ).read_bytes() == co_work["co-work.toml"]
     assert (assets / "x86_64/vmlinuz").read_bytes() == artifacts["vmlinuz"]
     assert (assets / "x86_64/initrd.img").read_bytes() == artifacts["initrd.img"]
     assert (assets / "x86_64/rootfs.erofs").read_bytes() == artifacts["rootfs.erofs"]
+    for logical_name, payload in (
+        ("vmlinuz", artifacts["vmlinuz"]),
+        ("initrd.img", artifacts["initrd.img"]),
+        ("rootfs.erofs", artifacts["rootfs.erofs"]),
+        ("vmlinuz", co_work["co-work-vmlinuz"]),
+        ("initrd.img", co_work["co-work-initrd.img"]),
+        ("rootfs.erofs", co_work["co-work-rootfs.erofs"]),
+    ):
+        digest = blake3.blake3(payload).hexdigest()
+        staged = assets / "x86_64" / STAGE._hash_filename(logical_name, digest)
+        assert staged.read_bytes() == payload
+
+
+def test_staging_reverifies_inputs_instead_of_trusting_the_fetch_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    inputs = tmp_path / "profile-inputs"
+    report = FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    first = inputs / report["artifacts"][0]["path"]
+    first.write_bytes(b"tampered")
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+
+    with pytest.raises(ValueError, match="byte size mismatch"):
+        STAGE.stage_profiles(inputs, tmp_path / "assets", tmp_path / "config")
+
+
+def _package_with_binary_inventory(
+    manifest: Path,
+    binaries: dict[str, bytes],
+) -> None:
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    package = document["packages"][0]
+    package.update({"platform": "linux", "architecture": "amd64"})
+    package["binaries"] = [
+        _record(
+            f"/usr/bin/{name}",
+            payload,
+            name=name,
+            installed_path=f"/usr/bin/{name}",
+            platform="linux",
+            architecture="amd64",
+            status="current",
+        )
+        for name, payload in binaries.items()
+    ]
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+
+
+def test_package_staging_uses_and_verifies_the_complete_binary_inventory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    binary_payloads = {
+        "capsem": b"resolved-capsem",
+        "capsem-service": b"resolved-service",
+    }
+    _package_with_binary_inventory(manifest, binary_payloads)
+    inputs = tmp_path / "package-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "packages", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+
+    def fake_extract(command: tuple[str, ...], check: bool) -> None:
+        assert command[:2] == ("dpkg-deb", "--extract")
+        assert check is True
+        root = Path(command[-1]) / "usr/bin"
+        root.mkdir(parents=True)
+        for name, payload in binary_payloads.items():
+            (root / name).write_bytes(payload)
+
+    monkeypatch.setattr(STAGE.subprocess, "run", fake_extract)
+    binary_dir = tmp_path / "target/debug"
+    binary_dir.mkdir(parents=True)
+    stale = binary_dir / "capsem-source-built"
+    stale.write_bytes(b"must-not-survive")
+
+    staged = STAGE.stage_package_binaries(inputs, binary_dir)
+
+    assert {path.name for path in staged} == set(binary_payloads)
+    assert not stale.exists()
+    for name, payload in binary_payloads.items():
+        assert (binary_dir / name).read_bytes() == payload
+
+
+def test_package_staging_rejects_inventory_missing_from_the_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    _package_with_binary_inventory(
+        manifest,
+        {"capsem": b"resolved-capsem", "capsem-service": b"resolved-service"},
+    )
+    inputs = tmp_path / "package-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "packages", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+
+    def fake_extract(command: tuple[str, ...], check: bool) -> None:
+        root = Path(command[-1]) / "usr/bin"
+        root.mkdir(parents=True)
+        (root / "capsem").write_bytes(b"resolved-capsem")
+
+    monkeypatch.setattr(STAGE.subprocess, "run", fake_extract)
+
+    with pytest.raises(ValueError, match="capsem-service"):
+        STAGE.stage_package_binaries(inputs, tmp_path / "target/debug")
+
+
+def test_candidate_package_staging_cannot_fall_back_to_source_binaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    package = tmp_path / "candidate.deb"
+    package.write_bytes(b"candidate-package")
+    payloads = {"capsem": b"candidate-capsem", "capsem-service": b"candidate-service"}
+
+    def fake_extract(command: tuple[str, ...], check: bool) -> None:
+        assert Path(command[2]) == package
+        root = Path(command[-1]) / "usr/bin"
+        root.mkdir(parents=True)
+        for name, payload in payloads.items():
+            (root / name).write_bytes(payload)
+
+    monkeypatch.setattr(STAGE.subprocess, "run", fake_extract)
+    binary_dir = tmp_path / "target/debug"
+    binary_dir.mkdir(parents=True)
+    (binary_dir / "capsem").write_bytes(b"source-capsem")
+    (binary_dir / "capsem-mcp").write_bytes(b"source-only-fallback")
+
+    staged = STAGE.stage_candidate_package(package, binary_dir)
+
+    assert {path.name for path in staged} == set(payloads)
+    assert not (binary_dir / "capsem-mcp").exists()
+    assert (binary_dir / "capsem").read_bytes() == payloads["capsem"]
+
+
+def test_release_profile_axis_is_exactly_the_active_manifest_catalog(
+    tmp_path: Path,
+) -> None:
+    profiles_dir = tmp_path / "config/profiles"
+    for profile_id in ("code", "experimental"):
+        path = profiles_dir / profile_id
+        path.mkdir(parents=True)
+        (path / "profile.toml").write_text(
+            f'id = "{profile_id}"\nname = "{profile_id}"\n',
+            encoding="utf-8",
+        )
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "profiles": {
+                    "code": {"status": "current"},
+                    "experimental": {"status": "staged"},
+                    "retired": {"status": "revoked"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert PROFILE_AXIS.release_test_profiles(profiles_dir, manifest) == [
+        "code",
+        "experimental",
+    ]
+
+
+def test_release_profile_axis_rejects_source_profile_fallback(
+    tmp_path: Path,
+) -> None:
+    profiles_dir = tmp_path / "config/profiles/code"
+    profiles_dir.mkdir(parents=True)
+    (profiles_dir / "profile.toml").write_text(
+        'id = "code"\nname = "Code"\n',
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        '{"profiles":{"code":{"status":"current"},"experimental":{"status":"staged"}}}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="does not match the selected manifest"):
+        PROFILE_AXIS.release_test_profiles(profiles_dir.parent, manifest)

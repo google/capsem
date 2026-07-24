@@ -4635,7 +4635,7 @@ def test_release_packages_use_the_shared_all_profile_materialization_rail() -> N
     linux_job = _workflow_job_block("build-app-linux", "release.yaml")
     materializer = _source_text("scripts/materialize-config.sh")
 
-    assert 'profile_paths=("$ROOT"/config/profiles/*/profile.toml)' in materializer
+    assert 'profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)' in materializer
     assert 'for profile_path in "${profile_paths[@]}"' in materializer
     assert 'CAPSEM_ASSET_MANIFEST="$ASSET_MANIFEST_URL"' in mac_job
     assert "CAPSEM_ARCH=arm64" in mac_job

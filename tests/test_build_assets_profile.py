@@ -51,7 +51,7 @@ def test_asset_build_primitives_accept_an_isolated_output_root() -> None:
 
 
 def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
-    test = _recipe_block("test:")
+    test = _recipe_block("_test-candidate-run:")
     asset_gate = _recipe_block("_gate-assets:")
 
     assert "just _gate-assets" in test
@@ -180,12 +180,12 @@ def test_materialize_config_falls_back_to_sole_manifest_arch_for_ci_runner() -> 
     assert "materialize arch $arch from $arch_source is not present" in script
 
 
-def test_materialize_config_materializes_entire_checked_in_profile_catalog() -> None:
+def test_materialize_config_materializes_entire_selected_profile_catalog() -> None:
     block = _recipe_block("_materialize-config:")
     script = (PROJECT_ROOT / "scripts" / "materialize-config.sh").read_text()
 
     assert 'rm -rf "$ROOT/target/config"' in script
-    assert 'profile_paths=("$ROOT"/config/profiles/*/profile.toml)' in script
+    assert 'profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)' in script
     assert 'for profile_path in "${profile_paths[@]}"; do' in script
     assert '--profile "$profile_path"' in script
     assert '--profile "$ROOT/config/profiles/code/profile.toml"' not in script
@@ -201,7 +201,7 @@ def test_ensure_service_uses_generated_profiles() -> None:
 
 
 def test_isolated_test_recipes_trap_test_home_service_cleanup() -> None:
-    for recipe in ["test:", "smoke:"]:
+    for recipe in ["_test-candidate-run:", "smoke:"]:
         block = _recipe_block(recipe)
         assert "cleanup_test_capsem_home_service()" in block
         assert "trap cleanup_test_capsem_home_service EXIT" in block
@@ -221,6 +221,7 @@ def test_release_workflow_uses_same_config_materializer() -> None:
 def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
     release = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
+    stager = (PROJECT_ROOT / "scripts/stage-profile-publication.py").read_text()
 
     assert "npm install -g @cyclonedx/cdxgen@12.7.0" in workflow
     assert "@cyclonedx/cdxgen@latest" not in workflow
@@ -231,15 +232,11 @@ def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:
     attest_step = workflow.split("- name: Attest VM asset provenance", maxsplit=1)[1].split(
         "\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", maxsplit=1
     )[0]
-    for logical_name in (
-        "vmlinuz",
-        "initrd.img",
-        "rootfs.erofs",
-        "obom.cdx.json",
-        "software-inventory.json",
-    ):
-        assert logical_name in upload_step
-        assert logical_name in attest_step
+    assert "scripts/stage-profile-publication.py" in upload_step
+    assert "scripts/verify-profile-publication.py" in upload_step
+    assert 'files=("$RELEASE_DIR"/*)' in upload_step
+    assert 'for section in ("config", "images", "evidence")' in stager
+    assert "subject-path: target/asset-release/profile-*/*" in attest_step
     assert "vm-build-ledger-" not in workflow
     assert "build-ledger.log" not in upload_step
     assert "build-ledger.log" not in attest_step

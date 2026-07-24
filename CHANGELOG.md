@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   owned profile namespaces, and rejection of first-party or package writes.
 
 ### Changed
+
+- Bound release compatibility tests to manifest-derived, digest-verified
+  complementary artifacts; staged exact profile config and every selected
+  profile image, replaced source-built host binaries with package inventory
+  bytes, and made each selected channel profile an explicit VM-suite axis.
+- Parameterized Winterfell, IronBank, doctor, MCP lifecycle, injection,
+  integration, and benchmark execution across every active profile in the
+  selected channel manifest without rebuilding either artifact family.
 - Preserved every channel profile's membership, revision, config, evidence,
   and image identity in runtime update state instead of collapsing a public
   release graph to one default profile.
@@ -35,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retried transient Tart SSH failures only before authenticated guest
+  execution, while failing without replay after a native package install has
+  started.
 - Removed stale source-contract references to the retired asset-delta helper
   so the orthogonal release doctrine teardown remains internally executable.
 

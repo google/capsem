@@ -707,8 +707,11 @@ jobs:
             --input-dir target/release-inputs
           uv run python scripts/stage-release-test-inputs.py \
             --input-dir target/release-inputs \
-            --assets-dir assets
+            --assets-dir assets \
+            --config-root target/release-config
           CAPSEM_ASSET_MANIFEST="file://$PWD/assets/manifest.json" \
+          CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
+          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/config" \
             bash scripts/materialize-config.sh
 
       - name: Activate exact candidate package binaries for functional tests
@@ -716,14 +719,13 @@ jobs:
           set -euo pipefail
           package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$package"
-          rm -rf target/release-package-root
-          dpkg-deb --extract "$package" target/release-package-root
-          mkdir -p target/debug
-          cp target/release-package-root/usr/bin/capsem* target/debug/
-          chmod 0755 target/debug/capsem*
+          uv run python scripts/stage-release-test-inputs.py \
+            --package-file "$package" \
+            --binary-dir target/debug
           echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package" >> "$GITHUB_ENV"
           echo "CAPSEM_RELEASE_BIN_DIR=$PWD/target/debug" >> "$GITHUB_ENV"
           echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/target/release-inputs" >> "$GITHUB_ENV"
+          echo "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem" >> "$GITHUB_ENV"
           echo "CAPSEM_TEST_ASSETS_DIR=$PWD/assets" >> "$GITHUB_ENV"
           echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/target/config" >> "$GITHUB_ENV"
 

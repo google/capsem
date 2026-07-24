@@ -838,6 +838,21 @@ _test-candidate-run:
     if module_enabled functional; then
     TEST_BINARY="${CAPSEM_TEST_BINARY:-{{binary}}}"
     TEST_ASSETS="${CAPSEM_TEST_ASSETS_DIR:-{{assets_dir}}}"
+    TEST_CONFIG_ROOT="${CAPSEM_TEST_CONFIG_ROOT:-target/config}"
+    TEST_PROFILES=()
+    while IFS= read -r test_profile; do
+        [ -n "$test_profile" ] && TEST_PROFILES+=("$test_profile")
+    done < <(
+        uv run python scripts/release-test-profiles.py \
+            --profiles-dir "$TEST_CONFIG_ROOT/profiles" \
+            --manifest "$TEST_ASSETS/manifest.json"
+    )
+    [ "${#TEST_PROFILES[@]}" -gt 0 ] || {
+        echo "functional release gate resolved no profiles" >&2
+        exit 1
+    }
+    BASE_PROFILE="${TEST_PROFILES[0]}"
+    echo "=== Functional profile matrix: ${TEST_PROFILES[*]} ==="
     HOST_SNAPSHOT_SERIAL=(
         "tests/capsem-mcp/test_state_transitions.py"
         "tests/capsem-service/test_svc_resume_paths.py"
@@ -857,7 +872,7 @@ _test-candidate-run:
     # absent it means an earlier stage silently dropped its output, and
     # we want that to fail loudly here rather than manifest as a pile of
     # individually-omitted tests whose absence goes unnoticed.
-    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short --maxfail=1 -n 4 --dist=loadfile \
+    CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short --maxfail=1 -n 4 --dist=loadfile \
         -m "not serial" \
         "${HOST_SNAPSHOT_IGNORE_ARGS[@]}" \
         --ignore=tests/capsem-recipes \
@@ -873,12 +888,12 @@ _test-candidate-run:
         --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
 
     echo "=== Python: host snapshot tests (serial) ==="
-    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
+    CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
         "${HOST_SNAPSHOT_SERIAL[@]}" \
         -v --tb=short --maxfail=1 -m "not serial"
 
     echo "=== Python: release site shared-dist tests (serial) ==="
-    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
+    CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
         tests/test_release_package_binary_contract.py \
         tests/test_release_profile_architecture_contract.py \
         tests/test_release_profile_contract.py \
@@ -888,22 +903,69 @@ _test-candidate-run:
         -v --tb=short
 
     echo "=== Python: serial timing and benchmark tests ==="
-    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
+    CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
         tests/capsem-serial/ \
         tests/ironbank/test_route_health.py \
         -v --tb=short -m serial -k 'not test_capsem_bench_baseline'
 
     # ---- Stage 6: legacy VM scripts + bench ---------------------------------
     echo "=== Injection test ==="
-    python3 scripts/injection_test.py --binary "$TEST_BINARY" --assets "$TEST_ASSETS"
+    python3 scripts/injection_test.py \
+        --binary "$TEST_BINARY" \
+        --assets "$TEST_ASSETS" \
+        --profiles-dir "$TEST_CONFIG_ROOT/profiles" \
+        --profile "$BASE_PROFILE"
 
     echo "=== Integration test ==="
-    python3 scripts/integration_test.py --binary "$TEST_BINARY" --assets "$TEST_ASSETS"
+    python3 scripts/integration_test.py \
+        --binary "$TEST_BINARY" \
+        --assets "$TEST_ASSETS" \
+        --profile "$BASE_PROFILE"
 
     echo "=== Benchmarks ==="
     # Gate-owned recordings stay under target/test-benchmarks so the candidate
     # tree remains byte-for-byte identical to the tested commit.
-    CAPSEM_ASSETS_DIR="$TEST_ASSETS" uv run python -m pytest tests/capsem-serial/test_capsem_bench_baseline.py -v --tb=short
+    CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_ASSETS_DIR="$TEST_ASSETS" \
+        uv run python -m pytest tests/capsem-serial/test_capsem_bench_baseline.py -v --tb=short
+
+    # The broad suite above proves every source and runtime contract once.
+    # Repeat every VM-owned suite for each remaining selected channel profile;
+    # this is the compatibility axis, not a reduced release-only substitute.
+    for TEST_PROFILE in "${TEST_PROFILES[@]:1}"; do
+        echo "=== Complete VM suites: profile $TEST_PROFILE ==="
+        CAPSEM_TEST_PROFILE="$TEST_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 \
+            uv run python -m pytest tests/ -v --tb=short --maxfail=1 -n 4 --dist=loadfile \
+                -m "(integration or mcp or e2e) and not serial" \
+                "${HOST_SNAPSHOT_IGNORE_ARGS[@]}" \
+                --ignore=tests/capsem-recipes \
+                --ignore=tests/capsem-install \
+                --ignore=tests/capsem-build-chain \
+                --ignore=tests/capsem-release
+
+        CAPSEM_TEST_PROFILE="$TEST_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 \
+            uv run python -m pytest \
+                "${HOST_SNAPSHOT_SERIAL[@]}" \
+                -v --tb=short --maxfail=1 -m "not serial"
+
+        CAPSEM_TEST_PROFILE="$TEST_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 \
+            uv run python -m pytest \
+                tests/capsem-serial/ \
+                tests/ironbank/test_route_health.py \
+                -v --tb=short -m serial -k 'not test_capsem_bench_baseline'
+
+        python3 scripts/injection_test.py \
+            --binary "$TEST_BINARY" \
+            --assets "$TEST_ASSETS" \
+            --profiles-dir "$TEST_CONFIG_ROOT/profiles" \
+            --profile "$TEST_PROFILE"
+        python3 scripts/integration_test.py \
+            --binary "$TEST_BINARY" \
+            --assets "$TEST_ASSETS" \
+            --profile "$TEST_PROFILE"
+        CAPSEM_TEST_PROFILE="$TEST_PROFILE" CAPSEM_ASSETS_DIR="$TEST_ASSETS" \
+            uv run python -m pytest \
+                tests/capsem-serial/test_capsem_bench_baseline.py -v --tb=short
+    done
     fi
 
     # ---- Stage 7: Docker e2e ------------------------------------------------

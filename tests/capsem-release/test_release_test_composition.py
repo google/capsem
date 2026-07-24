@@ -86,6 +86,23 @@ def test_modules_retain_complete_named_quality_gates() -> None:
         assert required in runner
 
 
+def test_functional_module_runs_every_selected_profile_without_rebuilding() -> None:
+    runner = _recipe("_test-candidate-run")
+
+    assert "scripts/release-test-profiles.py" in runner
+    assert '--manifest "$TEST_ASSETS/manifest.json"' in runner
+    assert 'for TEST_PROFILE in "${TEST_PROFILES[@]:1}"' in runner
+    assert 'CAPSEM_TEST_PROFILE="$BASE_PROFILE"' in runner
+    assert 'CAPSEM_TEST_PROFILE="$TEST_PROFILE"' in runner
+    assert '-m "(integration or mcp or e2e) and not serial"' in runner
+    assert '--profile "$BASE_PROFILE"' in runner
+    assert '--profile "$TEST_PROFILE"' in runner
+    assert "tests/capsem-mcp/test_state_transitions.py" in runner
+    assert "tests/ironbank/test_route_health.py" in runner
+    assert "tests/capsem-serial/test_capsem_bench_baseline.py" in runner
+    assert "build-assets" not in runner
+
+
 def test_source_state_digest_covers_dirty_and_untracked_nonignored_files(
     tmp_path: Path,
 ) -> None:

@@ -27,7 +27,7 @@ def test_justfile_routes_assets_through_profile_admin_rail() -> None:
     assert "cargo run -p capsem-admin -- manifest generate" in justfile
     assert "bash \"$ROOT/scripts/materialize-config.sh\"" in justfile
     assert "cargo run -p capsem-admin -- profile materialize" in materialize_config
-    assert 'profile_paths=("$ROOT"/config/profiles/*/profile.toml)' in materialize_config
+    assert 'profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)' in materialize_config
     assert "--config-root \"$CONFIG_ROOT\"" in materialize_config
 
 

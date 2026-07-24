@@ -113,9 +113,9 @@ if [ "$OUTPUT_ROOT" != "$ROOT/target/config" ]; then
     rm -rf "$OUTPUT_ROOT"
 fi
 
-profile_paths=("$ROOT"/config/profiles/*/profile.toml)
+profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)
 if [ "${#profile_paths[@]}" -eq 0 ] || [ ! -f "${profile_paths[0]}" ]; then
-    echo "ERROR: no checked-in profiles found under $ROOT/config/profiles" >&2
+    echo "ERROR: no profile inputs found under $CONFIG_ROOT/profiles" >&2
     exit 1
 fi
 
