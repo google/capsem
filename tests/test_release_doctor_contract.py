@@ -1214,6 +1214,11 @@ def test_installed_service_owns_one_serial_automatic_update_path() -> None:
     assert "run_automatic_update_loop(state_for_updates)" in service
     assert "automatic_updates_enabled()" in automatic_executor
     assert "state.update_lock.try_lock()" in automatic_executor
+    assert "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS" in service
+    assert "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS" in service
+    assert "automatic_update_delay(" in service
+    assert "AUTOMATIC_UPDATE_INITIAL_DELAY_SECS: u64 = 60" in service
+    assert "AUTOMATIC_UPDATE_POLL_SECS: u64 = 60 * 60" in service
     assert "state.update_lock.lock().await" in check_executor
     assert "state.update_lock.lock().await" in apply_executor
     assert service.count("execute_update_command_unlocked(plan).await") == 3

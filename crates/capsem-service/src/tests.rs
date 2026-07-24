@@ -1282,6 +1282,33 @@ fn automatic_update_failure_backoff_is_bounded() {
 }
 
 #[test]
+fn automatic_update_poll_delay_override_is_positive_and_fail_closed() {
+    use std::ffi::OsStr;
+
+    let fallback = std::time::Duration::from_secs(AUTOMATIC_UPDATE_POLL_SECS);
+    assert_eq!(
+        automatic_update_delay_from_value(None, AUTOMATIC_UPDATE_POLL_SECS),
+        fallback
+    );
+    assert_eq!(
+        automatic_update_delay_from_value(Some(OsStr::new("")), AUTOMATIC_UPDATE_POLL_SECS),
+        fallback
+    );
+    assert_eq!(
+        automatic_update_delay_from_value(Some(OsStr::new("0")), AUTOMATIC_UPDATE_POLL_SECS),
+        fallback
+    );
+    assert_eq!(
+        automatic_update_delay_from_value(Some(OsStr::new("invalid")), AUTOMATIC_UPDATE_POLL_SECS),
+        fallback
+    );
+    assert_eq!(
+        automatic_update_delay_from_value(Some(OsStr::new("2")), AUTOMATIC_UPDATE_POLL_SECS),
+        std::time::Duration::from_secs(2)
+    );
+}
+
+#[test]
 fn automatic_update_loop_runs_only_for_the_unbounded_installed_service() {
     assert!(should_start_automatic_update_loop(None));
     assert!(!should_start_automatic_update_loop(Some(1234)));

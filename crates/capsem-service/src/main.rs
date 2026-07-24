@@ -50,6 +50,8 @@ const AUTOMATIC_UPDATE_INITIAL_DELAY_SECS: u64 = 60;
 const AUTOMATIC_UPDATE_POLL_SECS: u64 = 60 * 60;
 const AUTOMATIC_UPDATE_BUSY_RETRY_SECS: u64 = 5 * 60;
 const AUTOMATIC_UPDATE_MAX_BACKOFF_SECS: u64 = 24 * 60 * 60;
+const AUTOMATIC_UPDATE_INITIAL_DELAY_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS";
+const AUTOMATIC_UPDATE_POLL_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS";
 
 fn checkpoint_complete_path(checkpoint_path: &StdPath) -> PathBuf {
     let marker_name = checkpoint_path
@@ -12525,6 +12527,23 @@ fn automatic_update_failure_backoff(consecutive_failures: u32) -> std::time::Dur
     std::time::Duration::from_secs(seconds)
 }
 
+fn automatic_update_delay_from_value(
+    value: Option<&std::ffi::OsStr>,
+    default_seconds: u64,
+) -> std::time::Duration {
+    let seconds = value
+        .and_then(std::ffi::OsStr::to_str)
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(default_seconds);
+    std::time::Duration::from_secs(seconds)
+}
+
+fn automatic_update_delay(environment_name: &str, default_seconds: u64) -> std::time::Duration {
+    let value = std::env::var_os(environment_name);
+    automatic_update_delay_from_value(value.as_deref(), default_seconds)
+}
+
 async fn run_automatic_update_once(state: &ServiceState) -> AutomaticUpdateOutcome {
     if !automatic_updates_enabled() {
         return AutomaticUpdateOutcome::Disabled;
@@ -12553,14 +12572,18 @@ async fn run_automatic_update_once(state: &ServiceState) -> AutomaticUpdateOutco
 }
 
 async fn run_automatic_update_loop(state: Arc<ServiceState>) {
-    let mut delay = std::time::Duration::from_secs(AUTOMATIC_UPDATE_INITIAL_DELAY_SECS);
+    let mut delay = automatic_update_delay(
+        AUTOMATIC_UPDATE_INITIAL_DELAY_ENV,
+        AUTOMATIC_UPDATE_INITIAL_DELAY_SECS,
+    );
+    let poll_delay = automatic_update_delay(AUTOMATIC_UPDATE_POLL_ENV, AUTOMATIC_UPDATE_POLL_SECS);
     let mut consecutive_failures = 0_u32;
     loop {
         tokio::time::sleep(delay).await;
         match run_automatic_update_once(&state).await {
             AutomaticUpdateOutcome::Disabled => {
                 consecutive_failures = 0;
-                delay = std::time::Duration::from_secs(AUTOMATIC_UPDATE_POLL_SECS);
+                delay = poll_delay;
                 info!("automatic release polling is disabled by app.auto_update");
             }
             AutomaticUpdateOutcome::Busy => {
@@ -12569,10 +12592,10 @@ async fn run_automatic_update_loop(state: Arc<ServiceState>) {
             }
             AutomaticUpdateOutcome::Succeeded(disposition) => {
                 consecutive_failures = 0;
-                delay = std::time::Duration::from_secs(AUTOMATIC_UPDATE_POLL_SECS);
+                delay = poll_delay;
                 info!(
                     ?disposition,
-                    next_poll_secs = AUTOMATIC_UPDATE_POLL_SECS,
+                    next_poll_secs = poll_delay.as_secs(),
                     "automatic release update completed"
                 );
             }
