@@ -1673,6 +1673,12 @@ _gate-install:
     # linked binaries and exact package bundle consumed by the runtime proofs.
     docker exec "$CONTAINER" bash -c \
         "rm -rf /cargo-target/debug/incremental /cargo-target/debug/deps /cargo-target/debug/build /cargo-target/debug/.fingerprint /cargo-target/debug/examples"
+    # The Linux CI container chowns the bind-mounted checkout to uid 1000 so
+    # its non-root build can write there. Hand the host-owned storage ledger
+    # back before invoking the host controller (runner uid 1001 on GitHub);
+    # the EXIT cleanup restores the rest of /src after this rail completes.
+    docker exec "$CONTAINER" bash -c \
+        "mkdir -p /src/target/storage && chown -R $HOST_UID:$HOST_GID /src/target/storage"
     # Package/image assembly can consume the reserve measured at recipe start.
     # The remaining runtime-only tail needs far less room than compilation, but
     # still keeps a 12 GiB cushion so ENOSPC fails here with diagnostics instead

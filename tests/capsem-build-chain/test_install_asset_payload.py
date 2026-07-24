@@ -807,10 +807,14 @@ def test_install_gate_releases_disposable_build_state_before_pytest() -> None:
         "/cargo-target/debug/examples",
         package_install,
     )
+    ledger_handoff = block.index(
+        "chown -R $HOST_UID:$HOST_GID /src/target/storage",
+        trim_build_state,
+    )
     final_capacity = block.index('scripts/ensure-docker-space.sh" install', package_install)
     pytest_launch = block.index("Running install e2e tests")
 
-    assert package_install < trim_build_state < final_capacity < pytest_launch
+    assert package_install < trim_build_state < ledger_handoff < final_capacity < pytest_launch
     cleanup = block[trim_build_state:final_capacity]
     assert "/cargo-target/debug/bundle" not in cleanup
     assert "rm -rf /cargo-target/debug/*" not in cleanup
