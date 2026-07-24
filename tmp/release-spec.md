@@ -518,6 +518,12 @@ Downstream jobs MUST verify those identities before use. A mutable artifact
 name, mutable cache, branch-relative output, or unverified download MUST NOT be
 accepted as release evidence.
 
+Before immutable candidate URLs are publicly reachable, an installed test MAY
+use a hermetic URL-only transport projection of the authoritative manifest.
+The projection MUST reuse the exact package and profile bytes, MUST prove that
+restoring the original URLs reproduces the authoritative manifest exactly, and
+MUST NOT become a source manifest, public manifest, or alternate authority.
+
 ### 9.4 Read permission does not imply write permission
 
 A lane may read complementary artifacts to prove compatibility. Reading them

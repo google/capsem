@@ -17,7 +17,9 @@ No hand-authored release manifest is created here.
 from __future__ import annotations
 
 import argparse
+import copy
 import contextlib
+from dataclasses import dataclass
 import errno
 import functools
 import hashlib
@@ -34,6 +36,7 @@ import sys
 import threading
 from typing import cast
 import urllib.request
+from urllib.parse import urljoin
 
 try:
     from release_glowup import (
@@ -59,9 +62,9 @@ except ModuleNotFoundError:
     )
 
 try:
-    from release_inputs import load_verified_release_inputs
+    from release_inputs import load_verified_release_inputs, safe_relative
 except ModuleNotFoundError:
-    from scripts.release_inputs import load_verified_release_inputs
+    from scripts.release_inputs import load_verified_release_inputs, safe_relative
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -77,6 +80,31 @@ HOST_BINARIES = (
     "capsem-tray",
     "capsem-admin",
 )
+
+
+@dataclass(frozen=True)
+class ExactReleasePairing:
+    channel: str
+    transition: TransitionKind
+    changed_profiles: tuple[str, ...]
+    before: PairingIdentity
+    after: PairingIdentity
+    before_manifest: Path
+    after_manifest: Path
+    before_package: Path
+    after_package: Path
+    before_profile_inputs: Path
+    after_profile_inputs: Path
+
+
+@dataclass(frozen=True)
+class ExactReleaseTransport:
+    before_manifest: Path
+    after_manifest: Path
+    before_manifest_url: str
+    after_manifest_url: str
+    before_package: Path
+    after_package: Path
 
 
 def _environment_path(name: str) -> Path | None:
@@ -173,6 +201,12 @@ def main() -> int:
         raise SystemExit(f"local release glow-up requires executable {admin}")
 
     with local_release_server(dist) as base_url:
+        if exact_pairing is not None:
+            stage_exact_release_transport(
+                exact_pairing,
+                dist=dist,
+                base_url=base_url,
+            )
         stable_manifest_url = f"{base_url}/assets/stable/manifest.json"
         nightly_manifest_url = f"{base_url}/assets/nightly/manifest.json"
         stable_download_base = f"{base_url}/releases/download/stable"
@@ -330,13 +364,6 @@ def main() -> int:
                 "nightly_manifest_url": nightly_manifest_url,
                 "stable_artifact": stable_artifact.as_report(),
             }
-            if exact_pairing is not None:
-                before_pairing, after_pairing = exact_pairing
-                report["adapter_evidence"]["release_pairing"] = {
-                    "kind": args.release_transition,
-                    "before": before_pairing.as_report(),
-                    "after": after_pairing.as_report(),
-                }
             (args.work_dir / "report.json").write_text(
                 json.dumps(report, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
@@ -351,7 +378,7 @@ def main() -> int:
 
 def validate_exact_release_pairing(
     args: argparse.Namespace,
-) -> tuple[PairingIdentity, PairingIdentity] | None:
+) -> ExactReleasePairing | None:
     """Fail closed when a release lane supplies an incomplete exact pairing."""
 
     core_fields = {
@@ -494,7 +521,7 @@ def validate_exact_release_pairing(
             "binary_only exact pairing cannot supply candidate profile publication inputs"
         )
 
-    return validate_pairing_inputs(
+    before, after = validate_pairing_inputs(
         kind=transition,
         channel=channel,
         before_manifest_bytes=before_manifest_bytes,
@@ -502,6 +529,183 @@ def validate_exact_release_pairing(
         before_artifact=before_artifact,
         after_artifact=after_artifact,
         changed_profiles=changed_profiles if changed_profile else (),
+    )
+    return ExactReleasePairing(
+        channel=channel,
+        transition=transition,
+        changed_profiles=changed_profiles,
+        before=before,
+        after=after,
+        before_manifest=before_manifest,
+        after_manifest=after_manifest,
+        before_package=before_package,
+        after_package=Path(args.input_deb),
+        before_profile_inputs=before_profile_inputs,
+        after_profile_inputs=after_profile_inputs,
+    )
+
+
+def _rewrite_transport_urls(
+    value: object,
+    *,
+    manifest_url: str,
+    replacements: dict[str, str],
+    reverse: dict[str, str],
+    used: set[str],
+) -> None:
+    if isinstance(value, dict):
+        fields = cast(dict[str, object], value)
+        for key, child in fields.items():
+            if key == "url" and isinstance(child, str):
+                absolute = urljoin(manifest_url, child)
+                replacement = replacements.get(absolute)
+                if replacement is not None:
+                    fields[key] = replacement
+                    reverse[replacement] = child
+                    used.add(absolute)
+                    continue
+            _rewrite_transport_urls(
+                child,
+                manifest_url=manifest_url,
+                replacements=replacements,
+                reverse=reverse,
+                used=used,
+            )
+    elif isinstance(value, list):
+        for child in value:
+            _rewrite_transport_urls(
+                child,
+                manifest_url=manifest_url,
+                replacements=replacements,
+                reverse=reverse,
+                used=used,
+            )
+
+
+def _restore_transport_urls(value: object, reverse: dict[str, str]) -> None:
+    if isinstance(value, dict):
+        fields = cast(dict[str, object], value)
+        for key, child in fields.items():
+            if key == "url" and isinstance(child, str) and child in reverse:
+                fields[key] = reverse[child]
+            else:
+                _restore_transport_urls(child, reverse)
+    elif isinstance(value, list):
+        for child in value:
+            _restore_transport_urls(child, reverse)
+
+
+def _stage_exact_transport_release(
+    *,
+    label: str,
+    manifest_path: Path,
+    package_path: Path,
+    profile_inputs: Path,
+    dist: Path,
+    base_url: str,
+) -> tuple[Path, Path]:
+    manifest_bytes = manifest_path.read_bytes()
+    authority = json.loads(manifest_bytes)
+    if not isinstance(authority, dict):
+        raise SystemExit(f"exact {label} manifest must be a JSON object")
+    report, verified_manifest, _ = load_verified_release_inputs(profile_inputs)
+    if report.get("kind") != "profiles" or verified_manifest != authority:
+        raise SystemExit(f"exact {label} profile inputs do not reproduce their authority manifest")
+    manifest_url = report.get("manifest_url")
+    artifacts = report.get("artifacts")
+    if not isinstance(manifest_url, str) or not isinstance(artifacts, list):
+        raise SystemExit(f"exact {label} profile input report is malformed")
+
+    root = dist / "transitions" / label
+    replacements: dict[str, str] = {}
+    expected_profile_urls: set[str] = set()
+    for index, row_value in enumerate(artifacts):
+        if not isinstance(row_value, dict):
+            raise SystemExit(f"exact {label} profile input row {index} is malformed")
+        row = cast(dict[str, object], row_value)
+        url = row.get("url")
+        if not isinstance(url, str):
+            raise SystemExit(f"exact {label} profile input row {index} has no URL")
+        relative = safe_relative(row.get("path"))
+        source = profile_inputs / relative
+        target = root / "profiles" / relative
+        copy_artifact_tree(source, target)
+        local_url = f"{base_url}/transitions/{label}/profiles/{relative.as_posix()}"
+        replacements[url] = local_url
+        expected_profile_urls.add(url)
+
+    artifact = artifact_identity_from_manifest_package(manifest_bytes, package_path)
+    package_record = assert_manifest_artifact(authority, artifact)
+    package_url = package_record.get("url")
+    if not isinstance(package_url, str):
+        raise SystemExit(f"exact {label} package record has no URL")
+    package_absolute_url = urljoin(manifest_url, package_url)
+    staged_package = root / "package" / package_path.name
+    copy_artifact_tree(package_path, staged_package)
+    replacements[package_absolute_url] = (
+        f"{base_url}/transitions/{label}/package/{package_path.name}"
+    )
+
+    transport = copy.deepcopy(authority)
+    reverse: dict[str, str] = {}
+    used: set[str] = set()
+    _rewrite_transport_urls(
+        transport,
+        manifest_url=manifest_url,
+        replacements=replacements,
+        reverse=reverse,
+        used=used,
+    )
+    if not expected_profile_urls.issubset(used):
+        missing = sorted(expected_profile_urls - used)
+        raise SystemExit(f"exact {label} transport omitted profile URLs: {missing}")
+    if package_absolute_url not in used:
+        raise SystemExit(f"exact {label} transport omitted its native package URL")
+
+    restored = copy.deepcopy(transport)
+    _restore_transport_urls(restored, reverse)
+    if restored != authority:
+        raise SystemExit(f"exact {label} transport changed release data beyond URL projection")
+    transport_manifest = root / "manifest.json"
+    transport_manifest.parent.mkdir(parents=True, exist_ok=True)
+    transport_manifest.write_text(
+        json.dumps(transport, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return transport_manifest, staged_package
+
+
+def stage_exact_release_transport(
+    pairing: ExactReleasePairing,
+    *,
+    dist: Path,
+    base_url: str,
+) -> ExactReleaseTransport:
+    """Build URL-only local projections around exact manifests and artifact bytes."""
+
+    before_manifest, before_package = _stage_exact_transport_release(
+        label="before",
+        manifest_path=pairing.before_manifest,
+        package_path=pairing.before_package,
+        profile_inputs=pairing.before_profile_inputs,
+        dist=dist,
+        base_url=base_url,
+    )
+    after_manifest, after_package = _stage_exact_transport_release(
+        label="after",
+        manifest_path=pairing.after_manifest,
+        package_path=pairing.after_package,
+        profile_inputs=pairing.after_profile_inputs,
+        dist=dist,
+        base_url=base_url,
+    )
+    return ExactReleaseTransport(
+        before_manifest=before_manifest,
+        after_manifest=after_manifest,
+        before_manifest_url=f"{base_url}/transitions/before/manifest.json",
+        after_manifest_url=f"{base_url}/transitions/after/manifest.json",
+        before_package=before_package,
+        after_package=after_package,
     )
 
 

@@ -47,6 +47,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of previously staged profiles while still requiring every unchanged profile
   to remain byte-for-byte identical.
 
+- Constructed hermetic Linux glow-up transports from the exact before/after
+  native packages and verified profile cohorts, proving the local manifests
+  differ from their manifest authorities only by artifact URLs.
+
 - Moved binary candidate manifest authoring and host SBOM generation ahead of
   complete pairing tests, then reused that exact tested source manifest for
   immutable publication and final channel assembly without a second mutation.

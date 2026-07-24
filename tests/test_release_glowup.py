@@ -31,6 +31,7 @@ def _load_local_glowup():
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+    sys.modules[spec.name] = module
     try:
         spec.loader.exec_module(module)
     finally:
@@ -772,3 +773,144 @@ def test_release_pairing_cli_is_all_or_nothing() -> None:
     partial.release_channel = "stable"
     with pytest.raises(SystemExit, match="exact pairing requires"):
         module.validate_exact_release_pairing(partial)
+
+
+def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_local_glowup()
+    before_root = tmp_path / "before"
+    after_root = tmp_path / "after"
+    before_root.mkdir()
+    after_root.mkdir()
+    before_package = before_root / "Capsem-1.5.100.pkg"
+    after_package = after_root / "Capsem-1.5.101.pkg"
+    before_package.write_bytes(b"before package")
+    after_package.write_bytes(b"after package")
+    before_artifact = module.ArtifactIdentity.from_path(
+        before_package,
+        version="1.5.100",
+        platform="macos",
+        architecture="arm64",
+    )
+    after_artifact = module.ArtifactIdentity.from_path(
+        after_package,
+        version="1.5.101",
+        platform="macos",
+        architecture="arm64",
+    )
+    before_profile_url = "https://profiles.test/code-1/rootfs.erofs"
+    after_profile_url = "https://profiles.test/code-2/rootfs.erofs"
+
+    def authority(artifact, package_url: str, profile_url: str, revision: str):
+        manifest = _manifest(artifact)
+        manifest["channel"] = "nightly"
+        manifest["packages"][0]["url"] = package_url
+        manifest["profiles"] = {
+            "code": {
+                "revision": revision,
+                "architectures": [
+                    {
+                        "architecture": "arm64",
+                        "images": [{"kind": "rootfs", "url": profile_url}],
+                    }
+                ],
+            }
+        }
+        return manifest
+
+    before_document = authority(
+        before_artifact,
+        "https://packages.test/Capsem-1.5.100.pkg",
+        before_profile_url,
+        "code-1",
+    )
+    after_document = authority(
+        after_artifact,
+        "https://packages.test/Capsem-1.5.101.pkg",
+        after_profile_url,
+        "code-2",
+    )
+    before_manifest = before_root / "manifest.json"
+    after_manifest = after_root / "manifest.json"
+    before_manifest.write_text(json.dumps(before_document, sort_keys=True))
+    after_manifest.write_text(json.dumps(after_document, sort_keys=True))
+    before_inputs = before_root / "profile-inputs"
+    after_inputs = after_root / "profile-inputs"
+    profile_relative = Path("profiles/code/arm64/images/rootfs.erofs")
+    for inputs, payload in (
+        (before_inputs, b"before rootfs"),
+        (after_inputs, b"after rootfs"),
+    ):
+        path = inputs / profile_relative
+        path.parent.mkdir(parents=True)
+        path.write_bytes(payload)
+
+    reports = {
+        before_inputs: (
+            {
+                "kind": "profiles",
+                "manifest_url": "https://release.test/assets/nightly/manifest.json",
+                "artifacts": [{"url": before_profile_url, "path": profile_relative.as_posix()}],
+            },
+            before_document,
+            {},
+        ),
+        after_inputs: (
+            {
+                "kind": "profiles",
+                "manifest_url": after_manifest.resolve().as_uri(),
+                "artifacts": [{"url": after_profile_url, "path": profile_relative.as_posix()}],
+            },
+            after_document,
+            {},
+        ),
+    }
+    monkeypatch.setattr(
+        module,
+        "load_verified_release_inputs",
+        lambda input_dir: reports[input_dir],
+    )
+    before, after = module.validate_pairing_inputs(
+        kind=module.TransitionKind.PROFILE_THEN_BINARY,
+        channel="nightly",
+        before_manifest_bytes=before_manifest.read_bytes(),
+        after_manifest_bytes=after_manifest.read_bytes(),
+        before_artifact=before_artifact,
+        after_artifact=after_artifact,
+        changed_profiles=("code",),
+    )
+    pairing = module.ExactReleasePairing(
+        channel="nightly",
+        transition=module.TransitionKind.PROFILE_THEN_BINARY,
+        changed_profiles=("code",),
+        before=before,
+        after=after,
+        before_manifest=before_manifest,
+        after_manifest=after_manifest,
+        before_package=before_package,
+        after_package=after_package,
+        before_profile_inputs=before_inputs,
+        after_profile_inputs=after_inputs,
+    )
+    before_authority_bytes = before_manifest.read_bytes()
+    after_authority_bytes = after_manifest.read_bytes()
+
+    transport = module.stage_exact_release_transport(
+        pairing,
+        dist=tmp_path / "dist",
+        base_url="http://127.0.0.1:8765",
+    )
+
+    assert transport.before_package.read_bytes() == before_package.read_bytes()
+    assert transport.after_package.read_bytes() == after_package.read_bytes()
+    assert before_manifest.read_bytes() == before_authority_bytes
+    assert after_manifest.read_bytes() == after_authority_bytes
+    projected = json.loads(transport.after_manifest.read_text())
+    assert projected["packages"][0]["digest"] == after_document["packages"][0]["digest"]
+    assert projected["profiles"]["code"]["revision"] == "code-2"
+    assert projected["packages"][0]["url"].startswith("http://127.0.0.1:8765/transitions/after/")
+    assert projected["profiles"]["code"]["architectures"][0]["images"][0]["url"].startswith(
+        "http://127.0.0.1:8765/transitions/after/"
+    )
