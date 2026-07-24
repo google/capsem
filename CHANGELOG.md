@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added `capsem-admin manifest corporate` for corporation-owned channel/profile
+  manifests with exact or verified-latest official Capsem package selection,
+  owned profile namespaces, and rejection of first-party or package writes.
+
 ### Changed
 - Replaced the retired independent release gate with serialized orthogonal
   binary/profile lanes that reuse the unchanged artifact family, call the same

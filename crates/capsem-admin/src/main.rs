@@ -90,6 +90,8 @@ struct ManifestCommand {
 enum ManifestSubcommand {
     Check(ManifestCheckArgs),
     Generate(ManifestGenerateArgs),
+    /// Author a corporation-owned manifest from official packages and owned profiles.
+    Corporate(ManifestCorporateArgs),
 }
 
 #[derive(Debug, Parser)]
@@ -277,6 +279,37 @@ struct ManifestGenerateArgs {
     #[arg(long)]
     version: Option<String>,
     /// Emit the generated manifest after writing it.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Parser)]
+struct ManifestCorporateArgs {
+    /// Corporation namespace that owns the generated manifest.
+    #[arg(long)]
+    corporation: String,
+    /// Corporation-owned channel name.
+    #[arg(long)]
+    channel: String,
+    /// Read-only official Capsem release manifest containing selectable packages.
+    #[arg(long)]
+    official_manifest: PathBuf,
+    /// Read-only capsem-admin-generated manifest containing corporation-owned profiles.
+    #[arg(long)]
+    profile_manifest: PathBuf,
+    /// HTTPS base that must own every profile config, image, inventory, and evidence URL.
+    #[arg(long)]
+    profile_base: String,
+    /// Official Capsem version to pin, or "latest" for the highest selectable version.
+    #[arg(long)]
+    binary: String,
+    /// Root below which capsem-admin owns corporation/channel manifest destinations.
+    #[arg(long)]
+    output_root: PathBuf,
+    /// Version written to the generated corporate manifest.
+    #[arg(long, default_value = "1.0.0")]
+    manifest_version: String,
+    /// Emit a machine-readable authoring report.
     #[arg(long)]
     json: bool,
 }
@@ -527,6 +560,21 @@ struct ReleaseDispatchReport {
     publication_identity: String,
     workflow: &'static str,
     dispatched: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct CorporateManifestReport {
+    schema: &'static str,
+    ok: bool,
+    corporation: String,
+    channel: String,
+    binary_policy: String,
+    resolved_binary_version: String,
+    official_manifest: String,
+    profile_manifest: String,
+    output_manifest: String,
+    profiles: Vec<String>,
+    packages: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -911,6 +959,7 @@ fn main() -> Result<()> {
         Commands::Manifest(command) => match command.command {
             ManifestSubcommand::Check(args) => manifest_check_command(args),
             ManifestSubcommand::Generate(args) => manifest_generate_command(args),
+            ManifestSubcommand::Corporate(args) => corporate_manifest_command(args),
         },
         Commands::Assets(command) => match command.command {
             AssetsSubcommand::Channel(command) => match command.command {
@@ -1534,6 +1583,338 @@ fn manifest_generate_command(args: ManifestGenerateArgs) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn corporate_manifest_command(args: ManifestCorporateArgs) -> Result<()> {
+    let report = author_corporate_manifest(&args)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "authored corporate manifest {}/{} at {} using Capsem {}",
+            report.corporation,
+            report.channel,
+            report.output_manifest,
+            report.resolved_binary_version
+        );
+    }
+    Ok(())
+}
+
+fn author_corporate_manifest(args: &ManifestCorporateArgs) -> Result<CorporateManifestReport> {
+    validate_corporate_namespace(&args.corporation, &args.channel)?;
+    validate_corporate_profile_base(&args.profile_base)?;
+
+    let official_bytes = fs::read(&args.official_manifest).with_context(|| {
+        format!(
+            "read official Capsem manifest {}",
+            args.official_manifest.display()
+        )
+    })?;
+    let official: serde_json::Value =
+        serde_json::from_slice(&official_bytes).with_context(|| {
+            format!(
+                "parse official Capsem manifest {}",
+                args.official_manifest.display()
+            )
+        })?;
+
+    let profile_bytes = fs::read(&args.profile_manifest).with_context(|| {
+        format!(
+            "read corporate profile manifest {}",
+            args.profile_manifest.display()
+        )
+    })?;
+    let profile_source: serde_json::Value =
+        serde_json::from_slice(&profile_bytes).with_context(|| {
+            format!(
+                "parse corporate profile manifest {}",
+                args.profile_manifest.display()
+            )
+        })?;
+    let profiles = profile_source
+        .get("profiles")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow!("corporate profile manifest profiles must be an object"))?;
+    if profiles.is_empty() {
+        return Err(anyhow!(
+            "corporate profile manifest must contain at least one profile"
+        ));
+    }
+
+    let (resolved_version, packages) = select_official_packages(&official, &args.binary)?;
+    let referenced_packages = profile_source
+        .get("packages")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow!("corporate profile manifest packages must be an array"))?;
+    if !referenced_packages.is_empty() && referenced_packages != &packages {
+        return Err(anyhow!(
+            "corporate profile manifest may reference only the selected official packages"
+        ));
+    }
+    for (profile_id, profile) in profiles {
+        validate_corporate_profile_document(
+            profile_id,
+            profile,
+            &args.profile_base,
+            &resolved_version,
+        )?;
+    }
+
+    let manifest = serde_json::json!({
+        "version": args.manifest_version,
+        "status": "current",
+        "packages": packages,
+        "profiles": profiles,
+    });
+    validate_assets_channel_graph_manifest(&manifest, &args.channel)?;
+    let output_dir = corporate_manifest_output_dir(args)?;
+    let output_path = output_dir.join("manifest.json");
+    let official_canonical = fs::canonicalize(&args.official_manifest).with_context(|| {
+        format!(
+            "resolve official Capsem manifest {}",
+            args.official_manifest.display()
+        )
+    })?;
+    let profile_canonical = fs::canonicalize(&args.profile_manifest).with_context(|| {
+        format!(
+            "resolve corporate profile manifest {}",
+            args.profile_manifest.display()
+        )
+    })?;
+    if output_path == official_canonical || output_path == profile_canonical {
+        return Err(anyhow!(
+            "corporate output must not overwrite an authoring input"
+        ));
+    }
+
+    let mut encoded = serde_json::to_vec_pretty(&manifest)?;
+    encoded.push(b'\n');
+    let temporary = output_dir.join(format!(".manifest.json.tmp-{}", std::process::id()));
+    fs::write(&temporary, &encoded).with_context(|| {
+        format!(
+            "write corporate manifest staging file {}",
+            temporary.display()
+        )
+    })?;
+    fs::rename(&temporary, &output_path)
+        .with_context(|| format!("publish corporate manifest {}", output_path.display()))?;
+
+    Ok(CorporateManifestReport {
+        schema: "capsem.admin.corporate_manifest.v1",
+        ok: true,
+        corporation: args.corporation.clone(),
+        channel: args.channel.clone(),
+        binary_policy: args.binary.clone(),
+        resolved_binary_version: resolved_version.to_string(),
+        official_manifest: args.official_manifest.display().to_string(),
+        profile_manifest: args.profile_manifest.display().to_string(),
+        output_manifest: output_path.display().to_string(),
+        profiles: profiles.keys().cloned().collect(),
+        packages: packages.len(),
+    })
+}
+
+fn validate_corporate_namespace(corporation: &str, channel: &str) -> Result<()> {
+    validate_channel_name(corporation)
+        .with_context(|| format!("invalid corporation namespace {corporation:?}"))?;
+    validate_channel_name(channel)
+        .with_context(|| format!("invalid corporate channel {channel:?}"))?;
+    if corporation == "capsem" || matches!(channel, "stable" | "nightly") {
+        return Err(anyhow!(
+            "corporate authoring cannot target a first-party namespace"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_corporate_profile_base(profile_base: &str) -> Result<()> {
+    if !profile_base.starts_with("https://") || !profile_base.ends_with('/') {
+        return Err(anyhow!(
+            "corporate profile base must be an HTTPS directory URL ending in '/'"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_corporate_profile_document(
+    profile_id: &str,
+    profile: &serde_json::Value,
+    profile_base: &str,
+    selected_version: &semver::Version,
+) -> Result<()> {
+    let embedded_id = require_json_string(profile, &["id"])?;
+    if embedded_id != profile_id {
+        return Err(anyhow!(
+            "corporate profile key {profile_id} does not match profile id {embedded_id}"
+        ));
+    }
+    require_json_string(profile, &["revision"])?;
+    let architectures = profile
+        .get("architectures")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow!("corporate profile {profile_id} architectures must be an array"))?;
+    if architectures.is_empty() {
+        return Err(anyhow!(
+            "corporate profile {profile_id} must list architectures"
+        ));
+    }
+    if let Some(minimum) = profile
+        .get("min_capsem_version")
+        .and_then(serde_json::Value::as_str)
+    {
+        let minimum = semver::Version::parse(minimum).with_context(|| {
+            format!("corporate profile {profile_id} minimum Capsem version is invalid: {minimum}")
+        })?;
+        if selected_version < &minimum {
+            return Err(anyhow!(
+                "corporate profile {profile_id} requires Capsem {minimum} or newer, selected {selected_version}"
+            ));
+        }
+    }
+    if let Some(maximum) = profile
+        .get("max_capsem_version")
+        .and_then(serde_json::Value::as_str)
+    {
+        let maximum = semver::Version::parse(maximum).with_context(|| {
+            format!("corporate profile {profile_id} maximum Capsem version is invalid: {maximum}")
+        })?;
+        if selected_version > &maximum {
+            return Err(anyhow!(
+                "corporate profile {profile_id} supports at most Capsem {maximum}, selected {selected_version}"
+            ));
+        }
+    }
+    validate_corporate_reference_tree(profile_id, profile, None, profile_base)?;
+    Ok(())
+}
+
+fn validate_corporate_reference_tree(
+    profile_id: &str,
+    value: &serde_json::Value,
+    key: Option<&str>,
+    profile_base: &str,
+) -> Result<()> {
+    if matches!(key, Some("url" | "evidence")) {
+        if let Some(reference) = value.as_str() {
+            if !reference.starts_with(profile_base) {
+                return Err(anyhow!(
+                    "corporate profile {profile_id} reference is outside the owned profile base: {reference}"
+                ));
+            }
+            return Ok(());
+        }
+    }
+    match value {
+        serde_json::Value::Array(rows) => {
+            for row in rows {
+                validate_corporate_reference_tree(profile_id, row, key, profile_base)?;
+            }
+        }
+        serde_json::Value::Object(fields) => {
+            for (field, child) in fields {
+                validate_corporate_reference_tree(profile_id, child, Some(field), profile_base)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn select_official_packages(
+    manifest: &serde_json::Value,
+    policy: &str,
+) -> Result<(semver::Version, Vec<serde_json::Value>)> {
+    let package_rows = manifest
+        .get("packages")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow!("official manifest packages must be an array"))?;
+    let mut selectable_versions = BTreeMap::<semver::Version, String>::new();
+    for package in package_rows {
+        let status = require_json_string(package, &["status"])?;
+        if status == "revoked" {
+            continue;
+        }
+        if !matches!(status.as_str(), "current" | "supported" | "deprecated") {
+            return Err(anyhow!("official package has invalid status {status:?}"));
+        }
+        let package_name = require_json_string(package, &["name"])?;
+        let package_version = require_json_string(package, &["version"])?;
+        let parsed = semver::Version::parse(&package_version).with_context(|| {
+            format!(
+                "official package {} has invalid Capsem version {}",
+                package_name, package_version
+            )
+        })?;
+        selectable_versions.entry(parsed).or_insert(package_version);
+    }
+    let resolved = if policy == "latest" {
+        selectable_versions
+            .last_key_value()
+            .map(|(version, _)| version.clone())
+            .ok_or_else(|| anyhow!("official manifest has no selectable Capsem packages"))?
+    } else {
+        let pinned = semver::Version::parse(policy)
+            .with_context(|| format!("invalid corporate Capsem binary pin {policy:?}"))?;
+        if !selectable_versions.contains_key(&pinned) {
+            return Err(anyhow!(
+                "official manifest does not publish Capsem {policy}"
+            ));
+        }
+        pinned
+    };
+    let packages = package_rows
+        .iter()
+        .filter(|package| {
+            package.get("status").and_then(serde_json::Value::as_str) != Some("revoked")
+                && package
+                    .get("version")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|version| semver::Version::parse(version).ok())
+                    .is_some_and(|version| version == resolved)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if packages.is_empty() {
+        return Err(anyhow!(
+            "official manifest does not publish Capsem {resolved}"
+        ));
+    }
+    Ok((resolved, packages))
+}
+
+fn corporate_manifest_output_dir(args: &ManifestCorporateArgs) -> Result<PathBuf> {
+    fs::create_dir_all(&args.output_root).with_context(|| {
+        format!(
+            "create corporate manifest output root {}",
+            args.output_root.display()
+        )
+    })?;
+    let output_root = fs::canonicalize(&args.output_root).with_context(|| {
+        format!(
+            "resolve corporate manifest output root {}",
+            args.output_root.display()
+        )
+    })?;
+    let output_dir = output_root.join(&args.corporation).join(&args.channel);
+    fs::create_dir_all(&output_dir).with_context(|| {
+        format!(
+            "create corporate manifest destination {}",
+            output_dir.display()
+        )
+    })?;
+    let output_dir = fs::canonicalize(&output_dir).with_context(|| {
+        format!(
+            "resolve corporate manifest destination {}",
+            output_dir.display()
+        )
+    })?;
+    if !output_dir.starts_with(&output_root) {
+        return Err(anyhow!(
+            "corporate manifest destination escapes its owned output root"
+        ));
+    }
+    Ok(output_dir)
 }
 
 fn assets_channel_build_command(args: AssetsChannelBuildArgs) -> Result<()> {
