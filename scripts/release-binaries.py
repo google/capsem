@@ -134,8 +134,22 @@ def _wait_for_run(runner: Runner, tag: str) -> str:
     raise RuntimeError(f"timed out waiting for release.yaml run for {tag}")
 
 
-def release_binaries(channel: str, runner: Runner) -> tuple[str, str]:
+def release_binaries(
+    channel: str, runner: Runner
+) -> tuple[str | None, str | None]:
     _validate_start(runner, channel)
+    current_release_tag = _capture(
+        runner,
+        "git",
+        "tag",
+        "--points-at",
+        "HEAD",
+        "--list",
+        "v*",
+    )
+    if channel == "nightly" and current_release_tag:
+        return None, None
+
     mutation = OwnedMutation(ROOT, MUTATED_PATHS)
     try:
         runner.run(("just", "_stamp-version"))
@@ -204,6 +218,9 @@ def main() -> int:
     except (OSError, subprocess.CalledProcessError, RuntimeError, ValueError) as error:
         print(f"release-binaries failed: {error}", file=sys.stderr)
         return 1
+    if tag is None:
+        print("nightly release skipped: current main has no unreleased binary changes")
+        return 0
     repository = os.environ.get("GITHUB_REPOSITORY")
     if repository:
         print(f"released {tag}: https://github.com/{repository}/actions/runs/{run_id}")

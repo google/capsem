@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+- Scheduled the nightly binary lane once daily through the same
+  `just release-binaries nightly` command, with a clean no-op when `main`
+  already points at an immutable binary release.
+
 - Added `capsem-admin manifest corporate` for corporation-owned channel/profile
   manifests with exact or verified-latest official Capsem package selection,
   owned profile namespaces, and rejection of first-party or package writes.

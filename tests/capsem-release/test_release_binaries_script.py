@@ -25,9 +25,16 @@ NOTES_SPEC.loader.exec_module(NOTES)
 
 
 class FakeRunner:
-    def __init__(self, root: Path, *, unexpected: bool = False) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        unexpected: bool = False,
+        current_release_tag: str = "",
+    ) -> None:
         self.root = root
         self.unexpected = unexpected
+        self.current_release_tag = current_release_tag
         self.calls: list[tuple[str, ...]] = []
         self.stamped = False
 
@@ -57,6 +64,8 @@ class FakeRunner:
             ("git", "rev-parse", "origin/main"),
         ):
             return RELEASE.CommandResult("a" * 40 + "\n")
+        if command == ("git", "tag", "--points-at", "HEAD", "--list", "v*"):
+            return RELEASE.CommandResult(f"{self.current_release_tag}\n")
         if command == ("just", "_stamp-version"):
             self.stamped = True
             (self.root / "Cargo.toml").write_text(
@@ -147,6 +156,73 @@ def test_invalid_channel_is_rejected_before_git_or_github(tmp_path: Path) -> Non
         RELEASE.release_binaries("corp", runner)
 
     assert runner.calls == []
+
+
+def test_nightly_release_skips_when_main_has_no_unreleased_binary_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    runner = FakeRunner(tmp_path, current_release_tag="v1.5.1000000000")
+
+    tag, run_id = RELEASE.release_binaries("nightly", runner)
+
+    assert tag is None
+    assert run_id is None
+    assert ("just", "_stamp-version") not in runner.calls
+    assert not any(call[:2] == ("git", "commit") for call in runner.calls)
+    assert not any(call[:3] == ("gh", "workflow", "run") for call in runner.calls)
+
+
+def test_stable_binary_release_remains_explicit_even_at_a_version_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    runner = FakeRunner(tmp_path, current_release_tag="v1.5.1000000000")
+
+    tag, run_id = RELEASE.release_binaries("stable", runner)
+
+    assert tag == "v1.5.2000000000"
+    assert run_id == "42"
+    assert ("just", "_stamp-version") in runner.calls
+    assert (
+        "gh",
+        "workflow",
+        "run",
+        "release.yaml",
+        "--ref",
+        tag,
+        "-f",
+        "channel=stable",
+    ) in runner.calls
+
+
+def test_daily_nightly_schedule_uses_only_the_public_binary_command() -> None:
+    workflow = (
+        PROJECT_ROOT / ".github" / "workflows" / "release-nightly.yaml"
+    ).read_text(encoding="utf-8")
+
+    assert workflow.count("cron:") == 1
+    assert '- cron: "23 7 * * *"' in workflow
+    assert "push:" not in workflow
+    assert workflow.count("just release-binaries nightly") == 1
+    assert "group: capsem-nightly-release-scheduler" in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert "ref: main" in workflow
+    assert "fetch-depth: 0" in workflow
+    assert "release.yaml" not in workflow
+    assert "release-assets.yaml" not in workflow
+    for forbidden in (
+        "fetch-channel-source-manifest.py",
+        "capsem-admin",
+        "_build-kernel",
+        "_build-rootfs",
+        "build-pkg.sh",
+        "build-complete-release-channel.py",
+        "release-channel.yaml",
+    ):
+        assert forbidden not in workflow
 
 
 def test_release_notes_promote_unreleased_once() -> None:

@@ -13,8 +13,9 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 |----------|---------|-------------|
 | `ci.yaml` | Pull requests and pushes to `main` | Quality gate: Rust unit/integration, frontend, Python contracts, install checks, explicit runner substitutions, and a post-merge main signal |
 | `security-audit.yaml` | Weekly schedule or manual dispatch | Blocking RustSec and frontend dependency advisories without coupling upstream advisory publication to every PR |
-| `release.yaml` | Manual `{tag, channel}` dispatch | Run one globally serialized stable or nightly release: build apps, install-test the exact packages, publish them, update only the selected channel, and run public glow-up checks |
-| `release-assets.yaml` | Manual | Build profile images/config/evidence, generate `assets/manifest.json`, and optionally deploy the asset channel |
+| `release-nightly.yaml` | Daily schedule or manual dispatch | Check out current `main` and call `just release-binaries nightly`; tagged `main` is a clean no-op |
+| `release.yaml` | Dispatch from `release-binaries` with `{tag, channel}` | Run one per-channel serialized stable or nightly release: build apps, install-test the exact packages, publish them, update only the selected channel, and run public glow-up checks |
+| `release-assets.yaml` | Dispatch from `capsem-admin release` | Build exactly one channel/profile's images, config, and evidence against the existing channel package |
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
 | `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove profile image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |
 | `docs.yaml` | Push to main | Deploy docs.capsem.org on each main merge, then smoke the live docs site |
@@ -144,8 +145,11 @@ not change the public channel. The following binary lane resolves those exact
 bytes, runs the complete pairing proof, and activates the channel. Neither
 artifact family is rebuilt twice.
 
-Nightly binary release runs once daily through the same binary script rather
-than on every push. Stable is started explicitly through the same command.
+Nightly binary release runs once daily through `release-nightly.yaml`, which
+calls the same public binary command rather than duplicating release steps or
+publishing on every push. If current `main` already has an immutable binary
+tag, the script exits successfully before stamping or dispatching. Stable is
+started explicitly through the same command.
 
 ## PR gate compared with `just test`
 
