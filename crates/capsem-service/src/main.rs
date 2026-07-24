@@ -260,6 +260,11 @@ struct ServiceState {
     /// sufficient because production runs exactly one capsem-service per
     /// user-host.
     shutdown_lock: tokio::sync::Mutex<()>,
+    /// Serializes every explicit and automatic update command. The update
+    /// transaction owns binaries, profiles, assets, and the selected manifest
+    /// together, so the service must never launch split or overlapping
+    /// mutations.
+    update_lock: tokio::sync::Mutex<()>,
     /// Keeps the unique filesystem root alive for helpers that return only a
     /// service state. Test constructors that return their TempDir separately
     /// leave this empty.
@@ -12357,23 +12362,21 @@ fn read_manifest_metadata_status_document(path: &StdPath) -> Result<serde_json::
 }
 
 async fn handle_update_check(
+    State(state): State<Arc<ServiceState>>,
     Json(request): Json<api::UpdateCheckRequest>,
 ) -> Result<Json<api::UpdateActionResponse>, AppError> {
     let plan = update_command_plan(UpdateCommandKind::Check);
     if request.dry_run {
         return Ok(Json(planned_update_response(plan)));
     }
-    execute_update_command(plan).await.map(Json)
+    execute_update_command(&state, plan).await.map(Json)
 }
 
 async fn handle_update_apply(
+    State(state): State<Arc<ServiceState>>,
     Json(request): Json<api::UpdateApplyRequest>,
 ) -> Result<Json<api::UpdateActionResponse>, AppError> {
-    let kind = match request.action {
-        api::UpdateApplyAction::BinaryProfiles => UpdateCommandKind::BinaryProfiles,
-        api::UpdateApplyAction::Assets => UpdateCommandKind::Assets,
-    };
-    let plan = update_command_plan(kind);
+    let plan = update_command_plan(UpdateCommandKind::Apply);
     if request.dry_run {
         return Ok(Json(planned_update_response(plan)));
     }
@@ -12383,21 +12386,19 @@ async fn handle_update_apply(
             "update apply requires confirmed=true or dry_run=true".to_string(),
         ));
     }
-    execute_update_command(plan).await.map(Json)
+    execute_update_command(&state, plan).await.map(Json)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpdateCommandKind {
     Check,
-    BinaryProfiles,
-    Assets,
+    Apply,
 }
 
 fn update_command_plan(kind: UpdateCommandKind) -> api::UpdateCommandPlan {
     let args = match kind {
         UpdateCommandKind::Check => vec!["update".to_string(), "--check".to_string()],
-        UpdateCommandKind::BinaryProfiles => vec!["update".to_string(), "--yes".to_string()],
-        UpdateCommandKind::Assets => vec!["update".to_string(), "--assets".to_string()],
+        UpdateCommandKind::Apply => vec!["update".to_string(), "--yes".to_string()],
     };
     api::UpdateCommandPlan {
         program: capsem_cli_program(),
@@ -12431,8 +12432,10 @@ fn planned_update_response(plan: api::UpdateCommandPlan) -> api::UpdateActionRes
 }
 
 async fn execute_update_command(
+    state: &ServiceState,
     plan: api::UpdateCommandPlan,
 ) -> Result<api::UpdateActionResponse, AppError> {
+    let _update_guard = state.update_lock.lock().await;
     let output = Command::new(&plan.program)
         .args(&plan.args)
         .output()
@@ -12768,6 +12771,7 @@ async fn main() -> Result<()> {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        update_lock: tokio::sync::Mutex::new(()),
         #[cfg(test)]
         _test_tempdir: None,
     });

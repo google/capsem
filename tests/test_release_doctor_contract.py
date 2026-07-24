@@ -1140,17 +1140,17 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     frontend_api = _source_text("frontend/src/lib/__tests__/api.test.ts")
 
     assert "Profile catalog update available" in cli
-    assert "Run `capsem update --assets` separately to refresh VM assets." in cli
+    assert "Run `capsem update --assets` separately to refresh VM assets." not in cli
     assert "--assets cannot be combined with --corp" in cli
     assert "update_status_lines_separate_available_and_blocked_tracks" in cli_status
     assert "available (binary" in cli_status
     assert "blocked (assets, images)" in cli_status
 
-    assert "update_route_apply_dry_run_plans_binary_profiles_and_assets" in service
-    assert "update_route_apply_confirmed_dispatches_binary_profiles_and_assets" in service
-    assert "update_route_apply_rejects_ambiguous_action_body" in service
+    assert "update_route_apply_dry_run_plans_one_atomic_update" in service
+    assert "update_route_apply_confirmed_dispatches_one_atomic_update" in service
+    assert "update_route_apply_rejects_obsolete_split_action_body" in service
     assert 'json!(["update", "--yes"])' in service
-    assert 'json!(["update", "--assets"])' in service
+    assert 'json!(["update", "--assets"])' not in service
 
     assert "spec_mixed_binary_and_asset_updates_share_indicator" in tray
     assert "spec_blocked_profile_update_shows_blocked_indicator" in tray
@@ -1177,13 +1177,13 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     assert "Binary, VM assets available" in frontend
     assert "VM assets available for future sessions" in frontend
 
+    assert "applies the complete update transaction through one confirmed body" in frontend_api
     assert (
-        "applies binary/profile and asset update actions through typed confirmed bodies"
+        "plans the complete update transaction without confirmation only through dry run"
         in frontend_api
     )
-    assert "plans update actions without confirmation only through dry runs" in frontend_api
-    assert "applyUpdateAction('binary_profiles'" in frontend_api
-    assert "applyUpdateAction('assets'" in frontend_api
+    assert "api.applyUpdate({ confirmed: true })" in frontend_api
+    assert "applyUpdateAction" not in frontend_api
 
 
 def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:

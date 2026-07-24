@@ -42,12 +42,7 @@ export interface UpdateCheckRequest {
   dry_run?: boolean;
 }
 
-export type UpdateApplyAction =
-  | 'binary_profiles'
-  | 'assets';
-
 export interface UpdateApplyRequest {
-  action: UpdateApplyAction;
   dry_run?: boolean;
   confirmed?: boolean;
 }

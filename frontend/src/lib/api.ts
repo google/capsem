@@ -15,7 +15,6 @@ import type {
   StatsResponse,
   UpdateStatusResponse,
   UpdateActionResponse,
-  UpdateApplyAction,
   UpdateCheckRequest,
 } from './types/gateway';
 import type {
@@ -1311,11 +1310,10 @@ export async function checkForUpdates(request: UpdateCheckRequest = {}): Promise
   return await resp.json();
 }
 
-export async function applyUpdateAction(
-  action: UpdateApplyAction,
+export async function applyUpdate(
   opts: { dry_run?: boolean; confirmed?: boolean } = {},
 ): Promise<UpdateActionResponse> {
-  const resp = await _post('/update/apply', { action, ...opts });
+  const resp = await _post('/update/apply', opts);
   return await resp.json();
 }
 

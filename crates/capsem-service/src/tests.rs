@@ -850,6 +850,7 @@ fn make_test_state() -> Arc<ServiceState> {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        update_lock: tokio::sync::Mutex::new(()),
         _test_tempdir: Some(test_tempdir),
     })
 }
@@ -960,65 +961,49 @@ async fn update_route_check_live_executes_non_mutating_cli_check() {
 }
 
 #[tokio::test]
-async fn update_route_apply_dry_run_plans_binary_profiles_and_assets() {
+async fn update_route_apply_dry_run_plans_one_atomic_update() {
     let app = build_service_router(make_test_state());
-    let (binary_status, binary_body) = route_request(
-        app.clone(),
-        axum::http::Method::POST,
-        "/update/apply",
-        Some(json!({ "action": "binary_profiles", "dry_run": true })),
-    )
-    .await;
-    let (assets_status, assets_body) = route_request(
+    let (status, body) = route_request(
         app,
         axum::http::Method::POST,
         "/update/apply",
-        Some(json!({ "action": "assets", "dry_run": true })),
+        Some(json!({ "dry_run": true })),
     )
     .await;
 
-    assert_eq!(binary_status, StatusCode::OK);
-    assert_eq!(binary_body["status"], "planned");
-    assert_eq!(binary_body["command"]["args"], json!(["update", "--yes"]));
-    assert_eq!(assets_status, StatusCode::OK);
-    assert_eq!(assets_body["status"], "planned");
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "planned");
+    assert_eq!(body["command"]["args"], json!(["update", "--yes"]));
+}
+
+#[tokio::test]
+async fn update_route_apply_requires_confirmation_for_live_command() {
+    let app = build_service_router(make_test_state());
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/update/apply",
+        Some(json!({})),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(
-        assets_body["command"]["args"],
-        json!(["update", "--assets"])
+        body["error"],
+        "update apply requires confirmed=true or dry_run=true"
     );
 }
 
 #[tokio::test]
-async fn update_route_apply_requires_confirmation_for_live_commands() {
-    let app = build_service_router(make_test_state());
-    for action in ["binary_profiles", "assets"] {
-        let (status, body) = route_request(
-            app.clone(),
-            axum::http::Method::POST,
-            "/update/apply",
-            Some(json!({ "action": action })),
-        )
-        .await;
-
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{action}");
-        assert_eq!(
-            body["error"], "update apply requires confirmed=true or dry_run=true",
-            "{action}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn update_route_apply_rejects_ambiguous_action_body() {
+async fn update_route_apply_rejects_obsolete_split_action_body() {
     let app = build_service_router(make_test_state());
     let (status, body) = route_request(
         app,
         axum::http::Method::POST,
         "/update/apply",
         Some(json!({
-            "action": "binary_profiles",
             "confirmed": true,
-            "assets": true,
+            "action": "assets",
         })),
     )
     .await;
@@ -1035,7 +1020,7 @@ async fn update_route_apply_rejects_ambiguous_action_body() {
 }
 
 #[tokio::test]
-async fn update_route_apply_confirmed_dispatches_binary_profiles_and_assets() {
+async fn update_route_apply_confirmed_dispatches_one_atomic_update() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let cli = dir.path().join("capsem");
@@ -1052,18 +1037,11 @@ async fn update_route_apply_confirmed_dispatches_binary_profiles_and_assets() {
     std::env::set_var("CAPSEM_CLI", &cli);
 
     let app = build_service_router(make_test_state());
-    let (binary_status, binary_body) = route_request(
-        app.clone(),
-        axum::http::Method::POST,
-        "/update/apply",
-        Some(json!({ "action": "binary_profiles", "confirmed": true })),
-    )
-    .await;
-    let (assets_status, assets_body) = route_request(
+    let (status, body) = route_request(
         app,
         axum::http::Method::POST,
         "/update/apply",
-        Some(json!({ "action": "assets", "confirmed": true })),
+        Some(json!({ "confirmed": true })),
     )
     .await;
     match previous {
@@ -1071,19 +1049,68 @@ async fn update_route_apply_confirmed_dispatches_binary_profiles_and_assets() {
         None => std::env::remove_var("CAPSEM_CLI"),
     }
 
-    assert_eq!(binary_status, StatusCode::OK);
-    assert_eq!(binary_body["status"], "succeeded");
-    assert_eq!(binary_body["command"]["args"], json!(["update", "--yes"]));
-    assert_eq!(assets_status, StatusCode::OK);
-    assert_eq!(assets_body["status"], "succeeded");
-    assert_eq!(
-        assets_body["command"]["args"],
-        json!(["update", "--assets"])
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "succeeded");
+    assert_eq!(body["command"]["args"], json!(["update", "--yes"]));
+    assert_eq!(std::fs::read_to_string(log).unwrap(), "update --yes\n");
+}
+
+#[tokio::test]
+async fn update_route_live_commands_share_one_serial_lock() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cli = dir.path().join("capsem");
+    let log = dir.path().join("serial.log");
+    let active = dir.path().join("active");
+    std::fs::write(
+        &cli,
+        format!(
+            "#!/bin/sh\n\
+             if ! mkdir '{}'; then printf '%s\\n' overlap >> '{}'; exit 9; fi\n\
+             printf '%s\\n' start >> '{}'\n\
+             sleep 0.1\n\
+             printf '%s\\n' end >> '{}'\n\
+             rmdir '{}'\n",
+            active.display(),
+            log.display(),
+            log.display(),
+            log.display(),
+            active.display(),
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&cli).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&cli, permissions).unwrap();
+    let previous = std::env::var_os("CAPSEM_CLI");
+    std::env::set_var("CAPSEM_CLI", &cli);
+
+    let app = build_service_router(make_test_state());
+    let first = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/update/apply",
+        Some(json!({ "confirmed": true })),
     );
-    assert_eq!(
-        std::fs::read_to_string(log).unwrap(),
-        "update --yes\nupdate --assets\n"
+    let second = route_request(
+        app,
+        axum::http::Method::POST,
+        "/update/check",
+        Some(json!({})),
     );
+    let (first, second) = tokio::join!(first, second);
+    match previous {
+        Some(value) => std::env::set_var("CAPSEM_CLI", value),
+        None => std::env::remove_var("CAPSEM_CLI"),
+    }
+
+    assert_eq!(first.0, StatusCode::OK);
+    assert_eq!(first.1["status"], "succeeded");
+    assert_eq!(second.0, StatusCode::OK);
+    assert_eq!(second.1["status"], "succeeded");
+    let execution = std::fs::read_to_string(log).unwrap();
+    assert!(!execution.contains("overlap"), "{execution}");
+    assert_eq!(execution, "start\nend\nstart\nend\n");
 }
 
 async fn decode_response_json<T: serde::de::DeserializeOwned>(
@@ -1139,6 +1166,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        update_lock: tokio::sync::Mutex::new(()),
         _test_tempdir: None,
     })
 }
@@ -6943,6 +6971,7 @@ fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        update_lock: tokio::sync::Mutex::new(()),
         _test_tempdir: None,
     })
 }
@@ -7492,6 +7521,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        update_lock: tokio::sync::Mutex::new(()),
         _test_tempdir: None,
     });
     (state, dir)
@@ -10231,6 +10261,7 @@ fn make_test_state_with_tempdir_at(
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        update_lock: tokio::sync::Mutex::new(()),
         _test_tempdir: None,
     });
     (state, dir)
