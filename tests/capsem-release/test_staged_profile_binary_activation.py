@@ -98,6 +98,11 @@ def test_staged_profile_is_authored_once_before_pairing_tests_and_publication() 
     assert "gh release create" in publish
     assert "name: authored-profile-channel-source" in author
     assert "name: authored-profile-candidate" in author
+    assert "name: authored-profile-publication" in author
+    assert "name: authored-profile-publication" in pairing
+    assert "name: authored-profile-publication" in publish
+    assert "stage-profile-publication.py" in author
+    assert "stage-profile-publication.py" not in publish
     assert "needs: [author-profile-release, resolve-current-binary]" in pairing
     assert "needs: [author-profile-release, build-assets, test-profile-pairing]" in publish
     assert "needs.test-profile-pairing.result == 'success'" in publish

@@ -167,8 +167,8 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
 
     assert "Validate selected channel profile through capsem-admin" in workflow
     assert "Fetch latest selected channel source manifest" in workflow
-    assert "Fetch selected channel binary packages" in workflow
-    assert "file://$PWD/target/channel-source/manifest.json" in workflow
+    assert "Fetch exact deployed public-before cohorts" in workflow
+    assert '--manifest-url "$ASSET_MANIFEST_URL"' in workflow
     assert "capsem-admin -- release" in workflow
     assert "--publication-base" in workflow
     assert "channel-source-$CHANNEL.json" in workflow
@@ -179,7 +179,7 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     assert "just _test-functional" in workflow
     assert "just _test-glowup" in workflow
     assert "just _test-release-contracts" in workflow
-    assert "--input-dir target/release-inputs" in workflow
+    assert "--input-dir target/profile-public-before/packages" in workflow
     assert "--binary-dir target/debug" in workflow
     assert "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem" in workflow
 
@@ -190,6 +190,51 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
         "cargo tauri build",
     ):
         assert forbidden not in workflow
+
+
+def test_profile_pairing_reuses_one_staged_publication_and_exact_public_before() -> None:
+    workflow = _workflow("release-assets.yaml")
+    resolve = _job_block(workflow, "resolve-current-binary")
+    author = _job_block(workflow, "author-profile-release")
+    pairing = _job_block(workflow, "test-profile-pairing")
+    publish = _job_block(workflow, "publish-profile-release")
+
+    assert resolve.count('--manifest-url "$ASSET_MANIFEST_URL"') == 2
+    assert "--kind packages" in resolve
+    assert "--kind profiles" in resolve
+    assert "profile-public-before-packages" in resolve
+    assert "profile-public-before-profiles" in resolve
+
+    assert "stage-profile-publication.py" in author
+    assert "verify-profile-publication.py" in author
+    assert "name: authored-profile-publication" in author
+
+    for artifact in (
+        "profile-public-before-packages",
+        "profile-public-before-profiles",
+        "authored-profile-publication",
+    ):
+        assert artifact in pairing
+    assert "--local-publication-base" in pairing
+    assert "--local-publication-dir" in pairing
+    assert "target/candidate-profile-inputs" in pairing
+    for variable in (
+        "CAPSEM_RELEASE_CHANNEL",
+        "CAPSEM_RELEASE_TRANSITION=profile_only",
+        "CAPSEM_RELEASE_BEFORE_MANIFEST",
+        "CAPSEM_RELEASE_AFTER_MANIFEST",
+        "CAPSEM_RELEASE_BEFORE_PACKAGE",
+        "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS",
+        "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS",
+        "CAPSEM_RELEASE_PROFILE",
+        "CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION",
+        "CAPSEM_RELEASE_PUBLICATION_BASE",
+    ):
+        assert variable in pairing
+
+    assert "name: authored-profile-publication" in publish
+    assert "stage-profile-publication.py" not in publish
+    assert "verify-profile-publication.py" in publish
 
 
 def test_production_deploy_has_no_unserialized_direct_entrypoint() -> None:

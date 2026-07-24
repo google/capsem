@@ -29,6 +29,9 @@ permissions:
   deployments: write
   id-token: write
 
+env:
+  ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json
+
 jobs:
   runtime-preflight:
     uses: ./.github/workflows/release-runtime-preflight.yaml
@@ -65,19 +68,32 @@ jobs:
             --channel "${{ inputs.channel }}" \
             --output target/channel-source/manifest.json
 
-      - name: Fetch selected channel binary packages
+      - name: Fetch exact deployed public-before cohorts
         run: |
           uv run python scripts/fetch-release-artifacts.py \
-            --manifest-url "file://$PWD/target/channel-source/manifest.json" \
+            --manifest-url "$ASSET_MANIFEST_URL" \
             --kind packages \
-            --output target/release-inputs
+            --output target/profile-public-before/packages
+          uv run python scripts/fetch-release-artifacts.py \
+            --manifest-url "$ASSET_MANIFEST_URL" \
+            --kind profiles \
+            --output target/profile-public-before/profiles
           uv run python scripts/verify-release-inputs.py \
-            --input-dir target/release-inputs
+            --input-dir target/profile-public-before/packages
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/profile-public-before/profiles
+          cmp \
+            target/profile-public-before/packages/manifest.json \
+            target/profile-public-before/profiles/manifest.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: current-binary-inputs
-          path: target/release-inputs/
+          name: profile-public-before-packages
+          path: target/profile-public-before/packages/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: profile-public-before-profiles
+          path: target/profile-public-before/profiles/
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: profile-channel-source
@@ -193,24 +209,20 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: vm-assets-arm64
-          path: assets/arm64/
+          name: profile-public-before-packages
+          path: target/profile-public-before/packages/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: vm-assets-x86_64
-          path: assets/x86_64/
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: current-binary-inputs
-          path: target/release-inputs/
+          name: profile-public-before-profiles
+          path: target/profile-public-before/profiles/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: authored-profile-channel-source
           path: target/source-channel/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: authored-profile-candidate
-          path: target/profile-candidate/
+          name: authored-profile-publication
+          path: target/asset-release/
 
       - name: Enable KVM for complete functional proof
         run: |
@@ -227,20 +239,53 @@ jobs:
 
       - name: Prepare exact profile and pulled binary pairing
         run: |
-          cargo run -p capsem-admin -- manifest generate assets
-          cargo run -p capsem-admin -- manifest check assets/manifest.json
+          set -euo pipefail
           uv run python scripts/verify-release-inputs.py \
-            --input-dir target/release-inputs
+            --input-dir target/profile-public-before/packages
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/profile-public-before/profiles
+          cmp \
+            target/profile-public-before/packages/manifest.json \
+            target/profile-public-before/profiles/manifest.json
+          PUBLICATION_IDENTITY="${{ needs.author-profile-release.outputs.publication_identity }}"
+          PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$PUBLICATION_IDENTITY"
+          PUBLICATION_DIR="target/asset-release/$PUBLICATION_IDENTITY"
+          uv run python scripts/fetch-release-artifacts.py \
+            --manifest-url "file://$PWD/target/source-channel/manifest.json" \
+            --kind profiles \
+            --output target/candidate-profile-inputs \
+            --local-publication-base "$PUBLICATION_BASE" \
+            --local-publication-dir "$PUBLICATION_DIR"
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/candidate-profile-inputs
           uv run python scripts/stage-release-test-inputs.py \
-            --input-dir target/release-inputs \
+            --input-dir target/profile-public-before/packages \
             --binary-dir target/debug
+          uv run python scripts/stage-release-test-inputs.py \
+            --input-dir target/candidate-profile-inputs \
+            --assets-dir assets \
+            --config-root target/release-config
           CAPSEM_ASSET_MANIFEST="file://$PWD/assets/manifest.json" \
+          CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
+          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/config" \
             bash scripts/materialize-config.sh
-          package=$(find target/release-inputs -maxdepth 1 -name '*.deb' -print -quit)
+          package=$(uv run python scripts/stage-release-test-inputs.py \
+            --input-dir target/profile-public-before/packages \
+            --print-package-path)
           test -n "$package"
           echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package" >> "$GITHUB_ENV"
           echo "CAPSEM_RELEASE_BIN_DIR=$PWD/target/debug" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/target/release-inputs" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/target/candidate-profile-inputs" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_CHANNEL=${{ inputs.channel }}" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_TRANSITION=profile_only" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/target/profile-public-before/profiles/manifest.json" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_AFTER_MANIFEST=$PWD/target/source-channel/manifest.json" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_BEFORE_PACKAGE=$PWD/$package" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS=$PWD/target/profile-public-before/profiles" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS=$PWD/target/candidate-profile-inputs" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_PROFILE=${{ inputs.profile }}" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION=$PWD/$PUBLICATION_DIR" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_PUBLICATION_BASE=$PUBLICATION_BASE" >> "$GITHUB_ENV"
           echo "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem" >> "$GITHUB_ENV"
           echo "CAPSEM_TEST_ASSETS_DIR=$PWD/assets" >> "$GITHUB_ENV"
           echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/target/config" >> "$GITHUB_ENV"
@@ -380,6 +425,26 @@ jobs:
           echo "compatible=$COMPATIBLE" >> "$GITHUB_OUTPUT"
           echo "publication_identity=$PUBLICATION_IDENTITY" >> "$GITHUB_OUTPUT"
 
+      - name: Stage and verify immutable profile publication once
+        if: ${{ steps.profile-delta.outputs.changed == 'true' }}
+        env:
+          PUBLICATION_IDENTITY: ${{ steps.author-release.outputs.publication_identity }}
+        run: |
+          set -euo pipefail
+          PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$PUBLICATION_IDENTITY"
+          RELEASE_DIR="target/asset-release/$PUBLICATION_IDENTITY"
+          uv run python scripts/stage-profile-publication.py \
+            --manifest target/source-channel/manifest.json \
+            --profile "${{ inputs.profile }}" \
+            --assets-dir assets \
+            --config-root config \
+            --release-dir "$RELEASE_DIR"
+          uv run python scripts/verify-profile-publication.py \
+            --manifest "$RELEASE_DIR/channel-source-$CHANNEL.json" \
+            --profile "${{ inputs.profile }}" \
+            --publication-base "$PUBLICATION_BASE" \
+            --release-dir "$RELEASE_DIR"
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: authored-profile-channel-source
@@ -389,6 +454,12 @@ jobs:
         with:
           name: authored-profile-candidate
           path: target/profile-candidate/
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ steps.profile-delta.outputs.changed == 'true' }}
+        with:
+          name: authored-profile-publication
+          path: target/asset-release/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -452,6 +523,10 @@ jobs:
           path: target/profile-candidate/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          name: authored-profile-publication
+          path: target/asset-release/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
           name: profile-release-selection
           path: target/
 
@@ -476,12 +551,6 @@ jobs:
           PROFILE_REVISION=$(python3 -c 'import json; print(json.load(open("target/profile-release-selection.json"))["profile_revision"])')
           RELEASE_DIR="target/asset-release/$TAG"
           UPLOAD_SCRIPT="target/asset-release/upload-assets.sh"
-          uv run python scripts/stage-profile-publication.py \
-            --manifest target/source-channel/manifest.json \
-            --profile "${{ inputs.profile }}" \
-            --assets-dir assets \
-            --config-root config \
-            --release-dir "$RELEASE_DIR"
           PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
           uv run python scripts/verify-profile-publication.py \
             --manifest "$RELEASE_DIR/channel-source-$CHANNEL.json" \

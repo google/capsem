@@ -92,7 +92,7 @@ def test_asset_gate_runs_architecture_lanes_in_parallel_before_boot_proofs() -> 
         'cargo run -p capsem-admin -- manifest generate "$profile_assets"'
     )
     assert asset_gate.index('wait "$X86_64_BUILD_PID"') < asset_gate.index(
-        'scripts/prove-installed-shell.py'
+        "scripts/prove-installed-shell.py"
     )
 
 
@@ -226,13 +226,22 @@ def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:
     assert "npm install -g @cyclonedx/cdxgen@12.7.0" in workflow
     assert "@cyclonedx/cdxgen@latest" not in workflow
     assert "CAPSEM_CDXGEN_CMD: cdxgen" in workflow
-    upload_step = workflow.split("- name: Publish immutable GitHub asset release", maxsplit=1)[
+    stage_step = workflow.split(
+        "- name: Stage and verify immutable profile publication once", maxsplit=1
+    )[1].split(
+        "\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        maxsplit=1,
+    )[0]
+    upload_step = workflow.split("- name: Publish immutable GitHub profile release", maxsplit=1)[
         1
     ].split("\n      - name: Attest VM asset provenance", maxsplit=1)[0]
     attest_step = workflow.split("- name: Attest VM asset provenance", maxsplit=1)[1].split(
-        "\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a", maxsplit=1
+        "\n      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+        maxsplit=1,
     )[0]
-    assert "scripts/stage-profile-publication.py" in upload_step
+    assert "scripts/stage-profile-publication.py" in stage_step
+    assert "scripts/verify-profile-publication.py" in stage_step
+    assert "scripts/stage-profile-publication.py" not in upload_step
     assert "scripts/verify-profile-publication.py" in upload_step
     assert 'files=("$RELEASE_DIR"/*)' in upload_step
     assert 'for section in ("config", "images", "evidence")' in stager
