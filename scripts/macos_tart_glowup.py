@@ -61,6 +61,7 @@ def storage_policy_string(section: str, key: str) -> str:
 
 OWNED_VM_PREFIX = storage_policy_string("tart", "owned_vm_prefix")
 DEFAULT_IMAGE = storage_policy_string("tart", "base_image")
+AUTHENTICATED_SENTINEL = "CAPSEM_TART_SSH_AUTHENTICATED"
 Run = Callable[..., subprocess.CompletedProcess[str]]
 
 
@@ -132,6 +133,8 @@ def ssh_command(ip: str, remote_args: Sequence[str]) -> list[str]:
         "UserKnownHostsFile=/dev/null",
         "-o",
         "ConnectTimeout=10",
+        "-o",
+        "NumberOfPasswordPrompts=1",
         "-o",
         "IdentitiesOnly=yes",
         "-o",
@@ -206,6 +209,73 @@ def wait_for_ssh(ip: str, timeout: int = 180) -> None:
         last_error = (result.stderr or result.stdout).strip()
         time.sleep(2)
     raise RuntimeError(f"Tart guest SSH was not ready after {timeout}s: {last_error}")
+
+
+def run_authenticated_guest(
+    ip: str,
+    remote: str,
+    *,
+    timeout: int = 1800,
+    readiness_timeout: int = 180,
+    run: Run = subprocess.run,
+    sleep: Callable[[float], None] = time.sleep,
+) -> subprocess.CompletedProcess[str]:
+    """Retry only SSH attempts that fail before the guest command starts."""
+
+    authenticated_remote = (
+        f"printf '%s\\n' {shlex.quote(AUTHENTICATED_SENTINEL)}; exec {remote}"
+    )
+    command = ssh_command(ip, [authenticated_remote])
+    deadline = time.monotonic() + readiness_timeout
+    last_error = ""
+    while True:
+        print("+", shlex.join(command), flush=True)
+        result = run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        lines = stdout.splitlines(keepends=True)
+        authenticated = bool(
+            lines and lines[0].rstrip("\r\n") == AUTHENTICATED_SENTINEL
+        )
+        if authenticated:
+            guest_stdout = "".join(lines[1:])
+            if guest_stdout:
+                print(guest_stdout, end="" if guest_stdout.endswith("\n") else "\n")
+            if stderr:
+                print(stderr, end="" if stderr.endswith("\n") else "\n", file=sys.stderr)
+            completed = subprocess.CompletedProcess(
+                result.args,
+                result.returncode,
+                guest_stdout,
+                stderr,
+            )
+            if result.returncode != 0:
+                raise subprocess.CalledProcessError(
+                    result.returncode,
+                    result.args,
+                    output=guest_stdout,
+                    stderr=stderr,
+                )
+            return completed
+
+        last_error = (stderr or stdout).strip()
+        if result.returncode != 255:
+            raise RuntimeError(
+                "Tart SSH exited without proving guest-command authentication "
+                f"(status {result.returncode}): {last_error}"
+            )
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "Tart guest did not accept an authenticated command before "
+                f"the {readiness_timeout}s deadline: {last_error}"
+            )
+        sleep(2)
 
 
 def wait_for_guest_ip(
@@ -447,7 +517,6 @@ def main() -> int:
             text=True,
         )
         ip = wait_for_guest_ip(vm_name, runner)
-        wait_for_ssh(ip)
         remote = shlex.join(
             [
                 "bash",
@@ -458,7 +527,7 @@ def main() -> int:
                 f"/Volumes/My Shared Files/capsem-release/{guest_package.relative_to(share)}",
             ]
         )
-        run_checked(ssh_command(ip, [remote]), timeout=1800)
+        run_authenticated_guest(ip, remote, timeout=1800)
         guest_report = validate_report(report_path, artifact=artifact)
         report = build_report(
             adapter="macos-tart-launchd",

@@ -114,11 +114,91 @@ def test_tart_ssh_command_uses_quick_start_noninteractive_contract() -> None:
     assert "StrictHostKeyChecking=no" in command
     assert "UserKnownHostsFile=/dev/null" in command
     assert "ConnectTimeout=10" in command
+    assert "NumberOfPasswordPrompts=1" in command
     assert "IdentitiesOnly=yes" in command
     assert "PreferredAuthentications=password" in command
     assert "PubkeyAuthentication=no" in command
     assert "admin@192.168.64.7" in command
     assert command[-2:] == ["uname", "-a"]
+
+
+def test_guest_command_retries_only_before_authenticated_execution() -> None:
+    module = _load_harness()
+    calls: list[list[str]] = []
+    sleeps: list[float] = []
+    results = iter(
+        [
+            subprocess.CompletedProcess(
+                ["ssh"],
+                255,
+                "",
+                "Permission denied (publickey,password).",
+            ),
+            subprocess.CompletedProcess(
+                ["ssh"],
+                0,
+                f"{module.AUTHENTICATED_SENTINEL}\nGUEST PASSED\n",
+                "",
+            ),
+        ]
+    )
+
+    def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(command)
+        return next(results)
+
+    completed = module.run_authenticated_guest(
+        "192.168.64.7",
+        "bash /guest.sh",
+        run=run,
+        sleep=sleeps.append,
+    )
+
+    assert len(calls) == 2
+    assert sleeps == [2]
+    assert completed.stdout == "GUEST PASSED\n"
+    assert module.AUTHENTICATED_SENTINEL in calls[0][-1]
+
+
+def test_guest_command_never_retries_after_authenticated_execution() -> None:
+    module = _load_harness()
+    calls = 0
+
+    def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        nonlocal calls
+        calls += 1
+        return subprocess.CompletedProcess(
+            command,
+            255,
+            f"{module.AUTHENTICATED_SENTINEL}\npartial install evidence\n",
+            "guest command failed",
+        )
+
+    with pytest.raises(subprocess.CalledProcessError) as error:
+        module.run_authenticated_guest(
+            "192.168.64.7",
+            "bash /guest.sh",
+            run=run,
+            sleep=lambda _: None,
+        )
+
+    assert calls == 1
+    assert error.value.stdout == "partial install evidence\n"
+
+
+def test_guest_command_fails_closed_without_authenticated_marker() -> None:
+    module = _load_harness()
+
+    def run(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, "unexpected output\n", "")
+
+    with pytest.raises(RuntimeError, match="without proving guest-command authentication"):
+        module.run_authenticated_guest(
+            "192.168.64.7",
+            "bash /guest.sh",
+            run=run,
+            sleep=lambda _: None,
+        )
 
 
 def test_cleanup_refuses_to_stop_or_delete_foreign_tart_vms() -> None:
