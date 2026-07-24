@@ -32,6 +32,7 @@ def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path
         "target/debug/capsem",
         "assets",
         str(profiles_dir),
+        "co-work",
         {
             "name": "proof",
             "description": "proof",
@@ -45,7 +46,13 @@ def test_injection_scenario_uses_materialized_profiles_dir(monkeypatch, tmp_path
     assert captured["env"]["CAPSEM_PROFILES_DIR"] == str(profiles_dir)
     assert captured["env"]["CAPSEM_HOME"] != str(profiles_dir)
     assert captured["env"]["CAPSEM_HOME"].startswith("/tmp/capsem-injection-proof-home-")
-    assert captured["args"] == ["target/debug/capsem", "run", "capsem-doctor -k injection"]
+    assert captured["args"] == [
+        "target/debug/capsem",
+        "run",
+        "--profile",
+        "co-work",
+        "capsem-doctor -k injection",
+    ]
 
 
 def test_default_materialized_profiles_dir_points_at_target_config_profiles():

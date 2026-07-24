@@ -17,6 +17,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from typing import TypedDict
 
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -53,6 +54,13 @@ class Results:
         return len(self.failed) == 0
 
 
+class Scenario(TypedDict):
+    name: str
+    description: str
+    settings_toml: str
+    corp_toml: str | None
+
+
 # -- Scenario definitions --
 # Each scenario is a dict with:
 #   name: human-readable label
@@ -63,7 +71,7 @@ class Results:
 # credential brokerage now flow through profile/corp security rules plus plugins,
 # not settings-owned AI toggles or static boot-time secret injection.
 
-SCENARIOS = [
+SCENARIOS: list[Scenario] = [
     {
         "name": "git_identity",
         "description": "Non-secret git identity and repository toggles materialize cleanly",
@@ -130,7 +138,8 @@ def run_scenario(
     binary: str,
     assets_dir: str,
     profiles_dir: str,
-    scenario: dict,
+    profile: str,
+    scenario: Scenario,
     results: Results,
 ) -> None:
     """Write temp config(s), boot VM with capsem-doctor -k injection, check exit code."""
@@ -149,11 +158,12 @@ def run_scenario(
 
     # Write temporary corp.toml if specified.
     corp_path = None
-    if scenario.get("corp_toml"):
+    corp_toml = scenario["corp_toml"]
+    if corp_toml:
         corp_file = tempfile.NamedTemporaryFile(
             mode="w", suffix=".toml", prefix=f"capsem-injection-{name}-corp-", delete=False,
         )
-        corp_file.write(scenario["corp_toml"])
+        corp_file.write(corp_toml)
         corp_file.close()
         corp_path = corp_file.name
 
@@ -173,7 +183,7 @@ def run_scenario(
     vm_command = "capsem-doctor -k injection"
     try:
         proc = subprocess.run(
-            [binary, "run", vm_command],
+            [binary, "run", "--profile", profile, vm_command],
             env=env,
             capture_output=True,
             text=True,
@@ -227,6 +237,11 @@ def main():
         help="Path to materialized profile catalog (default: target/config/profiles)",
     )
     parser.add_argument(
+        "--profile",
+        default=os.environ.get("CAPSEM_TEST_PROFILE", "code"),
+        help="Manifest profile to exercise (default: CAPSEM_TEST_PROFILE or code)",
+    )
+    parser.add_argument(
         "--scenario",
         default=None,
         help="Run only this scenario (by name). Default: run all.",
@@ -237,6 +252,7 @@ def main():
     print(f"  binary: {args.binary}")
     print(f"  assets: {args.assets}")
     print(f"  profiles: {args.profiles_dir}")
+    print(f"  selected profile: {args.profile}")
 
     results = Results()
 
@@ -249,7 +265,14 @@ def main():
             sys.exit(1)
 
     for scenario in scenarios:
-        run_scenario(args.binary, args.assets, args.profiles_dir, scenario, results)
+        run_scenario(
+            args.binary,
+            args.assets,
+            args.profiles_dir,
+            args.profile,
+            scenario,
+            results,
+        )
 
     # Summary.
     print(f"\n{BOLD}{'=' * 60}{RESET}")
