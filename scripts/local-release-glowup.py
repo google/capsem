@@ -75,6 +75,11 @@ def main() -> int:
         "--work-dir", default=PROJECT_ROOT / "target/local-release-glowup", type=Path
     )
     parser.add_argument("--skip-install", action="store_true")
+    parser.add_argument(
+        "--package-ready",
+        action="store_true",
+        help="Use an already repacked publishable package without rebuilding it.",
+    )
     args = parser.parse_args()
 
     if args.work_dir.exists():
@@ -108,22 +113,26 @@ def main() -> int:
         stable_sbom = artifacts / "stable" / f"v{stable_version}" / "capsem-sbom.spdx.json"
         nightly_sbom = artifacts / "nightly" / f"v{nightly_version}" / "capsem-sbom.spdx.json"
 
-        repack_deb(
-            args.input_deb,
-            stable_deb,
-            args.bin_dir,
-            args.config_root,
-            args.assets_dir,
-            stable_manifest_url,
-        )
-        repack_deb(
-            args.input_deb,
-            nightly_deb,
-            args.bin_dir,
-            args.config_root,
-            args.assets_dir,
-            nightly_manifest_url,
-        )
+        if args.package_ready:
+            shutil.copy2(args.input_deb, stable_deb)
+            shutil.copy2(args.input_deb, nightly_deb)
+        else:
+            repack_deb(
+                args.input_deb,
+                stable_deb,
+                args.bin_dir,
+                args.config_root,
+                args.assets_dir,
+                stable_manifest_url,
+            )
+            repack_deb(
+                args.input_deb,
+                nightly_deb,
+                args.bin_dir,
+                args.config_root,
+                args.assets_dir,
+                nightly_manifest_url,
+            )
         generate_sbom(stable_sbom, stable_deb)
         generate_sbom(nightly_sbom, nightly_deb)
 

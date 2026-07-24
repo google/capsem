@@ -69,12 +69,22 @@ def test_release_commands_are_not_a_parallel_just_surface() -> None:
     for retired in ("prepare-release", "qualify-release", "cut-release", "release"):
         assert f"\n{retired}:" not in justfile
         assert f"\n{retired} " not in justfile
+    assert "\nrelease-binaries channel:" in justfile
+    assert "\nrelease-profile channel profile:" in justfile
 
 
-def test_release_workflow_verifies_qualification_before_publication() -> None:
-    release = _read_text_exact_case(".github/workflows/release.yaml")
+def test_binary_release_recipe_uses_one_adversarial_script() -> None:
+    justfile = _read_text_exact_case("justfile")
+    script = _read_text_exact_case("scripts/release-binaries.py")
 
-    verify = release.index("Verify exact commit passed remote qualification")
-    package = release.index("build-app-macos:")
-    assert verify < package
-    assert "scripts/check-release-qualification.py" in release
+    binary_recipe = justfile.split("\nrelease-binaries channel:", 1)[1].split(
+        "\n\n", 1
+    )[0]
+    assert "scripts/release-binaries.py" in binary_recipe
+    assert "_build-kernel" not in binary_recipe
+    assert "_build-rootfs" not in binary_recipe
+    assert "MUTATED_PATHS" in script
+    assert "release preparation write set is invalid" in script
+    assert '"push", "--atomic", "origin", "main", tag' in script
+    assert '"workflow",\n            "run",\n            "release.yaml"' in script
+    assert "release-assets.yaml" not in script

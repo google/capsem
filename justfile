@@ -12,7 +12,9 @@
 #   logs [sandbox|failure] service, VM, or failure evidence
 #   doctor                 host, Docker/Colima, Tart, and asset readiness
 #   smoke                  focused local integration gate
-#   test                   the only release-qualification gate
+#   test                   complete local all-artifact proof
+#   release-binaries       publish packages for one channel
+#   release-profile        publish one channel/profile
 #
 # Underscore recipes are implementation detail. CI may call a private primitive
 # only when it is part of the canonical `test` graph.
@@ -50,9 +52,17 @@ _stamp-version:
     sed_in_place "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
     sed_in_place "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
     sed_in_place "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" pyproject.toml
-    # Keep the editable project metadata in the frozen lockfile on the exact
-    # release version before cut-release creates its commit and tag.
+    # Keep the editable project metadata in the frozen lockfile on the
+    # release version before release-binaries creates its commit and tag.
     uv lock --offline
+
+# Build, test, and publish only Capsem binaries/packages for one channel.
+release-binaries channel:
+    python3 scripts/release-binaries.py "{{channel}}"
+
+# Build, test, and publish exactly one channel/profile through capsem-admin.
+release-profile channel profile:
+    cargo run -p capsem-admin -- release --channel "{{channel}}" --profile "{{profile}}"
 
 # Compile all host binaries
 _build-host:
@@ -573,9 +583,9 @@ _gate-assets: _bootstrap _install-tools _generate-settings _sign
 _bootstrap:
     sh {{justfile_directory()}}/bootstrap.sh -y
 
-# Bind the complete gate to one clean committed tree. The candidate recipe may
-# write ignored output under target/, but it must never change tracked or
-# untracked source files or move to another commit while the gate is running.
+# Bind the complete gate to the exact source state present at invocation. A
+# developer may test deliberate uncommitted work; the gate must return every
+# tracked and untracked non-ignored source byte unchanged.
 test:
     #!/bin/bash
     set -euo pipefail
@@ -587,13 +597,9 @@ test:
         echo "=== Holding macOS awake for the complete candidate gate ==="
         exec caffeinate -dimsu env CAPSEM_TEST_CAFFEINATED=1 just test
     fi
-    if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
-        echo "just test requires a clean working tree; commit the complete candidate first." >&2
-        git status --short >&2
-        exit 1
-    fi
     TESTED_HEAD=$(git rev-parse HEAD)
-    echo "=== Testing clean candidate $TESTED_HEAD ==="
+    TESTED_SOURCE=$(uv run python scripts/source-state-digest.py)
+    echo "=== Testing source state $TESTED_SOURCE at $TESTED_HEAD ==="
     capture_candidate_failure() {
         status=$?
         if [ "$status" -ne 0 ]; then
@@ -607,22 +613,55 @@ test:
     scripts/with-gate-colima.sh just _test-candidate
     trap - EXIT
     test "$(git rev-parse HEAD)" = "$TESTED_HEAD" || {
-        echo "candidate HEAD changed while just test was running" >&2
+        echo "source HEAD changed while just test was running" >&2
         exit 1
     }
-    if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
-        echo "just test changed the candidate working tree" >&2
+    AFTER_SOURCE=$(uv run python scripts/source-state-digest.py)
+    if [ "$AFTER_SOURCE" != "$TESTED_SOURCE" ]; then
+        echo "just test changed the source working tree" >&2
+        echo "before=$TESTED_SOURCE after=$AFTER_SOURCE" >&2
         git status --short >&2
         exit 1
     fi
-    echo "=== Verified clean candidate $TESTED_HEAD ==="
+    echo "=== Verified source state $TESTED_SOURCE ==="
+
+# Local composition constructs every artifact family before running the same
+# checked-in modules used by release CI.
+_test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-stale _pnpm-install _check-generated-settings _check-assets _pack-initrd _materialize-config
+    CAPSEM_TEST_MODULE=all just _test-candidate-run
+
+_test-static: _bootstrap _bound-docker-test-storage _install-tools _clean-stale _pnpm-install
+    CAPSEM_TEST_MODULE=static just _test-candidate-run
+
+_test-artifacts:
+    CAPSEM_TEST_MODULE=artifacts just _test-candidate-run
+
+_test-functional:
+    CAPSEM_TEST_MODULE=functional just _test-candidate-run
+
+_test-glowup:
+    CAPSEM_TEST_MODULE=glowup just _test-candidate-run
+
+_test-release-contracts:
+    CAPSEM_TEST_MODULE=release-contracts just _test-candidate-run
 
 # Require Docker headroom without discarding content-addressed compiler caches.
-# Cargo validates cached artifacts against the exact candidate inputs; bounded
-# reuse speeds forward candidates without weakening the clean-tree invariant.
-_test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-stale _pnpm-install _check-generated-settings _check-assets _pack-initrd _materialize-config
+# Cargo validates cached artifacts against the current source inputs; bounded
+# reuse speeds forward fixes without weakening the before/after tree invariant.
+_test-candidate-run:
     #!/bin/bash
     set -euo pipefail
+    TEST_MODULE="${CAPSEM_TEST_MODULE:-all}"
+    module_enabled() {
+        [ "$TEST_MODULE" = "all" ] || [ "$TEST_MODULE" = "$1" ]
+    }
+    case "$TEST_MODULE" in
+        all|static|artifacts|functional|glowup|release-contracts) ;;
+        *)
+            echo "unknown Capsem test module: $TEST_MODULE" >&2
+            exit 1
+            ;;
+    esac
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
     export CAPSEM_BENCHMARK_OUTPUT_ROOT="{{justfile_directory()}}/target/test-benchmarks"
@@ -659,8 +698,9 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
     }
     trap cleanup_test_capsem_home_service EXIT
 
-    echo "=== Hardcoded profile/channel selection guard ==="
-    bash scripts/check-hardcoded-release-selections.sh
+    if module_enabled static; then
+        echo "=== Hardcoded profile/channel selection guard ==="
+        bash scripts/check-hardcoded-release-selections.sh
 
     # ---- Stage 0: release harness bootstrap --------------------------------
     # Prove the clean Linux install container can resolve and launch its test
@@ -758,14 +798,23 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
     # ---- Stage 4: sign host binaries for VM tests ---------------------------
     echo "=== Sign binaries for integration tests ==="
     just _sign
+    fi
 
     # ---- Stage 4b: full VM asset build + boot parity -----------------------
     # This is the canonical owner of the portable work performed by the VM
     # asset publication workflow. It rebuilds every profile for both published
     # architectures in isolation, validates the manifests and release payload,
     # then boots each profile-owned host-arch result and proves a guest shell.
-    echo "=== VM assets: all profiles, both arches, real guest shell ==="
-    just _gate-assets
+    if module_enabled artifacts; then
+        if [ -n "${CAPSEM_RELEASE_INPUT_DIR:-}" ]; then
+            echo "=== Release artifacts: verify pulled immutable inputs ==="
+            uv run python scripts/verify-release-inputs.py \
+                --input-dir "$CAPSEM_RELEASE_INPUT_DIR"
+        else
+            echo "=== VM assets: all profiles, both arches, real guest shell ==="
+            just _gate-assets
+        fi
+    fi
 
     # ---- Stage 5: Python pytest ---------------------------------------------
     # Dogfooding canary: 4 concurrent VMs. --dist=loadfile keeps per-file
@@ -786,6 +835,9 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
     #   build -p capsem` from within pytest. This directory is owned by
     #   Stage 7's private install gate, which runs it inside Docker with
     #   CAPSEM_DEB_INSTALLED=1 (the live-system opt-in tests respect).
+    if module_enabled functional; then
+    TEST_BINARY="${CAPSEM_TEST_BINARY:-{{binary}}}"
+    TEST_ASSETS="${CAPSEM_TEST_ASSETS_DIR:-{{assets_dir}}}"
     HOST_SNAPSHOT_SERIAL=(
         "tests/capsem-mcp/test_state_transitions.py"
         "tests/capsem-service/test_svc_resume_paths.py"
@@ -841,22 +893,31 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
         tests/ironbank/test_route_health.py \
         -v --tb=short -m serial -k 'not test_capsem_bench_baseline'
 
-    echo "=== Python: Build chain and release tests (serial) ==="
-    CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/capsem-build-chain/ tests/capsem-release/ -v --tb=short
-
     # ---- Stage 6: legacy VM scripts + bench ---------------------------------
     echo "=== Injection test ==="
-    python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
+    python3 scripts/injection_test.py --binary "$TEST_BINARY" --assets "$TEST_ASSETS"
 
     echo "=== Integration test ==="
-    python3 scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
+    python3 scripts/integration_test.py --binary "$TEST_BINARY" --assets "$TEST_ASSETS"
 
     echo "=== Benchmarks ==="
     # Gate-owned recordings stay under target/test-benchmarks so the candidate
     # tree remains byte-for-byte identical to the tested commit.
-    CAPSEM_ASSETS_DIR={{assets_dir}} uv run python -m pytest tests/capsem-serial/test_capsem_bench_baseline.py -v --tb=short
+    CAPSEM_ASSETS_DIR="$TEST_ASSETS" uv run python -m pytest tests/capsem-serial/test_capsem_bench_baseline.py -v --tb=short
+    fi
 
     # ---- Stage 7: Docker e2e ------------------------------------------------
+    if module_enabled glowup; then
+    if [ -n "${CAPSEM_RELEASE_PACKAGE:-}" ]; then
+        echo "=== Publishable package glow-up against resolved profiles ==="
+        python3 scripts/local-release-glowup.py \
+            --input-deb "$CAPSEM_RELEASE_PACKAGE" \
+            --bin-dir "${CAPSEM_RELEASE_BIN_DIR:-target/debug}" \
+            --assets-dir "${CAPSEM_TEST_ASSETS_DIR:-assets}" \
+            --config-root "${CAPSEM_TEST_CONFIG_ROOT:-target/config}" \
+            --work-dir target/release-module-glowup \
+            --package-ready
+    else
     echo "=== Cross-compile Linux releases (Docker, both arches) ==="
     just _cross-compile arm64
     uv run python scripts/docker-storage-policy.py release \
@@ -884,8 +945,18 @@ _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-sta
     echo "=== Install e2e tests (Docker + systemd) ==="
     just _gate-install
 
-    echo "=== Just recipe tests (post-VM, serial) ==="
-    uv run python -m pytest tests/capsem-recipes/ -v --tb=short -m recipe
+    fi
+    fi
+
+    if module_enabled release-contracts; then
+        echo "=== Build chain and release contracts (serial) ==="
+        CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
+            tests/capsem-build-chain/ tests/capsem-release/ \
+            -v --tb=short
+
+        echo "=== Just recipe contracts (post-VM, serial) ==="
+        uv run python -m pytest tests/capsem-recipes/ -v --tb=short -m recipe
+    fi
 
     # ---- Stage 8: cleanup ---------------------------------------------------
     echo "=== Pruning stale build artifacts ==="

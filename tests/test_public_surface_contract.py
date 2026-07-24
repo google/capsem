@@ -36,9 +36,9 @@ def test_declared_count_drift_fails_closed(tmp_path: Path) -> None:
     checker = _load_checker()
     policy = (ROOT / "config" / "public-surface.toml").read_text()
     broken = tmp_path / "public-surface.toml"
-    broken.write_text(policy.replace("[just]\ncount = 11", "[just]\ncount = 12"))
+    broken.write_text(policy.replace("[just]\ncount = 13", "[just]\ncount = 14"))
 
-    with pytest.raises(checker.SurfaceError, match="policy count=12"):
+    with pytest.raises(checker.SurfaceError, match="policy count=14"):
         checker.check_policy(broken)
 
 
@@ -51,7 +51,7 @@ def test_rejects_unapproved_allowlist_entry(tmp_path: Path) -> None:
             '  "build",',
             '  "build",\n  "unapproved-command",',
             1,
-        ).replace("[just]\ncount = 11", "[just]\ncount = 12")
+        ).replace("[just]\ncount = 13", "[just]\ncount = 14")
     )
 
     with pytest.raises(checker.SurfaceError, match="missing=.*unapproved-command"):
