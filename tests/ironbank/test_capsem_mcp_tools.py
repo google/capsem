@@ -250,7 +250,12 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             created = _json_tool_result(
                 mcp.call_tool(
                     "capsem_create",
-                    {"name": session_id, "ramMb": DEFAULT_RAM_MB, "cpuCount": DEFAULT_CPUS},
+                    {
+                        "name": session_id,
+                        "profile": CODE_PROFILE_ID,
+                        "ramMb": DEFAULT_RAM_MB,
+                        "cpuCount": DEFAULT_CPUS,
+                    },
                 )
             )
             assert created.get("id") == session_id or created.get("name") == session_id
@@ -289,7 +294,9 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 f"/profiles/{CODE_PROFILE_ID}/mcp/servers/list",
                 timeout=30,
             )
-            mcp_servers = _json_tool_result(mcp.call_tool("capsem_mcp_servers"))
+            mcp_servers = _json_tool_result(
+                mcp.call_tool("capsem_mcp_servers", {"profile": CODE_PROFILE_ID})
+            )
             assert mcp_servers == route_servers
             assert any(server["name"] == "local" for server in mcp_servers)
 
@@ -306,7 +313,12 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 f"/profiles/{CODE_PROFILE_ID}/mcp/servers/local/tools/list",
                 timeout=30,
             )
-            mcp_tools = _json_tool_result(mcp.call_tool("capsem_mcp_tools", {"server": "local"}))
+            mcp_tools = _json_tool_result(
+                mcp.call_tool(
+                    "capsem_mcp_tools",
+                    {"profile": CODE_PROFILE_ID, "server": "local"},
+                )
+            )
             assert mcp_tools == route_tools
             assert {tool["namespaced_name"] for tool in mcp_tools} >= {
                 "local__http_headers",
@@ -328,6 +340,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 mcp.call_tool(
                     "capsem_mcp_call",
                     {
+                        "profile": CODE_PROFILE_ID,
                         "name": "local__http_headers",
                         "arguments": {"url": url, "method": "GET"},
                     },
