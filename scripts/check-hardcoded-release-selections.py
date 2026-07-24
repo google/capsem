@@ -160,7 +160,6 @@ reject_matches(
     "public release HTTP reader passes a bare URL to urllib and may be rejected by the edge",
     r"urlopen\(\s*(?:source|url|manifest_url)\s*,",
     "scripts/materialize-config.sh",
-    "scripts/check-asset-release-delta.py",
     "scripts/build-complete-release-channel.py",
     "scripts/local-release-glowup.py",
 )

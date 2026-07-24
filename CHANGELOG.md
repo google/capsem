@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   outputs at their last consumer, recorded byte-accounted cleanup ledgers,
   and put both Docker and Tart working resources under the Python controller.
 
+### Fixed
+
+- Removed stale source-contract references to the retired asset-delta helper
+  so the orthogonal release doctrine teardown remains internally executable.
+
 ## [1.5.1784808246] - 2026-07-23
 
 ### Fixed

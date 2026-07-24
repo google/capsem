@@ -203,7 +203,6 @@ def _load_script(path: str):
 @pytest.mark.parametrize(
     ("path", "reader_name"),
     [
-        ("scripts/check-asset-release-delta.py", "_load_url"),
         ("scripts/build-complete-release-channel.py", "read_json_source"),
     ],
 )
@@ -253,7 +252,6 @@ def test_public_release_readers_identify_capsem_to_http_edge(
 def test_public_release_readers_never_pass_a_url_string_to_urlopen() -> None:
     readers = {
         "scripts/materialize-config.sh": ("urlopen(source",),
-        "scripts/check-asset-release-delta.py": ("urlopen(url",),
         "scripts/build-complete-release-channel.py": ("urlopen(source",),
         "scripts/local-release-glowup.py": ("urlopen(manifest_url",),
     }
