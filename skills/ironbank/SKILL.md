@@ -20,10 +20,11 @@ missing contract.
 ### Ironbank parity rule
 
 The Ironbank parity rule is that every portable release gate belongs in
-`just test`. The exact candidate must pass the complete recipe locally, then
-exact-SHA CI must run the same recipe; green split jobs do not replace it.
-Specialized workflows must reuse the same checked-in entrypoints exercised by
-`just test`, including workspace/runtime tests, coverage floors,
+`just test`. Local `just test` rebuilds both artifact families and runs the
+complete recipe. Binary and profile release CI reuse the same checked-in
+modules while pulling the unchanged artifact family; green split jobs do not
+replace those modules. The shared entrypoints include workspace/runtime tests,
+coverage floors,
 `capsem-doctor`, Ironbank acceptance, benchmarks, artifact checks, all web
 surfaces, and Docker/systemd Linux install plus a real guest-shell proof. Only
 unavoidable platform boundaries may remain outside, and each must be named
@@ -50,12 +51,12 @@ Hardcoded release selection is also unaccounted state. The canonical gate must
 run the grep-backed selection guard covering current and planned profile names
 (`code`, `co-work`/`cowork`, `terminal`, `termional`, and `gui`), public channel
 names, manifest URLs, user-facing request bodies, native postinstall scripts,
-and release qualification. Defaults may be declared explicitly at API
+and both serialized release commands. Defaults may be declared explicitly at API
 boundaries, but downstream profile/channel routes must carry the selected value
 and damaged packages must fail closed instead of falling back to stable.
 
 For multi-architecture packages, `required` applies to the package matching the
-qualification host. Cross artifacts are still built and structurally validated,
+release host. Cross artifacts are still built and structurally validated,
 but must not fail early merely because they cannot execute natively on the
 opposite-architecture runner. Tagged arm64 CI must install and verify its exact
 package/service even though that hosted runner lacks KVM; x86_64 CI additionally

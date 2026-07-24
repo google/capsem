@@ -19,18 +19,17 @@ Three tiers, fast to thorough. Every change must pass all three before it ships.
 
 `just test` is the single source of truth. There is no "fast" tier that skips integration tests -- that's how the "Connection refused" bug shipped while tests said green. Individual `test-*` recipes exist for targeted debugging but `just test` is the gate.
 
-The full gate is a candidate boundary, not the edit loop. During TDD, reproduce
-the failure with the smallest focused test, run that test red/green, and batch
-adjacent parity fixes before paying for the complete gate. After a failed
-qualification, do not restart a 50-minute `just test` for each small edit. Run
-it once when the forward-fix candidate is ready; any later production or gate
-change invalidates that candidate and requires one new complete run.
-For a release candidate, version stamping and the candidate commit happen
-before that final local run. `just test` refuses a dirty tree, records `HEAD`,
-and fails if the commit or tree changes while it runs. The `.pkg`, both `.deb`
-files, SBOM, metadata, and installed binary checks therefore exercise the exact
-clean commit subsequently pushed and qualified. A gate on uncommitted bytes or
-on the previous version followed by a stamp is not local candidate evidence.
+The full gate is a construction boundary, not the edit loop. During TDD,
+reproduce the failure with the smallest focused test, run that test red/green,
+and batch adjacent parity fixes before paying for the complete gate. Run it
+once when the forward-fix source state is ready; any later production or gate
+change needs one new complete run.
+
+`just test` deliberately accepts committed or uncommitted developer work. It
+records `HEAD` plus a digest of every tracked and untracked non-ignored source
+byte, then fails if either changes while the gate runs. Generated output stays
+under ignored build directories. The local proof therefore covers the exact
+source state the developer asked to test without forcing commit choreography.
 Automatic gate benchmark output belongs under ignored
 `target/test-benchmarks/`. Historical benchmark publication uses the owning
 pytest/benchmark command and an explicit review; it is not a Just convenience
@@ -38,26 +37,31 @@ recipe.
 
 ## Release CI invariant
 
-Every stable and nightly release must execute `just test` in CI for the exact
-versioned, untagged candidate SHA before an immutable tag exists. A local gate,
-a prior or nearby commit's green workflow, a matching title with a different
-`headSha`, or a release-specific subset is not evidence and must never unblock
-tag creation or publication. `release-qualification.yaml` must call `just test`
-so additions to the canonical gate automatically become mandatory.
+Release CI reuses the same checked-in private modules as local `just test`:
 
-Temporary hosted-CI exception: the full gate runs once on Linux because
-GitHub-hosted macOS lacks the nested Virtualization.framework access needed by
-Capsem VM tests and Colima, and no physical macOS runner is registered. Keep
-this limitation explicitly commented in `release-qualification.yaml`. The
-tagged workflow must verify the exact successful qualification before macOS
-and Linux package jobs fan out. Restore a parallel macOS `just test` job when
-a physical runner becomes available.
+- `_test-static`
+- `_test-artifacts`
+- `_test-functional`
+- `_test-glowup`
+- `_test-release-contracts`
+
+The build scope is selective; the quality scope is not. Binary CI builds only
+packages and resolves every channel profile by recorded digest. Profile CI
+builds exactly one channel/profile and resolves the current package by recorded
+digest. The resolved complementary artifacts are staged into the production
+test harness, not replaced by source-built substitutes.
+
+Every activated pairing must pass artifact validation, all VM suites,
+Winterfell/MCP lifecycle, IronBank, injection, integration, benchmarks, full
+`capsem-doctor`, exact native install, and update glow-up. A staged profile
+whose minimum package is not yet satisfied may run only the self-consistency,
+integrity, isolation, and boot proof; the following binary lane must run the
+complete functional and glow-up modules before activation.
 
 Both macOS and Linux must install their exact publishable native packages,
 including their real post-install scripts, before publication. Notarization and
-the public stable-to-nightly switch/upgrade glow-up remain mandatory afterward
-as the end-to-end deployed-release test. Do not duplicate `just test` after
-tagging or packaging.
+the public stable-to-nightly switch/upgrade glow-up remain mandatory
+end-to-end proof.
 
 On Apple Silicon macOS, `just test` owns the pre-publication macOS package
 boundary through `scripts/macos_release_glowup.py`: it builds the package with the

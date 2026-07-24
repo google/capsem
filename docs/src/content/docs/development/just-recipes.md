@@ -131,10 +131,14 @@ the current-build runtime profile under `target/config/` from checked-in
 
 | Recipe | What it does |
 |--------|-------------|
-| `just prepare-release` | Stamp and commit an untagged candidate, then run the complete local gate |
-| `just qualify-release` | Run the canonical remote gate for the exact published candidate SHA |
-| `just cut-release` | Verify exact-SHA qualification and create the immutable local tag |
-| `just install` | Build release package and install locally |
+| `just release-binaries <channel>` | Build packages only, pull every selected-channel profile by digest, run the complete pairing proof, and publish binary-owned manifest fields |
+| `just release-profile <channel> <profile>` | Call `capsem-admin release`, build exactly one channel/profile, pull the channel package by digest, and publish only that profile |
+
+Both commands share one `capsem-release-<channel>` lock from source-manifest
+read through deployment. If a profile needs newer code, release the profile
+first as staged immutable assets, then release the binary; the second lane
+reuses the same profile bytes and activates the completed pairing after the
+full functional and glow-up proof.
 
 ## Cleanup
 
@@ -158,9 +162,8 @@ test             -> _install-tools + _clean-stale + _pnpm-install + _generate-se
 build-assets     -> _install-tools + _clean-stale + doctor + capsem-admin image build
 test-install     -> Docker package install + generated local stable/nightly glow-up
 scripts/macos_release_glowup.py -> production .pkg + clean Tart install + physical-host exact-payload VZ boot
-prepare-release  -> _stamp-version + candidate commit + test
-qualify-release  -> exact origin/main SHA + release-qualification.yaml
-cut-release      -> exact successful qualification + local tag
+release-profile  -> capsem-admin release + locked one-profile workflow
+release-binaries -> adversarial binary script + locked package workflow
 ```
 
 `_`-prefixed recipes are internal (hidden from `just --list`). Key internal recipes:
@@ -174,3 +177,8 @@ cut-release      -> exact successful qualification + local tag
 | `_check-assets` | Verifies VM assets exist, tells you to run `build-assets` if not |
 | `_generate-settings` | Generates settings schema, UI metadata, and frontend mock data |
 | `_ensure-service` | Builds/signs host binaries and starts or reuses the service |
+| `_test-static` | Audits, lint, coverage, frontend/docs/sites, cross-compilation, and source contracts |
+| `_test-artifacts` | Packages, inventories, SBOM/OBOM, images, evidence, digests, architecture coverage, and boot |
+| `_test-functional` | VM suites, Winterfell, MCP lifecycle, IronBank, injection, integration, benchmarks, and full doctor |
+| `_test-glowup` | Native install and manifest-driven binary/profile/channel update transitions |
+| `_test-release-contracts` | Lane boundaries, shared serialization, deploy containment, and corporate authoring |

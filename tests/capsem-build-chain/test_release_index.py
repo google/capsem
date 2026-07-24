@@ -106,6 +106,13 @@ def _write_asset(path: Path, data: bytes) -> dict[str, object]:
 
 def _write_minimal_deb(path: Path, executable_name: str = "capsem-app") -> bytes:
     executable = b"#!/bin/sh\nexit 0\n"
+    control = (
+        b"Package: capsem\n"
+        b"Version: 1.4.2234567890\n"
+        b"Architecture: arm64\n"
+        b"Maintainer: Capsem <release@capsem.org>\n"
+        b"Description: Capsem contract-test package\n"
+    )
     data_tar = io.BytesIO()
     with gzip.GzipFile(fileobj=data_tar, mode="wb", mtime=0) as gz:
         with tarfile.open(fileobj=gz, mode="w") as tar:
@@ -116,8 +123,12 @@ def _write_minimal_deb(path: Path, executable_name: str = "capsem-app") -> bytes
             tar.addfile(info, io.BytesIO(executable))
     control_tar = io.BytesIO()
     with gzip.GzipFile(fileobj=control_tar, mode="wb", mtime=0) as gz:
-        with tarfile.open(fileobj=gz, mode="w"):
-            pass
+        with tarfile.open(fileobj=gz, mode="w") as tar:
+            info = tarfile.TarInfo("./control")
+            info.mode = 0o644
+            info.size = len(control)
+            info.mtime = 0
+            tar.addfile(info, io.BytesIO(control))
     deb = (
         b"!<arch>\n"
         + _ar_member("debian-binary", b"2.0\n")
@@ -728,7 +739,7 @@ def test_asset_channel_deprecate_release_reports_history_without_moving_current(
     _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))
 
 
-def test_asset_release_index_workflow_deploys_generated_preview_only_after_asset_change() -> None:
+def test_profile_release_deploys_generated_preview_only_when_changed_and_compatible() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(
         encoding="utf-8"
     )
@@ -738,30 +749,38 @@ def test_asset_release_index_workflow_deploys_generated_preview_only_after_asset
     deploy_channel = workflow.split("  deploy-channel:", maxsplit=1)[1]
 
     assert "cargo run -p capsem-admin -- manifest generate assets" in assemble_channel
-    assert "scripts/check-asset-release-delta.py" in assemble_channel
+    assert "scripts/check-profile-release-delta.py" in assemble_channel
+    assert "cargo run -p capsem-admin -- release" in assemble_channel
     assert "scripts/build-complete-release-channel.py" in assemble_channel
     assert '--channel-source "$CHANNEL=file://$PWD/assets/manifest.json"' in assemble_channel
     assert '--primary-channel "$CHANNEL"' in assemble_channel
     assert "--allow-mirror-missing" in assemble_channel
-    assert (
-        "--asset-source-base \"$ASSET_BASE\"" in assemble_channel
-        and "assets-v{asset_version}" in assemble_channel
-    )
+    assert '--asset-source-base "$ASSET_BASE"' in assemble_channel
+    assert "releases/download/$PROFILE_IDENTITY" in assemble_channel
+    assert "--source-manifest target/source-channel/manifest.json" in assemble_channel
+    assert '--out-dir target/profile-candidate' in assemble_channel
     assert '--out-dir target/release-channel' in assemble_channel
     assert "name: asset-channel-preview" in assemble_channel
     assert "path: target/release-channel/" in assemble_channel
-    assert "asset_changed: ${{ steps.asset-delta.outputs.changed }}" in assemble_channel
-    assert "if: ${{ steps.asset-delta.outputs.changed == 'true' }}" in assemble_channel
+    assert "profile_changed: ${{ steps.profile-delta.outputs.changed }}" in assemble_channel
+    assert "compatible: ${{ steps.author-release.outputs.compatible }}" in assemble_channel
+    assert "if: ${{ steps.profile-delta.outputs.changed == 'true' }}" in assemble_channel
+    assert (
+        "if: ${{ steps.profile-delta.outputs.changed == 'true' && "
+        "steps.author-release.outputs.compatible == 'true' }}"
+    ) in assemble_channel
 
     assert (
-        "if: ${{ inputs.dry_run == false && needs.assemble-channel.outputs.asset_changed == 'true' }}"
+        "if: ${{ inputs.dry_run == false && "
+        "needs.assemble-channel.outputs.profile_changed == 'true' && "
+        "needs.assemble-channel.outputs.compatible == 'true' }}"
         in deploy_channel
     )
     assert "uses: ./.github/workflows/release-channel.yaml" in deploy_channel
     assert "dist_artifact: asset-channel-preview" in deploy_channel
 
 
-def test_release_assets_workflow_allows_first_channel_bootstrap() -> None:
+def test_profile_release_publishes_incompatible_assets_but_withholds_channel_deploy() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(
         encoding="utf-8"
     )
@@ -769,12 +788,23 @@ def test_release_assets_workflow_allows_first_channel_bootstrap() -> None:
         "  deploy-channel:", maxsplit=1
     )[0]
 
-    assert "scripts/check-asset-release-delta.py" in assemble_channel
+    deploy_channel = workflow.split("  deploy-channel:", maxsplit=1)[1]
+
+    assert "scripts/check-profile-release-delta.py" in assemble_channel
+    assert "cargo run -p capsem-admin -- release" in assemble_channel
+    assert "Publish immutable GitHub asset release" in assemble_channel
     assert (
-        '--previous-manifest-url "https://release.capsem.org/assets/$CHANNEL/manifest.json"'
+        "if: ${{ steps.profile-delta.outputs.changed == 'true' }}"
         in assemble_channel
     )
-    assert "--allow-missing-previous" in assemble_channel
+    immutable_release = assemble_channel.split(
+        "- name: Publish immutable GitHub asset release", maxsplit=1
+    )[1].split("- name: Attest VM asset provenance", maxsplit=1)[0]
+    assert "steps.author-release.outputs.compatible" not in immutable_release
+    assert (
+        "needs.assemble-channel.outputs.compatible == 'true'"
+        in deploy_channel
+    )
 
 
 def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path) -> None:

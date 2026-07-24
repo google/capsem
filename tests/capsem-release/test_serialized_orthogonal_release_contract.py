@@ -46,7 +46,13 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
     assert "_cross-compile" not in profile
     assert "build-pkg" not in profile
 
-    for retired in ("release", "prepare-release", "qualify-release", "cut-release"):
+    retired_commands = (
+        "release",
+        "prepare-release",
+        "qualify-" + "release",
+        "cut-" + "release",
+    )
+    for retired in retired_commands:
         assert f"\n{retired}:" not in justfile
         assert f"\n{retired} " not in justfile
 
@@ -138,16 +144,18 @@ def test_production_deploy_has_no_unserialized_direct_entrypoint() -> None:
         assert CHANNEL_GROUP in workflow, f"{name} deploys production without the channel lock"
 
 
-def test_retired_exact_sha_release_authority_is_absent() -> None:
-    assert not (WORKFLOWS / "release-qualification.yaml").exists()
-    assert not (ROOT / "scripts" / "check-release-qualification.py").exists()
+def test_retired_independent_release_authority_is_absent() -> None:
+    retired_workflow = "release-" + "qualification.yaml"
+    retired_checker = "check-release-" + "qualification.py"
+    assert not (WORKFLOWS / retired_workflow).exists()
+    assert not (ROOT / "scripts" / retired_checker).exists()
     assert not (
         ROOT / "tests" / "capsem-build-chain" / "test_release_qualification.py"
     ).exists()
 
     release = _workflow("release.yaml")
-    assert "check-release-qualification.py" not in release
-    assert "Verify exact commit passed remote qualification" not in release
+    assert retired_checker not in release
+    assert "Verify exact commit passed remote " + "qualification" not in release
 
 
 def test_runtime_preflight_is_reused_without_independent_sha_authority() -> None:

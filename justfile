@@ -422,7 +422,7 @@ _gate-assets: _bootstrap _install-tools _generate-settings _sign
 
     profile_paths=(config/profiles/*/profile.toml)
 
-    # A hosted qualification runner has an observed hard lifetime below the
+    # A hosted release runner has an observed hard lifetime below the
     # workflow's nominal timeout. Build two architecture lanes concurrently so
     # the complete four-cell profile/architecture matrix fits with enough time
     # left for pytest and installed-package proof. Each lane owns a distinct
@@ -772,7 +772,7 @@ _test-candidate-run:
     # Native Linux runs exercise these cfg branches in Stage 3 below. A Mac
     # host must execute the same checked-in Linux runner inside the existing
     # host-builder image; otherwise Linux-only regressions can remain excluded
-    # from the local canonical gate until exact-SHA CI.
+    # from the local canonical gate until the owning release job.
     if [ "$(uname -s)" = "Darwin" ]; then
         echo "=== Linux Rust platform tests + coverage (Docker) ==="
         just _gate-linux-rust

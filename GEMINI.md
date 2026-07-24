@@ -4,10 +4,11 @@ Native macOS app that sandboxes AI agents in Linux VMs using Apple's Virtualizat
 
 Shared agent invariants live in `AGENTS.md`; it is the Codex/Claude/Gemini
 common contract. **Read it before any release work or any change touching
-logged data** -- it carries the two hard contracts: release evidence (only the
-successful remote `release-qualification.yaml` run on the exact candidate SHA
-counts; never a local run, a nearby commit's green, or an agent's claim) and
-the logger DB boundary (only `capsem-logger` executes ledger queries).
+logged data** -- it carries the two hard contracts: serialized orthogonal
+binary/profile releases with complete reusable test modules, and the logger DB
+boundary (only `capsem-logger` executes ledger queries). The only release
+commands are `just release-binaries <channel>` and
+`just release-profile <channel> <profile>`.
 
 ## Skills -- LOAD BEFORE CODING
 

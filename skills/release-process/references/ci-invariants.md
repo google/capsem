@@ -8,10 +8,11 @@ Reference for /release-process: the Ironbank parity rule and every burned-releas
 ##### Ironbank parity rule
 
 The Ironbank parity rule is that every portable release gate must be owned by
-`just test`. Before qualification, the exact candidate must pass the complete
-`just test` locally; exact-SHA CI then runs that identical recipe. A specialized
-job is useful evidence, but it must reuse an entrypoint already exercised by
-`just test` and cannot become the sole owner of a portable release requirement.
+`just test`. Local development rebuilds every package and every profile.
+Release CI reuses the same checked-in test modules while building only its
+owned artifact family and resolving the unchanged family by manifest-recorded
+digest. A specialized job is useful evidence, but it cannot become the sole
+owner of a portable release requirement.
 
 The canonical gate includes workspace/runtime tests, Rust and Python coverage
 floors, `capsem-doctor` and Ironbank acceptance, benchmarks, artifact
@@ -19,12 +20,15 @@ completeness, frontend/docs/marketing/release-site checks, and the
 Docker/systemd Linux package install with a real guest-shell proof. Keep only
 unavoidable platform boundaries outside it: Apple signing/notarization,
 hosted-runner KVM, and Cloudflare publication. Apple VZ is owned by the complete
-local gate on the exact clean candidate.
+local gate over its recorded source state.
 
 Every portable release-critical workflow must share the same production
 entrypoint with a local gate. Current required mappings are:
 
-- candidate qualification: local and CI both execute `just test`;
+- test composition: local `just test` and both release lanes call
+  `_test-static`, `_test-artifacts`, `_test-functional`, `_test-glowup`, and
+  `_test-release-contracts`; release lanes stage resolved complementary
+  artifacts rather than rebuilding them;
 - VM assets: `just test` owns `just _gate-assets`, which executes the same
   `just _build-kernel` and `just _build-rootfs` primitives as
   `release-assets.yaml` for every checked-in profile and both published
@@ -34,7 +38,7 @@ entrypoint with a local gate. Current required mappings are:
   and binary workflows execute `scripts/build-complete-release-channel.py`;
   every deployable production dist must contain and validate both `stable` and
   `nightly`, preserving the untouched channel graph instead of replacing the
-  Pages site with only the channel being updated. Local qualification must
+  Pages site with only the channel being updated. The local gate must
   materialize profile config from the same candidate worktree used to generate
   its descriptors, while production assembly must use an immutable git ref;
 - VM asset digests: the asset build/ingest boundary streams every immutable
@@ -89,18 +93,18 @@ capture successful `mkfs.erofs` output. Without this, an arm64 asset build on
 x86 CI can silently select arm64 `erofs-utils` and compress a multi-gigabyte
 rootfs under QEMU; the corresponding Mac rail then has different behavior.
 Treat runner loss during this rail as a release-blocking build-system bug
-requiring a RED regression and a new exact candidate, not as a transient rerun.
+requiring a RED regression and a forward fix, not as a transient rerun.
 
 The unavoidable platform boundaries are Apple signing and notarization,
 hosted-runner KVM, and Cloudflare publication. The physical Mac runs the
-complete local candidate gate before qualification, so VZ is not deferred to a
-post-release proof. Keep each boundary's nearest deterministic contract, but
-never claim the boundary itself from emulation: retain exact-SHA CI for hosted
-services/KVM and the complete local VZ gate for the exact candidate. Any new
-CI-only step must either gain a local shared-entrypoint proof or be added to
-this explicit boundary list with its substitute and final authoritative gate.
+complete local gate, so VZ is not deferred to a post-release proof. Keep each
+boundary's nearest deterministic contract, but never claim the boundary itself
+from emulation: retain the owning hosted service/KVM gate and the complete
+local VZ gate. Any new CI-only step must either gain a local shared-entrypoint
+proof or be added to this explicit boundary list with its substitute and final
+authoritative gate.
 
-Qualification must fit the runner that actually executes it with substantial
+Each release lane must fit the runner that actually executes it with substantial
 headroom for the final tests and evidence upload. Measure stage and total wall
 times; do not infer capacity from `timeout-minutes`. Repeated termination at
 nearly the same run age is a runtime-budget defect, not a transient runner loss.
@@ -175,8 +179,8 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
 - **`Cargo.lock` is gitignored.** CI resolves a fresh lockfile each build. This means dependency versions can drift between builds. Acceptable for now but a reproducibility risk.
 - **Three files hold the binary version.** `Cargo.toml` (workspace),
   `crates/capsem-app/tauri.conf.json`, and `pyproject.toml`. Candidate
-  preparation keeps all three aligned before `just test`; qualification and
-  tagging never stamp or commit.
+  preparation keeps all three aligned before `just test`; release workflows
+  never silently stamp or commit them.
 - **Do not resurrect local VM manifest signing.** VM asset integrity is the
   profile manifest plus BLAKE3 hashes, manifest metadata/hash reporting, and
   SBOM/OBOM/build-ledger evidence. Local `manifest-sign.pub` keys and minisign

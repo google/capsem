@@ -125,52 +125,36 @@ caching. If the local checkout has unpublished commits, publish or merge those
 commits before changing remote protection. It does not push, deploy, create
 tags, edit rulesets, or mutate Cloudflare.
 
-### Live release activation order
+### Orthogonal release lanes
 
-Use this order when turning the 1.4 release rails on. Do not skip ahead because
-later steps depend on earlier public state being true.
+Production has two entrypoints:
 
-1. Merge the release-rail commits to `main` only after the pull request's
-   expanded `pr-gate` passes.
-2. Require only `pr-gate` in branch protection or active rulesets.
-3. Provision the `release.capsem.org` Cloudflare Pages project and DNS for the
-   generated `target/release-channel/` artifact.
-4. Run `uv run python scripts/check-remote-release-readiness.py`; continue only
-   after unpublished commits, remote fail-closed `pr-gate` shape, branch
-   protection, `release.capsem.org` DNS, public cache headers, and
-   release-channel content all pass.
-5. Run `release-channel-staging.yaml` against the Cloudflare Pages staging
-   branch and verify it passes the same release-channel contract without
-   invoking `build-assets`, `build-app-macos`, or `build-app-linux`.
-6. Run the manual profile image workflow as a dry run and review the
-   `asset-release-plan`, `asset-release-delta`, and `asset-channel-preview`
-   artifacts. For metadata-only asset release changes, review
-   `asset-release-delta` and `asset-channel-preview`; no `asset-release-plan`
-   is expected because there are no immutable profile image blobs to republish.
-7. Run `release-binary-staging.yaml` and review the
-   `binary-channel-dry-run-bundle` artifact. It must contain package metadata,
-   `capsem-sbom.spdx.json`, `manifest.before.json`, the updated manifest,
-   `record-binary.json`, `proof.json`, and the release-site preview, while
-   proving profile image metadata did not change. This is the safe binary dry-run
-   path.
-8. Push a new immutable `vX.Y.Z` tag, then explicitly dispatch `release.yaml`
-   with that tag and exactly one `stable` or `nightly` channel. The workflow is
-   globally serialized so channel deployments cannot race.
-9. Run the manual profile image workflow live only after reviewing
-   `asset-release-plan` when `asset_blobs_changed` is true, or reviewing the
-   metadata-only delta and channel preview when only release-channel metadata
-   changed; it must publish changed profile image blobs, attest them, and deploy
-   `release.capsem.org`.
-10. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
-   asset refresh, profile update path, and staged cross-surface update state.
+| Command | Builds | Resolves unchanged | Manifest write |
+|---|---|---|---|
+| `just release-binaries <channel>` | Packages, per-binary inventory, host SBOM, existing attestations | Every profile in that channel by digest | Binary-owned fields only |
+| `just release-profile <channel> <profile>` | One channel/profile config, images, inventory, OBOM, evidence | The channel package by digest | Selected profile only |
+
+Both workflows use `capsem-release-${{ inputs.channel }}` with cancellation
+disabled. The lock is acquired before reading the source manifest and held
+through tests, mutation, generated-distribution assembly, and production
+deployment. Different channels remain independent.
+
+An incompatible profile is published once as immutable staged assets but does
+not change the public channel. The following binary lane resolves those exact
+bytes, runs the complete pairing proof, and activates the channel. Neither
+artifact family is rebuilt twice.
+
+Nightly binary release runs once daily through the same binary script rather
+than on every push. Stable is started explicitly through the same command.
 
 ## PR gate compared with `just test`
 
 The Ironbank parity rule is that every portable release gate is owned by
-`just test`. The complete recipe must pass locally, and exact-SHA release
-qualification runs that same recipe. GitHub-hosted PR CI may split feedback
-across jobs, but those jobs reuse the same checked-in entrypoints and do not
-replace the canonical gate. Unavoidable runner substitutions are named below.
+`just test`. Local testing rebuilds both artifact families and calls the five
+private test modules. Release CI calls the same modules while pulling the
+unchanged family. GitHub-hosted PR CI may split feedback across jobs, but those
+jobs do not replace the canonical gate. Unavoidable runner substitutions are
+named below.
 
 | `just test` stage | PR CI proof | Difference |
 |-------------------|-------------|------------|

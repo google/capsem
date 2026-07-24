@@ -10,50 +10,41 @@ Before code changes, load the relevant project skill from `skills/`. For tests
 and release gates, load `/dev-testing` and `/ironbank`. For debugging, load
 `/dev-debugging`. For architecture changes, load `/site-architecture`.
 
-## Release CI Is the Authority
+## Serialized Orthogonal Releases
 
-Every stable and nightly binary release must run the complete `just test` gate
-in `release-qualification.yaml` on the exact versioned, untagged candidate
-commit before an immutable release tag may be created. `release.yaml` must
-verify that successful exact-SHA result before any package build, GitHub
-Release creation, channel assembly, or deployment may proceed.
+The governing contract is `tmp/release-spec.md`. Capsem has exactly two release
+commands:
 
-There is one explicit temporary GitHub-hosted exception: the full gate runs on
-Linux only because GitHub-hosted macOS cannot provide the nested
-Virtualization.framework access required by Capsem and Colima, and the
-repository has no physical macOS runner. The qualification-workflow comment
-must remain until a physical runner exists. The macOS and Linux package jobs
-may fan out only after `release.yaml` verifies the exact qualification result;
-macOS still builds, notarizes, installs, and verifies the exact `.pkg` before
-publication.
+```text
+just release-binaries <channel>
+just release-profile <channel> <profile>
+```
 
-- Never replace `just test` with a hand-picked subset, a coverage-only job, or
-  a faster release-specific approximation.
-- Never treat a local run, a nearby commit's green run, a run title without a
-  matching `headSha`, or an agent's claim that tests passed as release
-  evidence. Only the successful remote qualification for the exact candidate
-  SHA counts.
-- The gate includes audits, lint, frontend, Rust coverage, four-VM parallel
-  Python tests, Winterfell/MCP lifecycle tests, IronBank, injection,
-  integration, benchmarks, cross-compilation, and Docker/systemd install tests.
-- Run the complete `just test` gate exactly once for each candidate in
-  `release-qualification.yaml`. Do not rerun or duplicate it after tagging or
-  packaging.
-- Keep cheap clean-environment bootstrap proofs at the start of `just test` for
-  every expensive release harness. In particular, prove the Docker install
-  image can create its container-owned Python environment and launch pytest
-  before Rust/frontend/VM/package work. This fail-fast proof supplements the
-  later complete install E2E; it never replaces or skips it. Guard the ordering
-  with contract tests so harness drift fails before a multi-hour release run.
-- Exact publishable packages must still be installed on macOS and Linux so the
-  native installers and their post-install scripts are proven before
-  publication. The public install/channel-switch/upgrade glow-up is then the
-  end-to-end test of the deployed release. None of these gates substitutes for
-  another.
-- Stable and nightly require the same exact-SHA qualification and use the same
-  parameterized tagged workflow. Only the selected channel may be updated.
-- A failed candidate may receive forward fix commits and be qualified again,
-  but it must not receive a final tag, GitHub Release, or channel mutation.
+- Local `just test` remains the complete all-artifact proof. It rebuilds
+  packages and every configured profile, then runs audits, lint, frontend,
+  Rust/Python coverage, all VM suites, Winterfell/MCP lifecycle, IronBank,
+  injection, integration, benchmarks, full `capsem-doctor`, native install,
+  and glow-up.
+- Release CI calls the same checked-in private test modules but builds only the
+  artifact family owned by its lane. Binary CI pulls every selected profile;
+  profile CI pulls the selected channel's package. Pulled inputs are verified
+  by immutable identity and digest.
+- Every pairing that becomes public must pass the complete functional and
+  glow-up modules. Saving build time never means skipping tests.
+- Binary and profile releases share the workflow-level
+  `capsem-release-${channel}` lock from source-manifest resolution through
+  production deployment. Different channels remain independent.
+- A profile requiring new code is published immutably but remains inactive.
+  The following binary release consumes that staged profile without rebuilding
+  it and activates only the fully tested compatible graph.
+- The manifest is the authority. Existing SBOM, OBOM, attestations, and GitHub
+  logs are the evidence; do not add a parallel release ledger or result file.
+- All first-party and corporate manifest/profile authoring goes through
+  `capsem-admin`. Corporations select official Capsem packages; they do not
+  build or replace them.
+- Exact publishable packages must be installed on macOS and Linux before
+  publication. Public polling, channel switching, binary/profile transitions,
+  tamper rejection, Winterfell, and doctor remain mandatory glow-up proof.
 
 ## Logger DB Boundary
 

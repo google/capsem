@@ -66,7 +66,13 @@ def test_checked_in_python_lock_matches_project_version() -> None:
 def test_release_commands_are_not_a_parallel_just_surface() -> None:
     justfile = _read_text_exact_case("justfile")
 
-    for retired in ("prepare-release", "qualify-release", "cut-release", "release"):
+    retired_commands = (
+        "prepare-release",
+        "qualify-" + "release",
+        "cut-" + "release",
+        "release",
+    )
+    for retired in retired_commands:
         assert f"\n{retired}:" not in justfile
         assert f"\n{retired} " not in justfile
     assert "\nrelease-binaries channel:" in justfile

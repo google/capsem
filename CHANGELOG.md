@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Replaced the retired independent release gate with serialized orthogonal
+  binary/profile lanes that reuse the unchanged artifact family, call the same
+  complete test modules as local `just test`, and expose only
+  `release-binaries` and `release-profile`.
 - Centralized release-gate Docker capacity, cache retention, resource
   ownership, and debug-artifact limits in `config/storage-policy.toml`;
   retained a measured 24 GiB BuildKit cohort, released one-shot compiler

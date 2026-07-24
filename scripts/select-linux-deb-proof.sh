@@ -22,7 +22,7 @@ esac
 
 # A two-architecture build always emits one non-host package. Requiring a
 # native KVM proof must not reject that structurally validated cross artifact;
-# the matching native qualification runner owns its functional proof.
+# the matching native package lane owns its functional proof.
 if [ "$HOST_OS" != "Linux" ] || [ "$TARGET_ARCH" != "$HOST_ARCH" ]; then
     echo skip
     exit 0

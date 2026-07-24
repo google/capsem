@@ -154,7 +154,7 @@ test.
 Keep an executable parity test after the fix and audit sibling workflows for
 the same one-sided assumption. If reproduction crosses an unavoidable platform
 boundary, document the boundary and preserve the nearest local contract plus
-the required exact-SHA CI or physical-machine proof. Do not relabel an
+the required owning release-job or physical-machine proof. Do not relabel an
 unreproduced CI failure as transient.
 
 ## What NOT to do

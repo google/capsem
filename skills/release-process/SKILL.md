@@ -1,484 +1,275 @@
 ---
 name: release-process
-description: Capsem release process, CI pipeline, Apple code signing, notarization, documentation site, and post-release verification. Use when preparing a release, debugging CI failures, working with Apple certificates, updating the documentation site, or cutting a new version. Covers the full release lifecycle from pre-release checklist through post-release verification.
+description: Capsem release process, orthogonal binary/profile CI, Apple code signing, notarization, channel deployment, and post-release verification.
 ---
 
 # Release Process
 
-## Public command discipline
+## Governing contract
 
-`just test` is the sole release-qualification command. There are no public
-`prepare-release`, `qualify-release`, `cut-release`, `release`, `install`, or
-`test-*` recipes. Candidate/tag/publication mechanics remain workflow-owned;
-native install proof remains glow-up-owned. Do not recreate a parallel Just
-release path.
+Read `tmp/release-spec.md` before changing release commands, manifests,
+workflows, test composition, artifact publication, or update behavior. It is
+the normative contract when older repository text disagrees.
 
-`config/public-surface.toml` locks the exact Just, Capsem CLI, and service HTTP
-surfaces. Updating the ledger requires explicit product/API approval and must
-be reviewed as a public contract change.
-
-## Pre-release checklist
+Capsem has exactly two release-facing Just commands:
 
 ```bash
-just doctor                    # Check tools
-scripts/preflight.sh           # Validate Apple certs for CI
-just test                      # ALL tests: unit + integration + cross-compile + bench
+just release-binaries <channel>
+just release-profile <channel> <profile>
 ```
 
-The checklist is developer feedback only. It is never release authorization.
-For every stable and nightly release, `release-qualification.yaml` must run the
-complete `just test` recipe in CI on the exact versioned, untagged candidate
-commit. A final immutable tag must not exist until that run succeeds.
-`release.yaml` then verifies the successful qualification's exact `headSha`
-before package work. Never substitute a partial Rust/frontend/coverage job, a
-previous or nearby green commit, a matching display title with another SHA, or
-a local agent-run gate. CI is authoritative because agent-reported local
-evidence is not trusted release proof.
+Each command owns one artifact family. There is no combined command and no
+operator path that bypasses these entrypoints.
 
-Temporary hosted-CI exception: `just test` runs once on Linux because
-GitHub-hosted macOS cannot expose the nested Virtualization.framework support
-Capsem and Colima require, and no physical macOS runner is registered. Keep the
-exception explicitly commented in `release-qualification.yaml`. The tagged
-workflow must fail in preflight unless that exact qualification passed; macOS
-and Linux package jobs fan out only after preflight. Restore a parallel macOS
-full gate once a physical runner exists.
+`config/public-surface.toml` locks this command surface. Treat any change as an
+explicit product/API decision.
 
-`just test` includes Winterfell/MCP persistence, the four-VM concurrency
-canary, IronBank, integration and injection, benchmarks, cross-compilation,
-Docker/systemd install tests, and on an Apple Silicon Mac an exact-package
-install/glow-up in a disposable Tart guest. Run it exactly once in the release
-workflow, not again after packaging. The exact final `.pkg`/`.deb` must
-then be installed on macOS and Linux to exercise the real native installer and
-post-install scripts before publication. Notarization and public
-channel-switch/upgrade glow-up verification remain additional requirements and
-provide the end-to-end deployed-release proof. Never replace the full gate
-with doctor, Winterfell, smoke, or another selected subset.
+## Local proof and release-CI composition
 
-Locally, the same complete gate is paid once per ready candidate—not after
-every few-line repair. Use focused red/green tests and the relevant clean Linux
-container proof while editing, then commit the complete candidate before the
-one complete local `just test`. The wrapper refuses a dirty tree, records
-`HEAD`, runs the internal candidate gate, and fails if either `HEAD` or the
-working tree changes. The SHA printed at success is the local Apple VZ evidence
-and the only SHA that may be pushed for qualification. A subsequent production
-or gate change creates a new candidate and therefore needs a new complete run.
+Local `just test` is the whole-world proof. It rebuilds every package and every
+checked-in profile, then runs all five checked-in modules:
 
-Stamp the forward-only version before that complete local gate. The real macOS
-and Linux packages, host SBOM, installer metadata, and binary-version checks
-built by `just test` must contain the exact version that will be committed,
-qualified, and tagged. Version/changelog preparation is an explicit candidate
-operation, not a public Just recipe.
+- `_test-static`
+- `_test-artifacts`
+- `_test-functional`
+- `_test-glowup`
+- `_test-release-contracts`
 
-Automatic benchmark recordings from `just test` belong under
-`target/test-benchmarks/`, which is ignored and disposable. Intentional
-historical benchmark publication uses the owning pytest/benchmark tools and an
-explicit review; there is no benchmark convenience recipe. Never weaken the
-clean-tree invariant by allowlisting benchmark source paths.
+Release CI saves construction time, never test quality:
 
-Rust is pinned to `1.97.1` in `rust-toolchain.toml`, every workflow toolchain
-step, the host-builder image, and bootstrap. Bump every surface together in a
-deliberate monthly toolchain PR and resolve new lint fallout there. Do not use
-`stable`, `latest`, or an independently floating Docker compiler. Workspace
-lints deny `dbg_macro` and `todo` so debugging placeholders cannot ship.
+- the binary lane builds packages only and resolves every selected-channel
+  profile by manifest-recorded digest;
+- the profile lane builds exactly one channel/profile and resolves the
+  selected channel's current package by manifest-recorded digest;
+- both lanes stage those exact resolved artifacts into the same test modules
+  used locally;
+- source-built substitutes must not replace the resolved complementary family.
 
-The Tart macOS base image is pinned by registry digest in
-`config/storage-policy.toml`. Review and bump that digest deliberately with the
-monthly toolchain update, then prove the replacement through bootstrap,
-doctor, the standalone macOS glow-up, and their contract tests. A remote
-`:latest` image is never valid release-gate infrastructure; locally built
-`capsem-*:latest` images remain allowed because checked-in Dockerfiles own
-their bytes.
+Before public activation, the resulting pairing must pass manifest/artifact
+integrity, every VM suite, Winterfell and MCP lifecycle, IronBank, injection,
+integration, benchmarks, full `capsem-doctor`, native install, and update
+glow-up. A staged incompatible profile may run only static, self-consistency,
+integrity, isolation, and boot gates; the following binary lane must run the
+complete functional and glow-up proof before activation.
 
-`cargo audit` is an external-clock security signal, not a per-diff compiler
-gate. The scheduled/manual `security-audit.yaml` workflow owns the blocking
-RustSec result and gets a named owner and remediation. The local complete gate
-reports an audit failure loudly but does not invalidate an otherwise unchanged
-release candidate solely because a new upstream advisory appeared.
+The local gate records `HEAD` and a digest of all tracked and untracked
+non-ignored source bytes. It supports ordinary uncommitted development and
+fails if the source state changes while tests run.
 
-Treat disk capacity as a release resource on both macOS and Linux. Never copy
-an already-built multi-gigabyte immutable VM/package cohort into a second
-same-filesystem staging tree late in qualification. Use hardlink-first staging
-for immutable bytes, retain an executable cross-filesystem copy fallback, and
-cover both paths with a constrained-disk regression that fails an accidental
-copy with `ENOSPC`. Measure and report capacity before expensive artifact lanes
-and again before the final installer/glow-up tail; discovering deterministic
-disk exhaustion after the KVM and package rails is a qualification-harness bug.
+## Shared per-channel serialization
 
-Keep release-harness bootstrap checks fail-fast inside that canonical recipe.
-Before expensive audits/builds/VMs/package assembly, Stage 0 must build the
-clean Linux install image and prove its container-owned uv environment can run
-`python -m pytest --version`. Contract-test that ordering. This catches host
-virtualenv leakage and missing runner dependencies in seconds while retaining
-the complete Docker/systemd install suite later in `just test`; the bootstrap
-proof is never accepted as a substitute for install E2E.
+Both production entry workflows use exactly:
 
-Before paying for qualification, run the exact package materializer on macOS
-and in the Linux host-builder against the live public channel URL, using every
-release architecture and the complete checked-in profile catalog. The public
-channel document is a release graph (`profiles`/`packages`), while local asset
-inputs may still use the legacy `assets.current`/`assets.releases` schema; the
-shared materializer must accept both intentionally and reject every incomplete
-or unknown shape. Every Python reader of `release.capsem.org` must send an
-explicit Capsem user agent. Cloudflare rejecting bare `urllib` while `curl`
-succeeds is a client-contract failure that must be reproduced by an adversarial
-local HTTP server and rejected by the fail-fast source guard.
-`release-qualification.yaml` must enforce that contract as a cheap two-platform
-job (macOS arm64 and Linux x86_64) on the exact candidate SHA. The canonical
-`just test` job must depend on it, so a Cloudflare HTTP-policy or live manifest
-schema failure cannot consume the multi-hour qualification budget. A local
-focused test is necessary but is not a substitute for this remote preflight.
+```yaml
+concurrency:
+  group: capsem-release-${{ inputs.channel }}
+  cancel-in-progress: false
+```
 
-## Installer outcome gate
+The workflow acquires the lock before reading the source manifest and holds it
+through artifact resolution, tests, source-manifest mutation, generated
+distribution assembly, and production deployment.
 
-The installer exists to leave a working Capsem installation, not merely to
-download a package, launch Installer.app, or return exit code zero. Treat the
-following as separate, non-substitutable release gates:
+Consequences:
 
-### CI exact-artifact gates
+- binary and profile release work for one channel cannot overlap;
+- two profile releases for one channel cannot overlap;
+- queued work re-reads the manifest only after acquiring the lock;
+- stable and nightly may proceed concurrently;
+- preview deployment cannot mutate production source manifests;
+- `release-channel.yaml` may deploy production only for a serialized parent
+  binary or profile workflow.
 
-- **macOS CI exact-package proof:** build the exact publishable `.pkg`, sign,
-  notarize, and staple it, then install that same file with
-  `sudo /usr/sbin/installer -pkg <pkg> -target /`. Assert the installed app,
-  complete host-binary cohort, package version, manifest metadata, service
-  registration, and launchable public CLI surfaces before uploading it.
-- **Linux CI installed-product proof:** build the exact publishable `.deb` for
-  every supported release architecture, install that same file on a clean
-  native runner, and assert package metadata, the complete installed binary
-  cohort, exact version agreement, service startup, and a functional Capsem
-  command. Where the CI runner exposes KVM, prove `capsem shell` can start a
-  guest and execute a deterministic command inside it. The current arm64
-  hosted runner does not expose `/dev/kvm`, so arm64 must still pass the exact
-  package/service proof while x86_64 owns the mandatory guest-shell proof.
-- Publication must depend on both platform jobs. A skipped, optional,
-  `continue-on-error`, mocked, source-layout, or inspect-only result does not
-  count as release proof. Signing, notarization, file existence, and package
-  expansion are necessary checks, but none substitutes for installing the
-  artifact.
-- Every installed-product rail must run
-  `scripts/verify-installed-release.py` before accepting the install. That
-  verifier must compare the installed manifest byte-for-byte with the selected
-  manifest URL, require all manifest-declared profiles ready, validate the one
-  canonical metadata sidecar including install/refresh/check state and package
-  version, and reject every legacy origin/check/cache path. Do not replace this
-  with ad-hoc status greps in an individual workflow.
+`release-channel-staging.yaml` is the preview-only proof of the reusable
+deployer. It renders a deterministic generated distribution and deploys a
+non-production branch without invoking VM asset builds or host package builds.
 
-### Public installer gates
+The selected channel source manifest is the sole mutable release authority. Do
+not add a release result file, pending ledger, last-known-good graph, manual
+diff approval record, or parallel authoring path.
 
-- The public `curl -fsSL https://capsem.org/install.sh | sh` path must select
-  the expected package from the release manifest, verify its declared byte
-  size and SHA-256, synchronously apply it through the native package manager,
-  and return failure when any step fails.
-- After deployment, Linux CI must run that live command in a clean supported
-  environment and repeat installed version, binary-cohort, service, and
-  functional-command assertions. Parser tests and command stubs do not count
-  as this gate.
-- The installed `assets/manifest.json` must be the exact verified manifest
-  document selected from the channel. Package postinstall and update code must
-  not rewrite it into a reduced runtime schema or discard package binaries,
-  profile descriptions, image records, ABOM/OBOM, software inventory, or host
-  SBOM evidence. Runtime adapters may derive an in-memory boot view only.
-- Installed manifest state has exactly one sidecar:
-  `assets/manifest-metadata.json` with schema
-  `capsem.manifest_metadata.v1`. It owns the manifest URL, channel/lock,
-  package/install/refresh/check timestamps, checked URL and digest, validation
-  result, and update comparison. Do not create a separate origin file, update
-  check file, source-keyed cache directory, or UI-specific release cache.
-- `GET /system/status` is the single installed-status contract. It returns the
-  exact parsed `manifest.json`, exact parsed `manifest-metadata.json`, live
-  profile readiness, corp state, and update comparison. `capsem status` and
-  About Capsem must consume that same endpoint; the UI must not synthesize
-  publication state or fetch a parallel profile/evidence status source.
+## Profile release
 
-### Stateful channel glow-up gate
-
-The glow-up name is earned only by exercising one installed product through
-state transitions. Fresh installs with different `CAPSEM_CHANNEL` values do
-not prove channel switching and must never satisfy this gate.
-
-- Run the compiled, package-installed CLI with `capsem update --channel`; a
-  source inspection, fixture-only resolver, or direct `--manifest` substitution
-  does not count as a public-channel switch.
-- On the same Linux installation, prove stable -> nightly -> stable for VM
-  assets and prove the installed manifest metadata records the exact selected
-  channel, manifest URL, and correlated update-audit event each time.
-- Prove a verified nightly package upgrade and a verified stable package
-  downgrade through the native package manager. Linux downgrade application
-  must use `apt-get --allow-downgrades`; both directions must leave the full
-  binary cohort and service healthy.
-- Move that installation to an explicit corporate manifest, persist
-  `channel_kind=corporate` and `channel_locked=true`, refresh it successfully,
-  then prove attempts to select stable, nightly, or a different corporate
-  manifest fail before network or package mutation. A machine may enter corp
-  but cannot leave corp through self-update.
-- Verify the channel catalog record and selected manifest SHA-256 and BLAKE3
-  before writing cache, assets, origin, or package state. Tampered manifests
-  must fail nonzero and preserve the prior installed state.
-- CI must run this stateful glow-up on the built Linux package.
-
-### Accepted macOS VZ proof boundary
-
-The complete local `just test` on the exact clean, versioned candidate is the
-authoritative Apple Virtualization.framework guest-shell proof.
-`scripts/macos_release_glowup.py` first installs the exact package in a disposable Tart Mac,
-then extracts that same package on the physical host and boots a guest from the
-packaged binaries and profiles. This split is required because Tart macOS
-guests explicitly reject nested virtualization. The tagged
-GitHub-hosted macOS job separately builds, signs, notarizes, staples, installs,
-and verifies the exact publishable `.pkg`, but hosted runners cannot repeat the
-VZ guest path because nested virtualization is unavailable.
-
-The local package is intentionally unsigned. Its postinstall ad-hoc signs the
-installed Mach-O payload with the required entitlements, so local qualification
-needs no release certificate, private key, or temporary keychain. Developer ID
-signing, notarization, stapling, Gatekeeper verification, and installation of
-that final signed artifact remain owned exclusively by the tagged publication
-workflow.
-
-The accepted release risk is explicit: the published `.pkg` is not installed
-again on a physical Mac for a second VZ guest-shell run after publication. Do
-not claim that missing post-publication combination as evidence; record the
-locally tested candidate SHA and the successful exact-package hosted macOS job.
-
-## Release graph and channel publishing
-
-Read `references/release-graph.md` for the asset manifest and channel graph
-contract, `release-assets.yaml` behavior, the four disjoint CI lanes, and the
-live release activation order. Load it before touching manifest generation,
-channel assembly, or any release workflow's publishing tail.
-
-## Cutting a release
-
-### Release history discipline
-
-Release history is forward-only. Once a commit or tag has been pushed, do not
-amend it, force-push it, or force-move the tag to "save" that release. That
-makes the release harder to audit and can leave CI, GitHub Releases, and local
-checkouts disagreeing about what was actually shipped.
-
-- Never use `git commit --amend`, `git push --force`, `git push --force-with-lease`,
-  `git tag -f`, or a forced tag push for a release that has already left the
-  machine.
-- If an untagged candidate fails qualification, land a normal follow-up commit
-  on top of `main` and requalify that new SHA without minting any tag. If a
-  failure happens after a final tag exists, stamp a new unique version, create
-  a new forward tag, and leave the old tag untouched.
-- Cancel superseded failed CI runs when useful, but leave the historical commit
-  and tag alone. The goal is a clean next release, not rewriting the failed one.
-- Do not reuse a version string or tag name. For the `1.2.{unix_timestamp}`
-  release line, choose a later timestamp and let the old tag remain historical.
-
-### Prepare and remotely qualify an untagged candidate
+`just release-profile nightly code` invokes:
 
 ```bash
-just test
-git push origin HEAD:main
-gh workflow run release-qualification.yaml --ref main \
-  -f "sha=$(git rev-parse HEAD)" -f channel=stable
+capsem-admin release --channel nightly --profile code
 ```
 
-Prepare the version and changelog explicitly, commit the ordinary candidate,
-then run the complete local gate on that clean `HEAD`. It must not create a
-tag, GitHub Release, or channel mutation. Push that ordinary commit, then
-dispatch the canonical Linux qualification workflow. If qualification fails,
-add a normal forward fix commit and qualify the new candidate. Do not mint
-failure tags or stamp a new version merely to obtain another CI attempt.
+The locked profile workflow:
 
-### Mint the immutable tag after qualification
+1. reads the latest nightly source manifest;
+2. resolves and verifies its current package;
+3. builds only the `nightly + code` config, images, inventory, OBOM, evidence,
+   and architecture cohort;
+4. creates an immutable identity containing channel and profile identity;
+5. validates digests, bootability, and the unchanged package pairing;
+6. mutates only the selected profile entry;
+7. deploys immediately when the public package satisfies the profile's
+   declared minimum Capsem version.
 
-```bash
-python3 scripts/check-release-qualification.py \
-  --sha "$(git rev-parse HEAD)" --channel stable
-git tag "v$(sed -n 's/^version = \"\\([^\"]*\\)\"/\\1/p' Cargo.toml | head -1)"
-```
+If the public package is too old, publish the immutable profile artifacts and
+persist the staged source-manifest state, but do not deploy that incompatible
+pairing. Other profiles, channels, packages, and binaries remain untouched.
 
-Tagging performs no stamping and creates no commit. First compare `HEAD` with
-`origin/main`, require a successful completed qualification, and reject
-existing local or remote tag names. Missing, pending, failed, or malformed
-qualification results are hard failures.
+All corporate manifest and profile authoring also goes through `capsem-admin`.
+A corporation owns its manifest and profile definitions, may use the latest
+compatible Capsem package or pin a compatible version, and never builds or
+mutates Capsem-owned binaries or public channels.
 
-### Manual publish
+## Binary release
 
-1. Confirm the release tag does not already exist remotely:
-   `git ls-remote origin "refs/tags/vX.Y.Z"`
-2. Confirm exact-SHA qualification again:
-   `python3 scripts/check-release-qualification.py --sha "$(git rev-parse HEAD)" --channel stable`
-3. Push the immutable tag: `git push origin vX.Y.Z`
-4. Dispatch the one channel workflow:
-   `gh workflow run release.yaml --ref vX.Y.Z -f tag=vX.Y.Z -f channel=stable`
-5. Watch that exact run with `gh run watch --exit-status`.
+`just release-binaries nightly` invokes the checked-in, adversarially tested
+binary release script. The locked binary workflow:
 
-There is deliberately no Just release wrapper. Publication is not a second
-test gate, and hiding tag selection, workflow dispatch, polling, and retry
-semantics behind a large recipe created a fork from the canonical `just test`
-path. Qualification, tag creation, and final workflow dispatch remain explicit.
+1. reads the latest nightly source manifest;
+2. resolves every referenced profile by recorded digest, including compatible
+   staged profiles;
+3. builds only candidate packages, per-binary inventory, host SBOM, and
+   existing attestation evidence;
+4. runs the complete functional suite for every resulting channel profile;
+5. installs the exact native packages and runs binary-update plus
+   profile-then-binary glow-up;
+6. mutates only package, per-binary inventory, host SBOM, and existing
+   attestation fields;
+7. assembles and deploys the completed channel only after every gate passes.
 
-Never reuse or move a tag. Always increment the version number, and always tag
-forward.
+The workflow must never invoke a profile/image builder.
 
-Before candidate qualification, run
-`scripts/check-hardcoded-release-selections.sh` through `just test`. It rejects
-named profile selection in UI/tray/CLI/MCP request paths, one-profile release
-materialization, qualification that is not channel-bound, and native installer
-fallbacks to stable/nightly. Keep the vocabulary list current; it intentionally
-includes `code`, `co-work`, `cowork`, `terminal`, the known `termional` spelling,
-and `gui` so future profile renames cannot bypass the guard during migration.
-This fail-fast guard must remain runnable in clean qualification Linux with
-only Python's standard library; its focused contract deliberately removes
-`rg` from `PATH` so a developer-only search dependency cannot burn another
-full-gate attempt.
+Daily nightly automation calls this same binary command path and queues behind
+other nightly release work. It does not publish on every push. Stable uses the
+same command explicitly and the same quality gates.
 
-### GitHub CLI release control
+## Dependent profile then binary release
 
-Use `gh` as the release control plane:
+When a profile requires new Capsem code:
 
-```bash
-gh auth status
-gh release list --limit 10
-git ls-remote origin "refs/tags/vX.Y.Z"
-git push origin HEAD:main
-git push origin vX.Y.Z
-gh run watch <run-id>
-gh run view <run-id> --json status,conclusion,headSha,url
-gh run view <run-id> --log-failed
-gh release view vX.Y.Z --json name,tagName,isDraft,isPrerelease,assets,url
-```
+1. run `just release-profile <channel> <profile>`;
+2. publish the immutable assets once and withhold the incompatible public
+   channel;
+3. run `just release-binaries <channel>`;
+4. resolve the already-built staged profile by digest;
+5. run the full functional, native install, and glow-up proof over the
+   completed pairing;
+6. activate the channel only after success.
 
-Before pushing a tag, confirm the tag does not already exist remotely and the
-exact candidate qualification succeeded. After pushing, dispatch the selected
-channel and watch package proof and publication to completion. If candidate
-qualification fails, diagnose it with `gh run view --log-failed`, assign a
-named owner, make a forward fix, and requalify without creating any tag. Red is
-stop-the-line: do not merge over it and do not blindly retry an unchanged SHA.
-A failure after tagging still requires a new forward version and tag; never
-move the old tag.
+Neither artifact family is rebuilt twice.
 
-## CI pipelines
+## Evidence and integrity
 
-Candidate qualification is dispatched with `{sha}` before a tag exists:
+The manifest defines channel membership, profiles, compatibility bounds,
+packages, binaries, and integrity digests. SBOM, OBOM, existing attestations,
+and GitHub workflow logs are the release evidence. Do not add another
+provenance or approval document.
 
-```
-release-qualification.yaml: exact untagged SHA ──> just test
+Profiles belong to channels. A profile may appear in several channels, one
+channel, or no public channel; each channel/profile publication is independent.
+Every immutable config, image, evidence, and revision path must include enough
+channel/profile identity to prevent stable and nightly from aliasing bytes.
 
-release.yaml: verified tag/SHA/qualification ──> build-app-macos (exact .pkg install) ──┐
-                                         └─────> build-app-linux (exact .deb installs) ─┴──> create-release
-                                               create-release + channel preview ──> verify public candidate ──> advance channel
-```
+Public graph rules:
 
-| Job | Runner | Needs | Purpose |
-|-----|--------|-------|---------|
-| `qualification` | ubuntu-24.04 | -- | Exact-SHA canonical `just test`, read-only and untagged |
-| `preflight` | macos-14 | -- | Verify tag identity, exact qualification, Apple cert, Tauri key, notarization |
-| `build-app-macos` | macos-14 | preflight | Build, sign, notarize, staple, Gatekeeper-check, install, and verify exact `.pkg` |
-| `build-app-linux` | ubuntu arm64 + x86_64 | preflight | Build `.deb` packages, install and verify each exact artifact, and prove a guest shell on KVM |
-| `create-release` | ubuntu-latest | build-app-macos, build-app-linux | Publish the install-tested `.pkg`, mandatory `.deb` files, and host SBOM |
-| `verify-release-candidate` | ubuntu-24.04 | create-release, assemble-release-channel | Verify public package URLs, SHA-256/BLAKE3, and `install.sh` against the candidate manifest |
-| `deploy-release-channel` | reusable | verify-release-candidate | Advance the user-discoverable channel only after candidate verification |
+- release graphs and local asset manifests are generated through
+  `capsem-admin manifest generate`;
+- packages are delivery containers;
+- per-binary inventory stays under its owning package;
+- profiles own config, images, inventory, OBOM, evidence, and their minimum
+  compatible Capsem version;
+- mutable channel pointers use
+  `Cache-Control: no-cache, must-revalidate`;
+- immutable artifacts use
+  `Cache-Control: public, max-age=31536000, immutable`;
+- every fetched artifact is verified by recorded digest before use.
 
-The qualification job completes once, then the platform builds and exact
-artifact install gates fan out. A public GitHub Release is inert package
-storage until `release.capsem.org` points clients at it; draft assets cannot be
-verified through public download URLs. Create the public storage release,
-verify every candidate URL and installer selection, and advance the channel as
-the final publish moment. Never advance the channel from a failed or unverified
-candidate.
+Read `references/release-graph.md` before changing graph generation or channel
+deployment.
 
+## Native installation and platform gates
 
-### CI invariants (hard-won lessons)
+Native installation is a functional outcome, not a file-existence check:
 
-Read `references/ci-invariants.md` before editing any release workflow. It
-holds the Ironbank local/CI parity rule (every portable release gate must be
-owned by `just test`) and every burned-release lesson: AppImage's 14 failed
-releases, Xcode pinning, musl toolchain flags, platform gating, cdxgen
-pinning, Docker prune races, disk-capacity staging, and more. Skipping it
-repeats releases that already failed once.
+- macOS CI builds the publishable `.pkg`, signs, notarizes, staples,
+  Gatekeeper-checks, installs that exact package, verifies the full binary
+  cohort and service, and preserves the local Apple VZ proof boundary;
+- Linux CI builds every required `.deb`, installs each host-native exact
+  package, verifies package metadata, binaries, service, and command behavior,
+  and runs the mandatory guest shell where KVM is available;
+- publication depends on both platform rails;
+- skipped, optional, source-layout-only, or inspect-only checks do not count;
+- `scripts/verify-installed-release.py` verifies the exact installed manifest,
+  metadata sidecar, profile readiness, package version, and update state;
+- the stateful glow-up proves binary-only, profile-only,
+  profile-then-binary, channel switching, tamper rejection, and preservation
+  of the previous working state, with Winterfell and full doctor after
+  transitions.
 
+GitHub-hosted macOS cannot repeat nested Apple Virtualization.framework guest
+boot. Local Apple Silicon `just test` owns that VZ proof. Hosted macOS owns
+signing, notarization, stapling, installation, and structural verification of
+the final publishable package. Neither substitutes for the other.
 
-| Gate | What |
-|------|------|
-| Unit tests | `cargo llvm-cov` with coverage |
-| Cross-compile | capsem-agent for aarch64 + x86_64 musl |
-| Frontend | `pnpm run check && pnpm run build` |
-| capsem-doctor | Boot VM, run full diagnostic suite |
-| Integration | Boot VM, exercise all 6 telemetry pipelines |
-| Benchmark | Boot VM, run capsem-bench |
+The installed source of truth remains the exact verified
+`assets/manifest.json`, byte-for-byte. Installation and update code must not
+rewrite it into a reduced runtime schema. The only metadata sidecar is
+`assets/manifest-metadata.json` with schema
+`capsem.manifest_metadata.v1`; do not create a separate origin file. Runtime
+adapters may derive an in-memory boot view. `GET /system/status` returns that
+manifest, metadata, readiness, corporate state, and update comparison. CLI and
+UI consume the same status contract; the UI must not synthesize publication
+state.
 
+Read `references/apple-signing.md` when touching signing, notarization,
+certificates, Tauri keys, or Apple agreements. Read
+`references/post-release-verification.md` after any public deployment.
 
-## Apple code signing and CI secrets
+## Failure and retry discipline
 
-Read `references/apple-signing.md` when touching signing, notarization, the
-p12 certificate, release secrets, or Cloudflare release-channel prerequisites.
-The p12 legacy-3DES gotcha and the Apple agreement 403 playbook live there.
+- A red gate stops publication.
+- Fix forward with a normal commit; never move a published tag or rewrite
+  public release history.
+- Do not blindly rerun unchanged work when the failure is deterministic.
+- Preserve the previous public channel and installed working pair on any
+  artifact, compatibility, tamper, test, or deployment failure.
+- Treat disk, runtime, and runner capacity as tested release resources.
+- Keep expensive artifact staging hardlink-first on the same-filesystem, with
+  a tested cross-filesystem copy fallback and constrained-disk regression.
+- Keep the clean-environment bootstrap proof before expensive work, while
+  retaining the full installer E2E later.
 
-## Post-release verification
+Read `references/ci-invariants.md` before editing release workflows. It carries
+the platform, toolchain, scanner, disk, Docker, package, and runner lessons
+learned from prior failures.
 
-Read `references/post-release-verification.md` after any publication: public
-package verification, the stateful glow-up, the two-cohort binary transition
-proof, and the demo-facing macOS installer proof.
+## Release-channel Cloudflare prerequisites
 
+Before running a live binary or profile channel deploy, verify the Cloudflare
+Pages project serving `release.capsem.org`, its `release.capsem.org` custom
+domain, and both `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN`.
+After deployment, run `scripts/check-release-site-contract.py`; it validates
+BLAKE3/SHA-256 content, graph agreement, attestation references, and cache
+headers rather than only checking that files exist.
 
-The product website uses Astro Starlight. Docs live in `docs/src/content/docs/`.
+## Documentation, changelog, and versions
 
-### Writing style
-Tight and to the point. One topic per page. Tables over prose for configs and test cases. No filler.
+Documentation and marketing deploy independently from binary/profile release
+rails. Their builds remain mandatory source gates.
 
-### Structure
-- `docs/src/content/docs/<category>/<topic>.md`
-- Categories: `security/`, `testing/`, `releases/`, `architecture/`
-- Frontmatter: `title` and `description` required. `sidebar: { order: N }` for ordering.
+Keep user-visible changes under `## [Unreleased]` in `CHANGELOG.md`. Historical
+entries describe past behavior and are not normative release instructions.
 
-### Release pages
-- Path: `docs/src/content/docs/releases/<major>-<minor>.md` (hyphens, not dots)
-- Each page consolidates all patch releases for that minor
-- Higher `sidebar.order` = newer = listed first
+Binary and profile versions are orthogonal:
 
-### Dev workflow
-```bash
-cd site && pnpm run dev     # localhost:4321
-cd site && pnpm run build   # Production build
-```
+- binary: the Capsem package/application version;
+- profile: the immutable channel/profile publication identity derived and
+  authored by `capsem-admin`.
 
-### Keep docs in sync
-When features change (settings, CLI flags, MCP tools, security invariants, benchmarks), update the corresponding doc page. When cutting a new minor, create a new release page.
+Do not infer that a profile change requires a binary rebuild, or that a binary
+change requires rebuilding any profile.
 
-### Update benchmarks before release
+## Commit discipline
 
-Run the host-side benchmarks to generate versioned data files and update the results page:
-
-```bash
-# Generate benchmarks/fork/data_{version}.json and benchmarks/lifecycle/data_{version}.json
-uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs
-
-# Update docs/src/content/docs/benchmarks/results.md with new numbers
-# (manual -- copy from the benchmark summary tables)
-```
-
-Benchmark data files in `benchmarks/` are committed to git for historical tracking. The `test_fork_benchmark` gates ensure fork stays under 500ms and images under 12MB -- these must pass before release.
-
-## Changelog
-
-Keep a Changelog format in `CHANGELOG.md`. Every user-visible change gets an
-entry under `## [Unreleased]` using the standard added, changed, deprecated,
-removed, fixed, and security groups.
-
-## Versioning
-
-Binary and asset versions are **orthogonal**:
-
-- **Binary**: `1.3.{unix_timestamp}` for the current release line. Select it
-  before committing and qualifying the candidate; tagging never changes it.
-  Set `CAPSEM_RELEASE_VERSION=x.y.z` when an exact preselected stamp is needed.
-- **Assets**: `YYYY.MMDD.patch` -- derived by `capsem-admin manifest generate` from the build date
-
-Three files hold the binary version (kept in sync by `_stamp-version`): `Cargo.toml` (workspace), `crates/capsem-app/tauri.conf.json`, `pyproject.toml`.
-
-The v2 manifest links them via `min_binary` (oldest binary for these assets) and `min_assets` (oldest assets for this binary). See `/asset-pipeline` for manifest format.
-
-## Commits
-
-1. Include `CHANGELOG.md` update in the same commit
-2. Stage files explicitly (no `git add -A`)
-3. Conventional messages: `feat:`, `fix:`, `chore:`, `docs:`
-4. Author: Elie Bursztein <github@elie.net>
-5. No `Co-Authored-By` trailers
-6. Never stage private release material (`private/`, `capsem-private.zip`,
-   `graphics.zip`, certificates, keys, tokens, or local-only demo credentials)
+1. Include the appropriate `CHANGELOG.md` entry for user-visible changes.
+2. Stage files explicitly.
+3. Use conventional commit subjects.
+4. Never stage private release material, certificates, keys, tokens, or
+   local-only credentials.

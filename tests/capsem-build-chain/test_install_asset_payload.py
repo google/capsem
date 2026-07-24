@@ -5,6 +5,7 @@ import importlib.util
 import os
 import re
 import subprocess
+import sys
 import tomllib
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -39,7 +40,12 @@ def _just_recipe_block(name: str) -> str:
             break
     block = "\n".join(lines[start:end])
     if name == "test:":
-        block = f"{block}\n{_just_recipe_block('_test-candidate:')}"
+        block = (
+            f"{block}\n{_just_recipe_block('_test-candidate:')}"
+            f"\n{_just_recipe_block('_test-candidate-run:')}"
+        )
+    elif name == "_test-candidate:":
+        block = f"{block}\n{_just_recipe_block('_test-candidate-run:')}"
     return block
 
 
@@ -63,7 +69,12 @@ def _load_local_release_glowup() -> ModuleType:
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    scripts_path = str(PROJECT_ROOT / "scripts")
+    sys.path.insert(0, scripts_path)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(scripts_path)
     return module
 
 
@@ -340,17 +351,16 @@ def test_systemd_install_image_cannot_flush_host_binfmt_registrations() -> None:
     assert "systemd install container removed Colima's Rosetta binfmt registration" in install_gate
 
 
-def test_release_qualification_requires_exact_linux_deb_proof() -> None:
-    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release-qualification.yaml").read_text()
+def test_binary_release_requires_exact_linux_deb_proof() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
 
-    assert 'CAPSEM_REQUIRE_LINUX_DEB_PROOF: "1"' in workflow
-    assert "runs-on: ubuntu-24.04" in workflow
-    assert "platforms: arm64" in workflow
-    assert (
-        "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json"
-        in workflow
-    )
-    assert "CAPSEM_INSTALL_CHANNEL: ${{ inputs.channel }}" in workflow
+    assert "build-app-linux:" in workflow
+    assert "runs-on: ${{ matrix.runner }}" in workflow
+    assert "sudo dpkg -i target/release/bundle/deb/*.deb" in workflow
+    assert "scripts/verify-installed-release.py" in workflow
+    assert "scripts/prove-installed-shell.py" in workflow
+    assert "just _test-functional" in workflow
+    assert "just _test-glowup" in workflow
 
 
 def test_linux_deb_proof_selector_requires_only_the_native_package() -> None:
@@ -1626,17 +1636,17 @@ def test_linux_postinstall_prints_service_journal_on_readiness_failure() -> None
 
 def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
-    qualification = (
-        PROJECT_ROOT / ".github" / "workflows" / "release-qualification.yaml"
-    ).read_text()
 
     assert "  build-assets:" not in workflow
     assert "vm-assets-" not in workflow
     assert "assets/current" not in workflow
     assert """echo '{"releases":{}}'""" not in workflow
-    assert "Complete canonical release gate (just test)" in qualification
     assert "run: just test" not in workflow
-    assert "scripts/check-release-qualification.py" in workflow
+    assert "Fetch latest selected channel source manifest" in workflow
+    assert "Fetch selected channel manifest and profiles" in workflow
+    assert "just _test-artifacts" in workflow
+    assert "just _test-functional" in workflow
+    assert "just _test-glowup" in workflow
     assert "just _build-kernel" not in workflow
     assert "just _build-rootfs" not in workflow
     assert "RELEASE_CHANNEL: ${{ inputs.channel }}" in workflow

@@ -35,13 +35,12 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     assert "Attest VM asset provenance" in asset_workflow
     assert "actions/attest-build-provenance@" in asset_workflow
     assert (
-        "if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}"
+        "if: ${{ inputs.dry_run == false && steps.profile-delta.outputs.changed == 'true' }}"
         in asset_workflow
     )
-    assert "target/asset-release/assets-v*/*-vmlinuz" in asset_workflow
-    assert "target/asset-release/assets-v*/*-initrd.img" in asset_workflow
-    assert "target/asset-release/assets-v*/*-rootfs.erofs" in asset_workflow
-    assert "target/asset-release/assets-v*/*-obom.cdx.json" in asset_workflow
+    assert "scripts/stage-profile-publication.py" in asset_workflow
+    assert "scripts/verify-profile-publication.py" in asset_workflow
+    assert "subject-path: target/asset-release/profile-*/*" in asset_workflow
     assert asset_workflow.index("Publish immutable GitHub asset release") < asset_workflow.index(
         "Attest VM asset provenance"
     )

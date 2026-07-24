@@ -337,5 +337,5 @@ def test_public_release_dispatch_recipe_is_gone() -> None:
 
     assert '\nrelease tag="" channel="stable":' not in f"\n{justfile}"
     assert "    release " not in listed
-    assert "qualify-release" not in listed
-    assert "cut-release" not in listed
+    assert "release-binaries" in listed
+    assert "release-profile" in listed

@@ -81,14 +81,20 @@ gh run download <run-id> -n test-artifacts-macOS-1
 - **Infra flake** (runner died, network timeout, artifact upload hiccup):
   one rerun, after writing the diagnosis. Second failure = not a flake.
 
-## Release CI is different
+## Release CI is orthogonal
 
-Release evidence rules are stricter and live in `AGENTS.md` and
-`/release-process`: only the successful remote `release-qualification.yaml`
-run on the exact candidate SHA counts. A green local run, a nearby commit's
-green run, or an agent's claim of passing tests is never release evidence.
-Do not rerun the qualification gate for the same candidate; a failed
-candidate gets forward fixes and a fresh qualification.
+Release rules live in `AGENTS.md`, `tmp/release-spec.md`, and
+`/release-process`.
+
+- `just test` is the complete local all-artifact proof.
+- Binary CI builds packages only, pulls every selected profile, and runs the
+  shared complete modules against that resolved pairing.
+- Profile CI builds one channel/profile only, pulls the current package, and
+  runs the same modules against that resolved pairing.
+- Both entry workflows use the identical `capsem-release-${channel}` lock.
+- No pairing becomes public without complete functional and glow-up proof.
+- Diagnose and fix a failed lane forward; never bypass or selectively rerun
+  away a failed required module.
 
 ## Editing workflows
 

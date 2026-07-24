@@ -3,7 +3,7 @@
 
 This guard intentionally uses only the Python standard library. It runs before
 Capsem's expensive test stages and therefore must work in the same clean Linux
-environment as release qualification without assuming developer tools such as
+release environment without assuming developer tools such as
 ripgrep are installed.
 """
 
@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from collections.abc import Iterable
 from pathlib import Path
@@ -94,12 +95,6 @@ if configured_profiles != embedded_profiles:
     failed = True
 
 reject_matches(
-    "release packaging materializes one named profile instead of the catalog",
-    rf"--profile\s+\S*{PROFILE_TERMS}",
-    ".github/workflows/release.yaml",
-)
-
-reject_matches(
     "workflow input silently defaults a profile or public release channel",
     rf"(?:channel|asset_channel|profile):\s*\n(?:[^\n]*\n){{0,8}}"
     rf"\s*default:\s*(?:{PROFILE_TERMS}|stable|nightly)\s*\n",
@@ -107,9 +102,9 @@ reject_matches(
 )
 
 reject_matches(
-    "release qualification hardcodes stable/nightly instead of its channel input",
-    r"CAPSEM_INSTALL_(?:MANIFEST_URL|CHANNEL):.*(?:stable|nightly)",
-    ".github/workflows/release-qualification.yaml",
+    "binary release packaging materializes one named profile instead of the selected channel catalog",
+    rf"--profile\s+\S*{PROFILE_TERMS}",
+    ".github/workflows/release.yaml",
 )
 
 reject_matches(
@@ -145,12 +140,6 @@ reject_matches(
 )
 
 reject_matches(
-    "release qualification bypasses installed manifest-metadata provenance",
-    r"CAPSEM_RELEASE_(?:MANIFEST|HEALTH)_URL=",
-    ".github/workflows/release-qualification.yaml",
-)
-
-reject_matches(
     "installed update test bypasses manifest-metadata provenance",
     r"['\"]CAPSEM_RELEASE_(?:MANIFEST|HEALTH)_URL['\"]\s*:",
     "tests/capsem-install",
@@ -182,16 +171,121 @@ reject_matches(
     "crates/capsem/src/update.rs",
 )
 
-qualification_paths = ("justfile", ".github/workflows/release.yaml")
-missing_channel: list[str] = []
-for path in source_files(qualification_paths):
-    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-        if "check-release-qualification.py" in line and "--channel" not in line:
-            missing_channel.append(f"{path.relative_to(ROOT)}:{line_number}:{line}")
-if missing_channel:
-    print("ERROR: release qualification check is not bound to an explicit channel", file=sys.stderr)
-    print("\n".join(missing_channel), file=sys.stderr)
+def repository_files() -> Iterable[Path]:
+    """Yield tracked and non-ignored untracked files without requiring rg."""
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-co", "--exclude-standard", "-z"],
+            check=True,
+            capture_output=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        ignored_parts = {".astro", ".git", ".venv", "dist", "node_modules", "target"}
+        yield from (
+            path
+            for path in ROOT.rglob("*")
+            if path.is_file()
+            and not ignored_parts.intersection(path.relative_to(ROOT).parts)
+            and not any(
+                part.startswith(".sprinty") for part in path.relative_to(ROOT).parts
+            )
+        )
+        return
+
+    for raw in result.stdout.split(b"\0"):
+        if raw:
+            path = ROOT / os.fsdecode(raw)
+            relative = path.relative_to(ROOT)
+            if any(part.startswith(".sprinty") for part in relative.parts):
+                continue
+            if any(part in {".astro", "dist", "node_modules", "target"} for part in relative.parts):
+                continue
+            if path.is_file():
+                yield path
+
+
+retired_markers = (
+    "release-" + "qualification.yaml",
+    "check-release-" + "qualification.py",
+    "qualify-" + "release",
+    "cut-" + "release",
+)
+retired_sha_pattern = re.compile(r"\bexact[- ]" + r"SHA\b", re.IGNORECASE)
+resurrected: list[str] = []
+for path in repository_files():
+    relative = path.relative_to(ROOT)
+    if relative.as_posix() == "CHANGELOG.md":
+        continue
+    data = path.read_bytes()
+    if b"\0" in data:
+        continue
+    contents = data.decode("utf-8", errors="replace")
+    for marker in retired_markers:
+        if marker in contents:
+            line = contents.count("\n", 0, contents.index(marker)) + 1
+            resurrected.append(f"{relative}:{line}:{marker}")
+    match = retired_sha_pattern.search(contents)
+    if match:
+        line = contents.count("\n", 0, match.start()) + 1
+        resurrected.append(f"{relative}:{line}:{match.group(0)}")
+
+if resurrected:
+    print("ERROR: retired independent release doctrine was reintroduced", file=sys.stderr)
+    print("\n".join(resurrected), file=sys.stderr)
     failed = True
+
+
+release_workflows = [
+    ROOT / ".github/workflows/release.yaml",
+    ROOT / ".github/workflows/release-assets.yaml",
+]
+expected_group = "group: capsem-release-${{ inputs.channel }}"
+for workflow in release_workflows:
+    contents = workflow.read_text(encoding="utf-8")
+    if expected_group not in contents or "cancel-in-progress: false" not in contents:
+        print(
+            f"ERROR: {workflow.relative_to(ROOT)} does not use the shared per-channel release lock",
+            file=sys.stderr,
+        )
+        failed = True
+
+allowed_writers = {path.resolve() for path in release_workflows}
+writer_markers = (
+    "stage-profile-publication.py",
+    "capsem-admin -- release",
+    "gh release upload \"$RELEASE_TAG\" \"$named\"",
+)
+for workflow in (ROOT / ".github/workflows").glob("*.yaml"):
+    if workflow.resolve() in allowed_writers:
+        continue
+    contents = workflow.read_text(encoding="utf-8")
+    if any(marker in contents for marker in writer_markers):
+        print(
+            f"ERROR: production source-manifest writer outside serialized release workflows: "
+            f"{workflow.relative_to(ROOT)}",
+            file=sys.stderr,
+        )
+        failed = True
+
+deploy_call = "uses: ./.github/workflows/release-channel.yaml"
+for workflow in (ROOT / ".github/workflows").glob("*.yaml"):
+    contents = workflow.read_text(encoding="utf-8")
+    if deploy_call not in contents or workflow.resolve() in allowed_writers:
+        continue
+    if workflow.name != "release-channel-staging.yaml":
+        print(
+            f"ERROR: production deploy caller outside serialized release workflows: "
+            f"{workflow.relative_to(ROOT)}",
+            file=sys.stderr,
+        )
+        failed = True
+    elif (
+        "deploy_branch: ${{ inputs.deploy_branch }}" not in contents
+        or "validate_complete_public_channels: false" not in contents
+    ):
+        print("ERROR: release-channel staging caller is not constrained to preview mode", file=sys.stderr)
+        failed = True
 
 if failed:
     raise SystemExit(1)

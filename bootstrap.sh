@@ -198,7 +198,7 @@ fi
 
 # Bootstrap owns the one-time OCI pull and proves the VM really boots. Doctor
 # repeats the clone/boot/SSH proof from the cache and fails if the base is
-# missing, so release qualification never discovers a dead Tart setup late.
+# missing, so the complete local release gate never discovers a dead Tart setup late.
 if [ "$(uname -s)" = "Darwin" ] \
     && command -v tart >/dev/null 2>&1 \
     && command -v sshpass >/dev/null 2>&1; then

@@ -25,17 +25,19 @@ allowlist update in the same change.
 | `just logs [sandbox-id\|failure]` | Tail service logs, show a sandbox log, or list the latest preserved failure evidence. |
 | `just doctor [fix]` | Validate host tools, Docker/Colima, Tart cache/boot/SSH, signing, and assets. |
 | `just smoke` | Focused integration gate. |
-| `just test` | The only complete release-qualification gate. |
+| `just test` | Complete local all-artifact construction and test proof. |
+| `just release-binaries <channel>` | Build and release only packages for one channel, testing them against pulled profiles. |
+| `just release-profile <channel> <profile>` | Call `capsem-admin release` for one profile, testing it against the pulled package. |
 
-`just --summary` must print only those 11 names.
+`just --summary` must print only those 13 names.
 
 ## What does not belong in Just
 
 - No `test-*` public recipes. Focused tests run their native command directly;
   only `smoke` and `test` are public.
-- No `prepare-release`, `qualify-release`, `cut-release`, or `release` recipe.
-  Release orchestration belongs to the checked-in workflows and exact
-  qualification checks. `just test` owns qualification.
+- No generic or combined release recipe. The two approved release commands
+  each delegate to one checked-in implementation and the two workflows share
+  the per-channel lock.
 - No dependency-update, fixture-update, audit-only, coverage-only, benchmark,
   cleanup, session-SQL, or package-install convenience recipes. Call the owning
   script/tool directly.
@@ -64,7 +66,11 @@ branching, reporting, cleanup, or resource ownership.
   on the installed executable payload, and physical Apple VZ boot from that
   exact package.
 
-Do not fork or approximate this graph in another public recipe.
+Release CI calls the checked-in `_test-static`, `_test-artifacts`,
+`_test-functional`, `_test-glowup`, and `_test-release-contracts` modules.
+Binary CI builds packages and pulls profiles; profile CI builds one profile and
+pulls packages. Both retain complete functional and glow-up proof before
+activation. Do not fork or approximate this graph in another public recipe.
 Local qualification must not import, unlock, or use Apple Developer
 certificates. Developer ID package signing, notarization, and stapling belong
 only to the tagged publication workflow.

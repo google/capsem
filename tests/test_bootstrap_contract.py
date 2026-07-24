@@ -100,16 +100,16 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
         assert command in web_gate
 
 
-def test_exact_sha_release_qualification_uses_fail_closed_workspace_clippy_gate() -> None:
-    workflow = _read(".github/workflows/release-qualification.yaml")
-    tagged_workflow = _read(".github/workflows/release.yaml")
+def test_both_release_lanes_reuse_fail_closed_static_module() -> None:
+    binary_workflow = _read(".github/workflows/release.yaml")
+    profile_workflow = _read(".github/workflows/release-assets.yaml")
     just = _read("justfile")
 
-    assert "run: just test" in workflow
-    assert "run: just test" not in tagged_workflow
-    assert "scripts/check-release-qualification.py" in tagged_workflow
+    assert "just _test-static" in binary_workflow
+    assert "just _test-static" in profile_workflow
+    assert "run: just test" not in binary_workflow
+    assert "run: just test" not in profile_workflow
     assert "cargo clippy --workspace --all-targets -- -D warnings" in just
-    assert "run: cargo check --workspace" not in workflow
 
 
 def test_frontend_release_gate_is_owned_by_the_canonical_test() -> None:

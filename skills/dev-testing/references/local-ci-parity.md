@@ -7,11 +7,12 @@ Reference for /dev-testing: every portable release gate must be owned by just te
 ### Ironbank parity rule
 
 The Ironbank parity rule is that every portable release gate must be owned by
-`just test`. A release candidate is not qualified until the complete
-`just test` passes locally and exact-SHA CI runs that same recipe successfully.
-Specialized CI jobs may provide faster feedback or platform evidence, but they
-must call the same checked-in recipe or script already exercised by
-`just test`; they cannot be the only owner of a portable requirement.
+`just test`. Local development rebuilds every package and every profile, then
+runs the complete gate. Release CI calls the same checked-in modules while
+building only the lane-owned artifact family and resolving the unchanged
+family from the selected channel manifest. Specialized CI jobs may provide
+faster feedback or platform evidence, but they cannot be the only owner of a
+portable requirement.
 
 Treat `just test` as a strict superset, not merely a collection of similar
 assertions. Anything a CI workflow builds locally-portably must be built and
@@ -43,17 +44,17 @@ explicit host-native `--platform`; otherwise an arm64 guest build on x86 CI can
 silently run `mkfs.erofs` under QEMU, while a Mac may exercise a different path.
 Test the x86_64/amd64 and arm64/aarch64 host aliases and reject unknown hosts.
 Capture verbose successful helper output so per-file progress cannot starve a
-runner. A qualification runner blackout during an expensive tool is a missing
+runner. A release runner blackout during an expensive tool is a missing
 local/CI resource contract, not permission to rerun unchanged.
 
 Run `scripts/check-hardcoded-release-selections.sh` at the start of `just test`.
 This source guard is a release contract, not a style check: user-facing and
 profile-scoped requests must obtain profile ids from arguments or the installed
 catalog, package rails must materialize the catalog, native installers must use
-packaged manifest metadata without a stable/nightly fallback, and exact-SHA
-qualification must also match the requested channel. Extend the guarded profile
-terms during renames; keep `code`, `co-work`, `cowork`, `terminal`, `termional`,
-and `gui` until every migration path is complete.
+packaged manifest metadata without a stable/nightly fallback, and both release
+commands must bind selection to explicit channel/profile inputs. Extend the
+guarded profile terms during renames; keep `code`, `co-work`, `cowork`,
+`terminal`, `termional`, and `gui` until every migration path is complete.
 Because it runs before the expensive test stages, the guard must use only
 declared bootstrap dependencies. Its scanner is Python-standard-library
 only and has an executable regression with `rg` absent; never reintroduce a
@@ -78,8 +79,8 @@ checked-in profile for arm64 and x86_64 through `just _build-kernel` and
 `just _build-rootfs`, validates the release payload and manifest, and boots each
 host-architecture result to a real guest-shell marker. Truly non-portable
 boundaries remain explicit final gates: Apple signing/notarization, hosted KVM,
-and Cloudflare publication. Apple VZ is proven by the complete local gate on
-the exact clean candidate before qualification.
+and Cloudflare publication. Apple VZ is proven by the complete local gate over
+the recorded local source state.
 
 Every portable release-critical CI path must be executable locally through the
 same production entrypoint. Do not create a local lookalike that merely checks
@@ -157,8 +158,8 @@ clock primitive.
 
 When an unavoidable platform boundary prevents local execution, name it in the
 release skill and retain the nearest deterministic local proof. Hardware and
-external-service gates still require exact-SHA CI evidence. macOS VZ behavior
-requires the complete local `just test` on the exact clean candidate, while
-hosted CI owns final package signing, notarization, installation, and
-structural verification. Never silently omit either gate because one
-environment cannot run the other environment's proof.
+external-service gates still require evidence from their owning release job.
+macOS VZ behavior requires the complete local `just test`, while hosted CI owns
+final package signing, notarization, installation, and structural verification.
+Never silently omit either gate because one environment cannot run the other
+environment's proof.

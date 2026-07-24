@@ -79,7 +79,7 @@ def test_discovery_symlink_points_at_canonical_skills(root: str) -> None:
 def test_index_files_carry_the_common_contract_pointer(index_file: str) -> None:
     text = (PROJECT_ROOT / index_file).read_text(encoding="utf-8")
     assert "AGENTS.md" in text, f"{index_file} must point at AGENTS.md"
-    for marker in ("release-qualification.yaml", "capsem-logger"):
+    for marker in ("release-binaries", "release-profile", "capsem-logger"):
         assert marker in text, (
             f"{index_file} must summarize the {marker} hard contract in its "
             "AGENTS.md pointer so every agent sees it without a second read"
