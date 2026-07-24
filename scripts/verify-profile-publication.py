@@ -26,6 +26,22 @@ def verify_profile_publication(
     profile = profiles[profile_id]
     if not isinstance(profile, dict):
         raise ValueError(f"source manifest profile {profile_id!r} is malformed")
+    channel = manifest.get("channel")
+    revision = profile.get("revision")
+    if not isinstance(channel, str) or not channel:
+        raise ValueError("source manifest has no channel")
+    if profile.get("id") != profile_id:
+        raise ValueError(f"source manifest profile key does not match {profile_id!r}")
+    if not isinstance(revision, str) or not revision:
+        raise ValueError(f"source manifest profile {profile_id!r} has no revision")
+    parsed = urlparse(publication_base)
+    identity = parsed.path.rstrip("/").rsplit("/", maxsplit=1)[-1]
+    expected_identity = f"profile-{channel}-{profile_id}-{revision}"
+    if identity != expected_identity:
+        raise ValueError(
+            "immutable profile publication base does not match the "
+            f"channel/profile/revision identity {expected_identity}"
+        )
     base = publication_base.rstrip("/") + "/"
     expected: set[Path] = set()
     seen_urls: set[str] = set()
@@ -83,7 +99,6 @@ def verify_profile_publication(
         raise ValueError(
             f"immutable profile release file set mismatch: extra={extra}, missing={missing}"
         )
-    parsed = urlparse(publication_base)
     if parsed.scheme != "https" or not parsed.netloc:
         raise ValueError("immutable profile publication base must be HTTPS")
     return expected

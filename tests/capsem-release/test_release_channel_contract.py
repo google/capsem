@@ -674,10 +674,9 @@ def test_release_channel_contract_rejects_swapped_manifest(
     manifest = json.loads(manifest_path.read_text())
     profile = next(iter(manifest["profiles"].values()))
     image = profile["architectures"][0]
-    asset_version = image["image_revision"]
     image["images"][0]["url"] = image["images"][0]["url"].replace(
-        f"/assets/releases/{asset_version}/",
-        "/assets/releases/2030.0101.1/",
+        "/profiles/releases/stable/",
+        "/profiles/releases/nightly/",
     )
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 

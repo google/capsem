@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   owned profile namespaces, and rejection of first-party or package writes.
 
 ### Changed
+- Channel-qualified immutable profile config, image, inventory, and evidence
+  paths so the same profile revision in different channels cannot alias bytes.
 - Replaced the retired independent release gate with serialized orthogonal
   binary/profile lanes that reuse the unchanged artifact family, call the same
   complete test modules as local `just test`, and expose only

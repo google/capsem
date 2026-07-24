@@ -125,12 +125,27 @@ def materialize_manifest_profile_files(
 ) -> int:
     written = 0
     seen: dict[str, bytes] = {}
-    for profile in manifest.get("profiles", {}).values():
+    channel = manifest.get("channel")
+    if not isinstance(channel, str) or not channel:
+        raise SystemExit("profile manifest missing channel")
+    for profile_id, profile in manifest.get("profiles", {}).items():
         if not isinstance(profile, dict):
             continue
+        if profile.get("id") != profile_id:
+            raise SystemExit(
+                f"profile key {profile_id!r} does not match embedded profile id"
+            )
+        revision = profile.get("revision")
+        if not isinstance(revision, str) or not revision:
+            raise SystemExit(f"profile {profile_id} missing revision")
+        profile_prefix = f"/profiles/releases/{channel}/{profile_id}/{revision}/"
         for architecture in profile.get("architectures", []):
             if not isinstance(architecture, dict):
                 continue
+            arch = architecture.get("architecture")
+            if not isinstance(arch, str) or not arch:
+                raise SystemExit(f"profile {profile_id} architecture missing name")
+            architecture_prefix = f"{profile_prefix}{arch}/"
             for item in architecture.get("config", []):
                 if not isinstance(item, dict):
                     continue
@@ -138,6 +153,11 @@ def materialize_manifest_profile_files(
                 source_path = item.get("path")
                 if not isinstance(url, str) or not url.startswith("/profiles/releases/"):
                     continue
+                if not url.startswith(architecture_prefix):
+                    raise SystemExit(
+                        f"profile config {url} is not channel-qualified as "
+                        f"{channel}/{profile_id}/{revision}/{arch}"
+                    )
                 if not isinstance(source_path, str) or not source_path:
                     raise SystemExit(f"profile config {url} missing source path")
                 source_bytes = read_source(

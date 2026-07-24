@@ -285,8 +285,10 @@ def test_profile_software_inventory_is_complete_and_hashed(
                 assert isinstance(package["source"], str), context
                 assert package["architecture"] == arch, context
                 assert isinstance(package["evidence"], str), context
-                assert package["evidence"].startswith("/assets/releases/"), context
-                assert package["evidence"].endswith("-software-inventory.json"), context
+                assert package["evidence"].startswith(
+                    f"/profiles/releases/{CHANNEL}/{profile_id}/"
+                ), context
+                assert package["evidence"].endswith("/software-inventory.json"), context
                 assert set(package["digest"]) == {"sha256", "blake3"}, context
                 _assert_no_hmac(package, context)
                 for digest_name, digest_value in package["digest"].items():

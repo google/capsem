@@ -59,6 +59,8 @@ def _publication(tmp_path: Path) -> tuple[Path, Path, str]:
         "packages": [],
         "profiles": {
             "code": {
+                "id": "code",
+                "revision": "r1",
                 "architectures": [
                     {
                         "architecture": "x86_64",
@@ -124,6 +126,8 @@ def test_profile_publication_stages_only_manifest_described_inputs(
         "packages": [],
         "profiles": {
             "code": {
+                "id": "code",
+                "revision": "r1",
                 "architectures": [
                     {
                         "architecture": "x86_64",

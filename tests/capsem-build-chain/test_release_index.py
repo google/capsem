@@ -507,9 +507,18 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "Architecture x86_64" in profile_html
     assert "Profile Evidence" in profile_html
     assert "ABOM" in profile_html
-    assert "/assets/releases/2030.0101.1/arm64-rootfs.erofs" in profile_html
-    assert "/assets/releases/2030.0101.1/arm64-obom.cdx.json" in profile_html
-    assert "/assets/releases/2030.0101.1/x86_64-rootfs.erofs" in profile_html
+    assert (
+        "/profiles/releases/stable/code/profiles-2030.0101.1/"
+        "arm64/rootfs.erofs"
+    ) in profile_html
+    assert (
+        "/profiles/releases/stable/code/profiles-2030.0101.1/"
+        "arm64/obom.cdx.json"
+    ) in profile_html
+    assert (
+        "/profiles/releases/stable/code/profiles-2030.0101.1/"
+        "x86_64/rootfs.erofs"
+    ) in profile_html
     assert "apt_packages" in profile_html
     assert "python_requirements" in profile_html
     assert "npm_packages" in profile_html

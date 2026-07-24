@@ -57,7 +57,7 @@ def test_materializes_profile_config_from_asset_source_tag(tmp_path: Path) -> No
                                     {
                                         "kind": "apt_packages",
                                         "path": "profiles/code/apt-packages.txt",
-                                        "url": "/profiles/releases/profiles-2030.0101.1/code/arm64/apt-packages.txt",
+                                        "url": "/profiles/releases/stable/code/profiles-2030.0101.1/arm64/apt-packages.txt",
                                         "bytes": len(contents),
                                         "digest": {
                                             "sha256": hashlib.sha256(contents).hexdigest(),
@@ -99,8 +99,9 @@ def test_materializes_profile_config_from_asset_source_tag(tmp_path: Path) -> No
         dist
         / "profiles"
         / "releases"
-        / "profiles-2030.0101.1"
+        / "stable"
         / "code"
+        / "profiles-2030.0101.1"
         / "arm64"
         / "apt-packages.txt"
     )
@@ -140,7 +141,7 @@ def test_materializes_profile_config_from_dirty_worktree_source_root(tmp_path: P
                                     {
                                         "kind": "build_script",
                                         "path": "profiles/code/build.sh",
-                                        "url": "/profiles/releases/profiles-candidate/code/arm64/build.sh",
+                                        "url": "/profiles/releases/stable/code/profiles-candidate/arm64/build.sh",
                                         "bytes": len(candidate_contents),
                                         "digest": {
                                             "sha256": hashlib.sha256(
@@ -183,12 +184,95 @@ def test_materializes_profile_config_from_dirty_worktree_source_root(tmp_path: P
         dist
         / "profiles"
         / "releases"
-        / "profiles-candidate"
+        / "stable"
         / "code"
+        / "profiles-candidate"
         / "arm64"
         / "build.sh"
     )
     assert artifact.read_bytes() == candidate_contents
+
+
+def test_same_profile_revision_materializes_independently_per_channel(
+    tmp_path: Path,
+) -> None:
+    contents = b"id = 'code'\n"
+    source_root = tmp_path / "source"
+    profile_path = source_root / "config" / "profiles" / "code" / "profile.toml"
+    profile_path.parent.mkdir(parents=True)
+    profile_path.write_bytes(contents)
+    dist = tmp_path / "dist"
+    for channel in ("stable", "nightly"):
+        manifest_path = dist / "assets" / channel / "manifest.json"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "version": "1.0.1",
+                    "channel": channel,
+                    "packages": [],
+                    "profiles": {
+                        "code": {
+                            "id": "code",
+                            "revision": "same-revision",
+                            "architectures": [
+                                {
+                                    "architecture": "arm64",
+                                    "config": [
+                                        {
+                                            "kind": "profile",
+                                            "path": "profiles/code/profile.toml",
+                                            "url": (
+                                                f"/profiles/releases/{channel}/code/"
+                                                "same-revision/arm64/profile.toml"
+                                            ),
+                                            "bytes": len(contents),
+                                            "digest": {
+                                                "sha256": hashlib.sha256(
+                                                    contents
+                                                ).hexdigest(),
+                                                "blake3": blake3.blake3(
+                                                    contents
+                                                ).hexdigest(),
+                                            },
+                                        }
+                                    ],
+                                    "images": [],
+                                    "evidence": [],
+                                }
+                            ],
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--dist",
+            str(dist),
+            "--repo-root",
+            str(source_root),
+            "--source-root",
+            str(source_root),
+        ],
+        check=True,
+    )
+
+    stable = (
+        dist
+        / "profiles/releases/stable/code/same-revision/arm64/profile.toml"
+    )
+    nightly = (
+        dist
+        / "profiles/releases/nightly/code/same-revision/arm64/profile.toml"
+    )
+    assert stable.read_bytes() == contents
+    assert nightly.read_bytes() == contents
+    assert stable != nightly
 
 
 def test_worktree_source_root_rejects_config_path_escape(tmp_path: Path) -> None:
