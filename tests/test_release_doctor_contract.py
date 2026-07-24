@@ -1469,6 +1469,7 @@ def test_binary_release_does_not_publish_latest_json_updater_metadata() -> None:
 def test_binary_release_channel_policy_supports_daily_nightly_and_explicit_stable() -> None:
     workflow = _workflow_text("release.yaml")
     docs = _source_text("docs/src/content/docs/development/ci.md")
+    normalized_docs = " ".join(docs.split())
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
     trigger = workflow.split("\npermissions:", maxsplit=1)[0]
@@ -1479,8 +1480,8 @@ def test_binary_release_channel_policy_supports_daily_nightly_and_explicit_stabl
     assert "group: capsem-release-${{ inputs.channel }}" in workflow
     assert "cancel-in-progress: false" in workflow
     assert "Prove binary lane did not change VM assets" in workflow
-    assert "Nightly binary release runs once daily" in docs
-    assert "Stable is started explicitly" in docs
+    assert "Nightly binary release runs once daily" in normalized_docs
+    assert "Stable is started explicitly" in normalized_docs
     assert "Daily nightly automation calls this same binary command path" in release_skill
     assert "Stable uses the same command explicitly" in " ".join(release_skill.split())
 
