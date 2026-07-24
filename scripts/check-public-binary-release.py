@@ -27,7 +27,7 @@ import urllib.parse
 import urllib.request
 import zlib
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import Enum
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -37,7 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SBOM_GENERATOR = PROJECT_ROOT / "scripts" / "generate-host-binary-sbom.py"
 
 
-class PackageArchitecture(StrEnum):
+class PackageArchitecture(str, Enum):
     ARM64 = "arm64"
     AMD64 = "amd64"
 

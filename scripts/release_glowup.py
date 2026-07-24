@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from enum import StrEnum
+from enum import Enum
 from pathlib import Path
 from typing import Mapping
 
@@ -23,7 +23,7 @@ class GlowupContractError(RuntimeError):
     """The candidate failed a platform-neutral release invariant."""
 
 
-class PackageArchitecture(StrEnum):
+class PackageArchitecture(str, Enum):
     ARM64 = "arm64"
     AMD64 = "amd64"
 
