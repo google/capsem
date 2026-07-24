@@ -48,6 +48,45 @@ def _manifest(artifact) -> dict[str, object]:
     }
 
 
+def _pairing(
+    module,
+    *,
+    channel: str,
+    manifest_sha256: str,
+    package_version: str,
+    package_sha256: str,
+    profiles_sha256: str,
+):
+    return module.PairingIdentity(
+        channel=channel,
+        manifest_sha256=manifest_sha256,
+        package_version=package_version,
+        package_sha256=package_sha256,
+        profiles_sha256=profiles_sha256,
+    )
+
+
+def _transition(
+    module,
+    kind,
+    *,
+    before,
+    after,
+    result="activated",
+    staged_profiles_sha256=None,
+):
+    return module.build_transition_evidence(
+        kind=kind,
+        before=before,
+        after=after,
+        result=result,
+        doctor_passed=True,
+        winterfell_passed=True,
+        staged_profiles_sha256=staged_profiles_sha256,
+        preserved_previous=result == "rejected",
+    )
+
+
 def test_candidate_artifact_must_match_manifest_exactly(tmp_path: Path) -> None:
     module = _load_module()
     artifact = _artifact(tmp_path, module)
@@ -236,3 +275,276 @@ def test_shared_report_has_one_schema_for_linux_and_macos(tmp_path: Path) -> Non
     }
     assert reports[0]["artifact"] == reports[1]["artifact"]
     json.dumps(reports)
+
+
+def test_pairing_identity_is_derived_from_exact_manifest_and_package(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    artifact = _artifact(tmp_path, module)
+    manifest = _manifest(artifact)
+    manifest["profiles"] = {"code": {"revision": "profiles-1", "images": [{"digest": "a" * 64}]}}
+    contents = json.dumps(manifest, sort_keys=True).encode()
+
+    pairing = module.PairingIdentity.from_manifest_bytes(
+        contents,
+        artifact=artifact,
+        channel="stable",
+    )
+
+    assert pairing.package_version == artifact.version
+    assert pairing.package_sha256 == artifact.sha256
+    assert pairing.manifest_sha256 == hashlib.sha256(contents).hexdigest()
+    assert (
+        pairing.profiles_sha256
+        == hashlib.sha256(
+            json.dumps(
+                manifest["profiles"],
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+    )
+
+
+def test_transition_sequence_proves_each_required_installed_state() -> None:
+    module = _load_module()
+    zero = "0" * 64
+    one = "1" * 64
+    two = "2" * 64
+    three = "3" * 64
+    four = "4" * 64
+    five = "5" * 64
+    initial = _pairing(
+        module,
+        channel="stable",
+        manifest_sha256=zero,
+        package_version="1.0.0",
+        package_sha256=zero,
+        profiles_sha256=zero,
+    )
+    binary = _pairing(
+        module,
+        channel="stable",
+        manifest_sha256=one,
+        package_version="1.1.0",
+        package_sha256=one,
+        profiles_sha256=zero,
+    )
+    profile = _pairing(
+        module,
+        channel="stable",
+        manifest_sha256=two,
+        package_version="1.1.0",
+        package_sha256=one,
+        profiles_sha256=two,
+    )
+    combined = _pairing(
+        module,
+        channel="stable",
+        manifest_sha256=three,
+        package_version="1.2.0",
+        package_sha256=three,
+        profiles_sha256=three,
+    )
+    nightly = _pairing(
+        module,
+        channel="nightly",
+        manifest_sha256=four,
+        package_version="1.3.0-nightly.1",
+        package_sha256=four,
+        profiles_sha256=five,
+    )
+    transitions = [
+        _transition(
+            module,
+            module.TransitionKind.FRESH_INSTALL,
+            before=None,
+            after=initial,
+        ),
+        _transition(
+            module,
+            module.TransitionKind.BINARY_ONLY,
+            before=initial,
+            after=binary,
+        ),
+        _transition(
+            module,
+            module.TransitionKind.PROFILE_ONLY,
+            before=binary,
+            after=profile,
+        ),
+        _transition(
+            module,
+            module.TransitionKind.PROFILE_THEN_BINARY,
+            before=profile,
+            after=combined,
+            staged_profiles_sha256=combined.profiles_sha256,
+        ),
+        _transition(
+            module,
+            module.TransitionKind.CHANNEL_SWITCH,
+            before=combined,
+            after=nightly,
+        ),
+        _transition(
+            module,
+            module.TransitionKind.TAMPER_REJECTION,
+            before=nightly,
+            after=nightly,
+            result="rejected",
+        ),
+    ]
+
+    report = module.validate_transition_sequence(transitions)
+
+    assert [row["kind"] for row in report] == [kind.value for kind in module.TransitionKind]
+    assert report[3]["staged_profiles_sha256"] == combined.profiles_sha256
+    assert report[-1]["preserved_previous"] is True
+    assert all(row["probes"] == {"doctor": True, "winterfell": True} for row in report)
+
+
+@pytest.mark.parametrize(
+    ("kind", "before_updates", "after_updates", "error"),
+    [
+        (
+            "binary_only",
+            {},
+            {"profiles_sha256": "2" * 64},
+            "profiles",
+        ),
+        (
+            "profile_only",
+            {},
+            {"package_sha256": "2" * 64},
+            "package",
+        ),
+        (
+            "channel_switch",
+            {},
+            {"channel": "stable"},
+            "channel",
+        ),
+    ],
+)
+def test_transition_contract_rejects_metadata_only_or_cross_family_changes(
+    kind: str,
+    before_updates: dict[str, str],
+    after_updates: dict[str, str],
+    error: str,
+) -> None:
+    module = _load_module()
+    before_values = {
+        "channel": "stable",
+        "manifest_sha256": "0" * 64,
+        "package_version": "1.0.0",
+        "package_sha256": "0" * 64,
+        "profiles_sha256": "0" * 64,
+        **before_updates,
+    }
+    after_values = {
+        "channel": "nightly" if kind == "channel_switch" else "stable",
+        "manifest_sha256": "1" * 64,
+        "package_version": "1.1.0" if kind == "binary_only" else "1.0.0",
+        "package_sha256": "1" * 64 if kind == "binary_only" else "0" * 64,
+        "profiles_sha256": "1" * 64 if kind == "profile_only" else "0" * 64,
+        **after_updates,
+    }
+
+    with pytest.raises(module.GlowupContractError, match=error):
+        _transition(
+            module,
+            module.TransitionKind(kind),
+            before=_pairing(module, **before_values),
+            after=_pairing(module, **after_values),
+        )
+
+
+def test_profile_then_binary_requires_exact_staged_profile_reuse() -> None:
+    module = _load_module()
+    before = _pairing(
+        module,
+        channel="stable",
+        manifest_sha256="0" * 64,
+        package_version="1.0.0",
+        package_sha256="0" * 64,
+        profiles_sha256="0" * 64,
+    )
+    after = _pairing(
+        module,
+        channel="stable",
+        manifest_sha256="1" * 64,
+        package_version="1.1.0",
+        package_sha256="1" * 64,
+        profiles_sha256="1" * 64,
+    )
+
+    with pytest.raises(module.GlowupContractError, match="staged profile"):
+        _transition(
+            module,
+            module.TransitionKind.PROFILE_THEN_BINARY,
+            before=before,
+            after=after,
+            staged_profiles_sha256="2" * 64,
+        )
+
+
+def test_tamper_rejection_requires_working_state_to_remain_exact() -> None:
+    module = _load_module()
+    before = _pairing(
+        module,
+        channel="stable",
+        manifest_sha256="0" * 64,
+        package_version="1.0.0",
+        package_sha256="0" * 64,
+        profiles_sha256="0" * 64,
+    )
+    changed = _pairing(
+        module,
+        channel="stable",
+        manifest_sha256="1" * 64,
+        package_version="1.0.0",
+        package_sha256="0" * 64,
+        profiles_sha256="0" * 64,
+    )
+
+    with pytest.raises(module.GlowupContractError, match="previous working"):
+        _transition(
+            module,
+            module.TransitionKind.TAMPER_REJECTION,
+            before=before,
+            after=changed,
+            result="rejected",
+        )
+    with pytest.raises(module.GlowupContractError, match="doctor"):
+        module.build_transition_evidence(
+            kind=module.TransitionKind.TAMPER_REJECTION,
+            before=before,
+            after=before,
+            result="rejected",
+            doctor_passed=False,
+            winterfell_passed=True,
+            preserved_previous=True,
+        )
+
+
+def test_transition_sequence_rejects_missing_duplicate_or_reordered_rows() -> None:
+    module = _load_module()
+    pairing = _pairing(
+        module,
+        channel="stable",
+        manifest_sha256="0" * 64,
+        package_version="1.0.0",
+        package_sha256="0" * 64,
+        profiles_sha256="0" * 64,
+    )
+    fresh = _transition(
+        module,
+        module.TransitionKind.FRESH_INSTALL,
+        before=None,
+        after=pairing,
+    )
+
+    for invalid in ([], [fresh], [fresh, fresh]):
+        with pytest.raises(module.GlowupContractError, match="transition sequence"):
+            module.validate_transition_sequence(invalid)

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added one cross-platform installed-transition evidence contract for fresh
+  installs, orthogonal updates, staged profile-then-binary activation, channel
+  switches, tamper rejection, full doctor, and Winterfell proofs.
+
 - Scheduled the nightly binary lane once daily through the same
   `just release-binaries nightly` command, with a clean no-op when `main`
   already points at an immutable binary release.
