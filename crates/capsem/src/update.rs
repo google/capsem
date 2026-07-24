@@ -426,6 +426,14 @@ struct VerifiedUpdatePlan {
     steps: Vec<UpdatePlanStep>,
 }
 
+#[derive(Debug)]
+struct StagedUpdate {
+    manifest_path: PathBuf,
+    installer_path: Option<PathBuf>,
+    assets_dir: Option<PathBuf>,
+    profiles_dir: Option<PathBuf>,
+}
+
 fn plan_verified_update(
     check: &UpdateCheck,
     manifest_bytes: &[u8],
@@ -596,6 +604,150 @@ fn validate_v2_update_pairing(
         );
     }
     Ok(())
+}
+
+async fn stage_verified_update_at(
+    capsem_home: &Path,
+    plan: &VerifiedUpdatePlan,
+    check: &UpdateCheck,
+    manifest_bytes: &[u8],
+) -> Result<StagedUpdate> {
+    let derived = plan_verified_update(check, manifest_bytes, &plan.installed_binary)?;
+    if &derived != plan {
+        anyhow::bail!("verified update plan changed before artifact staging");
+    }
+    let source = check
+        .source
+        .as_deref()
+        .context("verified update stage is missing its manifest source")?;
+    let identity = check
+        .channel_hash
+        .as_deref()
+        .context("verified update stage is missing its manifest SHA-256")?;
+    validate_hex_digest(identity, 64, "verified update candidate identity")?;
+
+    let candidates_dir = capsem_home.join("updates").join("candidates");
+    std::fs::create_dir_all(&candidates_dir)
+        .with_context(|| format!("create {}", candidates_dir.display()))?;
+    let final_root = candidates_dir.join(identity);
+    let stage_root = candidates_dir.join(format!(".{identity}.{}.tmp", std::process::id()));
+    if stage_root.exists() {
+        std::fs::remove_dir_all(&stage_root)
+            .with_context(|| format!("remove stale {}", stage_root.display()))?;
+    }
+    std::fs::create_dir(&stage_root).with_context(|| format!("create {}", stage_root.display()))?;
+
+    let stage_result: Result<Option<PathBuf>> = async {
+        atomic_write(&stage_root.join("manifest.json"), manifest_bytes)?;
+        let installer_path = if plan.steps.contains(&UpdatePlanStep::Binary) {
+            let installer = check
+                .binary_installer
+                .as_ref()
+                .context("binary update stage is missing its installer")?;
+            Some(download_binary_installer_at(capsem_home, installer).await?)
+        } else {
+            None
+        };
+        if plan.steps.contains(&UpdatePlanStep::Profiles) {
+            stage_profile_candidate(
+                &stage_root,
+                source,
+                manifest_bytes,
+                &plan.selected_binary,
+                check,
+            )
+            .await?;
+        }
+        Ok(installer_path)
+    }
+    .await;
+
+    let installer_path = match stage_result {
+        Ok(path) => path,
+        Err(error) => {
+            let _ = std::fs::remove_dir_all(&stage_root);
+            return Err(error).context("stage verified update candidate");
+        }
+    };
+    if final_root.exists() {
+        std::fs::remove_dir_all(&final_root)
+            .with_context(|| format!("replace staged candidate {}", final_root.display()))?;
+    }
+    std::fs::rename(&stage_root, &final_root).with_context(|| {
+        format!(
+            "commit staged candidate {} to {}",
+            stage_root.display(),
+            final_root.display()
+        )
+    })?;
+
+    let assets_dir = final_root.join("assets");
+    let profiles_dir = final_root.join("profiles");
+    Ok(StagedUpdate {
+        manifest_path: final_root.join("manifest.json"),
+        installer_path,
+        assets_dir: assets_dir.is_dir().then_some(assets_dir),
+        profiles_dir: profiles_dir.is_dir().then_some(profiles_dir),
+    })
+}
+
+async fn stage_profile_candidate(
+    stage_root: &Path,
+    source: &str,
+    manifest_bytes: &[u8],
+    selected_binary: &str,
+    check: &UpdateCheck,
+) -> Result<()> {
+    let body = std::str::from_utf8(manifest_bytes)
+        .with_context(|| format!("manifest URL did not return UTF-8 JSON: {source}"))?;
+    let document: serde_json::Value =
+        serde_json::from_str(body).with_context(|| format!("parse manifest JSON from {source}"))?;
+    if document.get("format").is_none() && document.get("profiles").is_some() {
+        let arch = capsem_core::asset_manager::host_manifest_arch();
+        let (_, downloads, profile_config_downloads) =
+            manifest_from_release_channel_profile_graph(body, arch)?;
+        capsem_core::asset_manager::ManifestV2::from_json(body)
+            .context("validate release graph through the runtime manifest parser")?;
+        hydrate_release_channel_profile_assets(&stage_root.join("assets"), source, &downloads)
+            .await?;
+        stage_release_channel_profile_configs(
+            source,
+            &profile_config_downloads,
+            &stage_root.join("profiles"),
+        )
+        .await?;
+        return Ok(());
+    }
+
+    capsem_core::asset_manager::ManifestV2::from_json(body)
+        .with_context(|| format!("parse format 2 manifest from {source}"))?;
+    let assets_dir = stage_root.join("assets");
+    std::fs::create_dir_all(&assets_dir)
+        .with_context(|| format!("create {}", assets_dir.display()))?;
+    atomic_write(&assets_dir.join("manifest.json"), manifest_bytes)?;
+    let metadata = serde_json::json!({
+        "schema": "capsem.manifest_metadata.v1",
+        "origin": "update_candidate",
+        "manifest_url": source,
+    });
+    atomic_write(
+        &assets_dir.join("manifest-metadata.json"),
+        &serde_json::to_vec_pretty(&metadata)?,
+    )?;
+    hydrate_assets_for_binary(&assets_dir, selected_binary).await?;
+
+    match (
+        check.profile_catalog_source.as_deref(),
+        check.profile_catalog_hash.as_deref(),
+    ) {
+        (Some(_), Some(_)) => {
+            stage_published_profile_catalog(check, &stage_root.join("profiles")).await
+        }
+        (None, None) => Ok(()),
+        _ => anyhow::bail!(
+            "profile catalog update must provide both its immutable source and BLAKE3 digest"
+        ),
+    }
 }
 
 impl ReleaseChannelUpdateTarget {
@@ -1922,9 +2074,17 @@ fn binary_installer_from_release_payload(
     Ok(binary_installer_for_layout(&files, layout))
 }
 
+#[cfg(test)]
 async fn download_binary_installer(installer: &BinaryInstaller) -> Result<PathBuf> {
+    download_binary_installer_at(&crate::paths::capsem_home()?, installer).await
+}
+
+async fn download_binary_installer_at(
+    capsem_home: &Path,
+    installer: &BinaryInstaller,
+) -> Result<PathBuf> {
     validate_binary_installer_metadata(installer)?;
-    let target = binary_installer_cache_path(installer)?;
+    let target = binary_installer_cache_path_at(capsem_home, installer)?;
     if target.exists() {
         verify_binary_installer_file(&target, installer)?;
         return Ok(target);
@@ -1947,9 +2107,12 @@ async fn download_binary_installer(installer: &BinaryInstaller) -> Result<PathBu
     Ok(target)
 }
 
-fn binary_installer_cache_path(installer: &BinaryInstaller) -> Result<PathBuf> {
+fn binary_installer_cache_path_at(
+    capsem_home: &Path,
+    installer: &BinaryInstaller,
+) -> Result<PathBuf> {
     validate_binary_installer_metadata(installer)?;
-    Ok(crate::paths::capsem_home()?
+    Ok(capsem_home
         .join("updates")
         .join("installers")
         .join(&installer.name))
@@ -2182,10 +2345,83 @@ pub async fn run_update(
         return Ok(());
     }
 
-    if yes {
-        plan_verified_update(&check, &manifest_bytes, &current)
+    let staged_update = if yes {
+        let plan = plan_verified_update(&check, &manifest_bytes, &current)
             .context("release manifest does not describe a complete compatible update")?;
-    }
+        if plan.steps.is_empty() {
+            None
+        } else {
+            let capsem_home = crate::paths::capsem_home()?;
+            if let Some(installer) = check
+                .binary_installer
+                .as_ref()
+                .filter(|_| plan.steps.contains(&UpdatePlanStep::Binary))
+            {
+                append_update_audit(serde_json::json!({
+                    "event": "binary_update_start",
+                    "action": "binary_update",
+                    "outcome": "started",
+                    "source": check.source.as_deref(),
+                    "channel": check.source.as_deref().and_then(channel_from_source),
+                    "old_version": current.as_str(),
+                    "new_version": plan.selected_binary.as_str(),
+                    "package": {
+                        "name": &installer.name,
+                        "url": &installer.url,
+                        "sha256": &installer.sha256,
+                        "size": installer.size,
+                        "layout": &installer.install_layout
+                    }
+                }));
+            }
+            let staged = match stage_verified_update_at(
+                &capsem_home,
+                &plan,
+                &check,
+                &manifest_bytes,
+            )
+            .await
+            {
+                Ok(staged) => staged,
+                Err(error) => {
+                    if let Some(installer) = check
+                        .binary_installer
+                        .as_ref()
+                        .filter(|_| plan.steps.contains(&UpdatePlanStep::Binary))
+                    {
+                        append_update_audit(serde_json::json!({
+                            "event": "binary_update_failed",
+                            "action": "binary_update",
+                            "outcome": "failure",
+                            "source": check.source.as_deref(),
+                            "channel": check.source.as_deref().and_then(channel_from_source),
+                            "old_version": current.as_str(),
+                            "new_version": plan.selected_binary.as_str(),
+                            "package": {
+                                "name": &installer.name,
+                                "url": &installer.url,
+                                "sha256": &installer.sha256,
+                                "size": installer.size,
+                                "layout": &installer.install_layout
+                            },
+                            "error": format!("{error:#}")
+                        }));
+                    }
+                    return Err(error);
+                }
+            };
+            info!(
+                manifest = %staged.manifest_path.display(),
+                installer = ?staged.installer_path,
+                assets = ?staged.assets_dir,
+                profiles = ?staged.profiles_dir,
+                "verified every changed update artifact before mutation"
+            );
+            Some(staged)
+        }
+    } else {
+        None
+    };
 
     let mut did_update = false;
     match check.latest_version.as_deref() {
@@ -2197,26 +2433,16 @@ pub async fn run_update(
                 println!("Package:   {} ({mb:.1} MB)", installer.name);
                 println!("SHA-256:   {}", installer.sha256);
                 if yes {
-                    append_update_audit(serde_json::json!({
-                        "event": "binary_update_start",
-                        "action": "binary_update",
-                        "outcome": "started",
-                        "source": check.source.as_deref(),
-                        "channel": check.source.as_deref().and_then(channel_from_source),
-                        "old_version": current.as_str(),
-                        "new_version": latest,
-                        "package": {
-                            "name": &installer.name,
-                            "url": &installer.url,
-                            "sha256": &installer.sha256,
-                            "size": installer.size,
-                            "layout": &installer.install_layout
-                        }
-                    }));
                     let update_result: Result<()> = async {
-                        let path = download_binary_installer(installer).await?;
+                        let path = staged_update
+                            .as_ref()
+                            .and_then(|staged| staged.installer_path.as_deref())
+                            .context(
+                                "verified binary installer disappeared from the staged update",
+                            )?;
                         println!("Verified installer: {}", path.display());
-                        let plan = binary_installer_apply_plan(installer, &path)?;
+                        verify_binary_installer_file(path, installer)?;
+                        let plan = binary_installer_apply_plan(installer, path)?;
                         println!("Apply command:");
                         for command in plan.command_lines() {
                             println!("  {command}");
@@ -2434,6 +2660,25 @@ fn print_image_update_status(check: &UpdateCheck) {
 }
 
 async fn apply_profile_catalog_update(check: &UpdateCheck) -> Result<()> {
+    let target_dir = crate::paths::capsem_home()?.join("profiles");
+    let stage_parent = target_dir
+        .parent()
+        .context("profile catalog target has no parent")?;
+    let stage = stage_parent.join(format!("profiles.update.{}.tmp", std::process::id()));
+    if stage.exists() {
+        std::fs::remove_dir_all(&stage)
+            .with_context(|| format!("remove stale {}", stage.display()))?;
+    }
+    stage_published_profile_catalog(check, &stage).await?;
+    let backup = stage_parent.join(format!("profiles.update.{}.backup", std::process::id()));
+    if backup.exists() {
+        std::fs::remove_dir_all(&backup)
+            .with_context(|| format!("remove stale {}", backup.display()))?;
+    }
+    replace_profile_catalog_dir(&target_dir, &stage, &backup)
+}
+
+async fn stage_published_profile_catalog(check: &UpdateCheck, target_dir: &Path) -> Result<()> {
     let source = check
         .profile_catalog_source
         .as_deref()
@@ -2456,9 +2701,16 @@ async fn apply_profile_catalog_update(check: &UpdateCheck) -> Result<()> {
         );
     }
     let document = parse_profile_catalog_document(&bytes, &catalog_url)?;
-    let target_dir = crate::paths::capsem_home()?.join("profiles");
-    install_profile_catalog_document(&target_dir, &document, &catalog_url, expected_hash)?;
-    Ok(())
+    let parent = target_dir
+        .parent()
+        .context("profile catalog stage has no parent")?;
+    std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    if target_dir.exists() {
+        std::fs::remove_dir_all(target_dir)
+            .with_context(|| format!("replace {}", target_dir.display()))?;
+    }
+    std::fs::create_dir(target_dir).with_context(|| format!("create {}", target_dir.display()))?;
+    materialize_profile_catalog(target_dir, &document, &catalog_url, expected_hash)
 }
 
 fn resolve_release_channel_artifact_url(channel_source: &str, artifact: &str) -> Result<String> {
@@ -2545,39 +2797,6 @@ fn parse_profile_catalog_document(
         );
     }
     Ok(document)
-}
-
-fn install_profile_catalog_document(
-    target_dir: &Path,
-    document: &PublishedProfileCatalogDocument,
-    source: &str,
-    hash: &str,
-) -> Result<()> {
-    let parent = target_dir
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("profile catalog target has no parent"))?;
-    std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    let unique = format!(
-        "{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos()
-    );
-    let tmp_dir = parent.join(format!(".profiles.{unique}.tmp"));
-    let backup_dir = parent.join(format!(".profiles.{unique}.backup"));
-    if tmp_dir.exists() {
-        std::fs::remove_dir_all(&tmp_dir)
-            .with_context(|| format!("remove stale {}", tmp_dir.display()))?;
-    }
-    std::fs::create_dir(&tmp_dir).with_context(|| format!("create {}", tmp_dir.display()))?;
-    let result = materialize_profile_catalog(&tmp_dir, document, source, hash)
-        .and_then(|_| replace_profile_catalog_dir(target_dir, &tmp_dir, &backup_dir));
-    if result.is_err() {
-        let _ = std::fs::remove_dir_all(&tmp_dir);
-    }
-    result
 }
 
 fn materialize_profile_catalog(
@@ -2928,6 +3147,10 @@ fn persist_channel_transition(assets_dir: &Path, transition: &ChannelTransition)
 }
 
 async fn hydrate_installed_assets(assets_dir: &Path) -> Result<()> {
+    hydrate_assets_for_binary(assets_dir, env!("CARGO_PKG_VERSION")).await
+}
+
+async fn hydrate_assets_for_binary(assets_dir: &Path, binary_version: &str) -> Result<()> {
     let manifest_path = assets_dir.join("manifest.json");
     let manifest_bytes = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("read {}", manifest_path.display()))?;
@@ -2939,7 +3162,6 @@ async fn hydrate_installed_assets(assets_dir: &Path) -> Result<()> {
     } else {
         "x86_64"
     };
-    let binary_version = env!("CARGO_PKG_VERSION");
 
     println!("Refreshing VM assets into {}...", assets_dir.display());
     if let Some(local_source) = local_manifest_asset_source(assets_dir)? {
@@ -3280,46 +3502,9 @@ async fn hydrate_release_channel_profile_configs(
     let profiles_dir = capsem_home.join("profiles");
     let _ = std::fs::remove_dir_all(&stage);
     let _ = std::fs::remove_dir_all(&backup);
-    std::fs::create_dir_all(&stage).with_context(|| format!("create {}", stage.display()))?;
-
-    let install_result: Result<()> = async {
-        let mut profile_ids = BTreeSet::new();
-        for download in downloads {
-            profile_ids.insert(download.profile_id.clone());
-            let target = stage
-                .join(&download.profile_id)
-                .join(&download.relative_path);
-            let parent = target
-                .parent()
-                .context("profile config target has no parent directory")?;
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create {}", parent.display()))?;
-            let bytes = read_release_channel_profile_config(manifest_source, &download.url).await?;
-            let actual_blake3 = blake3::hash(&bytes).to_hex().to_string();
-            let actual_sha256 = sha256_hex(&bytes);
-            if bytes.len() as u64 != download.size
-                || actual_blake3 != download.blake3
-                || !actual_sha256.eq_ignore_ascii_case(&download.sha256)
-            {
-                anyhow::bail!(
-                    "profile config {} failed size or digest verification",
-                    download.url
-                );
-            }
-            atomic_write(&target, &bytes)?;
-        }
-        for profile_id in profile_ids {
-            let profile_toml = stage.join(&profile_id).join("profile.toml");
-            if !profile_toml.is_file() {
-                anyhow::bail!(
-                    "release channel profile {profile_id} has config payloads but no profile.toml"
-                );
-            }
-        }
-        Ok(())
-    }
-    .await;
-    if let Err(error) = install_result {
+    if let Err(error) =
+        stage_release_channel_profile_configs(manifest_source, downloads, &stage).await
+    {
         let _ = std::fs::remove_dir_all(&stage);
         return Err(error);
     }
@@ -3343,6 +3528,50 @@ async fn hydrate_release_channel_profile_configs(
         )));
     }
     let _ = std::fs::remove_dir_all(&backup);
+    Ok(())
+}
+
+async fn stage_release_channel_profile_configs(
+    manifest_source: &str,
+    downloads: &[ReleaseChannelProfileConfigDownload],
+    stage: &Path,
+) -> Result<()> {
+    if downloads.is_empty() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(stage).with_context(|| format!("create {}", stage.display()))?;
+    let mut profile_ids = BTreeSet::new();
+    for download in downloads {
+        profile_ids.insert(download.profile_id.clone());
+        let target = stage
+            .join(&download.profile_id)
+            .join(&download.relative_path);
+        let parent = target
+            .parent()
+            .context("profile config target has no parent directory")?;
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        let bytes = read_release_channel_profile_config(manifest_source, &download.url).await?;
+        let actual_blake3 = blake3::hash(&bytes).to_hex().to_string();
+        let actual_sha256 = sha256_hex(&bytes);
+        if bytes.len() as u64 != download.size
+            || actual_blake3 != download.blake3
+            || !actual_sha256.eq_ignore_ascii_case(&download.sha256)
+        {
+            anyhow::bail!(
+                "profile config {} failed size or digest verification",
+                download.url
+            );
+        }
+        atomic_write(&target, &bytes)?;
+    }
+    for profile_id in profile_ids {
+        let profile_toml = stage.join(&profile_id).join("profile.toml");
+        if !profile_toml.is_file() {
+            anyhow::bail!(
+                "release channel profile {profile_id} has config payloads but no profile.toml"
+            );
+        }
+    }
     Ok(())
 }
 

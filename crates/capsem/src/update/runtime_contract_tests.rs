@@ -221,3 +221,183 @@ fn complete_update_plan_requires_a_verified_installer_for_binary_change() {
         "unexpected error: {error:#}"
     );
 }
+
+fn staged_profile_fixture(release_dir: &Path, corrupt_rootfs: bool) -> (Vec<u8>, String, Vec<u8>) {
+    std::fs::create_dir_all(release_dir).unwrap();
+    let profile = br#"id = "code"
+name = "Code"
+description = "Staged code profile"
+revision = "profiles-2"
+refresh_policy = "manual"
+"#
+    .to_vec();
+    let kernel = b"verified-kernel".to_vec();
+    let initrd = b"verified-initrd".to_vec();
+    let rootfs = b"verified-rootfs".to_vec();
+    std::fs::write(release_dir.join("profile.toml"), &profile).unwrap();
+    std::fs::write(release_dir.join("vmlinuz"), &kernel).unwrap();
+    std::fs::write(release_dir.join("initrd.img"), &initrd).unwrap();
+    std::fs::write(
+        release_dir.join("rootfs.erofs"),
+        if corrupt_rootfs {
+            b"corrupt-rootfs"
+        } else {
+            rootfs.as_slice()
+        },
+    )
+    .unwrap();
+
+    let digest = |bytes: &[u8]| {
+        serde_json::json!({
+            "sha256": sha256_hex(bytes),
+            "blake3": blake3::hash(bytes).to_hex().to_string(),
+        })
+    };
+    let artifact = |kind: &str, name: &str, bytes: &[u8]| {
+        serde_json::json!({
+            "kind": kind,
+            "name": name,
+            "url": name,
+            "bytes": bytes.len(),
+            "digest": digest(bytes),
+            "status": "current",
+        })
+    };
+    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let body = serde_json::to_vec(&serde_json::json!({
+        "version": "1.0.0",
+        "channel": "stable",
+        "status": "current",
+        "packages": [],
+        "profiles": {
+            "code": {
+                "revision": "profiles-2",
+                "status": "current",
+                "min_capsem_version": env!("CARGO_PKG_VERSION"),
+                "architectures": [{
+                    "architecture": arch,
+                    "image_revision": "images-2",
+                    "config": [{
+                        "kind": "profile",
+                        "path": "profiles/code/profile.toml",
+                        "url": "profile.toml",
+                        "bytes": profile.len(),
+                        "digest": digest(&profile),
+                        "status": "current",
+                    }],
+                    "images": [
+                        artifact("kernel", "vmlinuz", &kernel),
+                        artifact("initrd", "initrd.img", &initrd),
+                        artifact("rootfs", "rootfs.erofs", &rootfs),
+                    ]
+                }]
+            }
+        }
+    }))
+    .unwrap();
+    let manifest_path = release_dir.join("manifest.json");
+    std::fs::write(&manifest_path, &body).unwrap();
+    let source = reqwest::Url::from_file_path(&manifest_path)
+        .unwrap()
+        .to_string();
+    (body, source, kernel)
+}
+
+fn profile_stage_plan() -> VerifiedUpdatePlan {
+    VerifiedUpdatePlan {
+        installed_binary: env!("CARGO_PKG_VERSION").to_string(),
+        selected_binary: env!("CARGO_PKG_VERSION").to_string(),
+        steps: vec![UpdatePlanStep::Profiles],
+    }
+}
+
+#[tokio::test]
+async fn stage_verified_update_downloads_every_profile_artifact_without_mutating_install() {
+    let temp = tempfile::tempdir().unwrap();
+    let capsem_home = temp.path().join("home");
+    let release_dir = temp.path().join("release");
+    let (body, source, kernel) = staged_profile_fixture(&release_dir, false);
+    let installed_manifest = capsem_home.join("assets/manifest.json");
+    let installed_profile = capsem_home.join("profiles/code/profile.toml");
+    std::fs::create_dir_all(installed_manifest.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(installed_profile.parent().unwrap()).unwrap();
+    std::fs::write(&installed_manifest, b"installed-manifest").unwrap();
+    std::fs::write(&installed_profile, b"installed-profile").unwrap();
+
+    let mut check = update_plan_check(false, true, true, true);
+    check.latest_version = Some(env!("CARGO_PKG_VERSION").to_string());
+    check.source = Some(source);
+    check.channel_hash = Some(channel_payload_hash(&body));
+    let staged = stage_verified_update_at(&capsem_home, &profile_stage_plan(), &check, &body)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        std::fs::read(&installed_manifest).unwrap(),
+        b"installed-manifest"
+    );
+    assert_eq!(
+        std::fs::read(&installed_profile).unwrap(),
+        b"installed-profile"
+    );
+    assert_eq!(std::fs::read(&staged.manifest_path).unwrap(), body);
+    assert_eq!(
+        std::fs::read(
+            staged
+                .assets_dir
+                .as_ref()
+                .unwrap()
+                .join(capsem_core::asset_manager::host_manifest_arch())
+                .join(capsem_core::asset_manager::hash_filename(
+                    "vmlinuz",
+                    &blake3::hash(&kernel).to_hex().to_string(),
+                )),
+        )
+        .unwrap(),
+        kernel
+    );
+    assert_eq!(
+        std::fs::read(
+            staged
+                .profiles_dir
+                .as_ref()
+                .unwrap()
+                .join("code/profile.toml"),
+        )
+        .unwrap(),
+        std::fs::read(release_dir.join("profile.toml")).unwrap()
+    );
+    assert!(staged.installer_path.is_none());
+}
+
+#[tokio::test]
+async fn stage_verified_update_rejects_corruption_before_candidate_or_install_mutation() {
+    let temp = tempfile::tempdir().unwrap();
+    let capsem_home = temp.path().join("home");
+    let release_dir = temp.path().join("release");
+    let (body, source, _) = staged_profile_fixture(&release_dir, true);
+    let installed_manifest = capsem_home.join("assets/manifest.json");
+    std::fs::create_dir_all(installed_manifest.parent().unwrap()).unwrap();
+    std::fs::write(&installed_manifest, b"installed-manifest").unwrap();
+
+    let mut check = update_plan_check(false, true, true, true);
+    check.latest_version = Some(env!("CARGO_PKG_VERSION").to_string());
+    check.source = Some(source);
+    check.channel_hash = Some(channel_payload_hash(&body));
+    let error = stage_verified_update_at(&capsem_home, &profile_stage_plan(), &check, &body)
+        .await
+        .expect_err("corrupt profile bytes must fail before activation");
+
+    assert!(format!("{error:#}").contains("mismatch"), "{error:#}");
+    assert_eq!(
+        std::fs::read(&installed_manifest).unwrap(),
+        b"installed-manifest"
+    );
+    assert!(
+        !capsem_home
+            .join("updates/candidates")
+            .join(channel_payload_hash(&body))
+            .exists(),
+        "a failed stage must not leave a complete candidate identity"
+    );
+}
