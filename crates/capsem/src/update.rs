@@ -413,6 +413,191 @@ struct ResolvedReleaseChannelManifest {
     blake3: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdatePlanStep {
+    Binary,
+    Profiles,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct VerifiedUpdatePlan {
+    installed_binary: String,
+    selected_binary: String,
+    steps: Vec<UpdatePlanStep>,
+}
+
+fn plan_verified_update(
+    check: &UpdateCheck,
+    manifest_bytes: &[u8],
+    installed_binary: &str,
+) -> Result<VerifiedUpdatePlan> {
+    if check.validation_status.as_deref() != Some("valid") || check.validation_error.is_some() {
+        anyhow::bail!("cannot plan an update from a manifest that did not validate");
+    }
+    let source = check
+        .source
+        .as_deref()
+        .filter(|source| !source.trim().is_empty())
+        .context("verified update is missing its manifest source")?;
+    let expected_hash = check
+        .channel_hash
+        .as_deref()
+        .context("verified update is missing its manifest SHA-256")?;
+    validate_hex_digest(expected_hash, 64, "verified manifest SHA-256")?;
+    let actual_hash = channel_payload_hash(manifest_bytes);
+    if !actual_hash.eq_ignore_ascii_case(expected_hash) {
+        anyhow::bail!(
+            "verified manifest snapshot SHA-256 mismatch for {source}: expected {expected_hash}, got {actual_hash}"
+        );
+    }
+
+    let selected_binary = check
+        .latest_version
+        .as_deref()
+        .unwrap_or(installed_binary)
+        .to_string();
+    semver::Version::parse(installed_binary)
+        .with_context(|| format!("parse installed Capsem version {installed_binary}"))?;
+    semver::Version::parse(&selected_binary)
+        .with_context(|| format!("parse selected Capsem version {selected_binary}"))?;
+
+    let graph = serde_json::from_slice::<ReleaseGraphManifest>(manifest_bytes).ok();
+    if let Some(graph) = graph
+        .as_ref()
+        .filter(|graph| !graph.packages.is_empty() || !graph.profiles.is_empty())
+    {
+        validate_release_graph_update_pairing(graph, &selected_binary)?;
+    } else {
+        let manifest_text =
+            std::str::from_utf8(manifest_bytes).context("release manifest is not valid UTF-8")?;
+        let manifest = capsem_core::asset_manager::ManifestV2::from_json(manifest_text)
+            .context("parse verified release manifest")?;
+        validate_v2_update_pairing(&manifest, &selected_binary)?;
+    }
+
+    let mut steps = Vec::new();
+    if check.update_available {
+        let installer = check.binary_installer.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "selected binary {selected_binary} has no verified installer for this installation"
+            )
+        })?;
+        validate_binary_installer_metadata(installer)?;
+        steps.push(UpdatePlanStep::Binary);
+    }
+
+    let profiles_changed = check.profiles_update_available
+        || check.assets_update_available
+        || check.images_update_available;
+    if profiles_changed {
+        steps.push(UpdatePlanStep::Profiles);
+    }
+
+    let blocked = [
+        check.profiles_blocked_reason.as_deref(),
+        check.assets_blocked_reason.as_deref(),
+        check.images_blocked_reason.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    if !blocked.is_empty() && !check.update_available {
+        anyhow::bail!(
+            "selected profile update is incompatible with installed binary {installed_binary}: {}",
+            blocked.join("; ")
+        );
+    }
+
+    Ok(VerifiedUpdatePlan {
+        installed_binary: installed_binary.to_string(),
+        selected_binary,
+        steps,
+    })
+}
+
+fn validate_release_graph_update_pairing(
+    graph: &ReleaseGraphManifest,
+    selected_binary: &str,
+) -> Result<()> {
+    let selected = semver::Version::parse(selected_binary)
+        .with_context(|| format!("parse selected Capsem version {selected_binary}"))?;
+    if let Some(graph_binary) = graph_current_binary_version(&graph.packages)? {
+        if graph_binary != selected_binary {
+            anyhow::bail!(
+                "verified manifest selects binary {graph_binary}, but update check selected {selected_binary}"
+            );
+        }
+    }
+
+    for (profile_id, profile) in &graph.profiles {
+        if release_channel_status_is_revoked(&profile.status) {
+            continue;
+        }
+        if let Some(minimum) = profile
+            .extra
+            .get("min_capsem_version")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+        {
+            let minimum_version = semver::Version::parse(minimum).with_context(|| {
+                format!("profile {profile_id} has invalid minimum Capsem version {minimum}")
+            })?;
+            if selected < minimum_version {
+                anyhow::bail!(
+                    "profile {profile_id} requires Capsem {minimum} or newer, selected {selected_binary}"
+                );
+            }
+        }
+        if let Some(maximum) = profile
+            .extra
+            .get("max_capsem_version")
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+        {
+            let maximum_version = semver::Version::parse(maximum).with_context(|| {
+                format!("profile {profile_id} has invalid maximum Capsem version {maximum}")
+            })?;
+            if selected > maximum_version {
+                anyhow::bail!(
+                    "profile {profile_id} supports Capsem through {maximum}, selected {selected_binary}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_v2_update_pairing(
+    manifest: &capsem_core::asset_manager::ManifestV2,
+    selected_binary: &str,
+) -> Result<()> {
+    if manifest.binaries.current != selected_binary {
+        anyhow::bail!(
+            "verified manifest selects binary {}, but update check selected {selected_binary}",
+            manifest.binaries.current
+        );
+    }
+    let resolved = manifest
+        .resolve(
+            selected_binary,
+            capsem_core::asset_manager::host_manifest_arch(),
+            Path::new("."),
+        )
+        .with_context(|| {
+            format!(
+                "selected binary {selected_binary} has no compatible profile assets in the verified manifest"
+            )
+        })?;
+    if resolved.asset_version != manifest.assets.current {
+        anyhow::bail!(
+            "verified manifest selects incompatible binary/profile state: binary {selected_binary} resolves assets {}, not selected {}",
+            resolved.asset_version,
+            manifest.assets.current
+        );
+    }
+    Ok(())
+}
+
 impl ReleaseChannelUpdateTarget {
     #[allow(dead_code)]
     fn latest_version(&self) -> Option<String> {
@@ -1634,11 +1819,9 @@ fn machine_architecture() -> Architecture {
 async fn fetch_release_update_check(
     layout: &InstallLayout,
     selected_channel: Option<&ResolvedReleaseChannelManifest>,
-) -> Result<UpdateCheck> {
+) -> Result<(Vec<u8>, UpdateCheck)> {
     if let Some(selection) = selected_channel {
-        return fetch_selected_channel_update_check(layout, selection)
-            .await
-            .map(|(_, check)| check);
+        return fetch_selected_channel_update_check(layout, selection).await;
     }
     let manifest_url = release_manifest_url()?;
     let url = reqwest::Url::parse(&manifest_url)
@@ -1647,7 +1830,9 @@ async fn fetch_release_update_check(
         .await
         .with_context(|| format!("read release manifest from {manifest_url}"))?;
     let channel_hash = channel_payload_hash(&body);
-    update_check_from_release_payload(&body, layout, &manifest_url, Some(channel_hash))
+    let check =
+        update_check_from_release_payload(&body, layout, &manifest_url, Some(channel_hash))?;
+    Ok((body.to_vec(), check))
 }
 
 async fn fetch_selected_channel_update_check(
@@ -1977,23 +2162,29 @@ pub async fn run_update(
         return Ok(());
     }
 
-    let check = match fetch_release_update_check(&layout, selected_channel.as_ref()).await {
-        Ok(check) => check,
-        Err(error) => {
-            if check_only || channel.is_some() {
-                return Err(error).context("release channel check failed");
+    let (manifest_bytes, check) =
+        match fetch_release_update_check(&layout, selected_channel.as_ref()).await {
+            Ok(update) => update,
+            Err(error) => {
+                if check_only || channel.is_some() {
+                    return Err(error).context("release channel check failed");
+                }
+                println!("Binary update check failed: {error:#}");
+                println!("Run `capsem update --assets` to refresh VM assets, or retry later.");
+                return Ok(());
             }
-            println!("Binary update check failed: {error:#}");
-            println!("Run `capsem update --assets` to refresh VM assets, or retry later.");
-            return Ok(());
-        }
-    };
+        };
     let _ = write_cache(&check);
 
     let current = local_current_binary_version();
     if check_only {
         print_update_check_summary(&check, &current, &layout);
         return Ok(());
+    }
+
+    if yes {
+        plan_verified_update(&check, &manifest_bytes, &current)
+            .context("release manifest does not describe a complete compatible update")?;
     }
 
     let mut did_update = false;
@@ -2119,7 +2310,7 @@ pub async fn run_update(
 
     if yes {
         if let Some(selection) = selected_channel.as_ref() {
-            refresh_assets(Some(&selection.url), Some(selection), None).await?;
+            refresh_assets(Some(&selection.url), Some(selection), Some(&manifest_bytes)).await?;
             println!(
                 "Release channel switched to {} and its VM assets were verified.",
                 selection.channel
@@ -2134,7 +2325,7 @@ pub async fn run_update(
                 .source
                 .as_deref()
                 .context("release graph update is missing its manifest source")?;
-            refresh_assets(Some(source), None, None).await?;
+            refresh_assets(Some(source), None, Some(&manifest_bytes)).await?;
             println!("Release graph profiles and VM assets were verified and refreshed.");
             did_update = true;
         }
@@ -2495,11 +2686,13 @@ async fn refresh_assets(
             "previous": previous_state
         }));
         let refresh_result: Result<()> = async {
-            if let Some(selection) = selected_channel {
-                let bytes = match selected_payload {
-                    Some(bytes) => bytes.to_vec(),
-                    None => read_manifest_source(&source).await?,
-                };
+            if let Some(bytes) = selected_payload {
+                if let Some(selection) = selected_channel {
+                    verify_selected_channel_manifest(selection, bytes)?;
+                }
+                install_manifest_bytes(&assets_dir, &source, bytes).await?;
+            } else if let Some(selection) = selected_channel {
+                let bytes = read_manifest_source(&source).await?;
                 verify_selected_channel_manifest(selection, &bytes)?;
                 install_manifest_bytes(&assets_dir, &source, &bytes).await?;
             } else {
