@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Moved binary candidate manifest authoring and host SBOM generation ahead of
+  complete pairing tests, then reused that exact tested source manifest for
+  immutable publication and final channel assembly without a second mutation.
+
 - Enforced every active profile's minimum and maximum Capsem bounds before
   recording binary metadata or assembling a public channel, while preserving
   the exact staged profile bytes for later compatible-binary activation.

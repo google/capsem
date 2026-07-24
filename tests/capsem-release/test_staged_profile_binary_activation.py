@@ -165,11 +165,12 @@ def test_profile_then_binary_reuses_authored_source_without_rebuilding_assets() 
     assert "Fetch latest selected channel source manifest" in binary
     assert "Fetch selected channel manifest and profiles" in binary
     assert "--kind profiles" in binary
-    assert binary.index("Run shared complete functional module") < binary.index(
-        "Record binary release metadata in selected channel manifest"
+    assert binary.index("Record binary candidate metadata once") < binary.index(
+        "Run shared complete functional module"
     )
-    assert binary.index("Run shared native and update glow-up module") < binary.index(
-        "Record binary release metadata in selected channel manifest"
+    assert binary.index("Record binary candidate metadata once") < binary.index(
+        "Run shared native and update glow-up module"
     )
-    assert "Prove binary lane did not change VM assets" in binary
-    assert 'after["profiles"] != before["profiles"]' in binary
+    assert "Prove binary candidate preserved every profile" in binary
+    assert 'before.get("profiles") != after.get("profiles")' in binary
+    assert "name: binary-channel-candidate" in binary

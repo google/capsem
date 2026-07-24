@@ -56,11 +56,21 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     assert "--output release-artifacts/capsem-sbom.spdx.json" in binary_workflow
     assert "cargo sbom --output-format spdx_json_2_3" not in binary_workflow
     assert "install_cargo_tool cargo-sbom" not in binary_workflow
-    channel_sbom = binary_workflow.split(
+    author_sbom = binary_workflow.split(
+        "  author-binary-candidate:", maxsplit=1
+    )[1].split("  test-binary-pairing:", maxsplit=1)[0]
+    assert "Generate packaged host SBOM once" in author_sbom
+    assert "scripts/generate-host-binary-sbom.py" in author_sbom
+    assembly = binary_workflow.split(
         "  assemble-release-channel:", maxsplit=1
-    )[1].split("- name: Verify binary channel artifacts", maxsplit=1)[0]
-    assert "Generate packaged host SBOM" in channel_sbom
-    assert "scripts/generate-host-binary-sbom.py" in channel_sbom
+    )[1].split("  verify-release-candidate:", maxsplit=1)[0]
+    assert "Generate packaged host SBOM" not in assembly
+    assert "name: binary-channel-candidate" in assembly
+    create_release = binary_workflow.split(
+        "  create-release:", maxsplit=1
+    )[1].split("  assemble-release-channel:", maxsplit=1)[0]
+    assert "name: binary-host-sbom" in create_release
+    assert "Generate packaged host SBOM" not in create_release
     assert "Attest SBOM" in binary_workflow
     sbom_attestation = binary_workflow.split("- name: Attest SBOM", maxsplit=1)[1].split(
         "- name: Build summary", maxsplit=1

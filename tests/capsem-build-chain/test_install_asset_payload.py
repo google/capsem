@@ -928,14 +928,17 @@ def test_standalone_install_gate_preflights_privileged_helper() -> None:
 
 def test_binary_release_sbom_jobs_install_zstd_for_deb_payloads() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
+    jobs = _workflow_job_blocks(workflow)
+    author = jobs["author-binary-candidate"]
 
-    for job_name in ("create-release", "assemble-release-channel"):
-        job = _workflow_job_blocks(workflow)[job_name]
-        assert "Install host SBOM archive deps" in job
-        assert "zstd" in job
-        assert job.index("Install host SBOM archive deps") < job.index(
-            "Generate packaged host SBOM"
-        )
+    assert "Install host SBOM archive deps" in author
+    assert "zstd" in author
+    assert author.index("Install host SBOM archive deps") < author.index(
+        "Generate packaged host SBOM once"
+    )
+    assert "name: binary-host-sbom" in author
+    assert "Generate packaged host SBOM" not in jobs["create-release"]
+    assert "Generate packaged host SBOM" not in jobs["assemble-release-channel"]
 
 
 def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:

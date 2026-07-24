@@ -573,7 +573,7 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "uses: ./.github/workflows/release-channel.yaml" in workflow
     assert "dist_artifact: asset-channel-preview" in workflow
     assert (
-        "if: ${{ inputs.dry_run == false && needs.assemble-channel.outputs.profile_changed == 'true' && needs.assemble-channel.outputs.compatible == 'true' }}"
+        "if: ${{ inputs.dry_run == false && needs.publish-profile-release.outputs.profile_changed == 'true' && needs.publish-profile-release.outputs.compatible == 'true' }}"
         in workflow
     )
 
@@ -1253,6 +1253,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
 
 def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> None:
     workflow = _workflow_text("release.yaml")
+    author_candidate = _workflow_job_block("author-binary-candidate", "release.yaml")
     create_release = _workflow_job_block("create-release", "release.yaml")
     assemble_channel = _workflow_job_block("assemble-release-channel", "release.yaml")
     trigger = workflow.split("\npermissions:", maxsplit=1)[0]
@@ -1331,11 +1332,11 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert '[ -f "$deb" ] && gh release upload "$RELEASE_TAG" "$deb"' in create_release
     assert "target/binary-channel/$RELEASE_CHANNEL/manifest.json" in assemble_channel
     assert "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json" in assemble_channel
-    assert "name: binary-channel-source" in assemble_channel
-    assert "target/binary-channel/${{ inputs.channel }}/" in assemble_channel
-    record_step = assemble_channel.split(
-        "- name: Record binary release metadata in selected channel manifest", maxsplit=1
-    )[1].split("- name: Prove binary lane did not change VM assets", maxsplit=1)[0]
+    assert "name: binary-channel-candidate" in assemble_channel
+    assert "path: target/binary-channel/" in assemble_channel
+    record_step = author_candidate.split(
+        "- name: Record binary candidate metadata once", maxsplit=1
+    )[1].split("- name: Prove binary candidate preserved every profile", maxsplit=1)[0]
     assert "target/binary-channel/$RELEASE_CHANNEL/manifest.json" in record_step
     assert "for channel in" not in record_step
     build_channels = assemble_channel.split(
@@ -1352,30 +1353,34 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert build_channels.index('generated_at="$(date -u') < build_channels.index(
         "scripts/build-complete-release-channel.py"
     )
-    assert "Prove binary lane did not change VM assets" in assemble_channel
-    assert "binary release changed VM asset metadata" in assemble_channel
-    assert assemble_channel.index("Preserve serialized selected channel source manifest") < (
-        assemble_channel.index("Record binary release metadata in selected channel manifest")
+    assert "Prove binary candidate preserved every profile" in author_candidate
+    assert "binary candidate changed profile metadata" in author_candidate
+    assert author_candidate.index("Preserve serialized public-before manifest") < (
+        author_candidate.index("Record binary candidate metadata once")
     )
-    assert assemble_channel.index("Record binary release metadata in selected channel manifest") < (
-        assemble_channel.index("Build complete release channels with existing VM assets")
+    assert workflow.index("Record binary candidate metadata once") < workflow.index(
+        "Run shared complete functional module"
     )
+    assert "Record binary candidate metadata once" not in assemble_channel
     assert "- name: Build release site pages" not in assemble_channel
     assert "- name: Check binary-updated release channels" not in assemble_channel
 
 
 def test_binary_release_channel_assembly_preflights_canonical_artifacts() -> None:
+    author_candidate = _workflow_job_block("author-binary-candidate", "release.yaml")
     assemble_channel = _workflow_job_block("assemble-release-channel", "release.yaml")
 
-    assert "Verify binary channel artifacts" in assemble_channel
-    assert "release-artifacts/capsem-sbom.spdx.json" in assemble_channel
-    assert "::error::release-artifacts/capsem-sbom.spdx.json missing" in assemble_channel
-    assert "release-artifacts/*.pkg" in assemble_channel
-    assert "release-artifacts/*.deb" in assemble_channel
-    assert "::error::no installable host package artifact found" in assemble_channel
-    assert assemble_channel.index("Verify binary channel artifacts") < assemble_channel.index(
-        "Record binary release metadata in selected channel manifest"
+    assert "Verify binary candidate artifacts" in author_candidate
+    assert "release-artifacts/capsem-sbom.spdx.json" in author_candidate
+    assert "release-artifacts/*.pkg" in author_candidate
+    assert "release-artifacts/*.deb" in author_candidate
+    assert author_candidate.index("Verify binary candidate artifacts") < (
+        author_candidate.index("Record binary candidate metadata once")
     )
+    assert "Verify tested binary candidate source is present" in assemble_channel
+    assert "manifest.before.json" in assemble_channel
+    assert "manifest.json" in assemble_channel
+    assert "release-artifacts/" not in assemble_channel
 
 
 def test_binary_release_staging_dry_run_is_separate_from_tag_release() -> None:
@@ -1479,7 +1484,7 @@ def test_binary_release_channel_policy_supports_daily_nightly_and_explicit_stabl
     assert "RELEASE_CHANNEL: ${{ inputs.channel }}" in workflow
     assert "group: capsem-release-${{ inputs.channel }}" in workflow
     assert "cancel-in-progress: false" in workflow
-    assert "Prove binary lane did not change VM assets" in workflow
+    assert "Prove binary candidate preserved every profile" in workflow
     assert "Nightly binary release runs once daily" in normalized_docs
     assert "Stable is started explicitly" in normalized_docs
     assert "Daily nightly automation calls this same binary command path" in release_skill

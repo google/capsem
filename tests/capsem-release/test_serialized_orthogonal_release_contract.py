@@ -30,6 +30,18 @@ def _recipe_block(justfile: str, recipe: str) -> str:
     return rest if next_recipe < 0 else rest[:next_recipe]
 
 
+def _job_block(workflow: str, job: str) -> str:
+    lines = workflow.splitlines()
+    start = lines.index(f"  {job}:")
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line.startswith("  ") and not line.startswith("    ") and line.endswith(":"):
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
 def test_release_commands_are_two_single_purpose_recipes() -> None:
     justfile = "\n" + _read("justfile")
 
@@ -78,7 +90,10 @@ def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
     assert "Fetch latest selected channel source manifest" in workflow
     assert "binary-channel-source" in workflow
     assert "Fetch selected channel manifest and profiles" in workflow
-    assert 'file://$PWD/target/channel-source/manifest.json' in workflow
+    assert (
+        'file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json'
+        in workflow
+    )
     assert "just _test-artifacts" in workflow
     assert "just _test-functional" in workflow
     assert "just _test-glowup" in workflow
@@ -95,6 +110,37 @@ def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
         "capsem-admin -- image build",
     ):
         assert forbidden not in workflow
+
+
+def test_binary_candidate_manifest_is_authored_once_before_pairing() -> None:
+    workflow = _workflow("release.yaml")
+    author = _job_block(workflow, "author-binary-candidate")
+    pairing = _job_block(workflow, "test-binary-pairing")
+    create = _job_block(workflow, "create-release")
+    assemble = _job_block(workflow, "assemble-release-channel")
+
+    assert (
+        "needs: [build-app-macos, build-app-linux, resolve-channel-source]"
+        in author
+    )
+    assert author.count("assets channel record-binary") == 1
+    assert "binary-channel-candidate" in author
+    assert "manifest.before.json" in author
+    assert "manifest.json" in author
+
+    assert "author-binary-candidate" in pairing.splitlines()[1]
+    assert "binary-channel-candidate" in pairing
+    assert (
+        'file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json'
+        in pairing
+    )
+    assert "assets channel record-binary" not in pairing
+
+    assert "test-binary-pairing" in create.splitlines()[1]
+    assert "author-binary-candidate" in assemble.splitlines()[1]
+    assert "binary-channel-candidate" in assemble
+    assert "assets channel record-binary" not in assemble
+    assert "generate-host-binary-sbom.py" not in assemble
 
 
 def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:

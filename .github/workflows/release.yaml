@@ -651,8 +651,125 @@ jobs:
           name: release-linux-${{ matrix.arch }}
           path: release-artifacts/
 
-  test-binary-pairing:
+  author-binary-candidate:
     needs: [build-app-macos, build-app-linux, resolve-channel-source]
+    runs-on: ubuntu-latest
+    name: Author binary candidate source manifest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          key: release-channel-binary-author
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: uv sync
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-macos
+          path: release-artifacts/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-linux-arm64
+          path: release-artifacts/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-linux-x86_64
+          path: release-artifacts/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-source
+          path: target/binary-channel/${{ inputs.channel }}/
+
+      - name: Install host SBOM archive deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends zstd
+
+      - name: Generate packaged host SBOM once
+        run: |
+          set -euo pipefail
+          ARTIFACTS=()
+          for file in release-artifacts/*.pkg release-artifacts/*.deb; do
+            [ -f "$file" ] && ARTIFACTS+=("$file")
+          done
+          if [ "${#ARTIFACTS[@]}" -eq 0 ]; then
+            echo "::error::no package artifacts available for host SBOM"
+            exit 1
+          fi
+          python3 scripts/generate-host-binary-sbom.py \
+            --output release-artifacts/capsem-sbom.spdx.json \
+            "${ARTIFACTS[@]}"
+
+      - name: Verify binary candidate artifacts
+        run: |
+          set -euo pipefail
+          test -s release-artifacts/capsem-sbom.spdx.json
+          test "$(find release-artifacts -maxdepth 1 \( -name '*.pkg' -o -name '*.deb' \) -type f | wc -l)" -eq 3
+
+      - name: Preserve serialized public-before manifest
+        run: |
+          set -euo pipefail
+          manifest="target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          test -f "$manifest"
+          cp "$manifest" \
+            "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
+
+      - name: Record binary candidate metadata once
+        env:
+          CAPSEM_RELEASE_URL: https://github.com/${{ github.repository }}/releases/download
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          ARTIFACT_ARGS=()
+          for file in release-artifacts/*.pkg release-artifacts/*.deb release-artifacts/capsem-sbom.spdx.json; do
+            [ -f "$file" ] && ARTIFACT_ARGS+=(--artifact "$file")
+          done
+          cargo run -p capsem-admin -- assets channel record-binary \
+            --manifest-path "target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
+            --version "$VERSION" \
+            "${ARTIFACT_ARGS[@]}"
+          test -f "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
+
+      - name: Prove binary candidate preserved every profile
+        run: |
+          set -euo pipefail
+          python3 - "$RELEASE_CHANNEL" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          channel = sys.argv[1]
+          root = Path("target/binary-channel") / channel
+          before = json.loads((root / "manifest.before.json").read_text())
+          after = json.loads((root / "manifest.json").read_text())
+          if before.get("profiles") != after.get("profiles"):
+              raise SystemExit(f"{channel} binary candidate changed profile metadata")
+          PY
+
+      - name: Verify binary release lane policy
+        run: |
+          uv run pytest \
+            tests/capsem-release/test_binary_lane_gate.py \
+            tests/capsem-release/test_release_lane_diff_policy.py -q
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: binary-channel-candidate
+          path: target/binary-channel/
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: binary-host-sbom
+          path: release-artifacts/capsem-sbom.spdx.json
+
+  test-binary-pairing:
+    needs: [build-app-macos, build-app-linux, author-binary-candidate]
     runs-on: ubuntu-24.04
     name: Complete binary pairing gate
     steps:
@@ -693,6 +810,10 @@ jobs:
         with:
           name: binary-channel-source
           path: target/channel-source/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-candidate
+          path: target/binary-channel/
 
       - name: Run shared static module
         run: just _test-static
@@ -700,7 +821,7 @@ jobs:
       - name: Fetch selected channel manifest and profiles
         run: |
           uv run python scripts/fetch-release-artifacts.py \
-            --manifest-url "file://$PWD/target/channel-source/manifest.json" \
+            --manifest-url "file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
             --kind profiles \
             --output target/release-inputs
           uv run python scripts/verify-release-inputs.py \
@@ -760,26 +881,13 @@ jobs:
         with:
           name: release-linux-x86_64
           path: release-artifacts/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-host-sbom
+          path: release-artifacts/
 
-      - name: Install host SBOM archive deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zstd
-
-      - name: Generate packaged host SBOM
-        run: |
-          set -euo pipefail
-          ARTIFACTS=()
-          for file in release-artifacts/*.pkg release-artifacts/*.deb; do
-            [ -f "$file" ] && ARTIFACTS+=("$file")
-          done
-          if [ "${#ARTIFACTS[@]}" -eq 0 ]; then
-            echo "::error::no package artifacts available for host SBOM"
-            exit 1
-          fi
-          python3 scripts/generate-host-binary-sbom.py \
-            --output release-artifacts/capsem-sbom.spdx.json \
-            "${ARTIFACTS[@]}"
+      - name: Verify tested host SBOM is present
+        run: test -s release-artifacts/capsem-sbom.spdx.json
 
       - name: Attest build provenance (pkg + deb)
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
@@ -858,7 +966,7 @@ jobs:
           done
 
   assemble-release-channel:
-    needs: [create-release, resolve-channel-source]
+    needs: [create-release, author-binary-candidate]
     runs-on: ubuntu-latest
     outputs:
       dist_artifact: binary-channel-preview
@@ -888,107 +996,14 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: release-macos
-          path: release-artifacts/
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: release-linux-arm64
-          path: release-artifacts/
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: release-linux-x86_64
-          path: release-artifacts/
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: binary-channel-source
-          path: target/binary-channel/${{ inputs.channel }}/
+          name: binary-channel-candidate
+          path: target/binary-channel/
 
-      - name: Install host SBOM archive deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zstd
-
-      - name: Generate packaged host SBOM
+      - name: Verify tested binary candidate source is present
         run: |
           set -euo pipefail
-          ARTIFACTS=()
-          for file in release-artifacts/*.pkg release-artifacts/*.deb; do
-            [ -f "$file" ] && ARTIFACTS+=("$file")
-          done
-          if [ "${#ARTIFACTS[@]}" -eq 0 ]; then
-            echo "::error::no package artifacts available for host SBOM"
-            exit 1
-          fi
-          python3 scripts/generate-host-binary-sbom.py \
-            --output release-artifacts/capsem-sbom.spdx.json \
-            "${ARTIFACTS[@]}"
-
-      - name: Verify binary channel artifacts
-        run: |
-          set -euo pipefail
-          if [ ! -f release-artifacts/capsem-sbom.spdx.json ]; then
-            echo "::error::release-artifacts/capsem-sbom.spdx.json missing"
-            exit 1
-          fi
-          package_found=false
-          for file in release-artifacts/*.pkg release-artifacts/*.deb; do
-            if [ -f "$file" ]; then
-              package_found=true
-              break
-            fi
-          done
-          if [ "$package_found" != true ]; then
-            echo "::error::no installable host package artifact found"
-            exit 1
-          fi
-
-      - name: Preserve serialized selected channel source manifest
-        run: |
-          set -euo pipefail
-          manifest="target/binary-channel/$RELEASE_CHANNEL/manifest.json"
-          test -f "$manifest"
-          cp "$manifest" \
-            "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
-
-      - name: Record binary release metadata in selected channel manifest
-        run: |
-          set -euo pipefail
-          VERSION="${RELEASE_TAG#v}"
-          ARTIFACT_ARGS=()
-          for file in release-artifacts/*.pkg release-artifacts/*.deb release-artifacts/capsem-sbom.spdx.json; do
-            [ -f "$file" ] && ARTIFACT_ARGS+=(--artifact "$file")
-          done
-          cargo run -p capsem-admin -- assets channel record-binary \
-            --manifest-path "target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
-            --version "$VERSION" \
-            "${ARTIFACT_ARGS[@]}"
-          test -f "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
-
-      - name: Prove binary lane did not change VM assets
-        run: |
-          set -euo pipefail
-          python3 - "$RELEASE_CHANNEL" <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          channel = sys.argv[1]
-          root = Path("target/binary-channel") / channel
-          before = json.loads((root / "manifest.before.json").read_text())
-          after = json.loads((root / "manifest.json").read_text())
-          if "profiles" in before and "profiles" in after:
-              if after["profiles"] != before["profiles"]:
-                  raise SystemExit(f"{channel} binary release changed profile image metadata")
-          else:
-              if after["assets"] != before["assets"]:
-                  raise SystemExit(f"{channel} binary release changed VM asset metadata")
-          PY
-
-      - name: Verify binary release lane policy
-        run: |
-          uv run pytest \
-            tests/capsem-release/test_binary_lane_gate.py \
-            tests/capsem-release/test_release_lane_diff_policy.py -q
+          test -s "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
+          test -s "target/binary-channel/$RELEASE_CHANNEL/manifest.json"
 
       - name: Build complete release channels with existing VM assets
         run: |
