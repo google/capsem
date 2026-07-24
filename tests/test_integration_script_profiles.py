@@ -13,11 +13,46 @@ def load_integration_script():
     return module
 
 
+def test_integration_script_loads_under_the_host_python():
+    script_path = Path(__file__).resolve().parents[1] / "scripts" / "integration_test.py"
+
+    result = subprocess.run(
+        ["python3", str(script_path), "--help"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--profile" in result.stdout
+
+
 def test_integration_script_uses_materialized_profiles_dir():
     module = load_integration_script()
 
     assert module.default_materialized_profiles_dir().endswith("target/config/profiles")
     assert module._profile_env()["CAPSEM_PROFILES_DIR"] == module.default_materialized_profiles_dir()
+
+
+def test_integration_script_pins_every_cli_run_to_the_selected_profile():
+    module = load_integration_script()
+
+    assert module._profile_run_prefix(
+        "target/debug/capsem", "experimental", timeout=300
+    ) == [
+        "target/debug/capsem",
+        "run",
+        "--timeout",
+        "300",
+        "--profile",
+        "experimental",
+    ]
+    assert module._profile_run_prefix("target/debug/capsem", "co-work") == [
+        "target/debug/capsem",
+        "run",
+        "--profile",
+        "co-work",
+    ]
 
 
 def test_integration_script_service_paths_use_process_scoped_isolated_home():

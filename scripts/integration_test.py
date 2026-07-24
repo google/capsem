@@ -20,6 +20,8 @@ services, or expectations copied from Rust internals. The ledger contract is
 client result + parsed facts + security rows + protocol rows + logs + routes.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -117,6 +119,16 @@ def default_materialized_profiles_dir() -> str:
 
 def _profile_env() -> dict[str, str]:
     return {"CAPSEM_PROFILES_DIR": default_materialized_profiles_dir()}
+
+
+def _profile_run_prefix(
+    binary: str, profile: str, *, timeout: int | None = None
+) -> list[str]:
+    command = [binary, "run"]
+    if timeout is not None:
+        command.extend(["--timeout", str(timeout)])
+    command.extend(["--profile", profile])
+    return command
 
 
 def _test_isolation_env() -> dict[str, str]:
@@ -364,7 +376,7 @@ def _start_service_with_test_config(
     return proc
 
 
-def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
+def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[str, int]:
     """Boot a temp VM via `capsem run`, return (session_id, exit_code).
 
     The service preserves the session dir after `run` completes, so we
@@ -407,7 +419,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
         # Pass deterministic local fixture settings via --env so they reach the
         # VM through the service. Do not inject proxy variables: guest traffic
         # must prove the iptables-nft redirect rail.
-        cmd = [binary, "run", "--timeout", "300"]
+        cmd = _profile_run_prefix(binary, profile, timeout=300)
         for key, value in local_fixture_env(
             mock_base_url,
             ready.get("https_base_url"),
@@ -1027,7 +1039,7 @@ PERSISTENCE_CHECK_CMD = (
 )
 
 
-def check_persistence(binary: str, assets_dir: str) -> bool:
+def check_persistence(binary: str, assets_dir: str, profile: str) -> bool:
     """Boot two consecutive VMs; verify a file written in the first is gone in the second."""
     print(f"\n{BOLD}=== Ephemeral model check ==={RESET}")
     env = {
@@ -1048,7 +1060,7 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
     try:
         print("  Invocation 1: writing sentinel file...")
         proc1 = subprocess.run(
-            [binary, "run", PERSISTENCE_WRITE_CMD],
+            [*_profile_run_prefix(binary, profile), PERSISTENCE_WRITE_CMD],
             env=env, capture_output=True, text=True, timeout=120,
         )
         output1 = proc1.stdout + "\n" + proc1.stderr
@@ -1060,7 +1072,7 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
 
         print("  Invocation 2: checking sentinel is absent...")
         proc2 = subprocess.run(
-            [binary, "run", PERSISTENCE_CHECK_CMD],
+            [*_profile_run_prefix(binary, profile), PERSISTENCE_CHECK_CMD],
             env=env, capture_output=True, text=True, timeout=120,
         )
         output2 = proc2.stdout + "\n" + proc2.stderr
@@ -1100,16 +1112,21 @@ def main():
         default="assets",
         help="Path to VM assets directory (default: assets)",
     )
+    parser.add_argument(
+        "--profile",
+        default=os.environ.get("CAPSEM_TEST_PROFILE", "code"),
+        help="Manifest profile to exercise (default: CAPSEM_TEST_PROFILE or code)",
+    )
     args = parser.parse_args()
 
-    session_id, exit_code = run_vm(args.binary, args.assets)
+    session_id, exit_code = run_vm(args.binary, args.assets, args.profile)
 
     if exit_code != 0:
         print(f"{RED}FAIL: VM integration workload exited with code {exit_code}{RESET}")
         sys.exit(1)
 
     telemetry_ok = verify_session(session_id)
-    ephemeral_ok = check_persistence(args.binary, args.assets)
+    ephemeral_ok = check_persistence(args.binary, args.assets, args.profile)
     sys.exit(0 if (telemetry_ok and ephemeral_ok) else 1)
 
 
