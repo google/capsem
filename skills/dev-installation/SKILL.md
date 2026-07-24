@@ -101,12 +101,12 @@ state. CLI status and About Capsem both read the service's canonical
 
 - `read_cached_update_notice()` -> sync file read on every command
 - `refresh_update_cache_if_stale()` -> background 24h-cached check merged atomically into `assets/manifest-metadata.json`
-- `run_update()` -> check the selected manifest URL, choose the matching `.pkg`/`.deb` installer metadata, and keep profile image refresh on `capsem update --assets`
-- `capsem update --yes` -> downloads the selected installer into `~/.capsem/updates/installers/`, verifies size + SHA-256, prints the tested package-manager apply command for audit, and executes it through `sudo` (`/usr/sbin/installer -pkg ... -target /` or `apt-get install --yes ...`)
-- `capsem update --assets` -> hydrate the locally installed manifest or an explicit `--manifest` URL
+- `run_update()` -> check the selected manifest URL and stage one complete compatible release transaction before mutating the installation
+- `capsem update --yes` -> verifies every changed package/profile artifact, applies the native package when required, and atomically activates the selected profile graph; this is the one ordinary update path used by the installed service
+- `capsem update --assets` -> low-level diagnostic/repair rail for hydrating the locally installed manifest or an explicit `--manifest` URL; normal product surfaces never direct users to apply assets separately
 - Corporate VM asset channels use `capsem update --assets --manifest <URL>`; `--corp <URL>` provisions policy config and must not be combined with `--assets`
 - `--manifest` and `--corp` are URL-only inputs. Local files must use `file:///absolute/path`, while hosted release and corporate channels use `https://...` or `http://...`; bare paths are rejected so update checks share one URL-based mechanism.
-- Stable/nightly switching uses the installed CLI: `capsem update --assets --channel <stable|nightly>` switches VM assets, while `capsem update --yes --channel <stable|nightly>` applies the verified package transition and assets. Explicit channel transitions may downgrade; Linux uses `apt-get --allow-downgrades`. The single metadata file records the installed manifest URL separately from the most recently checked URL.
+- Stable/nightly switching uses the one complete installed transaction: `capsem update --yes --channel <stable|nightly>`. Explicit channel transitions may downgrade; Linux uses `apt-get --allow-downgrades`. The single metadata file records the installed manifest URL separately from the most recently checked URL.
 - An explicit corporate asset manifest moves the installation into a one-way locked channel. Persist `channel_kind=corporate` and `channel_locked=true`; later public-channel or different-manifest selections must fail before fetch or mutation.
 - Profile-owned images/configs/evidence belong to the selected channel/profile. Updating the co-work nightly profile can refresh only nightly co-work image/config refs and matching digests; it must not mutate stable, packages, per-binary inventory, or other profiles.
 - Profiles may set `min_capsem_version` when a profile requires newer client behavior. That is the compatibility hook; profiles must not point at the selected Capsem binary.

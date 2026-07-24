@@ -1158,7 +1158,7 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     assert "Updates: Binary, VM assets" in tray
     assert "Updates: Binary; blocked: Profiles" in tray
 
-    assert "tui_update_smoke_matrix_covers_release_states_and_actions" in tui
+    assert "tui_update_smoke_matrix_covers_release_states_and_atomic_action" in tui
     for case in [
         "binary-update",
         "profile-update",
@@ -1166,8 +1166,9 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
         "mixed-binary-asset-update",
     ]:
         assert case in tui
-    assert "ControlAction::Update { assets: false }" in tui
-    assert "ControlAction::Update { assets: true }" in tui
+    assert "ControlAction::Update" in tui
+    assert "ControlAction::Update { assets:" not in tui
+    assert "update --assets" not in tui
 
     assert "summarizes mixed binary and VM asset updates without profile noise" in frontend
     assert "treats profile catalog updates as a first-class available track" in frontend
@@ -1176,6 +1177,8 @@ def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     )
     assert "Binary, VM assets available" in frontend
     assert "VM assets available for future sessions" in frontend
+    assert "apply the verified VM asset update automatically" in frontend
+    assert "capsem update --assets" not in frontend
 
     assert "applies the complete update transaction through one confirmed body" in frontend_api
     assert (

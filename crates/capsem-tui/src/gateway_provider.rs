@@ -119,8 +119,8 @@ impl GatewayProvider {
         if matches!(action, ControlAction::StartService) {
             return start_service().await;
         }
-        if let ControlAction::Update { assets } = action {
-            return update_with_binary(&capsem_binary(), *assets).await;
+        if matches!(action, ControlAction::Update) {
+            return update_with_binary(&capsem_binary()).await;
         }
         let token = self.token().await?;
         invoke_action(&self.client, &self.base_url, &token, action).await
@@ -410,7 +410,7 @@ async fn invoke_action(
 ) -> Result<ActionOutcome> {
     match action {
         ControlAction::StartService => start_service().await,
-        ControlAction::Update { assets } => update_with_binary(&capsem_binary(), *assets).await,
+        ControlAction::Update => update_with_binary(&capsem_binary()).await,
         ControlAction::CreateSession { name, profile_id } => {
             let mut body = serde_json::json!({
                 "persistent": true,
@@ -544,14 +544,9 @@ pub(crate) async fn start_service_with_binary(binary: &Path) -> Result<ActionOut
     })
 }
 
-pub(crate) async fn update_with_binary(binary: &Path, assets: bool) -> Result<ActionOutcome> {
+pub(crate) async fn update_with_binary(binary: &Path) -> Result<ActionOutcome> {
     let mut command = tokio::process::Command::new(binary);
-    command.arg("update");
-    if assets {
-        command.arg("--assets");
-    } else {
-        command.arg("--yes");
-    }
+    command.args(["update", "--yes"]);
     let output = command
         .output()
         .await
@@ -560,13 +555,8 @@ pub(crate) async fn update_with_binary(binary: &Path, assets: bool) -> Result<Ac
         let detail = command_detail(&output);
         anyhow::bail!("capsem update failed: {detail}");
     }
-    let fallback = if assets {
-        "VM asset update finished"
-    } else {
-        "Capsem update finished"
-    };
     Ok(ActionOutcome {
-        message: command_summary(&output).unwrap_or_else(|| fallback.to_string()),
+        message: command_summary(&output).unwrap_or_else(|| "Capsem update finished".to_string()),
         focus_session: None,
     })
 }

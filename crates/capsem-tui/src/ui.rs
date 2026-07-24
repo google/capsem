@@ -562,8 +562,12 @@ fn help_lines() -> Vec<Line<'static>> {
             "global",
             "purge temporary/broken sessions",
         ),
-        help_row("Alt+u", "update", "global", "apply binary/profile updates"),
-        help_row("Alt+a", "assets", "global", "refresh VM assets"),
+        help_row(
+            "Alt+u",
+            "update",
+            "global",
+            "apply complete verified release",
+        ),
         help_row("Alt+q", "quit", "app", "plain q passes through"),
     ]
 }

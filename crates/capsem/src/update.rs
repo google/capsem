@@ -1069,7 +1069,7 @@ pub fn read_cached_update_notice() -> Option<String> {
     if let Some(latest) = check.latest_version {
         if is_newer(&latest, current) {
             return Some(format!(
-                "Update available: {} -> {}. Run `capsem update` to inspect.",
+                "Update available: {} -> {}. The installed service will apply it automatically.",
                 current, latest
             ));
         }
@@ -1078,7 +1078,7 @@ pub fn read_cached_update_notice() -> Option<String> {
     if check.assets_update_available {
         if let Some(latest_assets) = check.latest_assets {
             return Some(format!(
-                "VM asset update available: {latest_assets}. Run `capsem update --assets` to refresh."
+                "VM asset update available: {latest_assets}. The installed service will apply it automatically."
             ));
         }
     }
@@ -1086,7 +1086,7 @@ pub fn read_cached_update_notice() -> Option<String> {
     if check.profiles_update_available {
         if let Some(latest_profiles) = check.latest_profiles {
             return Some(format!(
-                "Profile catalog update available: {latest_profiles}. Run `capsem update` to refresh."
+                "Profile catalog update available: {latest_profiles}. The installed service will apply it automatically."
             ));
         }
     }
@@ -2569,7 +2569,7 @@ pub async fn run_update(
                     return Err(error).context("release channel check failed");
                 }
                 println!("Binary update check failed: {error:#}");
-                println!("Run `capsem update --assets` to refresh VM assets, or retry later.");
+                println!("The installed service will keep polling the selected release channel.");
                 return Ok(());
             }
         };
@@ -4473,7 +4473,7 @@ mod tests {
         assert_eq!(
             read_cached_update_notice().as_deref(),
             Some(
-                "VM asset update available: 2030.0101.1. Run `capsem update --assets` to refresh."
+                "VM asset update available: 2030.0101.1. The installed service will apply it automatically."
             )
         );
     }
@@ -4494,7 +4494,7 @@ mod tests {
         assert_eq!(
             read_cached_update_notice().as_deref(),
             Some(
-                "Profile catalog update available: profiles-2030.0101.1. Run `capsem update` to refresh."
+                "Profile catalog update available: profiles-2030.0101.1. The installed service will apply it automatically."
             )
         );
     }
