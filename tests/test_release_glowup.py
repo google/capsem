@@ -58,9 +58,7 @@ def test_candidate_artifact_must_match_manifest_exactly(tmp_path: Path) -> None:
     assert artifact.sha256 == hashlib.sha256(b"exact candidate package").hexdigest()
 
 
-def test_debian_amd64_identity_matches_canonical_x86_64_graph(
-    tmp_path: Path,
-) -> None:
+def test_debian_amd64_identity_matches_native_package_graph(tmp_path: Path) -> None:
     module = _load_module()
     package = tmp_path / "Capsem_1.5.100_amd64.deb"
     package.write_bytes(b"exact linux candidate package")
@@ -71,12 +69,57 @@ def test_debian_amd64_identity_matches_canonical_x86_64_graph(
         architecture="amd64",
     )
     manifest = _manifest(artifact)
-    manifest["packages"][0]["architecture"] = "x86_64"
 
     matched = module.assert_manifest_artifact(manifest, artifact)
 
-    assert artifact.architecture == "x86_64"
-    assert matched["architecture"] == "x86_64"
+    assert artifact.architecture is module.PackageArchitecture.AMD64
+    assert matched["architecture"] == "amd64"
+
+
+@pytest.mark.parametrize("architecture", ["x86_64", "aarch64", ""])
+def test_package_identity_rejects_machine_architectures_and_aliases(
+    tmp_path: Path,
+    architecture: str,
+) -> None:
+    module = _load_module()
+    package = tmp_path / "Capsem_1.5.100_amd64.deb"
+    package.write_bytes(b"exact linux candidate package")
+
+    with pytest.raises(module.GlowupContractError, match="package architecture"):
+        module.ArtifactIdentity.from_path(
+            package,
+            version="1.5.100",
+            platform="linux",
+            architecture=architecture,
+        )
+
+
+@pytest.mark.parametrize(
+    ("name", "platform", "architecture"),
+    [
+        ("Capsem_1.5.100_x86_64.deb", "linux", "amd64"),
+        ("Capsem_1.5.100_arm64.deb", "linux", "amd64"),
+        ("Capsem_1.5.100_amd64.deb", "linux", "arm64"),
+        ("Capsem-1.5.100.pkg", "macos", "amd64"),
+    ],
+)
+def test_package_filename_platform_and_architecture_must_agree(
+    tmp_path: Path,
+    name: str,
+    platform: str,
+    architecture: str,
+) -> None:
+    module = _load_module()
+    package = tmp_path / name
+    package.write_bytes(b"candidate package")
+
+    with pytest.raises(module.GlowupContractError, match="package|architecture"):
+        module.ArtifactIdentity.from_path(
+            package,
+            version="1.5.100",
+            platform=platform,
+            architecture=architecture,
+        )
 
 
 @pytest.mark.parametrize(

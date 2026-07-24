@@ -67,6 +67,51 @@ fn validate_sha256(hash: &str) -> Result<()> {
 // Manifest types
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Architecture {
+    Arm64,
+    X86_64,
+}
+
+impl Architecture {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Arm64 => "arm64",
+            Self::X86_64 => "x86_64",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PackageArchitecture {
+    Amd64,
+    Arm64,
+}
+
+impl PackageArchitecture {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Amd64 => "amd64",
+            Self::Arm64 => "arm64",
+        }
+    }
+
+    pub fn from_package_name(name: &str) -> Result<Self> {
+        if name.ends_with(".pkg") {
+            return Ok(Self::Arm64);
+        }
+        if name.ends_with("_amd64.deb") {
+            return Ok(Self::Amd64);
+        }
+        if name.ends_with("_arm64.deb") {
+            return Ok(Self::Arm64);
+        }
+        bail!("package name must end in .pkg, _amd64.deb, or _arm64.deb: {name}")
+    }
+}
+
 /// A single asset entry (keyed by logical name in the map).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AssetEntry {

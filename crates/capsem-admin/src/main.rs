@@ -1613,7 +1613,7 @@ fn graph_package_from_binary_file(
 ) -> Result<serde_json::Value> {
     let package_kind = package_kind_for_name(&file.name);
     let platform = package_platform_for_kind(package_kind);
-    let architecture = package_architecture_for_name(&file.name);
+    let architecture = release_graph::PackageArchitecture::from_package_name(&file.name)?;
     let package_id = release_graph_id(&file.name);
     let package_url = capsem_core::asset_manager::release_url(version);
     let package_url = format!("{}/{}", package_url.trim_end_matches('/'), file.name);
@@ -1721,6 +1721,22 @@ fn binary_files_from_artifacts(artifacts: &[PathBuf]) -> Result<Vec<BinaryFile>>
         }
         let bytes = fs::read(path)
             .with_context(|| format!("read binary release artifact {}", path.display()))?;
+        if name.ends_with(".deb") {
+            let filename_architecture =
+                release_graph::PackageArchitecture::from_package_name(&name)?;
+            let control_architecture = deb_control_architecture(&bytes)
+                .with_context(|| format!("read Debian control metadata from {}", path.display()))?;
+            if filename_architecture != control_architecture {
+                return Err(anyhow!(
+                    "Debian package filename architecture {} does not match control Architecture {}: {}",
+                    filename_architecture.as_str(),
+                    control_architecture.as_str(),
+                    name
+                ));
+            }
+        } else if name.ends_with(".pkg") {
+            release_graph::PackageArchitecture::from_package_name(&name)?;
+        }
         if is_host_sbom_file(&name) || is_package_sbom_file(&name) {
             validate_host_spdx_sbom_bytes(&bytes, path)
                 .with_context(|| format!("validate host SBOM artifact {}", path.display()))?;
@@ -2133,6 +2149,46 @@ fn deb_executable_inventory(bytes: &[u8]) -> Result<Vec<BinaryExecutable>> {
     }
     binaries.sort_by(|left, right| left.installed_path.cmp(&right.installed_path));
     Ok(binaries)
+}
+
+fn deb_control_architecture(bytes: &[u8]) -> Result<release_graph::PackageArchitecture> {
+    let mut reader: Box<dyn Read> = if let Ok(control_tar) = deb_member(bytes, "control.tar.gz") {
+        Box::new(flate2::read::GzDecoder::new(control_tar))
+    } else {
+        let control_tar = deb_member(bytes, "control.tar.zst")?;
+        Box::new(zstd::stream::read::Decoder::new(control_tar).context("decode control.tar.zst")?)
+    };
+    let mut archive = tar::Archive::new(&mut reader);
+    let mut architecture = None;
+    for entry in archive.entries().context("read Debian control archive")? {
+        let mut entry = entry.context("read Debian control entry")?;
+        let path = entry.path().context("read Debian control entry path")?;
+        if path.to_string_lossy().trim_start_matches("./") != "control" {
+            continue;
+        }
+        let mut control = String::new();
+        entry
+            .read_to_string(&mut control)
+            .context("read Debian control file")?;
+        for line in control.lines() {
+            let Some(value) = line.strip_prefix("Architecture:") else {
+                continue;
+            };
+            if architecture.is_some() {
+                return Err(anyhow!(
+                    "Debian control file contains duplicate Architecture fields"
+                ));
+            }
+            architecture = Some(match value.trim() {
+                "amd64" => release_graph::PackageArchitecture::Amd64,
+                "arm64" => release_graph::PackageArchitecture::Arm64,
+                value => {
+                    return Err(anyhow!("unsupported Debian control Architecture: {value}"));
+                }
+            });
+        }
+    }
+    architecture.ok_or_else(|| anyhow!("Debian control file is missing Architecture"))
 }
 
 fn deb_member<'a>(bytes: &'a [u8], member_name: &str) -> Result<&'a [u8]> {
@@ -4229,10 +4285,10 @@ fn graph_package_rows(manifest: &ManifestV2) -> Result<Vec<serde_json::Value>> {
     let rows = binary_files
         .iter()
         .filter(|file| !is_host_sbom_file(&file.name) && !is_package_sbom_file(&file.name))
-        .map(|file| {
+        .map(|file| -> Result<serde_json::Value> {
             let package_kind = package_kind_for_name(&file.name);
             let platform = package_platform_for_kind(package_kind);
-            let architecture = package_architecture_for_name(&file.name);
+            let architecture = release_graph::PackageArchitecture::from_package_name(&file.name)?;
             let package_id = release_graph_id(&file.name);
             let package_sboms = package_sbom_refs(&package_id, &binary_files, release);
             let binaries = file
@@ -4245,7 +4301,7 @@ fn graph_package_rows(manifest: &ManifestV2) -> Result<Vec<serde_json::Value>> {
                         "version": manifest.binaries.current,
                         "installed_path": binary.installed_path,
                         "platform": platform,
-                        "architecture": architecture.clone(),
+                        "architecture": architecture,
                         "bytes": binary.size,
                         "digest": {
                             "sha256": binary.sha256,
@@ -4256,7 +4312,7 @@ fn graph_package_rows(manifest: &ManifestV2) -> Result<Vec<serde_json::Value>> {
                     })
                 })
                 .collect::<Vec<_>>();
-            serde_json::json!({
+            Ok(serde_json::json!({
                 "id": package_id,
                 "kind": package_kind,
                 "name": file.name,
@@ -4272,9 +4328,9 @@ fn graph_package_rows(manifest: &ManifestV2) -> Result<Vec<serde_json::Value>> {
                 "binaries": binaries,
                 "evidence": package_sboms,
                 "status": release_state(release),
-            })
+            }))
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
     Ok(rows)
 }
 
@@ -4808,14 +4864,6 @@ fn package_platform_for_kind(kind: &str) -> &'static str {
         "macos_pkg" => "macos",
         "debian_package" => "linux",
         _ => "unknown",
-    }
-}
-
-fn package_architecture_for_name(name: &str) -> String {
-    if name.contains("x86_64") || name.contains("amd64") {
-        "x86_64".to_string()
-    } else {
-        "arm64".to_string()
     }
 }
 
@@ -9816,7 +9864,12 @@ decision = "block"
         let temp = tempfile::tempdir().expect("tempdir");
         let deb_path = temp.path().join("Capsem_1.4.1234567890_arm64.deb");
         let executable = b"real capsem executable bytes";
-        write_minimal_deb_with_file(&deb_path, "usr/bin/capsem-app", executable);
+        write_minimal_deb_with_file(
+            &deb_path,
+            "usr/bin/capsem-app",
+            executable,
+            release_graph::PackageArchitecture::Arm64,
+        );
 
         let files = binary_files_from_artifacts(&[deb_path]).expect("binary files");
 
@@ -9831,6 +9884,47 @@ decision = "block"
         assert_eq!(binary.sha256, format!("{:x}", Sha256::digest(executable)));
         assert_eq!(binary.blake3, blake3::hash(executable).to_hex().to_string());
         assert_eq!(binary.sbom_component_ref, "SPDXRef-File-capsem-app");
+    }
+
+    #[test]
+    fn binary_files_from_deb_rejects_filename_control_architecture_mismatch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let deb_path = temp.path().join("Capsem_1.4.1234567890_amd64.deb");
+        write_minimal_deb_with_file(
+            &deb_path,
+            "usr/bin/capsem-app",
+            b"executable",
+            release_graph::PackageArchitecture::Arm64,
+        );
+
+        let error = binary_files_from_artifacts(&[deb_path])
+            .expect_err("filename/control architecture mismatch rejected");
+
+        assert!(
+            format!("{error:#}")
+                .contains("filename architecture amd64 does not match control Architecture arm64"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
+    fn binary_files_from_deb_rejects_missing_control_architecture() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let deb_path = temp.path().join("Capsem_1.4.1234567890_amd64.deb");
+        write_minimal_deb_with_control(
+            &deb_path,
+            "usr/bin/capsem-app",
+            b"executable",
+            b"Package: capsem\nVersion: 1.0.0\n",
+        );
+
+        let error = binary_files_from_artifacts(&[deb_path])
+            .expect_err("missing control Architecture rejected");
+
+        assert!(
+            format!("{error:#}").contains("missing Architecture"),
+            "{error:#}"
+        );
     }
 
     #[test]
@@ -9850,7 +9944,12 @@ decision = "block"
             "Applications/Capsem.app/Contents/MacOS/capsem-app",
             b"pkg executable bytes",
         );
-        write_minimal_deb_with_file(&deb_path, "usr/bin/capsem-app", b"deb executable bytes");
+        write_minimal_deb_with_file(
+            &deb_path,
+            "usr/bin/capsem-app",
+            b"deb executable bytes",
+            release_graph::PackageArchitecture::Arm64,
+        );
         fs::write(&sbom_path, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("sbom");
 
         let report = record_binary_release_metadata(
@@ -9912,7 +10011,12 @@ decision = "block"
             "Applications/Capsem.app/Contents/MacOS/capsem-app",
             b"pkg executable bytes",
         );
-        write_minimal_deb_with_file(&deb_path, "usr/bin/capsem-app", b"deb executable bytes");
+        write_minimal_deb_with_file(
+            &deb_path,
+            "usr/bin/capsem-app",
+            b"deb executable bytes",
+            release_graph::PackageArchitecture::Amd64,
+        );
         fs::write(&sbom_path, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("sbom");
 
         let report = record_binary_release_metadata(
@@ -9965,7 +10069,7 @@ decision = "block"
             updated["packages"][1]["name"],
             "Capsem_1.4.1234567890_amd64.deb"
         );
-        assert_eq!(updated["packages"][1]["architecture"], "x86_64");
+        assert_eq!(updated["packages"][1]["architecture"], "amd64");
     }
 
     #[test]
@@ -10164,9 +10268,42 @@ decision = "block"
         }
     }
 
-    fn write_minimal_deb_with_file(path: &Path, file_path: &str, contents: &[u8]) {
+    fn write_minimal_deb_with_file(
+        path: &Path,
+        file_path: &str,
+        contents: &[u8],
+        architecture: release_graph::PackageArchitecture,
+    ) {
+        let control = format!(
+            "Package: capsem\nVersion: 1.0.0\nArchitecture: {}\n",
+            architecture.as_str()
+        );
+        write_minimal_deb_with_control(path, file_path, contents, control.as_bytes());
+    }
+
+    fn write_minimal_deb_with_control(
+        path: &Path,
+        file_path: &str,
+        contents: &[u8],
+        control: &[u8],
+    ) {
         use flate2::{write::GzEncoder, Compression};
         use tar::{Builder, Header};
+
+        let mut control_tar_gz = Vec::new();
+        {
+            let encoder = GzEncoder::new(&mut control_tar_gz, Compression::default());
+            let mut builder = Builder::new(encoder);
+            let mut header = Header::new_gnu();
+            header.set_size(control.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "control", control)
+                .expect("append Debian control file");
+            let encoder = builder.into_inner().expect("finish control tar");
+            encoder.finish().expect("finish control gzip");
+        }
 
         let mut data_tar_gz = Vec::new();
         {
@@ -10186,7 +10323,7 @@ decision = "block"
         let mut deb = Vec::new();
         deb.extend_from_slice(b"!<arch>\n");
         append_ar_member(&mut deb, "debian-binary", b"2.0\n");
-        append_ar_member(&mut deb, "control.tar.gz", b"");
+        append_ar_member(&mut deb, "control.tar.gz", &control_tar_gz);
         append_ar_member(&mut deb, "data.tar.gz", &data_tar_gz);
         fs::write(path, deb).expect("write deb");
     }

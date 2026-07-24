@@ -488,10 +488,10 @@
             "version": "1.5.0-nightly.20260702"
           },
           {
-            "architecture": "x86_64",
+            "architecture": "amd64",
             "binaries": [
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 94,
                 "digest": {
                   "blake3": "8e1f1711c5c0a05bf9702c97491bc220f7b76675180f9bf399962ac5acdf8b8c",
@@ -506,7 +506,7 @@
                 "description": "Capsem command-line executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 106,
                 "digest": {
                   "blake3": "67c61c6d6a4c4797f190082bbf397287c8dca007ec17c04abf6e89db012623e6",
@@ -521,7 +521,7 @@
                 "description": "Capsem release administration executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 102,
                 "digest": {
                   "blake3": "fed012b21bd43f44e14b66ff12be3313ecc0d4af7a88eb8e713ce7cb5ae5647e",
@@ -536,7 +536,7 @@
                 "description": "Capsem desktop application executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 110,
                 "digest": {
                   "blake3": "5ee281e99db414d20fff17ed5ee66e7bebd17d012e4ad756aa7002c3edc376df",
@@ -551,7 +551,7 @@
                 "description": "Capsem local gateway executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 102,
                 "digest": {
                   "blake3": "16be850c17f9a2056eb06f1daf8c8af62cb8f507806c446c325443d5d0804ee6",
@@ -566,7 +566,7 @@
                 "description": "Capsem MCP server executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 124,
                 "digest": {
                   "blake3": "328ef97807b4e3b61894215f4c9072f917793ba4a878a31d542531a0f870d71e",
@@ -581,7 +581,7 @@
                 "description": "Capsem MCP aggregator executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 118,
                 "digest": {
                   "blake3": "f1d6e53bcf99b3cc794c07302854e4572191e7ffa85acb7d8f76911fca17dff0",
@@ -596,7 +596,7 @@
                 "description": "Capsem builtin MCP tools executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 110,
                 "digest": {
                   "blake3": "9b9eb145779412e7c505ef1d23019f7c6de9ad1f6a90cf2658578e2a98599b3a",
@@ -611,7 +611,7 @@
                 "description": "Capsem guest process bridge executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 110,
                 "digest": {
                   "blake3": "564e43a58e0105162d5d8586202a018e39898fd180c582d18d0704b6cf8e63e7",
@@ -626,7 +626,7 @@
                 "description": "Capsem host service executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 104,
                 "digest": {
                   "blake3": "39e66d3ac08e3402885c348d2c130ae7a6590850d92acec06bb88e69ca0620d8",
@@ -641,7 +641,7 @@
                 "description": "Capsem tray companion executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 102,
                 "digest": {
                   "blake3": "5cc13dfcfa10ce6368c73f020033a8228ce5d1fb1df4a5a716adf418e6be4f7a",
@@ -1935,10 +1935,10 @@
             "version": "1.4.0"
           },
           {
-            "architecture": "x86_64",
+            "architecture": "amd64",
             "binaries": [
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 59,
                 "digest": {
                   "blake3": "830a71720e6b02bed1c91f9123356d47aedea6fa67b26c689d7b4c4568cb3ee4",
@@ -1953,7 +1953,7 @@
                 "description": "Capsem command-line executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 71,
                 "digest": {
                   "blake3": "d8a13312c199fca97624f5112e8744c8d8b8d7259814075898cfd6702d96a5e1",
@@ -1968,7 +1968,7 @@
                 "description": "Capsem release administration executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 67,
                 "digest": {
                   "blake3": "8cab52dd5417a5e0893392c9a72bccc513e5ffc277cd793461daf3eee69e490b",
@@ -1983,7 +1983,7 @@
                 "description": "Capsem desktop application executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 75,
                 "digest": {
                   "blake3": "32fa921d7057a9b54756b5f828bd606c663e6949b3eb494f69cab716313954b5",
@@ -1998,7 +1998,7 @@
                 "description": "Capsem local gateway executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 67,
                 "digest": {
                   "blake3": "c3a1ee0ac87ecff1f91bc8f8bab959b59e139a2c42d8cb50629024c120025a04",
@@ -2013,7 +2013,7 @@
                 "description": "Capsem MCP server executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 89,
                 "digest": {
                   "blake3": "efa30170219629756ac6a198a3f2492d2cbd58ce8c7cf9c3579bd2208d8e9065",
@@ -2028,7 +2028,7 @@
                 "description": "Capsem MCP aggregator executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 83,
                 "digest": {
                   "blake3": "f78f5f51535d523446f767ae9c503f93d8b456ae6f85d0a622e3599a7260de40",
@@ -2043,7 +2043,7 @@
                 "description": "Capsem builtin MCP tools executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 75,
                 "digest": {
                   "blake3": "d611da07e4d13c996fe8b5c3f2fe1ea3e9619c17e3385dfb0734d54b84078b09",
@@ -2058,7 +2058,7 @@
                 "description": "Capsem guest process bridge executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 75,
                 "digest": {
                   "blake3": "d21af4d85e0a3dacc0ccdf2b8354ceb863a5ecbcaffbfc54b6b5c838783d47c5",
@@ -2073,7 +2073,7 @@
                 "description": "Capsem host service executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 69,
                 "digest": {
                   "blake3": "da84ceb23d8dfc954d28bdc3dd3a92f8acde1fb61cb746c64bec09bbc122c2cf",
@@ -2088,7 +2088,7 @@
                 "description": "Capsem tray companion executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 67,
                 "digest": {
                   "blake3": "ba0bc4ba019dd90606255c4dffb7d6aca5c2600aa1b487a53077b3607ed1fc00",

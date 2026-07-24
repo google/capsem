@@ -137,7 +137,7 @@ FAKE_RELEASE_MANIFEST = r"""
       "version": "1.5.0"
     },
     {
-      "architecture": "x86_64",
+      "architecture": "amd64",
       "binaries": [],
       "bytes": 17,
       "digest": {"sha256": "f46ed56922b881235bea694d06c5e366954607fd25526c9dbf56ffefa67830b9"},

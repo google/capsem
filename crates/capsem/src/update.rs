@@ -22,6 +22,7 @@ use sha2::{Digest, Sha256};
 use tracing::{info, warn};
 
 use crate::platform::{self, InstallLayout};
+use capsem_core::asset_manager::{Architecture, PackageArchitecture};
 use capsem_core::net::policy_config::{ProfileCatalog, ProfileConfigFile};
 
 const RELEASE_HTTP_ATTEMPTS: usize = 4;
@@ -268,7 +269,7 @@ struct ReleaseChannelProfileDocument {
 
 #[derive(Debug, Deserialize)]
 struct ReleaseChannelProfileArchitecture {
-    architecture: String,
+    architecture: Architecture,
     #[serde(default)]
     image_revision: Option<String>,
     #[serde(default)]
@@ -321,7 +322,7 @@ struct ReleaseGraphPackage {
     version: String,
     kind: String,
     platform: String,
-    architecture: String,
+    architecture: PackageArchitecture,
     #[serde(default)]
     status: String,
     #[serde(rename = "bytes")]
@@ -1328,7 +1329,7 @@ fn graph_package_matches_layout(
         InstallLayout::LinuxDeb => {
             package.kind == "debian_package"
                 && package.platform == "linux"
-                && package.architecture == deb_graph_arch()
+                && package.architecture == package_architecture()
                 && package.name.ends_with(&format!("_{}.deb", deb_arch()))
         }
         InstallLayout::UserDir | InstallLayout::Development => false,
@@ -1592,18 +1593,23 @@ fn validate_release_channel_binary_file_metadata(file: &ReleaseChannelBinaryFile
 }
 
 fn deb_arch() -> &'static str {
+    package_architecture().as_str()
+}
+
+fn package_architecture() -> PackageArchitecture {
     if cfg!(target_arch = "aarch64") {
-        "arm64"
+        PackageArchitecture::Arm64
     } else {
-        "amd64"
+        PackageArchitecture::Amd64
     }
 }
 
-fn deb_graph_arch() -> &'static str {
+#[cfg(test)]
+fn machine_architecture() -> Architecture {
     if cfg!(target_arch = "aarch64") {
-        "arm64"
+        Architecture::Arm64
     } else {
-        "x86_64"
+        Architecture::X86_64
     }
 }
 
@@ -2813,7 +2819,7 @@ fn manifest_from_release_channel_profile_graph(
         let Some(arch_images) = profile
             .architectures
             .iter()
-            .find(|candidate| candidate.architecture == arch)
+            .find(|candidate| candidate.architecture.as_str() == arch)
         else {
             continue;
         };
@@ -4469,6 +4475,10 @@ mod tests {
     #[test]
     fn release_graph_update_check_selects_linux_deb_package() {
         let package_name = format!("Capsem_2.0.0_{}.deb", deb_arch());
+        let other_package_architecture = match package_architecture() {
+            PackageArchitecture::Amd64 => PackageArchitecture::Arm64,
+            PackageArchitecture::Arm64 => PackageArchitecture::Amd64,
+        };
         let graph: ReleaseGraphManifest = serde_json::from_value(serde_json::json!({
             "version": "1.0.0",
             "channel": "nightly",
@@ -4479,7 +4489,7 @@ mod tests {
                     "version": "2.0.0",
                     "kind": "debian_package",
                     "platform": "linux",
-                    "architecture": "wrong",
+                    "architecture": other_package_architecture,
                     "status": "current",
                     "bytes": 111,
                     "digest": {"sha256": "1".repeat(64), "blake3": "a".repeat(64)}
@@ -4490,7 +4500,7 @@ mod tests {
                     "version": "2.0.0",
                     "kind": "debian_package",
                     "platform": "linux",
-                    "architecture": deb_graph_arch(),
+                    "architecture": package_architecture(),
                     "status": "current",
                     "bytes": 222,
                     "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
@@ -4513,7 +4523,7 @@ mod tests {
                     "status": "current",
                     "architectures": [
                         {
-                            "architecture": deb_graph_arch(),
+                            "architecture": machine_architecture(),
                             "image_revision": "2026.0709.7",
                             "images": []
                         }
@@ -4557,6 +4567,30 @@ mod tests {
     }
 
     #[test]
+    fn release_graph_rejects_machine_architecture_in_package_row() {
+        let error = serde_json::from_value::<ReleaseGraphManifest>(serde_json::json!({
+            "packages": [{
+                "name": "Capsem_2.0.0_amd64.deb",
+                "url": "/releases/download/v2.0.0/Capsem_2.0.0_amd64.deb",
+                "version": "2.0.0",
+                "kind": "debian_package",
+                "platform": "linux",
+                "architecture": "x86_64",
+                "status": "current",
+                "bytes": 222,
+                "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
+            }],
+            "profiles": {}
+        }))
+        .expect_err("machine architecture must not deserialize as package identity");
+
+        assert!(
+            format!("{error:#}").contains("unknown variant"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
     fn release_graph_update_check_selects_macos_pkg_package() {
         let graph: ReleaseGraphManifest = serde_json::from_value(serde_json::json!({
             "version": "1.0.0",
@@ -4582,7 +4616,7 @@ mod tests {
                     "version": "2.0.0",
                     "kind": "debian_package",
                     "platform": "linux",
-                    "architecture": deb_graph_arch(),
+                    "architecture": package_architecture(),
                     "status": "current",
                     "bytes": 222,
                     "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
@@ -4621,7 +4655,7 @@ mod tests {
                     "version": "1.5.0",
                     "kind": "debian_package",
                     "platform": "linux",
-                    "architecture": deb_graph_arch(),
+                    "architecture": package_architecture(),
                     "status": "current",
                     "bytes": 222,
                     "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
@@ -4658,9 +4692,9 @@ mod tests {
                 "name": "Capsem-99.99.99.pkg",
                 "url": "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg",
                 "version": "99.99.99",
-                "kind": "macos_package",
+                "kind": "macos_pkg",
                 "platform": "macos",
-                "architecture": "universal",
+                "architecture": "arm64",
                 "status": "current",
                 "bytes": 123,
                 "digest": {"sha256": "3".repeat(64), "blake3": "b".repeat(64)}
@@ -4697,7 +4731,7 @@ mod tests {
                     "revision": "2030.0101.2",
                     "status": "current",
                     "architectures": [{
-                        "architecture": deb_graph_arch(),
+                        "architecture": machine_architecture(),
                         "image_revision": "2030.0101.7",
                         "images": [
                             {
@@ -4775,7 +4809,7 @@ mod tests {
                     "version": "1.5.99",
                     "kind": "debian_package",
                     "platform": "linux",
-                    "architecture": deb_graph_arch(),
+                    "architecture": package_architecture(),
                     "status": "current",
                     "bytes": 222,
                     "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
@@ -4815,7 +4849,7 @@ mod tests {
                     "version": "nightly-20260710",
                     "kind": "debian_package",
                     "platform": "linux",
-                    "architecture": deb_graph_arch(),
+                    "architecture": package_architecture(),
                     "status": "current",
                     "bytes": 222,
                     "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}

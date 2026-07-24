@@ -323,6 +323,19 @@ def _write_minimal_pkg(path: Path, version: str, members: dict[str, bytes]) -> N
 
 
 def _write_minimal_deb(path: Path, members: dict[str, bytes]) -> None:
+    architecture = path.stem.rsplit("_", maxsplit=1)[-1]
+    assert architecture in {"amd64", "arm64"}
+    control = (
+        "Package: capsem\n"
+        "Version: 1.0.0\n"
+        f"Architecture: {architecture}\n"
+    ).encode()
+    control_tar_gz = io.BytesIO()
+    with tarfile.open(fileobj=control_tar_gz, mode="w:gz") as tar:
+        info = tarfile.TarInfo("control")
+        info.mode = 0o644
+        info.size = len(control)
+        tar.addfile(info, io.BytesIO(control))
     data_tar_gz = io.BytesIO()
     with tarfile.open(fileobj=data_tar_gz, mode="w:gz") as tar:
         for member_path, contents in members.items():
@@ -332,7 +345,7 @@ def _write_minimal_deb(path: Path, members: dict[str, bytes]) -> None:
             tar.addfile(info, io.BytesIO(contents))
     deb = bytearray(b"!<arch>\n")
     _append_ar_member(deb, "debian-binary", b"2.0\n")
-    _append_ar_member(deb, "control.tar.gz", b"")
+    _append_ar_member(deb, "control.tar.gz", control_tar_gz.getvalue())
     _append_ar_member(deb, "data.tar.gz", data_tar_gz.getvalue())
     path.write_bytes(bytes(deb))
 

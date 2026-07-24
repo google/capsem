@@ -9,7 +9,6 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import blake3
 
@@ -263,7 +262,7 @@ def test_packages_group_by_os_architecture() -> None:
     stable_packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
     target_labels = {
         ("macos", "arm64"): "macOS arm64",
-        ("linux", "x86_64"): "Linux x86_64",
+        ("linux", "amd64"): "Linux amd64",
         ("linux", "arm64"): "Linux arm64",
     }
 
@@ -296,7 +295,7 @@ def test_manifest_package_targets_by_architecture() -> None:
         assert targets, channel
         for package in manifest["packages"]:
             assert package["platform"] in {"macos", "linux"}, package
-            assert package["architecture"] in {"arm64", "x86_64"}, package
+            assert package["architecture"] in {"arm64", "amd64"}, package
             for binary in package["binaries"]:
                 assert binary["platform"] == package["platform"], binary
                 assert binary["architecture"] == package["architecture"], binary
@@ -322,36 +321,16 @@ def test_package_architecture_sections_are_explicit() -> None:
         assert packages_section.index(heading) < packages_section.index(package["name"])
 
 
-def test_package_architecture_not_filename_derived(tmp_path: Path) -> None:
+def test_package_architecture_matches_native_package_filename() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    stable_packages = graph["manifests"]["stable"]["1.0.2"]["packages"]
-    arm64_deb = next(
-        package
-        for package in stable_packages
-        if package["platform"] == "linux" and package["architecture"] == "arm64"
-    )
-    lying_name = "Capsem_1.4.0_amd64-looking-name.deb"
-    arm64_deb["name"] = lying_name
-    arm64_deb["url"] = arm64_deb["url"].replace("arm64.deb", "amd64-looking-name.deb")
-
-    graph_path = tmp_path / "release-graph-filename-lies.json"
-    graph_path.write_text(json.dumps(graph, indent=2), encoding="utf-8")
-
-    build_release_site_from_graph(graph_path)
-
-    stable = (
-        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
-    ).read_text(encoding="utf-8")
-    packages_section = stable.split("Capsem Packages", maxsplit=1)[1].split(
-        "Profile References",
-        maxsplit=1,
-    )[0]
-    linux_arm64 = packages_section.split("Package target Linux arm64", maxsplit=1)[1]
-    linux_x86_64 = packages_section.split("Package target Linux x86_64", maxsplit=1)[1]
-
-    assert lying_name in linux_arm64
-    assert lying_name not in linux_x86_64
-    assert "Package target Linux amd64" not in packages_section
+    for manifests in graph["manifests"].values():
+        for manifest in manifests.values():
+            for package in manifest["packages"]:
+                if package["kind"] == "debian_package":
+                    assert package["name"].endswith(
+                        f"_{package['architecture']}.deb"
+                    )
+                    assert "_x86_64.deb" not in package["name"]
 
 
 def test_package_target_rows_include_own_sbom() -> None:
@@ -425,7 +404,7 @@ def test_every_package_has_detail_page() -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     target_labels = {
         ("macos", "arm64"): "macOS arm64",
-        ("linux", "x86_64"): "Linux x86_64",
+        ("linux", "amd64"): "Linux amd64",
         ("linux", "arm64"): "Linux arm64",
     }
 
@@ -697,7 +676,7 @@ def test_linux_package_complete_binary_cohort() -> None:
     build_release_site_from_fixture()
 
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
-    expected_architectures = {"arm64", "x86_64"}
+    expected_architectures = {"arm64", "amd64"}
 
     for channel, record in graph["channels"].items():
         current = next(item for item in record["manifests"] if item["status"] == "current")
@@ -754,7 +733,7 @@ def test_package_target_parity() -> None:
     expected_targets = {
         ("macos", "arm64", "macos_pkg"),
         ("linux", "arm64", "debian_package"),
-        ("linux", "x86_64", "debian_package"),
+        ("linux", "amd64", "debian_package"),
     }
 
     for channel, record in graph["channels"].items():
@@ -784,8 +763,7 @@ def test_package_target_parity() -> None:
 def test_channel_manifest_package_targets_grouped_by_os_and_architecture() -> None:
     test_manifest_package_targets_by_architecture()
     test_package_architecture_sections_are_explicit()
-    with TemporaryDirectory() as tmpdir:
-        test_package_architecture_not_filename_derived(Path(tmpdir))
+    test_package_architecture_matches_native_package_filename()
     test_package_target_parity()
 
 

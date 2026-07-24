@@ -1108,10 +1108,10 @@ jobs:
               package
               for package in manifest.get('packages', [])
               if package.get('platform') == 'linux'
-              and package.get('architecture') == 'x86_64'
+              and package.get('architecture') == 'amd64'
           ]
           if len(matches) != 1 or not isinstance(matches[0].get('version'), str):
-              raise SystemExit('manifest must contain exactly one versioned linux/x86_64 package')
+              raise SystemExit('manifest must contain exactly one versioned linux/amd64 package')
           print(matches[0]['version'])
           PY
           )"

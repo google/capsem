@@ -68,7 +68,7 @@ find_asset_url() {
             _kind="debian_package"
             case "$_arch" in
                 amd64)
-                    _manifest_arch="x86_64"
+                    _manifest_arch="amd64"
                     _name_suffix="_amd64.deb"
                     ;;
                 arm64)

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, bail, Context, Result};
+pub use capsem_core::asset_manager::{Architecture, PackageArchitecture};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as ShaDigest, Sha256};
@@ -49,22 +50,6 @@ pub enum PackageKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Architecture {
-    Arm64,
-    X86_64,
-}
-
-impl Architecture {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Arm64 => "arm64",
-            Self::X86_64 => "x86_64",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum ProfileImageArtifactKind {
     Kernel,
     Initrd,
@@ -96,6 +81,13 @@ pub enum ReleaseLedgerKind {
     ProfileImage,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ReleaseLedgerArchitecture {
+    Package(PackageArchitecture),
+    Machine(Architecture),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EvidenceRef {
@@ -111,7 +103,7 @@ pub struct PackageInventoryRow {
     pub version: String,
     pub kind: PackageKind,
     pub platform: String,
-    pub architecture: Architecture,
+    pub architecture: PackageArchitecture,
     pub url: String,
     pub bytes: u64,
     pub digest: DigestSet,
@@ -130,7 +122,7 @@ pub struct BinaryInventoryRow {
     pub description: String,
     pub installed_path: String,
     pub platform: String,
-    pub architecture: Architecture,
+    pub architecture: PackageArchitecture,
     pub bytes: u64,
     pub digest: DigestSet,
     pub status: Status,
@@ -176,7 +168,7 @@ pub struct SoftwareInventoryRow {
     pub name: String,
     pub version: String,
     pub source: String,
-    pub architecture: String,
+    pub architecture: Architecture,
     pub evidence: String,
     pub digest: DigestSet,
 }
@@ -270,7 +262,7 @@ pub struct ReleaseLedgerEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub architecture: Option<Architecture>,
+    pub architecture: Option<ReleaseLedgerArchitecture>,
 }
 
 impl DigestSet {
@@ -352,6 +344,28 @@ impl PackageInventoryRow {
         }
         if self.platform.trim().is_empty() {
             bail!("package {} platform must not be empty", self.name);
+        }
+        let expected_architecture = PackageArchitecture::from_package_name(&self.name)?;
+        if expected_architecture != self.architecture {
+            bail!(
+                "package {} filename architecture does not match graph architecture",
+                self.name
+            );
+        }
+        match self.kind {
+            PackageKind::MacosPkg if self.platform != "macos" => {
+                bail!("macOS package {} platform must be macos", self.name);
+            }
+            PackageKind::MacosPkg if !self.name.ends_with(".pkg") => {
+                bail!("macOS package {} name must end in .pkg", self.name);
+            }
+            PackageKind::DebianPackage if self.platform != "linux" => {
+                bail!("Debian package {} platform must be linux", self.name);
+            }
+            PackageKind::DebianPackage if !self.name.ends_with(".deb") => {
+                bail!("Debian package {} name must end in .deb", self.name);
+            }
+            _ => {}
         }
         validate_url_like(&self.url).with_context(|| {
             format!(
@@ -651,7 +665,7 @@ impl ReleaseManifest {
                 version: package.version.clone(),
                 status: package.status,
                 profile: None,
-                architecture: Some(package.architecture),
+                architecture: Some(ReleaseLedgerArchitecture::Package(package.architecture)),
             });
         }
         for package in &self.packages {
@@ -663,7 +677,7 @@ impl ReleaseManifest {
                     version: binary.version.clone(),
                     status: binary.status,
                     profile: None,
-                    architecture: Some(binary.architecture),
+                    architecture: Some(ReleaseLedgerArchitecture::Package(binary.architecture)),
                 });
             }
         }
@@ -686,7 +700,9 @@ impl ReleaseManifest {
                         version: profile.revision.clone(),
                         status: artifact.status,
                         profile: Some(profile_id.clone()),
-                        architecture: Some(architecture.architecture),
+                        architecture: Some(ReleaseLedgerArchitecture::Machine(
+                            architecture.architecture,
+                        )),
                     });
                 }
             }
@@ -832,12 +848,6 @@ impl SoftwareInventoryRow {
                 self.name
             );
         }
-        if self.architecture.trim().is_empty() {
-            bail!(
-                "profile {profile} software {} architecture must not be empty",
-                self.name
-            );
-        }
         validate_url_like(&self.evidence).with_context(|| {
             format!(
                 "profile {profile} software {} evidence is invalid",
@@ -915,6 +925,13 @@ impl ProfileArchitectureImages {
             .collect::<Vec<_>>();
         for software in &self.software {
             software.validate(profile)?;
+            if software.architecture != self.architecture {
+                bail!(
+                    "profile {profile} architecture {:?} software {} architecture mismatch",
+                    self.architecture,
+                    software.name
+                );
+            }
             if software_inventory_digests
                 .iter()
                 .any(|digest| **digest == software.digest)
@@ -1126,7 +1143,7 @@ mod tests {
             name: "python".to_string(),
             version: "3.12.11".to_string(),
             source: "apt".to_string(),
-            architecture: "all".to_string(),
+            architecture: Architecture::Arm64,
             evidence: "/profiles/releases/1.0.0/co-work/apt-packages.txt".to_string(),
             digest: digest_set(),
         }
@@ -1396,7 +1413,7 @@ mod tests {
             description: "Capsem executable fixture".to_string(),
             installed_path: "/usr/local/bin/capsem".to_string(),
             platform: "macos".to_string(),
-            architecture: Architecture::Arm64,
+            architecture: PackageArchitecture::Arm64,
             bytes: 7,
             digest: digest_set(),
             status: Status::Current,
@@ -1410,7 +1427,7 @@ mod tests {
                 version: "1.4.0".to_string(),
                 kind: PackageKind::MacosPkg,
                 platform: "macos".to_string(),
-                architecture: Architecture::Arm64,
+                architecture: PackageArchitecture::Arm64,
                 url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
                 bytes: 42,
                 digest: digest_set(),
@@ -1439,6 +1456,61 @@ mod tests {
     }
 
     #[test]
+    fn package_and_machine_architecture_enums_reject_each_others_vocabulary() {
+        assert_eq!(
+            serde_json::from_str::<PackageArchitecture>(r#""amd64""#).expect("Debian architecture"),
+            PackageArchitecture::Amd64
+        );
+        serde_json::from_str::<PackageArchitecture>(r#""x86_64""#)
+            .expect_err("machine architecture must not enter package rows");
+        serde_json::from_str::<Architecture>(r#""amd64""#)
+            .expect_err("package architecture must not enter VM/profile rows");
+        assert_eq!(
+            serde_json::from_str::<Architecture>(r#""x86_64""#).expect("machine architecture"),
+            Architecture::X86_64
+        );
+    }
+
+    #[test]
+    fn package_architecture_parser_rejects_aliases_and_filename_lies() {
+        assert_eq!(
+            PackageArchitecture::from_package_name("Capsem_1.4.0_amd64.deb")
+                .expect("amd64 Debian filename"),
+            PackageArchitecture::Amd64
+        );
+        assert_eq!(
+            PackageArchitecture::from_package_name("Capsem_1.4.0_arm64.deb")
+                .expect("arm64 Debian filename"),
+            PackageArchitecture::Arm64
+        );
+        PackageArchitecture::from_package_name("Capsem_1.4.0_x86_64.deb")
+            .expect_err("machine alias is forbidden in package filenames");
+        PackageArchitecture::from_package_name("Capsem_1.4.0.deb")
+            .expect_err("missing Debian architecture is rejected");
+
+        let package = PackageInventoryRow {
+            name: "Capsem_1.4.0_amd64.deb".to_string(),
+            version: "1.4.0".to_string(),
+            kind: PackageKind::DebianPackage,
+            platform: "linux".to_string(),
+            architecture: PackageArchitecture::Arm64,
+            url: "/packages/stable/1.4.0/Capsem_1.4.0_amd64.deb".to_string(),
+            bytes: 42,
+            digest: digest_set(),
+            status: Status::Current,
+            binaries: Vec::new(),
+            evidence: Vec::new(),
+        };
+        let error = package
+            .validate()
+            .expect_err("filename and graph architecture mismatch is rejected");
+        assert!(
+            format!("{error:#}").contains("filename architecture"),
+            "{error:#}"
+        );
+    }
+
+    #[test]
     fn package_inventory_requires_package_sbom() {
         let manifest = ReleaseManifest {
             version: "1.4.0".to_string(),
@@ -1448,7 +1520,7 @@ mod tests {
                 version: "1.4.0".to_string(),
                 kind: PackageKind::MacosPkg,
                 platform: "macos".to_string(),
-                architecture: Architecture::Arm64,
+                architecture: PackageArchitecture::Arm64,
                 url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
                 bytes: 42,
                 digest: digest_set(),
@@ -1459,7 +1531,7 @@ mod tests {
                     description: "Capsem executable fixture".to_string(),
                     installed_path: "/usr/local/bin/capsem".to_string(),
                     platform: "macos".to_string(),
-                    architecture: Architecture::Arm64,
+                    architecture: PackageArchitecture::Arm64,
                     bytes: 7,
                     digest: digest_set(),
                     status: Status::Current,
@@ -1489,7 +1561,7 @@ mod tests {
                 version: "1.4.0".to_string(),
                 kind: PackageKind::DebianPackage,
                 platform: "linux".to_string(),
-                architecture: Architecture::Arm64,
+                architecture: PackageArchitecture::Arm64,
                 url: "/packages/stable/1.4.0/capsem_1.4.0_arm64.deb".to_string(),
                 bytes: 42,
                 digest: DigestSet {
@@ -1503,7 +1575,7 @@ mod tests {
                     description: "Capsem executable fixture".to_string(),
                     installed_path: "/usr/bin/capsem".to_string(),
                     platform: "linux".to_string(),
-                    architecture: Architecture::Arm64,
+                    architecture: PackageArchitecture::Arm64,
                     bytes: 7,
                     digest: digest_set(),
                     status: Status::Current,
@@ -1527,7 +1599,7 @@ mod tests {
             version: "1.4.0".to_string(),
             kind: PackageKind::MacosPkg,
             platform: "macos".to_string(),
-            architecture: Architecture::Arm64,
+            architecture: PackageArchitecture::Arm64,
             url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
             bytes: 42,
             digest: digest_set(),
@@ -1585,7 +1657,7 @@ mod tests {
             version: "1.4.0".to_string(),
             kind: PackageKind::DebianPackage,
             platform: "linux".to_string(),
-            architecture: Architecture::Arm64,
+            architecture: PackageArchitecture::Arm64,
             url: "/packages/stable/1.4.0/capsem_1.4.0_arm64.deb".to_string(),
             bytes: 42,
             digest: digest_set(),
@@ -1616,7 +1688,7 @@ mod tests {
             version: "1.4.0".to_string(),
             kind: PackageKind::MacosPkg,
             platform: "macos".to_string(),
-            architecture: Architecture::Arm64,
+            architecture: PackageArchitecture::Arm64,
             url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
             bytes: 99,
             digest: digest_set(),
@@ -1659,7 +1731,7 @@ mod tests {
             version: "1.4.0".to_string(),
             kind: PackageKind::DebianPackage,
             platform: "linux".to_string(),
-            architecture: Architecture::Arm64,
+            architecture: PackageArchitecture::Arm64,
             url: "/packages/stable/1.4.0/Capsem_1.4.0_arm64.deb".to_string(),
             bytes: 101,
             digest: digest_set(),
@@ -1705,7 +1777,7 @@ mod tests {
             version: "1.4.0".to_string(),
             kind: PackageKind::DebianPackage,
             platform: "linux".to_string(),
-            architecture: Architecture::Arm64,
+            architecture: PackageArchitecture::Arm64,
             url: "/packages/stable/1.4.0/Capsem_1.4.0_arm64.deb".to_string(),
             bytes: 101,
             digest: digest_set(),
@@ -2015,6 +2087,28 @@ mod tests {
     }
 
     #[test]
+    fn profile_json_ownership_rejects_software_machine_architecture_mismatch() {
+        let mut profile = profile_with_image_artifacts(
+            "1.0.0",
+            vec![profile_image_artifact(
+                ProfileImageArtifactKind::Rootfs,
+                "rootfs.erofs",
+                "1.0.0",
+            )],
+        );
+        profile.architectures[0].software[0].architecture = Architecture::X86_64;
+
+        let error = profile
+            .validate_profile_ownership()
+            .expect_err("software rows must use their owning machine architecture");
+
+        assert!(
+            error.to_string().contains("architecture mismatch"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn profile_json_ownership_rejects_reused_software_inventory_digest() {
         let mut profile = profile_with_image_artifacts(
             "1.0.0",
@@ -2163,7 +2257,7 @@ mod tests {
                         version: "1.4.0".to_string(),
                         kind: PackageKind::MacosPkg,
                         platform: "macos".to_string(),
-                        architecture: Architecture::Arm64,
+                        architecture: PackageArchitecture::Arm64,
                         url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
                         bytes: 42,
                         digest: digest_set(),
@@ -2174,7 +2268,7 @@ mod tests {
                             description: "Capsem executable fixture".to_string(),
                             installed_path: "/usr/local/bin/capsem".to_string(),
                             platform: "macos".to_string(),
-                            architecture: Architecture::Arm64,
+                            architecture: PackageArchitecture::Arm64,
                             bytes: 7,
                             digest: digest_set(),
                             status: Status::Current,
@@ -2207,7 +2301,8 @@ mod tests {
             entry.channel == "stable"
                 && entry.kind == ReleaseLedgerKind::ProfileImage
                 && entry.profile.as_deref() == Some("co-work")
-                && entry.architecture == Some(Architecture::Arm64)
+                && entry.architecture
+                    == Some(ReleaseLedgerArchitecture::Machine(Architecture::Arm64))
         }));
         assert!(ledger.entries.iter().any(|entry| {
             entry.channel == "nightly" && entry.kind == ReleaseLedgerKind::Manifest

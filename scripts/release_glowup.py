@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from enum import StrEnum
 from pathlib import Path
 from typing import Mapping
 
@@ -20,6 +21,11 @@ REPORT_SCHEMA = "capsem.release_glowup.v1"
 
 class GlowupContractError(RuntimeError):
     """The candidate failed a platform-neutral release invariant."""
+
+
+class PackageArchitecture(StrEnum):
+    ARM64 = "arm64"
+    AMD64 = "amd64"
 
 
 class ArtifactIdentity:
@@ -42,7 +48,7 @@ class ArtifactIdentity:
         name: str,
         version: str,
         platform: str,
-        architecture: str,
+        architecture: PackageArchitecture,
         bytes: int,
         sha256: str,
     ) -> None:
@@ -73,12 +79,19 @@ class ArtifactIdentity:
         with path.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
+        try:
+            package_architecture = PackageArchitecture(architecture)
+        except ValueError as error:
+            raise GlowupContractError(
+                f"unsupported package architecture: {architecture}"
+            ) from error
+        validate_package_identity(path.name, platform, package_architecture)
         return cls(
             path=path,
             name=path.name,
             version=version,
             platform=platform,
-            architecture=normalize_architecture(architecture),
+            architecture=package_architecture,
             bytes=size,
             sha256=digest.hexdigest(),
         )
@@ -88,22 +101,31 @@ class ArtifactIdentity:
             "name": self.name,
             "version": self.version,
             "platform": self.platform,
-            "architecture": self.architecture,
+            "architecture": self.architecture.value,
             "bytes": self.bytes,
             "sha256": self.sha256,
         }
 
 
-def normalize_architecture(value: str) -> str:
-    normalized = {
-        "aarch64": "arm64",
-        "arm64": "arm64",
-        "amd64": "x86_64",
-        "x86_64": "x86_64",
-    }.get(value)
-    if normalized is None:
-        raise GlowupContractError(f"unsupported package architecture: {value}")
-    return normalized
+def validate_package_identity(
+    name: str,
+    platform: str,
+    architecture: PackageArchitecture,
+) -> None:
+    if platform == "linux":
+        expected_suffix = f"_{architecture.value}.deb"
+        if not name.endswith(expected_suffix):
+            raise GlowupContractError(
+                f"linux package {name} must end in {expected_suffix}"
+            )
+        return
+    if platform == "macos":
+        if not name.endswith(".pkg"):
+            raise GlowupContractError(f"macOS package {name} must end in .pkg")
+        if architecture is not PackageArchitecture.ARM64:
+            raise GlowupContractError("macOS package architecture must be arm64")
+        return
+    raise GlowupContractError(f"unsupported package platform: {platform}")
 
 
 def assert_manifest_artifact(
@@ -121,12 +143,12 @@ def assert_manifest_artifact(
         if isinstance(package, dict)
         and package.get("name") == artifact.name
         and package.get("platform") == artifact.platform
-        and package.get("architecture") == artifact.architecture
+        and package.get("architecture") == artifact.architecture.value
     ]
     if len(matches) != 1:
         raise GlowupContractError(
             "candidate manifest must contain exactly one package record for "
-            f"{artifact.name} ({artifact.platform}/{artifact.architecture}); "
+            f"{artifact.name} ({artifact.platform}/{artifact.architecture.value}); "
             f"found {len(matches)}"
         )
     package = matches[0]
@@ -134,7 +156,7 @@ def assert_manifest_artifact(
         "name": artifact.name,
         "version": artifact.version,
         "platform": artifact.platform,
-        "architecture": artifact.architecture,
+        "architecture": artifact.architecture.value,
         "bytes": artifact.bytes,
         "status": "current",
     }

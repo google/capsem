@@ -27,6 +27,7 @@ import urllib.parse
 import urllib.request
 import zlib
 from dataclasses import dataclass
+from enum import StrEnum
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -36,10 +37,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SBOM_GENERATOR = PROJECT_ROOT / "scripts" / "generate-host-binary-sbom.py"
 
 
+class PackageArchitecture(StrEnum):
+    ARM64 = "arm64"
+    AMD64 = "amd64"
+
+
 @dataclass(frozen=True)
 class RequiredPackage:
     platform: str
-    architecture: str
+    architecture: PackageArchitecture
     kind: str
 
     @classmethod
@@ -49,16 +55,22 @@ class RequiredPackage:
             raise argparse.ArgumentTypeError(
                 "--required-package must use platform:architecture:kind"
             )
-        return cls(parts[0], parts[1], parts[2])
+        try:
+            architecture = PackageArchitecture(parts[1])
+        except ValueError as error:
+            raise argparse.ArgumentTypeError(
+                f"unsupported package architecture: {parts[1]}"
+            ) from error
+        return cls(parts[0], architecture, parts[2])
 
     def label(self) -> str:
-        return f"{self.platform}/{self.architecture}/{self.kind}"
+        return f"{self.platform}/{self.architecture.value}/{self.kind}"
 
 
 DEFAULT_REQUIRED_PACKAGES = (
-    RequiredPackage("macos", "arm64", "macos_pkg"),
-    RequiredPackage("linux", "x86_64", "debian_package"),
-    RequiredPackage("linux", "arm64", "debian_package"),
+    RequiredPackage("macos", PackageArchitecture.ARM64, "macos_pkg"),
+    RequiredPackage("linux", PackageArchitecture.AMD64, "debian_package"),
+    RequiredPackage("linux", PackageArchitecture.ARM64, "debian_package"),
 )
 
 
@@ -193,8 +205,8 @@ def main() -> int:
                 previous_manifest = json.loads(
                     fetch_bytes(args.docker_transition_from_manifest).decode("utf-8")
                 )
-                previous_version = linux_x86_current_package(previous_manifest)["version"]
-                current_version = linux_x86_current_package(manifest)["version"]
+                previous_version = linux_amd64_current_package(previous_manifest)["version"]
+                current_version = linux_amd64_current_package(manifest)["version"]
                 previous_key = numeric_release_version(previous_version)
                 current_key = numeric_release_version(current_version)
                 if previous_key == current_key:
@@ -695,7 +707,7 @@ def check_package_binaries(
 def should_execute_packaged_binary(package: dict[str, Any], installed_path: str) -> bool:
     if os.environ.get("CAPSEM_SKIP_PACKAGE_EXECUTION") == "1":
         return False
-    if package.get("platform") != "linux" or package.get("architecture") != "x86_64":
+    if package.get("platform") != "linux" or package.get("architecture") != "amd64":
         return False
     if package.get("kind") != "debian_package":
         return False
@@ -755,7 +767,7 @@ def sbom_file_hashes(sbom: dict[str, Any]) -> set[tuple[str, str]]:
     return rows
 
 
-def linux_x86_current_package(manifest: dict[str, Any]) -> dict[str, Any]:
+def linux_amd64_current_package(manifest: dict[str, Any]) -> dict[str, Any]:
     matches = [
         package
         for package in manifest.get("packages", [])
@@ -763,12 +775,12 @@ def linux_x86_current_package(manifest: dict[str, Any]) -> dict[str, Any]:
         and package.get("status") == "current"
         and package.get("kind") == "debian_package"
         and package.get("platform") == "linux"
-        and package.get("architecture") == "x86_64"
+        and package.get("architecture") == "amd64"
         and isinstance(package.get("version"), str)
     ]
     if len(matches) != 1:
         raise ValueError(
-            "binary transition manifest must contain exactly one current linux/x86_64 package"
+            "binary transition manifest must contain exactly one current linux/amd64 package"
         )
     return matches[0]
 
@@ -808,8 +820,8 @@ def run_docker_binary_transition_smoke(
 ) -> None:
     if shutil.which("docker") is None:
         raise OSError("docker is required for the binary transition gate")
-    older_version = str(linux_x86_current_package(older_manifest)["version"])
-    newer_version = str(linux_x86_current_package(newer_manifest)["version"])
+    older_version = str(linux_amd64_current_package(older_manifest)["version"])
+    newer_version = str(linux_amd64_current_package(newer_manifest)["version"])
     if numeric_release_version(older_version) >= numeric_release_version(newer_version):
         raise ValueError(
             f"binary transition versions are not ordered: {older_version} -> {newer_version}"
