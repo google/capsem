@@ -9,7 +9,9 @@ import time
 import tomllib
 import uuid
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from .constants import EXEC_READY_TIMEOUT
 from .sign import sign_binary
@@ -23,25 +25,147 @@ TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
 ASSETS_DIR = PROJECT_ROOT / "assets"
 PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 LINUX_TEST_TMP_PARENT = Path("/var/tmp/capsem-tests")
+WINTERFELL_ROOT_ENV = {
+    "binary_dir": "CAPSEM_WINTERFELL_BIN_DIR",
+    "assets_dir": "CAPSEM_WINTERFELL_ASSETS_DIR",
+    "profiles_dir": "CAPSEM_WINTERFELL_PROFILES_DIR",
+}
+WINTERFELL_REQUIRED_BINARIES = (
+    "capsem-service",
+    "capsem-process",
+    "capsem-gateway",
+    "capsem-mcp",
+)
 
 
 with (PROJECT_ROOT / "config" / "storage-policy.toml").open("rb") as _policy_stream:
     _DEBUG_ARTIFACT_POLICY = tomllib.load(_policy_stream)["debug_artifacts"]
 
 ARTIFACT_MAX_FILE_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_file_mib"]) * 1024 * 1024
-ARTIFACT_SKIP_NAMES = frozenset(_DEBUG_ARTIFACT_POLICY["skip_names"]) | frozenset({
-    # Multi-GB VM disk images -- regenerable from the build, would burn
-    # disk at ~2 GB per failure and we've been there.
-    "rootfs.img",
-    "rootfs.img.backing",
-    # VM memory checkpoints -- ~100MB+ per suspend, skip to save space.
-    # The logs in the same directory are what we need for debugging.
-    "checkpoint.vzsave",
-})
+ARTIFACT_SKIP_NAMES = frozenset(_DEBUG_ARTIFACT_POLICY["skip_names"]) | frozenset(
+    {
+        # Multi-GB VM disk images -- regenerable from the build, would burn
+        # disk at ~2 GB per failure and we've been there.
+        "rootfs.img",
+        "rootfs.img.backing",
+        # VM memory checkpoints -- ~100MB+ per suspend, skip to save space.
+        # The logs in the same directory are what we need for debugging.
+        "checkpoint.vzsave",
+    }
+)
 ARTIFACT_MIN_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["minimum_runs"])
 ARTIFACT_MAX_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["maximum_runs"])
 ARTIFACT_MAX_AGE_S = int(_DEBUG_ARTIFACT_POLICY["maximum_age_days"]) * 24 * 60 * 60
 ARTIFACT_MAX_TOTAL_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_total_gib"]) * 1024**3
+
+
+@dataclass(frozen=True)
+class WinterfellArtifactRoots:
+    """One coherent binary/profile/asset cohort for Winterfell."""
+
+    binary_dir: Path
+    assets_dir: Path
+    profiles_dir: Path
+    installed: bool
+
+    def binary(self, name: str) -> Path:
+        if name not in WINTERFELL_REQUIRED_BINARIES:
+            raise RuntimeError(f"unsupported Winterfell binary: {name}")
+        return self.binary_dir / name
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def resolve_winterfell_artifact_roots(
+    environment: Mapping[str, str] | None = None,
+) -> WinterfellArtifactRoots:
+    """Resolve dev defaults or one complete installed Winterfell cohort.
+
+    Any installed override turns on fail-closed mode. The caller must supply
+    all three roots, and none may alias the source-built development cohort.
+    """
+
+    environment = os.environ if environment is None else environment
+    configured = {
+        field: environment.get(variable) for field, variable in WINTERFELL_ROOT_ENV.items()
+    }
+    present = [field for field, value in configured.items() if value is not None]
+    if not present:
+        architecture = "arm64" if os.uname().machine == "arm64" else "x86_64"
+        return WinterfellArtifactRoots(
+            binary_dir=PROJECT_ROOT / "target" / "debug",
+            assets_dir=PROJECT_ROOT / "assets" / architecture,
+            profiles_dir=PROFILES_DIR,
+            installed=False,
+        )
+    if len(present) != len(WINTERFELL_ROOT_ENV) or any(
+        not configured[field] for field in WINTERFELL_ROOT_ENV
+    ):
+        raise RuntimeError(
+            "Winterfell requires all three installed artifact roots: "
+            "CAPSEM_WINTERFELL_BIN_DIR, CAPSEM_WINTERFELL_ASSETS_DIR, and "
+            "CAPSEM_WINTERFELL_PROFILES_DIR"
+        )
+
+    def configured_path(field: str) -> Path:
+        value = configured[field]
+        if not value:
+            raise RuntimeError(f"installed Winterfell {field} must not be empty")
+        return Path(value).expanduser().resolve()
+
+    binary_dir = configured_path("binary_dir")
+    assets_dir = configured_path("assets_dir")
+    profiles_dir = configured_path("profiles_dir")
+    source_roots = (
+        (binary_dir, (PROJECT_ROOT / "target" / "debug").resolve(), "binary"),
+        (assets_dir, (PROJECT_ROOT / "assets").resolve(), "asset"),
+        (profiles_dir, PROFILES_DIR.resolve(), "profile"),
+    )
+    for selected, source, family in source_roots:
+        if _path_is_within(selected, source):
+            raise RuntimeError(
+                f"installed Winterfell {family} root points at source-built artifacts: {selected}"
+            )
+
+    for directory, family in (
+        (binary_dir, "binary"),
+        (assets_dir, "asset"),
+        (profiles_dir, "profile"),
+    ):
+        if not directory.is_dir():
+            raise RuntimeError(
+                f"installed Winterfell {family} root is not a directory: {directory}"
+            )
+    if not (assets_dir / "manifest.json").is_file():
+        raise RuntimeError(f"installed Winterfell asset root has no manifest.json: {assets_dir}")
+    if not _contains_profile_toml(profiles_dir):
+        raise RuntimeError(f"installed Winterfell profile root has no profile.toml: {profiles_dir}")
+    for name in WINTERFELL_REQUIRED_BINARIES:
+        binary = binary_dir / name
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            raise RuntimeError(
+                f"installed Winterfell binary is missing or not executable: {binary}"
+            )
+        if _path_is_within(
+            binary.resolve(),
+            (PROJECT_ROOT / "target" / "debug").resolve(),
+        ):
+            raise RuntimeError(
+                f"installed Winterfell binary points at source-built artifacts: {binary}"
+            )
+
+    return WinterfellArtifactRoots(
+        binary_dir=binary_dir,
+        assets_dir=assets_dir,
+        profiles_dir=profiles_dir,
+        installed=True,
+    )
 
 
 def capsem_test_tmp_parent() -> Path:
@@ -52,8 +176,14 @@ def capsem_test_tmp_parent() -> Path:
     keeping paths short enough for Unix-domain sockets.
     """
     configured = os.environ.get("CAPSEM_TEST_TMPDIR")
-    parent = Path(configured) if configured else (
-        LINUX_TEST_TMP_PARENT if sys.platform.startswith("linux") else Path(tempfile.gettempdir())
+    parent = (
+        Path(configured)
+        if configured
+        else (
+            LINUX_TEST_TMP_PARENT
+            if sys.platform.startswith("linux")
+            else Path(tempfile.gettempdir())
+        )
     )
     parent.mkdir(parents=True, exist_ok=True)
     return parent
@@ -148,6 +278,7 @@ def preserve_tmp_dir_on_failure(tmp_dir, *, force: bool = False):
             return
     import stat as statmod
     import time
+
     worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
     if current_test:
         tag = current_test.replace("/", "_").replace(":", "_")[:80]
@@ -166,11 +297,13 @@ def preserve_tmp_dir_on_failure(tmp_dir, *, force: bool = False):
 
     try:
         dest.mkdir(parents=True, exist_ok=True)
+
         # topdown=True so we can prune by emptying dirnames in-place if
         # needed; onerror catches listdir failures so a single unreadable
         # subdir doesn't abort the whole walk.
         def _on_walk_error(err):
             errors.append(f"walk {err.filename}: {err}")
+
         for src_dir, dirnames, filenames in os.walk(tmp_dir, topdown=True, onerror=_on_walk_error):
             src_path = Path(src_dir)
             rel = src_path.relative_to(tmp_dir)
@@ -253,7 +386,9 @@ def _rotate_artifacts(root, keep, minimum, maximum_age_s, maximum_total_bytes):
     try:
         dirs = sorted(
             (p for p in root.iterdir() if p.is_dir()),
-            key=lambda p: p.name,  # names begin with YYYYMMDD-HHMMSS so string sort == chronological
+            key=lambda p: (
+                p.name
+            ),  # names begin with YYYYMMDD-HHMMSS so string sort == chronological
         )
         protected = set(dirs[-minimum:]) if minimum > 0 else set()
         now = time.time()
@@ -318,9 +453,7 @@ class ServiceInstance:
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
         env["CAPSEM_HOME"] = str(self.home_dir)
         env["CAPSEM_PROFILES_DIR"] = str(self.profiles_dir)
-        env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
-            self.home_dir / "credential-store.json"
-        )
+        env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(self.home_dir / "credential-store.json")
         env["HOME"] = str(self.home_dir)
 
         log_path = self.tmp_dir / "service.log"
@@ -334,12 +467,18 @@ class ServiceInstance:
         self.proc = subprocess.Popen(
             [
                 str(SERVICE_BINARY),
-                "--uds-path", str(self.uds_path),
-                "--assets-dir", str(assets_dir),
-                "--process-binary", str(PROCESS_BINARY),
-                "--gateway-binary", str(GATEWAY_BINARY),
-                "--gateway-port", "0",
-                "--parent-pid", str(os.getpid()),
+                "--uds-path",
+                str(self.uds_path),
+                "--assets-dir",
+                str(assets_dir),
+                "--process-binary",
+                str(PROCESS_BINARY),
+                "--gateway-binary",
+                str(GATEWAY_BINARY),
+                "--gateway-port",
+                "0",
+                "--parent-pid",
+                str(os.getpid()),
                 "--foreground",
             ],
             env=env,
@@ -353,9 +492,18 @@ class ServiceInstance:
                 # Socket file exists -- verify server is actually accepting connections
                 try:
                     result = subprocess.run(
-                        ["curl", "-s", "--unix-socket", str(self.uds_path),
-                         "--max-time", "2", "http://localhost/vms/list"],
-                        capture_output=True, text=True, timeout=5,
+                        [
+                            "curl",
+                            "-s",
+                            "--unix-socket",
+                            str(self.uds_path),
+                            "--max-time",
+                            "2",
+                            "http://localhost/vms/list",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
                     )
                     if result.returncode == 0:
                         return

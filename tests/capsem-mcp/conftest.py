@@ -27,15 +27,16 @@ from helpers.service import (
     make_service_home_run_dirs,
     materialize_test_profiles,
     preserve_tmp_dir_on_failure,
+    resolve_winterfell_artifact_roots,
 )
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-MCP_BINARY = PROJECT_ROOT / "target/debug/capsem-mcp"
-SERVICE_BINARY = PROJECT_ROOT / "target/debug/capsem-service"
-PROCESS_BINARY = PROJECT_ROOT / "target/debug/capsem-process"
-GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
-TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
-ASSETS_DIR = PROJECT_ROOT / "assets"
+WINTERFELL_ROOTS = resolve_winterfell_artifact_roots()
+MCP_BINARY = WINTERFELL_ROOTS.binary("capsem-mcp")
+SERVICE_BINARY = WINTERFELL_ROOTS.binary("capsem-service")
+PROCESS_BINARY = WINTERFELL_ROOTS.binary("capsem-process")
+GATEWAY_BINARY = WINTERFELL_ROOTS.binary("capsem-gateway")
+ASSETS_DIR = WINTERFELL_ROOTS.assets_dir
 
 
 class McpSession:
@@ -74,9 +75,7 @@ class McpSession:
         """Call a tool, assert success, return result."""
         resp = self.request("tools/call", {"name": name, "arguments": args or {}})
         assert "error" not in resp, f"JSON-RPC error: {resp.get('error')}"
-        assert not resp["result"].get("isError"), (
-            f"Tool error: {resp['result'].get('content')}"
-        )
+        assert not resp["result"].get("isError"), f"Tool error: {resp['result'].get('content')}"
         return resp["result"]
 
     def call_tool_raw(self, name, args=None):
@@ -101,11 +100,14 @@ def _make_mcp_session(uds_path):
     )
 
     session = McpSession(proc)
-    session.request("initialize", {
-        "protocolVersion": "2024-11-05",
-        "capabilities": {},
-        "clientInfo": {"name": "pytest-mcp", "version": "1.0"},
-    })
+    session.request(
+        "initialize",
+        {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {"name": "pytest-mcp", "version": "1.0"},
+        },
+    )
     session.notify("notifications/initialized")
     return session, proc
 
@@ -130,29 +132,30 @@ def _start_capsem_service():
     live in a single place.
     """
     from helpers.sign import sign_binary
-    sign_binary(PROCESS_BINARY)
-    sign_binary(SERVICE_BINARY)
+
+    if not WINTERFELL_ROOTS.installed:
+        sign_binary(PROCESS_BINARY)
+        sign_binary(SERVICE_BINARY)
 
     home_dir, run_dir = make_service_home_run_dirs()
     print(
-        f"\n@@@ WORKER {os.environ.get('PYTEST_XDIST_WORKER', 'master')} "
-        f"TMP_DIR: {home_dir}",
+        f"\n@@@ WORKER {os.environ.get('PYTEST_XDIST_WORKER', 'master')} TMP_DIR: {home_dir}",
         file=sys.stderr,
     )
     uds_path = run_dir / f"service-{uuid.uuid4().hex[:8]}.sock"
-
-    arch = "arm64" if os.uname().machine == "arm64" else "x86_64"
-    assets_dir = ASSETS_DIR / arch
 
     env = os.environ.copy()
     env["RUST_LOG"] = "debug"
     env["CAPSEM_RUN_DIR"] = str(run_dir)
     env["CAPSEM_HOME"] = str(home_dir)
     env["HOME"] = str(home_dir)
-    env["CAPSEM_PROFILES_DIR"] = str(materialize_test_profiles(run_dir))
-    env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
-        home_dir / "credential-store.json"
+    profiles_dir = (
+        WINTERFELL_ROOTS.profiles_dir
+        if WINTERFELL_ROOTS.installed
+        else materialize_test_profiles(run_dir)
     )
+    env["CAPSEM_PROFILES_DIR"] = str(profiles_dir)
+    env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(home_dir / "credential-store.json")
 
     log_path = run_dir / "service.log"
     stderr_path = run_dir / "service.stderr.log"
@@ -162,12 +165,18 @@ def _start_capsem_service():
     proc = subprocess.Popen(
         [
             str(SERVICE_BINARY),
-            "--uds-path", str(uds_path),
-            "--assets-dir", str(assets_dir),
-            "--process-binary", str(PROCESS_BINARY),
-            "--gateway-binary", str(GATEWAY_BINARY),
-            "--gateway-port", "0",
-            "--parent-pid", str(os.getpid()),
+            "--uds-path",
+            str(uds_path),
+            "--assets-dir",
+            str(ASSETS_DIR),
+            "--process-binary",
+            str(PROCESS_BINARY),
+            "--gateway-binary",
+            str(GATEWAY_BINARY),
+            "--gateway-port",
+            "0",
+            "--parent-pid",
+            str(os.getpid()),
             "--foreground",
         ],
         env=env,
@@ -183,11 +192,9 @@ def _start_capsem_service():
         proc.terminate()
         stderr_file.close()
         if log_path.exists():
-            print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---",
-                  file=sys.stderr)
+            print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
         if stderr_path.exists():
-            print(f"\n--- SERVICE STDERR ---\n{stderr_path.read_text()}\n---",
-                  file=sys.stderr)
+            print(f"\n--- SERVICE STDERR ---\n{stderr_path.read_text()}\n---", file=sys.stderr)
         raise RuntimeError("capsem-service failed to create socket within 15s")
 
     print(f"SERVICE LOG DIR: {log_path}", file=sys.stderr)
@@ -292,6 +299,7 @@ def fresh_vm(request, mcp_session):
     yield _create
 
     from tests.conftest import FAILED_NODEIDS
+
     if request.node.nodeid in FAILED_NODEIDS:
         print(f"\n@@@ Skipping cleanup for {created} due to failure", file=sys.stderr)
         return

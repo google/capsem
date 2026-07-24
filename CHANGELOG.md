@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installs, orthogonal updates, staged profile-then-binary activation, channel
   switches, tamper rejection, full doctor, and Winterfell proofs.
 
+- Added a fail-closed installed-Winterfell runner so persistence tests execute
+  one exact installed binary, profile, and asset cohort without signing or
+  falling back to source-built artifacts.
+
 - Scheduled the nightly binary lane once daily through the same
   `just release-binaries nightly` command, with a clean no-op when `main`
   already points at an immutable binary release.
