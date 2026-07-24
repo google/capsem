@@ -101,8 +101,12 @@ class ExactReleasePairing:
 class ExactReleaseTransport:
     before_manifest: Path
     after_manifest: Path
+    current_manifest: Path
+    channel_catalog: Path
     before_manifest_url: str
     after_manifest_url: str
+    current_manifest_url: str
+    channel_catalog_url: str
     before_package: Path
     after_package: Path
 
@@ -699,14 +703,64 @@ def stage_exact_release_transport(
         dist=dist,
         base_url=base_url,
     )
+    current_manifest = dist / "transitions" / "current" / "manifest.json"
+    copy_artifact_tree(before_manifest, current_manifest)
+    current_contents = current_manifest.read_bytes()
+    channel_catalog = dist / "transitions" / "channels.json"
+    channel_catalog.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "generated_at": "2030-01-01T00:00:00Z",
+                "release_site": f"{base_url}/",
+                "channels": {
+                    pairing.channel: {
+                        "label": pairing.channel.replace("-", " ").title(),
+                        "manifests": [
+                            {
+                                "version": json.loads(current_contents).get(
+                                    "version", "1.0.0"
+                                ),
+                                "status": "current",
+                                "url": "/transitions/current/manifest.json",
+                                "digest": {
+                                    "sha256": hashlib.sha256(current_contents).hexdigest(),
+                                    "blake3": file_blake3(current_manifest),
+                                },
+                            }
+                        ],
+                    }
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     return ExactReleaseTransport(
         before_manifest=before_manifest,
         after_manifest=after_manifest,
+        current_manifest=current_manifest,
+        channel_catalog=channel_catalog,
         before_manifest_url=f"{base_url}/transitions/before/manifest.json",
         after_manifest_url=f"{base_url}/transitions/after/manifest.json",
+        current_manifest_url=f"{base_url}/transitions/current/manifest.json",
+        channel_catalog_url=f"{base_url}/transitions/channels.json",
         before_package=before_package,
         after_package=after_package,
     )
+
+
+def promote_exact_candidate_transport(transport: ExactReleaseTransport) -> None:
+    """Atomically expose candidate-after bytes at the installed polling URL."""
+
+    pending = transport.current_manifest.with_suffix(".next")
+    try:
+        shutil.copyfile(transport.after_manifest, pending)
+        os.replace(pending, transport.current_manifest)
+    finally:
+        pending.unlink(missing_ok=True)
 
 
 def run(cmd: list[str], *, cwd: Path = PROJECT_ROOT, env: dict[str, str] | None = None) -> None:
@@ -730,6 +784,14 @@ def deb_arch(path: Path) -> str:
 
 def file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def file_blake3(path: Path) -> str:
+    try:
+        import blake3
+    except ModuleNotFoundError:
+        return subprocess.check_output(["b3sum", str(path)], text=True).split()[0]
+    return blake3.blake3(path.read_bytes()).hexdigest()
 
 
 def current_package_versions(manifest_path: Path) -> list[str]:

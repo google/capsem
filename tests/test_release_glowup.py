@@ -903,6 +903,19 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
         base_url="http://127.0.0.1:8765",
     )
 
+    assert transport.current_manifest.read_bytes() == transport.before_manifest.read_bytes()
+    assert transport.current_manifest_url == (
+        "http://127.0.0.1:8765/transitions/current/manifest.json"
+    )
+    channel_catalog = json.loads(transport.channel_catalog.read_text())
+    selected = channel_catalog["channels"]["nightly"]["manifests"]
+    assert len(selected) == 1
+    assert selected[0]["status"] == "current"
+    assert selected[0]["url"] == "/transitions/current/manifest.json"
+    assert selected[0]["digest"]["sha256"] == hashlib.sha256(
+        transport.before_manifest.read_bytes()
+    ).hexdigest()
+
     assert transport.before_package.read_bytes() == before_package.read_bytes()
     assert transport.after_package.read_bytes() == after_package.read_bytes()
     assert before_manifest.read_bytes() == before_authority_bytes
@@ -914,3 +927,8 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
     assert projected["profiles"]["code"]["architectures"][0]["images"][0]["url"].startswith(
         "http://127.0.0.1:8765/transitions/after/"
     )
+
+    module.promote_exact_candidate_transport(transport)
+
+    assert transport.current_manifest.read_bytes() == transport.after_manifest.read_bytes()
+    assert not transport.current_manifest.with_suffix(".next").exists()
