@@ -16,7 +16,7 @@ on:
           - nightly
 
 concurrency:
-  group: binary-release-channel
+  group: capsem-release-${{ inputs.channel }}
   cancel-in-progress: false
 
 permissions:
@@ -32,7 +32,33 @@ env:
   ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json
 
 jobs:
+  runtime-preflight:
+    uses: ./.github/workflows/release-runtime-preflight.yaml
+    with:
+      channel: ${{ inputs.channel }}
+
+  resolve-channel-source:
+    needs: runtime-preflight
+    runs-on: ubuntu-latest
+    name: Resolve serialized channel source manifest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Fetch latest selected channel source manifest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/fetch-channel-source-manifest.py \
+            --channel "$RELEASE_CHANNEL" \
+            --output target/channel-source/manifest.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: binary-channel-source
+          path: target/channel-source/manifest.json
+
   preflight:
+    needs: runtime-preflight
     runs-on: macos-14
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -46,14 +72,6 @@ jobs:
           test "$GITHUB_REF_NAME" = "$RELEASE_TAG"
           case "$RELEASE_TAG" in v*) ;; *) exit 1 ;; esac
           case "$RELEASE_CHANNEL" in stable|nightly) ;; *) exit 1 ;; esac
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          git fetch origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-
-      - name: Verify exact commit passed remote qualification
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/check-release-qualification.py --sha "$GITHUB_SHA" --channel "$RELEASE_CHANNEL" --repo "$GITHUB_REPOSITORY"
 
       - name: Select Xcode 16.2
         run: sudo xcode-select -s /Applications/Xcode_16.2.app
@@ -633,8 +651,96 @@ jobs:
           name: release-linux-${{ matrix.arch }}
           path: release-artifacts/
 
+  test-binary-pairing:
+    needs: [build-app-macos, build-app-linux, resolve-channel-source]
+    runs-on: ubuntu-24.04
+    name: Complete binary pairing gate
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: uv sync
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 10
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+          components: llvm-tools
+          targets: aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
+
+      - name: Enable KVM for complete functional proof
+        run: |
+          set -euo pipefail
+          sudo modprobe kvm
+          sudo chmod 0666 /dev/kvm
+          sudo modprobe vhost_vsock
+          sudo chmod 0666 /dev/vhost-vsock
+          test -r /dev/kvm -a -w /dev/kvm
+          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-linux-x86_64
+          path: release-test-package/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-source
+          path: target/channel-source/
+
+      - name: Run shared static module
+        run: just _test-static
+
+      - name: Fetch selected channel manifest and profiles
+        run: |
+          uv run python scripts/fetch-release-artifacts.py \
+            --manifest-url "file://$PWD/target/channel-source/manifest.json" \
+            --kind profiles \
+            --output target/release-inputs
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/release-inputs
+          uv run python scripts/stage-release-test-inputs.py \
+            --input-dir target/release-inputs \
+            --assets-dir assets
+          CAPSEM_ASSET_MANIFEST="file://$PWD/assets/manifest.json" \
+            bash scripts/materialize-config.sh
+
+      - name: Activate exact candidate package binaries for functional tests
+        run: |
+          set -euo pipefail
+          package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
+          test -n "$package"
+          rm -rf target/release-package-root
+          dpkg-deb --extract "$package" target/release-package-root
+          mkdir -p target/debug
+          cp target/release-package-root/usr/bin/capsem* target/debug/
+          chmod 0755 target/debug/capsem*
+          echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_BIN_DIR=$PWD/target/debug" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/target/release-inputs" >> "$GITHUB_ENV"
+          echo "CAPSEM_TEST_ASSETS_DIR=$PWD/assets" >> "$GITHUB_ENV"
+          echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/target/config" >> "$GITHUB_ENV"
+
+      - name: Run shared artifact module
+        run: just _test-artifacts
+
+      - name: Run shared complete functional module
+        run: just _test-functional
+
+      - name: Run shared native and update glow-up module
+        run: just _test-glowup
+
+      - name: Run shared release contracts
+        run: just _test-release-contracts
+
   create-release:
-    needs: [build-app-macos, build-app-linux]
+    needs: [build-app-macos, build-app-linux, test-binary-pairing]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -750,7 +856,7 @@ jobs:
           done
 
   assemble-release-channel:
-    needs: [create-release]
+    needs: [create-release, resolve-channel-source]
     runs-on: ubuntu-latest
     outputs:
       dist_artifact: binary-channel-preview
@@ -790,6 +896,10 @@ jobs:
         with:
           name: release-linux-x86_64
           path: release-artifacts/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-source
+          path: target/binary-channel/${{ inputs.channel }}/
 
       - name: Install host SBOM archive deps
         run: |
@@ -830,17 +940,13 @@ jobs:
             exit 1
           fi
 
-      - name: Fetch current asset channel manifests
+      - name: Preserve serialized selected channel source manifest
         run: |
           set -euo pipefail
-          mkdir -p target/binary-channel
-          for channel in stable nightly; do
-            mkdir -p "target/binary-channel/$channel"
-            curl -fsSL "https://release.capsem.org/assets/$channel/manifest.json" \
-              -o "target/binary-channel/$channel/manifest.json"
-            cp "target/binary-channel/$channel/manifest.json" \
-              "target/binary-channel/$channel/manifest.before.json"
-          done
+          manifest="target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          test -f "$manifest"
+          cp "$manifest" \
+            "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
 
       - name: Record binary release metadata in selected channel manifest
         run: |
@@ -859,8 +965,7 @@ jobs:
       - name: Prove binary lane did not change VM assets
         run: |
           set -euo pipefail
-          for channel in stable nightly; do
-            python3 - "$channel" <<'PY'
+          python3 - "$RELEASE_CHANNEL" <<'PY'
           import json
           import sys
           from pathlib import Path
@@ -876,7 +981,6 @@ jobs:
               if after["assets"] != before["assets"]:
                   raise SystemExit(f"{channel} binary release changed VM asset metadata")
           PY
-          done
 
       - name: Verify binary release lane policy
         run: |
@@ -889,13 +993,22 @@ jobs:
           set -euo pipefail
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           uv run python scripts/build-complete-release-channel.py \
-            --channel-source "stable=file://$PWD/target/binary-channel/stable/manifest.json" \
-            --channel-source "nightly=file://$PWD/target/binary-channel/nightly/manifest.json" \
+            --channel-source "$RELEASE_CHANNEL=file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
             --primary-channel "$RELEASE_CHANNEL" \
             --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
             --manifest-version "1.0.${{ github.run_number }}" \
             --generated-at "$generated_at" \
             --out-dir target/release-channel
+
+      - name: Persist mutated source manifest on the immutable binary release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source="target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          named="target/binary-channel/channel-source-$RELEASE_CHANNEL.json"
+          cp "$source" "$named"
+          gh release upload "$RELEASE_TAG" "$named"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

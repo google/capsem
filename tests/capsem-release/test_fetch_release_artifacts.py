@@ -27,6 +27,13 @@ STAGE_SPEC = importlib.util.spec_from_file_location(
 assert STAGE_SPEC is not None and STAGE_SPEC.loader is not None
 STAGE = importlib.util.module_from_spec(STAGE_SPEC)
 STAGE_SPEC.loader.exec_module(STAGE)
+SOURCE_SPEC = importlib.util.spec_from_file_location(
+    "fetch_channel_source_manifest",
+    ROOT / "scripts" / "fetch-channel-source-manifest.py",
+)
+assert SOURCE_SPEC is not None and SOURCE_SPEC.loader is not None
+SOURCE = importlib.util.module_from_spec(SOURCE_SPEC)
+SOURCE_SPEC.loader.exec_module(SOURCE)
 
 
 def _digest(payload: bytes) -> dict[str, str]:
@@ -34,6 +41,66 @@ def _digest(payload: bytes) -> dict[str, str]:
         "sha256": hashlib.sha256(payload).hexdigest(),
         "blake3": blake3.blake3(payload).hexdigest(),
     }
+
+
+def test_latest_channel_source_manifest_is_selected_without_parallel_state() -> None:
+    releases = [
+        {
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-07-23T12:00:00Z",
+            "assets": [
+                {
+                    "name": "channel-source-nightly.json",
+                    "url": "https://api.github.test/assets/older",
+                }
+            ],
+        },
+        {
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-07-24T12:00:00Z",
+            "assets": [
+                {
+                    "name": "channel-source-stable.json",
+                    "url": "https://api.github.test/assets/stable",
+                },
+                {
+                    "name": "channel-source-nightly.json",
+                    "url": "https://api.github.test/assets/newer",
+                },
+            ],
+        },
+        {
+            "draft": True,
+            "prerelease": False,
+            "published_at": "2026-07-25T12:00:00Z",
+            "assets": [
+                {
+                    "name": "channel-source-nightly.json",
+                    "url": "https://api.github.test/assets/draft",
+                }
+            ],
+        },
+    ]
+
+    selected = SOURCE.select_latest_source_asset(releases, "nightly")
+
+    assert selected == {
+        "name": "channel-source-nightly.json",
+        "url": "https://api.github.test/assets/newer",
+    }
+    assert SOURCE.select_latest_source_asset(releases, "experimental") is None
+
+
+def test_channel_source_manifest_validation_is_channel_scoped() -> None:
+    payload = json.dumps(
+        {"channel": "nightly", "profiles": {"code": {}}, "packages": []}
+    ).encode()
+
+    assert SOURCE.validate_source_manifest(payload, "nightly")["channel"] == "nightly"
+    with pytest.raises(ValueError, match="expected 'stable'"):
+        SOURCE.validate_source_manifest(payload, "stable")
 
 
 def _record(url: str, payload: bytes, **extra: object) -> dict[str, object]:

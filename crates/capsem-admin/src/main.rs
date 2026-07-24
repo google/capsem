@@ -218,6 +218,9 @@ struct ReleaseArgs {
     /// Candidate manifest containing the newly built selected profile.
     #[arg(long, hide = true, requires = "manifest_path")]
     candidate_manifest: Option<PathBuf>,
+    /// Immutable release base containing the selected profile's published files.
+    #[arg(long, hide = true, requires = "candidate_manifest")]
+    publication_base: Option<String>,
     /// Manifest version expected in the JSON file.
     #[arg(long, hide = true, requires = "manifest_path")]
     manifest_version: Option<String>,
@@ -273,12 +276,6 @@ struct ManifestGenerateArgs {
     /// Binary version to record. Defaults to capsem-builder's project version.
     #[arg(long)]
     version: Option<String>,
-    /// Existing channel manifest whose binary/package selection must be retained.
-    #[arg(long)]
-    preserve_binaries_from: Option<String>,
-    /// Permit first publication when the previous channel manifest is absent.
-    #[arg(long, requires = "preserve_binaries_from")]
-    allow_missing_previous: bool,
     /// Emit the generated manifest after writing it.
     #[arg(long)]
     json: bool,
@@ -499,6 +496,7 @@ struct ProfileReleaseReport {
     manifest_version: String,
     profile: String,
     profile_version: String,
+    publication_identity: String,
     status: release_graph::Status,
     changed_channels: Vec<String>,
     changed_manifests: Vec<String>,
@@ -515,6 +513,7 @@ struct ReleaseSelectionReport {
     channel: String,
     profile: String,
     profile_revision: String,
+    publication_identity: String,
     profile_path: String,
 }
 
@@ -525,6 +524,7 @@ struct ReleaseDispatchReport {
     channel: String,
     profile: String,
     profile_revision: String,
+    publication_identity: String,
     workflow: &'static str,
     dispatched: bool,
 }
@@ -990,12 +990,15 @@ fn validate_release_selection(args: &ReleaseValidateArgs) -> Result<ReleaseSelec
     })?;
     let profile_path = profiles_dir.join(&profile.id).join("profile.toml");
     validate_profile(&profile_path, Some(&args.config_root))?;
+    let publication_identity =
+        profile_publication_identity(&args.channel, &profile.id, &profile.revision)?;
     Ok(ReleaseSelectionReport {
         schema: "capsem.admin.release_validate.v1",
         ok: true,
         channel: args.channel.clone(),
         profile: profile.id.clone(),
         profile_revision: profile.revision.clone(),
+        publication_identity,
         profile_path: profile_path.display().to_string(),
     })
 }
@@ -1071,6 +1074,7 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
         channel: args.channel,
         profile: args.profile,
         profile_revision: selection.profile_revision,
+        publication_identity: selection.publication_identity,
         workflow,
         dispatched: !args.dry_run,
     };
@@ -1178,6 +1182,11 @@ fn apply_profile_release_status(args: &ReleaseArgs) -> Result<ProfileReleaseRepo
         manifest_version: manifest_version.to_string(),
         profile: args.profile.clone(),
         profile_version: profile_version.to_string(),
+        publication_identity: profile_publication_identity(
+            &args.channel,
+            &args.profile,
+            profile_version,
+        )?,
         status,
         changed_channels: vec![args.channel.clone()],
         changed_manifests: vec![manifest_version.to_string()],
@@ -1219,6 +1228,9 @@ fn merge_graph_profile_release(
                 args.profile
             )
         })?;
+    if let Some(publication_base) = args.publication_base.as_deref() {
+        rewrite_profile_publication_urls(&mut profile, publication_base)?;
+    }
     let revision = profile
         .get("revision")
         .and_then(|value| value.as_str())
@@ -1279,6 +1291,11 @@ fn merge_graph_profile_release(
         manifest_version: manifest_version.to_string(),
         profile: args.profile.clone(),
         profile_version: profile_version.to_string(),
+        publication_identity: profile_publication_identity(
+            &args.channel,
+            &args.profile,
+            profile_version,
+        )?,
         status,
         changed_channels: vec![args.channel.clone()],
         changed_manifests: vec![manifest_version.to_string()],
@@ -1322,6 +1339,73 @@ fn graph_profile_matches_current_binary(
         return Ok(false);
     }
     Ok(versions.iter().all(|version| version >= &minimum))
+}
+
+fn rewrite_profile_publication_urls(
+    profile: &mut serde_json::Value,
+    publication_base: &str,
+) -> Result<()> {
+    let parsed = reqwest::Url::parse(publication_base)
+        .with_context(|| format!("profile publication base is not a URL: {publication_base}"))?;
+    if parsed.scheme() != "https" {
+        return Err(anyhow!("profile publication base must use HTTPS"));
+    }
+    let architectures = profile
+        .get_mut("architectures")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| anyhow!("candidate profile architectures must be an array"))?;
+    for architecture in architectures {
+        let arch = architecture
+            .get("architecture")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("candidate profile architecture has no name"))?
+            .to_string();
+        for field in ["config", "images", "evidence"] {
+            let rows = architecture
+                .get_mut(field)
+                .and_then(serde_json::Value::as_array_mut)
+                .ok_or_else(|| anyhow!("candidate profile architecture has no {field} array"))?;
+            for row in rows {
+                let file_name = row
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .or_else(|| {
+                        row.get("path")
+                            .and_then(serde_json::Value::as_str)
+                            .and_then(|path| Path::new(path).file_name())
+                            .and_then(|name| name.to_str())
+                    })
+                    .or_else(|| {
+                        row.get("url")
+                            .and_then(serde_json::Value::as_str)
+                            .and_then(|url| url.rsplit('/').next())
+                    })
+                    .ok_or_else(|| {
+                        anyhow!("candidate profile {field} row has no publication file name")
+                    })?;
+                if file_name.is_empty()
+                    || !file_name.bytes().all(|byte| {
+                        byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
+                    })
+                {
+                    return Err(anyhow!(
+                        "candidate profile {field} file name is unsafe: {file_name}"
+                    ));
+                }
+                let publication_name = if file_name.starts_with(&format!("{arch}-")) {
+                    file_name.to_string()
+                } else {
+                    format!("{arch}-{file_name}")
+                };
+                row["url"] = serde_json::Value::String(format!(
+                    "{}/{}",
+                    publication_base.trim_end_matches('/'),
+                    publication_name
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn check_config_root(config_root: &Path, arch: Option<&str>) -> Result<ConfigRootCheckReport> {
@@ -1439,30 +1523,6 @@ fn manifest_generate_command(args: ManifestGenerateArgs) -> Result<()> {
     let command = manifest_generate_command_report(&args);
     run_command(&command)?;
     let manifest_path = args.assets_dir.join("manifest.json");
-    if let Some(previous_url) = args.preserve_binaries_from.as_deref() {
-        let previous = match read_manifest_url(previous_url) {
-            Ok(bytes) => Some(bytes),
-            Err(error)
-                if args.allow_missing_previous && format!("{error:#}").contains("HTTP 404") =>
-            {
-                None
-            }
-            Err(error) => return Err(error),
-        };
-        if let Some(previous) = previous {
-            let mut generated = load_manifest(&manifest_path)?;
-            let previous = std::str::from_utf8(&previous)
-                .context("previous channel manifest is not UTF-8 JSON")?;
-            let previous = ManifestV2::from_json(previous)
-                .context("parse previous channel manifest for binary preservation")?;
-            generated.binaries = previous.binaries;
-            let mut bytes =
-                serde_json::to_vec_pretty(&generated).context("serialize generated manifest")?;
-            bytes.push(b'\n');
-            fs::write(&manifest_path, bytes)
-                .with_context(|| format!("write {}", manifest_path.display()))?;
-        }
-    }
     if args.json {
         let manifest = load_manifest(&manifest_path)?;
         let report = manifest_report(&manifest_path, &manifest, None, None)?;
@@ -5713,6 +5773,22 @@ fn validate_channel_name(channel: &str) -> Result<()> {
     Ok(())
 }
 
+fn profile_publication_identity(channel: &str, profile: &str, revision: &str) -> Result<String> {
+    validate_channel_name(channel)?;
+    for (label, value) in [("profile", profile), ("profile revision", revision)] {
+        let valid = !value.is_empty()
+            && value
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+        if !valid {
+            return Err(anyhow!(
+                "{label} cannot form an immutable publication identity: {value}"
+            ));
+        }
+    }
+    Ok(format!("profile-{channel}-{profile}-{revision}"))
+}
+
 fn current_utc_rfc3339() -> Result<String> {
     OffsetDateTime::now_utc()
         .replace_microsecond(0)
@@ -7099,8 +7175,6 @@ fn image_build_plan(args: &ImageBuildArgs) -> Result<ImageBuildPlan> {
         commands.push(manifest_generate_command_report(&ManifestGenerateArgs {
             assets_dir: args.output.clone(),
             version: None,
-            preserve_binaries_from: None,
-            allow_missing_previous: false,
             json: false,
         }));
     }
@@ -11176,6 +11250,7 @@ decision = "block"
         let args = ReleaseArgs {
             manifest_path: Some(nightly_manifest.clone()),
             candidate_manifest: None,
+            publication_base: None,
             channel: "nightly".to_string(),
             manifest_version: Some("1.5.0-nightly.20300101".to_string()),
             profile: "co-work".to_string(),
@@ -11269,6 +11344,15 @@ decision = "block"
             }
             _ => panic!("expected release command"),
         }
+        assert_eq!(
+            profile_publication_identity("nightly", "code", "2026.06.08.7")
+                .expect("publication identity"),
+            "profile-nightly-code-2026.06.08.7"
+        );
+        assert!(
+            profile_publication_identity("nightly", "code", "revision/escape").is_err(),
+            "publication identities must be safe immutable GitHub release tags"
+        );
     }
 
     #[test]
@@ -11305,6 +11389,10 @@ decision = "block"
             config_root: PathBuf::from("config"),
             manifest_path: Some(base_path.clone()),
             candidate_manifest: Some(candidate_path),
+            publication_base: Some(
+                "https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1"
+                    .to_string(),
+            ),
             manifest_version: Some("1.0.2".to_string()),
             profile_version: Some("2026.07.24.1".to_string()),
             status: ProfileReleaseStatusArg::Current,
@@ -11325,6 +11413,26 @@ decision = "block"
             merged["profiles"]["code"]["revision"].as_str(),
             Some("2026.07.24.1")
         );
+        assert_eq!(
+            merged["profiles"]["code"]["architectures"][0]["config"][0]["url"].as_str(),
+            Some(
+                "https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1/arm64-profile.toml"
+            )
+        );
+        assert_eq!(
+            merged["profiles"]["code"]["architectures"][0]["images"][0]["url"].as_str(),
+            Some(
+                "https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1/arm64-vmlinuz"
+            )
+        );
+        assert!(merged["profiles"]["code"]["architectures"][0]["evidence"]
+            .as_array()
+            .expect("evidence rows")
+            .iter()
+            .all(|row| !row["url"]
+                .as_str()
+                .expect("evidence URL")
+                .contains("/arm64-arm64-")));
     }
 
     fn write_profile_release_manifest(

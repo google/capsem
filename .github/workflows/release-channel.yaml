@@ -1,4 +1,4 @@
-name: Publish Asset Channel
+name: Publish Generated Channel
 
 on:
   workflow_call:
@@ -31,7 +31,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    name: Publish asset channel
+    name: Publish generated channel
     permissions:
       contents: read
       deployments: write

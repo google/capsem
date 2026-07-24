@@ -13,15 +13,15 @@ on:
       profile:
         description: Profile id that owns the VM image build.
         required: true
-      manifest_version:
-        description: Manifest contract version to publish under the selected channel.
-        required: true
-        default: 1.0.2
       dry_run:
         description: Build and validate without deploying release.capsem.org.
         required: true
         type: boolean
         default: true
+
+concurrency:
+  group: capsem-release-${{ inputs.channel }}
+  cancel-in-progress: false
 
 permissions:
   attestations: write
@@ -30,6 +30,63 @@ permissions:
   id-token: write
 
 jobs:
+  runtime-preflight:
+    uses: ./.github/workflows/release-runtime-preflight.yaml
+    with:
+      channel: ${{ inputs.channel }}
+
+  resolve-current-binary:
+    needs: runtime-preflight
+    runs-on: ubuntu-latest
+    name: Resolve current channel binary
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          key: profile-release-selection
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: uv sync
+
+      - name: Validate selected channel profile through capsem-admin
+        run: |
+          cargo run -p capsem-admin -- validate \
+            --channel "${{ inputs.channel }}" \
+            --profile "${{ inputs.profile }}" \
+            --json > target/profile-release-selection.json
+
+      - name: Fetch latest selected channel source manifest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/fetch-channel-source-manifest.py \
+            --channel "${{ inputs.channel }}" \
+            --output target/channel-source/manifest.json
+
+      - name: Fetch selected channel binary packages
+        run: |
+          uv run python scripts/fetch-release-artifacts.py \
+            --manifest-url "file://$PWD/target/channel-source/manifest.json" \
+            --kind packages \
+            --output target/release-inputs
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/release-inputs
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: current-binary-inputs
+          path: target/release-inputs/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: profile-channel-source
+          path: target/channel-source/manifest.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: profile-release-selection
+          path: target/profile-release-selection.json
+
   cloudflare-release-site-preflight:
     runs-on: ubuntu-latest
     name: Cloudflare release site preflight
@@ -52,7 +109,7 @@ jobs:
             --project "$RELEASE_CHANNEL_PROJECT"
 
   build-assets:
-    needs: cloudflare-release-site-preflight
+    needs: [cloudflare-release-site-preflight, resolve-current-binary]
     strategy:
       matrix:
         include:
@@ -110,13 +167,93 @@ jobs:
           name: vm-assets-${{ matrix.arch }}
           path: assets/${{ matrix.arch }}/
 
+  test-profile-pairing:
+    needs: [build-assets, resolve-current-binary]
+    runs-on: ubuntu-24.04
+    name: Complete profile pairing gate
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: uv sync
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 10
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+          components: llvm-tools
+          targets: aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: vm-assets-arm64
+          path: assets/arm64/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: vm-assets-x86_64
+          path: assets/x86_64/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: current-binary-inputs
+          path: target/release-inputs/
+
+      - name: Enable KVM for complete functional proof
+        run: |
+          set -euo pipefail
+          sudo modprobe kvm
+          sudo chmod 0666 /dev/kvm
+          sudo modprobe vhost_vsock
+          sudo chmod 0666 /dev/vhost-vsock
+          test -r /dev/kvm -a -w /dev/kvm
+          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+
+      - name: Run shared static module
+        run: just _test-static
+
+      - name: Prepare exact profile and pulled binary pairing
+        run: |
+          cargo run -p capsem-admin -- manifest generate assets
+          cargo run -p capsem-admin -- manifest check assets/manifest.json
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/release-inputs
+          uv run python scripts/stage-release-test-inputs.py \
+            --input-dir target/release-inputs \
+            --binary-dir target/debug
+          CAPSEM_ASSET_MANIFEST="file://$PWD/assets/manifest.json" \
+            bash scripts/materialize-config.sh
+          package=$(find target/release-inputs -maxdepth 1 -name '*.deb' -print -quit)
+          test -n "$package"
+          echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_BIN_DIR=$PWD/target/debug" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/target/release-inputs" >> "$GITHUB_ENV"
+          echo "CAPSEM_TEST_ASSETS_DIR=$PWD/assets" >> "$GITHUB_ENV"
+          echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/target/config" >> "$GITHUB_ENV"
+
+      - name: Run shared artifact module
+        run: just _test-artifacts
+
+      - name: Run shared complete functional module
+        run: just _test-functional
+
+      - name: Run shared native and update glow-up module
+        run: just _test-glowup
+
+      - name: Run shared release contracts
+        run: just _test-release-contracts
+
   assemble-channel:
-    needs: build-assets
+    needs: [build-assets, test-profile-pairing]
     runs-on: ubuntu-latest
     name: Assemble asset channel
     outputs:
-      asset_changed: ${{ steps.asset-delta.outputs.changed }}
-      asset_blobs_changed: ${{ steps.asset-delta.outputs.asset_blobs_changed }}
+      profile_changed: ${{ steps.profile-delta.outputs.changed }}
+      compatible: ${{ steps.author-release.outputs.compatible }}
     env:
       CHANNEL: ${{ inputs.channel }}
     steps:
@@ -151,26 +288,18 @@ jobs:
         with:
           name: vm-assets-x86_64
           path: assets/x86_64/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: profile-channel-source
+          path: target/source-channel/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: profile-release-selection
+          path: target/
 
       - name: Generate asset manifest
         run: |
           cargo run -p capsem-admin -- manifest generate assets
-
-      - name: Preserve binary channel metadata
-        run: |
-          scripts/preserve-binary-channel-metadata.py \
-            --manifest-path assets/manifest.json \
-            --previous-manifest-url "https://release.capsem.org/assets/$CHANNEL/manifest.json" \
-            --allow-missing-previous
-
-      - name: Check asset release delta
-        id: asset-delta
-        run: |
-          scripts/check-asset-release-delta.py \
-            --new-manifest assets/manifest.json \
-            --previous-manifest-url "https://release.capsem.org/assets/$CHANNEL/manifest.json" \
-            --allow-missing-previous \
-            --json-output target/asset-release-delta/delta.json
 
       - name: Verify profile release lane policy
         run: |
@@ -179,46 +308,99 @@ jobs:
             tests/capsem-release/test_release_lane_diff_policy.py -q
 
       - name: Build complete asset channel preview
-        if: ${{ steps.asset-delta.outputs.changed == 'true' }}
         run: |
-          ASSET_BASE='https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}'
+          PROFILE_REVISION=$(python3 - <<'PY'
+          import json
+          print(json.load(open("target/profile-release-selection.json"))["profile_revision"])
+          PY
+          )
+          PROFILE_IDENTITY=$(python3 -c 'import json; print(json.load(open("target/profile-release-selection.json"))["publication_identity"])')
+          ASSET_BASE="https://github.com/${{ github.repository }}/releases/download/$PROFILE_IDENTITY"
+          MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("target/source-channel/manifest.json"))["version"])')
           uv run python scripts/build-complete-release-channel.py \
             --channel-source "$CHANNEL=file://$PWD/assets/manifest.json" \
             --primary-channel "$CHANNEL" \
             --assets-dir assets \
             --asset-source-base "$ASSET_BASE" \
-            --manifest-version "${{ inputs.manifest_version }}" \
-            --out-dir target/release-channel \
+            --manifest-version "$MANIFEST_VERSION" \
+            --out-dir target/profile-candidate \
             --allow-mirror-missing
 
+      - name: Check selected channel profile delta
+        id: profile-delta
+        run: |
+          uv run python scripts/check-profile-release-delta.py \
+            --source-manifest target/source-channel/manifest.json \
+            --candidate-manifest "target/profile-candidate/assets/$CHANNEL/manifest.json" \
+            --channel "$CHANNEL" \
+            --profile "${{ inputs.profile }}" \
+            --json-output target/profile-release-delta/delta.json
+
+      - name: Author selected channel profile in the source manifest
+        id: author-release
+        if: ${{ steps.profile-delta.outputs.changed == 'true' }}
+        run: |
+          set -euo pipefail
+          MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("target/source-channel/manifest.json"))["version"])')
+          PUBLICATION_IDENTITY=$(python3 -c 'import json; print(json.load(open("target/profile-release-selection.json"))["publication_identity"])')
+          PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$PUBLICATION_IDENTITY"
+          PROFILE_VERSION=$(python3 - <<'PY'
+          import json
+
+          channel = "${{ inputs.channel }}"
+          profile = "${{ inputs.profile }}"
+          manifest = json.load(open(f"target/profile-candidate/assets/{channel}/manifest.json"))
+          print(manifest["profiles"][profile]["revision"])
+          PY
+          )
+          cargo run -p capsem-admin -- release \
+            --channel "$CHANNEL" \
+            --profile "${{ inputs.profile }}" \
+            --manifest-path target/source-channel/manifest.json \
+            --candidate-manifest "target/profile-candidate/assets/$CHANNEL/manifest.json" \
+            --publication-base "$PUBLICATION_BASE" \
+            --manifest-version "$MANIFEST_VERSION" \
+            --profile-version "$PROFILE_VERSION" \
+            --json > target/profile-release.json
+          test "$(python3 -c 'import json; print(json.load(open("target/profile-release.json"))["publication_identity"])')" = "$PUBLICATION_IDENTITY"
+          COMPATIBLE=$(python3 -c 'import json; print(str(json.load(open("target/profile-release.json"))["compatible_with_current_binary"]).lower())')
+          echo "compatible=$COMPATIBLE" >> "$GITHUB_OUTPUT"
+          echo "publication_identity=$PUBLICATION_IDENTITY" >> "$GITHUB_OUTPUT"
+
+      - name: Build deployable channel from authored source manifest
+        if: ${{ steps.profile-delta.outputs.changed == 'true' && steps.author-release.outputs.compatible == 'true' }}
+        run: |
+          uv run python scripts/build-complete-release-channel.py \
+            --channel-source "$CHANNEL=file://$PWD/target/source-channel/manifest.json" \
+            --primary-channel "$CHANNEL" \
+            --assets-dir assets \
+            --manifest-version "$(python3 -c 'import json; print(json.load(open("target/source-channel/manifest.json"))["version"])')" \
+            --profile-source-root target/profile-candidate \
+            --out-dir target/release-channel
+
       - name: Publish immutable GitHub asset release
-        if: ${{ steps.asset-delta.outputs.asset_blobs_changed == 'true' }}
+        if: ${{ steps.profile-delta.outputs.changed == 'true' }}
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          ASSET_VERSION=$(python - <<'PY'
-          import json
-
-          with open("assets/manifest.json", encoding="utf-8") as handle:
-              print(json.load(handle)["assets"]["current"])
-          PY
-          )
-          TAG="assets-v$ASSET_VERSION"
+          TAG="${{ steps.author-release.outputs.publication_identity }}"
+          PROFILE_REVISION=$(python3 -c 'import json; print(json.load(open("target/profile-release-selection.json"))["profile_revision"])')
           RELEASE_DIR="target/asset-release/$TAG"
           UPLOAD_SCRIPT="target/asset-release/upload-assets.sh"
-          mkdir -p "$RELEASE_DIR"
-
-          for arch in arm64 x86_64; do
-            arch_dir="assets/$arch"
-            test -d "$arch_dir"
-            for logical_name in vmlinuz initrd.img rootfs.erofs obom.cdx.json software-inventory.json; do
-              src="$arch_dir/$logical_name"
-              test -f "$src"
-              cp "$src" "$RELEASE_DIR/$arch-$logical_name"
-            done
-          done
+          uv run python scripts/stage-profile-publication.py \
+            --manifest target/source-channel/manifest.json \
+            --profile "${{ inputs.profile }}" \
+            --assets-dir assets \
+            --config-root config \
+            --release-dir "$RELEASE_DIR"
+          PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
+          uv run python scripts/verify-profile-publication.py \
+            --manifest "$RELEASE_DIR/channel-source-$CHANNEL.json" \
+            --profile "${{ inputs.profile }}" \
+            --publication-base "$PUBLICATION_BASE" \
+            --release-dir "$RELEASE_DIR"
 
           files=("$RELEASE_DIR"/*)
           test "${#files[@]}" -gt 0
@@ -227,24 +409,18 @@ jobs:
             echo '#!/usr/bin/env bash'
             echo 'set -euo pipefail'
             printf 'if gh release view %q >/dev/null 2>&1; then\n' "$TAG"
-            printf '  gh release upload %q' "$TAG"
-            printf ' %q' "${files[@]}"
-            printf ' --clobber\n'
+            printf '  echo %q >&2\n' "immutable profile release already exists: $TAG"
+            printf '  exit 1\n'
             printf 'else\n'
             printf '  gh release create %q' "$TAG"
             printf ' %q' "${files[@]}"
             printf ' --title %q --notes %q --target %q\n' \
-              "Capsem VM assets $ASSET_VERSION" \
-              "Immutable Capsem VM asset release for $CHANNEL/$ASSET_VERSION." \
+              "Capsem $CHANNEL/${{ inputs.profile }} $PROFILE_REVISION" \
+              "Immutable Capsem profile release for $CHANNEL/${{ inputs.profile }}." \
               "$GITHUB_SHA"
             printf 'fi\n'
           } > "$UPLOAD_SCRIPT"
           chmod +x "$UPLOAD_SCRIPT"
-
-          {
-            echo "asset_version=$ASSET_VERSION"
-            echo "asset_release_tag=$TAG"
-          } >> "$GITHUB_OUTPUT"
 
           {
             echo "## Immutable VM asset release"
@@ -263,41 +439,36 @@ jobs:
           fi
 
       - name: Attest VM asset provenance
-        if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}
+        if: ${{ inputs.dry_run == false && steps.profile-delta.outputs.changed == 'true' }}
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
-          subject-path: |
-            target/asset-release/assets-v*/*-vmlinuz
-            target/asset-release/assets-v*/*-initrd.img
-            target/asset-release/assets-v*/*-rootfs.erofs
-            target/asset-release/assets-v*/*-obom.cdx.json
-            target/asset-release/assets-v*/*-software-inventory.json
+          subject-path: target/asset-release/profile-*/*
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: asset-channel-source
-          path: assets/manifest.json
+          path: target/source-channel/manifest.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: asset-release-delta
-          path: target/asset-release-delta/
+          name: profile-release-delta
+          path: target/profile-release-delta/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: ${{ inputs.dry_run == true && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}
+        if: ${{ inputs.dry_run == true && steps.profile-delta.outputs.changed == 'true' }}
         with:
           name: asset-release-plan
           path: target/asset-release/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: ${{ steps.asset-delta.outputs.changed == 'true' }}
+        if: ${{ steps.profile-delta.outputs.changed == 'true' && steps.author-release.outputs.compatible == 'true' }}
         with:
           name: asset-channel-preview
           path: target/release-channel/
 
   deploy-channel:
     needs: assemble-channel
-    if: ${{ inputs.dry_run == false && needs.assemble-channel.outputs.asset_changed == 'true' }}
+    if: ${{ inputs.dry_run == false && needs.assemble-channel.outputs.profile_changed == 'true' && needs.assemble-channel.outputs.compatible == 'true' }}
     uses: ./.github/workflows/release-channel.yaml
     with:
       channel: ${{ inputs.channel }}

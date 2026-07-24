@@ -1,0 +1,167 @@
+from __future__ import annotations
+
+import hashlib
+import importlib.util
+import json
+from pathlib import Path
+
+import blake3
+import pytest
+
+
+ROOT = Path(__file__).resolve().parents[2]
+SPEC = importlib.util.spec_from_file_location(
+    "verify_profile_publication",
+    ROOT / "scripts" / "verify-profile-publication.py",
+)
+assert SPEC is not None and SPEC.loader is not None
+VERIFY = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(VERIFY)
+STAGE_SPEC = importlib.util.spec_from_file_location(
+    "stage_profile_publication",
+    ROOT / "scripts" / "stage-profile-publication.py",
+)
+assert STAGE_SPEC is not None and STAGE_SPEC.loader is not None
+STAGE = importlib.util.module_from_spec(STAGE_SPEC)
+STAGE_SPEC.loader.exec_module(STAGE)
+
+
+def _record(url: str, payload: bytes, *, name: str | None = None) -> dict[str, object]:
+    record: dict[str, object] = {
+        "url": url,
+        "bytes": len(payload),
+        "digest": {
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "blake3": blake3.blake3(payload).hexdigest(),
+        },
+    }
+    if name is not None:
+        record["name"] = name
+    return record
+
+
+def _publication(tmp_path: Path) -> tuple[Path, Path, str]:
+    base = "https://github.com/google/capsem/releases/download/profile-nightly-code-r1"
+    release_dir = tmp_path / "profile-nightly-code-r1"
+    release_dir.mkdir()
+    config = b"id = 'code'\n"
+    kernel = b"kernel"
+    obom = b'{"bomFormat":"CycloneDX"}'
+    files = {
+        "x86_64-profile.toml": config,
+        "x86_64-vmlinuz": kernel,
+        "x86_64-obom.cdx.json": obom,
+    }
+    for name, payload in files.items():
+        (release_dir / name).write_bytes(payload)
+    manifest = {
+        "channel": "nightly",
+        "packages": [],
+        "profiles": {
+            "code": {
+                "architectures": [
+                    {
+                        "architecture": "x86_64",
+                        "config": [_record(f"{base}/x86_64-profile.toml", config)],
+                        "images": [
+                            _record(f"{base}/x86_64-vmlinuz", kernel, name="vmlinuz")
+                        ],
+                        "evidence": [
+                            _record(f"{base}/x86_64-obom.cdx.json", obom)
+                        ],
+                    }
+                ]
+            }
+        },
+    }
+    source = release_dir / "channel-source-nightly.json"
+    source.write_text(json.dumps(manifest), encoding="utf-8")
+    return source, release_dir, base
+
+
+def test_profile_publication_exactly_matches_manifest(tmp_path: Path) -> None:
+    source, release_dir, base = _publication(tmp_path)
+
+    verified = VERIFY.verify_profile_publication(
+        source, "code", base, release_dir
+    )
+
+    assert {path.name for path in verified} == {
+        "x86_64-profile.toml",
+        "x86_64-vmlinuz",
+        "x86_64-obom.cdx.json",
+    }
+
+
+def test_profile_publication_rejects_tamper_and_extra_files(tmp_path: Path) -> None:
+    source, release_dir, base = _publication(tmp_path)
+    (release_dir / "x86_64-vmlinuz").write_bytes(b"tampered")
+
+    with pytest.raises(ValueError, match="metadata mismatch|SHA-256 mismatch"):
+        VERIFY.verify_profile_publication(source, "code", base, release_dir)
+
+    (release_dir / "x86_64-vmlinuz").write_bytes(b"kernel")
+    (release_dir / "unexpected.txt").write_text("extra", encoding="utf-8")
+    with pytest.raises(ValueError, match="file set mismatch"):
+        VERIFY.verify_profile_publication(source, "code", base, release_dir)
+
+
+def test_profile_publication_stages_only_manifest_described_inputs(
+    tmp_path: Path,
+) -> None:
+    base = "https://github.com/google/capsem/releases/download/profile-nightly-code-r1"
+    assets = tmp_path / "assets" / "x86_64"
+    config = tmp_path / "config" / "profiles" / "code"
+    assets.mkdir(parents=True)
+    config.mkdir(parents=True)
+    kernel = b"kernel"
+    profile = b"id = 'code'\n"
+    (assets / "vmlinuz").write_bytes(kernel)
+    (assets / "build-ledger.log").write_text("must not publish", encoding="utf-8")
+    (config / "profile.toml").write_bytes(profile)
+    manifest = {
+        "channel": "nightly",
+        "packages": [],
+        "profiles": {
+            "code": {
+                "architectures": [
+                    {
+                        "architecture": "x86_64",
+                        "config": [
+                            {
+                                **_record(f"{base}/x86_64-profile.toml", profile),
+                                "path": "profiles/code/profile.toml",
+                            }
+                        ],
+                        "images": [
+                            _record(f"{base}/x86_64-vmlinuz", kernel, name="vmlinuz")
+                        ],
+                        "evidence": [],
+                    }
+                ]
+            }
+        },
+    }
+    source = tmp_path / "source.json"
+    source.write_text(json.dumps(manifest), encoding="utf-8")
+    release_dir = tmp_path / "publication"
+
+    staged = STAGE.stage_profile_publication(
+        source,
+        "code",
+        tmp_path / "assets",
+        tmp_path / "config",
+        release_dir,
+    )
+
+    assert {path.name for path in staged} == {
+        "x86_64-profile.toml",
+        "x86_64-vmlinuz",
+        "channel-source-nightly.json",
+    }
+    VERIFY.verify_profile_publication(
+        release_dir / "channel-source-nightly.json",
+        "code",
+        base,
+        release_dir,
+    )
