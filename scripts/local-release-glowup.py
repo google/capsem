@@ -46,7 +46,9 @@ try:
         artifact_identity_from_manifest_package,
         assert_manifest_artifact,
         build_report,
+        build_transition_evidence,
         classify_pairing_inputs,
+        validate_installed_evidence,
         validate_pairing_inputs,
     )
 except ModuleNotFoundError:
@@ -57,7 +59,9 @@ except ModuleNotFoundError:
         artifact_identity_from_manifest_package,
         assert_manifest_artifact,
         build_report,
+        build_transition_evidence,
         classify_pairing_inputs,
+        validate_installed_evidence,
         validate_pairing_inputs,
     )
 
@@ -109,6 +113,16 @@ class ExactReleaseTransport:
     channel_catalog_url: str
     before_package: Path
     after_package: Path
+
+
+@dataclass(frozen=True)
+class ExactInstalledGlowupEvidence:
+    fresh_installed: Path
+    fresh_doctor: Path
+    fresh_winterfell: Path
+    candidate_installed: Path
+    candidate_doctor: Path
+    candidate_winterfell: Path
 
 
 def _environment_path(name: str) -> Path | None:
@@ -205,8 +219,9 @@ def main() -> int:
         raise SystemExit(f"local release glow-up requires executable {admin}")
 
     with local_release_server(dist) as base_url:
+        exact_transport: ExactReleaseTransport | None = None
         if exact_pairing is not None:
-            stage_exact_release_transport(
+            exact_transport = stage_exact_release_transport(
                 exact_pairing,
                 dist=dist,
                 base_url=base_url,
@@ -338,36 +353,88 @@ def main() -> int:
             expected_architecture=arch,
         )
         if not args.skip_install:
-            evidence_path = args.work_dir / "installed-evidence.json"
-            run_installed_glowup(
-                install_script_url=install_script_url,
-                release_base_url=base_url,
-                stable_manifest_url=stable_manifest_url,
-                nightly_manifest_url=nightly_manifest_url,
-                corp_manifest_url=corp_manifest_url,
-                package_version=stable_version,
-                evidence_out=evidence_path,
-            )
-            installed = json.loads(evidence_path.read_text(encoding="utf-8"))
-            installed["package_receipt"] = True
-            installed["binary_cohort"] = True
-            report = build_report(
-                adapter="linux-docker-systemd",
-                artifact=nightly_artifact,
-                installed=installed,
-                capabilities={
-                    "native_install": True,
-                    "systemd": True,
-                    "stable_nightly_round_trip": True,
-                    "corporate_channel_lock": True,
-                },
-            )
-            report["adapter_evidence"] = {
-                "base_url": base_url,
-                "stable_manifest_url": stable_manifest_url,
-                "nightly_manifest_url": nightly_manifest_url,
-                "stable_artifact": stable_artifact.as_report(),
-            }
+            if exact_pairing is not None:
+                if exact_transport is None:
+                    raise SystemExit("exact release transport was not staged")
+                exact_evidence = run_exact_installed_glowup(
+                    pairing=exact_pairing,
+                    transport=exact_transport,
+                    install_script_url=install_script_url,
+                    release_base_url=base_url,
+                    evidence_dir=args.work_dir / "exact-transition-evidence",
+                )
+                installed = json.loads(
+                    exact_evidence.candidate_installed.read_text(encoding="utf-8")
+                )
+                installed["package_receipt"] = True
+                installed["binary_cohort"] = True
+                exact_artifact = artifact_identity_from_manifest_package(
+                    exact_pairing.after_manifest.read_bytes(),
+                    exact_pairing.after_package,
+                )
+                transitions = exact_installed_transition_rows(
+                    exact_pairing,
+                    exact_evidence,
+                )
+                expected_transitions = [
+                    TransitionKind.FRESH_INSTALL,
+                    exact_pairing.transition,
+                ]
+                report = build_report(
+                    adapter="linux-docker-systemd",
+                    artifact=exact_artifact,
+                    installed=installed,
+                    capabilities={
+                        "native_install": True,
+                        "systemd": True,
+                        "service_owned_update": True,
+                        "full_doctor": True,
+                        "installed_winterfell": True,
+                    },
+                    transitions=transitions,
+                    expected_transitions=expected_transitions,
+                )
+                report["adapter_evidence"] = {
+                    "base_url": base_url,
+                    "release_pairing": {
+                        "kind": exact_pairing.transition.value,
+                        "before": exact_pairing.before.as_report(),
+                        "after": exact_pairing.after.as_report(),
+                    },
+                    "polled_manifest_url": exact_transport.current_manifest_url,
+                    "channel_catalog_url": exact_transport.channel_catalog_url,
+                }
+            else:
+                evidence_path = args.work_dir / "installed-evidence.json"
+                run_installed_glowup(
+                    install_script_url=install_script_url,
+                    release_base_url=base_url,
+                    stable_manifest_url=stable_manifest_url,
+                    nightly_manifest_url=nightly_manifest_url,
+                    corp_manifest_url=corp_manifest_url,
+                    package_version=stable_version,
+                    evidence_out=evidence_path,
+                )
+                installed = json.loads(evidence_path.read_text(encoding="utf-8"))
+                installed["package_receipt"] = True
+                installed["binary_cohort"] = True
+                report = build_report(
+                    adapter="linux-docker-systemd",
+                    artifact=nightly_artifact,
+                    installed=installed,
+                    capabilities={
+                        "native_install": True,
+                        "systemd": True,
+                        "stable_nightly_round_trip": True,
+                        "corporate_channel_lock": True,
+                    },
+                )
+                report["adapter_evidence"] = {
+                    "base_url": base_url,
+                    "stable_manifest_url": stable_manifest_url,
+                    "nightly_manifest_url": nightly_manifest_url,
+                    "stable_artifact": stable_artifact.as_report(),
+                }
             (args.work_dir / "report.json").write_text(
                 json.dumps(report, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
@@ -1040,6 +1107,253 @@ def release_asset_urls(manifest: dict[str, object]) -> list[str]:
     if not urls:
         raise SystemExit("generated stable release manifest has no VM asset URLs")
     return urls
+
+
+def _exact_installed_probe_shell(evidence_dir: Path) -> str:
+    return f"""
+CAPSEM_BIN="$HOME/.capsem/bin/capsem"
+CAPSEM_HOME_DIR="$HOME/.capsem"
+EVIDENCE_DIR={shlex.quote(str(evidence_dir))}
+mkdir -p "$EVIDENCE_DIR"
+wait_for_service() {{
+  for attempt in $(seq 1 90); do
+    if CAPSEM_HOME="$CAPSEM_HOME_DIR" CAPSEM_RUN_DIR="$CAPSEM_HOME_DIR/run" \
+      "$CAPSEM_BIN" status > "$EVIDENCE_DIR/service-status.txt" 2>&1 \
+      && grep -Fq "Installed: true" "$EVIDENCE_DIR/service-status.txt" \
+      && grep -Fq "Running:   true" "$EVIDENCE_DIR/service-status.txt" \
+      && grep -Fq "Service:   ok" "$EVIDENCE_DIR/service-status.txt" \
+      && grep -Fq "Gateway:   ok" "$EVIDENCE_DIR/service-status.txt"; then
+      return 0
+    fi
+    sleep 2
+  done
+  cat "$EVIDENCE_DIR/service-status.txt" >&2 || true
+  systemctl --user status capsem.service --no-pager -l >&2 || true
+  journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true
+  return 1
+}}
+check_binary_versions() {{
+  expected="$1"
+  for binary in {" ".join(HOST_BINARIES)}; do
+    test -x "$CAPSEM_HOME_DIR/bin/$binary"
+    if [ "$binary" = capsem ]; then
+      "$CAPSEM_HOME_DIR/bin/$binary" version
+    else
+      "$CAPSEM_HOME_DIR/bin/$binary" --version
+    fi > "$EVIDENCE_DIR/$binary.version" 2>&1
+    grep -F "$expected" "$EVIDENCE_DIR/$binary.version"
+  done
+}}
+probe_installed_transition() {{
+  label="$1"
+  manifest_url="$2"
+  channel="$3"
+  package_version="$4"
+  artifact="$5"
+  platform="$6"
+  architecture="$7"
+  wait_for_service
+  check_binary_versions "$package_version"
+  dpkg-query -W -f='${{Version}}' capsem | grep -Fx "$package_version"
+  python3 scripts/verify-installed-release.py \
+    --capsem "$CAPSEM_BIN" \
+    --capsem-home "$CAPSEM_HOME_DIR" \
+    --manifest-url "$manifest_url" \
+    --channel "$channel" \
+    --package-version "$package_version" \
+    --artifact "$artifact" \
+    --platform "$platform" \
+    --architecture "$architecture" \
+    --evidence-out "$EVIDENCE_DIR/$label-installed.json"
+  CAPSEM_HOME="$CAPSEM_HOME_DIR" CAPSEM_RUN_DIR="$CAPSEM_HOME_DIR/run" \
+    "$CAPSEM_BIN" doctor > "$EVIDENCE_DIR/$label-doctor.log" 2>&1
+  printf '%s\n' '{{"schema":"capsem.installed_doctor.v1","passed":true}}' \
+    > "$EVIDENCE_DIR/$label-doctor.json"
+  uv run python scripts/run-installed-winterfell.py \
+    --bin-dir "$CAPSEM_HOME_DIR/bin" \
+    --assets-dir "$CAPSEM_HOME_DIR/assets" \
+    --profiles-dir "$CAPSEM_HOME_DIR/profiles" \
+    --evidence-out "$EVIDENCE_DIR/$label-winterfell.json"
+}}
+wait_for_exact_transition() {{
+  expected_manifest_sha="$1"
+  expected_package_version="$2"
+  for attempt in $(seq 1 90); do
+    installed_manifest_sha=""
+    installed_package_version=""
+    if [ -f "$CAPSEM_HOME_DIR/assets/manifest.json" ]; then
+      installed_manifest_sha=$(sha256sum "$CAPSEM_HOME_DIR/assets/manifest.json" | cut -d' ' -f1)
+    fi
+    installed_package_version=$(dpkg-query -W -f='${{Version}}' capsem 2>/dev/null || true)
+    if [ "$installed_manifest_sha" = "$expected_manifest_sha" ] \
+      && [ "$installed_package_version" = "$expected_package_version" ]; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "automatic update did not activate exact candidate: expected manifest=$expected_manifest_sha package=$expected_package_version" >&2
+  cat "$CAPSEM_HOME_DIR/logs/update.log" >&2 || true
+  systemctl --user status capsem.service --no-pager -l >&2 || true
+  journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true
+  return 1
+}}
+"""
+
+
+def run_exact_installed_glowup(
+    *,
+    pairing: ExactReleasePairing,
+    transport: ExactReleaseTransport,
+    install_script_url: str,
+    release_base_url: str,
+    evidence_dir: Path,
+) -> ExactInstalledGlowupEvidence:
+    before_artifact = artifact_identity_from_manifest_package(
+        pairing.before_manifest.read_bytes(),
+        pairing.before_package,
+    )
+    after_artifact = artifact_identity_from_manifest_package(
+        pairing.after_manifest.read_bytes(),
+        pairing.after_package,
+    )
+    if before_artifact.platform != "linux" or after_artifact.platform != "linux":
+        raise SystemExit("Linux installed glow-up requires exact Linux package artifacts")
+    if before_artifact.architecture != after_artifact.architecture:
+        raise SystemExit("exact installed transition cannot change package architecture")
+
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    probe_functions = _exact_installed_probe_shell(evidence_dir)
+    before_script = f"""
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+{probe_functions}
+sudo apt-get remove --purge -y capsem || true
+rm -rf "$HOME/.capsem"
+curl -fsSL {shlex.quote(install_script_url)} | \
+  CAPSEM_CHANNEL={shlex.quote(pairing.channel)} \
+  CAPSEM_RELEASE_BASE_URL={shlex.quote(release_base_url)} \
+  CAPSEM_MANIFEST_URL={shlex.quote(transport.current_manifest_url)} sh
+CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" \
+  CAPSEM_RELEASE_CHANNELS_URL={shlex.quote(transport.channel_catalog_url)} \
+  "$HOME/.capsem/bin/capsem" update --assets --channel {shlex.quote(pairing.channel)}
+systemctl --user set-environment \
+  CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS=2 \
+  CAPSEM_AUTOMATIC_UPDATE_POLL_SECS=2
+systemctl --user restart capsem.service
+probe_installed_transition fresh-install \
+  {shlex.quote(transport.current_manifest_url)} \
+  {shlex.quote(pairing.channel)} \
+  {shlex.quote(before_artifact.version)} \
+  {shlex.quote(str(pairing.before_package))} \
+  {shlex.quote(before_artifact.platform)} \
+  {shlex.quote(before_artifact.architecture.value)}
+"""
+    run(["bash", "-lc", before_script])
+
+    promote_exact_candidate_transport(transport)
+    after_script = f"""
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+{probe_functions}
+wait_for_exact_transition \
+  {shlex.quote(file_sha256(transport.after_manifest))} \
+  {shlex.quote(after_artifact.version)}
+probe_installed_transition candidate-after \
+  {shlex.quote(transport.current_manifest_url)} \
+  {shlex.quote(pairing.channel)} \
+  {shlex.quote(after_artifact.version)} \
+  {shlex.quote(str(pairing.after_package))} \
+  {shlex.quote(after_artifact.platform)} \
+  {shlex.quote(after_artifact.architecture.value)}
+"""
+    run(["bash", "-lc", after_script])
+
+    return ExactInstalledGlowupEvidence(
+        fresh_installed=evidence_dir / "fresh-install-installed.json",
+        fresh_doctor=evidence_dir / "fresh-install-doctor.json",
+        fresh_winterfell=evidence_dir / "fresh-install-winterfell.json",
+        candidate_installed=evidence_dir / "candidate-after-installed.json",
+        candidate_doctor=evidence_dir / "candidate-after-doctor.json",
+        candidate_winterfell=evidence_dir / "candidate-after-winterfell.json",
+    )
+
+
+def _probe_report_passed(path: Path, expected_schema: str) -> bool:
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(f"installed transition probe report is unreadable: {path}: {error}") from error
+    if not isinstance(report, dict):
+        raise SystemExit(f"installed transition probe report is not an object: {path}")
+    if report.get("schema") != expected_schema or report.get("passed") is not True:
+        raise SystemExit(f"installed transition probe failed: {path}: {report}")
+    return True
+
+
+def _validate_exact_installed_state(
+    path: Path,
+    pairing: PairingIdentity,
+) -> None:
+    try:
+        installed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(f"installed transition evidence is unreadable: {path}: {error}") from error
+    if not isinstance(installed, dict):
+        raise SystemExit(f"installed transition evidence is not an object: {path}")
+    installed["package_receipt"] = True
+    installed["binary_cohort"] = True
+    validate_installed_evidence(installed)
+    if installed.get("channel") != pairing.channel:
+        raise SystemExit(f"installed transition evidence has wrong channel: {path}")
+    if installed.get("package_version") != pairing.package_version:
+        raise SystemExit(f"installed transition evidence has wrong package version: {path}")
+
+
+def exact_installed_transition_rows(
+    pairing: ExactReleasePairing,
+    evidence: ExactInstalledGlowupEvidence,
+) -> list[dict[str, object]]:
+    _validate_exact_installed_state(evidence.fresh_installed, pairing.before)
+    _validate_exact_installed_state(evidence.candidate_installed, pairing.after)
+    fresh_doctor = _probe_report_passed(
+        evidence.fresh_doctor,
+        "capsem.installed_doctor.v1",
+    )
+    fresh_winterfell = _probe_report_passed(
+        evidence.fresh_winterfell,
+        "capsem.installed_winterfell.v1",
+    )
+    candidate_doctor = _probe_report_passed(
+        evidence.candidate_doctor,
+        "capsem.installed_doctor.v1",
+    )
+    candidate_winterfell = _probe_report_passed(
+        evidence.candidate_winterfell,
+        "capsem.installed_winterfell.v1",
+    )
+    return [
+        build_transition_evidence(
+            kind=TransitionKind.FRESH_INSTALL,
+            before=None,
+            after=pairing.before,
+            result="activated",
+            doctor_passed=fresh_doctor,
+            winterfell_passed=fresh_winterfell,
+        ),
+        build_transition_evidence(
+            kind=pairing.transition,
+            before=pairing.before,
+            after=pairing.after,
+            result="activated",
+            doctor_passed=candidate_doctor,
+            winterfell_passed=candidate_winterfell,
+            staged_profiles_sha256=(
+                pairing.after.profiles_sha256
+                if pairing.transition is TransitionKind.PROFILE_THEN_BINARY
+                else None
+            ),
+        ),
+    ]
 
 
 def run_installed_glowup(

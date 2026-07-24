@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from typing import NoReturn
 import urllib.request
 
 try:
@@ -38,7 +39,7 @@ LEGACY_STATE_PATHS = (
 )
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     raise SystemExit(f"installed release verification failed: {message}")
 
 

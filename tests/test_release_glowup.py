@@ -1011,3 +1011,173 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
 
     assert transport.current_manifest.read_bytes() == transport.after_manifest.read_bytes()
     assert not transport.current_manifest.with_suffix(".next").exists()
+
+
+def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_local_glowup()
+    before_package = tmp_path / "Capsem_1.5.99_amd64.deb"
+    after_package = tmp_path / "Capsem_1.5.100_amd64.deb"
+    before_package.write_bytes(b"before exact deb")
+    after_package.write_bytes(b"after exact deb")
+    before_artifact = module.ArtifactIdentity.from_path(
+        before_package,
+        version="1.5.99",
+        platform="linux",
+        architecture="amd64",
+    )
+    after_artifact = module.ArtifactIdentity.from_path(
+        after_package,
+        version="1.5.100",
+        platform="linux",
+        architecture="amd64",
+    )
+    before_document = _manifest(before_artifact)
+    before_document["channel"] = "nightly"
+    after_document = _manifest(after_artifact)
+    after_document["channel"] = "nightly"
+    before_manifest = tmp_path / "before.json"
+    after_manifest = tmp_path / "after.json"
+    current_manifest = tmp_path / "current" / "manifest.json"
+    current_manifest.parent.mkdir()
+    before_manifest.write_text(json.dumps(before_document, sort_keys=True))
+    after_manifest.write_text(json.dumps(after_document, sort_keys=True))
+    current_manifest.write_bytes(before_manifest.read_bytes())
+    before = module.PairingIdentity.from_manifest_bytes(
+        before_manifest.read_bytes(),
+        artifact=before_artifact,
+        channel="nightly",
+    )
+    after = module.PairingIdentity.from_manifest_bytes(
+        after_manifest.read_bytes(),
+        artifact=after_artifact,
+        channel="nightly",
+    )
+    pairing = module.ExactReleasePairing(
+        channel="nightly",
+        transition=module.TransitionKind.BINARY_ONLY,
+        changed_profiles=(),
+        before=before,
+        after=after,
+        before_manifest=before_manifest,
+        after_manifest=after_manifest,
+        before_package=before_package,
+        after_package=after_package,
+        before_profile_inputs=tmp_path / "before-profiles",
+        after_profile_inputs=tmp_path / "after-profiles",
+    )
+    transport = module.ExactReleaseTransport(
+        before_manifest=before_manifest,
+        after_manifest=after_manifest,
+        current_manifest=current_manifest,
+        channel_catalog=tmp_path / "channels.json",
+        before_manifest_url="http://127.0.0.1:8765/transitions/before/manifest.json",
+        after_manifest_url="http://127.0.0.1:8765/transitions/after/manifest.json",
+        current_manifest_url="http://127.0.0.1:8765/transitions/current/manifest.json",
+        channel_catalog_url="http://127.0.0.1:8765/transitions/channels.json",
+        before_package=before_package,
+        after_package=after_package,
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(module, "run", lambda command, **_kwargs: calls.append(command))
+
+    evidence = module.run_exact_installed_glowup(
+        pairing=pairing,
+        transport=transport,
+        install_script_url="http://127.0.0.1:8765/install.sh",
+        release_base_url="http://127.0.0.1:8765",
+        evidence_dir=tmp_path / "evidence",
+    )
+
+    assert len(calls) == 2
+    before_script = calls[0][-1]
+    after_script = calls[1][-1]
+    assert "CAPSEM_MANIFEST_URL=" in before_script
+    assert "update --assets --channel" in before_script
+    assert "systemctl --user set-environment" in before_script
+    assert "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS=2" in before_script
+    assert "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS=2" in before_script
+    assert "probe_installed_transition fresh-install" in before_script
+    assert "wait_for_exact_transition" in after_script
+    assert "probe_installed_transition candidate-after" in after_script
+    for script in (before_script, after_script):
+        assert "scripts/verify-installed-release.py" in script
+        assert '"$CAPSEM_BIN" doctor' in script
+        assert "scripts/run-installed-winterfell.py" in script
+        assert "update --yes" not in script
+    assert current_manifest.read_bytes() == after_manifest.read_bytes()
+    assert evidence.fresh_installed.name == "fresh-install-installed.json"
+    assert evidence.candidate_winterfell.name == "candidate-after-winterfell.json"
+
+
+def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Path) -> None:
+    module = _load_local_glowup()
+    before = _pairing(
+        module,
+        channel="nightly",
+        manifest_sha256="0" * 64,
+        package_version="1.5.99",
+        package_sha256="0" * 64,
+        profiles_sha256="2" * 64,
+    )
+    after = _pairing(
+        module,
+        channel="nightly",
+        manifest_sha256="1" * 64,
+        package_version="1.5.100",
+        package_sha256="1" * 64,
+        profiles_sha256="2" * 64,
+    )
+    pairing = SimpleNamespace(
+        transition=module.TransitionKind.BINARY_ONLY,
+        before=before,
+        after=after,
+    )
+    evidence = module.ExactInstalledGlowupEvidence(
+        fresh_installed=tmp_path / "fresh-installed.json",
+        fresh_doctor=tmp_path / "fresh-doctor.json",
+        fresh_winterfell=tmp_path / "fresh-winterfell.json",
+        candidate_installed=tmp_path / "candidate-installed.json",
+        candidate_doctor=tmp_path / "candidate-doctor.json",
+        candidate_winterfell=tmp_path / "candidate-winterfell.json",
+    )
+    for path, package_version in (
+        (evidence.fresh_installed, before.package_version),
+        (evidence.candidate_installed, after.package_version),
+    ):
+        path.write_text(
+            json.dumps(
+                {
+                    "package_version": package_version,
+                    "channel": "nightly",
+                    "manifest_url": "https://release.test/assets/nightly/manifest.json",
+                    "installed": True,
+                    "running": True,
+                    "service": "ok",
+                    "gateway": "ok",
+                    "profiles_ready": 1,
+                    "profiles_total": 1,
+                }
+            )
+        )
+    for path in (evidence.fresh_doctor, evidence.candidate_doctor):
+        path.write_text(
+            json.dumps({"schema": "capsem.installed_doctor.v1", "passed": True})
+        )
+    for path in (evidence.fresh_winterfell, evidence.candidate_winterfell):
+        path.write_text(
+            json.dumps({"schema": "capsem.installed_winterfell.v1", "passed": True})
+        )
+
+    rows = module.exact_installed_transition_rows(pairing, evidence)
+
+    assert [row["kind"] for row in rows] == ["fresh_install", "binary_only"]
+    assert all(row["probes"] == {"doctor": True, "winterfell": True} for row in rows)
+
+    evidence.candidate_doctor.write_text(
+        json.dumps({"schema": "capsem.installed_doctor.v1", "passed": False})
+    )
+    with pytest.raises(SystemExit, match="probe failed"):
+        module.exact_installed_transition_rows(pairing, evidence)
