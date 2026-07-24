@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added fail-closed release glow-up inputs that bind each orthogonal transition
+  to its exact public-before manifest, candidate-after manifest, native package
+  bytes, verified profile inputs, and selected profile publication.
+
 - Added one cross-platform installed-transition evidence contract for fresh
   installs, orthogonal updates, staged profile-then-binary activation, channel
   switches, tamper rejection, full doctor, and Winterfell proofs.

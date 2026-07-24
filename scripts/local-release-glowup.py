@@ -31,20 +31,34 @@ import shlex
 import socketserver
 import subprocess
 import threading
+from typing import cast
 import urllib.request
 
 try:
     from release_glowup import (
         ArtifactIdentity,
+        PairingIdentity,
+        TransitionKind,
+        artifact_identity_from_manifest_package,
         assert_manifest_artifact,
         build_report,
+        validate_pairing_inputs,
     )
 except ModuleNotFoundError:
     from scripts.release_glowup import (
         ArtifactIdentity,
+        PairingIdentity,
+        TransitionKind,
+        artifact_identity_from_manifest_package,
         assert_manifest_artifact,
         build_report,
+        validate_pairing_inputs,
     )
+
+try:
+    from release_inputs import load_verified_release_inputs
+except ModuleNotFoundError:
+    from scripts.release_inputs import load_verified_release_inputs
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -80,7 +94,24 @@ def main() -> int:
         action="store_true",
         help="Use an already repacked publishable package without rebuilding it.",
     )
+    parser.add_argument("--release-channel", choices=("stable", "nightly"))
+    parser.add_argument(
+        "--release-transition",
+        choices=(
+            TransitionKind.BINARY_ONLY.value,
+            TransitionKind.PROFILE_ONLY.value,
+            TransitionKind.PROFILE_THEN_BINARY.value,
+        ),
+    )
+    parser.add_argument("--before-manifest", type=Path)
+    parser.add_argument("--after-manifest", type=Path)
+    parser.add_argument("--before-package", type=Path)
+    parser.add_argument("--before-profile-inputs", type=Path)
+    parser.add_argument("--profile")
+    parser.add_argument("--candidate-profile-publication", type=Path)
+    parser.add_argument("--publication-base")
     args = parser.parse_args()
+    exact_pairing = validate_exact_release_pairing(args)
 
     if args.work_dir.exists():
         shutil.rmtree(args.work_dir)
@@ -257,6 +288,13 @@ def main() -> int:
                 "nightly_manifest_url": nightly_manifest_url,
                 "stable_artifact": stable_artifact.as_report(),
             }
+            if exact_pairing is not None:
+                before_pairing, after_pairing = exact_pairing
+                report["adapter_evidence"]["release_pairing"] = {
+                    "kind": args.release_transition,
+                    "before": before_pairing.as_report(),
+                    "after": after_pairing.as_report(),
+                }
             (args.work_dir / "report.json").write_text(
                 json.dumps(report, indent=2, sort_keys=True) + "\n",
                 encoding="utf-8",
@@ -267,6 +305,104 @@ def main() -> int:
         f"stable={stable_version} nightly={nightly_version} dist={dist}"
     )
     return 0
+
+
+def validate_exact_release_pairing(
+    args: argparse.Namespace,
+) -> tuple[PairingIdentity, PairingIdentity] | None:
+    """Fail closed when a release lane supplies an incomplete exact pairing."""
+
+    core_fields = {
+        "release_channel": args.release_channel,
+        "release_transition": args.release_transition,
+        "before_manifest": args.before_manifest,
+        "after_manifest": args.after_manifest,
+        "before_package": args.before_package,
+        "before_profile_inputs": args.before_profile_inputs,
+    }
+    profile_fields = {
+        "profile": args.profile,
+        "candidate_profile_publication": args.candidate_profile_publication,
+        "publication_base": args.publication_base,
+    }
+    if not any(value is not None for value in (*core_fields.values(), *profile_fields.values())):
+        return None
+    missing = [name for name, value in core_fields.items() if value is None]
+    if missing:
+        raise SystemExit(
+            "exact pairing requires release channel, transition, before/after "
+            f"manifests, before package, and before profile inputs; missing={missing}"
+        )
+
+    channel = str(args.release_channel)
+    transition = TransitionKind(str(args.release_transition))
+    before_manifest = Path(args.before_manifest)
+    after_manifest = Path(args.after_manifest)
+    before_package = Path(args.before_package)
+    before_profile_inputs = Path(args.before_profile_inputs)
+    before_manifest_bytes = before_manifest.read_bytes()
+    after_manifest_bytes = after_manifest.read_bytes()
+    report, _, _ = load_verified_release_inputs(before_profile_inputs)
+    if report.get("kind") != "profiles":
+        raise SystemExit("exact pairing before inputs must contain verified profiles")
+    if (before_profile_inputs / "manifest.json").read_bytes() != before_manifest_bytes:
+        raise SystemExit(
+            "exact pairing before profile inputs do not reproduce the public-before manifest"
+        )
+
+    changed_profile = transition in {
+        TransitionKind.PROFILE_ONLY,
+        TransitionKind.PROFILE_THEN_BINARY,
+    }
+    supplied_profile_fields = [name for name, value in profile_fields.items() if value is not None]
+    if changed_profile:
+        missing_profile = [name for name, value in profile_fields.items() if value is None]
+        if missing_profile:
+            raise SystemExit(
+                "exact profile pairing requires profile, candidate publication, "
+                f"and publication base; missing={missing_profile}"
+            )
+        try:
+            run(
+                [
+                    "python3",
+                    "scripts/verify-profile-publication.py",
+                    "--manifest",
+                    str(after_manifest),
+                    "--profile",
+                    str(args.profile),
+                    "--publication-base",
+                    str(args.publication_base),
+                    "--release-dir",
+                    str(args.candidate_profile_publication),
+                ]
+            )
+        except subprocess.CalledProcessError as error:
+            raise SystemExit(
+                "exact pairing candidate profile publication failed verification"
+            ) from error
+    elif supplied_profile_fields:
+        raise SystemExit(
+            "binary_only exact pairing cannot supply candidate profile publication inputs"
+        )
+
+    before_artifact = artifact_identity_from_manifest_package(
+        before_manifest_bytes,
+        before_package,
+    )
+    after_artifact = artifact_identity_from_manifest_package(
+        after_manifest_bytes,
+        Path(args.input_deb),
+    )
+    return validate_pairing_inputs(
+        kind=transition,
+        channel=channel,
+        before_manifest_bytes=before_manifest_bytes,
+        after_manifest_bytes=after_manifest_bytes,
+        before_artifact=before_artifact,
+        after_artifact=after_artifact,
+        selected_profile=str(args.profile) if changed_profile else None,
+    )
 
 
 def run(cmd: list[str], *, cwd: Path = PROJECT_ROOT, env: dict[str, str] | None = None) -> None:
@@ -515,19 +651,24 @@ def release_asset_urls(manifest: dict[str, object]) -> list[str]:
     for profile in profiles.values():
         if not isinstance(profile, dict):
             continue
-        architectures = profile.get("architectures")
+        profile_fields = cast(dict[str, object], profile)
+        architectures = profile_fields.get("architectures")
         if not isinstance(architectures, list):
             continue
         for architecture in architectures:
             if not isinstance(architecture, dict):
                 continue
+            architecture_fields = cast(dict[str, object], architecture)
             for section in ("images", "evidence"):
-                rows = architecture.get(section)
+                rows = architecture_fields.get(section)
                 if not isinstance(rows, list):
                     continue
                 for row in rows:
-                    if isinstance(row, dict) and isinstance(row.get("url"), str):
-                        url = row["url"]
+                    if not isinstance(row, dict):
+                        continue
+                    row_fields = cast(dict[str, object], row)
+                    if isinstance(row_fields.get("url"), str):
+                        url = cast(str, row_fields["url"])
                         if "/assets/releases/" in url:
                             urls.append(url)
     if not urls:
@@ -694,7 +835,9 @@ def local_release_server(root: Path):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        host, port = server.server_address
+        address = server.server_address
+        host = address[0]
+        port = address[1]
         yield f"http://{host}:{port}"
     finally:
         server.shutdown()

@@ -4,12 +4,15 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = PROJECT_ROOT / "scripts" / "release_glowup.py"
+LOCAL_GLOWUP_PATH = PROJECT_ROOT / "scripts" / "local-release-glowup.py"
 
 
 def _load_module():
@@ -17,6 +20,21 @@ def _load_module():
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+    return module
+
+
+def _load_local_glowup():
+    spec = importlib.util.spec_from_file_location(
+        "local_release_glowup",
+        LOCAL_GLOWUP_PATH,
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(PROJECT_ROOT / "scripts"))
     return module
 
 
@@ -548,3 +566,149 @@ def test_transition_sequence_rejects_missing_duplicate_or_reordered_rows() -> No
     for invalid in ([], [fresh], [fresh, fresh]):
         with pytest.raises(module.GlowupContractError, match="transition sequence"):
             module.validate_transition_sequence(invalid)
+
+
+def test_exact_binary_pairing_uses_real_manifest_and_package_bytes(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    before_root = tmp_path / "before"
+    before_root.mkdir()
+    before_artifact = _artifact(before_root, module)
+    after_path = tmp_path / "after" / "Capsem-1.5.101.pkg"
+    after_path.parent.mkdir(parents=True)
+    after_path.write_bytes(b"exact candidate package v2")
+    after_artifact = module.ArtifactIdentity.from_path(
+        after_path,
+        version="1.5.101",
+        platform="macos",
+        architecture="arm64",
+    )
+    profiles = {"code": {"revision": "profiles-1"}}
+    before_manifest = _manifest(before_artifact)
+    before_manifest["channel"] = "stable"
+    before_manifest["profiles"] = profiles
+    after_manifest = _manifest(after_artifact)
+    after_manifest["channel"] = "stable"
+    after_manifest["profiles"] = profiles
+    before_contents = json.dumps(before_manifest, sort_keys=True).encode()
+    after_contents = json.dumps(after_manifest, sort_keys=True).encode()
+    resolved_before = module.artifact_identity_from_manifest_package(
+        before_contents,
+        before_artifact.path,
+    )
+    resolved_after = module.artifact_identity_from_manifest_package(
+        after_contents,
+        after_artifact.path,
+    )
+
+    before, after = module.validate_pairing_inputs(
+        kind=module.TransitionKind.BINARY_ONLY,
+        channel="stable",
+        before_manifest_bytes=before_contents,
+        after_manifest_bytes=after_contents,
+        before_artifact=resolved_before,
+        after_artifact=resolved_after,
+    )
+
+    assert before.package_sha256 == before_artifact.sha256
+    assert after.package_sha256 == after_artifact.sha256
+    assert before.profiles_sha256 == after.profiles_sha256
+
+
+def test_exact_profile_pairing_allows_only_the_selected_profile_to_change(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    artifact = _artifact(tmp_path, module)
+    before_manifest = _manifest(artifact)
+    before_manifest["channel"] = "nightly"
+    before_manifest["profiles"] = {
+        "code": {"revision": "code-1"},
+        "experimental": {"revision": "experimental-1"},
+    }
+    after_manifest = json.loads(json.dumps(before_manifest))
+    after_manifest["profiles"]["experimental"]["revision"] = "experimental-2"
+
+    module.validate_pairing_inputs(
+        kind=module.TransitionKind.PROFILE_ONLY,
+        channel="nightly",
+        before_manifest_bytes=json.dumps(before_manifest, sort_keys=True).encode(),
+        after_manifest_bytes=json.dumps(after_manifest, sort_keys=True).encode(),
+        before_artifact=artifact,
+        after_artifact=artifact,
+        selected_profile="experimental",
+    )
+
+    after_manifest["profiles"]["code"]["revision"] = "code-2"
+    with pytest.raises(module.GlowupContractError, match="unselected profile"):
+        module.validate_pairing_inputs(
+            kind=module.TransitionKind.PROFILE_ONLY,
+            channel="nightly",
+            before_manifest_bytes=json.dumps(before_manifest, sort_keys=True).encode(),
+            after_manifest_bytes=json.dumps(after_manifest, sort_keys=True).encode(),
+            before_artifact=artifact,
+            after_artifact=artifact,
+            selected_profile="experimental",
+        )
+
+
+def test_exact_pairing_rejects_manifest_channel_or_package_mismatch(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    artifact = _artifact(tmp_path, module)
+    manifest = _manifest(artifact)
+    manifest["channel"] = "stable"
+    contents = json.dumps(manifest, sort_keys=True).encode()
+
+    with pytest.raises(module.GlowupContractError, match="channel"):
+        module.validate_pairing_inputs(
+            kind=module.TransitionKind.BINARY_ONLY,
+            channel="nightly",
+            before_manifest_bytes=contents,
+            after_manifest_bytes=contents,
+            before_artifact=artifact,
+            after_artifact=artifact,
+        )
+
+    changed = tmp_path / artifact.name
+    changed.write_bytes(b"different package bytes")
+    mismatched = module.ArtifactIdentity.from_path(
+        changed,
+        version=artifact.version,
+        platform=artifact.platform,
+        architecture=artifact.architecture.value,
+    )
+    with pytest.raises(module.GlowupContractError, match="sha256"):
+        module.validate_pairing_inputs(
+            kind=module.TransitionKind.PROFILE_ONLY,
+            channel="stable",
+            before_manifest_bytes=contents,
+            after_manifest_bytes=contents,
+            before_artifact=mismatched,
+            after_artifact=mismatched,
+            selected_profile="work",
+        )
+
+
+def test_release_pairing_cli_is_all_or_nothing() -> None:
+    module = _load_local_glowup()
+    empty = SimpleNamespace(
+        release_channel=None,
+        release_transition=None,
+        before_manifest=None,
+        after_manifest=None,
+        before_package=None,
+        before_profile_inputs=None,
+        profile=None,
+        candidate_profile_publication=None,
+        publication_base=None,
+        input_deb=Path("candidate.deb"),
+    )
+    assert module.validate_exact_release_pairing(empty) is None
+
+    partial = SimpleNamespace(**vars(empty))
+    partial.release_channel = "stable"
+    with pytest.raises(SystemExit, match="exact pairing requires"):
+        module.validate_exact_release_pairing(partial)

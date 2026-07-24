@@ -280,6 +280,131 @@ def assert_manifest_artifact(
     return package
 
 
+def artifact_identity_from_manifest_package(
+    contents: bytes,
+    package_path: Path,
+) -> ArtifactIdentity:
+    """Resolve one exact current package record without guessing its metadata."""
+
+    manifest = load_manifest_bytes(contents)
+    packages = manifest.get("packages")
+    if not isinstance(packages, list):
+        raise GlowupContractError("candidate manifest packages must be an array")
+    matches: list[Mapping[str, object]] = []
+    for candidate in packages:
+        if not isinstance(candidate, dict):
+            continue
+        package = cast(Mapping[str, object], candidate)
+        if package.get("name") == package_path.name and package.get("status") == "current":
+            matches.append(package)
+    if len(matches) != 1:
+        raise GlowupContractError(
+            "release pairing manifest must contain exactly one current package "
+            f"record for {package_path.name}; found {len(matches)}"
+        )
+    package = matches[0]
+    version = package.get("version")
+    platform = package.get("platform")
+    architecture = package.get("architecture")
+    if not all(isinstance(value, str) and value for value in (version, platform, architecture)):
+        raise GlowupContractError(
+            f"release pairing package metadata is incomplete for {package_path.name}"
+        )
+    artifact = ArtifactIdentity.from_path(
+        package_path,
+        version=cast(str, version),
+        platform=cast(str, platform),
+        architecture=cast(str, architecture),
+    )
+    assert_manifest_artifact(manifest, artifact)
+    return artifact
+
+
+def validate_pairing_inputs(
+    *,
+    kind: TransitionKind | str,
+    channel: str,
+    before_manifest_bytes: bytes,
+    after_manifest_bytes: bytes,
+    before_artifact: ArtifactIdentity,
+    after_artifact: ArtifactIdentity,
+    selected_profile: str | None = None,
+) -> tuple[PairingIdentity, PairingIdentity]:
+    """Validate an exact public-before/candidate-after release-lane pairing."""
+
+    try:
+        transition_kind = TransitionKind(kind)
+    except ValueError as error:
+        raise GlowupContractError(f"unsupported release transition: {kind}") from error
+    if transition_kind not in {
+        TransitionKind.BINARY_ONLY,
+        TransitionKind.PROFILE_ONLY,
+        TransitionKind.PROFILE_THEN_BINARY,
+    }:
+        raise GlowupContractError(
+            f"{transition_kind.value} is not a release-lane pairing transition"
+        )
+    before_manifest = load_manifest_bytes(before_manifest_bytes)
+    after_manifest = load_manifest_bytes(after_manifest_bytes)
+    for label, manifest in (
+        ("public-before", before_manifest),
+        ("candidate-after", after_manifest),
+    ):
+        if manifest.get("channel") != channel:
+            raise GlowupContractError(
+                f"{label} manifest channel is {manifest.get('channel')!r}, expected {channel!r}"
+            )
+
+    before = PairingIdentity.from_manifest_bytes(
+        before_manifest_bytes,
+        artifact=before_artifact,
+        channel=channel,
+    )
+    after = PairingIdentity.from_manifest_bytes(
+        after_manifest_bytes,
+        artifact=after_artifact,
+        channel=channel,
+    )
+
+    before_profiles = before_manifest.get("profiles")
+    after_profiles = after_manifest.get("profiles")
+    if not isinstance(before_profiles, dict) or not isinstance(after_profiles, dict):
+        raise GlowupContractError("release pairing manifests must contain profile objects")
+    before_profile_map = cast(Mapping[str, object], before_profiles)
+    after_profile_map = cast(Mapping[str, object], after_profiles)
+    if transition_kind is TransitionKind.BINARY_ONLY:
+        if selected_profile is not None:
+            raise GlowupContractError("binary_only release pairing cannot select a changed profile")
+    else:
+        if not selected_profile:
+            raise GlowupContractError(
+                f"{transition_kind.value} release pairing requires one selected profile"
+            )
+        if selected_profile not in after_profile_map:
+            raise GlowupContractError(
+                f"candidate-after manifest lacks selected profile {selected_profile!r}"
+            )
+        profile_ids = set(before_profile_map) | set(after_profile_map)
+        for profile_id in profile_ids - {selected_profile}:
+            if before_profile_map.get(profile_id) != after_profile_map.get(profile_id):
+                raise GlowupContractError(
+                    f"{transition_kind.value} release pairing changed unselected profile "
+                    f"{profile_id!r}"
+                )
+
+    _validate_transition_pairing(
+        transition_kind=transition_kind,
+        before=before,
+        after=after,
+        result="activated",
+        staged_profiles_sha256=(
+            after.profiles_sha256 if transition_kind is TransitionKind.PROFILE_THEN_BINARY else None
+        ),
+        preserved_previous=False,
+    )
+    return before, after
+
+
 def validate_installed_evidence(
     evidence: Mapping[str, object],
 ) -> Mapping[str, object]:
@@ -324,42 +449,26 @@ def _require_package_changed(
         raise GlowupContractError(f"{kind.value} transition must change the exact package identity")
 
 
-def build_transition_evidence(
+def _validate_transition_pairing(
     *,
-    kind: TransitionKind | str,
+    transition_kind: TransitionKind,
     before: PairingIdentity | None,
     after: PairingIdentity,
     result: str,
-    doctor_passed: bool,
-    winterfell_passed: bool,
-    staged_profiles_sha256: str | None = None,
-    preserved_previous: bool = False,
-) -> dict[str, object]:
-    """Validate and normalize one installed release transition proof."""
+    staged_profiles_sha256: str | None,
+    preserved_previous: bool,
+) -> None:
+    """Validate pairing deltas without claiming that runtime probes have run."""
 
-    try:
-        transition_kind = TransitionKind(kind)
-    except ValueError as error:
-        raise GlowupContractError(f"unsupported release transition: {kind}") from error
     if result not in {"activated", "rejected"}:
         raise GlowupContractError("release transition result must be 'activated' or 'rejected'")
-    if doctor_passed is not True:
-        raise GlowupContractError(
-            f"{transition_kind.value} transition must pass full capsem-doctor"
-        )
-    if winterfell_passed is not True:
-        raise GlowupContractError(f"{transition_kind.value} transition must pass Winterfell")
-
     if transition_kind is TransitionKind.FRESH_INSTALL:
         if before is not None or result != "activated":
             raise GlowupContractError(
                 "fresh_install transition must activate without a previous pairing"
             )
-    else:
-        if before is None:
-            raise GlowupContractError(
-                f"{transition_kind.value} transition requires a previous pairing"
-            )
+    elif before is None:
+        raise GlowupContractError(f"{transition_kind.value} transition requires a previous pairing")
 
     if before is not None:
         if transition_kind is TransitionKind.BINARY_ONLY:
@@ -413,6 +522,40 @@ def build_transition_evidence(
             raise GlowupContractError(
                 f"{transition_kind.value} transition cannot report previous-state preservation"
             )
+
+
+def build_transition_evidence(
+    *,
+    kind: TransitionKind | str,
+    before: PairingIdentity | None,
+    after: PairingIdentity,
+    result: str,
+    doctor_passed: bool,
+    winterfell_passed: bool,
+    staged_profiles_sha256: str | None = None,
+    preserved_previous: bool = False,
+) -> dict[str, object]:
+    """Validate and normalize one installed release transition proof."""
+
+    try:
+        transition_kind = TransitionKind(kind)
+    except ValueError as error:
+        raise GlowupContractError(f"unsupported release transition: {kind}") from error
+    if doctor_passed is not True:
+        raise GlowupContractError(
+            f"{transition_kind.value} transition must pass full capsem-doctor"
+        )
+    if winterfell_passed is not True:
+        raise GlowupContractError(f"{transition_kind.value} transition must pass Winterfell")
+
+    _validate_transition_pairing(
+        transition_kind=transition_kind,
+        before=before,
+        after=after,
+        result=result,
+        staged_profiles_sha256=staged_profiles_sha256,
+        preserved_previous=preserved_previous,
+    )
 
     evidence: dict[str, object] = {
         "kind": transition_kind.value,
