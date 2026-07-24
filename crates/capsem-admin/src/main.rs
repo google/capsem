@@ -1359,14 +1359,29 @@ fn graph_profile_matches_current_binary(
     profile: &serde_json::Value,
     manifest: &serde_json::Value,
 ) -> Result<bool> {
-    let Some(minimum) = profile
+    let minimum = profile
         .get("min_capsem_version")
         .and_then(serde_json::Value::as_str)
-    else {
-        return Ok(true);
-    };
-    let minimum = semver::Version::parse(minimum)
-        .with_context(|| format!("profile minimum Capsem version is invalid: {minimum}"))?;
+        .map(|minimum| {
+            semver::Version::parse(minimum)
+                .with_context(|| format!("profile minimum Capsem version is invalid: {minimum}"))
+        })
+        .transpose()?;
+    let maximum = profile
+        .get("max_capsem_version")
+        .and_then(serde_json::Value::as_str)
+        .map(|maximum| {
+            semver::Version::parse(maximum)
+                .with_context(|| format!("profile maximum Capsem version is invalid: {maximum}"))
+        })
+        .transpose()?;
+    if let (Some(minimum), Some(maximum)) = (&minimum, &maximum) {
+        if minimum > maximum {
+            return Err(anyhow!(
+                "profile minimum Capsem version {minimum} exceeds maximum {maximum}"
+            ));
+        }
+    }
     let versions = manifest
         .get("packages")
         .and_then(serde_json::Value::as_array)
@@ -1387,7 +1402,37 @@ fn graph_profile_matches_current_binary(
     if versions.is_empty() {
         return Ok(false);
     }
-    Ok(versions.iter().all(|version| version >= &minimum))
+    Ok(versions.iter().all(|version| {
+        minimum.as_ref().is_none_or(|minimum| version >= minimum)
+            && maximum.as_ref().is_none_or(|maximum| version <= maximum)
+    }))
+}
+
+fn validate_graph_profiles_match_current_binary(manifest: &serde_json::Value) -> Result<()> {
+    let profiles = manifest
+        .get("profiles")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow!("graph manifest profiles must be an object"))?;
+    for (profile_id, profile) in profiles {
+        if profile.get("status").and_then(serde_json::Value::as_str) == Some("revoked") {
+            continue;
+        }
+        if !graph_profile_matches_current_binary(profile, manifest)? {
+            let minimum = profile
+                .get("min_capsem_version")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unbounded");
+            let maximum = profile
+                .get("max_capsem_version")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unbounded");
+            return Err(anyhow!(
+                "profile {profile_id} is incompatible with current packages \
+                 (minimum Capsem {minimum}, maximum Capsem {maximum})"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn rewrite_profile_publication_urls(
@@ -2196,6 +2241,7 @@ fn build_assets_channel_from_graph(
     generated_at: &str,
 ) -> Result<AssetsChannelBuildReport> {
     validate_assets_channel_graph_manifest(&graph_manifest, channel)?;
+    validate_graph_profiles_match_current_binary(&graph_manifest)?;
     graph_manifest["version"] = serde_json::Value::String(manifest_version.to_string());
     graph_manifest["channel"] = serde_json::Value::String(channel.to_string());
     graph_manifest["status"] = serde_json::Value::String("current".to_string());
@@ -2283,6 +2329,7 @@ fn record_graph_binary_release_metadata(
     validate_binary_release_files(version, &files)?;
     let packages = graph_packages_from_binary_files(version, &files)?;
     manifest["packages"] = serde_json::Value::Array(packages);
+    validate_graph_profiles_match_current_binary(&manifest)?;
     let mut bytes = serde_json::to_vec_pretty(&manifest).context("serialize updated manifest")?;
     bytes.push(b'\n');
     fs::write(manifest_path, &bytes)
@@ -10907,6 +10954,133 @@ decision = "block"
             "Capsem_1.4.1234567890_amd64.deb"
         );
         assert_eq!(updated["packages"][1]["architecture"], "amd64");
+    }
+
+    #[test]
+    fn staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_profile() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest_path = write_test_release_graph_manifest(temp.path());
+        let mut staged: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).expect("manifest"))
+                .expect("json");
+        staged["profiles"]["co-work"]["version"] =
+            serde_json::Value::String("2030.0203.1".to_string());
+        staged["profiles"]["co-work"]["revision"] =
+            serde_json::Value::String("2030.0203.1".to_string());
+        staged["profiles"]["co-work"]["min_capsem_version"] =
+            serde_json::Value::String("1.4.1234567890".to_string());
+        staged["profiles"]["co-work"]["max_capsem_version"] =
+            serde_json::Value::String("1.4.1234567890".to_string());
+        fs::write(
+            &manifest_path,
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(&staged).expect("staged manifest")
+            ),
+        )
+        .expect("write staged manifest");
+        let staged_bytes = fs::read(&manifest_path).expect("staged bytes");
+        let staged_profile = staged["profiles"]["co-work"].clone();
+
+        assert!(
+            !graph_profile_matches_current_binary(&staged_profile, &staged)
+                .expect("old binary compatibility"),
+            "the staged profile must remain private while the public binary is too old"
+        );
+        let error = build_assets_channel_from_graph(
+            staged.clone(),
+            "stable",
+            "1.0.2",
+            &temp.path().join("incompatible-dist"),
+            "2030-02-03T04:05:06Z",
+        )
+        .expect_err("incompatible staged source cannot become a public distribution");
+        assert!(
+            format!("{error:#}").contains("co-work"),
+            "the rejection must identify the incompatible profile: {error:#}"
+        );
+
+        let too_new_dir = temp.path().join("too-new-binary");
+        fs::create_dir_all(&too_new_dir).expect("too-new artifact dir");
+        let too_new_pkg = too_new_dir.join("Capsem-2.0.0.pkg");
+        let too_new_deb = too_new_dir.join("Capsem_2.0.0_amd64.deb");
+        let too_new_sbom = too_new_dir.join("capsem-sbom.spdx.json");
+        write_minimal_pkg_with_file(
+            &too_new_pkg,
+            "Applications/Capsem.app/Contents/MacOS/capsem-app",
+            b"too new pkg executable bytes",
+        );
+        write_minimal_deb_with_file(
+            &too_new_deb,
+            "usr/bin/capsem-app",
+            b"too new deb executable bytes",
+            release_graph::PackageArchitecture::Amd64,
+        );
+        fs::write(&too_new_sbom, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("too-new SBOM");
+        let error = record_binary_release_metadata(
+            &manifest_path,
+            "2.0.0",
+            None,
+            &[too_new_pkg, too_new_deb, too_new_sbom],
+            "2030-02-03",
+        )
+        .expect_err("binary newer than the staged profile maximum must be rejected");
+        assert!(
+            format!("{error:#}").contains("co-work"),
+            "the rejection must identify the incompatible profile: {error:#}"
+        );
+        assert_eq!(
+            fs::read(&manifest_path).expect("manifest after rejected binary"),
+            staged_bytes,
+            "a rejected binary must not mutate the staged source manifest"
+        );
+
+        let compatible_dir = temp.path().join("compatible-binary");
+        fs::create_dir_all(&compatible_dir).expect("compatible artifact dir");
+        let compatible_pkg = compatible_dir.join("Capsem-1.4.1234567890.pkg");
+        let compatible_deb = compatible_dir.join("Capsem_1.4.1234567890_amd64.deb");
+        let compatible_sbom = compatible_dir.join("capsem-sbom.spdx.json");
+        write_minimal_pkg_with_file(
+            &compatible_pkg,
+            "Applications/Capsem.app/Contents/MacOS/capsem-app",
+            b"compatible pkg executable bytes",
+        );
+        write_minimal_deb_with_file(
+            &compatible_deb,
+            "usr/bin/capsem-app",
+            b"compatible deb executable bytes",
+            release_graph::PackageArchitecture::Amd64,
+        );
+        fs::write(&compatible_sbom, br#"{"spdxVersion":"SPDX-2.3"}"#).expect("compatible SBOM");
+        record_binary_release_metadata(
+            &manifest_path,
+            "1.4.1234567890",
+            None,
+            &[compatible_pkg, compatible_deb, compatible_sbom],
+            "2030-02-03",
+        )
+        .expect("compatible binary activates staged profile");
+
+        let activated: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&manifest_path).expect("activated manifest"))
+                .expect("activated json");
+        assert_eq!(
+            activated["profiles"]["co-work"], staged_profile,
+            "binary activation must reuse the exact staged profile instead of rebuilding it"
+        );
+        assert!(graph_profile_matches_current_binary(
+            &activated["profiles"]["co-work"],
+            &activated
+        )
+        .expect("activated compatibility"));
+        build_assets_channel_from_graph(
+            activated,
+            "stable",
+            "1.0.2",
+            &temp.path().join("activated-dist"),
+            "2030-02-03T04:05:06Z",
+        )
+        .expect("compatible staged profile and binary can become public");
     }
 
     #[test]

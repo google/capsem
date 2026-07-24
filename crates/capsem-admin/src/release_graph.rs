@@ -159,6 +159,8 @@ pub struct ProfileDocument {
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_capsem_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_capsem_version: Option<String>,
     pub architectures: Vec<ProfileArchitectureImages>,
 }
 
@@ -1819,6 +1821,7 @@ mod tests {
             revision: revision.to_string(),
             status: Status::Current,
             min_capsem_version: Some("1.4.0".to_string()),
+            max_capsem_version: None,
             architectures: vec![profile_architecture(revision, artifacts)],
         }
     }
@@ -2002,6 +2005,7 @@ mod tests {
             revision: "1.0.0".to_string(),
             status: Status::Current,
             min_capsem_version: Some("1.4.0".to_string()),
+            max_capsem_version: None,
             architectures: vec![ProfileArchitectureImages {
                 architecture: Architecture::Arm64,
                 software: vec![software_row()],
@@ -2203,6 +2207,7 @@ mod tests {
                 revision: "1.0.0".to_string(),
                 status: Status::Current,
                 min_capsem_version: Some("1.4.0".to_string()),
+                max_capsem_version: None,
                 architectures: vec![ProfileArchitectureImages {
                     architecture: Architecture::Arm64,
                     software: vec![software_row()],

@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Enforced every active profile's minimum and maximum Capsem bounds before
+  recording binary metadata or assembling a public channel, while preserving
+  the exact staged profile bytes for later compatible-binary activation.
 - Bound release compatibility tests to manifest-derived, digest-verified
   complementary artifacts; staged exact profile config and every selected
   profile image, replaced source-built host binaries with package inventory
