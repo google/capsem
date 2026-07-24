@@ -168,7 +168,8 @@ jobs:
           path: assets/${{ matrix.arch }}/
 
   test-profile-pairing:
-    needs: [build-assets, resolve-current-binary]
+    needs: [author-profile-release, resolve-current-binary]
+    if: ${{ needs.author-profile-release.outputs.profile_changed == 'true' }}
     runs-on: ubuntu-24.04
     name: Complete profile pairing gate
     steps:
@@ -202,6 +203,14 @@ jobs:
         with:
           name: current-binary-inputs
           path: target/release-inputs/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: authored-profile-channel-source
+          path: target/source-channel/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: authored-profile-candidate
+          path: target/profile-candidate/
 
       - name: Enable KVM for complete functional proof
         run: |
@@ -240,21 +249,24 @@ jobs:
         run: just _test-artifacts
 
       - name: Run shared complete functional module
+        if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}
         run: just _test-functional
 
       - name: Run shared native and update glow-up module
+        if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}
         run: just _test-glowup
 
       - name: Run shared release contracts
         run: just _test-release-contracts
 
-  assemble-channel:
-    needs: [build-assets, test-profile-pairing]
+  author-profile-release:
+    needs: [build-assets, resolve-current-binary]
     runs-on: ubuntu-latest
-    name: Assemble asset channel
+    name: Author selected profile release
     outputs:
       profile_changed: ${{ steps.profile-delta.outputs.changed }}
       compatible: ${{ steps.author-release.outputs.compatible }}
+      publication_identity: ${{ steps.author-release.outputs.publication_identity }}
     env:
       CHANNEL: ${{ inputs.channel }}
     steps:
@@ -368,8 +380,83 @@ jobs:
           echo "compatible=$COMPATIBLE" >> "$GITHUB_OUTPUT"
           echo "publication_identity=$PUBLICATION_IDENTITY" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: authored-profile-channel-source
+          path: target/source-channel/manifest.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: authored-profile-candidate
+          path: target/profile-candidate/
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: profile-release-delta
+          path: target/profile-release-delta/
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: ${{ steps.profile-delta.outputs.changed == 'true' }}
+        with:
+          name: authored-profile-release-report
+          path: target/profile-release.json
+
+  publish-profile-release:
+    needs: [author-profile-release, build-assets, test-profile-pairing]
+    if: ${{ always() && needs.author-profile-release.outputs.profile_changed == 'true' && needs.test-profile-pairing.result == 'success' }}
+    runs-on: ubuntu-latest
+    name: Publish tested profile release
+    outputs:
+      profile_changed: ${{ needs.author-profile-release.outputs.profile_changed }}
+      compatible: ${{ needs.author-profile-release.outputs.compatible }}
+    env:
+      CHANNEL: ${{ inputs.channel }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 10
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: release-site/pnpm-lock.yaml
+      - name: Install release site dependencies
+        run: cd release-site && pnpm install --frozen-lockfile
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: uv sync
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: vm-assets-arm64
+          path: assets/arm64/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: vm-assets-x86_64
+          path: assets/x86_64/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: authored-profile-channel-source
+          path: target/source-channel/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: authored-profile-candidate
+          path: target/profile-candidate/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: profile-release-selection
+          path: target/
+
       - name: Build deployable channel from authored source manifest
-        if: ${{ steps.profile-delta.outputs.changed == 'true' && steps.author-release.outputs.compatible == 'true' }}
+        if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}
         run: |
           uv run python scripts/build-complete-release-channel.py \
             --channel-source "$CHANNEL=file://$PWD/target/source-channel/manifest.json" \
@@ -379,14 +466,13 @@ jobs:
             --profile-source-root target/profile-candidate \
             --out-dir target/release-channel
 
-      - name: Publish immutable GitHub asset release
-        if: ${{ steps.profile-delta.outputs.changed == 'true' }}
+      - name: Publish immutable GitHub profile release
         env:
           DRY_RUN: ${{ inputs.dry_run }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.author-release.outputs.publication_identity }}"
+          TAG="${{ needs.author-profile-release.outputs.publication_identity }}"
           PROFILE_REVISION=$(python3 -c 'import json; print(json.load(open("target/profile-release-selection.json"))["profile_revision"])')
           RELEASE_DIR="target/asset-release/$TAG"
           UPLOAD_SCRIPT="target/asset-release/upload-assets.sh"
@@ -424,7 +510,7 @@ jobs:
           chmod +x "$UPLOAD_SCRIPT"
 
           {
-            echo "## Immutable VM asset release"
+            echo "## Immutable VM profile release"
             echo
             echo "- Tag: \`$TAG\`"
             echo "- Dry run: \`$DRY_RUN\`"
@@ -433,14 +519,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [[ "$DRY_RUN" == "true" ]]; then
-            echo "Dry run: would publish immutable VM asset release $TAG"
+            echo "Dry run: would publish immutable VM profile release $TAG"
             sed 's/^/DRY-RUN: /' "$UPLOAD_SCRIPT"
           else
             "$UPLOAD_SCRIPT"
           fi
 
       - name: Attest VM asset provenance
-        if: ${{ inputs.dry_run == false && steps.profile-delta.outputs.changed == 'true' }}
+        if: ${{ inputs.dry_run == false }}
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
           subject-path: target/asset-release/profile-*/*
@@ -451,25 +537,20 @@ jobs:
           path: target/source-channel/manifest.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: profile-release-delta
-          path: target/profile-release-delta/
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: ${{ inputs.dry_run == true && steps.profile-delta.outputs.changed == 'true' }}
+        if: ${{ inputs.dry_run == true }}
         with:
           name: asset-release-plan
           path: target/asset-release/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: ${{ steps.profile-delta.outputs.changed == 'true' && steps.author-release.outputs.compatible == 'true' }}
+        if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}
         with:
           name: asset-channel-preview
           path: target/release-channel/
 
   deploy-channel:
-    needs: assemble-channel
-    if: ${{ inputs.dry_run == false && needs.assemble-channel.outputs.profile_changed == 'true' && needs.assemble-channel.outputs.compatible == 'true' }}
+    needs: publish-profile-release
+    if: ${{ inputs.dry_run == false && needs.publish-profile-release.outputs.profile_changed == 'true' && needs.publish-profile-release.outputs.compatible == 'true' }}
     uses: ./.github/workflows/release-channel.yaml
     with:
       channel: ${{ inputs.channel }}

@@ -749,71 +749,83 @@ def test_asset_channel_deprecate_release_reports_history_without_moving_current(
 
 
 def test_profile_release_deploys_generated_preview_only_when_changed_and_compatible() -> None:
-    workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(
-        encoding="utf-8"
-    )
-    assemble_channel = workflow.split("  assemble-channel:", maxsplit=1)[1].split(
+    workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8")
+    pairing = workflow.split("  test-profile-pairing:", maxsplit=1)[1].split(
+        "  author-profile-release:", maxsplit=1
+    )[0]
+    author = workflow.split("  author-profile-release:", maxsplit=1)[1].split(
+        "  publish-profile-release:", maxsplit=1
+    )[0]
+    publish = workflow.split("  publish-profile-release:", maxsplit=1)[1].split(
         "  deploy-channel:", maxsplit=1
     )[0]
     deploy_channel = workflow.split("  deploy-channel:", maxsplit=1)[1]
 
-    assert "cargo run -p capsem-admin -- manifest generate assets" in assemble_channel
-    assert "scripts/check-profile-release-delta.py" in assemble_channel
-    assert "cargo run -p capsem-admin -- release" in assemble_channel
-    assert "scripts/build-complete-release-channel.py" in assemble_channel
-    assert '--channel-source "$CHANNEL=file://$PWD/assets/manifest.json"' in assemble_channel
-    assert '--primary-channel "$CHANNEL"' in assemble_channel
-    assert "--allow-mirror-missing" in assemble_channel
-    assert '--asset-source-base "$ASSET_BASE"' in assemble_channel
-    assert "releases/download/$PROFILE_IDENTITY" in assemble_channel
-    assert "--source-manifest target/source-channel/manifest.json" in assemble_channel
-    assert '--out-dir target/profile-candidate' in assemble_channel
-    assert '--out-dir target/release-channel' in assemble_channel
-    assert "name: asset-channel-preview" in assemble_channel
-    assert "path: target/release-channel/" in assemble_channel
-    assert "profile_changed: ${{ steps.profile-delta.outputs.changed }}" in assemble_channel
-    assert "compatible: ${{ steps.author-release.outputs.compatible }}" in assemble_channel
-    assert "if: ${{ steps.profile-delta.outputs.changed == 'true' }}" in assemble_channel
+    assert "cargo run -p capsem-admin -- manifest generate assets" in author
+    assert "scripts/check-profile-release-delta.py" in author
+    assert "cargo run -p capsem-admin -- release" in author
+    assert "scripts/build-complete-release-channel.py" in author
+    assert '--channel-source "$CHANNEL=file://$PWD/assets/manifest.json"' in author
+    assert '--primary-channel "$CHANNEL"' in author
+    assert "--allow-mirror-missing" in author
+    assert '--asset-source-base "$ASSET_BASE"' in author
+    assert "releases/download/$PROFILE_IDENTITY" in author
+    assert "--source-manifest target/source-channel/manifest.json" in author
+    assert "--out-dir target/profile-candidate" in author
+    assert "profile_changed: ${{ steps.profile-delta.outputs.changed }}" in author
+    assert "compatible: ${{ steps.author-release.outputs.compatible }}" in author
+    assert "if: ${{ steps.profile-delta.outputs.changed == 'true' }}" in author
+
+    assert "needs.author-profile-release.outputs.profile_changed == 'true'" in pairing
     assert (
-        "if: ${{ steps.profile-delta.outputs.changed == 'true' && "
-        "steps.author-release.outputs.compatible == 'true' }}"
-    ) in assemble_channel
+        pairing.count("if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}") == 2
+    )
+
+    assert "needs.test-profile-pairing.result == 'success'" in publish
+    assert "scripts/build-complete-release-channel.py" in publish
+    assert "--out-dir target/release-channel" in publish
+    assert "name: asset-channel-preview" in publish
+    assert "path: target/release-channel/" in publish
+    assert "if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}" in publish
 
     assert (
         "if: ${{ inputs.dry_run == false && "
-        "needs.assemble-channel.outputs.profile_changed == 'true' && "
-        "needs.assemble-channel.outputs.compatible == 'true' }}"
-        in deploy_channel
+        "needs.publish-profile-release.outputs.profile_changed == 'true' && "
+        "needs.publish-profile-release.outputs.compatible == 'true' }}" in deploy_channel
     )
     assert "uses: ./.github/workflows/release-channel.yaml" in deploy_channel
     assert "dist_artifact: asset-channel-preview" in deploy_channel
 
 
 def test_profile_release_publishes_incompatible_assets_but_withholds_channel_deploy() -> None:
-    workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(
-        encoding="utf-8"
-    )
-    assemble_channel = workflow.split("  assemble-channel:", maxsplit=1)[1].split(
+    workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8")
+    pairing = workflow.split("  test-profile-pairing:", maxsplit=1)[1].split(
+        "  author-profile-release:", maxsplit=1
+    )[0]
+    author = workflow.split("  author-profile-release:", maxsplit=1)[1].split(
+        "  publish-profile-release:", maxsplit=1
+    )[0]
+    publish = workflow.split("  publish-profile-release:", maxsplit=1)[1].split(
         "  deploy-channel:", maxsplit=1
     )[0]
-
     deploy_channel = workflow.split("  deploy-channel:", maxsplit=1)[1]
 
-    assert "scripts/check-profile-release-delta.py" in assemble_channel
-    assert "cargo run -p capsem-admin -- release" in assemble_channel
-    assert "Publish immutable GitHub asset release" in assemble_channel
+    assert "scripts/check-profile-release-delta.py" in author
+    assert "cargo run -p capsem-admin -- release" in author
+    assert "Run shared artifact module" in pairing
+    assert "Run shared release contracts" in pairing
     assert (
-        "if: ${{ steps.profile-delta.outputs.changed == 'true' }}"
-        in assemble_channel
+        "if:"
+        not in pairing.split("- name: Run shared artifact module", maxsplit=1)[1].split(
+            "- name: Run shared complete functional module", maxsplit=1
+        )[0]
     )
-    immutable_release = assemble_channel.split(
-        "- name: Publish immutable GitHub asset release", maxsplit=1
+    assert "Publish immutable GitHub profile release" in publish
+    immutable_release = publish.split(
+        "- name: Publish immutable GitHub profile release", maxsplit=1
     )[1].split("- name: Attest VM asset provenance", maxsplit=1)[0]
-    assert "steps.author-release.outputs.compatible" not in immutable_release
-    assert (
-        "needs.assemble-channel.outputs.compatible == 'true'"
-        in deploy_channel
-    )
+    assert "outputs.compatible" not in immutable_release
+    assert "needs.publish-profile-release.outputs.compatible == 'true'" in deploy_channel
 
 
 def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path) -> None:

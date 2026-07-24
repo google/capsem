@@ -2,18 +2,32 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
 ADMIN = ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
 RELEASE_GRAPH = ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
+PROFILE_WORKFLOW = ROOT / ".github" / "workflows" / "release-assets.yaml"
+BINARY_WORKFLOW = ROOT / ".github" / "workflows" / "release.yaml"
 
 
 def _function(source: str, name: str, next_name: str) -> str:
-    return source.split(f"fn {name}", maxsplit=1)[1].split(
-        f"fn {next_name}", maxsplit=1
-    )[0]
+    return source.split(f"fn {name}", maxsplit=1)[1].split(f"fn {next_name}", maxsplit=1)[0]
+
+
+def _job(workflow: str, name: str, _next_name: str) -> str:
+    body = workflow.split(f"  {name}:\n", maxsplit=1)[1]
+    next_job = re.search(r"\n  [a-z0-9][a-z0-9-]*:\n", body)
+    return body if next_job is None else body[: next_job.start()]
+
+
+def _step(job: str, name: str, next_name: str | None) -> str:
+    body = job.split(f"      - name: {name}\n", maxsplit=1)[1]
+    if next_name is None:
+        return body
+    return body.split(f"      - name: {next_name}\n", maxsplit=1)[0]
 
 
 def test_staged_profile_declares_minimum_and_maximum_binary_bounds() -> None:
@@ -60,10 +74,102 @@ def test_staged_profile_cannot_activate_until_binary_bounds_match() -> None:
     assert record.index('manifest["packages"]') < record.index(
         "validate_graph_profiles_match_current_binary"
     )
-    assert record.index("validate_graph_profiles_match_current_binary") < record.index(
-        "fs::write"
-    )
+    assert record.index("validate_graph_profiles_match_current_binary") < record.index("fs::write")
     assert (
-        "staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_profile"
-        in source
+        "staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_profile" in source
     )
+
+
+def test_staged_profile_is_authored_once_before_pairing_tests_and_publication() -> None:
+    workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
+    author = _job(workflow, "author-profile-release", "test-profile-pairing")
+    pairing = _job(workflow, "test-profile-pairing", "publish-profile-release")
+    publish = _job(workflow, "publish-profile-release", "deploy-channel")
+
+    assert "needs: [build-assets, resolve-current-binary]" in author
+    assert "profile_changed:" in author
+    assert "compatible:" in author
+    assert "publication_identity:" in author
+    assert workflow.count("cargo run -p capsem-admin -- release") == 1
+    assert "cargo run -p capsem-admin -- release" in author
+    assert "cargo run -p capsem-admin -- release" not in pairing
+    assert "cargo run -p capsem-admin -- release" not in publish
+    assert "gh release create" not in author
+    assert "gh release create" in publish
+    assert "name: authored-profile-channel-source" in author
+    assert "name: authored-profile-candidate" in author
+    assert "needs: [author-profile-release, resolve-current-binary]" in pairing
+    assert "needs: [author-profile-release, build-assets, test-profile-pairing]" in publish
+    assert "needs.test-profile-pairing.result == 'success'" in publish
+
+
+def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
+    workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
+    pairing = _job(workflow, "test-profile-pairing", "publish-profile-release")
+    publish = _job(workflow, "publish-profile-release", "deploy-channel")
+    deploy = workflow.split("  deploy-channel:\n", maxsplit=1)[1]
+    compatible = "needs.author-profile-release.outputs.compatible == 'true'"
+    static = _step(
+        pairing,
+        "Run shared static module",
+        "Prepare exact profile and pulled binary pairing",
+    )
+    artifacts = _step(
+        pairing,
+        "Run shared artifact module",
+        "Run shared complete functional module",
+    )
+    functional = _step(
+        pairing,
+        "Run shared complete functional module",
+        "Run shared native and update glow-up module",
+    )
+    glowup = _step(
+        pairing,
+        "Run shared native and update glow-up module",
+        "Run shared release contracts",
+    )
+    contracts = _step(pairing, "Run shared release contracts", None)
+    deployable = _step(
+        publish,
+        "Build deployable channel from authored source manifest",
+        "Publish immutable GitHub profile release",
+    )
+    immutable = _step(
+        publish, "Publish immutable GitHub profile release", "Attest VM asset provenance"
+    )
+
+    assert "needs.author-profile-release.outputs.profile_changed == 'true'" in pairing
+    assert "if:" not in static
+    assert "if:" not in artifacts
+    assert "if:" not in contracts
+    assert f"if: ${{{{ {compatible} }}}}" in functional
+    assert f"if: ${{{{ {compatible} }}}}" in glowup
+    assert f"if: ${{{{ {compatible} }}}}" in deployable
+    assert "if:" not in immutable
+    assert "needs.publish-profile-release.outputs.compatible == 'true'" in deploy
+
+
+def test_profile_then_binary_reuses_authored_source_without_rebuilding_assets() -> None:
+    profile_workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
+    publish = _job(profile_workflow, "publish-profile-release", "deploy-channel")
+    binary = BINARY_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "name: authored-profile-channel-source" in publish
+    assert "name: authored-profile-candidate" in publish
+    assert "--profile-source-root target/profile-candidate" in publish
+    assert "just _build-kernel" not in publish
+    assert "just _build-rootfs" not in publish
+    assert "cargo run -p capsem-admin -- release" not in publish
+
+    assert "Fetch latest selected channel source manifest" in binary
+    assert "Fetch selected channel manifest and profiles" in binary
+    assert "--kind profiles" in binary
+    assert binary.index("Run shared complete functional module") < binary.index(
+        "Record binary release metadata in selected channel manifest"
+    )
+    assert binary.index("Run shared native and update glow-up module") < binary.index(
+        "Record binary release metadata in selected channel manifest"
+    )
+    assert "Prove binary lane did not change VM assets" in binary
+    assert 'after["profiles"] != before["profiles"]' in binary

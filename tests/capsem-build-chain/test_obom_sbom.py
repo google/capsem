@@ -31,17 +31,19 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
         "just _build-rootfs"
     )
     assert "asset-channel-preview" in asset_workflow
-    assert "Publish immutable GitHub asset release" in asset_workflow
+    assert "Publish immutable GitHub profile release" in asset_workflow
     assert "Attest VM asset provenance" in asset_workflow
     assert "actions/attest-build-provenance@" in asset_workflow
-    assert (
-        "if: ${{ inputs.dry_run == false && steps.profile-delta.outputs.changed == 'true' }}"
-        in asset_workflow
-    )
+    publish_profile = asset_workflow.split("  publish-profile-release:", maxsplit=1)[1].split(
+        "  deploy-channel:", maxsplit=1
+    )[0]
+    assert "needs.author-profile-release.outputs.profile_changed == 'true'" in publish_profile
+    assert "needs.test-profile-pairing.result == 'success'" in publish_profile
+    assert "if: ${{ inputs.dry_run == false }}" in publish_profile
     assert "scripts/stage-profile-publication.py" in asset_workflow
     assert "scripts/verify-profile-publication.py" in asset_workflow
     assert "subject-path: target/asset-release/profile-*/*" in asset_workflow
-    assert asset_workflow.index("Publish immutable GitHub asset release") < asset_workflow.index(
+    assert asset_workflow.index("Publish immutable GitHub profile release") < asset_workflow.index(
         "Attest VM asset provenance"
     )
     assert (
