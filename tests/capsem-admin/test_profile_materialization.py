@@ -258,22 +258,24 @@ def test_assets_channel_profile_catalog_is_publishable_not_local(tmp_path: Path)
     manifest_text = manifest_path.read_text(encoding="utf-8")
     assert "file://" not in manifest_text
     assert str(tmp_path) not in manifest_text
-    assert "/assets/releases/2030.0101.1/arm64-vmlinuz" in manifest_text
-    assert (
-        "/assets/releases/2030.0101.1/arm64-obom.cdx.json" in manifest_text
+    publication_root = (
+        "/profiles/releases/stable/code/profiles-2030.0101.1/arm64"
     )
+    assert f"{publication_root}/vmlinuz" in manifest_text
+    assert f"{publication_root}/obom.cdx.json" in manifest_text
+    assert "/assets/releases/" not in manifest_text
 
     manifest = json.loads(manifest_text)
     assert "profile_catalog" not in manifest
     profile = manifest["profiles"]["code"]
+    assert profile["revision"] == "profiles-2030.0101.1"
     arm64 = profile["architectures"][0]
     kernel = next(item for item in arm64["images"] if item["kind"] == "kernel")
+    assert kernel["url"] == f"{publication_root}/vmlinuz"
     assert kernel["digest"]["blake3"]
     assert kernel["bytes"] > 0
     obom = next(item for item in arm64["evidence"] if item["kind"] == "obom")
-    assert obom["url"] == (
-        "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
-    )
+    assert obom["url"] == f"{publication_root}/obom.cdx.json"
 
 
 def test_profile_materialize_rejects_bare_manifest_path(tmp_path: Path) -> None:
