@@ -182,21 +182,15 @@ def stage_profiles(
                     f"profile {profile_id}/{arch} config path escapes its profile: {relative}"
                 )
             if relative in staged_config_paths:
-                raise ValueError(
-                    f"profile {profile_id}/{arch} repeats config path {relative}"
-                )
+                raise ValueError(f"profile {profile_id}/{arch} repeats config path {relative}")
             staged_config_paths.add(relative)
-            source = _local_file(
-                record.get("url"), f"profile {profile_id}/{arch} config[{index}]"
-            )
+            source = _local_file(record.get("url"), f"profile {profile_id}/{arch} config[{index}]")
             destination = config_root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, destination)
         expected_profile = Path("profiles") / profile_id / "profile.toml"
         if expected_profile not in staged_config_paths:
-            raise ValueError(
-                f"release profile {profile_id}/{arch} lacks {expected_profile}"
-            )
+            raise ValueError(f"release profile {profile_id}/{arch} lacks {expected_profile}")
 
         images = architecture.get("images")
         if not isinstance(images, list):
@@ -204,9 +198,7 @@ def stage_profiles(
         by_kind: dict[str, tuple[str, str, Path]] = {}
         for index, record in enumerate(images):
             if not isinstance(record, dict):
-                raise ValueError(
-                    f"release profile {profile_id}/{arch} image[{index}] is malformed"
-                )
+                raise ValueError(f"release profile {profile_id}/{arch} image[{index}] is malformed")
             record = cast(dict[str, Any], record)
             if record.get("status") == "revoked":
                 continue
@@ -214,35 +206,25 @@ def stage_profiles(
             if kind not in logical_names:
                 continue
             if kind in by_kind:
-                raise ValueError(
-                    f"release profile {profile_id}/{arch} repeats {kind} image"
-                )
+                raise ValueError(f"release profile {profile_id}/{arch} repeats {kind} image")
             logical_name = safe_component(
                 record.get("name") or logical_names[kind],
                 f"profile {profile_id}/{arch} {kind} image name",
             )
             digest = record.get("digest", {}).get("blake3")
             if not isinstance(digest, str):
-                raise ValueError(
-                    f"release profile {profile_id}/{arch} {kind} lacks BLAKE3"
-                )
-            source = _local_file(
-                record.get("url"), f"profile {profile_id}/{arch} image[{index}]"
-            )
+                raise ValueError(f"release profile {profile_id}/{arch} {kind} lacks BLAKE3")
+            source = _local_file(record.get("url"), f"profile {profile_id}/{arch} image[{index}]")
             by_kind[kind] = (logical_name, digest, source)
         missing = set(logical_names) - set(by_kind)
         if missing:
-            raise ValueError(
-                f"release profile {profile_id}/{arch} lacks images: {sorted(missing)}"
-            )
+            raise ValueError(f"release profile {profile_id}/{arch} lacks images: {sorted(missing)}")
         for kind, (logical_name, digest, source) in by_kind.items():
             hashed = arch_dir / _hash_filename(logical_name, digest)
             if not hashed.exists():
                 shutil.copy2(source, hashed)
             elif hashed.read_bytes() != source.read_bytes():
-                raise ValueError(
-                    f"release profiles collide at immutable image {hashed.name}"
-                )
+                raise ValueError(f"release profiles collide at immutable image {hashed.name}")
             # A few fail-fast checks still require the legacy logical names.
             # The first deterministic active profile supplies those aliases;
             # every VM boot resolves its selected profile by the hash name.
@@ -251,7 +233,9 @@ def stage_profiles(
     return manifest_path
 
 
-def stage_package_binaries(input_dir: Path, binary_dir: Path) -> list[Path]:
+def _select_host_package(
+    input_dir: Path,
+) -> tuple[dict[str, Any], Path]:
     report, manifest = _load(input_dir)
     if report.get("kind") != "packages":
         raise ValueError("package staging requires package release inputs")
@@ -276,12 +260,18 @@ def stage_package_binaries(input_dir: Path, binary_dir: Path) -> list[Path]:
         and urljoin(str(report["manifest_url"]), str(package.get("url"))) in url_to_path
     ]
     if len(candidates) != 1:
-        raise ValueError(
-            f"expected one current Linux {host_arch} package, found {len(candidates)}"
-        )
+        raise ValueError(f"expected one current Linux {host_arch} package, found {len(candidates)}")
     package = candidates[0]
     package_url = urljoin(str(report["manifest_url"]), str(package["url"]))
-    package_path = url_to_path[package_url]
+    return package, url_to_path[package_url]
+
+
+def select_host_package_path(input_dir: Path) -> Path:
+    return _select_host_package(input_dir)[1]
+
+
+def stage_package_binaries(input_dir: Path, binary_dir: Path) -> list[Path]:
+    package, package_path = _select_host_package(input_dir)
     extract_dir = binary_dir.parent / "resolved-package"
     if extract_dir.exists():
         shutil.rmtree(extract_dir)
@@ -301,9 +291,7 @@ def stage_package_binaries(input_dir: Path, binary_dir: Path) -> list[Path]:
         record = cast(dict[str, Any], record)
         if record.get("status") == "revoked":
             continue
-        name = safe_component(
-            record.get("name"), f"package binary[{index}] inventory name"
-        )
+        name = safe_component(record.get("name"), f"package binary[{index}] inventory name")
         installed_path = record.get("installed_path")
         if not isinstance(installed_path, str) or not installed_path.startswith("/usr/bin/"):
             raise ValueError(
@@ -324,9 +312,7 @@ def stage_package_binaries(input_dir: Path, binary_dir: Path) -> list[Path]:
         try:
             payload = source.read_bytes()
         except OSError as error:
-            raise ValueError(
-                f"package {package_path} lacks inventoried binary {name}"
-            ) from error
+            raise ValueError(f"package {package_path} lacks inventoried binary {name}") from error
         verify_payload(payload, record, f"package binary {name}")
         binaries.append(source)
     actual_names = {
@@ -361,9 +347,7 @@ def stage_candidate_package(package_path: Path, binary_dir: Path) -> list[Path]:
         ("dpkg-deb", "--extract", str(package_path), str(extract_dir)),
         check=True,
     )
-    binaries = sorted(
-        path for path in (extract_dir / "usr/bin").glob("capsem*") if path.is_file()
-    )
+    binaries = sorted(path for path in (extract_dir / "usr/bin").glob("capsem*") if path.is_file())
     if not binaries:
         raise ValueError(f"candidate package {package_path} contains no Capsem binaries")
     binary_dir.mkdir(parents=True, exist_ok=True)
@@ -392,8 +376,14 @@ def main() -> int:
         type=Path,
         default=Path("target/release-config"),
     )
+    parser.add_argument("--print-package-path", action="store_true")
     args = parser.parse_args()
     try:
+        if args.print_package_path:
+            if args.input_dir is None:
+                raise ValueError("--print-package-path requires --input-dir")
+            print(select_host_package_path(args.input_dir))
+            return 0
         if args.package_file is not None:
             result = stage_candidate_package(args.package_file, args.binary_dir)
         else:

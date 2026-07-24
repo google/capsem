@@ -568,6 +568,7 @@ def test_package_staging_uses_and_verifies_the_complete_binary_inventory(
 
     staged = STAGE.stage_package_binaries(inputs, binary_dir)
 
+    assert STAGE.select_host_package_path(inputs) == inputs / "capsem.deb"
     assert {path.name for path in staged} == set(binary_payloads)
     assert not stale.exists()
     for name, payload in binary_payloads.items():

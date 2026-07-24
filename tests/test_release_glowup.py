@@ -653,6 +653,64 @@ def test_exact_profile_pairing_allows_only_the_selected_profile_to_change(
         )
 
 
+def test_exact_pairing_classifier_distinguishes_binary_and_staged_profile(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    before_root = tmp_path / "before"
+    before_root.mkdir()
+    before_artifact = _artifact(before_root, module)
+    after_path = tmp_path / "after" / "Capsem-1.5.101.pkg"
+    after_path.parent.mkdir(parents=True)
+    after_path.write_bytes(b"exact candidate package v2")
+    after_artifact = module.ArtifactIdentity.from_path(
+        after_path,
+        version="1.5.101",
+        platform="macos",
+        architecture="arm64",
+    )
+    before_manifest = _manifest(before_artifact)
+    before_manifest["channel"] = "nightly"
+    before_manifest["profiles"] = {
+        "code": {"revision": "code-1"},
+        "experimental": {"revision": "experimental-1"},
+    }
+    after_manifest = _manifest(after_artifact)
+    after_manifest["channel"] = "nightly"
+    after_manifest["profiles"] = json.loads(json.dumps(before_manifest["profiles"]))
+
+    kind, profile = module.classify_pairing_inputs(
+        channel="nightly",
+        before_manifest_bytes=json.dumps(before_manifest).encode(),
+        after_manifest_bytes=json.dumps(after_manifest).encode(),
+        before_artifact=before_artifact,
+        after_artifact=after_artifact,
+    )
+    assert kind is module.TransitionKind.BINARY_ONLY
+    assert profile is None
+
+    after_manifest["profiles"]["experimental"]["revision"] = "experimental-2"
+    kind, profile = module.classify_pairing_inputs(
+        channel="nightly",
+        before_manifest_bytes=json.dumps(before_manifest).encode(),
+        after_manifest_bytes=json.dumps(after_manifest).encode(),
+        before_artifact=before_artifact,
+        after_artifact=after_artifact,
+    )
+    assert kind is module.TransitionKind.PROFILE_THEN_BINARY
+    assert profile == "experimental"
+
+    after_manifest["profiles"]["code"]["revision"] = "code-2"
+    with pytest.raises(module.GlowupContractError, match="exactly one staged profile"):
+        module.classify_pairing_inputs(
+            channel="nightly",
+            before_manifest_bytes=json.dumps(before_manifest).encode(),
+            after_manifest_bytes=json.dumps(after_manifest).encode(),
+            before_artifact=before_artifact,
+            after_artifact=after_artifact,
+        )
+
+
 def test_exact_pairing_rejects_manifest_channel_or_package_mismatch(
     tmp_path: Path,
 ) -> None:
@@ -701,6 +759,7 @@ def test_release_pairing_cli_is_all_or_nothing() -> None:
         after_manifest=None,
         before_package=None,
         before_profile_inputs=None,
+        after_profile_inputs=None,
         profile=None,
         candidate_profile_publication=None,
         publication_base=None,

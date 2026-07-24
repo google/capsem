@@ -40,10 +40,7 @@ def _source_digest_module():
 def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() -> None:
     local = _recipe("_test-candidate")
 
-    assert (
-        "_check-assets _pack-initrd _materialize-config"
-        in local.splitlines()[0]
-    )
+    assert "_check-assets _pack-initrd _materialize-config" in local.splitlines()[0]
     assert "CAPSEM_TEST_MODULE=all just _test-candidate-run" in local
     assert "scripts/source-state-digest.py" in _recipe("test")
 
@@ -58,10 +55,7 @@ def test_private_release_modules_select_one_shared_runner() -> None:
     }
 
     for recipe, module in expected.items():
-        assert (
-            f"CAPSEM_TEST_MODULE={module} just _test-candidate-run"
-            in _recipe(recipe)
-        )
+        assert f"CAPSEM_TEST_MODULE={module} just _test-candidate-run" in _recipe(recipe)
 
     runner = _recipe("_test-candidate-run")
     assert "all|static|artifacts|functional|glowup|release-contracts" in runner
@@ -84,6 +78,24 @@ def test_modules_retain_complete_named_quality_gates() -> None:
         "tests/capsem-build-chain/ tests/capsem-release/",
     ):
         assert required in runner
+
+
+def test_release_glowup_consumes_the_exact_pairing_environment() -> None:
+    runner = _recipe("_test-candidate-run")
+    adapter = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(encoding="utf-8")
+
+    assert "scripts/local-release-glowup.py" in runner
+    for variable in (
+        "CAPSEM_RELEASE_CHANNEL",
+        "CAPSEM_RELEASE_TRANSITION",
+        "CAPSEM_RELEASE_BEFORE_MANIFEST",
+        "CAPSEM_RELEASE_AFTER_MANIFEST",
+        "CAPSEM_RELEASE_BEFORE_PACKAGE",
+        "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS",
+        "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS",
+    ):
+        assert variable in adapter
+    assert "validate_exact_release_pairing(args)" in adapter
 
 
 def test_functional_module_runs_every_selected_profile_without_rebuilding() -> None:

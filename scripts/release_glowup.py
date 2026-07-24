@@ -405,6 +405,56 @@ def validate_pairing_inputs(
     return before, after
 
 
+def classify_pairing_inputs(
+    *,
+    channel: str,
+    before_manifest_bytes: bytes,
+    after_manifest_bytes: bytes,
+    before_artifact: ArtifactIdentity,
+    after_artifact: ArtifactIdentity,
+) -> tuple[TransitionKind, str | None]:
+    """Classify a binary lane as binary-only or one staged-profile composition."""
+
+    before_manifest = load_manifest_bytes(before_manifest_bytes)
+    after_manifest = load_manifest_bytes(after_manifest_bytes)
+    before_profiles = before_manifest.get("profiles")
+    after_profiles = after_manifest.get("profiles")
+    if not isinstance(before_profiles, dict) or not isinstance(after_profiles, dict):
+        raise GlowupContractError("release pairing manifests must contain profile objects")
+    before_profile_map = cast(Mapping[str, object], before_profiles)
+    after_profile_map = cast(Mapping[str, object], after_profiles)
+    if not all(
+        isinstance(profile_id, str)
+        for profile_id in set(before_profile_map) | set(after_profile_map)
+    ):
+        raise GlowupContractError("release pairing profile ids must be strings")
+    changed = sorted(
+        profile_id
+        for profile_id in set(before_profile_map) | set(after_profile_map)
+        if before_profile_map.get(profile_id) != after_profile_map.get(profile_id)
+    )
+    if not changed:
+        transition_kind = TransitionKind.BINARY_ONLY
+        selected_profile = None
+    elif len(changed) == 1:
+        transition_kind = TransitionKind.PROFILE_THEN_BINARY
+        selected_profile = changed[0]
+    else:
+        raise GlowupContractError(
+            f"binary release pairing may activate exactly one staged profile; changed={changed}"
+        )
+    validate_pairing_inputs(
+        kind=transition_kind,
+        channel=channel,
+        before_manifest_bytes=before_manifest_bytes,
+        after_manifest_bytes=after_manifest_bytes,
+        before_artifact=before_artifact,
+        after_artifact=after_artifact,
+        selected_profile=selected_profile,
+    )
+    return transition_kind, selected_profile
+
+
 def validate_installed_evidence(
     evidence: Mapping[str, object],
 ) -> Mapping[str, object]:

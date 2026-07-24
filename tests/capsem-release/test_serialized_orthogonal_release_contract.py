@@ -89,11 +89,8 @@ def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
 
     assert "Fetch latest selected channel source manifest" in workflow
     assert "binary-channel-source" in workflow
-    assert "Fetch selected channel manifest and profiles" in workflow
-    assert (
-        'file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json'
-        in workflow
-    )
+    assert "Resolve exact candidate-after profiles" in workflow
+    assert "file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in workflow
     assert "just _test-artifacts" in workflow
     assert "just _test-functional" in workflow
     assert "just _test-glowup" in workflow
@@ -119,10 +116,7 @@ def test_binary_candidate_manifest_is_authored_once_before_pairing() -> None:
     create = _job_block(workflow, "create-release")
     assemble = _job_block(workflow, "assemble-release-channel")
 
-    assert (
-        "needs: [build-app-macos, build-app-linux, resolve-channel-source]"
-        in author
-    )
+    assert "needs: [build-app-macos, build-app-linux, resolve-channel-source]" in author
     assert author.count("assets channel record-binary") == 1
     assert "binary-channel-candidate" in author
     assert "manifest.before.json" in author
@@ -130,10 +124,7 @@ def test_binary_candidate_manifest_is_authored_once_before_pairing() -> None:
 
     assert "author-binary-candidate" in pairing.splitlines()[1]
     assert "binary-channel-candidate" in pairing
-    assert (
-        'file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json'
-        in pairing
-    )
+    assert "file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in pairing
     assert "assets channel record-binary" not in pairing
 
     assert "test-binary-pairing" in create.splitlines()[1]
@@ -143,16 +134,44 @@ def test_binary_candidate_manifest_is_authored_once_before_pairing() -> None:
     assert "generate-host-binary-sbom.py" not in assemble
 
 
+def test_binary_pairing_uses_exact_public_before_and_candidate_after_cohorts() -> None:
+    workflow = _workflow("release.yaml")
+    resolve = _job_block(workflow, "resolve-channel-source")
+    pairing = _job_block(workflow, "test-binary-pairing")
+
+    assert resolve.count('--manifest-url "$ASSET_MANIFEST_URL"') == 2
+    assert "--kind packages" in resolve
+    assert "--kind profiles" in resolve
+    assert "binary-public-before-packages" in resolve
+    assert "binary-public-before-profiles" in resolve
+
+    assert "binary-public-before-packages" in pairing
+    assert "binary-public-before-profiles" in pairing
+    assert "file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in pairing
+    assert "--kind profiles" in pairing
+    assert "target/candidate-profile-inputs" in pairing
+    for variable in (
+        "CAPSEM_RELEASE_CHANNEL",
+        "CAPSEM_RELEASE_TRANSITION=auto",
+        "CAPSEM_RELEASE_BEFORE_MANIFEST",
+        "CAPSEM_RELEASE_AFTER_MANIFEST",
+        "CAPSEM_RELEASE_BEFORE_PACKAGE",
+        "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS",
+        "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS",
+    ):
+        assert variable in pairing
+
+
 def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     workflow = _workflow("release-assets.yaml")
 
     assert "Validate selected channel profile through capsem-admin" in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "Fetch selected channel binary packages" in workflow
-    assert 'file://$PWD/target/channel-source/manifest.json' in workflow
+    assert "file://$PWD/target/channel-source/manifest.json" in workflow
     assert "capsem-admin -- release" in workflow
     assert "--publication-base" in workflow
-    assert 'channel-source-$CHANNEL.json' in workflow
+    assert "channel-source-$CHANNEL.json" in workflow
     assert "steps.profile-delta.outputs.changed == 'true'" in workflow
     assert "check-profile-release-delta.py" in workflow
     assert "check-asset-release-delta.py" not in workflow
@@ -203,9 +222,7 @@ def test_retired_independent_release_authority_is_absent() -> None:
     retired_checker = "check-release-" + "qualification.py"
     assert not (WORKFLOWS / retired_workflow).exists()
     assert not (ROOT / "scripts" / retired_checker).exists()
-    assert not (
-        ROOT / "tests" / "capsem-build-chain" / "test_release_qualification.py"
-    ).exists()
+    assert not (ROOT / "tests" / "capsem-build-chain" / "test_release_qualification.py").exists()
 
     release = _workflow("release.yaml")
     assert retired_checker not in release

@@ -163,7 +163,7 @@ def test_profile_then_binary_reuses_authored_source_without_rebuilding_assets() 
     assert "cargo run -p capsem-admin -- release" not in publish
 
     assert "Fetch latest selected channel source manifest" in binary
-    assert "Fetch selected channel manifest and profiles" in binary
+    assert "Resolve exact candidate-after profiles" in binary
     assert "--kind profiles" in binary
     assert binary.index("Record binary candidate metadata once") < binary.index(
         "Run shared complete functional module"

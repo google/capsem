@@ -43,6 +43,8 @@ jobs:
     name: Resolve serialized channel source manifest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: uv sync
 
       - name: Fetch latest selected channel source manifest
         env:
@@ -52,10 +54,37 @@ jobs:
             --channel "$RELEASE_CHANNEL" \
             --output target/channel-source/manifest.json
 
+      - name: Fetch exact deployed public-before cohorts
+        run: |
+          set -euo pipefail
+          uv run python scripts/fetch-release-artifacts.py \
+            --manifest-url "$ASSET_MANIFEST_URL" \
+            --kind packages \
+            --output target/binary-public-before/packages
+          uv run python scripts/fetch-release-artifacts.py \
+            --manifest-url "$ASSET_MANIFEST_URL" \
+            --kind profiles \
+            --output target/binary-public-before/profiles
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/binary-public-before/packages
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/binary-public-before/profiles
+          cmp \
+            target/binary-public-before/packages/manifest.json \
+            target/binary-public-before/profiles/manifest.json
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-source
           path: target/channel-source/manifest.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: binary-public-before-packages
+          path: target/binary-public-before/packages/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: binary-public-before-profiles
+          path: target/binary-public-before/profiles/
 
   preflight:
     needs: runtime-preflight
@@ -808,8 +837,12 @@ jobs:
           path: release-test-package/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: binary-channel-source
-          path: target/channel-source/
+          name: binary-public-before-packages
+          path: target/binary-public-before/packages/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-public-before-profiles
+          path: target/binary-public-before/profiles/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-candidate
@@ -818,16 +851,23 @@ jobs:
       - name: Run shared static module
         run: just _test-static
 
-      - name: Fetch selected channel manifest and profiles
+      - name: Resolve exact candidate-after profiles
         run: |
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/binary-public-before/packages
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/binary-public-before/profiles
+          cmp \
+            target/binary-public-before/packages/manifest.json \
+            target/binary-public-before/profiles/manifest.json
           uv run python scripts/fetch-release-artifacts.py \
             --manifest-url "file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
             --kind profiles \
-            --output target/release-inputs
+            --output target/candidate-profile-inputs
           uv run python scripts/verify-release-inputs.py \
-            --input-dir target/release-inputs
+            --input-dir target/candidate-profile-inputs
           uv run python scripts/stage-release-test-inputs.py \
-            --input-dir target/release-inputs \
+            --input-dir target/candidate-profile-inputs \
             --assets-dir assets \
             --config-root target/release-config
           CAPSEM_ASSET_MANIFEST="file://$PWD/assets/manifest.json" \
@@ -840,12 +880,23 @@ jobs:
           set -euo pipefail
           package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$package"
+          before_package=$(uv run python scripts/stage-release-test-inputs.py \
+            --input-dir target/binary-public-before/packages \
+            --print-package-path)
+          test -n "$before_package"
           uv run python scripts/stage-release-test-inputs.py \
             --package-file "$package" \
             --binary-dir target/debug
           echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package" >> "$GITHUB_ENV"
           echo "CAPSEM_RELEASE_BIN_DIR=$PWD/target/debug" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/target/release-inputs" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/target/candidate-profile-inputs" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_CHANNEL=$RELEASE_CHANNEL" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_TRANSITION=auto" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/target/binary-public-before/profiles/manifest.json" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_AFTER_MANIFEST=$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_BEFORE_PACKAGE=$PWD/$before_package" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS=$PWD/target/binary-public-before/profiles" >> "$GITHUB_ENV"
+          echo "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS=$PWD/target/candidate-profile-inputs" >> "$GITHUB_ENV"
           echo "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem" >> "$GITHUB_ENV"
           echo "CAPSEM_TEST_ASSETS_DIR=$PWD/assets" >> "$GITHUB_ENV"
           echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/target/config" >> "$GITHUB_ENV"

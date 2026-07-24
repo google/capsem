@@ -30,6 +30,7 @@ import shutil
 import shlex
 import socketserver
 import subprocess
+import sys
 import threading
 from typing import cast
 import urllib.request
@@ -42,6 +43,7 @@ try:
         artifact_identity_from_manifest_package,
         assert_manifest_artifact,
         build_report,
+        classify_pairing_inputs,
         validate_pairing_inputs,
     )
 except ModuleNotFoundError:
@@ -52,6 +54,7 @@ except ModuleNotFoundError:
         artifact_identity_from_manifest_package,
         assert_manifest_artifact,
         build_report,
+        classify_pairing_inputs,
         validate_pairing_inputs,
     )
 
@@ -76,6 +79,11 @@ HOST_BINARIES = (
 )
 
 
+def _environment_path(name: str) -> Path | None:
+    value = os.environ.get(name)
+    return Path(value) if value else None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-deb", required=True, type=Path)
@@ -94,22 +102,56 @@ def main() -> int:
         action="store_true",
         help="Use an already repacked publishable package without rebuilding it.",
     )
-    parser.add_argument("--release-channel", choices=("stable", "nightly"))
+    parser.add_argument(
+        "--release-channel",
+        choices=("stable", "nightly"),
+        default=os.environ.get("CAPSEM_RELEASE_CHANNEL"),
+    )
     parser.add_argument(
         "--release-transition",
         choices=(
+            "auto",
             TransitionKind.BINARY_ONLY.value,
             TransitionKind.PROFILE_ONLY.value,
             TransitionKind.PROFILE_THEN_BINARY.value,
         ),
+        default=os.environ.get("CAPSEM_RELEASE_TRANSITION"),
     )
-    parser.add_argument("--before-manifest", type=Path)
-    parser.add_argument("--after-manifest", type=Path)
-    parser.add_argument("--before-package", type=Path)
-    parser.add_argument("--before-profile-inputs", type=Path)
-    parser.add_argument("--profile")
-    parser.add_argument("--candidate-profile-publication", type=Path)
-    parser.add_argument("--publication-base")
+    parser.add_argument(
+        "--before-manifest",
+        type=Path,
+        default=_environment_path("CAPSEM_RELEASE_BEFORE_MANIFEST"),
+    )
+    parser.add_argument(
+        "--after-manifest",
+        type=Path,
+        default=_environment_path("CAPSEM_RELEASE_AFTER_MANIFEST"),
+    )
+    parser.add_argument(
+        "--before-package",
+        type=Path,
+        default=_environment_path("CAPSEM_RELEASE_BEFORE_PACKAGE"),
+    )
+    parser.add_argument(
+        "--before-profile-inputs",
+        type=Path,
+        default=_environment_path("CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS"),
+    )
+    parser.add_argument(
+        "--after-profile-inputs",
+        type=Path,
+        default=_environment_path("CAPSEM_RELEASE_AFTER_PROFILE_INPUTS"),
+    )
+    parser.add_argument("--profile", default=os.environ.get("CAPSEM_RELEASE_PROFILE"))
+    parser.add_argument(
+        "--candidate-profile-publication",
+        type=Path,
+        default=_environment_path("CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION"),
+    )
+    parser.add_argument(
+        "--publication-base",
+        default=os.environ.get("CAPSEM_RELEASE_PUBLICATION_BASE"),
+    )
     args = parser.parse_args()
     exact_pairing = validate_exact_release_pairing(args)
 
@@ -319,6 +361,7 @@ def validate_exact_release_pairing(
         "after_manifest": args.after_manifest,
         "before_package": args.before_package,
         "before_profile_inputs": args.before_profile_inputs,
+        "after_profile_inputs": args.after_profile_inputs,
     }
     profile_fields = {
         "profile": args.profile,
@@ -331,31 +374,67 @@ def validate_exact_release_pairing(
     if missing:
         raise SystemExit(
             "exact pairing requires release channel, transition, before/after "
-            f"manifests, before package, and before profile inputs; missing={missing}"
+            "manifests, before package, and before/after profile inputs; "
+            f"missing={missing}"
         )
 
     channel = str(args.release_channel)
-    transition = TransitionKind(str(args.release_transition))
     before_manifest = Path(args.before_manifest)
     after_manifest = Path(args.after_manifest)
     before_package = Path(args.before_package)
     before_profile_inputs = Path(args.before_profile_inputs)
+    after_profile_inputs = Path(args.after_profile_inputs)
     before_manifest_bytes = before_manifest.read_bytes()
     after_manifest_bytes = after_manifest.read_bytes()
-    report, _, _ = load_verified_release_inputs(before_profile_inputs)
-    if report.get("kind") != "profiles":
-        raise SystemExit("exact pairing before inputs must contain verified profiles")
+    before_report, _, _ = load_verified_release_inputs(before_profile_inputs)
+    after_report, _, _ = load_verified_release_inputs(after_profile_inputs)
+    if before_report.get("kind") != "profiles" or after_report.get("kind") != "profiles":
+        raise SystemExit("exact pairing inputs must contain verified profiles")
     if (before_profile_inputs / "manifest.json").read_bytes() != before_manifest_bytes:
         raise SystemExit(
             "exact pairing before profile inputs do not reproduce the public-before manifest"
         )
+    if (after_profile_inputs / "manifest.json").read_bytes() != after_manifest_bytes:
+        raise SystemExit(
+            "exact pairing after profile inputs do not reproduce the candidate-after manifest"
+        )
+
+    before_artifact = artifact_identity_from_manifest_package(
+        before_manifest_bytes,
+        before_package,
+    )
+    after_artifact = artifact_identity_from_manifest_package(
+        after_manifest_bytes,
+        Path(args.input_deb),
+    )
+    if args.release_transition == "auto":
+        transition, selected_profile = classify_pairing_inputs(
+            channel=channel,
+            before_manifest_bytes=before_manifest_bytes,
+            after_manifest_bytes=after_manifest_bytes,
+            before_artifact=before_artifact,
+            after_artifact=after_artifact,
+        )
+        if args.profile is not None and args.profile != selected_profile:
+            raise SystemExit(
+                "exact pairing selected profile does not match the classified manifest delta"
+            )
+    else:
+        transition = TransitionKind(str(args.release_transition))
+        selected_profile = str(args.profile) if args.profile is not None else None
 
     changed_profile = transition in {
         TransitionKind.PROFILE_ONLY,
         TransitionKind.PROFILE_THEN_BINARY,
     }
-    supplied_profile_fields = [name for name, value in profile_fields.items() if value is not None]
-    if changed_profile:
+    publication_fields = {
+        "candidate_profile_publication": args.candidate_profile_publication,
+        "publication_base": args.publication_base,
+    }
+    supplied_publication_fields = [
+        name for name, value in publication_fields.items() if value is not None
+    ]
+    if transition is TransitionKind.PROFILE_ONLY:
         missing_profile = [name for name, value in profile_fields.items() if value is None]
         if missing_profile:
             raise SystemExit(
@@ -365,7 +444,7 @@ def validate_exact_release_pairing(
         try:
             run(
                 [
-                    "python3",
+                    sys.executable,
                     "scripts/verify-profile-publication.py",
                     "--manifest",
                     str(after_manifest),
@@ -381,19 +460,38 @@ def validate_exact_release_pairing(
             raise SystemExit(
                 "exact pairing candidate profile publication failed verification"
             ) from error
-    elif supplied_profile_fields:
+    elif transition is TransitionKind.PROFILE_THEN_BINARY:
+        if selected_profile is None:
+            raise SystemExit("profile_then_binary exact pairing requires one selected profile")
+        if supplied_publication_fields and len(supplied_publication_fields) != 2:
+            raise SystemExit(
+                "candidate profile publication base and directory must be supplied together"
+            )
+        if len(supplied_publication_fields) == 2:
+            try:
+                run(
+                    [
+                        sys.executable,
+                        "scripts/verify-profile-publication.py",
+                        "--manifest",
+                        str(after_manifest),
+                        "--profile",
+                        selected_profile,
+                        "--publication-base",
+                        str(args.publication_base),
+                        "--release-dir",
+                        str(args.candidate_profile_publication),
+                    ]
+                )
+            except subprocess.CalledProcessError as error:
+                raise SystemExit(
+                    "exact pairing candidate profile publication failed verification"
+                ) from error
+    elif any(value is not None for value in profile_fields.values()):
         raise SystemExit(
             "binary_only exact pairing cannot supply candidate profile publication inputs"
         )
 
-    before_artifact = artifact_identity_from_manifest_package(
-        before_manifest_bytes,
-        before_package,
-    )
-    after_artifact = artifact_identity_from_manifest_package(
-        after_manifest_bytes,
-        Path(args.input_deb),
-    )
     return validate_pairing_inputs(
         kind=transition,
         channel=channel,
@@ -401,7 +499,7 @@ def validate_exact_release_pairing(
         after_manifest_bytes=after_manifest_bytes,
         before_artifact=before_artifact,
         after_artifact=after_artifact,
-        selected_profile=str(args.profile) if changed_profile else None,
+        selected_profile=selected_profile if changed_profile else None,
     )
 
 

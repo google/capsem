@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Wired the binary release gate to the exact deployed public-before packages
+  and profiles plus the authored candidate package, manifest, and complete
+  profile cohort, classifying a single staged profile as a composed update.
+
 - Moved binary candidate manifest authoring and host SBOM generation ahead of
   complete pairing tests, then reused that exact tested source manifest for
   immutable publication and final channel assembly without a second mutation.
