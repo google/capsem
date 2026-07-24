@@ -560,7 +560,7 @@ def test_update_fetches_release_manifest_and_writes_channel_cache(
         f"capsem update failed\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     assert "Binary update available" in result.stdout
-    assert "Run `capsem update --assets` separately" in result.stdout
+    assert "Run `capsem update --assets` separately" not in result.stdout
     assert all(not path.endswith("/health.json") for path in requests)
 
     cache = json.loads((capsem_home / "assets" / "manifest-metadata.json").read_text(encoding="utf-8"))
