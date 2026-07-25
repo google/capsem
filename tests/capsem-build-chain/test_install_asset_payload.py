@@ -1281,6 +1281,142 @@ def test_local_release_glowup_stages_graph_bytes_by_manifest_digest(
     assert os.path.samefile(source, dist / expected_relative)
 
 
+def test_local_release_glowup_projects_only_fully_staged_architectures(
+    tmp_path: Path,
+) -> None:
+    glowup = _load_local_release_glowup()
+    source = tmp_path / "inputs" / "profile.toml"
+    source.parent.mkdir()
+    payload = b'id = "code"\nrevision = "2030.0101.1"\n'
+    source.write_bytes(payload)
+
+    def record(url: str) -> dict[str, object]:
+        return {
+            "kind": "profile",
+            "path": "profiles/code/profile.toml",
+            "url": url,
+            "bytes": len(payload),
+            "digest": {
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "blake3": blake3(payload).hexdigest(),
+            },
+            "status": "current",
+        }
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "packages": [{"status": "current"}],
+                "profiles": {
+                    "code": {
+                        "status": "current",
+                        "architectures": [
+                            {
+                                "architecture": "arm64",
+                                "config": [
+                                    record(
+                                        "/profiles/releases/stable/code/"
+                                        "2030.0101.1/arm64/profile.toml"
+                                    )
+                                ],
+                                "images": [],
+                                "evidence": [],
+                            },
+                            {
+                                "architecture": "x86_64",
+                                "config": [record(source.resolve().as_uri())],
+                                "images": [],
+                                "evidence": [],
+                            },
+                        ],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    dist = tmp_path / "dist"
+    base_url = "http://127.0.0.1:43123"
+
+    glowup.stage_manifest_artifacts(manifest_path, tmp_path / "unused", dist, base_url)
+
+    staged = json.loads(manifest_path.read_text(encoding="utf-8"))
+    architectures = staged["profiles"]["code"]["architectures"]
+    assert [row["architecture"] for row in architectures] == ["x86_64"]
+    staged_record = architectures[0]["config"][0]
+    expected_relative = (
+        Path("artifacts")
+        / "sha256"
+        / hashlib.sha256(payload).hexdigest()
+        / "profile.toml"
+    )
+    assert staged_record["url"] == f"{base_url}/{expected_relative.as_posix()}"
+    assert (dist / expected_relative).read_bytes() == payload
+
+
+def test_local_release_glowup_rejects_partially_staged_architecture(
+    tmp_path: Path,
+) -> None:
+    glowup = _load_local_release_glowup()
+    source = tmp_path / "inputs" / "profile.toml"
+    source.parent.mkdir()
+    payload = b'id = "code"\n'
+    source.write_bytes(payload)
+
+    def record(kind: str, url: str) -> dict[str, object]:
+        return {
+            "kind": kind,
+            "path": f"profiles/code/{kind}.toml",
+            "url": url,
+            "bytes": len(payload),
+            "digest": {
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "blake3": blake3(payload).hexdigest(),
+            },
+            "status": "current",
+        }
+
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "packages": [{"status": "current"}],
+                "profiles": {
+                    "code": {
+                        "status": "current",
+                        "architectures": [
+                            {
+                                "architecture": "x86_64",
+                                "config": [
+                                    record("profile", source.resolve().as_uri())
+                                ],
+                                "images": [
+                                    record(
+                                        "rootfs",
+                                        "/profiles/releases/stable/code/"
+                                        "2030.0101.1/x86_64/rootfs.erofs",
+                                    )
+                                ],
+                                "evidence": [],
+                            }
+                        ],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SystemExit, match="mixes staged and unstaged artifacts"):
+        glowup.stage_manifest_artifacts(
+            manifest_path,
+            tmp_path / "unused",
+            tmp_path / "dist",
+            "http://127.0.0.1:43123",
+        )
+
+
 def test_local_release_glowup_rejects_graph_bytes_not_matching_manifest(
     tmp_path: Path,
 ) -> None:

@@ -1166,12 +1166,14 @@ def _stage_graph_manifest_artifacts(
         architectures = profile.get("architectures")
         if not isinstance(architectures, list) or not architectures:
             raise SystemExit(f"local glow-up release profile {profile_id} has no architectures")
+        staged_architectures: list[dict[str, object]] = []
         for architecture in architectures:
             if not isinstance(architecture, dict):
                 raise SystemExit(
                     f"local glow-up release profile {profile_id} has malformed architecture"
                 )
             arch = architecture.get("architecture", "unknown")
+            active_rows: list[tuple[str, int, dict[str, object], str]] = []
             for section in ("config", "images", "evidence"):
                 rows = architecture.get(section, [])
                 if not isinstance(rows, list):
@@ -1188,30 +1190,50 @@ def _stage_graph_manifest_artifacts(
                             f"local glow-up release profile {profile_id}/{arch} "
                             f"{section}[{index}] has no URL"
                         )
-                    parsed = urlparse(url)
-                    if parsed.scheme != "file" or parsed.netloc:
-                        raise SystemExit(
-                            f"local glow-up graph artifact must be a staged file URL: {url}"
-                        )
-                    source = Path(unquote(parsed.path))
-                    if not source.is_file():
-                        raise SystemExit(f"local glow-up graph artifact is missing: {source}")
-                    payload = source.read_bytes()
-                    label = (
-                        f"profile {profile_id}/{arch} {section}[{index}] "
-                        f"{row.get('name') or row.get('path') or row.get('kind') or url}"
-                    )
-                    try:
-                        verify_payload(payload, row, label)
-                    except ValueError as error:
-                        raise SystemExit(str(error)) from error
-                    digest = cast(dict[str, object], row["digest"])
-                    sha256 = cast(str, digest["sha256"]).lower()
-                    filename = source.name
-                    if not filename or filename in {".", ".."}:
-                        raise SystemExit(f"local glow-up graph artifact has unsafe name: {url}")
-                    relative = Path("artifacts") / "sha256" / sha256 / filename
-                    staged.append((row, source, dist / relative, payload))
+                    active_rows.append((section, index, row, url))
+            if not active_rows:
+                raise SystemExit(
+                    f"local glow-up release profile {profile_id}/{arch} has no active artifacts"
+                )
+            local_rows = [
+                row
+                for row in active_rows
+                if (parsed := urlparse(row[3])).scheme == "file" and not parsed.netloc
+            ]
+            if local_rows and len(local_rows) != len(active_rows):
+                raise SystemExit(
+                    f"local glow-up release profile {profile_id}/{arch} "
+                    "mixes staged and unstaged artifacts"
+                )
+            if not local_rows:
+                continue
+            staged_architectures.append(architecture)
+            for section, index, row, url in active_rows:
+                parsed = urlparse(url)
+                source = Path(unquote(parsed.path))
+                if not source.is_file():
+                    raise SystemExit(f"local glow-up graph artifact is missing: {source}")
+                payload = source.read_bytes()
+                label = (
+                    f"profile {profile_id}/{arch} {section}[{index}] "
+                    f"{row.get('name') or row.get('path') or row.get('kind') or url}"
+                )
+                try:
+                    verify_payload(payload, row, label)
+                except ValueError as error:
+                    raise SystemExit(str(error)) from error
+                digest = cast(dict[str, object], row["digest"])
+                sha256 = cast(str, digest["sha256"]).lower()
+                filename = source.name
+                if not filename or filename in {".", ".."}:
+                    raise SystemExit(f"local glow-up graph artifact has unsafe name: {url}")
+                relative = Path("artifacts") / "sha256" / sha256 / filename
+                staged.append((row, source, dist / relative, payload))
+        if not staged_architectures:
+            raise SystemExit(
+                f"local glow-up release profile {profile_id} has no fully staged architectures"
+            )
+        profile["architectures"] = staged_architectures
 
     if not staged:
         raise SystemExit("local glow-up release graph resolved no profile artifacts")
