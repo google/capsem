@@ -233,12 +233,18 @@ def validate_package_identity(
 def assert_manifest_artifact(
     manifest: Mapping[str, object],
     artifact: ArtifactIdentity,
+    *,
+    manifest_architecture_aliases: Sequence[str] = (),
 ) -> Mapping[str, object]:
     """Require one current release record to describe the exact package bytes."""
 
     packages = manifest.get("packages")
     if not isinstance(packages, list):
         raise GlowupContractError("candidate manifest packages must be an array")
+    accepted_architectures = {
+        artifact.architecture.value,
+        *manifest_architecture_aliases,
+    }
     matches: list[Mapping[str, object]] = []
     for candidate in packages:
         if not isinstance(candidate, dict):
@@ -247,7 +253,7 @@ def assert_manifest_artifact(
         if (
             package.get("name") == artifact.name
             and package.get("platform") == artifact.platform
-            and package.get("architecture") == artifact.architecture.value
+            and package.get("architecture") in accepted_architectures
         ):
             matches.append(package)
     if len(matches) != 1:
@@ -266,9 +272,14 @@ def assert_manifest_artifact(
         "status": "current",
     }
     for field, value in expected.items():
-        if package.get(field) != value:
+        actual = package.get(field)
+        if field == "architecture":
+            matches_expected = actual in accepted_architectures
+        else:
+            matches_expected = actual == value
+        if not matches_expected:
             raise GlowupContractError(
-                f"candidate manifest package {field} is {package.get(field)!r}, expected {value!r}"
+                f"candidate manifest package {field} is {actual!r}, expected {value!r}"
             )
     digest = package.get("digest")
     actual_sha256 = (
@@ -371,13 +382,26 @@ def artifact_identity_from_manifest_package(
         raise GlowupContractError(
             f"release pairing package metadata is incomplete for {package_path.name}"
         )
+    canonical_architecture = cast(str, architecture)
+    manifest_architecture_aliases: tuple[str, ...] = ()
+    if (
+        platform == "linux"
+        and architecture == "x86_64"
+        and package_path.name.endswith("_amd64.deb")
+    ):
+        canonical_architecture = "amd64"
+        manifest_architecture_aliases = ("x86_64",)
     artifact = ArtifactIdentity.from_path(
         package_path,
         version=cast(str, version),
         platform=cast(str, platform),
-        architecture=cast(str, architecture),
+        architecture=canonical_architecture,
     )
-    assert_manifest_artifact(manifest, artifact)
+    assert_manifest_artifact(
+        manifest,
+        artifact,
+        manifest_architecture_aliases=manifest_architecture_aliases,
+    )
     return artifact
 
 

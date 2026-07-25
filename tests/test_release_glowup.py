@@ -135,6 +135,35 @@ def test_debian_amd64_identity_matches_native_package_graph(tmp_path: Path) -> N
     assert matched["architecture"] == "amd64"
 
 
+def test_existing_x86_64_manifest_package_resolves_without_mutating_authority(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    package = tmp_path / "Capsem_1.5.100_amd64.deb"
+    payload = b"exact existing linux package"
+    package.write_bytes(payload)
+    document = {
+        "packages": [
+            {
+                "name": package.name,
+                "version": "1.5.100",
+                "platform": "linux",
+                "architecture": "x86_64",
+                "bytes": len(payload),
+                "digest": {"sha256": hashlib.sha256(payload).hexdigest()},
+                "status": "current",
+            }
+        ],
+        "profiles": {"code": {}},
+    }
+    contents = json.dumps(document, sort_keys=True).encode()
+
+    artifact = module.artifact_identity_from_manifest_package(contents, package)
+
+    assert artifact.architecture is module.PackageArchitecture.AMD64
+    assert json.loads(contents) == document
+
+
 @pytest.mark.parametrize("architecture", ["x86_64", "aarch64", ""])
 def test_package_identity_rejects_machine_architectures_and_aliases(
     tmp_path: Path,
