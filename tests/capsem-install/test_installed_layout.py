@@ -22,6 +22,7 @@ import json
 import os
 import subprocess
 import tomllib
+from pathlib import Path
 
 import pytest
 
@@ -32,6 +33,13 @@ from .conftest import (
     INSTALL_DIR,
     RUN_DIR,
     run_capsem,
+)
+
+SOURCE_MANIFEST = Path(
+    os.environ.get(
+        "CAPSEM_TEST_ASSET_MANIFEST",
+        Path(__file__).resolve().parents[2] / "assets" / "manifest.json",
+    )
 )
 
 
@@ -54,6 +62,34 @@ def _version_at_least(actual: str, minimum: str) -> bool:
     left.extend([0] * (width - len(left)))
     right.extend([0] * (width - len(right)))
     return left >= right
+
+
+def _is_release_graph(manifest: dict) -> bool:
+    return isinstance(manifest.get("packages"), list) and isinstance(
+        manifest.get("profiles"), dict
+    )
+
+
+def _release_graph_profile_arch(manifest: dict, profile_id: str, arch: str) -> dict | None:
+    profile = manifest.get("profiles", {}).get(profile_id)
+    if not isinstance(profile, dict):
+        return None
+    return next(
+        (
+            architecture
+            for architecture in profile.get("architectures", [])
+            if architecture.get("architecture") == arch
+        ),
+        None,
+    )
+
+
+def _hash_named_asset(logical: str, digest: str) -> str:
+    prefix = digest[:16]
+    if "." in logical:
+        stem, ext = logical.split(".", 1)
+        return f"{stem}-{prefix}.{ext}"
+    return f"{logical}-{prefix}"
 
 
 class TestInstalledLayoutContract:
@@ -121,22 +157,52 @@ class TestInstalledLayoutContract:
     def test_manifest_json_exists(self, installed_layout):
         """manifest.json present at ~/.capsem/assets/manifest.json."""
         manifest = ASSETS_DIR / "manifest.json"
-        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not manifest.exists():
-            pytest.skip("assets downloaded on first use, not bundled in .deb")
         assert manifest.exists(), (
             f"manifest.json missing at {manifest} -- service will fail to start"
         )
 
     def test_manifest_json_is_valid(self, installed_layout):
-        """manifest.json parses as JSON with expected v2 structure."""
+        """manifest.json is the complete installed release graph."""
         manifest = ASSETS_DIR / "manifest.json"
         if not manifest.exists():
             pytest.skip("no manifest.json")
         data = json.loads(manifest.read_text())
+        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1":
+            assert _is_release_graph(data), (
+                "native package installed a legacy/runtime projection instead of "
+                "the authoritative release graph"
+            )
+        if _is_release_graph(data):
+            assert data.get("channel"), "release graph missing channel"
+            assert data.get("status") == "current"
+            assert data.get("version"), "release graph missing version"
+            assert data["packages"], "release graph missing packages"
+            assert data["profiles"], "release graph missing profiles"
+            return
+
+        # Standalone development installs still exercise the runtime-only v2
+        # asset index. Native package proofs above must exercise the exact
+        # public graph copied by the installer.
         assert data.get("format") == 2, f"expected format=2, got {data.get('format')!r}"
         assert "assets" in data and "releases" in data["assets"], "manifest missing assets.releases"
         assert "binaries" in data and "releases" in data["binaries"], (
             "manifest missing binaries.releases"
+        )
+
+    def test_native_install_preserves_exact_authoritative_manifest_bytes(
+        self, installed_layout
+    ):
+        """The native installer must activate the exact graph it fetched."""
+        if os.environ.get("CAPSEM_DEB_INSTALLED") != "1":
+            pytest.skip("exact source-manifest byte proof is native-package-only")
+
+        installed = ASSETS_DIR / "manifest.json"
+        assert SOURCE_MANIFEST.is_file(), (
+            f"authoritative install-test manifest missing: {SOURCE_MANIFEST}"
+        )
+        assert installed.read_bytes() == SOURCE_MANIFEST.read_bytes(), (
+            "native install normalized or projected the manifest; the fetched "
+            "release graph must remain the sole installed authority"
         )
 
     def test_hash_named_assets_exist(self, installed_layout):
@@ -147,31 +213,36 @@ class TestInstalledLayoutContract:
         arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
 
         manifest_path = ASSETS_DIR / "manifest.json"
-        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not manifest_path.exists():
-            pytest.skip("assets downloaded on first use, not bundled in .deb")
         assert manifest_path.exists(), f"manifest missing: {manifest_path}"
 
         data = json.loads(manifest_path.read_text())
-        current = data["assets"]["current"]
-        arch_assets = data["assets"]["releases"][current]["arches"].get(arch)
-        if arch_assets is None:
-            pytest.skip(f"no {arch} entry in manifest (cross-arch install)")
+        if _is_release_graph(data):
+            profile_arch = _release_graph_profile_arch(data, "code", arch)
+            if profile_arch is None:
+                pytest.skip(f"no code/{arch} entry in manifest (cross-arch install)")
+            arch_assets = {
+                image["name"]: {
+                    "hash": image["digest"]["blake3"],
+                    "sha256": image["digest"]["sha256"],
+                    "size": image["bytes"],
+                }
+                for image in profile_arch.get("images", [])
+                if image.get("status", "current") != "revoked"
+            }
+        else:
+            current = data["assets"]["current"]
+            arch_assets = data["assets"]["releases"][current]["arches"].get(arch)
+            if arch_assets is None:
+                pytest.skip(f"no {arch} entry in manifest (cross-arch install)")
 
         arch_dir = ASSETS_DIR / arch
-        if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and not arch_dir.exists():
-            pytest.skip("assets downloaded on first use, not bundled in .deb")
         assert arch_dir.is_dir(), (
             f"arch dir missing: {arch_dir}\n"
             f"resolver will fail: ManifestV2::resolve() checks $ASSETS/{arch}/<hash>"
         )
 
         for logical, meta in arch_assets.items():
-            prefix = meta["hash"][:16]
-            if "." in logical:
-                stem, ext = logical.split(".", 1)
-                hashed = f"{stem}-{prefix}.{ext}"
-            else:
-                hashed = f"{logical}-{prefix}"
+            hashed = _hash_named_asset(logical, meta["hash"])
             target = arch_dir / hashed
             assert target.exists(), (
                 f"asset missing: {target}\n"
@@ -196,6 +267,30 @@ class TestInstalledLayoutContract:
         data = json.loads(manifest_path.read_text())
         result = run_capsem("version", timeout=5)
         version = result.stdout.strip().split()[1]
+
+        if _is_release_graph(data):
+            current_versions = {
+                package["version"]
+                for package in data["packages"]
+                if package.get("status", "current") == "current"
+            }
+            if version in current_versions:
+                return
+            compatible_profiles = [
+                profile_id
+                for profile_id, profile in data["profiles"].items()
+                if profile.get("status", "current") != "revoked"
+                and _version_at_least(version, profile.get("min_capsem_version", ""))
+                and (
+                    not profile.get("max_capsem_version")
+                    or _version_at_least(profile["max_capsem_version"], version)
+                )
+            ]
+            assert compatible_profiles, (
+                f"installed version {version} has no compatible profile; "
+                f"manifest current package versions={sorted(current_versions)}"
+            )
+            return
 
         binary_releases = data.get("binaries", {}).get("releases", {})
         if version in binary_releases:
@@ -247,19 +342,30 @@ class TestInstalledLayoutContract:
         machine = platform.machine().lower()
         arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
         manifest = json.loads(manifest_path.read_text())
-        current = manifest["assets"]["current"]
-        manifest_assets = manifest["assets"]["releases"][current]["arches"].get(arch)
-        if manifest_assets is None:
-            pytest.skip(f"no {arch} entry in manifest")
+        if _is_release_graph(manifest):
+            profile_arch = _release_graph_profile_arch(manifest, "code", arch)
+            if profile_arch is None:
+                pytest.skip(f"no code/{arch} entry in manifest")
+            manifest_assets = {
+                image["kind"]: image["digest"]["blake3"]
+                for image in profile_arch.get("images", [])
+                if image.get("status", "current") != "revoked"
+            }
+        else:
+            current = manifest["assets"]["current"]
+            legacy_assets = manifest["assets"]["releases"][current]["arches"].get(arch)
+            if legacy_assets is None:
+                pytest.skip(f"no {arch} entry in manifest")
+            manifest_assets = {
+                "kernel": legacy_assets["vmlinuz"]["hash"],
+                "initrd": legacy_assets["initrd.img"]["hash"],
+                "rootfs": legacy_assets["rootfs.erofs"]["hash"],
+            }
 
         profile = tomllib.loads(profile_path.read_text())
         profile_assets = profile["assets"]["arch"][arch]
-        for kind, logical in [
-            ("kernel", "vmlinuz"),
-            ("initrd", "initrd.img"),
-            ("rootfs", "rootfs.erofs"),
-        ]:
-            expected = manifest_assets[logical]["hash"]
+        for kind in ["kernel", "initrd", "rootfs"]:
+            expected = manifest_assets[kind]
             actual = profile_assets[kind]["hash"].removeprefix("blake3:")
             assert actual == expected, (
                 f"profile {kind} pin drift: profile={actual} manifest={expected}"
