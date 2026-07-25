@@ -202,7 +202,7 @@
     return asset.kind ?? asset.name;
   }
 
-  function formatBytes(bytes?: number | null): string {
+  function formatBytes(bytes: number | null | undefined): string {
     if (!bytes || bytes <= 0) return '--';
     const units = ['B', 'KB', 'MB', 'GB'];
     let value = bytes;

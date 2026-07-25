@@ -84,6 +84,41 @@ def test_binary_and_profile_workflows_share_channel_transaction_lock() -> None:
         assert "inputs.tag" not in group_line
 
 
+def test_release_lanes_run_one_reusable_fast_gate_before_builders() -> None:
+    reusable = _workflow("fast-gate.yaml")
+    assert "workflow_call:" in reusable
+    assert "run: just _test-static" in reusable
+
+    binary = _workflow("release.yaml")
+    assert "  fast-gate:\n    uses: ./.github/workflows/fast-gate.yaml" in binary
+    assert "needs: [runtime-preflight, fast-gate]" in _job_block(binary, "preflight")
+    assert "Run shared static module" not in _job_block(binary, "test-binary-pairing")
+
+    profile = _workflow("release-assets.yaml")
+    assert "  fast-gate:\n    uses: ./.github/workflows/fast-gate.yaml" in profile
+    build_assets = _job_block(profile, "build-assets")
+    assert "fast-gate" in build_assets.splitlines()[1]
+    assert "Run shared static module" not in _job_block(profile, "test-profile-pairing")
+
+
+def test_release_profile_downloads_share_one_manifest_addressed_cache_module() -> None:
+    action = _read(".github/actions/fetch-release-inputs/action.yaml")
+
+    assert "scripts/fetch-release-artifacts.py" in action
+    assert '--manifest-url "${{ inputs.manifest-url }}"' in action
+    assert "--cache-dir target/release-input-cache" in action
+    assert "--prune-cache" not in action
+    assert "actions/cache/restore@" in action
+    assert "actions/cache/save@" in action
+    assert "steps.fetch.outputs.cache-misses != '0'" in action
+    cache_key = next(line for line in action.splitlines() if line.strip().startswith("key:"))
+    assert "inputs.channel" not in cache_key
+    assert "inputs.manifest-url" not in cache_key
+
+    assert "./.github/actions/fetch-release-inputs" in _workflow("release.yaml")
+    assert "./.github/actions/fetch-release-inputs" in _workflow("release-assets.yaml")
+
+
 def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
     workflow = _workflow("release.yaml")
 
@@ -124,7 +159,10 @@ def test_binary_candidate_manifest_is_authored_once_before_pairing() -> None:
 
     assert "author-binary-candidate" in pairing.splitlines()[1]
     assert "binary-channel-candidate" in pairing
-    assert "file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in pairing
+    assert (
+        "manifest-url: file://${{ github.workspace }}/target/binary-channel/"
+        "${{ inputs.channel }}/manifest.json"
+    ) in pairing
     assert "assets channel record-binary" not in pairing
 
     assert "test-binary-pairing" in create.splitlines()[1]
@@ -139,16 +177,20 @@ def test_binary_pairing_uses_exact_public_before_and_candidate_after_cohorts() -
     resolve = _job_block(workflow, "resolve-channel-source")
     pairing = _job_block(workflow, "test-binary-pairing")
 
-    assert resolve.count('--manifest-url "$ASSET_MANIFEST_URL"') == 2
-    assert "--kind packages" in resolve
-    assert "--kind profiles" in resolve
+    assert "manifest-url: ${{ env.ASSET_MANIFEST_URL }}" in resolve
+    assert "kind: packages" in resolve
+    assert "kind: profiles" in resolve
+    assert "architecture: x86_64" in resolve
     assert "binary-public-before-packages" in resolve
     assert "binary-public-before-profiles" in resolve
 
     assert "binary-public-before-packages" in pairing
     assert "binary-public-before-profiles" in pairing
-    assert "file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in pairing
-    assert "--kind profiles" in pairing
+    assert (
+        "manifest-url: file://${{ github.workspace }}/target/binary-channel/"
+        "${{ inputs.channel }}/manifest.json"
+    ) in pairing
+    assert "kind: profiles" in pairing
     assert "target/candidate-profile-inputs" in pairing
     for variable in (
         "CAPSEM_RELEASE_CHANNEL",
@@ -168,11 +210,13 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     assert "Validate selected channel profile through capsem-admin" in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "--bootstrap-missing-first-party" in workflow
-    assert "--profile \"${{ inputs.profile }}\"" in workflow
-    assert "Fetch exact deployed public-before cohorts" in workflow
-    assert '--manifest-url "$ASSET_MANIFEST_URL"' in workflow
-    assert workflow.count("--bootstrap-manifest-url") == 2
-    assert "--allow-empty-profiles" in workflow
+    assert '--profile "${{ inputs.profile }}"' in workflow
+    assert "Fetch exact deployed public-before package" in workflow
+    assert "Fetch exact deployed public-before profiles" in workflow
+    assert "manifest-url: ${{ env.ASSET_MANIFEST_URL }}" in workflow
+    assert workflow.count("bootstrap-manifest-url:") == 2
+    assert "--bootstrap-manifest-url" not in workflow
+    assert 'allow-empty-profiles: "true"' in workflow
     assert "capsem-admin -- release" in workflow
     assert "--publication-base" in workflow
     assert "channel-source-$CHANNEL.json" in workflow
@@ -203,9 +247,10 @@ def test_profile_pairing_reuses_one_staged_publication_and_exact_public_before()
     pairing = _job_block(workflow, "test-profile-pairing")
     publish = _job_block(workflow, "publish-profile-release")
 
-    assert resolve.count('--manifest-url "$ASSET_MANIFEST_URL"') == 2
-    assert "--kind packages" in resolve
-    assert "--kind profiles" in resolve
+    assert "manifest-url: ${{ env.ASSET_MANIFEST_URL }}" in resolve
+    assert "kind: packages" in resolve
+    assert "kind: profiles" in resolve
+    assert "architecture: x86_64" in resolve
     assert "profile-public-before-packages" in resolve
     assert "profile-public-before-profiles" in resolve
 

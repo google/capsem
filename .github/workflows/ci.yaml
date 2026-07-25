@@ -144,7 +144,6 @@ jobs:
         run: cd release-site && pnpm install --frozen-lockfile
 
       - name: Frontend dependency audit
-        continue-on-error: true
         run: python3 scripts/audit-pnpm-bulk.py --project-dir frontend
 
       - name: Install prebuilt Rust tools
@@ -352,11 +351,19 @@ jobs:
           test -r /dev/kvm -a -w /dev/kvm
           test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
 
+      - name: Pull existing stable profile assets
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: https://release.capsem.org/assets/stable/manifest.json
+          kind: profiles
+          architecture: x86_64
+          output: target/ci-install-profile-inputs
+
       - name: Build host builder Docker image
         run: just _build-host-image
 
       - name: Run install e2e tests
-        run: just _gate-install
+        run: CAPSEM_INSTALL_PROFILE_INPUTS=target/ci-install-profile-inputs just _gate-install
 
       - name: Upload install and glow-up evidence on failure
         if: failure()

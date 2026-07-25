@@ -1,13 +1,13 @@
 ---
 name: dev-testing-frontend
-description: Testing the Capsem frontend (Astro 5 + Svelte 5 + Tailwind v4 + Preline). Use when writing frontend tests, running type checks, debugging UI issues, or doing visual verification with Chrome DevTools MCP. Covers vitest, svelte-check, astro check, mock mode, and systematic visual verification workflow.
+description: Testing the Capsem frontend (Astro 7 + Svelte 5 + Tailwind v4 + Capsem-owned semantic CSS). Use when writing frontend tests, running type checks, debugging UI issues, or doing visual verification with Chrome DevTools MCP. Covers vitest, svelte-check, astro check, mock mode, and systematic visual verification workflow.
 ---
 
 # Frontend Testing
 
 ## Stack
 
-Astro 5 + Svelte 5 (runes only) + Tailwind v4 + Preline + LayerChart v2.
+Astro 7 + Svelte 5 (runes only) + Tailwind v4 + Capsem-owned semantic CSS + LayerChart v2.
 
 ## Running tests
 
@@ -85,4 +85,4 @@ Read `references/svelte5.md` for Svelte 5 patterns and the `@sveltejs/mcp` CLI f
 - `vm-state-changed` payload is `{ state, trigger }` (object), not a plain string
 - Dynamic Svelte components: use `<svelte:component this={item.icon} />`, not `<item.icon />`
 - Tailwind v4 + `client:only`: needs `@source` directives to scan Svelte files
-- Preline is CSS-only -- no JS plugins, no `data-hs-*` attributes, no `HSStaticMethods`
+- The semantic theme is checked in at `src/styles/capsem-theme.css`; tests must reject any Preline package, `node_modules/preline` scan, upstream CSS import, JS plugin, `data-hs-*` attribute, or `HSStaticMethods` use.

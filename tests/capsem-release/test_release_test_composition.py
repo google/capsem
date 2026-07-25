@@ -63,10 +63,31 @@ def test_private_release_modules_select_one_shared_runner() -> None:
         assert f"module_enabled {module}" in runner
 
 
+def test_release_static_module_never_bootstraps_or_builds_profile_assets() -> None:
+    static = _recipe("_test-static")
+
+    assert "_bootstrap" not in static.splitlines()[0]
+    assert "uv sync" in static
+    assert "just _bound-docker-test-storage" in static
+    assert "_check-generated-settings" in static.splitlines()[0]
+    for forbidden in (
+        "_build-assets",
+        "_build-kernel",
+        "_build-rootfs",
+        "_check-assets",
+        "_pack-initrd",
+    ):
+        assert forbidden not in static
+
+
 def test_modules_retain_complete_named_quality_gates() -> None:
     runner = _recipe("_test-candidate-run")
 
     for required in (
+        "cargo audit",
+        "scripts/audit-pnpm-bulk.py --project-dir frontend",
+        "cargo clippy --workspace --all-targets -- -D warnings",
+        "bash scripts/check-web-surface.sh frontend",
         "cargo llvm-cov --workspace --bins --lib --tests",
         "tests/capsem-mcp/test_state_transitions.py",
         "tests/ironbank/test_route_health.py",
@@ -78,6 +99,19 @@ def test_modules_retain_complete_named_quality_gates() -> None:
         "tests/capsem-build-chain/ tests/capsem-release/",
     ):
         assert required in runner
+
+
+def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
+    runner = _recipe("_test-candidate-run")
+
+    audit = runner.index("cargo audit")
+    frontend = runner.index("bash scripts/check-web-surface.sh frontend")
+    clippy = runner.index("cargo clippy --workspace --all-targets -- -D warnings")
+    install_preflight = runner.index("just _test-install-harness-preflight")
+
+    assert audit < install_preflight
+    assert frontend < install_preflight
+    assert clippy < install_preflight
 
 
 def test_standalone_functional_scripts_use_the_project_python() -> None:

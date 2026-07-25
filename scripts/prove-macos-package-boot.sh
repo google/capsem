@@ -11,6 +11,7 @@ CAPSEM_HOME_DIR="$WORK_ROOT/home"
 RUN_DIR=$(mktemp -d /tmp/capsem-pkg-boot.XXXXXX)
 DOCTOR_LOG="$WORK_ROOT/doctor.log"
 DOCTOR_EVIDENCE="$WORK_ROOT/doctor.json"
+WINTERFELL_LOG="$WORK_ROOT/winterfell.log"
 WINTERFELL_EVIDENCE="$WORK_ROOT/winterfell.json"
 
 [ "$(uname -s)" = "Darwin" ] || {
@@ -74,22 +75,57 @@ CAPSEM_PROFILES_DIR="$CAPSEM_HOME_DIR/profiles" \
         --timeout 300
 
 echo "=== Running full doctor from the exact package cohort ==="
+set +e
 CAPSEM_HOME="$CAPSEM_HOME_DIR" \
 CAPSEM_RUN_DIR="$RUN_DIR" \
 CAPSEM_ASSETS_DIR="$CAPSEM_HOME_DIR/assets" \
 CAPSEM_PROFILES_DIR="$CAPSEM_HOME_DIR/profiles" \
     "$CAPSEM_HOME_DIR/bin/capsem" doctor >"$DOCTOR_LOG" 2>&1
-printf '%s\n' '{"schema":"capsem.installed_doctor.v1","passed":true}' \
-    >"$DOCTOR_EVIDENCE"
+DOCTOR_STATUS=$?
+set -e
+python3 - "$DOCTOR_EVIDENCE" "$DOCTOR_LOG" "$DOCTOR_STATUS" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+status = int(sys.argv[3])
+Path(sys.argv[1]).write_text(
+    json.dumps(
+        {
+            "schema": "capsem.installed_doctor.v1",
+            "passed": status == 0,
+            "exit_code": status,
+            "log": str(Path(sys.argv[2]).resolve()),
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n"
+)
+PY
+if [ "$DOCTOR_STATUS" -ne 0 ]; then
+    echo "ERROR: full installed Doctor failed; retained evidence: $DOCTOR_EVIDENCE" >&2
+    cat "$DOCTOR_LOG" >&2
+    exit "$DOCTOR_STATUS"
+fi
 
 echo "=== Running installed Winterfell from the exact package cohort ==="
+set +e
 CAPSEM_HOME="$CAPSEM_HOME_DIR" \
 CAPSEM_RUN_DIR="$RUN_DIR" \
     uv run python "$ROOT/scripts/run-installed-winterfell.py" \
         --bin-dir "$CAPSEM_HOME_DIR/bin" \
         --assets-dir "$CAPSEM_HOME_DIR/assets" \
         --profiles-dir "$CAPSEM_HOME_DIR/profiles" \
-        --evidence-out "$WINTERFELL_EVIDENCE"
+        --evidence-out "$WINTERFELL_EVIDENCE" \
+        >"$WINTERFELL_LOG" 2>&1
+WINTERFELL_STATUS=$?
+set -e
+if [ "$WINTERFELL_STATUS" -ne 0 ]; then
+    echo "ERROR: installed Winterfell failed; retained evidence: $WINTERFELL_EVIDENCE" >&2
+    cat "$WINTERFELL_LOG" >&2
+    exit "$WINTERFELL_STATUS"
+fi
 
 python3 - "$WORK_ROOT/report.json" "$PKG" "$VERSION" \
     "$DOCTOR_EVIDENCE" "$WINTERFELL_EVIDENCE" <<'PY'
@@ -101,7 +137,7 @@ import sys
 package = Path(sys.argv[2]).resolve()
 doctor = json.loads(Path(sys.argv[4]).read_text())
 winterfell = json.loads(Path(sys.argv[5]).read_text())
-if doctor != {"schema": "capsem.installed_doctor.v1", "passed": True}:
+if doctor.get("schema") != "capsem.installed_doctor.v1" or not doctor.get("passed"):
     raise SystemExit(f"full installed doctor evidence failed: {doctor}")
 if winterfell.get("schema") != "capsem.installed_winterfell.v1" or not winterfell.get(
     "passed"

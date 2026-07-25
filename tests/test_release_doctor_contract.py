@@ -108,8 +108,7 @@ def _recipe_block(name: str) -> str:
     block = "\n".join(lines[start:end])
     if name == "test:":
         block = (
-            f"{block}\n{_recipe_block('_test-candidate:')}"
-            f"\n{_recipe_block('_test-candidate-run:')}"
+            f"{block}\n{_recipe_block('_test-candidate:')}\n{_recipe_block('_test-candidate-run:')}"
         )
     elif name == "_test-candidate:":
         block = f"{block}\n{_recipe_block('_test-candidate-run:')}"
@@ -313,14 +312,18 @@ def test_canonical_gate_builds_both_linux_release_architectures() -> None:
 def test_install_e2e_materializes_config_before_repacking_package() -> None:
     block = _recipe_block("_gate-install:")
 
-    prepare_pos = block.find("bash scripts/prepare-install-test-assets.sh")
+    stage_pos = block.find("scripts/stage-release-test-inputs.py")
+    local_copy_pos = block.find('cp -R assets/. \\"$INSTALL_ASSETS_DIR/\\"')
     materialize_pos = block.find("bash scripts/materialize-config.sh")
     repack_pos = block.find("scripts/repack-deb.sh")
 
-    assert prepare_pos != -1
+    assert "scripts/prepare-install-test-assets.sh" not in block
+    assert stage_pos != -1
+    assert local_copy_pos != -1
     assert materialize_pos != -1
     assert repack_pos != -1
-    assert prepare_pos < materialize_pos
+    assert stage_pos < materialize_pos
+    assert local_copy_pos < materialize_pos
     assert materialize_pos < repack_pos
     assert "just _materialize-config" not in block
 
@@ -534,6 +537,7 @@ def test_install_e2e_generates_manifest_through_admin_rail() -> None:
 
 def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     workflow = _workflow_text("release-assets.yaml")
+    fast_gate = _workflow_text("fast-gate.yaml")
     trigger = workflow.split("\npermissions:", maxsplit=1)[0]
 
     assert "workflow_dispatch:" in workflow
@@ -551,8 +555,8 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "--output target/profile-public-before/packages" in workflow
     assert "--input-dir target/profile-public-before/packages" in workflow
     assert "--print-package-path" in workflow
-    assert "just _build-kernel ${{ matrix.arch }} \"${{ inputs.profile }}\"" in workflow
-    assert "just _build-rootfs ${{ matrix.arch }} \"${{ inputs.profile }}\"" in workflow
+    assert 'just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
+    assert 'just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
     assert "- arch: arm64" in workflow
     assert "- arch: x86_64" in workflow
     assert "cargo run -p capsem-admin -- release" in workflow
@@ -562,8 +566,9 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "scripts/build-pkg.sh" not in workflow
     assert "scripts/repack-deb.sh" not in workflow
     assert "cargo tauri build" not in workflow
+    assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
+    assert "run: just _test-static" in fast_gate
     for module in (
-        "_test-static",
         "_test-artifacts",
         "_test-functional",
         "_test-glowup",
@@ -571,7 +576,7 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     ):
         assert f"just {module}" in workflow
     assert "scripts/build-complete-release-channel.py" in workflow
-    assert 'channel-source-$CHANNEL.json' in workflow
+    assert "channel-source-$CHANNEL.json" in workflow
     assert "check-profile-release-delta.py" in workflow
     assert "uses: ./.github/workflows/release-channel.yaml" in workflow
     assert "dist_artifact: asset-channel-preview" in workflow
@@ -1200,15 +1205,15 @@ def test_installed_service_owns_one_serial_automatic_update_path() -> None:
         "}", maxsplit=1
     )[0]
 
-    check_executor = service.split(
-        "async fn execute_update_command(", maxsplit=1
-    )[1].split("async fn execute_update_apply(", maxsplit=1)[0]
-    apply_executor = service.split(
+    check_executor = service.split("async fn execute_update_command(", maxsplit=1)[1].split(
         "async fn execute_update_apply(", maxsplit=1
-    )[1].split("async fn execute_update_command_unlocked(", maxsplit=1)[0]
-    automatic_executor = service.split(
-        "async fn run_automatic_update_once(", maxsplit=1
-    )[1].split("async fn run_automatic_update_loop(", maxsplit=1)[0]
+    )[0]
+    apply_executor = service.split("async fn execute_update_apply(", maxsplit=1)[1].split(
+        "async fn execute_update_command_unlocked(", maxsplit=1
+    )[0]
+    automatic_executor = service.split("async fn run_automatic_update_once(", maxsplit=1)[1].split(
+        "async fn run_automatic_update_loop(", maxsplit=1
+    )[0]
 
     assert "update_lock: tokio::sync::Mutex<()>" in service
     assert "run_automatic_update_loop(state_for_updates)" in service
@@ -1300,6 +1305,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
 
 def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> None:
     workflow = _workflow_text("release.yaml")
+    fast_gate = _workflow_text("fast-gate.yaml")
     author_candidate = _workflow_job_block("author-binary-candidate", "release.yaml")
     create_release = _workflow_job_block("create-release", "release.yaml")
     assemble_channel = _workflow_job_block("assemble-release-channel", "release.yaml")
@@ -1335,11 +1341,12 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert """echo '{"releases":{}}'""" not in workflow
     assert "run: just test" not in workflow
     assert "Fetch latest selected channel source manifest" in workflow
-    assert "--kind profiles" in workflow
-    assert "--output target/binary-public-before/profiles" in workflow
-    assert "--output target/candidate-profile-inputs" in workflow
+    assert "kind: profiles" in workflow
+    assert "output: target/binary-public-before/profiles" in workflow
+    assert "output: target/candidate-profile-inputs" in workflow
     assert "--input-dir target/candidate-profile-inputs" in workflow
-    assert "just _test-static" in workflow
+    assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
+    assert "run: just _test-static" in fast_gate
     assert "just _test-artifacts" in workflow
     assert "just _test-functional" in workflow
     assert "just _test-glowup" in workflow
@@ -1544,13 +1551,14 @@ def test_binary_release_channel_policy_supports_daily_nightly_and_explicit_stabl
 def test_release_lanes_reuse_complete_modules_without_independent_sha_authority() -> None:
     binary = _workflow_text("release.yaml")
     profile = _workflow_text("release-assets.yaml")
+    fast_gate = _workflow_text("fast-gate.yaml")
     runtime_preflight = _workflow_text("release-runtime-preflight.yaml")
     agents = _source_text("AGENTS.md")
     testing_skill = _source_text("skills/dev-testing/SKILL.md")
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
+    assert "run: just _test-static" in fast_gate
     modules = (
-        "_test-static",
         "_test-artifacts",
         "_test-functional",
         "_test-glowup",
@@ -1559,6 +1567,7 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
     for workflow in (binary, profile):
         assert "group: capsem-release-${{ inputs.channel }}" in workflow
         assert "cancel-in-progress: false" in workflow
+        assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
         for module in modules:
             assert f"just {module}" in workflow
 
@@ -2427,7 +2436,9 @@ def test_asset_channel_documented_as_assets_manifest_url_not_release_index_json(
     assert "Profiles belong to channels" in release_skill
     assert "Packages are delivery containers" in release_skill_text
     assert "Binary inventory is nested under its owning package" in release_skill_text
-    assert "Profiles own their config, images, software inventory, OBOM/evidence" in release_skill_text
+    assert (
+        "Profiles own their config, images, software inventory, OBOM/evidence" in release_skill_text
+    )
     assert "channels/stable/index.json" not in release_skill
 
 
@@ -2440,7 +2451,10 @@ def test_release_skill_keeps_binary_and_asset_verification_decoupled() -> None:
     assert "binary lane builds packages only" in release_skill_text
     assert "profile lane builds exactly one channel/profile" in release_skill_text
     assert "Neither artifact family is rebuilt twice" in release_skill
-    assert "selected channel source manifest is the sole mutable release authority" in release_skill_text
+    assert (
+        "selected channel source manifest is the sole mutable release authority"
+        in release_skill_text
+    )
     assert "`release-channel.yaml` may deploy production only" in release_skill_text
     assert "scripts/check-release-site-contract.py" in release_skill
 
@@ -2467,7 +2481,9 @@ def test_release_process_skill_documents_multi_channel_graph() -> None:
     assert "Binary lane" in release_skill
     assert "Profile lane" in release_skill
     assert "Corporate authoring" in release_skill
-    assert "same revision label in two channels cannot alias or overwrite bytes" in release_skill_text
+    assert (
+        "same revision label in two channels cannot alias or overwrite bytes" in release_skill_text
+    )
     assert "schema_version" not in release_skill
 
 
@@ -2731,11 +2747,14 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     assets = _workflow_text("release-assets.yaml")
     ci = _workflow_text("ci.yaml")
     release = _workflow_text("release.yaml")
+    fast_gate = _workflow_text("fast-gate.yaml")
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
     assert "test:" in just
+    assert "run: just _test-static" in fast_gate
+    assert "uses: ./.github/workflows/fast-gate.yaml" in assets
+    assert "uses: ./.github/workflows/fast-gate.yaml" in release
     for module in (
-        "_test-static",
         "_test-artifacts",
         "_test-functional",
         "_test-glowup",
@@ -2749,7 +2768,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     assert "_build-kernel arch" in just
     assert "_build-rootfs arch" in just
 
-    assert "run: just _gate-install" in ci
+    assert "just _gate-install" in ci
     assert "_gate-install:" in just
     install_job = ci.split("  test-install:", 1)[1].split("\n  #", 1)[0]
     assert "runs-on: ubuntu-24.04" in install_job
@@ -2855,6 +2874,7 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
     just = (PROJECT_ROOT / "justfile").read_text()
     binary = _workflow_text("release.yaml")
     profile = _workflow_text("release-assets.yaml")
+    fast_gate = _workflow_text("fast-gate.yaml")
     testing = _skill_text("skills/dev-testing/SKILL.md")
     ironbank = _skill_text("skills/ironbank/SKILL.md")
     release = _skill_text("skills/release-process/SKILL.md")
@@ -2864,8 +2884,9 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
         assert "every portable release gate" in document
         assert "`just test`" in document
 
+    assert "run: just _test-static" in fast_gate
     for workflow in (binary, profile):
-        assert "just _test-static" in workflow
+        assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
         assert "just _test-artifacts" in workflow
         assert "just _test-functional" in workflow
         assert "just _test-glowup" in workflow
@@ -4122,6 +4143,7 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
     binary_release = _workflow_text("release.yaml")
     profile_release = _workflow_text("release-assets.yaml")
+    fast_gate = _workflow_text("fast-gate.yaml")
     just = (PROJECT_ROOT / "justfile").read_text()
     web_gate = _source_text("scripts/check-web-surface.sh")
 
@@ -4132,8 +4154,9 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert generate_pos != -1
     assert first_frontend_build_pos != -1
     assert frontend_check_pos != -1
-    assert "just _test-static" in binary_release
-    assert "just _test-static" in profile_release
+    assert "uses: ./.github/workflows/fast-gate.yaml" in binary_release
+    assert "uses: ./.github/workflows/fast-gate.yaml" in profile_release
+    assert "run: just _test-static" in fast_gate
     assert (
         "_test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-stale _pnpm-install _check-generated-settings"
         in just

@@ -1,6 +1,6 @@
 ---
 name: preline-ui
-description: Preline UI v4.1.3 free component library reference. 27 headless Tailwind CSS plugins, 70+ CSS component patterns, 55 custom variants, and a semantic design token system. Use when building interactive UI with Preline -- accordions, dropdowns, modals, tabs, selects, carousels, forms, navigation, or any component. Read this first for overview and quick reference, then load the relevant category file for details.
+description: Historical Preline UI v4.1.3 pattern catalogue. Capsem owns its semantic CSS and must never install, import, scan, or execute Preline. Use this only as visual/layout inspiration.
 ---
 
 # Preline UI Reference (v4.1.3)
@@ -10,25 +10,21 @@ Preline is NOT like DaisyUI. It does not provide pre-built component classes. It
 2. **A semantic design token system** (200+ CSS variables for theming via `theme.css`)
 3. 27 headless JS plugins and 55 custom variants (reference only -- **Capsem does NOT use Preline JS**)
 
-**IMPORTANT: In Capsem, we use Preline CSS-only.** All interactivity is pure Svelte 5 runes + TypeScript. Copy the CSS class strings from Preline component docs, but drive active/open/selected state with Svelte `$state`/`$derived`, NOT with `data-hs-*` attributes or `hs-*-active:` variants. See `framework-integration.md` for the full setup.
+**IMPORTANT: Capsem does not depend on Preline.** The owned contract is
+`frontend/src/styles/capsem-theme.css`; all interactivity is pure Svelte 5
+runes + TypeScript. These pages are a historical pattern catalogue only. Copy
+and adapt useful class composition into Capsem-owned components; never copy
+installation, import, package-scan, plugin, or initialization instructions.
 
-## Installation
+## Capsem-owned setup
 
 ```css
 /* global.css */
 @import "tailwindcss";
-
-/* Preline UI -- CSS tokens only */
-@source "../../node_modules/preline";
-
-/* Preline Themes */
-@import "preline/css/themes/theme.css";
-/* ... plus other themes as needed */
+@import "./capsem-theme.css";
 ```
 
-```bash
-pnpm add preline
-```
+There is deliberately no component-library package to install.
 
 ## Plugin Initialization Patterns
 

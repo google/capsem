@@ -116,7 +116,7 @@ This stage has two parts: the frontend build and the Rust compilation.
 
 The UI lives in `frontend/` and is built by pnpm. The build chain:
 
-1. **pnpm install** -- installs npm dependencies (Astro, Svelte, Tailwind, Preline, xterm.js, LayerChart, sql.js)
+1. **pnpm install** -- installs npm dependencies (Astro, Svelte, Tailwind, xterm.js, LayerChart, sql.js)
 2. **astro build** -- compiles `.astro` and `.svelte` files into static HTML/JS/CSS in `frontend/dist/`
 3. The built frontend is served by capsem-gateway over HTTP and bundled into capsem-app for the service-unavailable screen.
 
@@ -124,9 +124,9 @@ The frontend stack:
 
 | Technology | Role |
 |------------|------|
-| [Astro 5](https://astro.build) | Static site generator -- page routing, builds the app shell |
+| [Astro 7](https://astro.build) | Static site generator -- page routing, builds the app shell |
 | [Svelte 5](https://svelte.dev) | Reactive components -- terminal view, stats charts, settings panels |
-| [Tailwind v4](https://tailwindcss.com) + [Preline](https://preline.co) | Styling -- utility classes + themed CSS-only component library |
+| [Tailwind v4](https://tailwindcss.com) + Capsem-owned semantic CSS | Styling -- utility classes mapped to the checked-in theme contract |
 | [xterm.js 6](https://xtermjs.org) | Terminal emulator -- renders the in-VM shell |
 | [LayerChart 2](https://layerchart.com) | Charts -- session stats, cost tracking (D3-based Svelte library) |
 | [sql.js](https://sql.js.org) | SQLite in the browser -- queries session DBs client-side |

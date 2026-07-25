@@ -110,15 +110,12 @@ def test_staged_profile_is_authored_once_before_pairing_tests_and_publication() 
 
 def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
+    fast_gate = _job(workflow, "fast-gate", "resolve-current-binary")
+    build_assets = _job(workflow, "build-assets", "test-profile-pairing")
     pairing = _job(workflow, "test-profile-pairing", "publish-profile-release")
     publish = _job(workflow, "publish-profile-release", "deploy-channel")
     deploy = workflow.split("  deploy-channel:\n", maxsplit=1)[1]
     compatible = "needs.author-profile-release.outputs.compatible == 'true'"
-    static = _step(
-        pairing,
-        "Run shared static module",
-        "Prepare exact profile and pulled binary pairing",
-    )
     artifacts = _step(
         pairing,
         "Run shared artifact module",
@@ -145,7 +142,10 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     )
 
     assert "needs.author-profile-release.outputs.profile_changed == 'true'" in pairing
-    assert "if:" not in static
+    assert "uses: ./.github/workflows/fast-gate.yaml" in fast_gate
+    assert "if:" not in fast_gate
+    assert "fast-gate" in build_assets.splitlines()[0]
+    assert "Run shared static module" not in pairing
     assert "if:" not in artifacts
     assert "if:" not in contracts
     assert f"if: ${{{{ {compatible} }}}}" in functional
@@ -169,7 +169,7 @@ def test_profile_then_binary_reuses_authored_source_without_rebuilding_assets() 
 
     assert "Fetch latest selected channel source manifest" in binary
     assert "Resolve exact candidate-after profiles" in binary
-    assert "--kind profiles" in binary
+    assert "kind: profiles" in binary
     assert binary.index("Record binary candidate metadata once") < binary.index(
         "Run shared complete functional module"
     )

@@ -5,6 +5,14 @@ description: CI triage and red-gate response discipline. Use when any GitHub Act
 
 # CI Triage and Red-Gate Discipline
 
+## Release input authority
+
+The selected manifest is the bible: an artifact absent from it does not exist
+for CI. Fetch mutable manifests fresh inside the owning serialized workflow.
+Cache only immutable bytes under the digests recorded in that manifest, with
+channel-independent cache identity, and verify every restored blob before any
+gate consumes it.
+
 ## The law: stop the line
 
 A red required gate stops the line. This is a mechanism, not a mood:
@@ -46,9 +54,12 @@ web-surface script must fail immediately with a message naming the `Install
 release site dependencies` step when `release-site/node_modules/.bin/astro`
 is absent.
 
-RustSec is blocking in scheduled/manual `security-audit.yaml`, not ordinary PR
-CI. Treat a red security audit with the same named-owner discipline, while
-keeping a newly published upstream advisory from invalidating every open PR.
+RustSec and the JavaScript bulk advisory audit are blocking in `just smoke`,
+local `just test`, ordinary CI, both release lanes, and the scheduled/manual
+`security-audit.yaml`. A newly published advisory is a real red gate: diagnose
+and remediate it or record an explicit reviewed exception in the scanner's
+checked-in policy. Never turn the command into a warning or
+`continue-on-error`.
 
 ## Triage procedure
 

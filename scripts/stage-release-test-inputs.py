@@ -133,6 +133,10 @@ def stage_profiles(
     report, manifest = _load(input_dir)
     if report.get("kind") != "profiles":
         raise ValueError("profile staging requires profile release inputs")
+    host_arch = _host_arch()
+    selected_arch = report.get("architecture")
+    if selected_arch is not None and selected_arch != host_arch:
+        raise ValueError(f"profile release inputs select {selected_arch}, not host {host_arch}")
     replacements = _local_url_map(input_dir, report)
     manifest_url = report.get("manifest_url")
     if not isinstance(manifest_url, str):
@@ -147,7 +151,7 @@ def stage_profiles(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
-    arch = _host_arch()
+    arch = host_arch
     arch_dir = assets_dir / arch
     arch_dir.mkdir(parents=True, exist_ok=True)
     logical_names = {

@@ -37,8 +37,12 @@ just release-profile <channel> <profile>
 - A profile requiring new code is published immutably but remains inactive.
   The following binary release consumes that staged profile without rebuilding
   it and activates only the fully tested compatible graph.
-- The manifest is the authority. Existing SBOM, OBOM, attestations, and GitHub
-  logs are the evidence; do not add a parallel release ledger or result file.
+- The manifest is the bible: if an artifact is not selected by it, it does not
+  exist for release, update, cache, test, or boot. Fetch mutable manifests
+  fresh. Cache immutable bytes only under their manifest-recorded digests,
+  independently of channel, and verify every hit before use. Existing SBOM,
+  OBOM, attestations, and GitHub logs are the evidence; do not add a parallel
+  release ledger or result file.
 - All first-party and corporate manifest/profile authoring goes through
   `capsem-admin`. Corporations select official Capsem packages; they do not
   build or replace them.

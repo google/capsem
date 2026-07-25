@@ -43,7 +43,7 @@ def _load_test_asset_manifest() -> dict:
     if not TEST_ASSET_MANIFEST.is_file():
         raise FileNotFoundError(
             f"install-test asset manifest missing at {TEST_ASSET_MANIFEST}; "
-            "run scripts/prepare-install-test-assets.sh before install tests"
+            "run just _gate-install with rebuilt or pulled profile assets"
         )
     return json.loads(TEST_ASSET_MANIFEST.read_text(encoding="utf-8"))
 

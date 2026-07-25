@@ -103,10 +103,12 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
 def test_both_release_lanes_reuse_fail_closed_static_module() -> None:
     binary_workflow = _read(".github/workflows/release.yaml")
     profile_workflow = _read(".github/workflows/release-assets.yaml")
+    fast_gate = _read(".github/workflows/fast-gate.yaml")
     just = _read("justfile")
 
-    assert "just _test-static" in binary_workflow
-    assert "just _test-static" in profile_workflow
+    assert "uses: ./.github/workflows/fast-gate.yaml" in binary_workflow
+    assert "uses: ./.github/workflows/fast-gate.yaml" in profile_workflow
+    assert "run: just _test-static" in fast_gate
     assert "run: just test" not in binary_workflow
     assert "run: just test" not in profile_workflow
     assert "cargo clippy --workspace --all-targets -- -D warnings" in just
@@ -117,9 +119,7 @@ def test_frontend_release_gate_is_owned_by_the_canonical_test() -> None:
     web_gate = _read("scripts/check-web-surface.sh")
 
     assert "\ntest-frontend:" not in justfile
-    block = justfile.split("\n_test-candidate:", 1)[1].split(
-        "\n_build-host-image:", 1
-    )[0]
+    block = justfile.split("\n_test-candidate:", 1)[1].split("\n_build-host-image:", 1)[0]
     assert "bash scripts/check-web-surface.sh frontend" in block
     assert "pnpm --dir frontend run check" in web_gate
     assert "pnpm --dir frontend run test" in web_gate

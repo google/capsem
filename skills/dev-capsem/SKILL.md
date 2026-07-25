@@ -33,7 +33,7 @@ Rule: if logic could be reused or tested without a specific crate, it belongs in
 | Path | What | Skill |
 |------|------|-------|
 | `crates/` | Rust workspace | `/site-architecture` |
-| `frontend/` | Astro 5 + Svelte 5 + Tailwind v4 + Preline | `/frontend-design` |
+| `frontend/` | Astro 7 + Svelte 5 + Tailwind v4 + owned semantic CSS | `/frontend-design` |
 | `site/` | Marketing website (Astro + Svelte 5) | `/site-marketing` |
 | `docs/` | Documentation site (Astro Starlight) | `/site-infra` |
 | `src/capsem/builder/` | Python image builder CLI | `/build-images` |
@@ -79,7 +79,7 @@ When working on a specific area, consult the relevant skill:
 ### Frontend & site
 | Skill | When |
 |-------|------|
-| `/frontend-design` | Design system, colors, Preline, Svelte 5 runes |
+| `/frontend-design` | Owned design system, semantic colors, Svelte 5 runes |
 | `/site-architecture` | System architecture, service daemon, gateway, key files |
 | `/site-infra` | Astro Starlight docs site |
 

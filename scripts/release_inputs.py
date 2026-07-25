@@ -94,9 +94,7 @@ def _artifact_row(
     }
 
 
-def _package_rows(
-    manifest: dict[str, Any], manifest_url: str
-) -> Iterable[dict[str, Any]]:
+def _package_rows(manifest: dict[str, Any], manifest_url: str) -> Iterable[dict[str, Any]]:
     packages = manifest.get("packages")
     if not isinstance(packages, list) or not packages:
         raise ValueError("release manifest contains no packages")
@@ -115,29 +113,21 @@ def _package_rows(
         name = safe_name(absolute, f"package-{index}")
         yield _artifact_row(Path(name), absolute, package, f"package {name}")
 
-        package_id = safe_component(
-            package.get("id") or f"package-{index}", "package identity"
-        )
+        package_id = safe_component(package.get("id") or f"package-{index}", "package identity")
         evidence = package.get("evidence", [])
         if not isinstance(evidence, list):
             raise ValueError(f"package {name} evidence is malformed")
         for evidence_index, record in enumerate(evidence):
             if not isinstance(record, dict):
-                raise ValueError(
-                    f"package {name} evidence[{evidence_index}] is malformed"
-                )
+                raise ValueError(f"package {name} evidence[{evidence_index}] is malformed")
             record = cast(dict[str, Any], record)
             if record.get("status") == "revoked":
                 continue
             evidence_url = record.get("url")
             if not isinstance(evidence_url, str) or not evidence_url:
-                raise ValueError(
-                    f"package {name} evidence[{evidence_index}] has no URL"
-                )
+                raise ValueError(f"package {name} evidence[{evidence_index}] has no URL")
             evidence_absolute = urljoin(manifest_url, evidence_url)
-            evidence_name = safe_name(
-                evidence_absolute, f"evidence-{evidence_index}"
-            )
+            evidence_name = safe_name(evidence_absolute, f"evidence-{evidence_index}")
             yield _artifact_row(
                 Path("package-evidence") / package_id / evidence_name,
                 evidence_absolute,
@@ -147,7 +137,9 @@ def _package_rows(
 
 
 def _profile_rows(
-    manifest: dict[str, Any], manifest_url: str
+    manifest: dict[str, Any],
+    manifest_url: str,
+    selected_architecture: str | None = None,
 ) -> Iterable[dict[str, Any]]:
     profiles = manifest.get("profiles")
     if not isinstance(profiles, dict) or not profiles:
@@ -162,15 +154,17 @@ def _profile_rows(
         architectures = profile.get("architectures")
         if not isinstance(architectures, list) or not architectures:
             raise ValueError(f"profile {profile_id} has no architectures")
-        for architecture in architectures:
-            if not isinstance(architecture, dict):
+        for architecture_record in architectures:
+            if not isinstance(architecture_record, dict):
                 raise ValueError(f"profile {profile_id} architecture is malformed")
             arch = safe_component(
-                architecture.get("architecture"),
+                architecture_record.get("architecture"),
                 f"profile {profile_id} architecture identity",
             )
+            if selected_architecture is not None and arch != selected_architecture:
+                continue
             for section in ("config", "images", "evidence"):
-                records = architecture.get(section, [])
+                records = architecture_record.get(section, [])
                 if not isinstance(records, list):
                     raise ValueError(f"profile {profile_id}/{arch} {section} is malformed")
                 for index, record in enumerate(records):
@@ -208,17 +202,22 @@ def resolved_artifact_rows(
     kind: str,
     *,
     allow_empty_profiles: bool = False,
+    architecture: str | None = None,
 ) -> list[dict[str, Any]]:
     if kind not in {"packages", "profiles"}:
         raise ValueError(f"invalid release input kind: {kind!r}")
     if allow_empty_profiles and kind != "profiles":
         raise ValueError("empty release inputs are permitted only for profiles")
+    if architecture is not None:
+        architecture = safe_component(architecture, "release input architecture")
+        if kind != "profiles":
+            raise ValueError("architecture filtering is permitted only for profiles")
     if allow_empty_profiles and manifest.get("profiles") == {}:
         return []
     source = (
         _package_rows(manifest, manifest_url)
         if kind == "packages"
-        else _profile_rows(manifest, manifest_url)
+        else _profile_rows(manifest, manifest_url, architecture)
     )
     rows: list[dict[str, Any]] = []
     by_url: dict[str, tuple[str, str, int]] = {}
@@ -227,16 +226,12 @@ def resolved_artifact_rows(
         identity = (row["sha256"], row["blake3"], row["bytes"])
         previous_identity = by_url.setdefault(row["url"], identity)
         if previous_identity != identity:
-            raise ValueError(
-                f"manifest records disagree on immutable input {row['url']}"
-            )
+            raise ValueError(f"manifest records disagree on immutable input {row['url']}")
         if row["url"] in {existing["url"] for existing in rows}:
             continue
         previous_url = by_path.setdefault(row["relative"], row["url"])
         if previous_url != row["url"]:
-            raise ValueError(
-                f"manifest artifacts collide at release input path {row['relative']}"
-            )
+            raise ValueError(f"manifest artifacts collide at release input path {row['relative']}")
         rows.append(row)
     if not rows:
         raise ValueError(f"release manifest resolved no {kind}")
@@ -285,18 +280,22 @@ def load_verified_release_inputs(
     allow_empty_profiles = report.get("allow_empty_profiles", False)
     if not isinstance(allow_empty_profiles, bool):
         raise ValueError("release input report has an invalid empty-profile policy")
+    architecture = report.get("architecture")
+    if architecture is not None:
+        architecture = safe_component(architecture, "release input report architecture")
+        if kind != "profiles":
+            raise ValueError("release input report architecture is permitted only for profiles")
     expected_rows = resolved_artifact_rows(
         manifest,
         manifest_url,
         kind,
         allow_empty_profiles=allow_empty_profiles,
+        architecture=architecture,
     )
     expected = report_artifacts(expected_rows)
     artifacts = report.get("artifacts")
     if artifacts != expected:
-        raise ValueError(
-            "release input report does not match the resolved manifest artifact set"
-        )
+        raise ValueError("release input report does not match the resolved manifest artifact set")
 
     input_root = input_dir.resolve()
     verified: list[str] = []

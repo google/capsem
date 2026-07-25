@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import sys
 
@@ -80,7 +81,7 @@ def test_bulk_audit_rejects_malformed_registry_response() -> None:
         raise AssertionError("malformed advisory response was accepted")
 
 
-def test_scheduled_workflow_owns_blocking_bulk_audit_signal() -> None:
+def test_every_fast_gate_blocks_on_bulk_dependency_advisories() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
     ci = (PROJECT_ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8")
     scheduled = (PROJECT_ROOT / ".github/workflows/security-audit.yaml").read_text(encoding="utf-8")
@@ -96,9 +97,28 @@ def test_scheduled_workflow_owns_blocking_bulk_audit_signal() -> None:
     # Audit-only convenience is not a public Just fork.
     assert "\naudit:" not in justfile
 
-    # Candidate/smoke/PR gates report advisories without letting the external
-    # publication clock turn an unrelated source candidate red.
-    assert justfile.count("cargo audit reported advisories; see the security-audit workflow") >= 2
-    assert justfile.count("npm audit reported advisories; see the security-audit workflow") >= 2
+    assert "cargo audit reported advisories; see the security-audit workflow" not in justfile
+    assert "npm audit reported advisories; see the security-audit workflow" not in justfile
+    assert "cargo audit & PID_CARGO_AUDIT=$!" in justfile
+    assert (
+        "python3 scripts/audit-pnpm-bulk.py --project-dir frontend & PID_PNPM_AUDIT=$!" in justfile
+    )
+    assert 'wait $PID_CARGO_AUDIT || { echo "cargo audit failed"; FAIL=1; }' in justfile
+    assert 'wait $PID_PNPM_AUDIT || { echo "npm bulk audit failed"; FAIL=1; }' in justfile
     ci_audit_step = ci.split("- name: Frontend dependency audit", 1)[1].split("- name:", 1)[0]
-    assert "continue-on-error: true" in ci_audit_step
+    assert "continue-on-error: true" not in ci_audit_step
+
+
+def test_frontend_owns_theme_css_without_preline_build_dependency() -> None:
+    package = json.loads((PROJECT_ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
+    global_css = (PROJECT_ROOT / "frontend" / "src" / "styles" / "global.css").read_text(
+        encoding="utf-8"
+    )
+    lockfile = (PROJECT_ROOT / "frontend" / "pnpm-lock.yaml").read_text(encoding="utf-8")
+
+    assert "preline" not in package["dependencies"]
+    assert "preline" not in lockfile
+    assert "node_modules/preline" not in global_css
+    assert "preline/variants.css" not in global_css
+    assert "preline/css/themes/theme.css" not in global_css
+    assert '@import "./capsem-theme.css";' in global_css

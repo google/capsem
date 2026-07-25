@@ -121,11 +121,14 @@ the current-build runtime profile under `target/config/` from checked-in
 
 | Recipe | What it does |
 |--------|-------------|
-| `just audit` | Check for known vulnerabilities in Rust + npm deps |
 | `just update-deps` | `cargo update` + `pnpm update` to latest compatible versions |
 | `just update-prices` | Refresh model pricing JSON from upstream |
 | `just doctor` | Check tools, colored output, structured recap (exits 1 if failures) |
 | `just doctor fix` | Doctor + auto-fix all fixable issues in dependency order |
+
+Rust and JavaScript vulnerability audits are mandatory parts of `just smoke`
+and `just test`; there is no separate public audit recipe that can drift from
+the tested composition.
 
 ## Release
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -47,6 +48,60 @@ def _read_manifest(url: str) -> tuple[bytes, dict[str, Any]]:
     return manifest_bytes, manifest
 
 
+def _cache_path(cache_dir: Path, row: dict[str, Any]) -> Path:
+    digest = row["sha256"]
+    return cache_dir / "sha256" / digest[:2] / digest
+
+
+def _cached_payload(cache_dir: Path, row: dict[str, Any]) -> bytes | None:
+    path = _cache_path(cache_dir, row)
+    if not path.exists():
+        return None
+    if not path.is_file():
+        raise ValueError(f"release input cache entry is not a file: {path}")
+    payload = path.read_bytes()
+    try:
+        verify_payload(payload, row["record"], f"cached {row['label']}")
+    except ValueError:
+        path.unlink()
+        return None
+    return payload
+
+
+def _store_cached_payload(cache_dir: Path, row: dict[str, Any], payload: bytes) -> None:
+    path = _cache_path(cache_dir, row)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_bytes(payload)
+    os.replace(temporary, path)
+
+
+def _prune_cache(cache_dir: Path, keep_sha256: set[str]) -> None:
+    root = cache_dir / "sha256"
+    if not root.exists():
+        return
+    for prefix in root.iterdir():
+        if (
+            not prefix.is_dir()
+            or len(prefix.name) != 2
+            or any(character not in "0123456789abcdef" for character in prefix.name)
+        ):
+            raise ValueError(f"unexpected release input cache entry: {prefix}")
+        for entry in prefix.iterdir():
+            if (
+                not entry.is_file()
+                or len(entry.name) != 64
+                or any(character not in "0123456789abcdef" for character in entry.name)
+            ):
+                raise ValueError(f"unexpected release input cache entry: {entry}")
+            if entry.name not in keep_sha256:
+                entry.unlink()
+        try:
+            prefix.rmdir()
+        except OSError:
+            pass
+
+
 def _assert_public_channel_absent(
     public_manifest_url: str, bootstrap_manifest: dict[str, Any]
 ) -> None:
@@ -56,18 +111,14 @@ def _assert_public_channel_absent(
     parsed = urlparse(public_manifest_url)
     expected_path = f"/assets/{channel}/manifest.json"
     if parsed.scheme not in {"http", "https"} or parsed.path != expected_path:
-        raise ValueError(
-            "bootstrap fallback requires the selected public channel manifest URL"
-        )
+        raise ValueError("bootstrap fallback requires the selected public channel manifest URL")
     catalog_url = f"{parsed.scheme}://{parsed.netloc}/channels.json"
     catalog = json.loads(_read_url(catalog_url))
     channels = catalog.get("channels") if isinstance(catalog, dict) else None
     if not isinstance(channels, dict):
         raise ValueError("public channel catalog must contain a channels object")
     if channel in channels:
-        raise ValueError(
-            f"public channel {channel} exists but its manifest could not be resolved"
-        )
+        raise ValueError(f"public channel {channel} exists but its manifest could not be resolved")
 
 
 def _local_publication_payload(
@@ -104,6 +155,9 @@ def fetch_release_inputs(
     local_publication_dir: Path | None = None,
     allow_empty_profiles: bool = False,
     bootstrap_manifest_url: str | None = None,
+    architecture: str | None = None,
+    cache_dir: Path | None = None,
+    prune_cache: bool = False,
 ) -> dict[str, Any]:
     if (local_publication_base is None) != (local_publication_dir is None):
         raise ValueError("local publication base and directory must be supplied together")
@@ -113,6 +167,19 @@ def fetch_release_inputs(
         parsed_base = urlparse(local_publication_base)
         if parsed_base.scheme != "https" or not parsed_base.netloc:
             raise ValueError("local publication base must be an absolute HTTPS URL")
+    if architecture is not None and kind != "profiles":
+        raise ValueError("architecture filtering is profile-only")
+    if prune_cache and cache_dir is None:
+        raise ValueError("cache pruning requires a cache directory")
+    if cache_dir is not None:
+        output_root = output.resolve()
+        cache_root = cache_dir.resolve()
+        if (
+            output_root == cache_root
+            or output_root in cache_root.parents
+            or cache_root in output_root.parents
+        ):
+            raise ValueError("release input output and cache directories must be separate")
 
     try:
         manifest_bytes, manifest = _read_manifest(manifest_url)
@@ -121,9 +188,7 @@ def fetch_release_inputs(
             raise
         manifest_bytes, manifest = _read_manifest(bootstrap_manifest_url)
         if manifest.get("profiles") != {}:
-            raise ValueError(
-                "bootstrap release-input fallback requires explicit empty profiles"
-            )
+            raise ValueError("bootstrap release-input fallback requires explicit empty profiles")
         _assert_public_channel_absent(manifest_url, manifest)
         manifest_url = bootstrap_manifest_url
 
@@ -137,20 +202,33 @@ def fetch_release_inputs(
         manifest_url,
         kind,
         allow_empty_profiles=allow_empty_profiles,
+        architecture=architecture,
     )
     local_paths: set[Path] = set()
+    cache_hits = 0
+    cache_misses = 0
     for row in rows:
+        store_in_cache = False
         local = _local_publication_payload(
             row["url"],
             publication_base=local_publication_base,
             publication_dir=local_publication_dir,
         )
         if local is None:
-            payload = _read_url(row["url"])
+            payload = _cached_payload(cache_dir, row) if cache_dir is not None else None
+            if payload is None:
+                payload = _read_url(row["url"])
+                if cache_dir is not None:
+                    store_in_cache = True
+            elif cache_dir is not None:
+                cache_hits += 1
         else:
             payload, local_path = local
             local_paths.add(local_path)
         verify_payload(payload, row["record"], row["label"])
+        if store_in_cache and cache_dir is not None:
+            _store_cached_payload(cache_dir, row, payload)
+            cache_misses += 1
         path = output / row["relative"]
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(payload)
@@ -170,6 +248,8 @@ def fetch_release_inputs(
                 f"extra={sorted(str(path) for path in actual - expected)}, "
                 f"missing={sorted(str(path) for path in expected - actual)}"
             )
+    if prune_cache and cache_dir is not None:
+        _prune_cache(cache_dir, {row["sha256"] for row in rows})
     fetched = report_artifacts(rows)
     report = {
         "schema": "capsem.release_inputs.v1",
@@ -180,6 +260,13 @@ def fetch_release_inputs(
     }
     if allow_empty_profiles:
         report["allow_empty_profiles"] = True
+    if architecture is not None:
+        report["architecture"] = architecture
+    if cache_dir is not None:
+        report["cache"] = {
+            "hits": cache_hits,
+            "misses": cache_misses,
+        }
     (output / "release-inputs.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -195,6 +282,9 @@ def main() -> int:
     parser.add_argument("--local-publication-dir", type=Path)
     parser.add_argument("--allow-empty-profiles", action="store_true")
     parser.add_argument("--bootstrap-manifest-url")
+    parser.add_argument("--architecture", choices=("arm64", "x86_64"))
+    parser.add_argument("--cache-dir", type=Path)
+    parser.add_argument("--prune-cache", action="store_true")
     args = parser.parse_args()
     try:
         report = fetch_release_inputs(
@@ -205,6 +295,9 @@ def main() -> int:
             local_publication_dir=args.local_publication_dir,
             allow_empty_profiles=args.allow_empty_profiles,
             bootstrap_manifest_url=args.bootstrap_manifest_url,
+            architecture=args.architecture,
+            cache_dir=args.cache_dir,
+            prune_cache=args.prune_cache,
         )
     except (OSError, ValueError) as error:
         print(f"release input fetch failed: {error}", file=sys.stderr)

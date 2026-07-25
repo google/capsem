@@ -5,6 +5,15 @@ description: Capsem release process, orthogonal binary/profile CI, Apple code si
 
 # Release Process
 
+## Manifest Authority
+
+The selected manifest is the bible: if an artifact is not recorded in it, it
+does not exist for a release lane. Fetch the mutable manifest fresh after the
+channel lock is acquired. Large immutable inputs may be cached only under the
+artifact digests already recorded in that manifest, independently of channel,
+and every cache hit must be digest-verified before use. Cache contents,
+filenames, GitHub Releases, and prior workflow runs never add membership.
+
 ## Governing contract
 
 Read `tmp/release-spec.md` before changing release commands, manifests,

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Restored fail-closed release inputs and early gates: CI now caches
+  manifest-selected native profile blobs by recorded digest, installed
+  Doctor/Winterfell boots real assets with retained failure evidence, blocking
+  audits/Clippy/frontend checks run before builders, and the frontend uses its
+  checked-in semantic theme without a Preline dependency.
+
 ### Added
 
 - Added fail-closed release glow-up inputs that bind each orthogonal transition

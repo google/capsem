@@ -466,16 +466,18 @@ def test_install_test_runs_local_release_glowup_from_real_package() -> None:
     assert "just _gate-install" in _just_recipe_block("test:")
 
 
-def test_install_test_uses_clean_isolated_asset_fixtures() -> None:
+def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> None:
     block = _just_recipe_block("_gate-install").replace(r"\"", '"').replace(r"\$", "$")
     update_tests = (PROJECT_ROOT / "tests/capsem-install/test_update.py").read_text()
 
     assert 'INSTALL_ASSETS_DIR="target/install-test-assets"' in block
     assert 'INSTALL_CONFIG_DIR="target/install-test-config"' in block
     assert 'rm -rf "$INSTALL_ASSETS_DIR" "$INSTALL_CONFIG_DIR"' in block
-    assert (
-        'CAPSEM_ASSETS_DIR="$INSTALL_ASSETS_DIR" bash scripts/prepare-install-test-assets.sh'
-    ) in block
+    assert "scripts/prepare-install-test-assets.sh" not in block
+    assert 'INSTALL_PROFILE_INPUTS="${CAPSEM_INSTALL_PROFILE_INPUTS:-}"' in block
+    assert "scripts/stage-release-test-inputs.py" in block
+    assert 'cp -R assets/. "$INSTALL_ASSETS_DIR/"' in block
+    assert "requires rebuilt local assets or verified pulled profile inputs" in block
     assert (
         'CAPSEM_ASSETS_DIR="$INSTALL_ASSETS_DIR" '
         'CAPSEM_CONFIG_OUTPUT_ROOT="/src/$INSTALL_CONFIG_DIR" '
@@ -487,7 +489,7 @@ def test_install_test_uses_clean_isolated_asset_fixtures() -> None:
     assert '--config-root "$INSTALL_CONFIG_DIR"' in block
     assert '"target" / "install-test-assets" / "manifest.json"' in update_tests
     assert 'REPO_ROOT / "assets" / "manifest.json"' not in update_tests
-    assert "run scripts/prepare-install-test-assets.sh before install tests" in update_tests
+    assert "run just _gate-install with rebuilt or pulled profile assets" in update_tests
 
 
 def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> None:
@@ -548,24 +550,20 @@ def test_install_recipe_runs_release_glowup_in_clean_project_environment() -> No
 
 def test_native_packages_make_full_doctor_mock_server_self_contained() -> None:
     build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
-    pkg_postinstall = (
-        PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall"
-    ).read_text()
+    pkg_postinstall = (PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall").read_text()
     repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()
     deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
     cli = (PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs").read_text()
-    mock_server = (
-        PROJECT_ROOT / "crates" / "capsem-mock-server" / "src" / "main.rs"
-    ).read_text()
+    mock_server = (PROJECT_ROOT / "crates" / "capsem-mock-server" / "src" / "main.rs").read_text()
 
     for package_script in (build_pkg, pkg_postinstall, repack_deb, deb_postinst):
         assert "capsem-mock-server" in package_script
     assert "std::env::current_exe()" in cli
     assert cli.index("std::env::current_exe()") < cli.index("std::env::current_dir()")
-    assert '#[command(version' in mock_server
+    assert "#[command(version" in mock_server
 
 
-def test_full_gate_preflights_clean_install_harness_before_expensive_stages() -> None:
+def test_full_gate_runs_fast_checks_before_install_harness_preflight() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
     full_gate = _just_recipe_block("test:")
     preflight = justfile.split("_test-install-harness-preflight:", maxsplit=1)[1].split(
@@ -573,9 +571,11 @@ def test_full_gate_preflights_clean_install_harness_before_expensive_stages() ->
     )[0]
 
     assert "just _test-install-harness-preflight" in full_gate
-    assert full_gate.index("just _test-install-harness-preflight") < full_gate.index(
-        "cargo clippy --workspace --all-targets"
-    )
+    clippy = full_gate.index("cargo clippy --workspace --all-targets")
+    frontend = full_gate.index("bash scripts/check-web-surface.sh frontend")
+    preflight_call = full_gate.index("just _test-install-harness-preflight")
+    assert clippy < preflight_call
+    assert frontend < preflight_call
     assert "docker/Dockerfile.install-test" in preflight
     assert "source /src/scripts/doctor-linux.sh" in preflight
     assert "linux_musl_toolchain_available" in preflight
@@ -804,7 +804,9 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
 
     dependencies = candidate.splitlines()[0].split(":", 1)[1].split()
     assert "_bound-docker-test-storage" in dependencies
-    assert candidate.index("just _gate-install") < candidate.index("just _bound-docker-test-storage")
+    assert candidate.index("just _gate-install") < candidate.index(
+        "just _bound-docker-test-storage"
+    )
     capacity = bound.index("scripts/ensure-docker-space.sh")
     release_install = bound.index("--boundary candidate-boundary")
     assert release_install < capacity
@@ -967,17 +969,11 @@ def test_install_gate_passes_vm_devices_to_full_installed_proofs() -> None:
     assert 'if [ "$(uname -s)" = "Linux" ]; then' in block
     assert "DOCKER_RUNTIME_ARGS=(" in block
     assert "--security-opt seccomp=unconfined" in block
-    assert (
-        'DOCKER_RUNTIME_ARGS+=("--device" "/dev/kvm" '
-        '"--device" "/dev/vhost-vsock")'
-    ) in block
+    assert ('DOCKER_RUNTIME_ARGS+=("--device" "/dev/kvm" "--device" "/dev/vhost-vsock")') in block
     assert 'DOCKER_RUNTIME_ARGS+=("--device" "/dev/vsock")' in block
     assert '"${DOCKER_RUNTIME_ARGS[@]}"' in block
     assert 'docker exec "$CONTAINER" test -r /dev/kvm -a -w /dev/kvm' in block
-    assert (
-        'docker exec "$CONTAINER" test -r /dev/vhost-vsock '
-        "-a -w /dev/vhost-vsock"
-    ) in block
+    assert ('docker exec "$CONTAINER" test -r /dev/vhost-vsock -a -w /dev/vhost-vsock') in block
     assert "CAPSEM_SKIP_KVM_CHECK" not in block
     assert "colima ssh -- test -r /dev/kvm" not in block
 
@@ -1358,7 +1354,7 @@ def test_local_release_glowup_installed_path_asserts_channel_round_trip_and_prov
     assert "update --yes --channel nightly" in script
     assert "update --yes --channel stable" in script
     assert script.count("update --assets --channel") == 1
-    assert "update --assets --channel nightly > \"$HOME/.capsem/corp-escape.log\"" in script
+    assert 'update --assets --channel nightly > "$HOME/.capsem/corp-escape.log"' in script
     assert '"package_version": "1.5.101"' not in script
     assert "probe_installed_transition fresh-stable" in script
     assert "probe_installed_transition channel-nightly" in script
@@ -1720,9 +1716,9 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
     assert """echo '{"releases":{}}'""" not in workflow
     assert "run: just test" not in workflow
     assert "Fetch latest selected channel source manifest" in workflow
-    assert "--kind profiles" in workflow
-    assert "--output target/binary-public-before/profiles" in workflow
-    assert "--output target/candidate-profile-inputs" in workflow
+    assert "kind: profiles" in workflow
+    assert "output: target/binary-public-before/profiles" in workflow
+    assert "output: target/candidate-profile-inputs" in workflow
     assert "--input-dir target/candidate-profile-inputs" in workflow
     assert "just _test-artifacts" in workflow
     assert "just _test-functional" in workflow
@@ -1788,9 +1784,35 @@ def test_ci_install_job_sets_up_uv_before_the_shared_install_gate() -> None:
     install_job = _workflow_job_blocks(workflow)["test-install"]
 
     setup_pos = install_job.find("astral-sh/setup-uv@")
-    install_pos = install_job.find("run: just _gate-install")
+    install_pos = install_job.find("just _gate-install")
     assert setup_pos != -1, "test-install invokes uv-backed Just helpers without setup-uv"
     assert setup_pos < install_pos, "test-install sets up uv after the shared install gate"
+
+
+def test_ci_install_job_pulls_existing_profiles_before_building_packages() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    install_job = _workflow_job_blocks(workflow)["test-install"]
+    fetch_action = (
+        PROJECT_ROOT / ".github" / "actions" / "fetch-release-inputs" / "action.yaml"
+    ).read_text()
+
+    fetch_pos = install_job.index("./.github/actions/fetch-release-inputs")
+    gate_pos = install_job.index("just _gate-install")
+    assert fetch_pos < gate_pos
+    assert "kind: profiles" in install_job
+    assert "architecture: x86_64" in install_job
+    assert "output: target/ci-install-profile-inputs" in install_job
+    assert "actions/cache/restore@" in fetch_action
+    assert "actions/cache/save@" in fetch_action
+    assert "--cache-dir target/release-input-cache" in fetch_action
+    assert "--prune-cache" not in fetch_action
+    assert "steps.fetch.outputs.cache-misses != '0'" in fetch_action
+    assert "inputs.manifest-url" not in fetch_action.split("key:", 1)[1].splitlines()[0]
+    assert "inputs.channel" not in fetch_action
+    assert (
+        "CAPSEM_INSTALL_PROFILE_INPUTS=target/ci-install-profile-inputs just _gate-install"
+    ) in install_job
+    assert "scripts/prepare-install-test-assets.sh" not in install_job
 
 
 def test_installed_doctor_failure_is_printed_and_preserved() -> None:
@@ -1813,10 +1835,7 @@ def test_ci_install_job_uploads_glowup_evidence_on_failure() -> None:
 
     assert "Upload install and glow-up evidence on failure" in install_job
     assert "if: failure()" in install_job
-    assert (
-        "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
-        in install_job
-    )
+    assert "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in install_job
     assert "target/local-release-glowup/" in install_job
     assert "if-no-files-found: warn" in install_job
 

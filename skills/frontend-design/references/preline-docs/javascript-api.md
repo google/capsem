@@ -1,4 +1,9 @@
-# Preline JavaScript API
+# Upstream Preline JavaScript API (Forbidden in Capsem)
+
+This page is retained only to recognize and reject upstream integration
+patterns. Capsem must never add the Preline package, import any API shown
+below, or use its plugins. Implement state and interaction in Capsem-owned
+Svelte code.
 
 ## Import Patterns
 

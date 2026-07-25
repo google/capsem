@@ -630,7 +630,9 @@ test:
 _test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-stale _pnpm-install _check-generated-settings _check-assets _pack-initrd _materialize-config
     CAPSEM_TEST_MODULE=all just _test-candidate-run
 
-_test-static: _bootstrap _bound-docker-test-storage _install-tools _clean-stale _pnpm-install
+_test-static: _install-tools _clean-stale _pnpm-install _check-generated-settings
+    uv sync
+    just _bound-docker-test-storage
     CAPSEM_TEST_MODULE=static just _test-candidate-run
 
 _test-artifacts:
@@ -702,34 +704,17 @@ _test-candidate-run:
         echo "=== Hardcoded profile/channel selection guard ==="
         bash scripts/check-hardcoded-release-selections.sh
 
-    # ---- Stage 0: release harness bootstrap --------------------------------
-    # Prove the clean Linux install container can resolve and launch its test
-    # runner before spending ~2 hours on builds, VMs, and package assembly.
-    # Stage 7 still runs the complete real install suite; this is only the
-    # cheap fail-fast proof of the harness itself.
-    echo "=== Install harness preflight (clean container) ==="
-    just _test-install-harness-preflight
-    # Neither final image is needed again until later rails: assets precede
-    # Linux packaging, and the install tail is last. The preflight releases
-    # the base; release the derived image here too. Bounded BuildKit keeps
-    # reusable content-addressed layers without pinning ~12 GiB of images.
-    uv run python scripts/docker-storage-policy.py release \
-        --boundary after-install-preflight --rail install-preflight
-
-    # ---- Stage 1: fast-fail (audits + lint + frontend) ---------------------
+    # ---- Stage 0: fast-fail (audits + lint + frontend) ---------------------
     # Cheap, independent, most-common failure class. Clippy (not cargo check)
     # is the Rust lint gate per CLAUDE.md -- it's a strict superset of check
-    # and covers --all-targets. Keep the production frontend build before
-    # clippy: capsem-app's Tauri context embeds frontend/dist at compile time.
-    # `set -e` does not trip on failed background jobs, so aggregate with
-    # FAIL=1.
+    # and covers --all-targets. Run it alongside the dependency and Python
+    # checks while the frontend suite produces the dist embedded by later
+    # capsem-app compilation. `set -e` does not trip on failed background
+    # jobs, so aggregate with FAIL=1.
     echo "=== Audits + lint + web surfaces ==="
-    # Dependency advisories follow an external clock. The scheduled/manual
-    # security-audit workflow owns the blocking signal; candidate qualification
-    # reports a fresh result without letting an upstream database update make an
-    # unrelated source commit red.
-    (cargo audit || echo "::warning::cargo audit reported advisories; see the security-audit workflow") & PID_CARGO_AUDIT=$!
-    (python3 scripts/audit-pnpm-bulk.py --project-dir frontend || echo "::warning::npm audit reported advisories; see the security-audit workflow") & PID_PNPM_AUDIT=$!
+    cargo audit & PID_CARGO_AUDIT=$!
+    python3 scripts/audit-pnpm-bulk.py --project-dir frontend & PID_PNPM_AUDIT=$!
+    cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
     uv run ruff check . & PID_RUFF=$!
     uv run ty check src/capsem & PID_TY=$!
     uv run capsem-builder validate-skills skills & PID_SKILLS=$!
@@ -751,15 +736,23 @@ _test-candidate-run:
         echo "release site (check/test/generated channel build) failed"
         FAIL=1
     fi
-    cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
-    wait $PID_CARGO_AUDIT
-    wait $PID_PNPM_AUDIT
+    wait $PID_CARGO_AUDIT || { echo "cargo audit failed"; FAIL=1; }
+    wait $PID_PNPM_AUDIT || { echo "npm bulk audit failed"; FAIL=1; }
     wait $PID_CLIPPY      || { echo "cargo clippy failed (warnings = error)"; FAIL=1; }
     wait $PID_RUFF        || { echo "ruff check failed"; FAIL=1; }
     wait $PID_TY          || { echo "ty check failed"; FAIL=1; }
     wait $PID_SKILLS      || { echo "skill validation failed"; FAIL=1; }
     wait $PID_PUBLIC_SURFACE || { echo "public surface approval failed"; FAIL=1; }
     [ $FAIL -eq 0 ] || exit 1
+
+    # ---- Stage 1: release harness bootstrap --------------------------------
+    # Only after the cheap source, dependency, lint, and frontend gates pass,
+    # prove the clean Linux install container can launch its test runner.
+    # The complete real install suite still runs later.
+    echo "=== Install harness preflight (clean container) ==="
+    just _test-install-harness-preflight
+    uv run python scripts/docker-storage-policy.py release \
+        --boundary after-install-preflight --rail install-preflight
 
     # ---- Stage 2: cross-arch agent cross-compile ----------------------------
     # _pack-initrd already built the host arch; this validates the non-host
@@ -1447,8 +1440,8 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     uv run ty check src/capsem & TY_PID=$!
     uv run capsem-builder validate-skills skills & SKILLS_PID=$!
     uv run python scripts/check_public_surface.py & PUBLIC_SURFACE_PID=$!
-    (cargo audit || echo "::warning::cargo audit reported advisories; see the security-audit workflow") & AUDIT_PID=$!
-    (python3 scripts/audit-pnpm-bulk.py --project-dir frontend || echo "::warning::npm audit reported advisories; see the security-audit workflow") & PNPM_AUDIT_PID=$!
+    cargo audit & AUDIT_PID=$!
+    python3 scripts/audit-pnpm-bulk.py --project-dir frontend & PNPM_AUDIT_PID=$!
     (cd frontend && pnpm run check) & FE_CHECK_PID=$!
     FAIL=0
     wait $CLIPPY_PID     || { echo "cargo clippy failed"; FAIL=1; }
@@ -1456,8 +1449,8 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     wait $TY_PID         || { echo "ty check failed"; FAIL=1; }
     wait $SKILLS_PID     || { echo "skill validation failed"; FAIL=1; }
     wait $PUBLIC_SURFACE_PID || { echo "public surface approval failed"; FAIL=1; }
-    wait $AUDIT_PID
-    wait $PNPM_AUDIT_PID
+    wait $AUDIT_PID      || { echo "cargo audit failed"; FAIL=1; }
+    wait $PNPM_AUDIT_PID || { echo "JavaScript dependency audit failed"; FAIL=1; }
     wait $FE_CHECK_PID   || { echo "pnpm check failed";   FAIL=1; }
     [ $FAIL -eq 0 ] || exit 1
     step_done
@@ -1733,6 +1726,7 @@ _gate-install:
     CONTAINER="capsem-install-test"
     INSTALL_ASSETS_DIR="target/install-test-assets"
     INSTALL_CONFIG_DIR="target/install-test-config"
+    INSTALL_PROFILE_INPUTS="${CAPSEM_INSTALL_PROFILE_INPUTS:-}"
     HOST_ROSETTA_REGISTRATION=not_applicable
     cleanup() {
         docker exec "$CONTAINER" bash -c "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" >/dev/null 2>&1 || true
@@ -1825,9 +1819,18 @@ _gate-install:
         "rm -f /cargo-target/debug/bundle/deb/*.deb"
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
-    echo "Preparing install-test asset manifest..."
-    docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && rm -rf \"$INSTALL_ASSETS_DIR\" \"$INSTALL_CONFIG_DIR\" && CAPSEM_ASSETS_DIR=\"$INSTALL_ASSETS_DIR\" bash scripts/prepare-install-test-assets.sh"
+    echo "Staging real profile assets for installed VM proofs..."
+    if [ -n "$INSTALL_PROFILE_INPUTS" ]; then
+        docker exec -u capsem "$CONTAINER" bash -c \
+            "cd /src && test -f \"$INSTALL_PROFILE_INPUTS/manifest.json\" && test -f \"$INSTALL_PROFILE_INPUTS/release-inputs.json\""
+        docker exec -u capsem "$CONTAINER" bash -c \
+            "cd /src && rm -rf \"$INSTALL_ASSETS_DIR\" \"$INSTALL_CONFIG_DIR\" && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test uv run python scripts/stage-release-test-inputs.py --input-dir \"$INSTALL_PROFILE_INPUTS\" --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\""
+    else
+        docker exec -u capsem "$CONTAINER" bash -c \
+            "cd /src && test -f assets/manifest.json || { echo 'ERROR: installed VM proof requires rebuilt local assets or verified pulled profile inputs' >&2; exit 1; }"
+        docker exec -u capsem "$CONTAINER" bash -c \
+            "cd /src && rm -rf \"$INSTALL_ASSETS_DIR\" \"$INSTALL_CONFIG_DIR\" && mkdir -p \"$INSTALL_ASSETS_DIR\" && cp -R assets/. \"$INSTALL_ASSETS_DIR/\""
+    fi
     echo "Materializing runtime config..."
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && CAPSEM_ASSETS_DIR=\"$INSTALL_ASSETS_DIR\" CAPSEM_CONFIG_OUTPUT_ROOT=\"/src/$INSTALL_CONFIG_DIR\" bash scripts/materialize-config.sh"

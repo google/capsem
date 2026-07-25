@@ -45,7 +45,7 @@ vi.stubGlobal('window', {
 });
 
 // Now import -- the singleton initializes with our mocks
-const { themeStore, PRELINE_THEMES, FONT_SIZES, FONT_FAMILIES, DEFAULT_FONT_SIZE, DEFAULT_FONT_FAMILY } =
+const { themeStore, ACCENT_THEMES, FONT_SIZES, FONT_FAMILIES, DEFAULT_FONT_SIZE, DEFAULT_FONT_FAMILY } =
   await import('../stores/theme.svelte.ts');
 
 describe('themeStore', () => {
@@ -60,7 +60,7 @@ describe('themeStore', () => {
     // Reset store to defaults
     themeStore.setMode('auto');
     themeStore.setTerminalTheme('default');
-    themeStore.setPrelineTheme('');
+    themeStore.setAccentTheme('');
     themeStore.setFontSize(DEFAULT_FONT_SIZE);
     themeStore.setFontFamily(DEFAULT_FONT_FAMILY);
     themeStore.setUiFontSize(14);
@@ -124,25 +124,27 @@ describe('themeStore', () => {
     expect(themeStore.terminalTheme).toBe('default');
   });
 
-  // -- setPrelineTheme --
+  // -- setAccentTheme --
 
-  it('accepts valid Preline theme', () => {
-    themeStore.setPrelineTheme('theme-ocean');
-    expect(themeStore.prelineTheme).toBe('theme-ocean');
-    expect(storage.get('capsem-preline-theme')).toBe('theme-ocean');
+  it('accepts valid Capsem accent theme', () => {
+    storage.set('capsem-preline-theme', 'theme-moon');
+    themeStore.setAccentTheme('theme-ocean');
+    expect(themeStore.accentTheme).toBe('theme-ocean');
+    expect(storage.get('capsem-accent-theme')).toBe('theme-ocean');
+    expect(storage.has('capsem-preline-theme')).toBe(false);
     expect(mockDocumentElement.dataset.theme).toBe('theme-ocean');
   });
 
   it('accepts empty string (default theme)', () => {
-    themeStore.setPrelineTheme('theme-moon');
-    themeStore.setPrelineTheme('');
-    expect(themeStore.prelineTheme).toBe('');
+    themeStore.setAccentTheme('theme-moon');
+    themeStore.setAccentTheme('');
+    expect(themeStore.accentTheme).toBe('');
   });
 
-  it('ignores invalid Preline theme', () => {
-    themeStore.setPrelineTheme('');
-    themeStore.setPrelineTheme('theme-fantasy');
-    expect(themeStore.prelineTheme).toBe('');
+  it('ignores invalid Capsem accent theme', () => {
+    themeStore.setAccentTheme('');
+    themeStore.setAccentTheme('theme-fantasy');
+    expect(themeStore.accentTheme).toBe('');
   });
 
   // -- setFontSize --
@@ -191,8 +193,8 @@ describe('themeStore', () => {
 
   // -- exports --
 
-  it('exports PRELINE_THEMES with 9 entries', () => {
-    expect(PRELINE_THEMES).toHaveLength(9);
+  it('exports ACCENT_THEMES with 9 entries', () => {
+    expect(ACCENT_THEMES).toHaveLength(9);
   });
 
   it('exports FONT_SIZES array', () => {

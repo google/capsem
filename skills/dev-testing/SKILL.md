@@ -82,9 +82,10 @@ contract and create another partial release tier.
 
 Rust is pinned to `1.97.1` across the workspace file, workflow steps,
 host-builder, and bootstrap. Change all pin surfaces together in a deliberate
-toolchain-bump PR. The scheduled/manual security audit owns blocking RustSec
-advisories; `just test` reports `cargo audit` failures without letting a new
-upstream advisory silently invalidate every unchanged local candidate.
+toolchain-bump PR. RustSec and JavaScript bulk advisories are blocking fast
+gates in `just smoke`, local `just test`, ordinary CI, and both release lanes,
+as well as the scheduled/manual audit. A new advisory fails the candidate
+until it is remediated or explicitly reviewed in checked-in scanner policy.
 
 Linux proof is host-aware: a cross-built non-host package receives structural
 validation in qualification and exact native installation in its tagged release
@@ -93,11 +94,13 @@ before the host package reaches its mandatory KVM proof. The hosted arm64 runner
 does not expose `/dev/kvm`, so it proves exact package/service operation while
 the x86_64 runner additionally owns the guest-shell marker.
 
-Expensive harnesses need a cheap clean-environment bootstrap proof at the start
-of `just test`. The Linux install rail must build the real install-test image,
-use a container-owned `UV_PROJECT_ENVIRONMENT`, and prove `python -m pytest`
-launches before audits, builds, VMs, or package assembly consume hours. Keep an
-ordering contract for this Stage 0 proof. It is fail-fast infrastructure
+Expensive harnesses need a cheap clean-environment bootstrap proof near the
+start of `just test`. Run source guards, dependency audits, Clippy, Python
+lint/type checks, and JavaScript/frontend checks first; only a green fast gate
+may build the Linux install-test image. That preflight must use a
+container-owned `UV_PROJECT_ENVIRONMENT` and prove `python -m pytest` launches
+before VM, package, or asset work consumes hours. Keep an ordering contract.
+It is fail-fast infrastructure
 validation only: the later Docker/systemd install E2E remains mandatory and
 must still exercise the installed package and post-install behavior.
 

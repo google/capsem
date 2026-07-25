@@ -7,6 +7,17 @@ description: Asset building, manifest format, hash verification, and boot-time r
 
 How VM assets (kernel, initrd, rootfs) are built, checksummed, resolved, and verified at boot.
 
+## Manifest Authority
+
+The selected manifest is the bible: if an artifact is not in that manifest, it
+does not exist for the release, update, cache, or boot path. Never infer
+membership from a cache directory, release attachment, filename, channel name,
+or prior run. Fetch mutable manifests fresh. Cache only immutable artifact
+bytes, address each cache entry directly by the digest recorded in the
+manifest, and re-verify that digest before every use. Artifact cache identity
+is channel-independent; the manifest decides which digest set belongs to a
+channel/profile at that moment.
+
 ## Versioning
 
 Binary and asset versions are **independent**:

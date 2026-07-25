@@ -383,6 +383,133 @@ def _write_manifest(tmp_path: Path) -> tuple[Path, dict[str, bytes]]:
     return path, artifacts
 
 
+def test_profile_fetch_can_limit_downloads_to_one_native_architecture(
+    tmp_path: Path,
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    x86 = document["profiles"]["code"]["architectures"][0]
+    arm = json.loads(json.dumps(x86))
+    arm["architecture"] = "arm64"
+    for section in ("images", "evidence"):
+        for index, record in enumerate(arm[section]):
+            original = (tmp_path / record["url"]).read_bytes()
+            name = f"arm64-{index}-{Path(record['url']).name}"
+            payload = b"arm64-" + original
+            (tmp_path / name).write_bytes(payload)
+            arm[section][index] = _record(
+                name,
+                payload,
+                **{
+                    key: value
+                    for key, value in record.items()
+                    if key not in {"url", "bytes", "digest"}
+                },
+            )
+    document["profiles"]["code"]["architectures"].append(arm)
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+
+    output = tmp_path / "x86-profile-inputs"
+    report = FETCH.fetch_release_inputs(
+        manifest.as_uri(),
+        "profiles",
+        output,
+        architecture="x86_64",
+    )
+
+    assert report["architecture"] == "x86_64"
+    assert report["artifacts"]
+    assert all("/x86_64/" in row["path"] for row in report["artifacts"])
+    assert not any("arm64-" in row["url"] for row in report["artifacts"])
+    VERIFY.verify_release_inputs(output)
+
+
+def test_profile_fetch_reuses_manifest_digest_cache_and_prunes_old_blobs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    cache = tmp_path / "artifact-cache"
+    reads: list[str] = []
+    original_read = FETCH._read_url
+
+    def read_url(url: str) -> bytes:
+        reads.append(url)
+        return original_read(url)
+
+    monkeypatch.setattr(FETCH, "_read_url", read_url)
+    first = FETCH.fetch_release_inputs(
+        manifest.as_uri(),
+        "profiles",
+        tmp_path / "first",
+        architecture="x86_64",
+        cache_dir=cache,
+        prune_cache=True,
+    )
+    first_artifact_reads = [url for url in reads if url != manifest.as_uri()]
+    reads.clear()
+    stale = cache / "sha256" / "00" / ("0" * 64)
+    stale.parent.mkdir(parents=True)
+    stale.write_bytes(b"stale")
+
+    second = FETCH.fetch_release_inputs(
+        manifest.as_uri(),
+        "profiles",
+        tmp_path / "second",
+        architecture="x86_64",
+        cache_dir=cache,
+        prune_cache=True,
+    )
+
+    assert first["cache"] == {"hits": 0, "misses": len(first["artifacts"])}
+    assert second["cache"] == {"hits": len(second["artifacts"]), "misses": 0}
+    assert first_artifact_reads
+    assert reads == [manifest.as_uri()]
+    assert not stale.exists()
+    VERIFY.verify_release_inputs(tmp_path / "second")
+
+
+def test_corrupt_manifest_digest_cache_entry_is_replaced(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    cache = tmp_path / "artifact-cache"
+    first = FETCH.fetch_release_inputs(
+        manifest.as_uri(),
+        "profiles",
+        tmp_path / "first",
+        architecture="x86_64",
+        cache_dir=cache,
+    )
+    corrupt = first["artifacts"][0]
+    cache_path = cache / "sha256" / corrupt["sha256"][:2] / corrupt["sha256"]
+    cache_path.write_bytes(b"corrupt")
+    reads: list[str] = []
+    original_read = FETCH._read_url
+
+    def read_url(url: str) -> bytes:
+        reads.append(url)
+        return original_read(url)
+
+    monkeypatch.setattr(FETCH, "_read_url", read_url)
+    second = FETCH.fetch_release_inputs(
+        manifest.as_uri(),
+        "profiles",
+        tmp_path / "second",
+        architecture="x86_64",
+        cache_dir=cache,
+    )
+
+    assert second["cache"] == {
+        "hits": len(second["artifacts"]) - 1,
+        "misses": 1,
+    }
+    assert reads == [manifest.as_uri(), corrupt["url"]]
+    assert cache_path.read_bytes() == (tmp_path / "second" / corrupt["path"]).read_bytes()
+    VERIFY.verify_release_inputs(tmp_path / "second")
+
+
 def test_fetches_only_current_packages_and_verifies_both_digests(
     tmp_path: Path,
 ) -> None:

@@ -415,9 +415,7 @@ def test_macos_glowup_stages_tamper_without_mutating_candidate(
     tampered = json.loads(tampered_path.read_text())
     assert tampered["packages"] == manifest["packages"]
     assert (
-        tampered["profiles"]["code"]["architectures"][0]["images"][0]["digest"][
-            "sha256"
-        ]
+        tampered["profiles"]["code"]["architectures"][0]["images"][0]["digest"]["sha256"]
         != "a" * 64
     )
 
@@ -516,9 +514,7 @@ def test_macos_glowup_finalizes_shared_transition_report(tmp_path: Path) -> None
     )
 
     assert report["transition_scope"] == ["fresh_install", "tamper_rejection"]
-    assert [row["kind"] for row in report["transitions"]] == report[
-        "transition_scope"
-    ]
+    assert [row["kind"] for row in report["transitions"]] == report["transition_scope"]
     assert report["transitions"][-1]["preserved_previous"] is True
 
 
@@ -534,6 +530,20 @@ def test_physical_mac_boots_a_guest_from_the_exact_package_payload() -> None:
     assert '"full_doctor": True' in source
     assert '"installed_winterfell": True' in source
     assert '"guest_vm_booted": True' in source
+
+
+def test_physical_mac_preserves_doctor_and_winterfell_failures() -> None:
+    source = HOST_BOOT.read_text()
+
+    assert 'DOCTOR_LOG="$WORK_ROOT/doctor.log"' in source
+    assert 'WINTERFELL_LOG="$WORK_ROOT/winterfell.log"' in source
+    assert "DOCTOR_STATUS=$?" in source
+    assert "WINTERFELL_STATUS=$?" in source
+    assert 'cat "$DOCTOR_LOG" >&2' in source
+    assert 'cat "$WINTERFELL_LOG" >&2' in source
+    assert '"passed": status == 0' in source
+    assert 'exit "$DOCTOR_STATUS"' in source
+    assert 'exit "$WINTERFELL_STATUS"' in source
 
 
 def test_macos_glowup_requires_physical_doctor_and_winterfell_evidence() -> None:
@@ -554,9 +564,7 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
         "schema": "capsem.release_glowup.v1",
         "adapter": "macos-tart-launchd",
         "artifact": {"version": "1.2.3", "sha256": "a" * 64},
-        "capabilities": {
-            capability: True for capability in module.REQUIRED_CAPABILITIES
-        },
+        "capabilities": {capability: True for capability in module.REQUIRED_CAPABILITIES},
         "adapter_evidence": {
             "physical_vz": {
                 "package_sha256": "a" * 64,

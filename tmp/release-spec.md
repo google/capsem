@@ -195,6 +195,19 @@ The authoritative update and integrity document authored through
 A manifest is not merely an asset list. It is the authoritative description of
 the complete, valid release graph that installed Capsem instances poll.
 
+The manifest is the bible: if an artifact is not selected by the manifest, it
+does not exist for release, update, test, cache, or boot purposes. A cache,
+release attachment, filename, directory listing, previous workflow, or channel
+convention MUST NOT add membership or substitute bytes.
+
+Mutable manifests MUST be fetched fresh at the owning transaction boundary.
+Large immutable artifacts MAY be cached, but each cache entry MUST be addressed
+directly by a digest already recorded in the selected manifest. Cache identity
+MUST be independent of channel. Every restored byte MUST be verified against
+the manifest's recorded size and digests before use; corrupt entries MUST be
+discarded and fetched again. Architecture filtering MAY reduce transfers only
+by selecting the requested architecture rows from that same manifest.
+
 ### 4.11 Source manifest
 
 The authoring state owned by `capsem-admin` from which validated and deployable
@@ -542,6 +555,14 @@ including version/revision and digest.
 Downstream jobs MUST verify those identities before use. A mutable artifact
 name, mutable cache, branch-relative output, or unverified download MUST NOT be
 accepted as release evidence.
+
+CI SHOULD retain a content-addressed cache for large pulled artifacts. The
+cache is a transport optimization, never authority: the current manifest is
+still fetched on every run, selects the digest set, and is retained with the
+resolved inputs. CI MUST download only missing or corrupt manifest-selected
+blobs, SHOULD limit profile pulls to the runner architecture when the owning
+test consumes one architecture, and MUST re-verify all selected blobs after
+cache restoration.
 
 Before immutable candidate URLs are publicly reachable, an installed test MAY
 use a hermetic URL-only transport projection of the authoritative manifest.

@@ -9,6 +9,9 @@ binary/profile releases with complete reusable test modules, and the logger DB
 boundary (only `capsem-logger` executes ledger queries). The only release
 commands are `just release-binaries <channel>` and
 `just release-profile <channel> <profile>`.
+For release inputs, the manifest is the bible: absent means nonexistent.
+Mutable manifests are fetched fresh; immutable caches are keyed only by
+manifest-recorded artifact digests, never by channel, and reverified on use.
 
 ## Skills -- LOAD BEFORE CODING
 
@@ -30,7 +33,7 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Session DB | `/dev-session-debug` | Inspecting session.db, correlating events |
 | Benchmarking | `/dev-benchmark` | capsem-bench, performance regression |
 | capsem-doctor | `/dev-capsem-doctor` | In-VM diagnostic suite, adding new tests |
-| Frontend | `/frontend-design` | UI components, Svelte 5 runes, Tailwind, Preline |
+| Frontend | `/frontend-design` | UI components, Svelte 5 runes, Tailwind, owned semantic CSS |
 | Build images | `/build-images` | capsem-builder, guest config, rootfs, kernel |
 | Initrd repack | `/build-initrd` | Guest binary changes, fast iteration loop |
 | Asset pipeline | `/asset-pipeline` | Asset manifest, hash verification, boot-time resolution |

@@ -37,6 +37,9 @@ jobs:
     with:
       channel: ${{ inputs.channel }}
 
+  fast-gate:
+    uses: ./.github/workflows/fast-gate.yaml
+
   resolve-channel-source:
     needs: runtime-preflight
     runs-on: ubuntu-latest
@@ -54,19 +57,23 @@ jobs:
             --channel "$RELEASE_CHANNEL" \
             --output target/channel-source/manifest.json
 
-      - name: Fetch exact deployed public-before cohorts
+      - name: Fetch exact deployed public-before packages
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: ${{ env.ASSET_MANIFEST_URL }}
+          kind: packages
+          output: target/binary-public-before/packages
+
+      - name: Fetch exact deployed public-before profiles
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: ${{ env.ASSET_MANIFEST_URL }}
+          kind: profiles
+          architecture: x86_64
+          output: target/binary-public-before/profiles
+
+      - name: Prove public-before cohorts use one manifest
         run: |
-          set -euo pipefail
-          uv run python scripts/fetch-release-artifacts.py \
-            --manifest-url "$ASSET_MANIFEST_URL" \
-            --kind packages \
-            --output target/binary-public-before/packages
-          uv run python scripts/fetch-release-artifacts.py \
-            --manifest-url "$ASSET_MANIFEST_URL" \
-            --kind profiles \
-            --output target/binary-public-before/profiles
-          uv run python scripts/verify-release-inputs.py \
-            --input-dir target/binary-public-before/packages
           uv run python scripts/verify-release-inputs.py \
             --input-dir target/binary-public-before/profiles
           cmp \
@@ -87,7 +94,7 @@ jobs:
           path: target/binary-public-before/profiles/
 
   preflight:
-    needs: runtime-preflight
+    needs: [runtime-preflight, fast-gate]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
@@ -849,10 +856,7 @@ jobs:
           name: binary-channel-candidate
           path: target/binary-channel/
 
-      - name: Run shared static module
-        run: just _test-static
-
-      - name: Resolve exact candidate-after profiles
+      - name: Verify exact public-before cohorts
         run: |
           uv run python scripts/verify-release-inputs.py \
             --input-dir target/binary-public-before/packages
@@ -861,10 +865,17 @@ jobs:
           cmp \
             target/binary-public-before/packages/manifest.json \
             target/binary-public-before/profiles/manifest.json
-          uv run python scripts/fetch-release-artifacts.py \
-            --manifest-url "file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
-            --kind profiles \
-            --output target/candidate-profile-inputs
+
+      - name: Resolve exact candidate-after profiles
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: file://${{ github.workspace }}/target/binary-channel/${{ inputs.channel }}/manifest.json
+          kind: profiles
+          architecture: x86_64
+          output: target/candidate-profile-inputs
+
+      - name: Stage exact candidate-after profiles
+        run: |
           uv run python scripts/verify-release-inputs.py \
             --input-dir target/candidate-profile-inputs
           uv run python scripts/stage-release-test-inputs.py \

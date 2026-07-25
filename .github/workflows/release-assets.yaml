@@ -38,6 +38,9 @@ jobs:
     with:
       channel: ${{ inputs.channel }}
 
+  fast-gate:
+    uses: ./.github/workflows/fast-gate.yaml
+
   resolve-current-binary:
     needs: runtime-preflight
     runs-on: ubuntu-latest
@@ -70,21 +73,26 @@ jobs:
             --bootstrap-missing-first-party \
             --output target/channel-source/manifest.json
 
-      - name: Fetch exact deployed public-before cohorts
+      - name: Fetch exact deployed public-before package
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: ${{ env.ASSET_MANIFEST_URL }}
+          bootstrap-manifest-url: file://${{ github.workspace }}/target/channel-source/manifest.json
+          kind: packages
+          output: target/profile-public-before/packages
+
+      - name: Fetch exact deployed public-before profiles
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: ${{ env.ASSET_MANIFEST_URL }}
+          bootstrap-manifest-url: file://${{ github.workspace }}/target/channel-source/manifest.json
+          allow-empty-profiles: "true"
+          kind: profiles
+          architecture: x86_64
+          output: target/profile-public-before/profiles
+
+      - name: Prove public-before cohorts use one manifest
         run: |
-          uv run python scripts/fetch-release-artifacts.py \
-            --manifest-url "$ASSET_MANIFEST_URL" \
-            --bootstrap-manifest-url "file://$PWD/target/channel-source/manifest.json" \
-            --kind packages \
-            --output target/profile-public-before/packages
-          uv run python scripts/fetch-release-artifacts.py \
-            --manifest-url "$ASSET_MANIFEST_URL" \
-            --bootstrap-manifest-url "file://$PWD/target/channel-source/manifest.json" \
-            --allow-empty-profiles \
-            --kind profiles \
-            --output target/profile-public-before/profiles
-          uv run python scripts/verify-release-inputs.py \
-            --input-dir target/profile-public-before/packages
           uv run python scripts/verify-release-inputs.py \
             --input-dir target/profile-public-before/profiles
           cmp \
@@ -130,7 +138,7 @@ jobs:
             --project "$RELEASE_CHANNEL_PROJECT"
 
   build-assets:
-    needs: [cloudflare-release-site-preflight, resolve-current-binary]
+    needs: [cloudflare-release-site-preflight, resolve-current-binary, fast-gate]
     strategy:
       matrix:
         include:
@@ -238,9 +246,6 @@ jobs:
           sudo chmod 0666 /dev/vhost-vsock
           test -r /dev/kvm -a -w /dev/kvm
           test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
-
-      - name: Run shared static module
-        run: just _test-static
 
       - name: Prepare exact profile and pulled binary pairing
         run: |

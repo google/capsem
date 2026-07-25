@@ -274,8 +274,8 @@ corporate channels use `https://` or `http://`.
 | Control | Implementation |
 |---------|---------------|
 | Rust toolchain | Rust 1.97.1, pinned consistently in the workspace, workflows, bootstrap, and host builder |
-| Dependency audit | Blocking `cargo audit` in the scheduled/manual security workflow; report-only in the local candidate gate |
-| npm audit | Blocking bulk advisory check in the scheduled/manual security workflow and ordinary CI feedback |
+| Dependency audit | Blocking `cargo audit` in local smoke/test, ordinary CI, both release lanes, and the scheduled/manual security workflow |
+| npm audit | Blocking npm bulk advisory API check in local smoke/test, ordinary CI, both release lanes, and the scheduled/manual security workflow |
 | Docker base images | Resolved by the profile-derived Docker template rail |
 | Compiler warnings | Treated as errors, with workspace `dbg_macro` and `todo` lints denied |
 | Auditable builds | `cargo-auditable` embeds dependency info in binaries |

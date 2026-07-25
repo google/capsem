@@ -7,6 +7,9 @@ common contract. **Read it before any release work or any change touching
 logged data** -- it carries the two hard contracts: serialized orthogonal
 binary/profile releases with complete reusable test modules, and the logger DB
 boundary (only `capsem-logger` executes ledger queries).
+For release inputs, the manifest is the bible: absent means nonexistent.
+Mutable manifests are fetched fresh; immutable caches are keyed only by
+manifest-recorded artifact digests, never by channel, and reverified on use.
 
 ## Quick Start
 
@@ -15,7 +18,6 @@ just doctor        # Check tools (first time)
 just doctor fix    # Install prerequisites and materialize missing VM assets
 just shell         # Build + boot VM (~10s)
 just smoke         # Fast path: doctor + integration tests
-just test          # Complete local all-artifact proof, including native install glow-up
 just test          # ALL tests: unit + integration + cross-compile + Docker e2e. No shortcuts.
 just release-binaries nightly
 just release-profile nightly code
@@ -40,7 +42,7 @@ crates/capsem-tray/            System tray (polls gateway, quick actions)
 crates/capsem-proto/           Shared protocol types (host-guest, service-process IPC)
 crates/capsem-logger/          Session DB schema, queries, async writer
 crates/capsem-guard/           Companion lifecycle primitives (parent-watch + flock singleton)
-frontend/                 Astro 5 + Svelte 5 + Tailwind v4 + Preline
+frontend/                 Astro 7 + Svelte 5 + Tailwind v4 + owned semantic CSS
 site/                     Marketing website (Astro + Svelte 5)
 docs/                     Documentation site (Astro Starlight)
 src/capsem/builder/       capsem-builder CLI (config-driven image builder)
@@ -87,7 +89,7 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Session DB | `/dev-session-debug` | Inspecting session.db, correlating events |
 | Benchmarking | `/dev-benchmark` | capsem-bench, performance regression |
 | capsem-doctor | `/dev-capsem-doctor` | In-VM diagnostic suite, adding new tests |
-| Frontend | `/frontend-design` | UI components, Svelte 5 runes, Tailwind, Preline |
+| Frontend | `/frontend-design` | UI components, Svelte 5 runes, Tailwind, owned semantic CSS |
 | Build images | `/build-images` | capsem-builder, guest config, rootfs, kernel |
 | Initrd repack | `/build-initrd` | Guest binary changes, fast iteration loop |
 | Asset pipeline | `/asset-pipeline` | Asset manifest, hash verification, boot-time resolution |
