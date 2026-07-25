@@ -378,7 +378,7 @@ async fn stage_verified_update_downloads_every_profile_artifact_without_mutating
                 .join(capsem_core::asset_manager::host_manifest_arch())
                 .join(capsem_core::asset_manager::hash_filename(
                     "vmlinuz",
-                    &blake3::hash(&kernel).to_hex().to_string(),
+                    blake3::hash(&kernel).to_hex().as_ref(),
                 )),
         )
         .unwrap(),
@@ -481,7 +481,7 @@ async fn activate_staged_update_switches_profiles_assets_and_manifest_together()
                 .join(capsem_core::asset_manager::host_manifest_arch())
                 .join(capsem_core::asset_manager::hash_filename(
                     "vmlinuz",
-                    &blake3::hash(&kernel).to_hex().to_string(),
+                    blake3::hash(&kernel).to_hex().as_ref(),
                 )),
         )
         .unwrap(),
@@ -525,7 +525,7 @@ async fn activate_staged_update_rolls_back_every_selected_path_on_manifest_failu
         .join(capsem_core::asset_manager::host_manifest_arch())
         .join(capsem_core::asset_manager::hash_filename(
             "vmlinuz",
-            &blake3::hash(&kernel).to_hex().to_string(),
+            blake3::hash(&kernel).to_hex().as_ref(),
         ));
     let installed_kernel = installed_assets.join(
         staged_kernel
