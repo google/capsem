@@ -80,6 +80,14 @@ def test_modules_retain_complete_named_quality_gates() -> None:
         assert required in runner
 
 
+def test_standalone_functional_scripts_use_the_project_python() -> None:
+    for recipe in ("_test-candidate-run", "smoke"):
+        body = _recipe(recipe)
+        for script in ("scripts/injection_test.py", "scripts/integration_test.py"):
+            assert f"python3 {script}" not in body
+            assert f"uv run python {script}" in body
+
+
 def test_release_glowup_consumes_the_exact_pairing_environment() -> None:
     runner = _recipe("_test-candidate-run")
     adapter = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(encoding="utf-8")

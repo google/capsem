@@ -910,14 +910,14 @@ _test-candidate-run:
 
     # ---- Stage 6: legacy VM scripts + bench ---------------------------------
     echo "=== Injection test ==="
-    python3 scripts/injection_test.py \
+    uv run python scripts/injection_test.py \
         --binary "$TEST_BINARY" \
         --assets "$TEST_ASSETS" \
         --profiles-dir "$TEST_CONFIG_ROOT/profiles" \
         --profile "$BASE_PROFILE"
 
     echo "=== Integration test ==="
-    python3 scripts/integration_test.py \
+    uv run python scripts/integration_test.py \
         --binary "$TEST_BINARY" \
         --assets "$TEST_ASSETS" \
         --profile "$BASE_PROFILE"
@@ -953,12 +953,12 @@ _test-candidate-run:
                 tests/ironbank/test_route_health.py \
                 -v --tb=short -m serial -k 'not test_capsem_bench_baseline'
 
-        python3 scripts/injection_test.py \
+        uv run python scripts/injection_test.py \
             --binary "$TEST_BINARY" \
             --assets "$TEST_ASSETS" \
             --profiles-dir "$TEST_CONFIG_ROOT/profiles" \
             --profile "$TEST_PROFILE"
-        python3 scripts/integration_test.py \
+        uv run python scripts/integration_test.py \
             --binary "$TEST_BINARY" \
             --assets "$TEST_ASSETS" \
             --profile "$TEST_PROFILE"
@@ -1465,10 +1465,10 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     {{cli_binary}} doctor
     step_done
     step "Injection test"
-    python3 scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
+    uv run python scripts/injection_test.py --binary {{binary}} --assets {{assets_dir}}
     step_done
     step "Integration test"
-    python3 scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
+    uv run python scripts/integration_test.py --binary {{binary}} --assets {{assets_dir}}
     step_done
     step "Python integration tests (MCP + service + CLI + gateway, parallel groups)"
     # Pre-sign binaries so parallel test groups don't race on codesign

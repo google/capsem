@@ -7,8 +7,8 @@ with `capsem-doctor -k injection`, and checks the exit code. The in-VM tests rea
 well-formed.
 
 Usage:
-    python3 scripts/injection_test.py              # uses target/debug/capsem
-    python3 scripts/injection_test.py --binary ./capsem --assets ./assets
+    uv run python scripts/injection_test.py              # uses target/debug/capsem
+    uv run python scripts/injection_test.py --binary ./capsem --assets ./assets
 """
 
 import argparse
