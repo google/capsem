@@ -7400,8 +7400,12 @@ fn materialize_profile_obom_descriptor(
     };
     let obom_url =
         materialized_profile_asset_url(inputs, "obom.cdx.json", &entry.hash, entry.size)?;
-    let (generator, generator_version) = if obom_url.starts_with("file://") {
-        let obom_path = inputs.assets_dir.join(inputs.arch).join("obom.cdx.json");
+    let parsed_obom_url = reqwest::Url::parse(&obom_url)
+        .with_context(|| format!("parse materialized OBOM URL {obom_url}"))?;
+    let (generator, generator_version) = if parsed_obom_url.scheme() == "file" {
+        let obom_path = parsed_obom_url
+            .to_file_path()
+            .map_err(|_| anyhow!("materialized OBOM file URL must be absolute: {obom_url}"))?;
         let obom_path = obom_path
             .canonicalize()
             .with_context(|| format!("canonicalize {}", obom_path.display()))?;
@@ -10062,6 +10066,9 @@ decision = "block"
             .expect("repo root");
         let temp = tempfile::tempdir().expect("tempdir");
         let output_root = temp.path().join("target/config");
+        let local_obom = temp.path().join("resolved-obom.cdx.json");
+        fs::write(&local_obom, test_obom_json()).expect("write resolved OBOM");
+        let local_obom_url = file_url(&local_obom);
         let digest = |bytes: &[u8]| {
             serde_json::json!({
                 "sha256": format!("{:x}", Sha256::digest(bytes)),
@@ -10113,9 +10120,9 @@ decision = "block"
                                 {
                                     "kind": "obom",
                                     "name": "obom.cdx.json",
-                                    "url": "/profiles/releases/2030.0101.1/code/arm64/obom.cdx.json",
-                                    "bytes": b"obom-arm64".len(),
-                                    "digest": digest(b"obom-arm64"),
+                                    "url": local_obom_url,
+                                    "bytes": test_obom_json().len(),
+                                    "digest": digest(test_obom_json().as_bytes()),
                                     "status": "current"
                                 }
                             ]
@@ -10166,12 +10173,9 @@ decision = "block"
             .arch
             .get("arm64")
             .expect("arm64 OBOM");
-        assert_eq!(
-            obom.url,
-            format!("{expected_origin}/profiles/releases/2030.0101.1/code/arm64/obom.cdx.json")
-        );
-        assert_eq!(obom.generator, "remote");
-        assert_eq!(obom.generator_version, "unknown");
+        assert_eq!(obom.url, local_obom_url);
+        assert_eq!(obom.generator, "cdxgen");
+        assert_eq!(obom.generator_version, "11.0.0");
 
         let converted_manifest_path = output_root.join("assets/manifest.json");
         let converted = ManifestV2::from_json(
