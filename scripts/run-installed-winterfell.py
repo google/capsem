@@ -15,6 +15,7 @@ from typing import Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 
 from tests.helpers.service import (  # noqa: E402
     WINTERFELL_ROOT_ENV,

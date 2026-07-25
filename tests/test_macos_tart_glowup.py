@@ -16,6 +16,7 @@ HARNESS = PROJECT_ROOT / "scripts" / "macos_tart_glowup.py"
 GLOWUP = PROJECT_ROOT / "scripts" / "macos_release_glowup.py"
 GUEST = PROJECT_ROOT / "scripts" / "macos_tart_guest.sh"
 HOST_BOOT = PROJECT_ROOT / "scripts" / "prove-macos-package-boot.sh"
+INSTALLED_WINTERFELL = PROJECT_ROOT / "scripts" / "run-installed-winterfell.py"
 LOCAL_PACKAGE_BUILD = PROJECT_ROOT / "scripts" / "build-test-macos-package.sh"
 LOCAL_SIGNING = PROJECT_ROOT / "scripts" / "macos_signing.py"
 RELEASE_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "release.yaml"
@@ -330,6 +331,15 @@ def test_physical_mac_boots_a_guest_from_the_exact_package_payload() -> None:
     assert "scripts/prove-installed-shell.py" in source
     assert "CAPSEM_MACOS_PACKAGE_VM_BOOT_OK" in source
     assert '"guest_vm_booted": True' in source
+
+
+def test_installed_winterfell_runner_loads_without_pytest_path_side_effects() -> None:
+    module = _load_script(INSTALLED_WINTERFELL, "installed_winterfell_direct")
+
+    assert module.WINTERFELL_TESTS == (
+        "tests/capsem-mcp/test_winterfell_rw.py",
+        "tests/capsem-mcp/test_winterfell_exec.py",
+    )
 
 
 def test_tart_harness_promotes_guest_evidence_to_a_durable_report() -> None:
