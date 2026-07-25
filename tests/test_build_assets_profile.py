@@ -184,7 +184,8 @@ def test_materialize_config_materializes_entire_selected_profile_catalog() -> No
     block = _recipe_block("_materialize-config:")
     script = (PROJECT_ROOT / "scripts" / "materialize-config.sh").read_text()
 
-    assert 'rm -rf "$ROOT/target/config"' in script
+    assert 'rm -rf "$OUTPUT_ROOT"' in script
+    assert 'rm -rf "$ROOT/target/config"' not in script
     assert 'profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)' in script
     assert 'for profile_path in "${profile_paths[@]}"; do' in script
     assert '--profile "$profile_path"' in script

@@ -108,10 +108,7 @@ if ! printf '%s\n' "$manifest_arches" | grep -Fxq "$arch"; then
 fi
 
 echo "=== Materialize runtime config ==="
-rm -rf "$ROOT/target/config"
-if [ "$OUTPUT_ROOT" != "$ROOT/target/config" ]; then
-    rm -rf "$OUTPUT_ROOT"
-fi
+rm -rf "$OUTPUT_ROOT"
 
 profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)
 if [ "${#profile_paths[@]}" -eq 0 ] || [ ! -f "${profile_paths[0]}" ]; then

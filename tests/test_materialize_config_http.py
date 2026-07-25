@@ -169,6 +169,54 @@ def test_materializer_accepts_release_graph_manifest(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_materializer_custom_output_preserves_shared_default_config(
+    tmp_path: Path,
+) -> None:
+    repo, fake_bin = _fake_materializer_repo(tmp_path)
+    shared_marker = repo / "target" / "config" / "profiles" / "shared.marker"
+    shared_marker.parent.mkdir(parents=True)
+    shared_marker.write_text("functional cohort")
+    isolated_output = repo / "target" / "install-test-config"
+    isolated_marker = isolated_output / "stale.marker"
+    isolated_output.mkdir(parents=True)
+    isolated_marker.write_text("replace me")
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "channel": "stable",
+                "profiles": {
+                    "code": {"architectures": [{"architecture": "arm64"}]},
+                },
+                "packages": [],
+            }
+        )
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "CAPSEM_REPO_ROOT": str(repo),
+            "CAPSEM_ARCH": "arm64",
+            "CAPSEM_ASSET_MANIFEST": str(manifest_path),
+            "CAPSEM_CONFIG_OUTPUT_ROOT": str(isolated_output),
+            "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(MATERIALIZER)],
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert shared_marker.read_text() == "functional cohort"
+    assert not isolated_marker.exists()
+
+
 @pytest.mark.parametrize(
     ("manifest", "message"),
     [
