@@ -369,6 +369,23 @@ struct ReleaseChannelProfileConfigDownload {
     blake3: String,
 }
 
+#[derive(Debug, Clone)]
+struct ReleaseChannelProfileRuntimePin {
+    profile_id: String,
+    arch: String,
+    kind: String,
+    name: String,
+    url: String,
+    size: u64,
+    blake3: String,
+}
+
+struct ReleaseChannelProfileGraphInputs {
+    asset_downloads: Vec<ReleaseChannelAssetDownload>,
+    config_downloads: Vec<ReleaseChannelProfileConfigDownload>,
+    runtime_pins: Vec<ReleaseChannelProfileRuntimePin>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct ReleaseChannelsCatalog {
     version: u64,
@@ -706,15 +723,19 @@ async fn stage_profile_candidate(
         serde_json::from_str(body).with_context(|| format!("parse manifest JSON from {source}"))?;
     if document.get("format").is_none() && document.get("profiles").is_some() {
         let arch = capsem_core::asset_manager::host_manifest_arch();
-        let (_, downloads, profile_config_downloads) =
-            manifest_from_release_channel_profile_graph(body, arch)?;
+        let graph = manifest_from_release_channel_profile_graph(body, arch)?;
         capsem_core::asset_manager::ManifestV2::from_json(body)
             .context("validate release graph through the runtime manifest parser")?;
-        hydrate_release_channel_profile_assets(&stage_root.join("assets"), source, &downloads)
-            .await?;
+        hydrate_release_channel_profile_assets(
+            &stage_root.join("assets"),
+            source,
+            &graph.asset_downloads,
+        )
+        .await?;
         stage_release_channel_profile_configs(
             source,
-            &profile_config_downloads,
+            &graph.config_downloads,
+            &graph.runtime_pins,
             &stage_root.join("profiles"),
         )
         .await?;
@@ -3508,11 +3529,7 @@ async fn provision_corp_config(source: &str) -> Result<()> {
 fn manifest_from_release_channel_profile_graph(
     body: &str,
     arch: &str,
-) -> Result<(
-    capsem_core::asset_manager::ManifestV2,
-    Vec<ReleaseChannelAssetDownload>,
-    Vec<ReleaseChannelProfileConfigDownload>,
-)> {
+) -> Result<ReleaseChannelProfileGraphInputs> {
     let document: ReleaseChannelProfileManifest = serde_json::from_str(body)
         .context("failed to parse release channel profile manifest JSON")?;
     if document.profiles.is_empty() {
@@ -3525,6 +3542,7 @@ fn manifest_from_release_channel_profile_graph(
     )> = None;
     let mut downloads = Vec::new();
     let mut profile_config_downloads = Vec::new();
+    let mut runtime_pins = Vec::new();
 
     for (profile_id, profile) in &document.profiles {
         if release_channel_status_is_revoked(&profile.status) {
@@ -3558,6 +3576,15 @@ fn manifest_from_release_channel_profile_graph(
                     url: artifact.url.clone(),
                     size: artifact.size,
                     sha256: artifact.digest.sha256.clone(),
+                    blake3: artifact.digest.blake3.clone(),
+                });
+                runtime_pins.push(ReleaseChannelProfileRuntimePin {
+                    profile_id: profile_id.clone(),
+                    arch: arch.to_string(),
+                    kind: artifact.kind.clone(),
+                    name: artifact.name.clone(),
+                    url: artifact.url.clone(),
+                    size: artifact.size,
                     blake3: artifact.digest.blake3.clone(),
                 });
             }
@@ -3638,11 +3665,11 @@ fn manifest_from_release_channel_profile_graph(
     let json = serde_json::to_string(&manifest).context("serialize converted asset manifest")?;
     capsem_core::asset_manager::ManifestV2::from_json(&json)
         .context("validate converted asset manifest")?;
-    Ok((
-        manifest,
-        dedupe_release_channel_downloads(downloads),
-        profile_config_downloads,
-    ))
+    Ok(ReleaseChannelProfileGraphInputs {
+        asset_downloads: dedupe_release_channel_downloads(downloads),
+        config_downloads: profile_config_downloads,
+        runtime_pins,
+    })
 }
 
 fn profile_assets_from_release_channel_images(
@@ -3731,12 +3758,12 @@ async fn install_release_channel_profile_manifest(
     body: &str,
 ) -> Result<()> {
     let arch = capsem_core::asset_manager::host_manifest_arch();
-    let (_, downloads, profile_config_downloads) =
-        manifest_from_release_channel_profile_graph(body, arch)?;
+    let graph = manifest_from_release_channel_profile_graph(body, arch)?;
     capsem_core::asset_manager::ManifestV2::from_json(body)
         .context("validate release graph through the runtime manifest parser")?;
-    hydrate_release_channel_profile_assets(assets_dir, source, &downloads).await?;
-    hydrate_release_channel_profile_configs(source, &profile_config_downloads).await?;
+    hydrate_release_channel_profile_assets(assets_dir, source, &graph.asset_downloads).await?;
+    hydrate_release_channel_profile_configs(source, &graph.config_downloads, &graph.runtime_pins)
+        .await?;
 
     std::fs::create_dir_all(assets_dir)
         .with_context(|| format!("cannot create {}", assets_dir.display()))?;
@@ -3749,6 +3776,7 @@ async fn install_release_channel_profile_manifest(
 async fn hydrate_release_channel_profile_configs(
     manifest_source: &str,
     downloads: &[ReleaseChannelProfileConfigDownload],
+    runtime_pins: &[ReleaseChannelProfileRuntimePin],
 ) -> Result<()> {
     if downloads.is_empty() {
         return Ok(());
@@ -3764,7 +3792,8 @@ async fn hydrate_release_channel_profile_configs(
     let _ = std::fs::remove_dir_all(&stage);
     let _ = std::fs::remove_dir_all(&backup);
     if let Err(error) =
-        stage_release_channel_profile_configs(manifest_source, downloads, &stage).await
+        stage_release_channel_profile_configs(manifest_source, downloads, runtime_pins, &stage)
+            .await
     {
         let _ = std::fs::remove_dir_all(&stage);
         return Err(error);
@@ -3795,6 +3824,7 @@ async fn hydrate_release_channel_profile_configs(
 async fn stage_release_channel_profile_configs(
     manifest_source: &str,
     downloads: &[ReleaseChannelProfileConfigDownload],
+    runtime_pins: &[ReleaseChannelProfileRuntimePin],
     stage: &Path,
 ) -> Result<()> {
     if downloads.is_empty() {
@@ -3832,10 +3862,109 @@ async fn stage_release_channel_profile_configs(
                 "release channel profile {profile_id} has config payloads but no profile.toml"
             );
         }
+        let source = std::fs::read_to_string(&profile_toml)
+            .with_context(|| format!("read {}", profile_toml.display()))?;
+        let materialized = materialize_release_channel_profile_toml(
+            &source,
+            &profile_id,
+            manifest_source,
+            runtime_pins,
+        )?;
+        atomic_write(&profile_toml, materialized.as_bytes())?;
     }
     ProfileCatalog::load_from_dir(stage)
         .map_err(|error| anyhow::anyhow!("validate staged profile catalog: {error}"))?;
     Ok(())
+}
+
+fn materialize_release_channel_profile_toml(
+    source: &str,
+    profile_id: &str,
+    manifest_source: &str,
+    runtime_pins: &[ReleaseChannelProfileRuntimePin],
+) -> Result<String> {
+    let pins = runtime_pins
+        .iter()
+        .filter(|pin| pin.profile_id == profile_id)
+        .collect::<Vec<_>>();
+    let arches = pins
+        .iter()
+        .map(|pin| pin.arch.as_str())
+        .collect::<BTreeSet<_>>();
+    if arches.len() != 1 {
+        anyhow::bail!(
+            "release channel profile {profile_id} must have runtime pins for exactly one host architecture"
+        );
+    }
+    let arch = *arches
+        .first()
+        .context("release channel profile runtime pin architecture is missing")?;
+    let mut by_kind = BTreeMap::new();
+    for pin in pins {
+        if by_kind.insert(pin.kind.as_str(), pin).is_some() {
+            anyhow::bail!(
+                "release channel profile {profile_id}/{arch} repeats {} runtime pin",
+                pin.kind
+            );
+        }
+    }
+    let missing = ["kernel", "initrd", "rootfs"]
+        .into_iter()
+        .filter(|kind| !by_kind.contains_key(kind))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        anyhow::bail!(
+            "release channel profile {profile_id}/{arch} missing manifest runtime pins: {missing:?}"
+        );
+    }
+
+    let mut document: toml::Value = toml::from_str(source)
+        .with_context(|| format!("parse release channel profile {profile_id}"))?;
+    let arch_table = document
+        .get_mut("assets")
+        .and_then(toml::Value::as_table_mut)
+        .and_then(|assets| assets.get_mut("arch"))
+        .and_then(toml::Value::as_table_mut)
+        .and_then(|arches| arches.get_mut(arch))
+        .and_then(toml::Value::as_table_mut)
+        .with_context(|| {
+            format!("release channel profile {profile_id} lacks assets.arch.{arch}")
+        })?;
+    for kind in ["kernel", "initrd", "rootfs"] {
+        let pin = by_kind[kind];
+        validate_blake3_hex("profile image blake3", &pin.blake3)?;
+        if pin.name.trim().is_empty() || pin.url.trim().is_empty() || pin.size == 0 {
+            anyhow::bail!(
+                "release channel profile {profile_id}/{arch} {kind} runtime pin is incomplete"
+            );
+        }
+        let descriptor = arch_table
+            .get_mut(kind)
+            .and_then(toml::Value::as_table_mut)
+            .with_context(|| {
+                format!("release channel profile {profile_id} lacks assets.arch.{arch}.{kind}")
+            })?;
+        let resolved_url = resolve_release_channel_artifact_url(manifest_source, &pin.url)
+            .with_context(|| {
+                format!("resolve release channel profile {profile_id}/{arch} {kind} runtime URL")
+            })?;
+        descriptor.insert("name".to_string(), toml::Value::String(pin.name.clone()));
+        descriptor.insert("url".to_string(), toml::Value::String(resolved_url));
+        descriptor.insert(
+            "hash".to_string(),
+            toml::Value::String(format!("blake3:{}", pin.blake3)),
+        );
+        descriptor.insert(
+            "size".to_string(),
+            toml::Value::Integer(i64::try_from(pin.size).with_context(|| {
+                format!(
+                    "release channel profile {profile_id}/{arch} {kind} size exceeds TOML integer"
+                )
+            })?),
+        );
+    }
+    toml::to_string_pretty(&document)
+        .with_context(|| format!("serialize release channel profile {profile_id}"))
 }
 
 async fn read_release_channel_profile_config(
@@ -5511,6 +5640,118 @@ mod tests {
             )
             .unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn release_graph_materializes_installed_profile_pins_from_manifest() {
+        let source = r#"
+[assets]
+format = "profile-assets.v1"
+refresh_policy = "on_profile_refresh"
+
+[assets.arch.x86_64.kernel]
+name = "vmlinuz"
+url = "https://old.example/vmlinuz"
+
+[assets.arch.x86_64.initrd]
+name = "initrd.img"
+url = "https://old.example/initrd.img"
+
+[assets.arch.x86_64.rootfs]
+name = "rootfs.erofs"
+url = "https://old.example/rootfs.erofs"
+"#;
+        let pins = [
+            ("kernel", "vmlinuz", "a", 11_u64),
+            ("initrd", "initrd.img", "b", 22_u64),
+            ("rootfs", "rootfs.erofs", "c", 33_u64),
+        ]
+        .into_iter()
+        .map(
+            |(kind, name, digest_seed, size)| ReleaseChannelProfileRuntimePin {
+                profile_id: "code".to_string(),
+                arch: "x86_64".to_string(),
+                kind: kind.to_string(),
+                name: name.to_string(),
+                url: format!("/profiles/releases/test/code/x86_64/{name}"),
+                size,
+                blake3: digest_seed.repeat(64),
+            },
+        )
+        .collect::<Vec<_>>();
+
+        let materialized = materialize_release_channel_profile_toml(
+            source,
+            "code",
+            "https://release.example/assets/nightly/manifest.json",
+            &pins,
+        )
+        .unwrap();
+        let document: toml::Value = toml::from_str(&materialized).unwrap();
+        let assets = &document["assets"]["arch"]["x86_64"];
+
+        for (kind, name, digest_seed, size) in [
+            ("kernel", "vmlinuz", "a", 11_i64),
+            ("initrd", "initrd.img", "b", 22_i64),
+            ("rootfs", "rootfs.erofs", "c", 33_i64),
+        ] {
+            assert_eq!(assets[kind]["name"].as_str(), Some(name));
+            assert_eq!(
+                assets[kind]["url"].as_str(),
+                Some(
+                    format!("https://release.example/profiles/releases/test/code/x86_64/{name}")
+                        .as_str()
+                )
+            );
+            assert_eq!(
+                assets[kind]["hash"].as_str(),
+                Some(format!("blake3:{}", digest_seed.repeat(64)).as_str())
+            );
+            assert_eq!(assets[kind]["size"].as_integer(), Some(size));
+        }
+    }
+
+    #[test]
+    fn release_graph_profile_materialization_rejects_incomplete_manifest_pins() {
+        let source = r#"
+[assets]
+format = "profile-assets.v1"
+refresh_policy = "on_profile_refresh"
+
+[assets.arch.x86_64.kernel]
+name = "vmlinuz"
+url = "https://old.example/vmlinuz"
+
+[assets.arch.x86_64.initrd]
+name = "initrd.img"
+url = "https://old.example/initrd.img"
+
+[assets.arch.x86_64.rootfs]
+name = "rootfs.erofs"
+url = "https://old.example/rootfs.erofs"
+"#;
+        let pins = vec![ReleaseChannelProfileRuntimePin {
+            profile_id: "code".to_string(),
+            arch: "x86_64".to_string(),
+            kind: "kernel".to_string(),
+            name: "vmlinuz".to_string(),
+            url: "https://release.example/vmlinuz".to_string(),
+            size: 11,
+            blake3: "a".repeat(64),
+        }];
+
+        let error = materialize_release_channel_profile_toml(
+            source,
+            "code",
+            "https://release.example/assets/nightly/manifest.json",
+            &pins,
+        )
+        .unwrap_err();
+
+        assert!(
+            format!("{error:#}").contains("missing manifest runtime pins"),
+            "{error:#}"
         );
     }
 

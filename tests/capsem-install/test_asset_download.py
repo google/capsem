@@ -21,6 +21,7 @@ import os
 import platform
 import subprocess
 import threading
+import tomllib
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -746,7 +747,21 @@ url = "{profile_release_url}/rootfs.erofs"
         target = assets / arch / _hashed_asset_name(name, blob)
         assert target.exists(), f"{target} not downloaded. stdout={result.stdout}"
         assert target.read_bytes() == blob
-    assert (capsem_home / "profiles" / "default" / "profile.toml").read_bytes() == profile_config
+    installed_profile = tomllib.loads(
+        (capsem_home / "profiles" / "default" / "profile.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    installed_assets = installed_profile["assets"]["arch"][arch]
+    images_by_kind = {image["kind"]: image for image in installed_images}
+    for kind in ("kernel", "initrd", "rootfs"):
+        image = images_by_kind[kind]
+        assert installed_assets[kind] == {
+            "name": image["name"],
+            "url": f"{base_url}{image['url']}",
+            "hash": f"blake3:{image['digest']['blake3']}",
+            "size": image["bytes"],
+        }
 
 
 def test_installed_cli_switches_public_channels_then_corporate_channel_locks(

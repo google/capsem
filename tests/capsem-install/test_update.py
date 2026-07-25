@@ -19,6 +19,7 @@ import socketserver
 import subprocess
 import threading
 import tomllib
+from urllib.parse import urljoin
 from pathlib import Path
 
 import pytest
@@ -603,6 +604,32 @@ def _write_installed_profile_graph(
     profile_path.parent.mkdir(parents=True, exist_ok=True)
     profile_path.write_bytes(profile_bytes)
     return manifest_path
+
+
+def _assert_installed_profile_uses_manifest_pins(
+    profile_path: Path,
+    manifest: dict,
+    manifest_url: str,
+    *,
+    profile_id: str = "code",
+) -> None:
+    host_arch = "arm64" if platform.machine().lower() in {"aarch64", "arm64"} else "x86_64"
+    architecture = next(
+        row
+        for row in manifest["profiles"][profile_id]["architectures"]
+        if row["architecture"] == host_arch
+    )
+    images = {image["kind"]: image for image in architecture["images"]}
+    installed = tomllib.loads(profile_path.read_text(encoding="utf-8"))
+    assets = installed["assets"]["arch"][host_arch]
+    for kind in ("kernel", "initrd", "rootfs"):
+        image = images[kind]
+        assert assets[kind] == {
+            "name": image["name"],
+            "url": urljoin(manifest_url, image["url"]),
+            "hash": f"blake3:{image['digest']['blake3']}",
+            "size": image["bytes"],
+        }
 
 
 def _write_installed_asset_manifest(capsem_home: Path, current_assets: str) -> None:
@@ -1581,7 +1608,13 @@ def test_update_yes_applies_compatible_profile_catalog_from_release_channel(
     )
     assert "Profile catalog update available" in result.stdout
     assert "Profile configuration and VM assets were atomically activated." in result.stdout
-    assert (capsem_home / "profiles" / "code" / "profile.toml").read_bytes() == release_profile
+    installed_profile = capsem_home / "profiles" / "code" / "profile.toml"
+    assert installed_profile.read_bytes() != release_profile
+    _assert_installed_profile_uses_manifest_pins(
+        installed_profile,
+        release_graph,
+        f"{base_url}{manifest_path}",
+    )
     assert installed_manifest.read_bytes() == release_manifest
     assert requests[0] == manifest_path
     assert set(requests[1:]) == set(release_files)
@@ -1628,7 +1661,13 @@ def test_profile_catalog_preserves_existing_vm_pins_on_update(
         f"capsem update --yes failed\nstdout={result.stdout}\nstderr={result.stderr}"
     )
     assert "Profile configuration and VM assets were atomically activated." in result.stdout
-    assert (capsem_home / "profiles" / "code" / "profile.toml").read_bytes() == release_profile
+    installed_profile = capsem_home / "profiles" / "code" / "profile.toml"
+    assert installed_profile.read_bytes() != release_profile
+    _assert_installed_profile_uses_manifest_pins(
+        installed_profile,
+        release_graph,
+        f"{base_url}{release_manifest_path}",
+    )
     assert registry_path.read_bytes() == before_registry
     assert manifest_path.read_bytes() != before_manifest
     assert manifest_path.read_bytes() == release_manifest
