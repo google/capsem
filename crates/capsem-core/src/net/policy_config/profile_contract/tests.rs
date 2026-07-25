@@ -75,6 +75,50 @@ fn installed_release_graph_overlays_profile_bootstrap_assets_in_memory() {
 }
 
 #[test]
+fn installed_release_graph_resolves_relative_image_urls_to_hydrated_assets() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest_path = dir.path().join("manifest.json");
+    let manifest = serde_json::json!({
+        "version": "1.0.0",
+        "profiles": {
+            "code": {
+                "revision": "2030.01.02.3",
+                "architectures": [{
+                    "architecture": "arm64",
+                    "config": [],
+                    "images": [
+                        {"kind": "kernel", "name": "vmlinuz", "url": "/profiles/releases/nightly/code/2030.01.02.3/arm64/vmlinuz", "bytes": 11, "digest": {"blake3": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "sha256": "1111111111111111111111111111111111111111111111111111111111111111"}},
+                        {"kind": "initrd", "name": "initrd.img", "url": "/profiles/releases/nightly/code/2030.01.02.3/arm64/initrd.img", "bytes": 22, "digest": {"blake3": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "sha256": "2222222222222222222222222222222222222222222222222222222222222222"}},
+                        {"kind": "rootfs", "name": "rootfs.erofs", "url": "/profiles/releases/nightly/code/2030.01.02.3/arm64/rootfs.erofs", "bytes": 33, "digest": {"blake3": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "sha256": "3333333333333333333333333333333333333333333333333333333333333333"}}
+                    ]
+                }]
+            }
+        }
+    });
+    std::fs::write(&manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+    let mut catalog = ProfileCatalog::builtin();
+
+    overlay_release_manifest_assets(&mut catalog, &manifest_path).unwrap();
+
+    let code = catalog.get("code").unwrap();
+    let arm64 = code.assets.arch.get("arm64").unwrap();
+    assert_eq!(
+        arm64.kernel.url,
+        format!("file://{}", dir.path().join("arm64/vmlinuz").display())
+    );
+    assert_eq!(
+        arm64.initrd.url,
+        format!("file://{}", dir.path().join("arm64/initrd.img").display())
+    );
+    assert_eq!(
+        arm64.rootfs.url,
+        format!("file://{}", dir.path().join("arm64/rootfs.erofs").display())
+    );
+    code.validate()
+        .expect("installed profile overlay must remain valid");
+}
+
+#[test]
 fn profile_config_requires_assets_section() {
     let error = toml::from_str::<ProfileConfigFile>(
         r#"
