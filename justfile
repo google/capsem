@@ -1845,6 +1845,25 @@ _gate-install:
     echo "Repacking .deb with companion binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh --manifest \"file://\$PWD/$INSTALL_ASSETS_DIR/manifest.json\" \"\$DEB\" /cargo-target/debug \"$INSTALL_CONFIG_DIR\" \"$INSTALL_ASSETS_DIR\""
+    echo "Authoring exact candidate manifest for the installed package..."
+    docker exec -u capsem "$CONTAINER" bash -c \
+        "cd /src && \
+        DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && \
+        VERSION=\$(dpkg-deb -f \"\$DEB\" Version) && \
+        CANDIDATE_BASE=\"\$PWD/target/install-test-packages\" && \
+        CANDIDATE_DIR=\"\$CANDIDATE_BASE/v\$VERSION\" && \
+        rm -rf \"\$CANDIDATE_BASE\" && \
+        mkdir -p \"\$CANDIDATE_DIR\" && \
+        CANDIDATE_DEB=\"\$CANDIDATE_DIR/\$(basename \"\$DEB\")\" && \
+        cp \"\$DEB\" \"\$CANDIDATE_DEB\" && \
+        SBOM=\"\$CANDIDATE_DIR/capsem-sbom.spdx.json\" && \
+        python3 scripts/generate-host-binary-sbom.py --output \"\$SBOM\" \"\$CANDIDATE_DEB\" && \
+        CAPSEM_RELEASE_URL=\"file://\$CANDIDATE_BASE\" \
+            /cargo-target/debug/capsem-admin assets channel record-binary \
+            --manifest-path \"$INSTALL_ASSETS_DIR/manifest.json\" \
+            --version \"\$VERSION\" \
+            --artifact \"\$CANDIDATE_DEB\" \
+            --artifact \"\$SBOM\""
     echo "Installing .deb via dpkg..."
     docker exec "$CONTAINER" bash -c \
         "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"

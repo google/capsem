@@ -504,6 +504,24 @@ def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> No
     assert "run just _gate-install with rebuilt or pulled profile assets" in update_tests
 
 
+def test_install_test_authors_exact_candidate_manifest_before_dpkg() -> None:
+    block = _just_recipe_block("_gate-install").replace(r"\"", '"').replace(r"\$", "$")
+
+    repack = block.index("scripts/repack-deb.sh")
+    generate_sbom = block.index("scripts/generate-host-binary-sbom.py", repack)
+    record_binary = block.index("capsem-admin assets channel record-binary", generate_sbom)
+    install = block.index("dpkg -i /cargo-target/debug/bundle/deb/*.deb", record_binary)
+
+    assert repack < generate_sbom < record_binary < install
+    assert 'VERSION=$(dpkg-deb -f "$DEB" Version)' in block
+    assert 'CAPSEM_RELEASE_URL="file://$CANDIDATE_BASE"' in block
+    assert '--manifest-path "$INSTALL_ASSETS_DIR/manifest.json"' in block
+    assert '--artifact "$CANDIDATE_DEB"' in block
+    assert '--artifact "$SBOM"' in block
+    assert 'manifest["packages"]' not in block
+    assert 'jq ' not in block
+
+
 def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> None:
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
 
