@@ -85,7 +85,7 @@ def test_modules_retain_complete_named_quality_gates() -> None:
 
     for required in (
         "cargo audit",
-        "scripts/audit-pnpm-bulk.py --project-dir frontend",
+        "scripts/audit-pnpm-bulk.py",
         "cargo clippy --workspace --all-targets -- -D warnings",
         "bash scripts/check-web-surface.sh frontend",
         "cargo llvm-cov --workspace --bins --lib --tests",
@@ -110,8 +110,7 @@ def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     install_preflight = runner.index("just _test-install-harness-preflight")
 
     assert audit < install_preflight
-    assert frontend < install_preflight
-    assert clippy < install_preflight
+    assert frontend < clippy < install_preflight
 
 
 def test_standalone_functional_scripts_use_the_project_python() -> None:

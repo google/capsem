@@ -14,6 +14,9 @@ permissions:
   contents: read
 
 jobs:
+  fast-gate:
+    uses: ./.github/workflows/fast-gate.yaml
+
   # ---------------------------------------------------------------------------
   # Linux: compile + test KVM hypervisor backend (cfg(target_os = "linux"))
   # ---------------------------------------------------------------------------
@@ -142,9 +145,6 @@ jobs:
       - run: bash scripts/check-web-surface.sh frontend-build
       - name: Install release site dependencies
         run: cd release-site && pnpm install --frozen-lockfile
-
-      - name: Frontend dependency audit
-        run: python3 scripts/audit-pnpm-bulk.py --project-dir frontend
 
       - name: Install prebuilt Rust tools
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
@@ -464,11 +464,12 @@ jobs:
   # ---------------------------------------------------------------------------
   pr-gate:
     runs-on: ubuntu-latest
-    needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]
+    needs: [fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]
     if: ${{ always() }}
     steps:
       - name: Require all CI jobs
         env:
+          FAST_GATE_RESULT: ${{ needs.fast-gate.result }}
           TEST_LINUX_RESULT: ${{ needs.test-linux.result }}
           TEST_MACOS_RESULT: ${{ needs.test.result }}
           TEST_INSTALL_RESULT: ${{ needs.test-install.result }}
@@ -476,6 +477,7 @@ jobs:
           SITE_BUILD_RESULT: ${{ needs.site-build.result }}
           RELEASE_SITE_BUILD_RESULT: ${{ needs.release-site-build.result }}
         run: |
+          echo "fast-gate:    $FAST_GATE_RESULT"
           echo "test-linux:   $TEST_LINUX_RESULT"
           echo "test:         $TEST_MACOS_RESULT"
           echo "test-install: $TEST_INSTALL_RESULT"
@@ -483,6 +485,7 @@ jobs:
           echo "site-build:   $SITE_BUILD_RESULT"
           echo "release-site-build: $RELEASE_SITE_BUILD_RESULT"
 
+          test "$FAST_GATE_RESULT" = success
           test "$TEST_LINUX_RESULT" = success
           test "$TEST_MACOS_RESULT" = success
           test "$TEST_INSTALL_RESULT" = success

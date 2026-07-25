@@ -153,7 +153,7 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
     assert "cron:" in security_audit
     assert "workflow_dispatch:" in security_audit
     assert "run: cargo audit" in security_audit
-    assert "run: python3 scripts/audit-pnpm-bulk.py --project-dir frontend" in security_audit
+    assert "run: python3 scripts/audit-pnpm-bulk.py" in security_audit
 
 
 def test_remote_storage_images_are_immutable() -> None:

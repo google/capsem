@@ -11,8 +11,8 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 
 | Workflow | Trigger | What it does |
 |----------|---------|-------------|
-| `ci.yaml` | Pull requests and pushes to `main` | Quality gate: Rust unit/integration, frontend, Python contracts, install checks, explicit runner substitutions, and a post-merge main signal |
-| `security-audit.yaml` | Weekly schedule or manual dispatch | Blocking RustSec and frontend dependency advisories without coupling upstream advisory publication to every PR |
+| `ci.yaml` | Pull requests and pushes to `main` | Quality gate: the shared fast/static module, Rust unit/integration, frontend, Python contracts, install checks, explicit runner substitutions, and a post-merge main signal |
+| `security-audit.yaml` | Weekly schedule or manual dispatch | Blocking RustSec and dependency advisories across every JavaScript web workspace |
 | `release-nightly.yaml` | Daily schedule or manual dispatch | Check out current `main` and call `just release-binaries nightly`; tagged `main` is a clean no-op |
 | `release.yaml` | Dispatch from `release-binaries` with `{tag, channel}` | Run one per-channel serialized stable or nightly release: build apps, install-test the exact packages, publish them, update only the selected channel, and run public glow-up checks |
 | `release-assets.yaml` | Dispatch from `capsem-admin release` | Build exactly one channel/profile's images, config, and evidence against the existing channel package |
@@ -54,7 +54,7 @@ Tests the KVM backend, which only compiles on Linux:
 
 Hosted-runner quality suite on macOS:
 
-1. **Frontend dependency audit** -- the checked-in bulk advisory client
+1. **Shared fast/static gate** -- blocking RustSec and all-workspace JavaScript audits, Clippy, Python lint/type checks, frontend/docs/sites, source contracts, cross-compilation, clean install-harness bootstrap, and portable coverage
 2. **Rust unit tests with coverage** -- every workspace crate, including macOS-only app/tray crates
 3. **Rust integration tests** -- cross-crate tests from `tests/` directory
 4. **Frontend** -- type check (`astro check` + `svelte-check`), vitest with coverage, production build
@@ -63,9 +63,9 @@ Hosted-runner quality suite on macOS:
 7. **Import verification** -- all test suites import cleanly
 8. **Schema drift check** -- regenerates settings schema and verifies no uncommitted changes
 
-The blocking RustSec audit runs weekly and on demand in
-`security-audit.yaml`. This keeps a new upstream advisory loud and owned
-without making every unrelated PR red at once.
+The same RustSec and four-workspace JavaScript audit also runs weekly and on
+demand in `security-audit.yaml`; neither path converts new advisories to
+warnings.
 
 ### test-install (ubuntu-24.04-arm)
 
@@ -82,8 +82,8 @@ release.
 ### pr-gate (ubuntu-latest)
 
 This is the stable branch-protection status for code PRs. It depends on
-`test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and
-`release-site-build`, runs even when one dependency fails, and fails unless every dependency job reports
+`fast-gate`, `test-linux`, `test`, `test-install`, `docs-build`, `site-build`,
+and `release-site-build`, runs even when one dependency fails, and fails unless every dependency job reports
 `success`.
 
 `pr-gate` is the only status that should be required by branch protection for
@@ -100,11 +100,12 @@ uv run python scripts/check-remote-release-readiness.py
 ```
 
 It verifies that the local checkout has no unpublished commits relative to
-`origin/main`; remote `ci.yaml` exposes `pr-gate`, aggregates `test-linux`,
-`test`, `test-install`, `docs-build`, `site-build`, and `release-site-build`, runs with
-`if: ${{ always() }}` and asserts every dependency result; branch protection or
-active branch rulesets require `pr-gate`; and `release.capsem.org` resolves and
-serves the generated release graph. The public contract is the root
+`origin/main`; remote `ci.yaml` exposes `pr-gate`, aggregates `fast-gate`,
+`test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and
+`release-site-build`, runs with `if: ${{ always() }}` and asserts every
+dependency result; branch protection or active branch rulesets require
+`pr-gate`; and `release.capsem.org` resolves and serves the generated release
+graph. The public contract is the root
 `channels.json`, one selectable channel manifest URL
 `/assets/<channel>/manifest.json`, package-owned binary inventory, and
 profile-owned config, image, software inventory, ABOM, and OBOM records inside
@@ -162,7 +163,7 @@ named below.
 
 | `just test` stage | PR CI proof | Difference |
 |-------------------|-------------|------------|
-| Audits, lint, and all web surfaces | `test`, `docs-build`, `site-build`, and `release-site-build` reuse `scripts/check-web-surface.sh` | Same checked-in entrypoint; `just test` remains the canonical owner |
+| Audits, lint, and all web surfaces | `fast-gate` calls the same `_test-static` module as local and release CI; dedicated web jobs retain platform/deployment evidence | Same checked-in module and dependency audit across all four web workspaces |
 | Cross-compile agent (both arches) | `test` job: musl target check for `capsem-agent`; `test-linux` covers Linux host crates | Hosted PR substitution for Docker release cross-compile |
 | Rust workspace coverage | `test` and `test-linux` jobs run `cargo llvm-cov nextest` on macOS and Linux crate sets | Same coverage rail with runner-specific package sets |
 | Host binary signing prerequisites | `test` job builds and ad-hoc signs host binaries before non-VM integration suites | Same PR prerequisite for artifact-dependent Python suites |

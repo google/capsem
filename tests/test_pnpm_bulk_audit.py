@@ -81,18 +81,45 @@ def test_bulk_audit_rejects_malformed_registry_response() -> None:
         raise AssertionError("malformed advisory response was accepted")
 
 
+def test_default_bulk_audit_covers_every_web_workspace() -> None:
+    audit = _load_module()
+
+    assert audit.DEFAULT_PROJECT_DIRS == (
+        Path("frontend"),
+        Path("docs"),
+        Path("site"),
+        Path("release-site"),
+    )
+    for project in audit.DEFAULT_PROJECT_DIRS:
+        assert (PROJECT_ROOT / project / "package.json").is_file()
+        assert (PROJECT_ROOT / project / "pnpm-lock.yaml").is_file()
+
+
 def test_every_fast_gate_blocks_on_bulk_dependency_advisories() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
     ci = (PROJECT_ROOT / ".github/workflows/ci.yaml").read_text(encoding="utf-8")
+    fast_gate = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(encoding="utf-8")
     scheduled = (PROJECT_ROOT / ".github/workflows/security-audit.yaml").read_text(encoding="utf-8")
 
-    for source in (justfile, ci, scheduled):
+    for source in (justfile, scheduled):
         assert "scripts/audit-pnpm-bulk.py" in source
         assert "pnpm audit" not in source
         assert "--ignore-registry-errors" not in source
 
+    assert "uses: ./.github/workflows/fast-gate.yaml" in ci
+    assert "fast-gate" in ci.split("  pr-gate:", 1)[1]
+    assert "run: just _test-static" in fast_gate
     assert "npm bulk advisory audit (blocking security signal)" in scheduled
-    assert "run: python3 scripts/audit-pnpm-bulk.py --project-dir frontend" in scheduled
+    assert "run: python3 scripts/audit-pnpm-bulk.py" in scheduled
+    assert "--project-dir frontend" not in scheduled
+    for lockfile in (
+        "frontend/pnpm-lock.yaml",
+        "docs/pnpm-lock.yaml",
+        "site/pnpm-lock.yaml",
+        "release-site/pnpm-lock.yaml",
+    ):
+        assert lockfile in fast_gate
+        assert lockfile in scheduled
 
     # Audit-only convenience is not a public Just fork.
     assert "\naudit:" not in justfile
@@ -100,13 +127,11 @@ def test_every_fast_gate_blocks_on_bulk_dependency_advisories() -> None:
     assert "cargo audit reported advisories; see the security-audit workflow" not in justfile
     assert "npm audit reported advisories; see the security-audit workflow" not in justfile
     assert "cargo audit & PID_CARGO_AUDIT=$!" in justfile
-    assert (
-        "python3 scripts/audit-pnpm-bulk.py --project-dir frontend & PID_PNPM_AUDIT=$!" in justfile
-    )
+    assert "python3 scripts/audit-pnpm-bulk.py & PID_PNPM_AUDIT=$!" in justfile
+    assert "--project-dir frontend" not in justfile
     assert 'wait $PID_CARGO_AUDIT || { echo "cargo audit failed"; FAIL=1; }' in justfile
     assert 'wait $PID_PNPM_AUDIT || { echo "npm bulk audit failed"; FAIL=1; }' in justfile
-    ci_audit_step = ci.split("- name: Frontend dependency audit", 1)[1].split("- name:", 1)[0]
-    assert "continue-on-error: true" not in ci_audit_step
+    assert "continue-on-error: true" not in fast_gate
 
 
 def test_frontend_owns_theme_css_without_preline_build_dependency() -> None:

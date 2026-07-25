@@ -707,14 +707,14 @@ _test-candidate-run:
     # ---- Stage 0: fast-fail (audits + lint + frontend) ---------------------
     # Cheap, independent, most-common failure class. Clippy (not cargo check)
     # is the Rust lint gate per CLAUDE.md -- it's a strict superset of check
-    # and covers --all-targets. Run it alongside the dependency and Python
-    # checks while the frontend suite produces the dist embedded by later
-    # capsem-app compilation. `set -e` does not trip on failed background
-    # jobs, so aggregate with FAIL=1.
+    # and covers --all-targets. capsem-app embeds frontend/dist at compile time,
+    # so the frontend build must finish before Clippy reads that directory.
+    # Clippy can then overlap the other web builds and background checks.
+    # `set -e` does not trip on failed background jobs, so aggregate with
+    # FAIL=1.
     echo "=== Audits + lint + web surfaces ==="
     cargo audit & PID_CARGO_AUDIT=$!
-    python3 scripts/audit-pnpm-bulk.py --project-dir frontend & PID_PNPM_AUDIT=$!
-    cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
+    python3 scripts/audit-pnpm-bulk.py & PID_PNPM_AUDIT=$!
     uv run ruff check . & PID_RUFF=$!
     uv run ty check src/capsem & PID_TY=$!
     uv run capsem-builder validate-skills skills & PID_SKILLS=$!
@@ -723,6 +723,9 @@ _test-candidate-run:
     if ! bash scripts/check-web-surface.sh frontend; then
         echo "frontend (check/test/build) failed"
         FAIL=1
+        PID_CLIPPY=""
+    else
+        cargo clippy --workspace --all-targets -- -D warnings & PID_CLIPPY=$!
     fi
     if ! bash scripts/check-web-surface.sh docs; then
         echo "docs build failed"
@@ -738,7 +741,9 @@ _test-candidate-run:
     fi
     wait $PID_CARGO_AUDIT || { echo "cargo audit failed"; FAIL=1; }
     wait $PID_PNPM_AUDIT || { echo "npm bulk audit failed"; FAIL=1; }
-    wait $PID_CLIPPY      || { echo "cargo clippy failed (warnings = error)"; FAIL=1; }
+    if [ -n "$PID_CLIPPY" ]; then
+        wait $PID_CLIPPY || { echo "cargo clippy failed (warnings = error)"; FAIL=1; }
+    fi
     wait $PID_RUFF        || { echo "ruff check failed"; FAIL=1; }
     wait $PID_TY          || { echo "ty check failed"; FAIL=1; }
     wait $PID_SKILLS      || { echo "skill validation failed"; FAIL=1; }
@@ -1441,7 +1446,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     uv run capsem-builder validate-skills skills & SKILLS_PID=$!
     uv run python scripts/check_public_surface.py & PUBLIC_SURFACE_PID=$!
     cargo audit & AUDIT_PID=$!
-    python3 scripts/audit-pnpm-bulk.py --project-dir frontend & PNPM_AUDIT_PID=$!
+    python3 scripts/audit-pnpm-bulk.py & PNPM_AUDIT_PID=$!
     (cd frontend && pnpm run check) & FE_CHECK_PID=$!
     FAIL=0
     wait $CLIPPY_PID     || { echo "cargo clippy failed"; FAIL=1; }

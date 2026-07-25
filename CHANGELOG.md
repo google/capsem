@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Restored fail-closed release inputs and early gates: CI now caches
   manifest-selected native profile blobs by recorded digest, installed
   Doctor/Winterfell boots real assets with retained failure evidence, blocking
-  audits/Clippy/frontend checks run before builders, and the frontend uses its
-  checked-in semantic theme without a Preline dependency.
+  audits/Clippy/web checks run before builders, all JavaScript workspaces audit
+  clean, and the frontend uses its checked-in semantic theme without a Preline
+  dependency.
 
 ### Added
 

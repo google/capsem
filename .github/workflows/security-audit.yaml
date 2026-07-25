@@ -25,7 +25,11 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
+          cache-dependency-path: |
+            frontend/pnpm-lock.yaml
+            docs/pnpm-lock.yaml
+            site/pnpm-lock.yaml
+            release-site/pnpm-lock.yaml
 
       - uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
         with:
@@ -37,8 +41,11 @@ jobs:
       - name: RustSec audit (blocking security signal)
         run: cargo audit
 
-      - name: Install frontend dependencies
-        run: pnpm --dir frontend install --frozen-lockfile
+      - name: Install all web dependencies
+        run: |
+          for project in frontend docs site release-site; do
+            pnpm --dir "$project" install --frozen-lockfile
+          done
 
       - name: npm bulk advisory audit (blocking security signal)
-        run: python3 scripts/audit-pnpm-bulk.py --project-dir frontend
+        run: python3 scripts/audit-pnpm-bulk.py

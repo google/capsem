@@ -366,16 +366,18 @@ def test_ci_has_stable_pr_gate_over_all_required_jobs() -> None:
     assert "branches: [main]" in trigger
     assert "cancel-in-progress: ${{ github.event_name == 'pull_request' }}" in trigger
     assert (
-        "needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]"
+        "needs: [fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]"
         in gate
     )
     assert "if: ${{ always() }}" in gate
+    assert "FAST_GATE_RESULT: ${{ needs.fast-gate.result }}" in gate
     assert "TEST_LINUX_RESULT: ${{ needs.test-linux.result }}" in gate
     assert "TEST_MACOS_RESULT: ${{ needs.test.result }}" in gate
     assert "TEST_INSTALL_RESULT: ${{ needs.test-install.result }}" in gate
     assert "DOCS_BUILD_RESULT: ${{ needs.docs-build.result }}" in gate
     assert "SITE_BUILD_RESULT: ${{ needs.site-build.result }}" in gate
     assert "RELEASE_SITE_BUILD_RESULT: ${{ needs.release-site-build.result }}" in gate
+    assert 'test "$FAST_GATE_RESULT" = success' in gate
     assert 'test "$TEST_LINUX_RESULT" = success' in gate
     assert 'test "$TEST_MACOS_RESULT" = success' in gate
     assert 'test "$TEST_INSTALL_RESULT" = success' in gate
@@ -401,7 +403,7 @@ def test_pr_gate_blocks_broken_docs_and_marketing_builds() -> None:
     assert "docs-build:" in workflow
     assert "site-build:" in workflow
     assert (
-        "needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]"
+        "needs: [fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]"
         in gate
     )
     assert "DOCS_BUILD_RESULT: ${{ needs.docs-build.result }}" in gate
@@ -551,8 +553,8 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "cancel-in-progress: false" in workflow
     assert "deployments: write" in workflow
     assert "Fetch latest selected channel source manifest" in workflow
-    assert "--kind packages" in workflow
-    assert "--output target/profile-public-before/packages" in workflow
+    assert "kind: packages" in workflow
+    assert "output: target/profile-public-before/packages" in workflow
     assert "--input-dir target/profile-public-before/packages" in workflow
     assert "--print-package-path" in workflow
     assert 'just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
@@ -1283,7 +1285,7 @@ def test_docs_and_marketing_sites_build_on_pr_and_deploy_on_main_only() -> None:
         assert f"cd {directory} && pnpm install --frozen-lockfile" in ci_block
         assert f"bash scripts/check-web-surface.sh {directory}" in ci_block
         assert (
-            "needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]"
+            "needs: [fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]"
             in ci_workflow
         )
         assert f"cd {directory} && pnpm install --frozen-lockfile" in workflow
@@ -2660,7 +2662,7 @@ def test_ci_docs_describes_three_independent_publication_rails() -> None:
     assert "release.yaml` | Tag push (`v*`) | Build assets" not in docs
     assert "generated asset manifest artifact" not in docs
     assert "### pr-gate (ubuntu-latest)" in docs
-    assert "`test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and" in docs
+    assert "`fast-gate`, `test-linux`, `test`, `test-install`, `docs-build`, `site-build`," in docs
     assert "`release-site-build`, runs even" in docs
     assert "fails unless every dependency job reports" in docs
     assert "After Cloudflare deploys, `release-channel.yaml` smoke" in docs
@@ -2697,7 +2699,7 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
 
     assert "## PR gate compared with `just test`" in docs
     assert (
-        "| Audits, lint, and all web surfaces | `test`, `docs-build`, `site-build`, and `release-site-build` reuse `scripts/check-web-surface.sh` | Same checked-in entrypoint; `just test` remains the canonical owner |"
+        "| Audits, lint, and all web surfaces | `fast-gate` calls the same `_test-static` module as local and release CI; dedicated web jobs retain platform/deployment evidence | Same checked-in module and dependency audit across all four web workspaces |"
         in docs
     )
     assert (
@@ -2715,7 +2717,7 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
     assert "`pr-gate` is the only status that should be required by branch protection" in docs
     assert "`pr-gate` depends on `docs-build`, `site-build`, and `release-site-build`" in docs_text
     assert (
-        "needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]"
+        "needs: [fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]"
         in workflow
     )
 
@@ -2954,7 +2956,7 @@ def test_remote_release_readiness_checker_is_read_only_and_covers_live_gates() -
     assert "read-only" in docs
     assert "remote `ci.yaml` exposes `pr-gate`" in docs_text
     assert (
-        "aggregates `test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and `release-site-build`"
+        "aggregates `fast-gate`, `test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and `release-site-build`"
         in (docs_text)
     )
     assert "runs with `if: ${{ always() }}` and asserts every dependency result" in docs_text
@@ -3075,13 +3077,16 @@ jobs:
     runs-on: ubuntu-latest
   release-site-build:
     runs-on: ubuntu-latest
+  fast-gate:
+    uses: ./.github/workflows/fast-gate.yaml
   pr-gate:
-    needs: [test-linux, test, test-install, docs-build, site-build, release-site-build]
+    needs: [fast-gate, test-linux, test, test-install, docs-build, site-build, release-site-build]
 """.strip()
     multiline = """
 jobs:
   pr-gate:
     needs:
+      - fast-gate
       - test-linux
       - test
       - test-install
@@ -3099,6 +3104,7 @@ jobs:
     steps:
       - name: Require all CI jobs
         env:
+          FAST_GATE_RESULT: ${{ needs.fast-gate.result }}
           TEST_LINUX_RESULT: ${{ needs.test-linux.result }}
           TEST_MACOS_RESULT: ${{ needs.test.result }}
           TEST_INSTALL_RESULT: ${{ needs.test-install.result }}
@@ -3106,6 +3112,7 @@ jobs:
           SITE_BUILD_RESULT: ${{ needs.site-build.result }}
           RELEASE_SITE_BUILD_RESULT: ${{ needs.release-site-build.result }}
         run: |
+          test "$FAST_GATE_RESULT" = success
           test "$TEST_LINUX_RESULT" = success
           test "$TEST_MACOS_RESULT" = success
           test "$TEST_INSTALL_RESULT" = success
@@ -3116,6 +3123,7 @@ jobs:
     )
 
     assert module.workflow_job_needs(module.workflow_job_block(inline, "pr-gate")) == {
+        "fast-gate",
         "test-linux",
         "test",
         "test-install",
@@ -3124,6 +3132,7 @@ jobs:
         "release-site-build",
     }
     assert module.workflow_job_needs(module.workflow_job_block(multiline, "pr-gate")) == {
+        "fast-gate",
         "test-linux",
         "test",
         "test-install",
@@ -3139,6 +3148,7 @@ jobs:
     assert module.pr_gate_contract_failures(module.workflow_job_block(fail_closed, "pr-gate")) == []
     assert module.pr_gate_contract_failures(module.workflow_job_block(non_failing, "pr-gate")) == [
         "pr-gate does not run with if: ${{ always() }}",
+        "pr-gate does not assert fast-gate result",
         "pr-gate does not assert test-linux result",
         "pr-gate does not assert test result",
         "pr-gate does not assert test-install result",

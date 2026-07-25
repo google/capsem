@@ -30,6 +30,7 @@ else:
 
 
 REQUIRED_PR_GATE_JOBS = (
+    "fast-gate",
     "test-linux",
     "test",
     "test-install",
@@ -38,6 +39,7 @@ REQUIRED_PR_GATE_JOBS = (
     "release-site-build",
 )
 REQUIRED_PR_GATE_RESULT_CHECKS = (
+    ("fast-gate", "FAST_GATE_RESULT"),
     ("test-linux", "TEST_LINUX_RESULT"),
     ("test", "TEST_MACOS_RESULT"),
     ("test-install", "TEST_INSTALL_RESULT"),
