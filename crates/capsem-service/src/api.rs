@@ -16,6 +16,17 @@ pub struct StatsResponse {
     pub top_mcp_tools: Vec<McpToolSummary>,
 }
 
+/// Compact live ledger totals for the active-session toolbar.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct VmStatsSummaryResponse {
+    pub total_input_tokens: u64,
+    pub total_thinking_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_estimated_cost: f64,
+    pub total_tool_calls: u64,
+    pub model_call_count: u64,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ProvisionRequest {
     pub name: Option<String>,

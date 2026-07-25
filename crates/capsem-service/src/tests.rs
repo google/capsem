@@ -9161,6 +9161,8 @@ async fn write_test_model_call(
     provider: &str,
     model: &str,
     event_id: &str,
+    usage_details: BTreeMap<String, u64>,
+    with_tool: bool,
 ) {
     let writer = capsem_logger::DbWriter::open(db_path, 16).unwrap();
     writer.write_blocking(capsem_logger::WriteOp::ModelCall(
@@ -9177,7 +9179,7 @@ async fn write_test_model_call(
             stream: true,
             system_prompt_preview: None,
             messages_count: 1,
-            tools_count: 0,
+            tools_count: usize::from(with_tool),
             request_bytes: 32,
             request_body_preview: None,
             request_body_full: None,
@@ -9189,17 +9191,102 @@ async fn write_test_model_call(
             stop_reason: Some("end_turn".to_string()),
             input_tokens: Some(12),
             output_tokens: Some(7),
-            usage_details: BTreeMap::new(),
+            usage_details,
             duration_ms: 25,
             response_bytes: 64,
             estimated_cost_usd: 0.001,
             trace_id: Some(format!("trace-{event_id}")),
             credential_ref: None,
-            tool_calls: vec![],
+            tool_calls: if with_tool {
+                vec![capsem_logger::ToolCallEntry {
+                    call_index: 0,
+                    call_id: format!("tool-{event_id}"),
+                    tool_name: "Read".to_string(),
+                    arguments: Some(r#"{"path":"/root/a.txt"}"#.to_string()),
+                    origin: "native".to_string(),
+                    trace_id: Some(format!("trace-{event_id}")),
+                }]
+            } else {
+                vec![]
+            },
             tool_responses: vec![],
         },
     ));
     writer.shutdown_blocking();
+}
+
+#[tokio::test]
+async fn stats_summary_route_returns_live_compact_session_totals() {
+    let state = make_test_state();
+    let app = build_service_router(Arc::clone(&state));
+    let dir = tempfile::tempdir().unwrap();
+    let session_dir = dir.path().join("sessions").join("stats-summary-vm");
+    std::fs::create_dir_all(&session_dir).unwrap();
+    insert_fake_instance_with_session_dir(
+        &state,
+        "stats-summary-vm",
+        std::process::id(),
+        session_dir.clone(),
+    );
+    let db_path = session_dir.join("session.db");
+
+    write_test_model_call(
+        &db_path,
+        "openai",
+        "o3",
+        "abc000000001",
+        BTreeMap::from([("thinking".to_string(), 3)]),
+        true,
+    )
+    .await;
+
+    let (status, first) = route_request(
+        app.clone(),
+        axum::http::Method::GET,
+        "/vms/stats-summary-vm/stats",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(
+        first,
+        serde_json::json!({
+            "total_input_tokens": 12,
+            "total_thinking_tokens": 3,
+            "total_output_tokens": 7,
+            "total_estimated_cost": 0.001,
+            "total_tool_calls": 1,
+            "model_call_count": 1,
+        })
+    );
+    assert!(
+        serde_json::to_vec(&first).unwrap().len() < 256,
+        "the hot toolbar route must stay a compact scalar payload: {first}"
+    );
+
+    write_test_model_call(
+        &db_path,
+        "google",
+        "gemini-3.5-flash",
+        "abc000000002",
+        BTreeMap::from([("thinking".to_string(), 2)]),
+        false,
+    )
+    .await;
+
+    let (status, second) = route_request(
+        app,
+        axum::http::Method::GET,
+        "/vms/stats-summary-vm/stats",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{second}");
+    assert_eq!(second["total_input_tokens"], 24);
+    assert_eq!(second["total_thinking_tokens"], 5);
+    assert_eq!(second["total_output_tokens"], 14);
+    assert_eq!(second["total_tool_calls"], 1);
+    assert_eq!(second["model_call_count"], 2);
 }
 
 #[tokio::test]
@@ -9217,6 +9304,8 @@ async fn stats_detail_route_reopens_session_db_handle_when_vm_id_rebinds_to_new_
         "ollama",
         "llama3.2",
         "badbadbadbad",
+        BTreeMap::new(),
+        false,
     )
     .await;
     write_test_model_call(
@@ -9224,6 +9313,8 @@ async fn stats_detail_route_reopens_session_db_handle_when_vm_id_rebinds_to_new_
         "google",
         "gemini-3.5-flash",
         "abcabcabcabc",
+        BTreeMap::new(),
+        false,
     )
     .await;
     let conn = rusqlite::Connection::open(selected_session_dir.join("session.db")).unwrap();

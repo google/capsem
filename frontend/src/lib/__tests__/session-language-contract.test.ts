@@ -29,6 +29,10 @@ const vmStore = readFileSync(
   new URL('../stores/vms.svelte.ts', import.meta.url),
   'utf8',
 );
+const activeStats = readFileSync(
+  new URL('../active-session-stats.ts', import.meta.url),
+  'utf8',
+);
 const stats = readFileSync(
   new URL('../components/views/StatsView.svelte', import.meta.url),
   'utf8',
@@ -140,10 +144,13 @@ describe('user-facing session language contract', () => {
   });
 
   it('keeps active toolbar stats live and splits input, thinking, and output tokens', () => {
-    expect(vmStore).toContain('api.getVmInfo(vm.id)');
+    expect(toolbar).toContain('api.getVmStats');
+    expect(toolbar).toContain('ActiveSessionStatsPoller');
+    expect(activeStats).toContain('intervalMs = 2_000');
     expect(toolbar).toContain('total_input_tokens');
     expect(toolbar).toContain('total_thinking_tokens');
     expect(toolbar).toContain('total_output_tokens');
+    expect(toolbar).toContain('model_call_count');
     expect(toolbar).toContain('in /');
     expect(toolbar).toContain('think /');
     expect(toolbar).toContain('out');

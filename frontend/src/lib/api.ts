@@ -13,6 +13,7 @@ import type {
   ForkRequest,
   ForkResponse,
   StatsResponse,
+  VmStatsSummary,
   UpdateStatusResponse,
   UpdateActionResponse,
   UpdateApplyAction,
@@ -672,6 +673,28 @@ export async function execCommand(
 }
 
 export type StatsDetailRow = Record<string, unknown>;
+
+export async function getVmStats(id: string): Promise<VmStatsSummary> {
+  const empty: VmStatsSummary = {
+    total_input_tokens: 0,
+    total_thinking_tokens: 0,
+    total_output_tokens: 0,
+    total_estimated_cost: 0,
+    total_tool_calls: 0,
+    model_call_count: 0,
+  };
+  if (!_connected) return empty;
+  try {
+    const resp = await _get(`/vms/${encodeURIComponent(id)}/stats`);
+    return await resp.json();
+  } catch (err) {
+    if (isNetworkError(err)) {
+      _connected = false;
+      return empty;
+    }
+    throw err;
+  }
+}
 
 export interface VmStatsDetailResponse {
   model_stats: StatsDetailRow[];

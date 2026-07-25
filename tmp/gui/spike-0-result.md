@@ -449,6 +449,30 @@ executing Claude, and never selects Chromium's insecure basic password store.
 The live launch used a diagnostic password because the running image predates
 revision `.3`; a clean Admin rebuild must prove the retained first-boot path.
 
+### Cross-cutting shell finding — captured stats were not live in the toolbar
+
+The installed Capsem app opened a real `co-work` session and Claude Code
+completed an Ollama model call. The selected session's `session.db` and
+`GET /vms/{id}/stats/detail` agreed on one `gemma4` call with 21,845 input
+tokens and 128 output tokens, while the app toolbar remained
+`0 in / 0 think / 0 out`, `0 calls`, and `$0.00`.
+
+The telemetry capture was correct. The toolbar read optional ledger fields
+from the lifecycle VM object, but the service intentionally keeps
+`/vms/{id}/info` limited to lifecycle and storage. The retained fix adds the
+compact typed `GET /vms/{id}/stats` surface, backed by the logger-owned DB
+handle, and polls it only for the visible session every two seconds. The
+response is bounded to six scalar totals, includes the normalized `thinking`
+usage detail, and reports the visible `calls` value as model calls rather than
+the previously mislabeled tool-call count. Polling rejects overlapping work,
+discards late samples after tab switches, and stops with the toolbar.
+
+The same host displayed five Capsem tray icons. Process ownership showed one
+installed production service/gateway/tray chain and four `capsem-injection`
+test chains reparented to PID 1. This is a separate companion-lifecycle defect,
+tracked independently; it is not evidence that telemetry was written to the
+wrong service.
+
 ## Measurement tables
 
 No runtime samples exist yet. Rows are added only from the complete Capsem Web

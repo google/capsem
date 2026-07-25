@@ -418,6 +418,22 @@ describe('api', () => {
       expect(result.model_stats[0].provider).toBe('google');
     });
 
+    it('getVmStats sends GET /vms/{id}/stats', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        total_input_tokens: 21845,
+        total_thinking_tokens: 0,
+        total_output_tokens: 128,
+        total_estimated_cost: 0,
+        total_tool_calls: 0,
+        model_call_count: 1,
+      }));
+      const result = await api.getVmStats('vm-1');
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/vms/vm-1/stats');
+      expect(result.model_call_count).toBe(1);
+      expect(result.total_input_tokens).toBe(21845);
+    });
+
     it('getVmSecurityLatest sends GET /vms/{id}/security/latest with limit', async () => {
       mockFetch.mockReturnValueOnce(jsonResponse([
         {

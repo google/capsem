@@ -4066,6 +4066,61 @@ async fn handle_stats(
     ))
 }
 
+const STATS_SUMMARY_SQL: &str = r#"
+SELECT
+    COALESCE(SUM(COALESCE(input_tokens, 0)), 0) AS total_input_tokens,
+    COALESCE(SUM(COALESCE(
+        CAST(json_extract(usage_details, '$.thinking') AS INTEGER),
+        0
+    )), 0) AS total_thinking_tokens,
+    COALESCE(SUM(COALESCE(output_tokens, 0)), 0) AS total_output_tokens,
+    COALESCE(SUM(COALESCE(estimated_cost_usd, 0.0)), 0.0) AS total_estimated_cost,
+    (
+        SELECT COUNT(*)
+        FROM tool_calls
+        WHERE origin IN ('native', 'mcp', 'builtin', 'local', 'mcp_proxy')
+    ) AS total_tool_calls,
+    COUNT(*) AS model_call_count
+FROM model_calls
+"#;
+
+async fn read_stats_summary_from_session_db(
+    state: &ServiceState,
+    vm_id: &str,
+    db_path: &StdPath,
+) -> Result<api::VmStatsSummaryResponse, AppError> {
+    let db = open_ready_session_db(state, vm_id, "stats_summary", db_path).await?;
+    query_route_typed_rows(
+        vm_id,
+        "stats_summary",
+        "totals",
+        db_path,
+        &db,
+        STATS_SUMMARY_SQL,
+        &[],
+    )
+    .await?
+    .into_iter()
+    .next()
+    .ok_or_else(|| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("stats summary query returned no row for {vm_id}"),
+        )
+    })
+}
+
+/// GET /vms/{id}/stats -- return compact, live toolbar totals.
+async fn handle_stats_summary(
+    State(state): State<Arc<ServiceState>>,
+    Path(id): Path<String>,
+) -> Result<Json<api::VmStatsSummaryResponse>, AppError> {
+    let session_dir = resolve_session_dir(&state, &id)?;
+    let summary =
+        read_stats_summary_from_session_db(&state, &id, &session_dir.join("session.db")).await?;
+    Ok(Json(summary))
+}
+
 /// GET /vms/{id}/stats/detail -- return fixed UI stats/detail ledgers.
 async fn handle_stats_detail(
     State(state): State<Arc<ServiceState>>,
@@ -12083,6 +12138,7 @@ fn build_service_router(state: Arc<ServiceState>) -> Router {
         .route("/purge", post(handle_purge))
         .route("/run", post(handle_run))
         .route("/stats", get(handle_stats))
+        .route("/vms/{id}/stats", get(handle_stats_summary))
         .route("/vms/{id}/stats/detail", get(handle_stats_detail))
         .route("/service-logs", get(handle_service_logs))
         .route("/triage", get(handle_triage))

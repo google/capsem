@@ -20,16 +20,30 @@
   import HardDrives from 'phosphor-svelte/lib/HardDrives';
   import { formatTokens, formatCost } from '../../format';
   import { hasVmAction, startAction, startLabel } from '../../vm-actions';
+  import * as api from '../../api';
+  import {
+    ActiveSessionStatsPoller,
+    emptyVmStatsSummary,
+  } from '../../active-session-stats';
 
   let active = $derived(tabStore.active);
   let isVM = $derived(active?.vmId != null);
   let menuOpen = $state(false);
   let busy = $derived(vmStore.acting);
   let activeVm = $derived(isVM && active?.vmId ? vmStore.vms.find(v => v.id === active!.vmId) : null);
+  let activeStats = $state(emptyVmStatsSummary());
   let activeTokenStats = $derived({
-    input: activeVm?.total_input_tokens ?? 0,
-    thinking: activeVm?.total_thinking_tokens ?? 0,
-    output: activeVm?.total_output_tokens ?? 0,
+    input: activeStats.total_input_tokens,
+    thinking: activeStats.total_thinking_tokens,
+    output: activeStats.total_output_tokens,
+  });
+  const statsPoller = new ActiveSessionStatsPoller(
+    api.getVmStats,
+    stats => { activeStats = stats; },
+  );
+
+  $effect(() => {
+    void statsPoller.setActive(active?.vmId ?? null);
   });
 
   const vmViewButtons: { view: TabView; label: string; icon: typeof Terminal }[] = [
@@ -71,7 +85,10 @@
     }
   }
   onMount(() => window.addEventListener('capsem:tab-action', onTabAction));
-  onDestroy(() => window.removeEventListener('capsem:tab-action', onTabAction));
+  onDestroy(() => {
+    window.removeEventListener('capsem:tab-action', onTabAction);
+    statsPoller.destroy();
+  });
 
   function closeModal() {
     modalKind = null;
@@ -271,8 +288,8 @@
   <div class="flex items-center gap-x-3 text-[11px] text-muted-foreground-1 tabular-nums">
     {#if isVM && activeVm}
       <span title="Tokens: input / thinking / output">{formatTokens(activeTokenStats.input)} in / {formatTokens(activeTokenStats.thinking)} think / {formatTokens(activeTokenStats.output)} out</span>
-      <span title="Tool calls">{activeVm.total_tool_calls ?? 0} calls</span>
-      <span title="Cost">{formatCost(activeVm.total_estimated_cost ?? 0)}</span>
+      <span title="Model calls">{activeStats.model_call_count} calls</span>
+      <span title="Cost">{formatCost(activeStats.total_estimated_cost)}</span>
     {/if}
   </div>
 </div>
