@@ -68,6 +68,8 @@ def test_bootstrap_provisions_live_nested_kvm_before_docker_probe() -> None:
 
     assert bootstrap.count("--nested-virtualization") >= 2
     assert "nestedVirtualization: true" in bootstrap
+    assert "for attempt in $(seq 1 30)" in bootstrap
+    assert "sudo chmod 0666 /dev/kvm /dev/vhost-vsock" in bootstrap
     live_kvm = "colima ssh -- test -r /dev/kvm -a -w /dev/kvm"
     assert live_kvm in bootstrap
     assert bootstrap.index(live_kvm) < bootstrap.index("docker info >/dev/null")

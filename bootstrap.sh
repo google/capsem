@@ -275,7 +275,7 @@ case "$(uname -s)" in
                     && grep -q 'vmType: vz' "$colima_yaml" \
                     && grep -q 'nestedVirtualization: true' "$colima_yaml"; then
                     if ! colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1 \
-                        || ! colima ssh -- test -r /dev/kvm -a -w /dev/kvm >/dev/null 2>&1; then
+                        || ! colima ssh -- sudo test -e /dev/kvm >/dev/null 2>&1; then
                         if confirm "restart Colima to register Rosetta and nested KVM for release gates"; then
                             colima restart
                         fi
@@ -284,8 +284,20 @@ case "$(uname -s)" in
                     colima stop
                     colima start --vm-type vz --vz-rosetta --nested-virtualization --memory 16 --cpu 8 --disk "$DOCKER_DISK_GIB"
                 fi
-                if ! colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1 \
-                    || ! colima ssh -- test -r /dev/kvm -a -w /dev/kvm >/dev/null 2>&1; then
+                nested_devices_ready=0
+                for attempt in $(seq 1 30); do
+                    if colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1 \
+                        && colima ssh -- sudo test -e /dev/kvm -a -e /dev/vhost-vsock >/dev/null 2>&1; then
+                        colima ssh -- sudo chmod 0666 /dev/kvm /dev/vhost-vsock
+                        if colima ssh -- test -r /dev/kvm -a -w /dev/kvm >/dev/null 2>&1 \
+                            && colima ssh -- test -r /dev/vhost-vsock -a -w /dev/vhost-vsock >/dev/null 2>&1; then
+                            nested_devices_ready=1
+                            break
+                        fi
+                    fi
+                    sleep 1
+                done
+                if [ "$nested_devices_ready" -ne 1 ]; then
                     printf "  [FAIL] Colima did not expose live Rosetta and nested KVM after repair\n" >&2
                     exit 1
                 fi

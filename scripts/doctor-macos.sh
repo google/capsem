@@ -117,7 +117,7 @@ check_platform() {
                 if colima ssh -- test -r /dev/kvm -a -w /dev/kvm &>/dev/null; then
                     pass "colima nested virtualization (enabled, live KVM)"
                 else
-                    fail "colima nested virtualization configured but /dev/kvm is not live -- fix: colima restart"
+                    fail "colima nested virtualization configured but /dev/kvm is not usable -- fix: rerun bootstrap.sh"
                 fi
             else
                 fail "colima nested virtualization not enabled -- fix: colima stop && colima start --vm-type vz --vz-rosetta --nested-virtualization --memory 16 --cpu 8"
