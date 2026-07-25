@@ -1807,10 +1807,18 @@ def test_linux_update_yes_applies_verified_deb_with_package_manager(
     )
     assert "Binary update applied." in result.stdout
     events = _read_update_log(capsem_home)
-    assert [event["event"] for event in events[-2:]] == [
+    assert [event["event"] for event in events[-4:]] == [
         "binary_update_start",
+        "asset_update_start",
+        "asset_update_complete",
         "binary_update_complete",
     ]
+    asset_complete = events[-2]
+    assert asset_complete["schema"] == "capsem.update_audit.v1"
+    assert asset_complete["action"] == "asset_update"
+    assert asset_complete["outcome"] == "success"
+    assert asset_complete["source"] == health_url
+    assert asset_complete["channel"] == "stable"
     complete = events[-1]
     assert complete["schema"] == "capsem.update_audit.v1"
     assert complete["action"] == "binary_update"
