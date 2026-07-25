@@ -28,8 +28,8 @@ tool_hint() {
         zstd)          echo "brew install zstd" ;;
         tart)          echo "brew trust --formula cirruslabs/cli/softnet && brew install cirruslabs/cli/tart" ;;
         sshpass)       echo "brew install cirruslabs/cli/sshpass" ;;
-        docker)        echo "brew install colima docker (CLI + Colima backend) && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk $(recommended_docker_disk_gib)" ;;
-        docker-daemon) echo "start Colima: colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk $(recommended_docker_disk_gib)" ;;
+        docker)        echo "brew install colima docker (CLI + Colima backend) && colima start --vm-type vz --vz-rosetta --nested-virtualization --memory 16 --cpu 8 --disk $(recommended_docker_disk_gib)" ;;
+        docker-daemon) echo "start Colima: colima start --vm-type vz --vz-rosetta --nested-virtualization --memory 16 --cpu 8 --disk $(recommended_docker_disk_gib)" ;;
         docker-buildx) echo "brew install docker-buildx && ln -sf \$(brew --prefix docker-buildx)/bin/docker-buildx ~/.docker/cli-plugins/docker-buildx" ;;
     esac
 }
@@ -94,7 +94,7 @@ check_platform() {
         if printf '%s\n' "$colima_status" | grep -qi "running"; then
             pass "colima (running)"
         else
-            fail "colima not running -- start: colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8"
+            fail "colima not running -- start: colima start --vm-type vz --vz-rosetta --nested-virtualization --memory 16 --cpu 8"
         fi
 
         # Rosetta. The config bit is not sufficient: an already-running Colima
@@ -110,7 +110,17 @@ check_platform() {
                     fail "colima rosetta configured but not registered -- fix: colima restart"
                 fi
             else
-                fail "colima rosetta not enabled -- fix: colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8"
+                fail "colima rosetta not enabled -- fix: colima stop && colima start --vm-type vz --vz-rosetta --nested-virtualization --memory 16 --cpu 8"
+            fi
+            if grep -q 'nestedVirtualization: true' "$colima_yaml" \
+                && grep -q 'vmType: vz' "$colima_yaml"; then
+                if colima ssh -- test -r /dev/kvm -a -w /dev/kvm &>/dev/null; then
+                    pass "colima nested virtualization (enabled, live KVM)"
+                else
+                    fail "colima nested virtualization configured but /dev/kvm is not live -- fix: colima restart"
+                fi
+            else
+                fail "colima nested virtualization not enabled -- fix: colima stop && colima start --vm-type vz --vz-rosetta --nested-virtualization --memory 16 --cpu 8"
             fi
         else
             fail "colima config not found at $colima_yaml"
@@ -136,7 +146,7 @@ check_platform() {
             if [[ "$disk_total_kib" =~ ^[0-9]+$ ]] && [[ "$disk_total_kib" -gt 0 ]]; then
                 disk_total_gib=$((disk_total_kib / 1024 / 1024))
                 if [[ "$disk_total_gib" -lt "$minimum_disk_gib" ]]; then
-                    fail "Colima Docker disk: ${disk_total_gib}GiB (minimum ${minimum_disk_gib}GiB) -- expand: colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk ${recommended_disk_gib}"
+                    fail "Colima Docker disk: ${disk_total_gib}GiB (minimum ${minimum_disk_gib}GiB) -- expand: colima stop && colima start --vm-type vz --vz-rosetta --nested-virtualization --memory 16 --cpu 8 --disk ${recommended_disk_gib}"
                 elif [[ "$disk_total_gib" -lt "$recommended_disk_gib" ]]; then
                     pass "Colima Docker disk: ${disk_total_gib}GiB (supported; ${recommended_disk_gib}GiB recommended for new runtimes)"
                 else
