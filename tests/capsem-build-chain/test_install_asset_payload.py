@@ -535,6 +535,16 @@ def test_install_recipe_invokes_pytest_as_a_module_inside_container() -> None:
     assert "uv run pytest tests/capsem-install/" not in recipe
 
 
+def test_install_recipe_runs_release_glowup_in_clean_project_environment() -> None:
+    recipe = _just_recipe_block("_gate-install")
+
+    assert (
+        "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test "
+        "uv run python scripts/local-release-glowup.py"
+    ) in recipe
+    assert "python3 scripts/local-release-glowup.py" not in recipe
+
+
 def test_full_gate_preflights_clean_install_harness_before_expensive_stages() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
     full_gate = _just_recipe_block("test:")

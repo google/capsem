@@ -1822,7 +1822,7 @@ _gate-install:
         "mkdir -p /home/capsem/tmp && cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test TMPDIR=/home/capsem/tmp uv run python -m pytest tests/capsem-install/ -v --tb=short"
     echo "Running local release glow-up (install, channel switch, upgrade)..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
-        "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && python3 scripts/local-release-glowup.py --input-deb \"\$DEB\" --bin-dir /cargo-target/debug --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\" --work-dir target/local-release-glowup"
+        "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test uv run python scripts/local-release-glowup.py --input-deb \"\$DEB\" --bin-dir /cargo-target/debug --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\" --work-dir target/local-release-glowup"
     if [ "$HOST_ROSETTA_REGISTRATION" = "required" ] \
         && ! colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1; then
         echo "ERROR: systemd install container removed Colima's Rosetta binfmt registration" >&2
