@@ -104,6 +104,7 @@ def test_fixture_has_stable_and_nightly() -> None:
         "capsem-mcp": "SPDXRef-File-capsem-mcp",
         "capsem-mcp-aggregator": "SPDXRef-File-capsem-mcp-aggregator",
         "capsem-mcp-builtin": "SPDXRef-File-capsem-mcp-builtin",
+        "capsem-mock-server": "SPDXRef-File-capsem-mock-server",
         "capsem-process": "SPDXRef-File-capsem-process",
         "capsem-service": "SPDXRef-File-capsem-service",
         "capsem-tray": "SPDXRef-File-capsem-tray",
