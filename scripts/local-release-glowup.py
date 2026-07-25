@@ -124,6 +124,7 @@ class ExactInstalledGlowupEvidence:
     candidate_doctor: Path
     candidate_winterfell: Path
     tamper_rejection: Path
+    incompatible_rejection: Path
 
 
 @dataclass(frozen=True)
@@ -1334,6 +1335,23 @@ wait_for_automatic_rejection() {{
   journalctl --user-unit capsem.service --since "$since" --no-pager -o cat >&2 || true
   return 1
 }}
+wait_for_incompatible_profile_rejection() {{
+  since="$1"
+  for attempt in $(seq 1 90); do
+    journal=$(
+      journalctl --user-unit capsem.service --since "$since" --no-pager -o cat
+    )
+    if printf '%s\n' "$journal" \
+      | grep -Fq "automatic release update failed" \
+      && printf '%s\n' "$journal" \
+      | grep -Fq "requires Capsem 9999.0.0 or newer"; then
+      return 0
+    fi
+    sleep 2
+  done
+  journalctl --user-unit capsem.service --since "$since" --no-pager -o cat >&2 || true
+  return 1
+}}
 """
 
 
@@ -1441,6 +1459,37 @@ printf '%s\n' \
     finally:
         promote_exact_candidate_transport(transport)
 
+    incompatible_evidence = evidence_dir / "incompatible-rejection.json"
+    promote_exact_manifest(
+        adversarial.incompatible_manifest,
+        transport.current_manifest,
+    )
+    incompatible_script = f"""
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+{probe_functions}
+cp "$CAPSEM_HOME_DIR/assets/manifest.json" \
+  "$EVIDENCE_DIR/incompatible-before-manifest.json"
+profile_digest_before=$(installed_profile_tree_digest)
+rejection_since=$(date --iso-8601=seconds)
+systemctl --user restart capsem.service
+wait_for_incompatible_profile_rejection "$rejection_since"
+cmp "$EVIDENCE_DIR/incompatible-before-manifest.json" \
+  "$CAPSEM_HOME_DIR/assets/manifest.json"
+! cmp -s {shlex.quote(str(transport.current_manifest))} \
+  "$CAPSEM_HOME_DIR/assets/manifest.json"
+test "$(installed_profile_tree_digest)" = "$profile_digest_before"
+dpkg-query -W -f='${{Version}}' capsem \
+  | grep -Fx {shlex.quote(after_artifact.version)}
+printf '%s\n' \
+  '{{"schema":"capsem.installed_rejection.v1","kind":"incompatible_profile","result":"rejected","blocked_reason":"requires Capsem 9999.0.0 or newer","preserved_previous":true}}' \
+  > {shlex.quote(str(incompatible_evidence))}
+"""
+    try:
+        run(["bash", "-lc", incompatible_script])
+    finally:
+        promote_exact_candidate_transport(transport)
+
     return ExactInstalledGlowupEvidence(
         fresh_installed=evidence_dir / "fresh-install-installed.json",
         fresh_doctor=evidence_dir / "fresh-install-doctor.json",
@@ -1449,6 +1498,7 @@ printf '%s\n' \
         candidate_doctor=evidence_dir / "candidate-after-doctor.json",
         candidate_winterfell=evidence_dir / "candidate-after-winterfell.json",
         tamper_rejection=tamper_evidence,
+        incompatible_rejection=incompatible_evidence,
     )
 
 
