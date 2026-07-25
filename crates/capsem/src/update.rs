@@ -893,6 +893,57 @@ fn activate_staged_update_at(
     Ok(())
 }
 
+fn activate_staged_update_with_asset_audit(
+    capsem_home: &Path,
+    installed_assets: &Path,
+    staged: &StagedUpdate,
+    check: &UpdateCheck,
+    transition: &ChannelTransition,
+) -> Result<()> {
+    let source = check
+        .source
+        .as_deref()
+        .context("staged update audit is missing its manifest source")?;
+    let previous_state = installed_asset_audit_state(installed_assets);
+    append_update_audit(serde_json::json!({
+        "event": "asset_update_start",
+        "action": "asset_update",
+        "outcome": "started",
+        "source": source,
+        "channel": channel_from_source(source),
+        "previous": previous_state
+    }));
+
+    if let Err(error) =
+        activate_staged_update_at(capsem_home, installed_assets, staged, check, transition)
+    {
+        append_update_audit(serde_json::json!({
+            "event": "asset_update_failed",
+            "action": "asset_update",
+            "outcome": "failure",
+            "source": source,
+            "channel": channel_from_source(source),
+            "previous": previous_state,
+            "current": installed_asset_audit_state(installed_assets),
+            "error": format!("{error:#}")
+        }));
+        return Err(error);
+    }
+
+    let current_state = installed_asset_audit_state(installed_assets);
+    append_update_audit(serde_json::json!({
+        "event": "asset_update_complete",
+        "action": "asset_update",
+        "outcome": "success",
+        "source": source,
+        "channel": channel_from_source(source),
+        "previous": previous_state,
+        "current": current_state,
+        "changed_fields": changed_asset_audit_fields(&previous_state, &current_state)
+    }));
+    Ok(())
+}
+
 fn copy_staged_asset_files(source_root: &Path, target_root: &Path) -> Result<Vec<PathBuf>> {
     let mut created = Vec::new();
     for source in regular_files_below(source_root)? {
@@ -2808,7 +2859,7 @@ pub async fn run_update(
             let capsem_home = crate::paths::capsem_home()?;
             let installed_assets = capsem_core::asset_manager::default_assets_dir()
                 .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
-            if let Err(error) = activate_staged_update_at(
+            if let Err(error) = activate_staged_update_with_asset_audit(
                 &capsem_home,
                 &installed_assets,
                 staged,
@@ -6809,6 +6860,161 @@ url = "https://old.example/rootfs.erofs"
         assert_eq!(origin["channel"], "stable");
         assert_eq!(origin["channel_kind"], "public");
         assert_eq!(origin["channel_locked"], false);
+    }
+
+    #[test]
+    fn staged_channel_switch_records_correlated_asset_audit() {
+        let _lock = crate::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let assets_dir = home.path().join("assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        let previous_source = "https://release.capsem.org/assets/stable/manifest.json";
+        let next_source = "https://release.capsem.org/assets/nightly/manifest.json";
+        let manifest = serde_json::to_vec(&test_manifest(
+            env!("CARGO_PKG_VERSION"),
+            "2026.0725.1",
+            env!("CARGO_PKG_VERSION"),
+            "2026.0725.1",
+        ))
+        .unwrap();
+        std::fs::write(assets_dir.join("manifest.json"), &manifest).unwrap();
+        std::fs::write(
+            assets_dir.join("manifest-metadata.json"),
+            serde_json::json!({
+                "schema": "capsem.manifest_metadata.v1",
+                "origin": "update",
+                "manifest_url": previous_source,
+                "channel": "stable",
+                "channel_kind": "public",
+                "channel_locked": false,
+                "package_version": env!("CARGO_PKG_VERSION")
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let staged_root = home.path().join("updates/candidates/nightly");
+        std::fs::create_dir_all(&staged_root).unwrap();
+        std::fs::write(staged_root.join("manifest.json"), &manifest).unwrap();
+        let staged = StagedUpdate {
+            manifest_path: staged_root.join("manifest.json"),
+            installer_path: None,
+            assets_dir: None,
+            profiles_dir: None,
+        };
+        let check = UpdateCheck {
+            checked_at: now_secs(),
+            latest_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            update_available: false,
+            binary_installer: None,
+            latest_assets: Some("2026.0725.1".into()),
+            current_assets: Some("2026.0725.1".into()),
+            assets_update_available: false,
+            assets_state: Some("published".into()),
+            assets_blocked_reason: None,
+            latest_profiles: None,
+            current_profiles: None,
+            profiles_update_available: false,
+            profiles_state: None,
+            profiles_blocked_reason: None,
+            profile_catalog_source: None,
+            profile_catalog_hash: None,
+            latest_images: None,
+            images_update_available: false,
+            images_state: None,
+            images_blocked_reason: None,
+            source: Some(next_source.into()),
+            channel_hash: Some(channel_payload_hash(&manifest)),
+            validation_status: Some("valid".into()),
+            validation_error: None,
+        };
+
+        activate_staged_update_with_asset_audit(
+            home.path(),
+            &assets_dir,
+            &staged,
+            &check,
+            &ChannelTransition::Public("nightly".into()),
+        )
+        .unwrap();
+
+        let rows: Vec<serde_json::Value> =
+            std::fs::read_to_string(home.path().join("logs/update.log"))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+        assert_eq!(
+            rows.iter()
+                .map(|row| row["event"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["asset_update_start", "asset_update_complete"]
+        );
+        let complete = rows.last().unwrap();
+        assert_eq!(complete["source"], next_source);
+        assert_eq!(complete["channel"], "nightly");
+        assert_eq!(complete["previous"]["source"], previous_source);
+        assert_eq!(complete["current"]["source"], next_source);
+        assert_eq!(complete["current"]["channel"], "nightly");
+    }
+
+    #[test]
+    fn failed_staged_channel_switch_never_records_asset_completion() {
+        let _lock = crate::lock_test_env();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("CAPSEM_HOME", home.path().to_str().unwrap());
+        let assets_dir = home.path().join("assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        let source = "https://release.capsem.org/assets/nightly/manifest.json";
+        let manifest = serde_json::to_vec(&test_manifest(
+            env!("CARGO_PKG_VERSION"),
+            "2026.0725.1",
+            env!("CARGO_PKG_VERSION"),
+            "2026.0725.1",
+        ))
+        .unwrap();
+        let staged_root = home.path().join("updates/candidates/nightly");
+        std::fs::create_dir_all(&staged_root).unwrap();
+        std::fs::write(staged_root.join("manifest.json"), &manifest).unwrap();
+        let staged = StagedUpdate {
+            manifest_path: staged_root.join("manifest.json"),
+            installer_path: None,
+            assets_dir: None,
+            profiles_dir: None,
+        };
+        let mut check = cached_notice_check();
+        check.source = Some(source.into());
+        check.channel_hash = Some("f".repeat(64));
+
+        let error = activate_staged_update_with_asset_audit(
+            home.path(),
+            &assets_dir,
+            &staged,
+            &check,
+            &ChannelTransition::Public("nightly".into()),
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("staged manifest SHA-256 mismatch"),
+            "{error:#}"
+        );
+
+        let rows: Vec<serde_json::Value> =
+            std::fs::read_to_string(home.path().join("logs/update.log"))
+                .unwrap()
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
+        assert_eq!(
+            rows.iter()
+                .map(|row| row["event"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["asset_update_start", "asset_update_failed"]
+        );
+        assert!(rows
+            .iter()
+            .all(|row| row["event"] != "asset_update_complete"));
+        assert_eq!(rows.last().unwrap()["source"], source);
     }
 
     #[test]
