@@ -8,6 +8,20 @@ import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 import tomllib
+from typing import cast
+
+try:
+    from release_glowup import (
+        GlowupContractError,
+        TransitionKind,
+        validate_transition_sequence,
+    )
+except ModuleNotFoundError:
+    from scripts.release_glowup import (
+        GlowupContractError,
+        TransitionKind,
+        validate_transition_sequence,
+    )
 
 
 REQUIRED_CAPABILITIES = (
@@ -27,7 +41,7 @@ class NativeGlowupError(RuntimeError):
 def require_mapping(value: object, field: str) -> Mapping[str, object]:
     if not isinstance(value, Mapping):
         raise NativeGlowupError(f"macOS glow-up report {field} must be an object")
-    return value
+    return cast(Mapping[str, object], value)
 
 
 def validate_report(report_path: Path, cargo_toml: Path) -> Mapping[str, object]:
@@ -74,6 +88,28 @@ def validate_report(report_path: Path, cargo_toml: Path) -> Mapping[str, object]
     for field in ("guest_vm_booted", "full_doctor", "installed_winterfell"):
         if physical.get(field) is not True:
             raise NativeGlowupError(f"physical VZ proof did not pass {field}")
+    expected_transitions = (
+        TransitionKind.FRESH_INSTALL,
+        TransitionKind.TAMPER_REJECTION,
+    )
+    expected_scope = [kind.value for kind in expected_transitions]
+    if report.get("transition_scope") != expected_scope:
+        raise NativeGlowupError(
+            f"macOS glow-up transition scope must be exactly {expected_scope}"
+        )
+    transitions = report.get("transitions")
+    if not isinstance(transitions, list) or not all(
+        isinstance(transition, Mapping) for transition in transitions
+    ):
+        raise NativeGlowupError("macOS glow-up transitions must be an array of objects")
+    transition_rows = cast(list[Mapping[str, object]], transitions)
+    try:
+        validate_transition_sequence(
+            transition_rows,
+            expected_transitions=expected_transitions,
+        )
+    except GlowupContractError as error:
+        raise NativeGlowupError(f"macOS glow-up transition proof is invalid: {error}") from error
     return report
 
 

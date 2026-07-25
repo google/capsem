@@ -48,6 +48,7 @@ try:
         build_report,
         build_transition_evidence,
         classify_pairing_inputs,
+        tamper_profile_artifact_digest,
         validate_installed_evidence,
         validate_pairing_inputs,
     )
@@ -61,6 +62,7 @@ except ModuleNotFoundError:
         build_report,
         build_transition_evidence,
         classify_pairing_inputs,
+        tamper_profile_artifact_digest,
         validate_installed_evidence,
         validate_pairing_inputs,
     )
@@ -882,38 +884,13 @@ def _tamper_selected_profile_digest(
     manifest: dict[str, object],
     pairing: ExactReleasePairing,
 ) -> None:
-    profile_id, profile = _adversarial_profile(manifest, pairing)
-    architectures = profile.get("architectures")
-    if not isinstance(architectures, list):
-        raise SystemExit(f"exact adversarial profile {profile_id} has no architectures")
-    for architecture in architectures:
-        if not isinstance(architecture, dict):
-            continue
-        architecture_fields = cast(dict[str, object], architecture)
-        for section in ("config", "images", "evidence"):
-            rows = architecture_fields.get(section)
-            if not isinstance(rows, list):
-                continue
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                row_fields = cast(dict[str, object], row)
-                if row_fields.get("status", "current") != "current":
-                    continue
-                digest = row_fields.get("digest")
-                if not isinstance(digest, dict):
-                    continue
-                digest_fields = cast(dict[str, object], digest)
-                sha256 = digest_fields.get("sha256")
-                if not isinstance(sha256, str):
-                    continue
-                digest_fields["sha256"] = (
-                    "1" * 64 if sha256 == "0" * 64 else "0" * 64
-                )
-                return
-    raise SystemExit(
-        f"exact adversarial profile {profile_id} has no current digest-bearing artifact"
-    )
+    try:
+        tamper_profile_artifact_digest(
+            manifest,
+            profile_ids=pairing.changed_profiles,
+        )
+    except RuntimeError as error:
+        raise SystemExit(f"cannot stage exact adversarial profile: {error}") from error
 
 
 def stage_adversarial_exact_candidates(

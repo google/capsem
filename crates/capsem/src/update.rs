@@ -2488,6 +2488,14 @@ fn is_different_semver(candidate: &str, current: &str) -> bool {
     }
 }
 
+fn release_check_failure_is_fatal(yes: bool, check_only: bool, has_explicit_channel: bool) -> bool {
+    yes || check_only || has_explicit_channel
+}
+
+fn should_write_preflight_cache(yes: bool) -> bool {
+    !yes
+}
+
 /// Run the update flow.
 ///
 /// With `assets = true`, refresh only the VM asset files referenced by the
@@ -2565,7 +2573,7 @@ pub async fn run_update(
         match fetch_release_update_check(&layout, selected_channel.as_ref()).await {
             Ok(update) => update,
             Err(error) => {
-                if check_only || channel.is_some() {
+                if release_check_failure_is_fatal(yes, check_only, channel.is_some()) {
                     return Err(error).context("release channel check failed");
                 }
                 println!("Binary update check failed: {error:#}");
@@ -2573,7 +2581,9 @@ pub async fn run_update(
                 return Ok(());
             }
         };
-    let _ = write_cache(&check);
+    if should_write_preflight_cache(yes) {
+        let _ = write_cache(&check);
+    }
 
     let current = local_current_binary_version();
     if check_only {
@@ -2849,6 +2859,9 @@ pub async fn run_update(
         } else {
             println!("Capsem binary is current; one or more update tracks are blocked.");
         }
+    }
+    if yes && staged_update.is_none() {
+        write_cache(&check).context("write no-op release status cache")?;
     }
     Ok(())
 }
@@ -6185,6 +6198,20 @@ mod tests {
                 "{err:#}"
             );
         }
+    }
+
+    #[test]
+    fn mutating_updates_fail_closed_when_release_check_fails() {
+        assert!(release_check_failure_is_fatal(true, false, false));
+        assert!(release_check_failure_is_fatal(false, true, false));
+        assert!(release_check_failure_is_fatal(false, false, true));
+        assert!(!release_check_failure_is_fatal(false, false, false));
+    }
+
+    #[test]
+    fn mutating_updates_defer_status_cache_until_activation() {
+        assert!(!should_write_preflight_cache(true));
+        assert!(should_write_preflight_cache(false));
     }
 
     #[tokio::test(flavor = "current_thread")]

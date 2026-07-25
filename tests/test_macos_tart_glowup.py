@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -325,6 +326,202 @@ def test_guest_installs_and_verifies_the_exact_shared_package() -> None:
         assert binary in source
 
 
+def test_guest_rejects_tampered_poll_and_reproves_preserved_install() -> None:
+    source = GUEST.read_text()
+    glowup = GLOWUP.read_text()
+
+    assert 'TAMPERED_MANIFEST="$SHARE/tampered-manifest.json"' in source
+    assert 'ORIGINAL_MANIFEST="$SHARE/original-manifest.json"' in source
+    assert 'GUEST_RELEASE_ROOT = "http://127.0.0.1:' in glowup
+    assert "file:///Volumes/My%20Shared%20Files/capsem-release/candidate" not in glowup
+    assert "python3 -m http.server" in source
+    assert source.index("start_release_http_server") < source.index(
+        "=== Installing exact shared package ==="
+    )
+    assert "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS" in source
+    assert "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS" in source
+    assert "com.capsem.service.plist.before-glowup" in source
+    assert 'launchctl bootout "gui/$(id -u)" "$SERVICE_PLIST"' in source
+    assert 'launchctl bootstrap "gui/$(id -u)" "$SERVICE_PLIST"' in source
+    assert "launchctl kickstart -k" in source
+    assert "automatic release update failed" in source
+    assert 'SERVICE_LOG="$CAPSEM_HOME/run/service.log"' in source
+    assert "manifest-before-rejection.json" in source
+    assert "manifest-metadata-before-rejection.json" in source
+    assert "profile_tree_digest" in source
+    assert "polled manifest URL did not expose the tampered candidate" in source
+    assert 'STATUS_OUTPUT=$("$CAPSEM" status 2>/dev/null || true)' in source
+    assert "preserved-installed-evidence.json" in source
+    assert '"schema": "capsem.installed_rejection.v1"' in source
+    assert '"kind": "tampered_artifact"' in source
+    assert '"preserved_previous": True' in source
+
+
+def test_tart_harness_requires_preserved_rejection_evidence() -> None:
+    source = HARNESS.read_text()
+
+    assert '"--tampered-manifest-file"' in source
+    assert '"tampered-manifest.json"' in source
+    assert '"original-manifest.json"' in source
+    assert 'guest_report["preserved_installed"]' in source
+    assert 'guest_report["tamper_rejection"]' in source
+
+
+def test_macos_glowup_stages_tamper_without_mutating_candidate(
+    tmp_path: Path,
+) -> None:
+    module = _load_glowup()
+    package = tmp_path / "Capsem-1.2.3.pkg"
+    package.write_bytes(b"exact macOS package")
+    digest = hashlib.sha256(package.read_bytes()).hexdigest()
+    manifest_path = tmp_path / "manifest.json"
+    manifest = {
+        "channel": "nightly",
+        "packages": [
+            {
+                "name": package.name,
+                "version": "1.2.3",
+                "platform": "macos",
+                "architecture": "arm64",
+                "bytes": package.stat().st_size,
+                "status": "current",
+                "digest": {"sha256": digest},
+            }
+        ],
+        "profiles": {
+            "code": {
+                "architectures": [
+                    {
+                        "architecture": "arm64",
+                        "images": [
+                            {
+                                "kind": "rootfs",
+                                "status": "current",
+                                "digest": {"sha256": "a" * 64},
+                            }
+                        ],
+                    }
+                ]
+            }
+        },
+    }
+    original = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    manifest_path.write_text(original)
+    tampered_path = tmp_path / "tampered.json"
+
+    module.prepare_tampered_manifest(manifest_path, tampered_path)
+
+    assert manifest_path.read_text() == original
+    tampered = json.loads(tampered_path.read_text())
+    assert tampered["packages"] == manifest["packages"]
+    assert (
+        tampered["profiles"]["code"]["architectures"][0]["images"][0]["digest"][
+            "sha256"
+        ]
+        != "a" * 64
+    )
+
+
+def test_macos_glowup_finalizes_shared_transition_report(tmp_path: Path) -> None:
+    module = _load_glowup()
+    package = tmp_path / "Capsem-1.2.3.pkg"
+    package.write_bytes(b"exact macOS package")
+    artifact = module.ArtifactIdentity.from_path(
+        package,
+        version="1.2.3",
+        platform="macos",
+        architecture="arm64",
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "channel": "nightly",
+                "packages": [
+                    {
+                        **artifact.as_report(),
+                        "status": "current",
+                        "digest": {"sha256": artifact.sha256},
+                    }
+                ],
+                "profiles": {"code": {"revision": "code-1"}},
+            },
+            sort_keys=True,
+        )
+    )
+    installed = {
+        "package_version": "1.2.3",
+        "channel": "nightly",
+        "manifest_url": "file:///candidate/assets/nightly/manifest.json",
+        "package_receipt": True,
+        "binary_cohort": True,
+        "installed": True,
+        "running": True,
+        "service": "ok",
+        "gateway": "ok",
+        "profiles_ready": 1,
+        "profiles_total": 1,
+    }
+    report_path = tmp_path / "report.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "schema": "capsem.release_glowup.v1",
+                "adapter": "macos-tart-launchd",
+                "artifact": artifact.as_report(),
+                "installed": installed,
+                "capabilities": {
+                    "native_install": True,
+                    "package_receipt": True,
+                    "launchd": True,
+                },
+                "adapter_evidence": {
+                    "guest": {},
+                    "preserved_installed": installed,
+                    "tamper_rejection": {
+                        "schema": "capsem.installed_rejection.v1",
+                        "kind": "tampered_artifact",
+                        "result": "rejected",
+                        "preserved_previous": True,
+                        "manifest_unchanged": True,
+                        "manifest_metadata_unchanged": True,
+                        "profiles_unchanged": True,
+                        "package_unchanged": True,
+                        "service": "ok",
+                        "gateway": "ok",
+                    },
+                },
+            }
+        )
+    )
+    physical_path = tmp_path / "physical.json"
+    physical_path.write_text(
+        json.dumps(
+            {
+                "package_sha256": artifact.sha256,
+                "guest_vm_booted": True,
+                "full_doctor": True,
+                "installed_winterfell": True,
+            }
+        )
+    )
+
+    report = module.finalize_native_report(
+        report_path=report_path,
+        physical_report_path=physical_path,
+        manifest_path=manifest_path,
+        package=package,
+        version="1.2.3",
+        channel="nightly",
+    )
+
+    assert report["transition_scope"] == ["fresh_install", "tamper_rejection"]
+    assert [row["kind"] for row in report["transitions"]] == report[
+        "transition_scope"
+    ]
+    assert report["transitions"][-1]["preserved_previous"] is True
+
+
 def test_physical_mac_boots_a_guest_from_the_exact_package_payload() -> None:
     source = HOST_BOOT.read_text()
 
@@ -344,8 +541,8 @@ def test_macos_glowup_requires_physical_doctor_and_winterfell_evidence() -> None
 
     assert 'physical_report.get("full_doctor") is not True' in source
     assert 'physical_report.get("installed_winterfell") is not True' in source
-    assert 'tart_report["capabilities"]["full_doctor"] = True' in source
-    assert 'tart_report["capabilities"]["installed_winterfell"] = True' in source
+    assert 'capabilities["full_doctor"] = True' in source
+    assert 'capabilities["installed_winterfell"] = True' in source
 
 
 def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> None:
@@ -368,6 +565,43 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
                 "installed_winterfell": True,
             }
         },
+        "transition_scope": ["fresh_install", "tamper_rejection"],
+        "transitions": [
+            {
+                "kind": "fresh_install",
+                "result": "activated",
+                "before": None,
+                "after": {
+                    "channel": "stable",
+                    "manifest_sha256": "b" * 64,
+                    "package_version": "1.2.3",
+                    "package_sha256": "a" * 64,
+                    "profiles_sha256": "c" * 64,
+                },
+                "probes": {"doctor": True, "winterfell": True},
+                "preserved_previous": False,
+            },
+            {
+                "kind": "tamper_rejection",
+                "result": "rejected",
+                "before": {
+                    "channel": "stable",
+                    "manifest_sha256": "b" * 64,
+                    "package_version": "1.2.3",
+                    "package_sha256": "a" * 64,
+                    "profiles_sha256": "c" * 64,
+                },
+                "after": {
+                    "channel": "stable",
+                    "manifest_sha256": "b" * 64,
+                    "package_version": "1.2.3",
+                    "package_sha256": "a" * 64,
+                    "profiles_sha256": "c" * 64,
+                },
+                "probes": {"doctor": True, "winterfell": True},
+                "preserved_previous": True,
+            },
+        ],
     }
     report_path.write_text(json.dumps(report))
 
@@ -375,6 +609,11 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
     report["capabilities"]["installed_winterfell"] = False
     report_path.write_text(json.dumps(report))
     with pytest.raises(module.NativeGlowupError, match="installed_winterfell"):
+        module.validate_report(report_path, cargo_toml)
+    report["capabilities"]["installed_winterfell"] = True
+    report.pop("transitions")
+    report_path.write_text(json.dumps(report))
+    with pytest.raises(module.NativeGlowupError, match="transition"):
         module.validate_report(report_path, cargo_toml)
 
 

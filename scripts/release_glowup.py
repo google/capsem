@@ -280,6 +280,66 @@ def assert_manifest_artifact(
     return package
 
 
+def tamper_profile_artifact_digest(
+    manifest: dict[str, object],
+    *,
+    profile_ids: Sequence[str] = (),
+) -> str:
+    """Corrupt one current profile artifact digest for a rejection proof.
+
+    The caller must pass a private copy of the manifest.  Returning the selected
+    profile id lets adapters record which profile supplied the adversarial
+    candidate without inventing a second mutation contract.
+    """
+
+    profiles = manifest.get("profiles")
+    if not isinstance(profiles, dict) or not profiles:
+        raise GlowupContractError("adversarial candidate manifest has no profiles")
+    profile_map = cast(dict[str, object], profiles)
+    selected = tuple(profile_ids) or tuple(sorted(profile_map))
+    for profile_id in selected:
+        profile = profile_map.get(profile_id)
+        if not isinstance(profile_id, str) or not isinstance(profile, dict):
+            continue
+        profile_fields = cast(dict[str, object], profile)
+        architectures = profile_fields.get("architectures")
+        if not isinstance(architectures, list):
+            continue
+        for architecture in architectures:
+            if not isinstance(architecture, dict):
+                continue
+            architecture_fields = cast(dict[str, object], architecture)
+            for section in ("config", "images", "evidence"):
+                rows = architecture_fields.get(section)
+                if not isinstance(rows, list):
+                    continue
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    row_fields = cast(dict[str, object], row)
+                    if row_fields.get("status", "current") != "current":
+                        continue
+                    digest = row_fields.get("digest")
+                    if not isinstance(digest, dict):
+                        continue
+                    digest_fields = cast(dict[str, object], digest)
+                    sha256 = digest_fields.get("sha256")
+                    if not isinstance(sha256, str):
+                        continue
+                    digest_fields["sha256"] = (
+                        "1" * 64 if sha256 == "0" * 64 else "0" * 64
+                    )
+                    blake3 = digest_fields.get("blake3")
+                    if isinstance(blake3, str):
+                        digest_fields["blake3"] = (
+                            "1" * 64 if blake3 == "0" * 64 else "0" * 64
+                        )
+                    return profile_id
+    raise GlowupContractError(
+        "adversarial candidate has no current digest-bearing profile artifact"
+    )
+
+
 def artifact_identity_from_manifest_package(
     contents: bytes,
     package_path: Path,

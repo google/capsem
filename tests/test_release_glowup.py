@@ -1041,6 +1041,12 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
         ]
         == "0" * 64
     )
+    assert (
+        tampered["profiles"]["code"]["architectures"][0]["images"][0]["digest"][
+            "blake3"
+        ]
+        == "0" * 64
+    )
     assert incompatible["profiles"]["code"]["min_capsem_version"] == "9999.0.0"
     assert candidates.tampered_manifest.read_bytes() != transport.after_manifest.read_bytes()
     assert candidates.incompatible_manifest.read_bytes() != transport.after_manifest.read_bytes()

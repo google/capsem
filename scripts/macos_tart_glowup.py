@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import Callable, Sequence
+from typing import Callable, Sequence, TextIO, cast
 
 try:
     from release_glowup import (
@@ -335,6 +335,33 @@ def validate_report(
     if not isinstance(installed, dict):
         raise RuntimeError("Tart guest report has no normalized installed evidence")
     validate_installed_evidence(installed)
+    preserved = report.get("preserved_installed")
+    if not isinstance(preserved, dict):
+        raise RuntimeError("Tart guest report has no preserved installed evidence")
+    validate_installed_evidence(preserved)
+    if preserved != installed:
+        raise RuntimeError("Tart guest did not preserve the exact installed state")
+    rejection = report.get("tamper_rejection")
+    if not isinstance(rejection, dict):
+        raise RuntimeError("Tart guest report has no tamper rejection evidence")
+    expected = {
+        "schema": "capsem.installed_rejection.v1",
+        "kind": "tampered_artifact",
+        "result": "rejected",
+        "preserved_previous": True,
+        "manifest_unchanged": True,
+        "manifest_metadata_unchanged": True,
+        "profiles_unchanged": True,
+        "package_unchanged": True,
+        "service": "ok",
+        "gateway": "ok",
+    }
+    for field, value in expected.items():
+        if rejection.get(field) != value:
+            raise RuntimeError(
+                f"Tart guest tamper rejection {field} is "
+                f"{rejection.get(field)!r}, expected {value!r}"
+            )
     return report
 
 
@@ -353,7 +380,7 @@ def local_tart_capabilities() -> dict[str, bool]:
 
 def terminate_runner(
     runner: subprocess.Popen[str] | None,
-    log_stream: object | None,
+    log_stream: TextIO | None,
 ) -> None:
     if runner is not None:
         try:
@@ -366,7 +393,7 @@ def terminate_runner(
                 runner.kill()
                 runner.wait(timeout=10)
     if log_stream is not None:
-        log_stream.close()  # type: ignore[union-attr]
+        log_stream.close()
 
 
 def capture_guest_diagnostics(ip: str, work_dir: Path) -> None:
@@ -380,6 +407,8 @@ echo '=== ~/.capsem/logs/install.log ==='
 cat "$HOME/.capsem/logs/install.log"
 echo '=== ~/.capsem/logs/install-failure.txt ==='
 cat "$HOME/.capsem/logs/install-failure.txt"
+echo '=== ~/.capsem/run/service.log (tail) ==='
+tail -n 300 "$HOME/.capsem/run/service.log"
 echo '=== ~/.capsem/logs listing ==='
 ls -la "$HOME/.capsem/logs"
 echo '=== package script log events ==='
@@ -410,6 +439,7 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--manifest-url", required=True)
     parser.add_argument("--manifest-file", required=True, type=Path)
+    parser.add_argument("--tampered-manifest-file", required=True, type=Path)
     parser.add_argument("--sbom", required=True, type=Path)
     parser.add_argument("--asset-share", required=True, type=Path)
     parser.add_argument("--profile-share", required=True, type=Path)
@@ -445,6 +475,12 @@ def main() -> int:
         raise RuntimeError(f"candidate profile share is missing: {profile_share}")
     manifest = load_manifest_bytes(manifest_file.read_bytes())
     assert_manifest_artifact(manifest, artifact)
+    tampered_manifest_file = args.tampered_manifest_file.resolve()
+    tampered_bytes = tampered_manifest_file.read_bytes()
+    if tampered_bytes == manifest_file.read_bytes():
+        raise RuntimeError("tampered manifest must differ from the exact candidate")
+    tampered_manifest = load_manifest_bytes(tampered_bytes)
+    assert_manifest_artifact(tampered_manifest, artifact)
 
     work_dir = args.work_dir.resolve()
     share = work_dir / "share"
@@ -472,6 +508,8 @@ def main() -> int:
         manifest_file,
         candidate_dir / "assets" / args.channel / "manifest.json",
     )
+    stage_file(manifest_file, share / "original-manifest.json")
+    stage_file(tampered_manifest_file, share / "tampered-manifest.json")
     stage_file(PROJECT_ROOT / "scripts" / "macos_tart_guest.sh", share / "guest.sh")
     stage_file(
         PROJECT_ROOT / "scripts" / "verify-installed-release.py",
@@ -529,16 +567,19 @@ def main() -> int:
         )
         run_authenticated_guest(ip, remote, timeout=1800)
         guest_report = validate_report(report_path, artifact=artifact)
+        installed = cast(dict[str, object], guest_report["installed"])
         report = build_report(
             adapter="macos-tart-launchd",
             artifact=artifact,
-            installed=guest_report["installed"],
+            installed=installed,
             capabilities=local_tart_capabilities(),
         )
         report["adapter_evidence"] = {
             "tart_image": args.image,
             "tart_vm": vm_name,
             "guest": guest_report.get("guest", {}),
+            "preserved_installed": guest_report["preserved_installed"],
+            "tamper_rejection": guest_report["tamper_rejection"],
         }
         rendered_report = json.dumps(report, indent=2, sort_keys=True) + "\n"
         report_path.write_text(rendered_report)
