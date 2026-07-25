@@ -1057,6 +1057,18 @@ def test_macos_install_gate_consumes_native_full_probe_evidence() -> None:
     assert "unsupported nested ARM VM boot" in install
 
 
+def test_macos_install_gate_missing_native_report_fails_before_cleanup() -> None:
+    install = _just_recipe_block("_gate-install").replace(r"\"", '"').replace(r"\$", "$")
+
+    assert '${CAPSEM_MACOS_NATIVE_GLOWUP_REPORT:?' not in install
+    guard = install.index('if [ -z "${CAPSEM_MACOS_NATIVE_GLOWUP_REPORT:-}" ]; then')
+    diagnostic = install.index("macOS install rail requires the native glow-up report", guard)
+    failure = install.index("exit 1", diagnostic)
+    assignment = install.index('MACOS_REPORT="$CAPSEM_MACOS_NATIVE_GLOWUP_REPORT"', failure)
+
+    assert guard < diagnostic < failure < assignment
+
+
 def test_binary_release_sbom_jobs_install_zstd_for_deb_payloads() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
     jobs = _workflow_job_blocks(workflow)

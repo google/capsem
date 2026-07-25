@@ -1945,7 +1945,11 @@ _gate-install:
             "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test uv run python scripts/local-release-glowup.py --input-deb \"\$DEB\" --bin-dir /cargo-target/debug --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\" --work-dir target/local-release-glowup"
     else
         echo "Validating the native macOS installed doctor/Winterfell proof..."
-        MACOS_REPORT="${CAPSEM_MACOS_NATIVE_GLOWUP_REPORT:?macOS install rail requires the native glow-up report from this module}"
+        if [ -z "${CAPSEM_MACOS_NATIVE_GLOWUP_REPORT:-}" ]; then
+            echo "ERROR: macOS install rail requires the native glow-up report from this module" >&2
+            exit 1
+        fi
+        MACOS_REPORT="$CAPSEM_MACOS_NATIVE_GLOWUP_REPORT"
         uv run python scripts/check-macos-native-glowup.py \
             --report "$MACOS_REPORT" \
             --cargo-toml "$ROOT/Cargo.toml"
