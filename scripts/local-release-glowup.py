@@ -125,6 +125,12 @@ class ExactInstalledGlowupEvidence:
     candidate_winterfell: Path
 
 
+@dataclass(frozen=True)
+class AdversarialExactCandidates:
+    tampered_manifest: Path
+    incompatible_manifest: Path
+
+
 def _environment_path(name: str) -> Path | None:
     value = os.environ.get(name)
     return Path(value) if value else None
@@ -822,15 +828,123 @@ def stage_exact_release_transport(
     )
 
 
+def promote_exact_manifest(manifest: Path, current_manifest: Path) -> None:
+    """Atomically expose one already-staged manifest at the installed polling URL."""
+
+    pending = current_manifest.with_suffix(".next")
+    try:
+        shutil.copyfile(manifest, pending)
+        os.replace(pending, current_manifest)
+    finally:
+        pending.unlink(missing_ok=True)
+
+
 def promote_exact_candidate_transport(transport: ExactReleaseTransport) -> None:
     """Atomically expose candidate-after bytes at the installed polling URL."""
 
-    pending = transport.current_manifest.with_suffix(".next")
+    promote_exact_manifest(transport.after_manifest, transport.current_manifest)
+
+
+def _adversarial_profile(
+    manifest: dict[str, object],
+    pairing: ExactReleasePairing,
+) -> tuple[str, dict[str, object]]:
+    profiles = manifest.get("profiles")
+    if not isinstance(profiles, dict) or not profiles:
+        raise SystemExit("exact adversarial candidate has no profiles")
+    profile_map = cast(dict[str, object], profiles)
+    profile_ids = pairing.changed_profiles or tuple(sorted(profiles))
+    for profile_id in profile_ids:
+        profile = profile_map.get(profile_id)
+        if isinstance(profile_id, str) and isinstance(profile, dict):
+            return profile_id, cast(dict[str, object], profile)
+    raise SystemExit("exact adversarial candidate lacks its selected profile")
+
+
+def _tamper_selected_profile_digest(
+    manifest: dict[str, object],
+    pairing: ExactReleasePairing,
+) -> None:
+    profile_id, profile = _adversarial_profile(manifest, pairing)
+    architectures = profile.get("architectures")
+    if not isinstance(architectures, list):
+        raise SystemExit(f"exact adversarial profile {profile_id} has no architectures")
+    for architecture in architectures:
+        if not isinstance(architecture, dict):
+            continue
+        architecture_fields = cast(dict[str, object], architecture)
+        for section in ("config", "images", "evidence"):
+            rows = architecture_fields.get(section)
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                row_fields = cast(dict[str, object], row)
+                if row_fields.get("status", "current") != "current":
+                    continue
+                digest = row_fields.get("digest")
+                if not isinstance(digest, dict):
+                    continue
+                digest_fields = cast(dict[str, object], digest)
+                sha256 = digest_fields.get("sha256")
+                if not isinstance(sha256, str):
+                    continue
+                digest_fields["sha256"] = (
+                    "1" * 64 if sha256 == "0" * 64 else "0" * 64
+                )
+                return
+    raise SystemExit(
+        f"exact adversarial profile {profile_id} has no current digest-bearing artifact"
+    )
+
+
+def stage_adversarial_exact_candidates(
+    pairing: ExactReleasePairing,
+    transport: ExactReleaseTransport,
+    *,
+    output_dir: Path,
+) -> AdversarialExactCandidates:
+    """Derive local rejection candidates without changing authoritative release inputs."""
+
+    authority_before = pairing.after_manifest.read_bytes()
+    projected_before = transport.after_manifest.read_bytes()
     try:
-        shutil.copyfile(transport.after_manifest, pending)
-        os.replace(pending, transport.current_manifest)
-    finally:
-        pending.unlink(missing_ok=True)
+        projected = json.loads(projected_before)
+    except json.JSONDecodeError as error:
+        raise SystemExit(f"exact projected candidate manifest is invalid: {error}") from error
+    if not isinstance(projected, dict):
+        raise SystemExit("exact projected candidate manifest must be an object")
+
+    tampered = copy.deepcopy(projected)
+    _tamper_selected_profile_digest(tampered, pairing)
+    incompatible = copy.deepcopy(projected)
+    _, incompatible_profile = _adversarial_profile(incompatible, pairing)
+    incompatible_profile["min_capsem_version"] = "9999.0.0"
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tampered_manifest = output_dir / "tampered-artifact-manifest.json"
+    incompatible_manifest = output_dir / "incompatible-profile-manifest.json"
+    tampered_manifest.write_text(
+        json.dumps(tampered, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    incompatible_manifest.write_text(
+        json.dumps(incompatible, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    if pairing.after_manifest.read_bytes() != authority_before:
+        raise SystemExit("adversarial staging mutated the authoritative candidate manifest")
+    if transport.after_manifest.read_bytes() != projected_before:
+        raise SystemExit("adversarial staging mutated the exact projected candidate manifest")
+    if tampered_manifest.read_bytes() == projected_before:
+        raise SystemExit("tampered artifact candidate did not change the projected manifest")
+    if incompatible_manifest.read_bytes() == projected_before:
+        raise SystemExit("incompatible profile candidate did not change the projected manifest")
+    return AdversarialExactCandidates(
+        tampered_manifest=tampered_manifest,
+        incompatible_manifest=incompatible_manifest,
+    )
 
 
 def run(cmd: list[str], *, cwd: Path = PROJECT_ROOT, env: dict[str, str] | None = None) -> None:

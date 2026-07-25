@@ -891,12 +891,22 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
             "code": {
                 "revision": revision,
                 "architectures": [
-                    {
-                        "architecture": "arm64",
-                        "images": [{"kind": "rootfs", "url": profile_url}],
-                    }
-                ],
-            }
+                        {
+                            "architecture": "arm64",
+                            "images": [
+                                {
+                                    "kind": "rootfs",
+                                    "url": profile_url,
+                                    "bytes": 13,
+                                    "digest": {
+                                        "sha256": "a" * 64,
+                                        "blake3": "b" * 64,
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
         }
         return manifest
 
@@ -1012,6 +1022,28 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
 
     assert transport.current_manifest.read_bytes() == transport.after_manifest.read_bytes()
     assert not transport.current_manifest.with_suffix(".next").exists()
+
+    candidates = module.stage_adversarial_exact_candidates(
+        pairing,
+        transport,
+        output_dir=tmp_path / "adversarial",
+    )
+
+    assert after_manifest.read_bytes() == after_authority_bytes
+    assert transport.after_manifest.read_text() == json.dumps(
+        projected, indent=2, sort_keys=True
+    ) + "\n"
+    tampered = json.loads(candidates.tampered_manifest.read_text())
+    incompatible = json.loads(candidates.incompatible_manifest.read_text())
+    assert (
+        tampered["profiles"]["code"]["architectures"][0]["images"][0]["digest"][
+            "sha256"
+        ]
+        == "0" * 64
+    )
+    assert incompatible["profiles"]["code"]["min_capsem_version"] == "9999.0.0"
+    assert candidates.tampered_manifest.read_bytes() != transport.after_manifest.read_bytes()
+    assert candidates.incompatible_manifest.read_bytes() != transport.after_manifest.read_bytes()
 
 
 def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
