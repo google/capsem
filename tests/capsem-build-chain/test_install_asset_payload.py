@@ -1783,6 +1783,16 @@ def test_release_workflow_sets_up_uv_before_uv_run_steps() -> None:
         assert setup_pos < uv_run_pos, f"{name} sets up uv after first uv run"
 
 
+def test_ci_install_job_sets_up_uv_before_the_shared_install_gate() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    install_job = _workflow_job_blocks(workflow)["test-install"]
+
+    setup_pos = install_job.find("astral-sh/setup-uv@")
+    install_pos = install_job.find("run: just _gate-install")
+    assert setup_pos != -1, "test-install invokes uv-backed Just helpers without setup-uv"
+    assert setup_pos < install_pos, "test-install sets up uv after the shared install gate"
+
+
 def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
     doctor_linux = (PROJECT_ROOT / "scripts" / "doctor-linux.sh").read_text()

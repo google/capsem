@@ -85,6 +85,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Passed the immutable release tag as an explicit binary-workflow input so the
+  public release command cannot push a tag and then fail GitHub dispatch
+  validation.
+
+- Installed the pinned `uv` tool before the Linux install CI job enters the
+  shared package gate.
+
 - Retried transient Tart SSH failures only before authenticated guest
   execution, while failing without replay after a native package install has
   started.

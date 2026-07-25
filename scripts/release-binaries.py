@@ -201,6 +201,8 @@ def release_binaries(
             "--ref",
             tag,
             "-f",
+            f"tag={tag}",
+            "-f",
             f"channel={channel}",
         )
     )

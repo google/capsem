@@ -121,6 +121,8 @@ def test_binary_release_owns_one_scripted_build_and_dispatch(
         "--ref",
         tag,
         "-f",
+        f"tag={tag}",
+        "-f",
         "channel=nightly",
     ) in runner.calls
     assert ("gh", "run", "watch", "42", "--exit-status") in runner.calls
@@ -193,6 +195,8 @@ def test_stable_binary_release_remains_explicit_even_at_a_version_tag(
         "release.yaml",
         "--ref",
         tag,
+        "-f",
+        f"tag={tag}",
         "-f",
         "channel=stable",
     ) in runner.calls
