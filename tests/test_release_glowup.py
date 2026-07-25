@@ -1147,12 +1147,19 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
         evidence_dir=tmp_path / "evidence",
     )
 
-    assert len(calls) == 4
+    assert len(calls) == 5
     before_script = calls[0][-1]
     after_script = calls[1][-1]
     tamper_script = calls[2][-1]
     incompatible_script = calls[3][-1]
-    for script in (before_script, after_script, tamper_script, incompatible_script):
+    preserved_script = calls[4][-1]
+    for script in (
+        before_script,
+        after_script,
+        tamper_script,
+        incompatible_script,
+        preserved_script,
+    ):
         subprocess.run(["bash", "-n"], input=script, text=True, check=True)
     assert "CAPSEM_MANIFEST_URL=" in before_script
     assert "update --assets --channel" in before_script
@@ -1170,10 +1177,12 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     assert "requires Capsem 9999.0.0 or newer" in incompatible_script
     assert "incompatible-before-manifest.json" in incompatible_script
     assert "incompatible-rejection.json" in incompatible_script
-    for script in (before_script, after_script):
+    assert "probe_installed_transition rejection-preserved" in preserved_script
+    for script in (before_script, after_script, preserved_script):
         assert "scripts/verify-installed-release.py" in script
         assert '"$CAPSEM_BIN" doctor' in script
         assert "scripts/run-installed-winterfell.py" in script
+        assert "capsem-mock-server" in script
         assert "update --yes" not in script
     assert "update --yes" not in tamper_script
     assert "update --yes" not in incompatible_script
@@ -1182,6 +1191,9 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     assert evidence.candidate_winterfell.name == "candidate-after-winterfell.json"
     assert evidence.tamper_rejection.name == "tampered-rejection.json"
     assert evidence.incompatible_rejection.name == "incompatible-rejection.json"
+    assert evidence.preserved_installed.name == "rejection-preserved-installed.json"
+    assert evidence.preserved_doctor.name == "rejection-preserved-doctor.json"
+    assert evidence.preserved_winterfell.name == "rejection-preserved-winterfell.json"
 
 
 def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Path) -> None:
@@ -1216,10 +1228,14 @@ def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Pa
         candidate_winterfell=tmp_path / "candidate-winterfell.json",
         tamper_rejection=tmp_path / "tampered-rejection.json",
         incompatible_rejection=tmp_path / "incompatible-rejection.json",
+        preserved_installed=tmp_path / "preserved-installed.json",
+        preserved_doctor=tmp_path / "preserved-doctor.json",
+        preserved_winterfell=tmp_path / "preserved-winterfell.json",
     )
     for path, package_version in (
         (evidence.fresh_installed, before.package_version),
         (evidence.candidate_installed, after.package_version),
+        (evidence.preserved_installed, after.package_version),
     ):
         path.write_text(
             json.dumps(
@@ -1236,20 +1252,77 @@ def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Pa
                 }
             )
         )
-    for path in (evidence.fresh_doctor, evidence.candidate_doctor):
+    for path in (
+        evidence.fresh_doctor,
+        evidence.candidate_doctor,
+        evidence.preserved_doctor,
+    ):
         path.write_text(
             json.dumps({"schema": "capsem.installed_doctor.v1", "passed": True})
         )
-    for path in (evidence.fresh_winterfell, evidence.candidate_winterfell):
+    for path in (
+        evidence.fresh_winterfell,
+        evidence.candidate_winterfell,
+        evidence.preserved_winterfell,
+    ):
         path.write_text(
             json.dumps({"schema": "capsem.installed_winterfell.v1", "passed": True})
         )
+    evidence.tamper_rejection.write_text(
+        json.dumps(
+            {
+                "schema": "capsem.installed_rejection.v1",
+                "kind": "tampered_artifact",
+                "result": "rejected",
+                "preserved_previous": True,
+            }
+        )
+    )
+    evidence.incompatible_rejection.write_text(
+        json.dumps(
+            {
+                "schema": "capsem.installed_rejection.v1",
+                "kind": "incompatible_profile",
+                "result": "rejected",
+                "blocked_reason": "requires Capsem 9999.0.0 or newer",
+                "preserved_previous": True,
+            }
+        )
+    )
 
     rows = module.exact_installed_transition_rows(pairing, evidence)
 
-    assert [row["kind"] for row in rows] == ["fresh_install", "binary_only"]
+    assert [row["kind"] for row in rows] == [
+        "fresh_install",
+        "binary_only",
+        "tamper_rejection",
+    ]
     assert all(row["probes"] == {"doctor": True, "winterfell": True} for row in rows)
+    assert rows[-1]["before"] == rows[-1]["after"]
+    assert rows[-1]["preserved_previous"] is True
 
+    evidence.tamper_rejection.write_text(
+        json.dumps(
+            {
+                "schema": "capsem.installed_rejection.v1",
+                "kind": "tampered_artifact",
+                "result": "activated",
+                "preserved_previous": False,
+            }
+        )
+    )
+    with pytest.raises(SystemExit, match="rejection evidence failed"):
+        module.exact_installed_transition_rows(pairing, evidence)
+    evidence.tamper_rejection.write_text(
+        json.dumps(
+            {
+                "schema": "capsem.installed_rejection.v1",
+                "kind": "tampered_artifact",
+                "result": "rejected",
+                "preserved_previous": True,
+            }
+        )
+    )
     evidence.candidate_doctor.write_text(
         json.dumps({"schema": "capsem.installed_doctor.v1", "passed": False})
     )

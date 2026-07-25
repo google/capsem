@@ -83,6 +83,7 @@ HOST_BINARIES = (
     "capsem-gateway",
     "capsem-tray",
     "capsem-admin",
+    "capsem-mock-server",
 )
 
 
@@ -125,6 +126,9 @@ class ExactInstalledGlowupEvidence:
     candidate_winterfell: Path
     tamper_rejection: Path
     incompatible_rejection: Path
+    preserved_installed: Path
+    preserved_doctor: Path
+    preserved_winterfell: Path
 
 
 @dataclass(frozen=True)
@@ -387,6 +391,7 @@ def main() -> int:
                 expected_transitions = [
                     TransitionKind.FRESH_INSTALL,
                     exact_pairing.transition,
+                    TransitionKind.TAMPER_REJECTION,
                 ]
                 report = build_report(
                     adapter="linux-docker-systemd",
@@ -411,6 +416,16 @@ def main() -> int:
                     },
                     "polled_manifest_url": exact_transport.current_manifest_url,
                     "channel_catalog_url": exact_transport.channel_catalog_url,
+                    "rejections": {
+                        "tampered_artifact": json.loads(
+                            exact_evidence.tamper_rejection.read_text(encoding="utf-8")
+                        ),
+                        "incompatible_profile": json.loads(
+                            exact_evidence.incompatible_rejection.read_text(
+                                encoding="utf-8"
+                            )
+                        ),
+                    },
                 }
             else:
                 evidence_path = args.work_dir / "installed-evidence.json"
@@ -1490,6 +1505,21 @@ printf '%s\n' \
     finally:
         promote_exact_candidate_transport(transport)
 
+    preserved_script = f"""
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+{probe_functions}
+systemctl --user restart capsem.service
+probe_installed_transition rejection-preserved \
+  {shlex.quote(transport.current_manifest_url)} \
+  {shlex.quote(pairing.channel)} \
+  {shlex.quote(after_artifact.version)} \
+  {shlex.quote(str(pairing.after_package))} \
+  {shlex.quote(after_artifact.platform)} \
+  {shlex.quote(after_artifact.architecture.value)}
+"""
+    run(["bash", "-lc", preserved_script])
+
     return ExactInstalledGlowupEvidence(
         fresh_installed=evidence_dir / "fresh-install-installed.json",
         fresh_doctor=evidence_dir / "fresh-install-doctor.json",
@@ -1499,6 +1529,9 @@ printf '%s\n' \
         candidate_winterfell=evidence_dir / "candidate-after-winterfell.json",
         tamper_rejection=tamper_evidence,
         incompatible_rejection=incompatible_evidence,
+        preserved_installed=evidence_dir / "rejection-preserved-installed.json",
+        preserved_doctor=evidence_dir / "rejection-preserved-doctor.json",
+        preserved_winterfell=evidence_dir / "rejection-preserved-winterfell.json",
     )
 
 
@@ -1533,12 +1566,36 @@ def _validate_exact_installed_state(
         raise SystemExit(f"installed transition evidence has wrong package version: {path}")
 
 
+def _validate_installed_rejection(path: Path, expected_kind: str) -> None:
+    try:
+        rejection = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise SystemExit(f"installed rejection evidence is unreadable: {path}: {error}") from error
+    if not isinstance(rejection, dict):
+        raise SystemExit(f"installed rejection evidence is not an object: {path}")
+    if (
+        rejection.get("schema") != "capsem.installed_rejection.v1"
+        or rejection.get("kind") != expected_kind
+        or rejection.get("result") != "rejected"
+        or rejection.get("preserved_previous") is not True
+    ):
+        raise SystemExit(f"installed rejection evidence failed: {path}: {rejection}")
+    if expected_kind == "incompatible_profile" and not isinstance(
+        rejection.get("blocked_reason"),
+        str,
+    ):
+        raise SystemExit(f"installed rejection evidence omitted blocked reason: {path}")
+
+
 def exact_installed_transition_rows(
     pairing: ExactReleasePairing,
     evidence: ExactInstalledGlowupEvidence,
 ) -> list[dict[str, object]]:
     _validate_exact_installed_state(evidence.fresh_installed, pairing.before)
     _validate_exact_installed_state(evidence.candidate_installed, pairing.after)
+    _validate_exact_installed_state(evidence.preserved_installed, pairing.after)
+    _validate_installed_rejection(evidence.tamper_rejection, "tampered_artifact")
+    _validate_installed_rejection(evidence.incompatible_rejection, "incompatible_profile")
     fresh_doctor = _probe_report_passed(
         evidence.fresh_doctor,
         "capsem.installed_doctor.v1",
@@ -1553,6 +1610,14 @@ def exact_installed_transition_rows(
     )
     candidate_winterfell = _probe_report_passed(
         evidence.candidate_winterfell,
+        "capsem.installed_winterfell.v1",
+    )
+    preserved_doctor = _probe_report_passed(
+        evidence.preserved_doctor,
+        "capsem.installed_doctor.v1",
+    )
+    preserved_winterfell = _probe_report_passed(
+        evidence.preserved_winterfell,
         "capsem.installed_winterfell.v1",
     )
     return [
@@ -1576,6 +1641,15 @@ def exact_installed_transition_rows(
                 if pairing.transition is TransitionKind.PROFILE_THEN_BINARY
                 else None
             ),
+        ),
+        build_transition_evidence(
+            kind=TransitionKind.TAMPER_REJECTION,
+            before=pairing.after,
+            after=pairing.after,
+            result="rejected",
+            doctor_passed=preserved_doctor,
+            winterfell_passed=preserved_winterfell,
+            preserved_previous=True,
         ),
     ]
 
