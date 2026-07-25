@@ -36,6 +36,40 @@ def _read_url(url: str) -> bytes:
         return response.read()
 
 
+def _read_manifest(url: str) -> tuple[bytes, dict[str, Any]]:
+    manifest_bytes = _read_url(url)
+    try:
+        manifest = json.loads(manifest_bytes)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"release manifest is invalid JSON: {error}") from error
+    if not isinstance(manifest, dict):
+        raise ValueError("release manifest must contain a JSON object")
+    return manifest_bytes, manifest
+
+
+def _assert_public_channel_absent(
+    public_manifest_url: str, bootstrap_manifest: dict[str, Any]
+) -> None:
+    channel = bootstrap_manifest.get("channel")
+    if not isinstance(channel, str) or not channel:
+        raise ValueError("bootstrap manifest is missing its channel")
+    parsed = urlparse(public_manifest_url)
+    expected_path = f"/assets/{channel}/manifest.json"
+    if parsed.scheme not in {"http", "https"} or parsed.path != expected_path:
+        raise ValueError(
+            "bootstrap fallback requires the selected public channel manifest URL"
+        )
+    catalog_url = f"{parsed.scheme}://{parsed.netloc}/channels.json"
+    catalog = json.loads(_read_url(catalog_url))
+    channels = catalog.get("channels") if isinstance(catalog, dict) else None
+    if not isinstance(channels, dict):
+        raise ValueError("public channel catalog must contain a channels object")
+    if channel in channels:
+        raise ValueError(
+            f"public channel {channel} exists but its manifest could not be resolved"
+        )
+
+
 def _local_publication_payload(
     url: str,
     *,
@@ -68,6 +102,8 @@ def fetch_release_inputs(
     *,
     local_publication_base: str | None = None,
     local_publication_dir: Path | None = None,
+    allow_empty_profiles: bool = False,
+    bootstrap_manifest_url: str | None = None,
 ) -> dict[str, Any]:
     if (local_publication_base is None) != (local_publication_dir is None):
         raise ValueError("local publication base and directory must be supplied together")
@@ -78,20 +114,30 @@ def fetch_release_inputs(
         if parsed_base.scheme != "https" or not parsed_base.netloc:
             raise ValueError("local publication base must be an absolute HTTPS URL")
 
-    manifest_bytes = _read_url(manifest_url)
     try:
-        manifest = json.loads(manifest_bytes)
-    except json.JSONDecodeError as error:
-        raise ValueError(f"release manifest is invalid JSON: {error}") from error
-    if not isinstance(manifest, dict):
-        raise ValueError("release manifest must contain a JSON object")
+        manifest_bytes, manifest = _read_manifest(manifest_url)
+    except (OSError, ValueError):
+        if bootstrap_manifest_url is None:
+            raise
+        manifest_bytes, manifest = _read_manifest(bootstrap_manifest_url)
+        if manifest.get("profiles") != {}:
+            raise ValueError(
+                "bootstrap release-input fallback requires explicit empty profiles"
+            )
+        _assert_public_channel_absent(manifest_url, manifest)
+        manifest_url = bootstrap_manifest_url
 
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True)
     (output / "manifest.json").write_bytes(manifest_bytes)
 
-    rows = resolved_artifact_rows(manifest, manifest_url, kind)
+    rows = resolved_artifact_rows(
+        manifest,
+        manifest_url,
+        kind,
+        allow_empty_profiles=allow_empty_profiles,
+    )
     local_paths: set[Path] = set()
     for row in rows:
         local = _local_publication_payload(
@@ -132,6 +178,8 @@ def fetch_release_inputs(
         "output": str(output),
         "artifacts": fetched,
     }
+    if allow_empty_profiles:
+        report["allow_empty_profiles"] = True
     (output / "release-inputs.json").write_text(
         json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -145,6 +193,8 @@ def main() -> int:
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--local-publication-base")
     parser.add_argument("--local-publication-dir", type=Path)
+    parser.add_argument("--allow-empty-profiles", action="store_true")
+    parser.add_argument("--bootstrap-manifest-url")
     args = parser.parse_args()
     try:
         report = fetch_release_inputs(
@@ -153,6 +203,8 @@ def main() -> int:
             args.output,
             local_publication_base=args.local_publication_base,
             local_publication_dir=args.local_publication_dir,
+            allow_empty_profiles=args.allow_empty_profiles,
+            bootstrap_manifest_url=args.bootstrap_manifest_url,
         )
     except (OSError, ValueError) as error:
         print(f"release input fetch failed: {error}", file=sys.stderr)

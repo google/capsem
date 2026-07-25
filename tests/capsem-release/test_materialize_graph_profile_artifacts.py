@@ -287,7 +287,80 @@ def test_worktree_source_root_rejects_config_path_escape(tmp_path: Path) -> None
             source_ref=None,
             source_root=source_root,
             source_path="../secret",
+            public_base=None,
+            source_url="/profiles/releases/stable/code/revision/arm64/secret",
         )
+
+
+def test_public_mirror_preserves_legacy_profile_config_bytes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _module()
+    contents = b"zstd\nlz4\n"
+    manifest = {
+        "channel": "stable",
+        "profiles": {
+            "code": {
+                "id": "code",
+                "revision": "legacy-revision",
+                "architectures": [
+                    {
+                        "architecture": "arm64",
+                        "config": [
+                            {
+                                "path": "profiles/code/apt-packages.txt",
+                                "url": (
+                                    "/profiles/releases/legacy-revision/"
+                                    "arm64/apt-packages.txt"
+                                ),
+                                "bytes": len(contents),
+                                "digest": {
+                                    "sha256": hashlib.sha256(contents).hexdigest(),
+                                    "blake3": blake3.blake3(contents).hexdigest(),
+                                },
+                            }
+                        ],
+                    }
+                ],
+            }
+        },
+    }
+    requested: list[str] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return contents
+
+    def open_url(request, timeout: int):
+        requested.append(request.full_url)
+        assert timeout == 60
+        return Response()
+
+    monkeypatch.setattr(module, "urlopen", open_url)
+    written = module.materialize_manifest_profile_files(
+        dist=tmp_path,
+        repo_root=tmp_path,
+        source_ref=None,
+        source_root=None,
+        public_base="https://release.example",
+        manifest=manifest,
+    )
+
+    assert written == 1
+    assert requested == [
+        "https://release.example/profiles/releases/legacy-revision/"
+        "arm64/apt-packages.txt"
+    ]
+    assert (
+        tmp_path / "profiles/releases/legacy-revision/arm64/apt-packages.txt"
+    ).read_bytes() == contents
 
 
 def _git(repo: Path, *args: str) -> None:

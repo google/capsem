@@ -167,8 +167,12 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
 
     assert "Validate selected channel profile through capsem-admin" in workflow
     assert "Fetch latest selected channel source manifest" in workflow
+    assert "--bootstrap-missing-first-party" in workflow
+    assert "--profile \"${{ inputs.profile }}\"" in workflow
     assert "Fetch exact deployed public-before cohorts" in workflow
     assert '--manifest-url "$ASSET_MANIFEST_URL"' in workflow
+    assert workflow.count("--bootstrap-manifest-url") == 2
+    assert "--allow-empty-profiles" in workflow
     assert "capsem-admin -- release" in workflow
     assert "--publication-base" in workflow
     assert "channel-source-$CHANNEL.json" in workflow

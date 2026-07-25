@@ -378,6 +378,23 @@ First-party release entrypoints are deliberately asymmetric:
 - `just release-binaries <channel>` calls one checked-in, adversarially tested
   binary-release script.
 
+The first release into a missing first-party channel MUST still obey this
+surface. The serialized profile workflow MAY ask `capsem-admin release` to
+initialize the selected channel from the verified official package cohort of
+the other existing first-party channel. That initial source manifest MUST:
+
+- Be created only after the selected channel lock is held.
+- Contain the selected channel name and the verified existing package cohort.
+- Contain explicit empty profile membership.
+- Copy no profile from the donor channel.
+- Mutate neither the donor channel nor its source manifest.
+- Be rejected if the public channel catalog already claims that the selected
+  channel exists.
+
+The selected profile is then authored through the normal `capsem-admin release`
+path. Bootstrap is not a third public release command, a generic authoring
+shortcut, or permission to relabel a release graph from another channel.
+
 There MUST NOT be a generic release command, a combined command, or a public
 collection of internal release stages.
 
@@ -488,6 +505,14 @@ Examples:
   read-only.
 - A composed release builds a profile first, then a binary, while preserving
   both lanes' separate write scopes.
+
+Generated-distribution assembly MUST preserve every non-selected channel from
+its deployed public manifest and exact referenced bytes. It MUST NOT rebuild,
+reauthor, normalize, or require migration of that preserved channel merely
+because another channel is being released. Legacy referenced bytes MAY be
+copied from the current public distribution after their recorded size and
+digests are verified; this is preservation, not authoring. Only the selected
+channel may be generated from candidate source state.
 
 ### 9.2 No YAML business logic
 

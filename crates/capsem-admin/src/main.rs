@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
+mod channel_bootstrap;
 #[allow(dead_code)]
 mod release_graph;
 
@@ -232,8 +233,24 @@ struct ReleaseArgs {
     /// Publication state written by the serialized workflow.
     #[arg(long, value_enum, default_value_t = ProfileReleaseStatusArg::Current, hide = true)]
     status: ProfileReleaseStatusArg,
+    /// Existing first-party channel source used only to initialize a missing channel.
+    #[arg(
+        long,
+        hide = true,
+        requires = "bootstrap_output",
+        conflicts_with = "manifest_path"
+    )]
+    bootstrap_from_manifest: Option<PathBuf>,
+    /// Selected-channel source manifest created by the serialized workflow.
+    #[arg(
+        long,
+        hide = true,
+        requires = "bootstrap_from_manifest",
+        conflicts_with = "manifest_path"
+    )]
+    bootstrap_output: Option<PathBuf>,
     /// Validate and print the workflow dispatch without executing it.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "bootstrap_from_manifest")]
     dry_run: bool,
     /// Emit a machine-readable release report.
     #[arg(long)]
@@ -1072,6 +1089,54 @@ fn release_command(args: ReleaseArgs) -> Result<()> {
         config_root: args.config_root.clone(),
         json: args.json,
     })?;
+    if let (Some(donor_path), Some(output_path)) = (
+        args.bootstrap_from_manifest.as_deref(),
+        args.bootstrap_output.as_deref(),
+    ) {
+        let donor: serde_json::Value = serde_json::from_slice(
+            &fs::read(donor_path)
+                .with_context(|| format!("read bootstrap donor {}", donor_path.display()))?,
+        )
+        .with_context(|| format!("parse bootstrap donor {}", donor_path.display()))?;
+        let donor_channel = donor
+            .get("channel")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow!("bootstrap donor is missing its channel"))?;
+        validate_assets_channel_graph_manifest(&donor, donor_channel)?;
+        let bootstrapped =
+            channel_bootstrap::bootstrap_first_party_channel_source(&args.channel, &donor)?;
+        validate_assets_channel_graph_manifest(&bootstrapped, &args.channel)?;
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        }
+        let mut bytes =
+            serde_json::to_vec_pretty(&bootstrapped).context("serialize bootstrap manifest")?;
+        bytes.push(b'\n');
+        fs::write(output_path, bytes)
+            .with_context(|| format!("write {}", output_path.display()))?;
+        let report = serde_json::json!({
+            "schema": "capsem.admin.release_bootstrap.v1",
+            "ok": true,
+            "channel": args.channel,
+            "profile": selection.profile,
+            "profile_revision": selection.profile_revision,
+            "publication_identity": selection.publication_identity,
+            "donor_channel": donor_channel,
+            "package_count": bootstrapped["packages"].as_array().map_or(0, Vec::len),
+            "output": output_path.display().to_string(),
+        });
+        if args.json {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            println!(
+                "bootstrapped {}/{} source manifest from verified {} packages",
+                report["channel"].as_str().unwrap_or("channel"),
+                report["profile"].as_str().unwrap_or("profile"),
+                donor_channel
+            );
+        }
+        return Ok(());
+    }
     if args.manifest_path.is_some() {
         let report = apply_profile_release_status(&args)?;
         if args.json {
@@ -1708,6 +1773,7 @@ fn author_corporate_manifest(args: &ManifestCorporateArgs) -> Result<CorporateMa
 
     let manifest = serde_json::json!({
         "version": args.manifest_version,
+        "channel": args.channel,
         "status": "current",
         "packages": packages,
         "profiles": profiles,
@@ -3232,6 +3298,12 @@ fn validate_assets_channel_graph_manifest(
     require_json_string(manifest, &["version"])?;
     require_json_str(
         manifest,
+        &["channel"],
+        channel,
+        "graph manifest channel mismatch",
+    )?;
+    require_json_str(
+        manifest,
         &["status"],
         "current",
         "graph manifest status mismatch",
@@ -3261,13 +3333,10 @@ fn validate_assets_channel_graph_manifest(
             require_json_string(binary, &["sbom_component_ref"])?;
         }
     }
-    let profiles = manifest
+    manifest
         .get("profiles")
         .and_then(|value| value.as_object())
         .ok_or_else(|| anyhow!("graph manifest profiles must be an object"))?;
-    if profiles.is_empty() {
-        return Err(anyhow!("graph manifest must list profiles for {channel}"));
-    }
     Ok(())
 }
 
@@ -11894,6 +11963,8 @@ decision = "block"
                 .expect("config root")
                 .to_path_buf(),
             status: ProfileReleaseStatusArg::Current,
+            bootstrap_from_manifest: None,
+            bootstrap_output: None,
             dry_run: false,
             json: true,
         };
@@ -12049,6 +12120,8 @@ decision = "block"
             manifest_version: Some("1.0.2".to_string()),
             profile_version: Some("2026.07.24.1".to_string()),
             status: ProfileReleaseStatusArg::Current,
+            bootstrap_from_manifest: None,
+            bootstrap_output: None,
             dry_run: false,
             json: true,
         };

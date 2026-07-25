@@ -165,11 +165,12 @@ class PairingIdentity:
         *,
         artifact: ArtifactIdentity,
         channel: str,
+        allow_empty_profiles: bool = False,
     ) -> PairingIdentity:
         manifest = load_manifest_bytes(contents)
         assert_manifest_artifact(manifest, artifact)
         profiles = manifest.get("profiles")
-        if not isinstance(profiles, dict) or not profiles:
+        if not isinstance(profiles, dict) or (not profiles and not allow_empty_profiles):
             raise GlowupContractError("candidate manifest profiles must be a non-empty object")
         profiles_bytes = json.dumps(
             profiles,
@@ -419,6 +420,8 @@ def validate_pairing_inputs(
         before_manifest_bytes,
         artifact=before_artifact,
         channel=channel,
+        allow_empty_profiles=transition_kind
+        in {TransitionKind.PROFILE_ONLY, TransitionKind.PROFILE_THEN_BINARY},
     )
     after = PairingIdentity.from_manifest_bytes(
         after_manifest_bytes,

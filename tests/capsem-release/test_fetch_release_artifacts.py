@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 
 import blake3
 import pytest
@@ -106,6 +107,187 @@ def test_channel_source_manifest_validation_is_channel_scoped() -> None:
     assert SOURCE.validate_source_manifest(payload, "nightly")["channel"] == "nightly"
     with pytest.raises(ValueError, match="expected 'stable'"):
         SOURCE.validate_source_manifest(payload, "stable")
+
+
+def test_invalid_serialized_source_never_falls_back_to_channel_bootstrap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    releases = [
+        {
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-07-25T12:00:00Z",
+            "assets": [
+                {
+                    "name": "channel-source-nightly.json",
+                    "url": "https://api.github.test/assets/nightly",
+                }
+            ],
+        }
+    ]
+    monkeypatch.setattr(SOURCE, "_github_releases", lambda *_args: releases)
+    monkeypatch.setattr(
+        SOURCE,
+        "_read_url",
+        lambda *_args, **_kwargs: b'{"channel":"wrong","profiles":{},"packages":[]}',
+    )
+
+    with pytest.raises(ValueError, match="expected 'nightly'") as error:
+        SOURCE.resolve_source_manifest(
+            channel="nightly",
+            repository="google/capsem",
+            token="test",
+            fallback_url="https://release.example/assets/nightly/manifest.json",
+        )
+
+    assert not isinstance(error.value, SOURCE.ChannelSourceUnavailable)
+
+
+def test_missing_first_party_channel_bootstraps_through_capsem_admin(
+    tmp_path: Path,
+) -> None:
+    donor = json.dumps(
+        {
+            "version": "1.0.143",
+            "channel": "stable",
+            "status": "current",
+            "packages": [{"name": "Capsem.pkg"}],
+            "profiles": {"code": {"revision": "stable-only"}},
+        }
+    ).encode()
+    output = tmp_path / "nightly.json"
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        del kwargs
+        calls.append(command)
+        donor_path = Path(command[command.index("--bootstrap-from-manifest") + 1])
+        assert json.loads(donor_path.read_bytes())["channel"] == "stable"
+        output_path = Path(command[command.index("--bootstrap-output") + 1])
+        output_path.write_text(
+            json.dumps(
+                {
+                    "version": "1.0.143",
+                    "channel": "nightly",
+                    "status": "current",
+                    "packages": [{"name": "Capsem.pkg"}],
+                    "profiles": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return subprocess.CompletedProcess(command, 0)
+
+    payload = SOURCE.bootstrap_source_manifest(
+        channel="nightly",
+        profile="code",
+        donor_payload=donor,
+        output=output,
+        runner=run,
+    )
+
+    assert SOURCE.validate_source_manifest(payload, "nightly")["profiles"] == {}
+    assert len(calls) == 1
+    command = calls[0]
+    assert command[:6] == ["cargo", "run", "-p", "capsem-admin", "--", "release"]
+    assert command[command.index("--channel") + 1] == "nightly"
+    assert command[command.index("--profile") + 1] == "code"
+
+
+def test_missing_channel_bootstrap_requires_absence_from_public_catalog() -> None:
+    catalog = json.dumps({"channels": {"stable": {}}}).encode()
+
+    assert SOURCE.public_channel_is_absent(catalog, "nightly")
+    assert not SOURCE.public_channel_is_absent(catalog, "stable")
+    with pytest.raises(ValueError, match="channels object"):
+        SOURCE.public_channel_is_absent(b'{"channels":[]}', "nightly")
+
+
+def test_bootstrap_baseline_allows_only_explicit_empty_profile_membership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "nightly.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": "1.0.143",
+                "channel": "nightly",
+                "status": "current",
+                "packages": [],
+                "profiles": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    output = tmp_path / "profiles"
+    url = manifest.as_uri()
+
+    with pytest.raises(ValueError, match="contains no profiles"):
+        FETCH.fetch_release_inputs(url, "profiles", output)
+
+    primary_url = "https://release.example/assets/nightly/manifest.json"
+    original_read = FETCH._read_url
+
+    def read_url(requested: str) -> bytes:
+        if requested == primary_url:
+            raise OSError("nightly is not published")
+        if requested == "https://release.example/channels.json":
+            return b'{"channels":{"stable":{}}}'
+        return original_read(requested)
+
+    monkeypatch.setattr(FETCH, "_read_url", read_url)
+    report = FETCH.fetch_release_inputs(
+        primary_url,
+        "profiles",
+        output,
+        allow_empty_profiles=True,
+        bootstrap_manifest_url=url,
+    )
+
+    assert report["artifacts"] == []
+    assert report["allow_empty_profiles"] is True
+    assert report["manifest_url"] == url
+    verification = VERIFY.verify_release_inputs(output)
+    assert verification["verified"] == []
+
+
+def test_bootstrap_release_inputs_reject_existing_public_channel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bootstrap = tmp_path / "nightly.json"
+    bootstrap.write_text(
+        json.dumps(
+            {
+                "version": "1.0.143",
+                "channel": "nightly",
+                "status": "current",
+                "packages": [],
+                "profiles": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    primary_url = "https://release.example/assets/nightly/manifest.json"
+
+    def read_url(requested: str) -> bytes:
+        if requested == primary_url:
+            raise OSError("published channel manifest is invalid")
+        if requested == "https://release.example/channels.json":
+            return b'{"channels":{"nightly":{}}}'
+        return Path(requested.removeprefix("file://")).read_bytes()
+
+    monkeypatch.setattr(FETCH, "_read_url", read_url)
+
+    with pytest.raises(ValueError, match="exists but its manifest could not be resolved"):
+        FETCH.fetch_release_inputs(
+            primary_url,
+            "profiles",
+            tmp_path / "profiles",
+            allow_empty_profiles=True,
+            bootstrap_manifest_url=bootstrap.as_uri(),
+        )
 
 
 def _record(url: str, payload: bytes, **extra: object) -> dict[str, object]:

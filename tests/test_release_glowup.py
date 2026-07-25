@@ -734,6 +734,31 @@ def test_exact_profile_pairing_allows_only_the_selected_profile_to_change(
         )
 
 
+def test_exact_profile_pairing_allows_first_profile_in_empty_channel(
+    tmp_path: Path,
+) -> None:
+    module = _load_module()
+    artifact = _artifact(tmp_path, module)
+    before_manifest = _manifest(artifact)
+    before_manifest["channel"] = "nightly"
+    before_manifest["profiles"] = {}
+    after_manifest = json.loads(json.dumps(before_manifest))
+    after_manifest["profiles"] = {"code": {"revision": "code-1"}}
+
+    before, after = module.validate_pairing_inputs(
+        kind=module.TransitionKind.PROFILE_ONLY,
+        channel="nightly",
+        before_manifest_bytes=json.dumps(before_manifest, sort_keys=True).encode(),
+        after_manifest_bytes=json.dumps(after_manifest, sort_keys=True).encode(),
+        before_artifact=artifact,
+        after_artifact=artifact,
+        changed_profiles=("code",),
+    )
+
+    assert before.package_sha256 == after.package_sha256
+    assert before.profiles_sha256 != after.profiles_sha256
+
+
 def test_exact_pairing_classifier_distinguishes_binary_and_staged_profile(
     tmp_path: Path,
 ) -> None:

@@ -6,15 +6,22 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, url2pathname, urlopen
 
 
 USER_AGENT = "capsem-release-source/1"
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class ChannelSourceUnavailable(RuntimeError):
+    """No serialized source asset or valid public channel exists yet."""
 
 
 def source_asset_name(channel: str) -> str:
@@ -88,6 +95,68 @@ def validate_source_manifest(payload: bytes, channel: str) -> dict[str, Any]:
     return manifest
 
 
+def public_channel_is_absent(payload: bytes, channel: str) -> bool:
+    catalog = json.loads(payload)
+    if not isinstance(catalog, dict) or not isinstance(catalog.get("channels"), dict):
+        raise ValueError("public channel catalog must contain a channels object")
+    return channel not in catalog["channels"]
+
+
+def bootstrap_source_manifest(
+    *,
+    channel: str,
+    profile: str,
+    donor_payload: bytes,
+    output: Path,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> bytes:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        dir=output.parent,
+        prefix=f".{channel}-bootstrap-donor-",
+        suffix=".json",
+        delete=False,
+    ) as handle:
+        handle.write(donor_payload)
+        donor_path = Path(handle.name)
+    try:
+        runner(
+            [
+                "cargo",
+                "run",
+                "-p",
+                "capsem-admin",
+                "--",
+                "release",
+                "--channel",
+                channel,
+                "--profile",
+                profile,
+                "--bootstrap-from-manifest",
+                str(donor_path),
+                "--bootstrap-output",
+                str(output),
+                "--json",
+            ],
+            cwd=ROOT,
+            check=True,
+            text=True,
+        )
+        payload = output.read_bytes()
+        validate_source_manifest(payload, channel)
+        return payload
+    finally:
+        donor_path.unlink(missing_ok=True)
+
+
+def _other_first_party_channel(channel: str) -> str:
+    if channel == "stable":
+        return "nightly"
+    if channel == "nightly":
+        return "stable"
+    raise ValueError("first-party bootstrap requires stable or nightly")
+
+
 def resolve_source_manifest(
     *,
     channel: str,
@@ -98,7 +167,19 @@ def resolve_source_manifest(
     releases = _github_releases(repository, token)
     asset = select_latest_source_asset(releases, channel)
     if asset is None:
-        payload = _read_url(fallback_url)
+        try:
+            payload = _read_url(fallback_url)
+            validate_source_manifest(payload, channel)
+        except (
+            HTTPError,
+            URLError,
+            OSError,
+            ValueError,
+            json.JSONDecodeError,
+        ) as error:
+            raise ChannelSourceUnavailable(
+                f"no valid serialized or public source exists for {channel}"
+            ) from error
         source = fallback_url
     else:
         api_url = asset.get("url")
@@ -106,7 +187,7 @@ def resolve_source_manifest(
             raise ValueError("selected source-manifest asset has no API URL")
         payload = _read_url(api_url, token=token, api=True)
         source = api_url
-    validate_source_manifest(payload, channel)
+        validate_source_manifest(payload, channel)
     return payload, source
 
 
@@ -122,6 +203,15 @@ def main() -> int:
         "--fallback-url",
         help="Public manifest used only before the channel has a serialized source asset.",
     )
+    parser.add_argument(
+        "--bootstrap-missing-first-party",
+        action="store_true",
+        help="Initialize an absent stable/nightly source through capsem-admin.",
+    )
+    parser.add_argument(
+        "--profile",
+        help="Selected profile required when bootstrapping an absent first-party channel.",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     fallback_url = args.fallback_url or (
@@ -132,15 +222,60 @@ def main() -> int:
         print("GITHUB_TOKEN is required to resolve source manifests", file=sys.stderr)
         return 1
     try:
-        payload, source = resolve_source_manifest(
-            channel=args.channel,
-            repository=args.repository,
-            token=token,
-            fallback_url=fallback_url,
-        )
+        try:
+            payload, source = resolve_source_manifest(
+                channel=args.channel,
+                repository=args.repository,
+                token=token,
+                fallback_url=fallback_url,
+            )
+        except ChannelSourceUnavailable as error:
+            if not args.bootstrap_missing_first_party:
+                raise
+            if not args.profile:
+                raise ValueError(
+                    "--profile is required with --bootstrap-missing-first-party"
+                ) from error
+            parsed_fallback = urlparse(fallback_url)
+            if parsed_fallback.scheme not in {"http", "https"} or not parsed_fallback.netloc:
+                raise ValueError(
+                    "first-party bootstrap requires an HTTP release-site fallback"
+                ) from error
+            catalog_url = (
+                f"{parsed_fallback.scheme}://{parsed_fallback.netloc}/channels.json"
+            )
+            if not public_channel_is_absent(_read_url(catalog_url), args.channel):
+                raise ValueError(
+                    f"public channel {args.channel} exists but its source manifest is invalid"
+                ) from error
+            donor_channel = _other_first_party_channel(args.channel)
+            donor_payload, donor_source = resolve_source_manifest(
+                channel=donor_channel,
+                repository=args.repository,
+                token=token,
+                fallback_url=(
+                    f"{parsed_fallback.scheme}://{parsed_fallback.netloc}"
+                    f"/assets/{donor_channel}/manifest.json"
+                ),
+            )
+            payload = bootstrap_source_manifest(
+                channel=args.channel,
+                profile=args.profile,
+                donor_payload=donor_payload,
+                output=args.output,
+            )
+            source = f"capsem-admin bootstrap from {donor_source}"
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_bytes(payload)
-    except (HTTPError, URLError, OSError, ValueError, json.JSONDecodeError) as error:
+    except (
+        ChannelSourceUnavailable,
+        HTTPError,
+        URLError,
+        OSError,
+        subprocess.CalledProcessError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as error:
         print(f"source manifest resolution failed: {error}", file=sys.stderr)
         return 1
     print(f"resolved {args.channel} source manifest from {source}")

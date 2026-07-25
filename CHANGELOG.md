@@ -85,6 +85,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bootstrapped an absent first-party channel through `capsem-admin release`
+  with existing official packages and empty profile membership, while
+  preserving non-selected public-channel manifests and profile bytes.
+
+- Emitted the selected corporate channel identity in every validated
+  `capsem-admin` corporate manifest.
+
 - Passed the immutable release tag as an explicit binary-workflow input so the
   public release command cannot push a tag and then fail GitHub dispatch
   validation.

@@ -66,16 +66,21 @@ jobs:
         run: |
           python3 scripts/fetch-channel-source-manifest.py \
             --channel "${{ inputs.channel }}" \
+            --profile "${{ inputs.profile }}" \
+            --bootstrap-missing-first-party \
             --output target/channel-source/manifest.json
 
       - name: Fetch exact deployed public-before cohorts
         run: |
           uv run python scripts/fetch-release-artifacts.py \
             --manifest-url "$ASSET_MANIFEST_URL" \
+            --bootstrap-manifest-url "file://$PWD/target/channel-source/manifest.json" \
             --kind packages \
             --output target/profile-public-before/packages
           uv run python scripts/fetch-release-artifacts.py \
             --manifest-url "$ASSET_MANIFEST_URL" \
+            --bootstrap-manifest-url "file://$PWD/target/channel-source/manifest.json" \
+            --allow-empty-profiles \
             --kind profiles \
             --output target/profile-public-before/profiles
           uv run python scripts/verify-release-inputs.py \

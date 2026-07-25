@@ -131,3 +131,10 @@ def test_asset_workflow_and_local_gate_share_complete_dist_builder() -> None:
     )[1].split("- name: Publish immutable", maxsplit=1)[0]
     assert 'REQUIRED_CHANNELS = ("stable", "nightly")' in builder
     assert '"assets",\n                "channel",\n                "check"' in builder
+
+
+def test_complete_builder_preserves_public_mirror_from_public_bytes() -> None:
+    builder = (PROJECT_ROOT / "scripts/build-complete-release-channel.py").read_text()
+
+    assert "is_public_mirror" in builder
+    assert 'command.extend(["--public-base", args.release_site])' in builder

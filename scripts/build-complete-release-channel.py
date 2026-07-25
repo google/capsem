@@ -185,7 +185,14 @@ def build_complete_dist(args: argparse.Namespace) -> None:
             "--channel",
             channel,
         ]
-        if args.profile_source_ref:
+        source = urlparse(sources[channel])
+        is_public_mirror = (
+            channel != args.primary_channel
+            and source.scheme in {"http", "https"}
+        )
+        if is_public_mirror:
+            command.extend(["--public-base", args.release_site])
+        elif args.profile_source_ref:
             command.extend(["--source-ref", args.profile_source_ref])
         elif args.profile_source_root:
             command.extend(["--source-root", str(args.profile_source_root)])

@@ -203,10 +203,18 @@ def _profile_rows(
 
 
 def resolved_artifact_rows(
-    manifest: dict[str, Any], manifest_url: str, kind: str
+    manifest: dict[str, Any],
+    manifest_url: str,
+    kind: str,
+    *,
+    allow_empty_profiles: bool = False,
 ) -> list[dict[str, Any]]:
     if kind not in {"packages", "profiles"}:
         raise ValueError(f"invalid release input kind: {kind!r}")
+    if allow_empty_profiles and kind != "profiles":
+        raise ValueError("empty release inputs are permitted only for profiles")
+    if allow_empty_profiles and manifest.get("profiles") == {}:
+        return []
     source = (
         _package_rows(manifest, manifest_url)
         if kind == "packages"
@@ -274,7 +282,15 @@ def load_verified_release_inputs(
         raise ValueError("release input report lacks its manifest URL")
     manifest = _load_json_object(manifest_path, "resolved manifest")
 
-    expected_rows = resolved_artifact_rows(manifest, manifest_url, kind)
+    allow_empty_profiles = report.get("allow_empty_profiles", False)
+    if not isinstance(allow_empty_profiles, bool):
+        raise ValueError("release input report has an invalid empty-profile policy")
+    expected_rows = resolved_artifact_rows(
+        manifest,
+        manifest_url,
+        kind,
+        allow_empty_profiles=allow_empty_profiles,
+    )
     expected = report_artifacts(expected_rows)
     artifacts = report.get("artifacts")
     if artifacts != expected:

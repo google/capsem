@@ -10,11 +10,14 @@ import re
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlparse
+from urllib.request import Request, urlopen
 
 import blake3
 
 
 ASSET_TAG_RE = re.compile(r"/releases/download/(assets-v[^/]+)/")
+USER_AGENT = "capsem-release-mirror/1"
 
 
 def main() -> int:
@@ -34,17 +37,25 @@ def main() -> int:
         type=Path,
         help="Read profile config files from this local candidate worktree.",
     )
+    source.add_argument(
+        "--public-base",
+        help="Preserve profile config bytes from an existing public release site.",
+    )
     args = parser.parse_args()
 
     dist = args.dist.resolve()
     repo_root = args.repo_root.resolve()
     source_root = args.source_root.resolve() if args.source_root else None
+    if args.public_base:
+        parsed_public = urlparse(args.public_base)
+        if parsed_public.scheme not in {"http", "https"} or not parsed_public.netloc:
+            raise SystemExit("--public-base must be an absolute HTTP(S) URL")
     manifests = manifest_paths(dist, args.channels)
     written = 0
     for manifest_path in manifests:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         source_ref = None
-        if source_root is None:
+        if source_root is None and args.public_base is None and has_local_profile_config(manifest):
             source_ref = args.source_ref or infer_source_ref(manifest, manifest_path)
             ensure_ref(repo_root, source_ref)
         written += materialize_manifest_profile_files(
@@ -52,6 +63,7 @@ def main() -> int:
             repo_root=repo_root,
             source_ref=source_ref,
             source_root=source_root,
+            public_base=args.public_base,
             manifest=manifest,
         )
     print(f"materialized {written} graph profile artifact files")
@@ -115,6 +127,23 @@ def ensure_ref(repo_root: Path, source_ref: str) -> None:
     )
 
 
+def has_local_profile_config(manifest: dict[str, Any]) -> bool:
+    for profile in manifest.get("profiles", {}).values():
+        if not isinstance(profile, dict):
+            continue
+        for architecture in profile.get("architectures", []):
+            if not isinstance(architecture, dict):
+                continue
+            for item in architecture.get("config", []):
+                if (
+                    isinstance(item, dict)
+                    and isinstance(item.get("url"), str)
+                    and item["url"].startswith("/profiles/releases/")
+                ):
+                    return True
+    return False
+
+
 def materialize_manifest_profile_files(
     *,
     dist: Path,
@@ -122,6 +151,7 @@ def materialize_manifest_profile_files(
     source_ref: str | None,
     source_root: Path | None,
     manifest: dict[str, Any],
+    public_base: str | None = None,
 ) -> int:
     written = 0
     seen: dict[str, bytes] = {}
@@ -153,7 +183,7 @@ def materialize_manifest_profile_files(
                 source_path = item.get("path")
                 if not isinstance(url, str) or not url.startswith("/profiles/releases/"):
                     continue
-                if not url.startswith(architecture_prefix):
+                if public_base is None and not url.startswith(architecture_prefix):
                     raise SystemExit(
                         f"profile config {url} is not channel-qualified as "
                         f"{channel}/{profile_id}/{revision}/{arch}"
@@ -165,6 +195,8 @@ def materialize_manifest_profile_files(
                     source_ref=source_ref,
                     source_root=source_root,
                     source_path=source_path,
+                    public_base=public_base,
+                    source_url=url,
                 )
                 verify_descriptor(url, item, source_bytes)
                 previous = seen.get(url)
@@ -192,7 +224,16 @@ def read_source(
     source_ref: str | None,
     source_root: Path | None,
     source_path: str,
+    public_base: str | None,
+    source_url: str,
 ) -> bytes:
+    if public_base is not None:
+        request = Request(
+            urljoin(f"{public_base.rstrip('/')}/", source_url),
+            headers={"User-Agent": USER_AGENT},
+        )
+        with urlopen(request, timeout=60) as response:
+            return response.read()
     if source_root is None:
         if source_ref is None:
             raise SystemExit("profile config source needs a git ref or local source root")
