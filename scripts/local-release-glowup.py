@@ -306,7 +306,7 @@ def main() -> int:
         stage_manifest_artifacts(stable_manifest, args.assets_dir, dist, base_url)
         # Both channels begin with the same verified profile cohort. Binary
         # authoring below mutates only each manifest's package inventory.
-        shutil.copy2(stable_manifest, nightly_manifest)
+        clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")
 
         record_binary(
             admin, stable_manifest, stable_version, stable_deb, stable_sbom, stable_download_base
@@ -1147,6 +1147,20 @@ def stage_manifest_artifacts(
             # The immediately following capsem-admin channel build validates
             # every source digest against this same manifest.
             copy_artifact_tree(source, release_dir / f"{arch}-{logical_name}")
+
+
+def clone_manifest_for_channel(source: Path, destination: Path, channel: str) -> None:
+    manifest = json.loads(source.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise SystemExit("local glow-up manifest must be an object")
+    if isinstance(manifest.get("profiles"), dict):
+        manifest["channel"] = channel
+        destination.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return
+    shutil.copy2(source, destination)
 
 
 def _stage_graph_manifest_artifacts(

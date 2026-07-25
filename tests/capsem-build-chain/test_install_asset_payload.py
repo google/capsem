@@ -1355,6 +1355,39 @@ def test_local_release_glowup_projects_only_fully_staged_architectures(
     assert (dist / expected_relative).read_bytes() == payload
 
 
+def test_local_release_glowup_clones_graph_with_only_channel_identity_changed(
+    tmp_path: Path,
+) -> None:
+    glowup = _load_local_release_glowup()
+    source = tmp_path / "stable-manifest.json"
+    destination = tmp_path / "nightly-manifest.json"
+    source_manifest = {
+        "version": "1.0.143",
+        "channel": "stable",
+        "packages": [{"name": "Capsem_stable_amd64.deb", "status": "current"}],
+        "profiles": {
+            "code": {
+                "status": "current",
+                "revision": "2026.06.08.7",
+                "architectures": [{"architecture": "x86_64"}],
+            }
+        },
+    }
+    source.write_text(
+        json.dumps(source_manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    original = source.read_bytes()
+
+    glowup.clone_manifest_for_channel(source, destination, "nightly")
+
+    assert source.read_bytes() == original
+    cloned = json.loads(destination.read_text(encoding="utf-8"))
+    expected = dict(source_manifest)
+    expected["channel"] = "nightly"
+    assert cloned == expected
+
+
 def test_local_release_glowup_rejects_partially_staged_architecture(
     tmp_path: Path,
 ) -> None:
