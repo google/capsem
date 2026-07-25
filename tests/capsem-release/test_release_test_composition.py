@@ -113,13 +113,14 @@ def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     assert frontend < clippy < install_preflight
 
 
-def test_reusable_fast_gate_installs_workspace_clippy_prerequisites() -> None:
+def test_reusable_fast_gate_installs_workspace_static_prerequisites() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(encoding="utf-8")
     prerequisites = workflow.index("Install Linux workspace lint prerequisites")
     shared_module = workflow.index("Run shared static module")
 
     assert prerequisites < shared_module
     for package in (
+        "musl-tools",
         "pkg-config",
         "libssl-dev",
         "libgtk-3-dev",
@@ -128,6 +129,9 @@ def test_reusable_fast_gate_installs_workspace_clippy_prerequisites() -> None:
         "libxdo-dev",
     ):
         assert package in workflow[prerequisites:shared_module]
+    shared_block = workflow[shared_module:]
+    assert "CC_x86_64_unknown_linux_musl: musl-gcc" in shared_block
+    assert "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc" in shared_block
 
 
 def test_standalone_functional_scripts_use_the_project_python() -> None:

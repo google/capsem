@@ -45,6 +45,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            musl-tools \
             pkg-config \
             libssl-dev \
             libgtk-3-dev \
@@ -58,4 +59,7 @@ jobs:
           tool: cargo-audit@0.22.1,cargo-llvm-cov@0.8.5,b3sum@1.8.5,cargo-sbom@0.10.0,tauri-cli@2.11.0
 
       - name: Run shared static module
+        env:
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: musl-gcc
         run: just _test-static
