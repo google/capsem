@@ -340,6 +340,38 @@ fn profile_stage_plan() -> VerifiedUpdatePlan {
     }
 }
 
+fn assert_profile_uses_release_manifest_pins(profile_path: &Path, release_dir: &Path) {
+    let profile: toml::Value =
+        toml::from_str(&std::fs::read_to_string(profile_path).unwrap()).unwrap();
+    let arch = capsem_core::asset_manager::host_manifest_arch();
+    let assets = &profile["assets"]["arch"][arch];
+    for (kind, name) in [
+        ("kernel", "vmlinuz"),
+        ("initrd", "initrd.img"),
+        ("rootfs", "rootfs.erofs"),
+    ] {
+        let bytes = std::fs::read(release_dir.join(name)).unwrap();
+        assert_eq!(assets[kind]["name"].as_str(), Some(name));
+        assert_eq!(
+            assets[kind]["url"].as_str(),
+            Some(
+                reqwest::Url::from_file_path(release_dir.join(name))
+                    .unwrap()
+                    .to_string()
+                    .as_str()
+            )
+        );
+        assert_eq!(
+            assets[kind]["hash"].as_str(),
+            Some(format!("blake3:{}", blake3::hash(&bytes).to_hex()).as_str())
+        );
+        assert_eq!(
+            assets[kind]["size"].as_integer(),
+            Some(i64::try_from(bytes.len()).unwrap())
+        );
+    }
+}
+
 #[tokio::test]
 async fn stage_verified_update_downloads_every_profile_artifact_without_mutating_install() {
     let temp = tempfile::tempdir().unwrap();
@@ -385,16 +417,13 @@ async fn stage_verified_update_downloads_every_profile_artifact_without_mutating
         .unwrap(),
         kernel
     );
-    assert_eq!(
-        std::fs::read(
-            staged
-                .profiles_dir
-                .as_ref()
-                .unwrap()
-                .join("code/profile.toml"),
-        )
-        .unwrap(),
-        std::fs::read(release_dir.join("profile.toml")).unwrap()
+    assert_profile_uses_release_manifest_pins(
+        &staged
+            .profiles_dir
+            .as_ref()
+            .unwrap()
+            .join("code/profile.toml"),
+        &release_dir,
     );
     assert!(staged.installer_path.is_none());
 }
@@ -472,10 +501,7 @@ async fn activate_staged_update_switches_profiles_assets_and_manifest_together()
     .unwrap();
 
     assert_eq!(std::fs::read(&installed_manifest).unwrap(), body);
-    assert_eq!(
-        std::fs::read(&installed_profile).unwrap(),
-        std::fs::read(release_dir.join("profile.toml")).unwrap()
-    );
+    assert_profile_uses_release_manifest_pins(&installed_profile, &release_dir);
     assert_eq!(
         std::fs::read(
             installed_assets
