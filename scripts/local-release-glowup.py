@@ -1276,8 +1276,24 @@ probe_installed_transition() {{
     --platform "$platform" \
     --architecture "$architecture" \
     --evidence-out "$EVIDENCE_DIR/$label-installed.json"
-  CAPSEM_HOME="$CAPSEM_HOME_DIR" CAPSEM_RUN_DIR="$CAPSEM_HOME_DIR/run" \
-    "$CAPSEM_BIN" doctor > "$EVIDENCE_DIR/$label-doctor.log" 2>&1
+  doctor_log="$EVIDENCE_DIR/$label-doctor.log"
+  failed_process_logs="$EVIDENCE_DIR/$label-failed-process-logs.txt"
+  if ! CAPSEM_HOME="$CAPSEM_HOME_DIR" CAPSEM_RUN_DIR="$CAPSEM_HOME_DIR/run" \
+    "$CAPSEM_BIN" doctor > "$doctor_log" 2>&1; then
+    : > "$failed_process_logs"
+    while IFS= read -r process_log; do
+      printf '\n===== %s =====\n' "$process_log" >> "$failed_process_logs"
+      tail -n 200 "$process_log" >> "$failed_process_logs" 2>&1 || true
+    done < <(
+      find "$CAPSEM_HOME_DIR/run/sessions" -type f -name process.log \
+        -path "*-failed-*" -print 2>> "$failed_process_logs" || true
+    )
+    cat "$doctor_log" >&2
+    cat "$failed_process_logs" >&2
+    systemctl --user status capsem.service --no-pager -l >&2 || true
+    journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true
+    return 1
+  fi
   printf '%s\n' '{{"schema":"capsem.installed_doctor.v1","passed":true}}' \
     > "$EVIDENCE_DIR/$label-doctor.json"
   uv run python scripts/run-installed-winterfell.py \

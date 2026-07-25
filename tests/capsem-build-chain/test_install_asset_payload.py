@@ -1793,6 +1793,34 @@ def test_ci_install_job_sets_up_uv_before_the_shared_install_gate() -> None:
     assert setup_pos < install_pos, "test-install sets up uv after the shared install gate"
 
 
+def test_installed_doctor_failure_is_printed_and_preserved() -> None:
+    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    probe = script.split("probe_installed_transition() {{", maxsplit=1)[1].split(
+        "\n}}\nwait_for_exact_transition()", maxsplit=1
+    )[0]
+
+    assert 'doctor_log="$EVIDENCE_DIR/$label-doctor.log"' in probe
+    assert 'failed_process_logs="$EVIDENCE_DIR/$label-failed-process-logs.txt"' in probe
+    assert 'if ! CAPSEM_HOME="$CAPSEM_HOME_DIR" CAPSEM_RUN_DIR="$CAPSEM_HOME_DIR/run"' in probe
+    assert 'find "$CAPSEM_HOME_DIR/run/sessions"' in probe
+    assert 'cat "$doctor_log" >&2' in probe
+    assert 'cat "$failed_process_logs" >&2' in probe
+
+
+def test_ci_install_job_uploads_glowup_evidence_on_failure() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
+    install_job = _workflow_job_blocks(workflow)["test-install"]
+
+    assert "Upload install and glow-up evidence on failure" in install_job
+    assert "if: failure()" in install_job
+    assert (
+        "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a"
+        in install_job
+    )
+    assert "target/local-release-glowup/" in install_job
+    assert "if-no-files-found: warn" in install_job
+
+
 def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
     justfile = (PROJECT_ROOT / "justfile").read_text()
     doctor_linux = (PROJECT_ROOT / "scripts" / "doctor-linux.sh").read_text()

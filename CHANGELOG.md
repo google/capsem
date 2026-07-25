@@ -85,6 +85,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserved installed doctor and failed VM-session evidence when the native
+  package gate fails in CI.
+
 - Bootstrapped an absent first-party channel through `capsem-admin release`
   with existing official packages and empty profile membership, while
   preserving non-selected public-channel manifests and profile bytes.
