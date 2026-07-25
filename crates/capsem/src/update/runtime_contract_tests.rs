@@ -65,6 +65,7 @@ fn update_plan_check(binary: bool, profiles: bool, assets: bool, images: bool) -
             name: "Capsem_2.0.0_amd64.deb".to_string(),
             url: "https://release.capsem.org/Capsem_2.0.0_amd64.deb".to_string(),
             sha256: "1".repeat(64),
+            blake3: "2".repeat(64),
             size: 1,
             install_layout: "linux_deb".to_string(),
         }),

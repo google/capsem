@@ -110,6 +110,8 @@ pub struct BinaryInstaller {
     pub name: String,
     pub url: String,
     pub sha256: String,
+    #[serde(default)]
+    pub blake3: String,
     pub size: u64,
     pub install_layout: String,
 }
@@ -1887,6 +1889,7 @@ fn graph_binary_installer_for_layout(
                 name: package.name.clone(),
                 url: graph_package_url(source, &package.url).ok()?,
                 sha256: package.digest.sha256.clone(),
+                blake3: package.digest.blake3.clone(),
                 size: package.size,
                 install_layout: graph_install_layout_name(install_layout)?.to_string(),
             };
@@ -2158,6 +2161,7 @@ fn binary_installer_for_layout(
                 name: file.name.clone(),
                 url: file.url.clone(),
                 sha256: file.sha256.clone(),
+                blake3: file.blake3.clone(),
                 size: file.size,
                 install_layout: matcher.name().to_string(),
             };
@@ -2169,6 +2173,7 @@ fn binary_installer_for_layout(
             name: file.name.clone(),
             url: file.url.clone(),
             sha256: file.sha256.clone(),
+            blake3: file.blake3.clone(),
             size: file.size,
             install_layout: matcher.name().to_string(),
         })
@@ -2320,8 +2325,18 @@ async fn download_binary_installer_at(
     validate_binary_installer_metadata(installer)?;
     let target = binary_installer_cache_path_at(capsem_home, installer)?;
     if target.exists() {
-        verify_binary_installer_file(&target, installer)?;
-        return Ok(target);
+        match verify_binary_installer_file(&target, installer) {
+            Ok(()) => return Ok(target),
+            Err(error) => {
+                warn!(
+                    path = %target.display(),
+                    error = %error,
+                    "discarding corrupt cached binary installer"
+                );
+                std::fs::remove_file(&target)
+                    .with_context(|| format!("remove corrupt installer {}", target.display()))?;
+            }
+        }
     }
 
     let url = reqwest::Url::parse(&installer.url)
@@ -2349,6 +2364,8 @@ fn binary_installer_cache_path_at(
     Ok(capsem_home
         .join("updates")
         .join("installers")
+        .join("sha256")
+        .join(installer.sha256.to_ascii_lowercase())
         .join(&installer.name))
 }
 
@@ -2412,6 +2429,9 @@ fn validate_binary_installer_metadata(installer: &BinaryInstaller) -> Result<()>
     if installer.sha256.len() != 64 || !installer.sha256.chars().all(|c| c.is_ascii_hexdigit()) {
         anyhow::bail!("binary installer sha256 must be 64 hex characters");
     }
+    if installer.blake3.len() != 64 || !installer.blake3.chars().all(|c| c.is_ascii_hexdigit()) {
+        anyhow::bail!("binary installer blake3 must be 64 hex characters");
+    }
     Ok(())
 }
 
@@ -2448,6 +2468,15 @@ fn verify_binary_installer_bytes(bytes: &[u8], installer: &BinaryInstaller) -> R
             installer.name,
             installer.sha256,
             actual
+        );
+    }
+    let actual_blake3 = blake3::hash(bytes).to_hex().to_string();
+    if !actual_blake3.eq_ignore_ascii_case(&installer.blake3) {
+        anyhow::bail!(
+            "binary installer blake3 mismatch for {}: expected {}, got {}",
+            installer.name,
+            installer.blake3,
+            actual_blake3
         );
     }
     Ok(())
@@ -4371,6 +4400,7 @@ mod tests {
                 url: "https://github.com/google/capsem/releases/download/v0.17.0/Capsem-0.17.0.pkg"
                     .into(),
                 sha256: "abc123".into(),
+                blake3: "def456".into(),
                 size: 123,
                 install_layout: "macos_pkg".into(),
             }),
@@ -5937,6 +5967,7 @@ mod tests {
             format!("Capsem_99.99.99_{}.deb", deb_arch())
         );
         assert_eq!(installer.sha256, "2".repeat(64));
+        assert_eq!(installer.blake3, "b".repeat(64));
         assert_eq!(installer.size, 20);
         assert_eq!(installer.install_layout, "linux_deb");
     }
@@ -5965,6 +5996,7 @@ mod tests {
             url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg"
                 .to_string(),
             sha256: test_sha256(bytes),
+            blake3: test_blake3(bytes),
             size: bytes.len() as u64,
             install_layout: "macos_pkg".to_string(),
         };
@@ -5980,6 +6012,7 @@ mod tests {
             url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg"
                 .to_string(),
             sha256: test_sha256(bytes),
+            blake3: test_blake3(bytes),
             size: bytes.len() as u64 + 1,
             install_layout: "macos_pkg".to_string(),
         };
@@ -6000,6 +6033,7 @@ mod tests {
             url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg"
                 .to_string(),
             sha256: "0".repeat(64),
+            blake3: test_blake3(bytes),
             size: bytes.len() as u64,
             install_layout: "macos_pkg".to_string(),
         };
@@ -6013,12 +6047,34 @@ mod tests {
     }
 
     #[test]
+    fn verify_binary_installer_bytes_rejects_blake3_mismatch() {
+        let bytes = b"verified installer payload";
+        let installer = BinaryInstaller {
+            name: "Capsem-99.99.99.pkg".to_string(),
+            url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg"
+                .to_string(),
+            sha256: test_sha256(bytes),
+            blake3: "0".repeat(64),
+            size: bytes.len() as u64,
+            install_layout: "macos_pkg".to_string(),
+        };
+
+        let err = verify_binary_installer_bytes(bytes, &installer).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("binary installer blake3 mismatch"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
     fn binary_installer_metadata_rejects_path_names() {
         let installer = BinaryInstaller {
             name: "../Capsem-99.99.99.pkg".to_string(),
             url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg"
                 .to_string(),
             sha256: "0".repeat(64),
+            blake3: "0".repeat(64),
             size: 10,
             install_layout: "macos_pkg".to_string(),
         };
@@ -6041,6 +6097,7 @@ mod tests {
             url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg"
                 .to_string(),
             sha256: "0".repeat(64),
+            blake3: "0".repeat(64),
             size: 3,
             install_layout: "macos_pkg".to_string(),
         };
@@ -6079,6 +6136,7 @@ mod tests {
             url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem_99.99.99_arm64.deb"
                 .to_string(),
             sha256: "0".repeat(64),
+            blake3: "0".repeat(64),
             size: 3,
             install_layout: "linux_deb".to_string(),
         };
@@ -6117,6 +6175,7 @@ mod tests {
             url: "https://github.com/google/capsem/releases/download/v99.99.99/Capsem-99.99.99.pkg"
                 .to_string(),
             sha256: "0".repeat(64),
+            blake3: "0".repeat(64),
             size: 3,
             install_layout: "portable_zip".to_string(),
         };
@@ -6154,6 +6213,7 @@ mod tests {
             name: "Capsem-99.99.99.pkg".to_string(),
             url: format!("http://{addr}/Capsem-99.99.99.pkg"),
             sha256: test_sha256(&payload),
+            blake3: test_blake3(&payload),
             size: payload.len() as u64,
             install_layout: "macos_pkg".to_string(),
         };
@@ -6163,8 +6223,105 @@ mod tests {
 
         assert_eq!(
             path,
-            home.path().join("updates/installers/Capsem-99.99.99.pkg")
+            home.path()
+                .join("updates/installers/sha256")
+                .join(test_sha256(&payload))
+                .join("Capsem-99.99.99.pkg")
         );
+        assert_eq!(std::fs::read(path).unwrap(), payload);
+    }
+
+    #[test]
+    fn binary_installer_cache_is_manifest_digest_addressed_and_channel_independent() {
+        let home = tempfile::tempdir().unwrap();
+        let payload = b"one immutable installer";
+        let mut nightly = BinaryInstaller {
+            name: "Capsem.pkg".to_string(),
+            url: "https://release.example/assets/nightly/Capsem.pkg".to_string(),
+            sha256: test_sha256(payload),
+            blake3: test_blake3(payload),
+            size: payload.len() as u64,
+            install_layout: "macos_pkg".to_string(),
+        };
+        let nightly_path = binary_installer_cache_path_at(home.path(), &nightly).unwrap();
+
+        nightly.url = "https://corp.example/releases/Capsem.pkg".to_string();
+        let corporate_path = binary_installer_cache_path_at(home.path(), &nightly).unwrap();
+
+        let mut replacement = nightly.clone();
+        replacement.sha256 = "f".repeat(64);
+        replacement.blake3 = "e".repeat(64);
+        let replacement_path = binary_installer_cache_path_at(home.path(), &replacement).unwrap();
+
+        assert_eq!(nightly_path, corporate_path);
+        assert_ne!(nightly_path, replacement_path);
+        assert_eq!(
+            nightly_path,
+            home.path()
+                .join("updates/installers/sha256")
+                .join(test_sha256(payload))
+                .join("Capsem.pkg")
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn corrupt_cached_binary_installer_is_discarded_and_refetched() {
+        let home = tempfile::tempdir().unwrap();
+        let payload = b"replacement installer payload".to_vec();
+        let response_payload = payload.clone();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            loop {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut request = [0_u8; 1024];
+                        let _ = std::io::Read::read(&mut stream, &mut request);
+                        let header = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+                            response_payload.len()
+                        );
+                        std::io::Write::write_all(&mut stream, header.as_bytes()).unwrap();
+                        std::io::Write::write_all(&mut stream, &response_payload).unwrap();
+                        return true;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        if std::time::Instant::now() >= deadline {
+                            return false;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept installer request: {error}"),
+                }
+            }
+        });
+        let installer = BinaryInstaller {
+            name: "Capsem.pkg".to_string(),
+            url: format!("http://{addr}/Capsem.pkg"),
+            sha256: test_sha256(&payload),
+            blake3: test_blake3(&payload),
+            size: payload.len() as u64,
+            install_layout: "macos_pkg".to_string(),
+        };
+        let target = home
+            .path()
+            .join("updates/installers/sha256")
+            .join(&installer.sha256)
+            .join(&installer.name);
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, b"corrupt").unwrap();
+
+        let result = download_binary_installer_at(home.path(), &installer).await;
+        let fetched = server.join().unwrap();
+        let path = result.unwrap();
+
+        assert!(
+            fetched,
+            "corrupt cache entry must trigger an artifact fetch"
+        );
+        assert_eq!(path, target);
         assert_eq!(std::fs::read(path).unwrap(), payload);
     }
 
@@ -6241,6 +6398,10 @@ mod tests {
         let mut hasher = Sha256::new();
         hasher.update(bytes);
         format!("{:x}", hasher.finalize())
+    }
+
+    fn test_blake3(bytes: &[u8]) -> String {
+        blake3::hash(bytes).to_hex().to_string()
     }
 
     struct EnvGuard {

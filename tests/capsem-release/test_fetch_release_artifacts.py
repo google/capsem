@@ -469,6 +469,49 @@ def test_profile_fetch_reuses_manifest_digest_cache_and_prunes_old_blobs(
     VERIFY.verify_release_inputs(tmp_path / "second")
 
 
+def test_artifact_cache_identity_is_shared_across_channel_manifests(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    nightly_root = tmp_path / "nightly"
+    stable_root = tmp_path / "stable"
+    nightly_root.mkdir()
+    stable_root.mkdir()
+    nightly, _ = _write_manifest(nightly_root)
+    stable, _ = _write_manifest(stable_root)
+    stable_document = json.loads(stable.read_text(encoding="utf-8"))
+    stable_document["channel"] = "stable"
+    stable.write_text(json.dumps(stable_document), encoding="utf-8")
+    cache = tmp_path / "artifact-cache"
+
+    first = FETCH.fetch_release_inputs(
+        nightly.as_uri(),
+        "packages",
+        tmp_path / "nightly-output",
+        cache_dir=cache,
+    )
+    reads: list[str] = []
+    original_read = FETCH._read_url
+
+    def read_url(url: str) -> bytes:
+        reads.append(url)
+        return original_read(url)
+
+    monkeypatch.setattr(FETCH, "_read_url", read_url)
+    second = FETCH.fetch_release_inputs(
+        stable.as_uri(),
+        "packages",
+        tmp_path / "stable-output",
+        cache_dir=cache,
+    )
+
+    assert first["cache"] == {"hits": 0, "misses": len(first["artifacts"])}
+    assert second["cache"] == {"hits": len(second["artifacts"]), "misses": 0}
+    assert reads == [stable.as_uri()]
+    assert (tmp_path / "stable-output" / "manifest.json").read_bytes() == stable.read_bytes()
+    VERIFY.verify_release_inputs(tmp_path / "stable-output")
+
+
 def test_corrupt_manifest_digest_cache_entry_is_replaced(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
