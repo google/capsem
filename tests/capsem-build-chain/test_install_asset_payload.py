@@ -1543,7 +1543,7 @@ def test_local_release_glowup_generated_release_checker_rejects_tampered_blob(
             )
 
 
-def test_local_release_glowup_generated_release_checker_accepts_local_assets(
+def test_local_release_glowup_generated_release_checker_accepts_manifest_root_relative_assets(
     tmp_path: Path,
 ) -> None:
     glowup = _load_local_release_glowup()
@@ -1557,8 +1557,9 @@ def test_local_release_glowup_generated_release_checker_accepts_local_assets(
         package_path.write_bytes(b"fixture deb")
         payload = b"fixture"
         for relative in (
-            "assets/releases/2026.0709.13/x86_64-rootfs.erofs",
-            "assets/releases/2026.0709.13/obom.cdx.json",
+            "profiles/releases/nightly/co-work/2026.0709.13/x86_64/profile.toml",
+            "profiles/releases/nightly/co-work/2026.0709.13/x86_64/rootfs.erofs",
+            "profiles/releases/nightly/co-work/2026.0709.13/x86_64/obom.cdx.json",
         ):
             target = dist / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -1583,9 +1584,11 @@ def test_local_release_glowup_generated_release_checker_accepts_local_assets(
                                 {
                                     "images": [
                                         {
+                                            "kind": "rootfs",
+                                            "name": "rootfs.erofs",
                                             "url": (
-                                                f"{base_url}/assets/releases/2026.0709.13/"
-                                                "x86_64-rootfs.erofs"
+                                                "/profiles/releases/nightly/co-work/"
+                                                "2026.0709.13/x86_64/rootfs.erofs"
                                             ),
                                             "bytes": len(payload),
                                             "digest": {
@@ -1594,12 +1597,26 @@ def test_local_release_glowup_generated_release_checker_accepts_local_assets(
                                             },
                                         }
                                     ],
-                                    "config": [],
+                                    "config": [
+                                        {
+                                            "kind": "profile",
+                                            "path": "profiles/co-work/profile.toml",
+                                            "url": (
+                                                "/profiles/releases/nightly/co-work/"
+                                                "2026.0709.13/x86_64/profile.toml"
+                                            ),
+                                            "bytes": len(payload),
+                                            "digest": {
+                                                "sha256": hashlib.sha256(payload).hexdigest(),
+                                                "blake3": blake3(payload).hexdigest(),
+                                            },
+                                        }
+                                    ],
                                     "evidence": [
                                         {
                                             "url": (
-                                                f"{base_url}/assets/releases/2026.0709.13/"
-                                                "obom.cdx.json"
+                                                "/profiles/releases/nightly/co-work/"
+                                                "2026.0709.13/x86_64/obom.cdx.json"
                                             ),
                                             "bytes": len(payload),
                                             "digest": {
@@ -1623,6 +1640,29 @@ def test_local_release_glowup_generated_release_checker_accepts_local_assets(
             deb,
             dist,
             "nightly",
+        )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/profiles/releases/%2e%2e/escape",
+        "//attacker.invalid/rootfs.erofs",
+        "https://attacker.invalid/rootfs.erofs",
+        "/profiles/releases/rootfs.erofs?replacement=1",
+    ],
+)
+def test_local_release_glowup_rejects_unsafe_or_nonlocal_manifest_urls(
+    tmp_path: Path,
+    url: str,
+) -> None:
+    glowup = _load_local_release_glowup()
+
+    with pytest.raises(SystemExit):
+        glowup.local_release_artifact_path(
+            "http://127.0.0.1:43123",
+            url,
+            tmp_path,
         )
 
 

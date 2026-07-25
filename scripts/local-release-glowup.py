@@ -1275,11 +1275,7 @@ def check_generated_release(
     staged_assets: list[tuple[str, Path, dict[str, object]]] = []
     for record in profile_artifacts:
         url = cast(str, record["url"])
-        if url.startswith(f"{base_url}/"):
-            relative = url.removeprefix(f"{base_url}/")
-        else:
-            raise SystemExit(f"generated VM asset URL is not absolute and local: {url}")
-        artifact_path = dist / relative
+        artifact_path = local_release_artifact_path(base_url, url, dist)
         if not artifact_path.is_file():
             missing_assets.append(url)
         else:
@@ -1298,6 +1294,26 @@ def check_generated_release(
         except ValueError as error:
             raise SystemExit(str(error)) from error
     return artifact
+
+
+def local_release_artifact_path(base_url: str, url: str, dist: Path) -> Path:
+    base = urlparse(base_url)
+    parsed = urlparse(url)
+    if parsed.query or parsed.fragment:
+        raise SystemExit(f"generated VM asset URL has query or fragment: {url}")
+    if parsed.scheme or parsed.netloc:
+        if (parsed.scheme, parsed.netloc) != (base.scheme, base.netloc):
+            raise SystemExit(f"generated VM asset URL is not local: {url}")
+    elif not url.startswith("/") or url.startswith("//"):
+        raise SystemExit(f"generated VM asset URL is not manifest-root-relative: {url}")
+    try:
+        relative = safe_relative(
+            unquote(parsed.path).lstrip("/"),
+            "generated VM asset URL",
+        )
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    return dist / relative
 
 
 def release_asset_urls(manifest: dict[str, object]) -> list[str]:
