@@ -98,6 +98,22 @@ def test_release_glowup_consumes_the_exact_pairing_environment() -> None:
     assert "validate_exact_release_pairing(args)" in adapter
 
 
+def test_standalone_local_glowup_materializes_config_without_release_builders() -> None:
+    runner = _recipe("_test-candidate-run")
+
+    release_branch = runner.index('if [ -n "${CAPSEM_RELEASE_PACKAGE:-}" ]; then')
+    local_branch = runner.index("else", release_branch)
+    local_materialize = runner.index("just _materialize-config", local_branch)
+    first_cross_compile = runner.index("just _cross-compile arm64", local_branch)
+
+    assert 'LOCAL_CONFIG_ROOT="target/config"' in runner
+    assert 'find "$LOCAL_CONFIG_ROOT/profiles"' in runner
+    assert local_branch < local_materialize < first_cross_compile
+    assert "just _build-kernel" not in runner
+    assert "just _build-rootfs" not in runner
+    assert "just _build-images" not in runner
+
+
 def test_functional_module_runs_every_selected_profile_without_rebuilding() -> None:
     runner = _recipe("_test-candidate-run")
 

@@ -980,6 +980,20 @@ _test-candidate-run:
             --work-dir target/release-module-glowup \
             --package-ready
     else
+    # A direct local module run has no earlier artifact stage to materialize
+    # package-owned profile configuration. Reuse the checked-in materializer
+    # against the already-present local assets; release CI enters the branch
+    # above with its explicitly staged pulled profile/config cohort.
+    LOCAL_CONFIG_ROOT="target/config"
+    LOCAL_PROFILE=$(
+        find "$LOCAL_CONFIG_ROOT/profiles" \
+            -mindepth 2 -maxdepth 2 -name profile.toml -print -quit \
+            2>/dev/null || true
+    )
+    if [ -z "$LOCAL_PROFILE" ]; then
+        echo "=== Materialize local runtime config for standalone glow-up ==="
+        just _materialize-config
+    fi
     echo "=== Cross-compile Linux releases (Docker, both arches) ==="
     just _cross-compile arm64
     uv run python scripts/docker-storage-policy.py release \
