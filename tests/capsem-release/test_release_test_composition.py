@@ -113,6 +113,33 @@ def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     assert frontend < clippy < install_preflight
 
 
+def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
+    runner = _recipe("_test-candidate-run")
+    pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    audit_script = (PROJECT_ROOT / "scripts/audit-python-lock.sh").read_text(
+        encoding="utf-8"
+    )
+
+    launch = runner.index("bash scripts/audit-python-lock.sh & PID_PYTHON_AUDIT=$!")
+    wait = runner.index(
+        'wait $PID_PYTHON_AUDIT || { echo "Python dependency audit failed"; FAIL=1; }'
+    )
+    install_preflight = runner.index("just _test-install-harness-preflight")
+
+    assert launch < wait < install_preflight
+    assert '"pip-audit>=' in pyproject
+    for required in (
+        "uv export",
+        "--locked",
+        "--no-emit-project",
+        "uv run pip-audit",
+        "-s osv",
+        "--require-hashes",
+        "--disable-pip",
+    ):
+        assert required in audit_script
+
+
 def test_reusable_fast_gate_installs_workspace_static_prerequisites() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(encoding="utf-8")
     prerequisites = workflow.index("Install Linux workspace lint prerequisites")

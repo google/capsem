@@ -715,6 +715,7 @@ _test-candidate-run:
     echo "=== Audits + lint + web surfaces ==="
     cargo audit & PID_CARGO_AUDIT=$!
     python3 scripts/audit-pnpm-bulk.py & PID_PNPM_AUDIT=$!
+    bash scripts/audit-python-lock.sh & PID_PYTHON_AUDIT=$!
     uv run ruff check . & PID_RUFF=$!
     uv run ty check src/capsem & PID_TY=$!
     uv run capsem-builder validate-skills skills & PID_SKILLS=$!
@@ -741,6 +742,7 @@ _test-candidate-run:
     fi
     wait $PID_CARGO_AUDIT || { echo "cargo audit failed"; FAIL=1; }
     wait $PID_PNPM_AUDIT || { echo "npm bulk audit failed"; FAIL=1; }
+    wait $PID_PYTHON_AUDIT || { echo "Python dependency audit failed"; FAIL=1; }
     if [ -n "$PID_CLIPPY" ]; then
         wait $PID_CLIPPY || { echo "cargo clippy failed (warnings = error)"; FAIL=1; }
     fi
@@ -1447,6 +1449,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     uv run python scripts/check_public_surface.py & PUBLIC_SURFACE_PID=$!
     cargo audit & AUDIT_PID=$!
     python3 scripts/audit-pnpm-bulk.py & PNPM_AUDIT_PID=$!
+    bash scripts/audit-python-lock.sh & PYTHON_AUDIT_PID=$!
     (cd frontend && pnpm run check) & FE_CHECK_PID=$!
     FAIL=0
     wait $CLIPPY_PID     || { echo "cargo clippy failed"; FAIL=1; }
@@ -1456,6 +1459,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     wait $PUBLIC_SURFACE_PID || { echo "public surface approval failed"; FAIL=1; }
     wait $AUDIT_PID      || { echo "cargo audit failed"; FAIL=1; }
     wait $PNPM_AUDIT_PID || { echo "JavaScript dependency audit failed"; FAIL=1; }
+    wait $PYTHON_AUDIT_PID || { echo "Python dependency audit failed"; FAIL=1; }
     wait $FE_CHECK_PID   || { echo "pnpm check failed";   FAIL=1; }
     [ $FAIL -eq 0 ] || exit 1
     step_done
