@@ -927,6 +927,27 @@ def test_package_staging_uses_and_verifies_the_complete_binary_inventory(
         assert (binary_dir / name).read_bytes() == payload
 
 
+def test_package_staging_accepts_manifest_selected_x86_64_debian_package(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    _package_with_binary_inventory(manifest, {"capsem": b"resolved-capsem"})
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    package = document["packages"][0]
+    package["architecture"] = "x86_64"
+    for binary in package["binaries"]:
+        binary["architecture"] = "x86_64"
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    inputs = tmp_path / "package-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "packages", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+
+    selected = STAGE.select_host_package_path(inputs)
+
+    assert selected == inputs / "capsem.deb"
+    assert json.loads((inputs / "manifest.json").read_text(encoding="utf-8")) == document
+
+
 def test_package_staging_rejects_inventory_missing_from_the_package(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

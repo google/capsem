@@ -246,7 +246,8 @@ def _select_host_package(
     packages = manifest.get("packages")
     if not isinstance(packages, list):
         raise ValueError("release manifest packages are malformed")
-    host_arch = "arm64" if _host_arch() == "arm64" else "amd64"
+    host_arch = _host_arch()
+    package_architectures = {"arm64"} if host_arch == "arm64" else {"amd64", "x86_64"}
     url_to_path = {
         row["url"]: input_dir / row["path"]
         for row in report.get("artifacts", [])
@@ -260,11 +261,12 @@ def _select_host_package(
         if isinstance(package, dict)
         and package.get("status") == "current"
         and package.get("platform") == "linux"
-        and package.get("architecture") == host_arch
+        and package.get("architecture") in package_architectures
         and urljoin(str(report["manifest_url"]), str(package.get("url"))) in url_to_path
     ]
     if len(candidates) != 1:
-        raise ValueError(f"expected one current Linux {host_arch} package, found {len(candidates)}")
+        expected = "/".join(sorted(package_architectures))
+        raise ValueError(f"expected one current Linux {expected} package, found {len(candidates)}")
     package = candidates[0]
     package_url = urljoin(str(report["manifest_url"]), str(package["url"]))
     return package, url_to_path[package_url]
