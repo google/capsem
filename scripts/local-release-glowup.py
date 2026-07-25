@@ -413,6 +413,9 @@ def main() -> int:
                     nightly_manifest_url=nightly_manifest_url,
                     corp_manifest_url=corp_manifest_url,
                     package_version=stable_version,
+                    stable_package=stable_deb,
+                    nightly_package=nightly_deb,
+                    package_architecture=arch,
                     evidence_out=evidence_path,
                 )
                 installed = json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -1364,49 +1367,21 @@ def run_installed_glowup(
     nightly_manifest_url: str,
     corp_manifest_url: str,
     package_version: str,
+    stable_package: Path,
+    nightly_package: Path,
+    package_architecture: str,
     evidence_out: Path | None = None,
 ) -> None:
-    evidence_arg = shlex.quote(
-        str(evidence_out or PROJECT_ROOT / "target" / "local-release-glowup-evidence.json")
+    installed_evidence = (
+        evidence_out or PROJECT_ROOT / "target" / "local-release-glowup-evidence.json"
     )
+    evidence_arg = shlex.quote(str(installed_evidence))
+    transition_evidence_dir = installed_evidence.parent / "channel-transition-evidence"
+    probe_functions = _exact_installed_probe_shell(transition_evidence_dir)
     script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
-check_service_installed() {{
-  "$HOME/.capsem/bin/capsem" status | tee "$HOME/.capsem/service-status.txt"
-  grep -F "Installed: true" "$HOME/.capsem/service-status.txt"
-  grep -F "Running:   true" "$HOME/.capsem/service-status.txt"
-  grep -F "Service:   ok" "$HOME/.capsem/service-status.txt"
-  grep -F "Gateway:   ok" "$HOME/.capsem/service-status.txt"
-}}
-verify_installed_release() {{
-  manifest_url="$1"
-  channel="$2"
-  package_version="$3"
-  evidence_out="${{4:-}}"
-  evidence_args=()
-  if [ -n "$evidence_out" ]; then
-    evidence_args=(--evidence-out "$evidence_out")
-  fi
-  python3 scripts/verify-installed-release.py \
-    --capsem "$HOME/.capsem/bin/capsem" \
-    --manifest-url "$manifest_url" \
-    --channel "$channel" \
-    --package-version "$package_version" \
-    "${{evidence_args[@]}}"
-}}
-check_binary_versions() {{
-  expected="$1"
-  for bin in {" ".join(HOST_BINARIES)}; do
-    test -x "$HOME/.capsem/bin/$bin"
-    if [ "$bin" = "capsem" ]; then
-      "$HOME/.capsem/bin/$bin" version > "$HOME/.capsem/$bin.version" 2>&1
-    else
-      "$HOME/.capsem/bin/$bin" --version > "$HOME/.capsem/$bin.version" 2>&1
-    fi
-    grep -F "$expected" "$HOME/.capsem/$bin.version"
-  done
-}}
+{probe_functions}
 check_update_log() {{
   event="$1"
   source="$2"
@@ -1444,9 +1419,9 @@ test -f "$HOME/.capsem/assets/manifest.json"
 grep -F {stable_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/assets/manifest-metadata.json"
 stable_manifest_sha=$(sha256sum "$HOME/.capsem/assets/manifest.json" | cut -d' ' -f1)
-check_binary_versions {package_version}
-check_service_installed
-verify_installed_release {stable_manifest_url} stable {package_version}
+probe_installed_transition fresh-stable \
+  {stable_manifest_url} stable {package_version} \
+  {shlex.quote(str(stable_package))} linux {shlex.quote(package_architecture)}
 test -f "$HOME/.capsem/logs/install.log"
 grep -F "event=manifest_source source={stable_manifest_url}" "$HOME/.capsem/logs/install.log"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/logs/install.log"
@@ -1454,18 +1429,22 @@ grep -F "event=assets_hydrated" "$HOME/.capsem/logs/install.log"
 grep -F "event=service_install_invoked" "$HOME/.capsem/logs/install.log"
 check_update_log asset_update_complete {stable_manifest_url}
 dpkg-query -W -f='${{Version}}' capsem | grep -Fx {package_version}
-CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL="$release_channels_url" "$HOME/.capsem/bin/capsem" update --assets --channel nightly
+CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL="$release_channels_url" "$HOME/.capsem/bin/capsem" update --yes --channel nightly
 grep -F {nightly_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/assets/manifest-metadata.json"
 check_origin_channel nightly {nightly_manifest_url} false
 check_update_log asset_update_complete {nightly_manifest_url}
-verify_installed_release {nightly_manifest_url} nightly {package_version}
-CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL="$release_channels_url" "$HOME/.capsem/bin/capsem" update --assets --channel stable
+probe_installed_transition channel-nightly \
+  {nightly_manifest_url} nightly {package_version} \
+  {shlex.quote(str(nightly_package))} linux {shlex.quote(package_architecture)}
+CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL="$release_channels_url" "$HOME/.capsem/bin/capsem" update --yes --channel stable
 grep -F {stable_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/assets/manifest-metadata.json"
 check_origin_channel stable {stable_manifest_url} false
 check_update_log asset_update_complete {stable_manifest_url}
-verify_installed_release {stable_manifest_url} stable {package_version}
+probe_installed_transition channel-stable-return \
+  {stable_manifest_url} stable {package_version} \
+  {shlex.quote(str(stable_package))} linux {shlex.quote(package_architecture)}
 stable_manifest_sha_after_switch=$(sha256sum "$HOME/.capsem/assets/manifest.json" | cut -d' ' -f1)
 test "$stable_manifest_sha" = "$stable_manifest_sha_after_switch"
 CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" "$HOME/.capsem/bin/capsem" update --assets --manifest {corp_manifest_url}
@@ -1473,7 +1452,9 @@ grep -F {corp_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/assets/manifest-metadata.json"
 check_origin_channel corp {corp_manifest_url} true
 check_update_log asset_update_complete {corp_manifest_url}
-verify_installed_release {corp_manifest_url} corp {package_version}
+probe_installed_transition corporate \
+  {corp_manifest_url} corp {package_version} \
+  {shlex.quote(str(stable_package))} linux {shlex.quote(package_architecture)}
 CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" "$HOME/.capsem/bin/capsem" update --assets
 grep -F {corp_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
 check_update_log asset_update_complete {corp_manifest_url}
@@ -1497,10 +1478,10 @@ rm -rf "$HOME/.capsem"
 curl -fsSL {install_script_url} | CAPSEM_CHANNEL=nightly CAPSEM_RELEASE_BASE_URL={release_base_url} sh
 grep -F {nightly_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/assets/manifest-metadata.json"
-dpkg-query -W -f='${{Version}}' capsem | grep -Fx {package_version}
-check_binary_versions {package_version}
-check_service_installed
-verify_installed_release {nightly_manifest_url} nightly {package_version} {evidence_arg}
+probe_installed_transition final-nightly \
+  {nightly_manifest_url} nightly {package_version} \
+  {shlex.quote(str(nightly_package))} linux {shlex.quote(package_architecture)}
+cp "$EVIDENCE_DIR/final-nightly-installed.json" {evidence_arg}
 """
     run(["bash", "-lc", script])
 

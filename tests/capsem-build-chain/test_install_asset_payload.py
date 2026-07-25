@@ -71,10 +71,12 @@ def _load_local_release_glowup() -> ModuleType:
     module = importlib.util.module_from_spec(spec)
     scripts_path = str(PROJECT_ROOT / "scripts")
     sys.path.insert(0, scripts_path)
+    sys.modules[spec.name] = module
     try:
         spec.loader.exec_module(module)
     finally:
         sys.path.remove(scripts_path)
+        sys.modules.pop(spec.name, None)
     return module
 
 
@@ -500,10 +502,11 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     assert 'shutil.copy2(args.assets_dir / "manifest.json"' in script
     assert "CAPSEM_RELEASE_URL" in script
     assert "CAPSEM_RELEASE_CHANNELS_URL=" in script
-    assert "update --assets --channel nightly" in script
-    assert "update --assets --channel stable" in script
-    assert "update --yes --channel nightly" not in script
-    assert "update --yes --channel stable" not in script
+    assert "update --yes --channel nightly" in script
+    assert "update --yes --channel stable" in script
+    assert script.count("update --assets --channel nightly") == 1
+    assert "corp-escape.log" in script
+    assert "update --assets --channel stable" not in script
     transition_gate = (PROJECT_ROOT / "scripts" / "check-public-binary-release.py").read_text()
     assert "run_docker_binary_transition_smoke" in transition_gate
     assert "update --yes --channel nightly" in transition_gate
@@ -1253,6 +1256,7 @@ def test_local_release_glowup_generated_release_checker_accepts_local_assets(
 
 def test_local_release_glowup_installed_path_asserts_channel_round_trip_and_provenance(
     monkeypatch,
+    tmp_path: Path,
 ) -> None:
     glowup = _load_local_release_glowup()
     calls: list[list[str]] = []
@@ -1266,10 +1270,14 @@ def test_local_release_glowup_installed_path_asserts_channel_round_trip_and_prov
         nightly_manifest_url="http://127.0.0.1:1234/assets/nightly/manifest.json",
         corp_manifest_url="http://127.0.0.1:1234/corp/manifest.json",
         package_version="1.5.100",
+        stable_package=tmp_path / "Capsem_1.5.100_amd64.deb",
+        nightly_package=tmp_path / "Capsem_1.5.100_amd64.deb",
+        package_architecture="amd64",
     )
 
     assert len(calls) == 1
     script = calls[0][-1]
+    subprocess.run(["bash", "-n"], input=script, text=True, check=True)
     assert 'grep -F \'"package_version": "1.5.100"\'' in script
     assert 'stable_manifest_sha=$(sha256sum "$HOME/.capsem/assets/manifest.json"' in script
     assert 'test "$stable_manifest_sha" = "$stable_manifest_sha_after_switch"' in script
@@ -1280,26 +1288,25 @@ def test_local_release_glowup_installed_path_asserts_channel_round_trip_and_prov
     assert 'CAPSEM_RELEASE_CHANNELS_URL="$release_channels_url"' in script
     assert "binary_update_failed" not in script
     assert "binary_update_complete" not in script
-    assert "update --yes" not in script
+    assert "update --yes --channel nightly" in script
+    assert "update --yes --channel stable" in script
+    assert script.count("update --assets --channel") == 1
+    assert "update --assets --channel nightly > \"$HOME/.capsem/corp-escape.log\"" in script
     assert '"package_version": "1.5.101"' not in script
-    assert "check_service_installed" in script
-    assert '"$HOME/.capsem/bin/capsem" status' in script
-    assert 'grep -F "Installed: true"' in script
-    assert 'grep -F "Running:   true"' in script
-    assert 'grep -F "Service:   ok"' in script
-    assert 'grep -F "Gateway:   ok"' in script
+    assert "probe_installed_transition fresh-stable" in script
+    assert "probe_installed_transition channel-nightly" in script
+    assert "probe_installed_transition channel-stable-return" in script
+    assert "probe_installed_transition corporate" in script
+    assert "probe_installed_transition final-nightly" in script
+    assert '"$CAPSEM_BIN" status' in script
+    assert 'grep -Fq "Installed: true"' in script
+    assert 'grep -Fq "Running:   true"' in script
+    assert 'grep -Fq "Service:   ok"' in script
+    assert 'grep -Fq "Gateway:   ok"' in script
     assert "scripts/verify-installed-release.py" in script
-    assert (
-        "verify_installed_release http://127.0.0.1:1234/assets/stable/manifest.json stable"
-        in script
-    )
-    assert (
-        "verify_installed_release http://127.0.0.1:1234/assets/nightly/manifest.json nightly"
-        in script
-    )
-    assert "verify_installed_release http://127.0.0.1:1234/corp/manifest.json corp" in script
+    assert '"$CAPSEM_BIN" doctor' in script
+    assert "scripts/run-installed-winterfell.py" in script
     assert "service status" not in script
-    assert "check_binary_versions 1.5.100" in script
     assert "CAPSEM_CHANNEL=nightly" in script
     assert "http://127.0.0.1:1234/corp/manifest.json" in script
     assert (
@@ -1317,8 +1324,8 @@ def test_local_release_glowup_asserts_channel_isolation_and_corp_manifest() -> N
     assert "nightly channel build mutated stable package records" in script
     assert 'corp_manifest_url = f"{base_url}/corp/manifest.json"' in script
     assert 'corp_dir = dist / "corp"' in script
-    assert "update --assets --channel nightly" in script
-    assert "update --assets --channel stable" in script
+    assert "update --yes --channel nightly" in script
+    assert "update --yes --channel stable" in script
     assert "check_origin_channel corp" in script
 
 
@@ -1646,7 +1653,10 @@ def test_release_workflow_decouples_vm_assets_and_keeps_full_host_binary_set() -
     assert """echo '{"releases":{}}'""" not in workflow
     assert "run: just test" not in workflow
     assert "Fetch latest selected channel source manifest" in workflow
-    assert "Fetch selected channel manifest and profiles" in workflow
+    assert "--kind profiles" in workflow
+    assert "--output target/binary-public-before/profiles" in workflow
+    assert "--output target/candidate-profile-inputs" in workflow
+    assert "--input-dir target/candidate-profile-inputs" in workflow
     assert "just _test-artifacts" in workflow
     assert "just _test-functional" in workflow
     assert "just _test-glowup" in workflow

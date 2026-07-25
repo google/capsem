@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -1094,6 +1095,8 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     assert len(calls) == 2
     before_script = calls[0][-1]
     after_script = calls[1][-1]
+    for script in (before_script, after_script):
+        subprocess.run(["bash", "-n"], input=script, text=True, check=True)
     assert "CAPSEM_MANIFEST_URL=" in before_script
     assert "update --assets --channel" in before_script
     assert "systemctl --user set-environment" in before_script
