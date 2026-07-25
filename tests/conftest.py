@@ -67,7 +67,8 @@ def _leak_log_path(filename: str, env: dict[str, str] | None = None) -> Path:
     """
     source = os.environ if env is None else env
     namespace = source.get("CAPSEM_TEST_RUN_ID", "").strip()
-    path = _TESTS_ROOT / filename
+    output_root = source.get("CAPSEM_TEST_OUTPUT_ROOT", "").strip()
+    path = (Path(output_root) if output_root else _TESTS_ROOT) / filename
     if not namespace:
         return path
     return path.with_name(

@@ -583,6 +583,7 @@ def test_full_gate_preflights_clean_install_harness_before_expensive_stages() ->
         "uv run python -m pytest --version"
     )
     assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in preflight
+    assert "CAPSEM_TEST_OUTPUT_ROOT=/tmp/capsem-test-output" in preflight
     assert "uv run python -m pytest --version" in preflight
     assert (
         "uv run python -m pytest -p no:cacheprovider -q tests/test_materialize_config_http.py"

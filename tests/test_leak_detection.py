@@ -172,6 +172,16 @@ def test_leak_log_path_uses_sanitized_parallel_run_namespace():
     assert _sanitize_leak_log_namespace("../../bad name") == "bad-name"
 
 
+def test_leak_log_path_uses_explicit_writable_output_root(tmp_path):
+    assert _leak_log_path(
+        "leak-attribution.jsonl",
+        {
+            "CAPSEM_TEST_OUTPUT_ROOT": str(tmp_path),
+            "CAPSEM_TEST_RUN_ID": "install preflight",
+        },
+    ) == tmp_path / "leak-attribution-install-preflight.jsonl"
+
+
 # ---------------------------------------------------------------------------
 # Global thread-exception hook. Daemon threads that raise (typical source:
 # async fixture teardown races, server loops) previously surfaced as

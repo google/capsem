@@ -1671,6 +1671,7 @@ _test-install-harness-preflight:
         docker run --rm \
             -u capsem \
             -e UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test \
+            -e CAPSEM_TEST_OUTPUT_ROOT=/tmp/capsem-test-output \
             -v "$PWD":/src:ro \
             "$IMAGE" \
             bash -lc 'set -e; sudo -n true; cd /src; cdxgen --version; source /src/scripts/doctor-linux.sh; linux_musl_toolchain_available; uv run python -m pytest --version; uv run python -m pytest -p no:cacheprovider -q tests/test_materialize_config_http.py'
