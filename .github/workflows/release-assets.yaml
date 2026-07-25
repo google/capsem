@@ -37,6 +37,7 @@ jobs:
     uses: ./.github/workflows/release-runtime-preflight.yaml
     with:
       channel: ${{ inputs.channel }}
+      bootstrap_missing_first_party: true
 
   fast-gate:
     uses: ./.github/workflows/fast-gate.yaml

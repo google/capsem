@@ -336,3 +336,18 @@ def test_runtime_preflight_is_reused_without_independent_sha_authority() -> None
     for name in ("release.yaml", "release-assets.yaml"):
         workflow = _workflow(name)
         assert "uses: ./.github/workflows/release-runtime-preflight.yaml" in workflow
+
+
+def test_profile_runtime_preflight_bootstraps_only_from_manifest_catalog() -> None:
+    preflight = _workflow("release-runtime-preflight.yaml")
+    binary = _workflow("release.yaml")
+    profile = _workflow("release-assets.yaml")
+
+    assert "bootstrap_missing_first_party:" in preflight
+    assert "scripts/select-runtime-preflight-manifest.py" in preflight
+    assert "--bootstrap-missing-first-party" in preflight
+    assert "steps.manifest.outputs.manifest-url" in preflight
+    assert "ASSET_MANIFEST_URL" not in preflight
+
+    assert "bootstrap_missing_first_party: true" in profile
+    assert "bootstrap_missing_first_party: true" not in binary
