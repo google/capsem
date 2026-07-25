@@ -9,6 +9,9 @@ WORK_ROOT="$ROOT/target/macos-package-boot"
 EXPANDED="$WORK_ROOT/expanded"
 CAPSEM_HOME_DIR="$WORK_ROOT/home"
 RUN_DIR=$(mktemp -d /tmp/capsem-pkg-boot.XXXXXX)
+DOCTOR_LOG="$WORK_ROOT/doctor.log"
+DOCTOR_EVIDENCE="$WORK_ROOT/doctor.json"
+WINTERFELL_EVIDENCE="$WORK_ROOT/winterfell.json"
 
 [ "$(uname -s)" = "Darwin" ] || {
     echo "ERROR: macOS package guest-boot proof requires macOS" >&2
@@ -70,13 +73,40 @@ CAPSEM_PROFILES_DIR="$CAPSEM_HOME_DIR/profiles" \
         --profile code \
         --timeout 300
 
-python3 - "$WORK_ROOT/report.json" "$PKG" "$VERSION" <<'PY'
+echo "=== Running full doctor from the exact package cohort ==="
+CAPSEM_HOME="$CAPSEM_HOME_DIR" \
+CAPSEM_RUN_DIR="$RUN_DIR" \
+CAPSEM_ASSETS_DIR="$CAPSEM_HOME_DIR/assets" \
+CAPSEM_PROFILES_DIR="$CAPSEM_HOME_DIR/profiles" \
+    "$CAPSEM_HOME_DIR/bin/capsem" doctor >"$DOCTOR_LOG" 2>&1
+printf '%s\n' '{"schema":"capsem.installed_doctor.v1","passed":true}' \
+    >"$DOCTOR_EVIDENCE"
+
+echo "=== Running installed Winterfell from the exact package cohort ==="
+CAPSEM_HOME="$CAPSEM_HOME_DIR" \
+CAPSEM_RUN_DIR="$RUN_DIR" \
+    uv run python "$ROOT/scripts/run-installed-winterfell.py" \
+        --bin-dir "$CAPSEM_HOME_DIR/bin" \
+        --assets-dir "$CAPSEM_HOME_DIR/assets" \
+        --profiles-dir "$CAPSEM_HOME_DIR/profiles" \
+        --evidence-out "$WINTERFELL_EVIDENCE"
+
+python3 - "$WORK_ROOT/report.json" "$PKG" "$VERSION" \
+    "$DOCTOR_EVIDENCE" "$WINTERFELL_EVIDENCE" <<'PY'
 import hashlib
 import json
 from pathlib import Path
 import sys
 
 package = Path(sys.argv[2]).resolve()
+doctor = json.loads(Path(sys.argv[4]).read_text())
+winterfell = json.loads(Path(sys.argv[5]).read_text())
+if doctor != {"schema": "capsem.installed_doctor.v1", "passed": True}:
+    raise SystemExit(f"full installed doctor evidence failed: {doctor}")
+if winterfell.get("schema") != "capsem.installed_winterfell.v1" or not winterfell.get(
+    "passed"
+):
+    raise SystemExit(f"installed Winterfell evidence failed: {winterfell}")
 report = {
     "schema": "capsem.macos_package_boot.v1",
     "package": str(package),
@@ -86,8 +116,12 @@ report = {
     "session_created": True,
     "guest_vm_booted": True,
     "guest_shell_marker": "CAPSEM_MACOS_PACKAGE_VM_BOOT_OK",
+    "full_doctor": True,
+    "installed_winterfell": True,
+    "doctor_evidence": doctor,
+    "winterfell_evidence": winterfell,
 }
 Path(sys.argv[1]).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
 PY
 
-echo "Exact macOS package guest-VM boot proof passed: $WORK_ROOT/report.json"
+echo "Exact macOS package guest-VM doctor/Winterfell proof passed: $WORK_ROOT/report.json"

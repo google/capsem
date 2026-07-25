@@ -275,7 +275,13 @@ def main() -> int:
         raise RuntimeError("physical VZ proof did not use the Tart-tested package")
     if physical_report.get("guest_vm_booted") is not True:
         raise RuntimeError("physical VZ proof did not boot the package payload")
+    if physical_report.get("full_doctor") is not True:
+        raise RuntimeError("physical VZ proof did not pass full installed doctor")
+    if physical_report.get("installed_winterfell") is not True:
+        raise RuntimeError("physical VZ proof did not pass installed Winterfell")
     tart_report["capabilities"]["physical_vz_boot"] = True
+    tart_report["capabilities"]["full_doctor"] = True
+    tart_report["capabilities"]["installed_winterfell"] = True
     tart_report["adapter_evidence"]["physical_vz"] = physical_report
     tart_report_path.write_text(
         json.dumps(tart_report, indent=2, sort_keys=True) + "\n",

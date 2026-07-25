@@ -330,7 +330,20 @@ def test_physical_mac_boots_a_guest_from_the_exact_package_payload() -> None:
     assert "scripts/simulate-install.sh" in source
     assert "scripts/prove-installed-shell.py" in source
     assert "CAPSEM_MACOS_PACKAGE_VM_BOOT_OK" in source
+    assert '"$CAPSEM_HOME_DIR/bin/capsem" doctor' in source
+    assert "scripts/run-installed-winterfell.py" in source
+    assert '"full_doctor": True' in source
+    assert '"installed_winterfell": True' in source
     assert '"guest_vm_booted": True' in source
+
+
+def test_macos_glowup_requires_physical_doctor_and_winterfell_evidence() -> None:
+    source = GLOWUP.read_text()
+
+    assert 'physical_report.get("full_doctor") is not True' in source
+    assert 'physical_report.get("installed_winterfell") is not True' in source
+    assert 'tart_report["capabilities"]["full_doctor"] = True' in source
+    assert 'tart_report["capabilities"]["installed_winterfell"] = True' in source
 
 
 def test_installed_winterfell_runner_loads_without_pytest_path_side_effects() -> None:
