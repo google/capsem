@@ -660,9 +660,34 @@ def test_update_assets_accepts_release_channel_profile_manifest(
         "initrd.img": b"profile-graph-initrd-" + os.urandom(64),
         "rootfs.erofs": b"profile-graph-rootfs-" + os.urandom(64),
     }
-    profile_config = b'id = "default"\nrevision = "2030.0101.2"\n'
-
     channel_manifest_url = f"{base_url}/assets/stable/manifest.json"
+    profile_release_url = (
+        f"{base_url}/profiles/releases/{NEW_ASSET_VERSION}/default/{arch}"
+    )
+    profile_config = f"""\
+id = "default"
+name = "Default"
+description = "Release-channel profile graph fixture."
+revision = "{NEW_ASSET_VERSION}"
+refresh_policy = "24h"
+
+[assets]
+format = "profile-assets.v1"
+refresh_policy = "on_profile_refresh"
+
+[assets.arch.{arch}.kernel]
+name = "vmlinuz"
+url = "{profile_release_url}/vmlinuz"
+
+[assets.arch.{arch}.initrd]
+name = "initrd.img"
+url = "{profile_release_url}/initrd.img"
+
+[assets.arch.{arch}.rootfs]
+name = "rootfs.erofs"
+url = "{profile_release_url}/rootfs.erofs"
+""".encode()
+
     channel_manifest = _make_release_channel_manifest(
         arch,
         new_files,
