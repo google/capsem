@@ -457,7 +457,7 @@ def test_install_test_removes_stale_container_before_controller_preflight() -> N
 def test_install_test_runs_local_release_glowup_from_real_package() -> None:
     block = _just_recipe_block("_gate-install").replace(r"\"", '"').replace(r"\$", "$")
 
-    assert "Running local release glow-up" in block
+    assert "Running Linux native release glow-up" in block
     assert "scripts/local-release-glowup.py" in block
     assert '--input-deb "$DEB"' in block
     assert "--bin-dir /cargo-target/debug" in block
@@ -963,6 +963,7 @@ def test_standalone_install_gate_preflights_privileged_helper() -> None:
 def test_install_gate_passes_vm_devices_to_full_installed_proofs() -> None:
     block = _just_recipe_block("_gate-install")
 
+    assert 'if [ "$(uname -s)" = "Linux" ]; then' in block
     assert 'DEVICE_ARGS=("--device" "/dev/kvm" "--device" "/dev/vhost-vsock")' in block
     assert 'DEVICE_ARGS+=("--device" "/dev/vsock")' in block
     assert "--security-opt seccomp=unconfined" in block
@@ -973,6 +974,21 @@ def test_install_gate_passes_vm_devices_to_full_installed_proofs() -> None:
         "-a -w /dev/vhost-vsock"
     ) in block
     assert "CAPSEM_SKIP_KVM_CHECK" not in block
+    assert "colima ssh -- test -r /dev/kvm" not in block
+
+
+def test_macos_install_gate_consumes_native_full_probe_evidence() -> None:
+    runner = _just_recipe_block("_test-candidate-run")
+    install = _just_recipe_block("_gate-install")
+
+    macos = runner.index("python3 scripts/macos_release_glowup.py")
+    export = runner.index("CAPSEM_MACOS_NATIVE_GLOWUP_REPORT")
+    install_call = runner.index("just _gate-install")
+    assert macos < export < install_call
+    assert "scripts/check-macos-native-glowup.py" in install
+    assert "--skip-install" in install
+    assert "Linux native release glow-up" in install
+    assert "unsupported nested ARM VM boot" in install
 
 
 def test_binary_release_sbom_jobs_install_zstd_for_deb_payloads() -> None:

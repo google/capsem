@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -17,6 +18,7 @@ GLOWUP = PROJECT_ROOT / "scripts" / "macos_release_glowup.py"
 GUEST = PROJECT_ROOT / "scripts" / "macos_tart_guest.sh"
 HOST_BOOT = PROJECT_ROOT / "scripts" / "prove-macos-package-boot.sh"
 INSTALLED_WINTERFELL = PROJECT_ROOT / "scripts" / "run-installed-winterfell.py"
+NATIVE_REPORT_CHECK = PROJECT_ROOT / "scripts" / "check-macos-native-glowup.py"
 LOCAL_PACKAGE_BUILD = PROJECT_ROOT / "scripts" / "build-test-macos-package.sh"
 LOCAL_SIGNING = PROJECT_ROOT / "scripts" / "macos_signing.py"
 RELEASE_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "release.yaml"
@@ -344,6 +346,36 @@ def test_macos_glowup_requires_physical_doctor_and_winterfell_evidence() -> None
     assert 'physical_report.get("installed_winterfell") is not True' in source
     assert 'tart_report["capabilities"]["full_doctor"] = True' in source
     assert 'tart_report["capabilities"]["installed_winterfell"] = True' in source
+
+
+def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> None:
+    module = _load_script(NATIVE_REPORT_CHECK, "macos_native_report_check")
+    cargo_toml = tmp_path / "Cargo.toml"
+    cargo_toml.write_text('[workspace.package]\nversion = "1.2.3"\n')
+    report_path = tmp_path / "report.json"
+    report = {
+        "schema": "capsem.release_glowup.v1",
+        "adapter": "macos-tart-launchd",
+        "artifact": {"version": "1.2.3", "sha256": "a" * 64},
+        "capabilities": {
+            capability: True for capability in module.REQUIRED_CAPABILITIES
+        },
+        "adapter_evidence": {
+            "physical_vz": {
+                "package_sha256": "a" * 64,
+                "guest_vm_booted": True,
+                "full_doctor": True,
+                "installed_winterfell": True,
+            }
+        },
+    }
+    report_path.write_text(json.dumps(report))
+
+    module.validate_report(report_path, cargo_toml)
+    report["capabilities"]["installed_winterfell"] = False
+    report_path.write_text(json.dumps(report))
+    with pytest.raises(module.NativeGlowupError, match="installed_winterfell"):
+        module.validate_report(report_path, cargo_toml)
 
 
 def test_installed_winterfell_runner_loads_without_pytest_path_side_effects() -> None:

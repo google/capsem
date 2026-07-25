@@ -185,15 +185,6 @@ def test_macos_doctor_requires_live_rosetta_registration() -> None:
     assert "Docker cannot execute $CROSS_PLATFORM containers" in asset_gate
 
 
-def test_macos_doctor_requires_configured_and_live_nested_kvm() -> None:
-    source = _source_text("scripts/doctor-macos.sh")
-
-    assert "nestedVirtualization: true" in source
-    assert "colima nested virtualization (enabled, live KVM)" in source
-    assert "colima ssh -- test -r /dev/kvm -a -w /dev/kvm" in source
-    assert "--nested-virtualization" in source
-
-
 def test_bootstrap_and_doctor_prove_tart_cache_clone_boot_and_ssh() -> None:
     bootstrap = _source_text("bootstrap.sh")
     doctor = _source_text("scripts/doctor-macos.sh")

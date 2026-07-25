@@ -257,49 +257,28 @@ case "$(uname -s)" in
             # do this -- it would just print the suggestion and fail.
             if command -v colima >/dev/null 2>&1 && ! colima status >/dev/null 2>&1; then
                 if confirm "start Colima now (vz, 16 GB RAM, 8 CPU, ${DOCKER_DISK_GIB} GB disk -- release-gate profile)"; then
-                    colima start --vm-type vz --vz-rosetta --nested-virtualization --memory 16 --cpu 8 --disk "$DOCKER_DISK_GIB"
+                    colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk "$DOCKER_DISK_GIB"
                 fi
             fi
-            # The persistent config can say Rosetta/nested virtualization are
-            # enabled while the running VM predates those settings. Repair
-            # both live capabilities before Docker probes or expensive release
-            # work. The full installed-package gate boots Capsem inside its
-            # systemd container, so /dev/kvm is a requirement, not an optional
-            # optimization.
+            # The persistent config can say Rosetta is enabled while the
+            # running VM predates that config and has no live binfmt handler.
+            # Repair that stale runtime before the Docker probe or expensive
+            # cross-architecture builds. Intel Macs do not need Rosetta.
             if command -v colima >/dev/null 2>&1 \
                 && colima status >/dev/null 2>&1 \
                 && [ "$(uname -m)" = "arm64" ]; then
                 colima_yaml="$HOME/.colima/default/colima.yaml"
                 if [ -f "$colima_yaml" ] \
                     && grep -q 'rosetta: true' "$colima_yaml" \
-                    && grep -q 'vmType: vz' "$colima_yaml" \
-                    && grep -q 'nestedVirtualization: true' "$colima_yaml"; then
-                    if ! colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1 \
-                        || ! colima ssh -- sudo test -e /dev/kvm >/dev/null 2>&1; then
-                        if confirm "restart Colima to register Rosetta and nested KVM for release gates"; then
+                    && grep -q 'vmType: vz' "$colima_yaml"; then
+                    if ! colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1; then
+                        if confirm "restart Colima to register Rosetta for amd64 release builds"; then
                             colima restart
                         fi
                     fi
-                elif confirm "restart Colima with VZ Rosetta and nested KVM for release gates"; then
+                elif confirm "restart Colima with VZ Rosetta for amd64 release builds"; then
                     colima stop
-                    colima start --vm-type vz --vz-rosetta --nested-virtualization --memory 16 --cpu 8 --disk "$DOCKER_DISK_GIB"
-                fi
-                nested_devices_ready=0
-                for attempt in $(seq 1 30); do
-                    if colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1 \
-                        && colima ssh -- sudo test -e /dev/kvm -a -e /dev/vhost-vsock >/dev/null 2>&1; then
-                        colima ssh -- sudo chmod 0666 /dev/kvm /dev/vhost-vsock
-                        if colima ssh -- test -r /dev/kvm -a -w /dev/kvm >/dev/null 2>&1 \
-                            && colima ssh -- test -r /dev/vhost-vsock -a -w /dev/vhost-vsock >/dev/null 2>&1; then
-                            nested_devices_ready=1
-                            break
-                        fi
-                    fi
-                    sleep 1
-                done
-                if [ "$nested_devices_ready" -ne 1 ]; then
-                    printf "  [FAIL] Colima did not expose live Rosetta and nested KVM after repair\n" >&2
-                    exit 1
+                    colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk "$DOCKER_DISK_GIB"
                 fi
             fi
             if command -v docker >/dev/null 2>&1; then

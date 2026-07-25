@@ -1000,6 +1000,7 @@ _test-candidate-run:
     if [ "$(uname -s)" = "Darwin" ]; then
         echo "=== macOS clean-VM package install and glow-up ==="
         python3 scripts/macos_release_glowup.py
+        export CAPSEM_MACOS_NATIVE_GLOWUP_REPORT="$PWD/target/macos-tart-glowup/report.json"
     fi
     echo "=== Host package SBOM artifact ==="
     just _gate-host-package-sbom
@@ -1683,28 +1684,19 @@ _gate-install:
     # masked the asset-URL bug for v1.0.1777065213).
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
-    DEVICE_ARGS=("--device" "/dev/kvm" "--device" "/dev/vhost-vsock")
-    if [ "$(uname -s)" = "Darwin" ]; then
-        if ! command -v colima >/dev/null 2>&1 \
-            || ! colima status >/dev/null 2>&1 \
-            || ! colima ssh -- test -r /dev/kvm -a -w /dev/kvm \
-            || ! colima ssh -- test -r /dev/vhost-vsock -a -w /dev/vhost-vsock; then
-            echo "ERROR: installed doctor requires KVM and vhost-vsock in the active Colima VM." >&2
-            echo "Run bootstrap.sh to enable and prove VZ nested virtualization before retrying." >&2
-            exit 1
-        fi
-        if colima ssh -- test -r /dev/vsock -a -w /dev/vsock; then
-            DEVICE_ARGS+=("--device" "/dev/vsock")
-        fi
-    else
+    DEVICE_ARGS=()
+    LINUX_VM_PROOF=0
+    if [ "$(uname -s)" = "Linux" ]; then
         if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ] \
             || [ ! -r /dev/vhost-vsock ] || [ ! -w /dev/vhost-vsock ]; then
             echo "ERROR: installed doctor requires KVM and vhost-vsock on the Linux runner." >&2
             exit 1
         fi
+        DEVICE_ARGS=("--device" "/dev/kvm" "--device" "/dev/vhost-vsock")
         if [ -r /dev/vsock ] && [ -w /dev/vsock ]; then
             DEVICE_ARGS+=("--device" "/dev/vsock")
         fi
+        LINUX_VM_PROOF=1
     fi
     # A completed install target retains only top-level runtime binaries and
     # the previous package after the post-install purge below; it no longer
@@ -1774,8 +1766,10 @@ _gate-install:
         -v capsem-install-frontend-node-modules:/src/frontend/node_modules \
         -v capsem-install-frontend-dist:/src/frontend/dist \
         "$IMAGE" /usr/lib/systemd/systemd
-    docker exec "$CONTAINER" test -r /dev/kvm -a -w /dev/kvm
-    docker exec "$CONTAINER" test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+    if [ "$LINUX_VM_PROOF" -eq 1 ]; then
+        docker exec "$CONTAINER" test -r /dev/kvm -a -w /dev/kvm
+        docker exec "$CONTAINER" test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+    fi
     # Wait for systemd to be ready
     for i in $(seq 1 30); do
         if docker exec "$CONTAINER" systemctl is-system-running --wait 2>/dev/null | grep -qE "running|degraded"; then
@@ -1848,9 +1842,20 @@ _gate-install:
     echo "Running install e2e tests..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_BIN_SRC=/cargo-target/debug -e CAPSEM_TEST_ASSET_MANIFEST="/src/$INSTALL_ASSETS_DIR/manifest.json" "$CONTAINER" bash -c \
         "mkdir -p /home/capsem/tmp && cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test TMPDIR=/home/capsem/tmp uv run python -m pytest tests/capsem-install/ -v --tb=short"
-    echo "Running local release glow-up (install, channel switch, upgrade)..."
-    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
-        "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test uv run python scripts/local-release-glowup.py --input-deb \"\$DEB\" --bin-dir /cargo-target/debug --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\" --work-dir target/local-release-glowup"
+    if [ "$LINUX_VM_PROOF" -eq 1 ]; then
+        echo "Running Linux native release glow-up (install, channel switch, upgrade)..."
+        docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
+            "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test uv run python scripts/local-release-glowup.py --input-deb \"\$DEB\" --bin-dir /cargo-target/debug --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\" --work-dir target/local-release-glowup"
+    else
+        echo "Validating the native macOS installed doctor/Winterfell proof..."
+        MACOS_REPORT="${CAPSEM_MACOS_NATIVE_GLOWUP_REPORT:?macOS install rail requires the native glow-up report from this module}"
+        uv run python scripts/check-macos-native-glowup.py \
+            --report "$MACOS_REPORT" \
+            --cargo-toml "$ROOT/Cargo.toml"
+        echo "Validating Linux package/channel assembly without unsupported nested ARM VM boot..."
+        docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
+            "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test uv run python scripts/local-release-glowup.py --input-deb \"\$DEB\" --bin-dir /cargo-target/debug --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\" --work-dir target/local-release-glowup --skip-install"
+    fi
     if [ "$HOST_ROSETTA_REGISTRATION" = "required" ] \
         && ! colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1; then
         echo "ERROR: systemd install container removed Colima's Rosetta binfmt registration" >&2
