@@ -240,6 +240,16 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
         assert forbidden not in workflow
 
 
+def test_profile_selection_creates_clean_runner_output_parent() -> None:
+    resolve = _job_block(_workflow("release-assets.yaml"), "resolve-current-binary")
+
+    create_parent = resolve.index("mkdir -p target")
+    validate = resolve.index("cargo run -p capsem-admin -- validate")
+    redirect = resolve.index("> target/profile-release-selection.json")
+
+    assert create_parent < validate < redirect
+
+
 def test_profile_pairing_reuses_one_staged_publication_and_exact_public_before() -> None:
     workflow = _workflow("release-assets.yaml")
     resolve = _job_block(workflow, "resolve-current-binary")
