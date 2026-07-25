@@ -104,25 +104,42 @@ impl Drop for DoctorMockServer {
     }
 }
 
-fn mock_server_binary_path() -> Result<PathBuf> {
-    let cwd_candidate = std::env::current_dir()
-        .context("read current directory")?
-        .join("target/debug/capsem-mock-server");
+fn find_mock_server_binary(
+    executable: &Path,
+    current_dir: &Path,
+    manifest_dir: &Path,
+) -> Option<PathBuf> {
+    if let Some(bin_dir) = executable.parent() {
+        let installed_candidate = bin_dir.join("capsem-mock-server");
+        if installed_candidate.exists() {
+            return Some(installed_candidate);
+        }
+    }
+
+    let cwd_candidate = current_dir.join("target/debug/capsem-mock-server");
     if cwd_candidate.exists() {
-        return Ok(cwd_candidate);
+        return Some(cwd_candidate);
     }
 
-    let manifest_candidate =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/capsem-mock-server");
+    let manifest_candidate = manifest_dir.join("../../target/debug/capsem-mock-server");
     if manifest_candidate.exists() {
-        return manifest_candidate
-            .canonicalize()
-            .context("resolve source-tree capsem-mock-server binary");
+        return Some(manifest_candidate);
     }
 
-    Err(anyhow!(
-        "target/debug/capsem-mock-server not found; run cargo build -p capsem-mock-server"
-    ))
+    None
+}
+
+fn mock_server_binary_path() -> Result<PathBuf> {
+    let executable = std::env::current_exe().context("resolve current Capsem executable")?;
+    let current_dir = std::env::current_dir().context("read current directory")?;
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    find_mock_server_binary(&executable, &current_dir, &manifest_dir).ok_or_else(|| {
+        anyhow!(
+            "capsem-mock-server not found beside the Capsem executable or under target/debug; \
+         reinstall Capsem or run cargo build -p capsem-mock-server"
+        )
+    })
 }
 
 fn spawn_doctor_mock_server() -> Result<DoctorMockServer> {
@@ -3329,6 +3346,30 @@ mod tests {
         assert_eq!(
             DoctorMockServerLock::path_for_addr(DOCTOR_MOCK_SERVER_ADDR),
             std::env::temp_dir().join("capsem-mock-server-127-0-0-1-3713.lock")
+        );
+    }
+
+    #[test]
+    fn mock_server_binary_prefers_installed_sibling() {
+        let fixture = tempfile::tempdir().unwrap();
+        let installed_bin = fixture.path().join("installed/bin");
+        let source_bin = fixture.path().join("source/target/debug");
+        std::fs::create_dir_all(&installed_bin).unwrap();
+        std::fs::create_dir_all(&source_bin).unwrap();
+        let executable = installed_bin.join("capsem");
+        let installed_mock = installed_bin.join("capsem-mock-server");
+        let source_mock = source_bin.join("capsem-mock-server");
+        std::fs::write(&executable, b"capsem").unwrap();
+        std::fs::write(&installed_mock, b"installed").unwrap();
+        std::fs::write(&source_mock, b"source").unwrap();
+
+        assert_eq!(
+            find_mock_server_binary(
+                &executable,
+                &fixture.path().join("source"),
+                &fixture.path().join("crates/capsem"),
+            ),
+            Some(installed_mock)
         );
     }
 

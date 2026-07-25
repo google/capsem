@@ -1280,7 +1280,7 @@ _cross-compile arch="": _clean-stale _check-assets _generate-settings
                mkdir -p /cargo-target/linux-agent/\$TARGET_ARCH && \
                cp /cargo-target/\$RUST_TARGET/release/capsem-pty-agent /cargo-target/\$RUST_TARGET/release/capsem-mcp-server /cargo-target/\$RUST_TARGET/release/capsem-net-proxy /cargo-target/\$RUST_TARGET/release/capsem-dns-proxy /cargo-target/\$RUST_TARGET/release/capsem-sysutil /cargo-target/linux-agent/\$TARGET_ARCH/ && \
                echo '--- Build companion host binaries ---' && \
-               cargo build --release --target \$RUST_TARGET -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin && \
+               cargo build --release --target \$RUST_TARGET -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server && \
                echo '--- Resolve Tauri signing key ---' && \
                DEV_KEY=/cargo-target/dev-tauri-private && \
                if [ -z \"\${TAURI_SIGNING_PRIVATE_KEY:-}\" ]; then \
@@ -1303,7 +1303,7 @@ _cross-compile arch="": _clean-stale _check-assets _generate-settings
                bash scripts/repack-deb.sh --manifest \"\$CAPSEM_INSTALL_MANIFEST_URL\" \"\$DEB\" \"/cargo-target/\$RUST_TARGET/release\" \"target/config\" \"assets\" && \
                echo '--- Validate artifacts ---' && \
                dpkg-deb --info \"\$DEB\" && \
-               dpkg-deb --contents \"\$DEB\" | grep -E 'usr/bin/(capsem|capsem-service|capsem-process|capsem-tui|capsem-mcp|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin)\$' && \
+               dpkg-deb --contents \"\$DEB\" | grep -E 'usr/bin/(capsem|capsem-service|capsem-process|capsem-tui|capsem-mcp|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin|capsem-mock-server)\$' && \
                cp \"\$DEB\" /src/dist/ && \
                basename \"\$DEB\" > \"/src/dist/.cross-compile-\$TARGET_ARCH-deb\" && \
                cp /cargo-target/linux-agent/\$TARGET_ARCH/* /src/dist/"
@@ -1590,7 +1590,8 @@ _prove-linux-deb: _test-install-harness-preflight
         capsem-process \
         capsem-service \
         capsem-tray \
-        capsem-tui; do
+        capsem-tui \
+        capsem-mock-server; do
         docker exec "$CONTAINER" test -x "/usr/bin/$bin"
         if [ "$bin" != "capsem-app" ]; then
             docker exec "$CONTAINER" "/usr/bin/$bin" --version | grep -F "$EXPECTED_VERSION"

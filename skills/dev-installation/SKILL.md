@@ -11,7 +11,7 @@ description: Capsem native package installer -- package install, service registr
 ~/.capsem/
   bin/capsem, capsem-service, capsem-process, capsem-tui,
       capsem-mcp, capsem-mcp-aggregator, capsem-mcp-builtin,
-      capsem-gateway, capsem-tray, capsem-admin
+      capsem-gateway, capsem-tray, capsem-admin, capsem-mock-server
   assets/manifest.json, manifest-metadata.json, {asset-name}-{hash16}.{ext}
   run/service.sock, service.pid, instances/, persistent/
   corp.toml               (CLI-provisioned corp config)
@@ -37,7 +37,7 @@ These commands dispatch before UdsClient creation -- they work without the servi
 1. `current_exe().parent()` -> bin_dir -> the packaged host binary cohort:
    `capsem`, `capsem-service`, `capsem-process`, `capsem-tui`,
    `capsem-mcp`, `capsem-mcp-aggregator`, `capsem-mcp-builtin`,
-   `capsem-gateway`, `capsem-tray`, `capsem-admin`
+   `capsem-gateway`, `capsem-tray`, `capsem-admin`, `capsem-mock-server`
 2. Assets: `~/.capsem/assets/` (the only installed layout -- packages install
    manifest URL provenance, then postinstall hydrates the live manifest and
    assets through `capsem update --assets --manifest <URL>`)

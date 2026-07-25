@@ -27,6 +27,7 @@ REQUIRED_BINARIES = [
     "capsem-gateway",
     "capsem-tray",
     "capsem-admin",
+    "capsem-mock-server",
 ]
 
 pytestmark = pytest.mark.skipif(

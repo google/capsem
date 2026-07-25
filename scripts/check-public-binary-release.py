@@ -881,6 +881,7 @@ def run_docker_binary_transition_smoke(
                 "capsem-service",
                 "capsem-tray",
                 "capsem-tui",
+                "capsem-mock-server",
             )
         )
         install_pipeline = (
@@ -976,6 +977,7 @@ def run_docker_install_smoke(
             "capsem-service",
             "capsem-tray",
             "capsem-tui",
+            "capsem-mock-server",
         )
     )
     container_script = f"""

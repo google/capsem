@@ -1617,7 +1617,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert 'require_path "per-user CLI" -x "$HOME/.capsem/bin/capsem"' in macos
     assert 'require_contains "per-user CLI version" "$VERSION"' in macos
     assert (
-        "for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui"
+        "for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server"
         in macos
     )
     assert 'require_path "host binary $bin" -x "$HOME/.capsem/bin/$bin"' in macos
@@ -1651,7 +1651,7 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     assert "test -x /usr/bin/capsem" in linux
     assert '/usr/bin/capsem --version | grep -F "$VERSION"' in linux
     assert (
-        "for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui"
+        "for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server"
         in linux
     )
     assert "dpkg-query -W -f='${Version}' capsem | grep -Fx \"$VERSION\"" in linux
@@ -4283,6 +4283,7 @@ def test_installer_codesigns_helpers_with_stable_identifiers() -> None:
         "org.capsem.gateway",
         "org.capsem.tray",
         "org.capsem.admin",
+        "org.capsem.mock-server",
     ]
 
     for script in [postinstall, simulate_install]:
@@ -4309,6 +4310,7 @@ def test_binary_update_installer_scripts_replace_and_restart_full_helper_cohort(
         "capsem-gateway",
         "capsem-tray",
         "capsem-admin",
+        "capsem-mock-server",
     ]
     stale_companions = [
         "capsem-service",

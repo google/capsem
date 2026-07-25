@@ -317,6 +317,7 @@ def test_guest_installs_and_verifies_the_exact_shared_package() -> None:
         "capsem-gateway",
         "capsem-tray",
         "capsem-admin",
+        "capsem-mock-server",
     ):
         assert binary in source
 

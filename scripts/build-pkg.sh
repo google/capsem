@@ -197,7 +197,7 @@ cp -R "$APP_PATH" "$WORK_DIR/payload/Applications/Capsem.app"
 # Companion binaries
 SHARE_DIR="$WORK_DIR/payload/usr/local/share/capsem"
 mkdir -p "$SHARE_DIR/bin"
-for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server; do
     src="$BIN_DIR/$bin"
     if [ -f "$src" ]; then
         reject_retired_credential_store_markers "$src"

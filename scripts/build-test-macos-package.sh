@@ -45,7 +45,8 @@ cargo build --release \
     -p capsem-mcp-builtin \
     -p capsem-gateway \
     -p capsem-tray \
-    -p capsem-admin
+    -p capsem-admin \
+    -p capsem-mock-server
 bash scripts/build-pkg.sh \
     --manifest "$MANIFEST_URL" \
     "$ROOT/target/release/bundle/macos/Capsem.app" \
@@ -67,6 +68,7 @@ expected = {
     "capsem", "capsem-admin", "capsem-app", "capsem-gateway",
     "capsem-mcp", "capsem-mcp-aggregator", "capsem-mcp-builtin",
     "capsem-process", "capsem-service", "capsem-tray", "capsem-tui",
+    "capsem-mock-server",
 }
 document = json.loads(pathlib.Path(sys.argv[1]).read_text())
 actual = {pathlib.Path(row["fileName"]).name for row in document["files"]}

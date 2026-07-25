@@ -284,7 +284,7 @@ def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
     assert 'CAPSEM_PROOF_MANIFEST_URL="$MANIFEST_URL"' in block
     assert 'CAPSEM_PROOF_MANIFEST_CHANNEL="$MANIFEST_CHANNEL"' in block
     assert 'CAPSEM_PROOF_DEB="$DEB"' in block
-    assert "capsem-admin)\\$'" in block
+    assert "capsem-mock-server)\\$'" in block
     assert '-e "HOST_UID=$HOST_UID"' in block
     assert '-e "HOST_GID=$HOST_GID"' in block
     assert 'trap \'chown -R \\"\\$HOST_UID:\\$HOST_GID\\"' in block
@@ -317,6 +317,7 @@ def test_exact_linux_deb_proof_uses_systemd_and_proves_guest_shell() -> None:
         "capsem-service",
         "capsem-tray",
         "capsem-tui",
+        "capsem-mock-server",
     ):
         assert binary in block
     assert 'test -x "/usr/bin/$bin"' in block
@@ -543,6 +544,25 @@ def test_install_recipe_runs_release_glowup_in_clean_project_environment() -> No
         "uv run python scripts/local-release-glowup.py"
     ) in recipe
     assert "python3 scripts/local-release-glowup.py" not in recipe
+
+
+def test_native_packages_make_full_doctor_mock_server_self_contained() -> None:
+    build_pkg = (PROJECT_ROOT / "scripts" / "build-pkg.sh").read_text()
+    pkg_postinstall = (
+        PROJECT_ROOT / "scripts" / "pkg-scripts" / "postinstall"
+    ).read_text()
+    repack_deb = (PROJECT_ROOT / "scripts" / "repack-deb.sh").read_text()
+    deb_postinst = (PROJECT_ROOT / "scripts" / "deb-postinst.sh").read_text()
+    cli = (PROJECT_ROOT / "crates" / "capsem" / "src" / "main.rs").read_text()
+    mock_server = (
+        PROJECT_ROOT / "crates" / "capsem-mock-server" / "src" / "main.rs"
+    ).read_text()
+
+    for package_script in (build_pkg, pkg_postinstall, repack_deb, deb_postinst):
+        assert "capsem-mock-server" in package_script
+    assert "std::env::current_exe()" in cli
+    assert cli.index("std::env::current_exe()") < cli.index("std::env::current_dir()")
+    assert '#[command(version' in mock_server
 
 
 def test_full_gate_preflights_clean_install_harness_before_expensive_stages() -> None:

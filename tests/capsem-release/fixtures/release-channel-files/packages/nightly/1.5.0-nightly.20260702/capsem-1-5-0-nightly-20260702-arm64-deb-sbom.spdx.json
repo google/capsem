@@ -118,6 +118,16 @@
         }
       ],
       "fileName": "/usr/bin/capsem-tui"
+    },
+    {
+      "SPDXID": "SPDXRef-File-capsem-mock-server",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "88862d504d269f8dcd13095ffb1ac38e1abc8702e305d937ff18a2e0502c93ac"
+        }
+      ],
+      "fileName": "/usr/bin/capsem-mock-server"
     }
   ],
   "name": "capsem-1-5-0-nightly-20260702-arm64-deb-sbom.spdx.json",

@@ -91,7 +91,7 @@ type RespBody = BoxBody<Bytes, Infallible>;
 struct LogBody(Bytes);
 
 #[derive(Parser, Debug)]
-#[command(about = "Hermetic Capsem mock upstream server")]
+#[command(version, about = "Hermetic Capsem mock upstream server")]
 struct Args {
     #[arg(long, default_value = "127.0.0.1:0")]
     addr: SocketAddr,

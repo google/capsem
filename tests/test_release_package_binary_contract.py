@@ -36,6 +36,7 @@ EXPECTED_BINARY_COHORT = {
     "capsem-service",
     "capsem-tray",
     "capsem-tui",
+    "capsem-mock-server",
 }
 EXPECTED_MACOS_BINARY_PATHS = {
     "capsem-app": "/Applications/Capsem.app/Contents/MacOS/capsem-app",

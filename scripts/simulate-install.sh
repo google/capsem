@@ -53,7 +53,7 @@ if [[ ! -d "$CONFIG_ROOT/profiles" ]]; then
 fi
 
 # Copy binaries
-for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server; do
     src="$BIN_SRC/$bin"
     if [[ ! -f "$src" ]]; then
         echo "ERROR: binary not found: $src" >&2
@@ -75,6 +75,7 @@ codesign_identifier_for_bin() {
         capsem-gateway) echo "org.capsem.gateway" ;;
         capsem-tray) echo "org.capsem.tray" ;;
         capsem-admin) echo "org.capsem.admin" ;;
+        capsem-mock-server) echo "org.capsem.mock-server" ;;
         *) return 1 ;;
     esac
 }

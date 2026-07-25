@@ -100,6 +100,7 @@ BINARIES = [
     "capsem-gateway",
     "capsem-tray",
     "capsem-admin",
+    "capsem-mock-server",
 ]
 DEFAULT_TIMEOUT = 30
 

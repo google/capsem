@@ -25,6 +25,7 @@ BINARIES=(
     capsem-gateway
     capsem-tray
     capsem-admin
+    capsem-mock-server
 )
 
 exec > >(tee "$SHARE/guest.log") 2>&1
