@@ -1071,6 +1071,29 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     before_document["channel"] = "nightly"
     after_document = _manifest(after_artifact)
     after_document["channel"] = "nightly"
+    for document in (before_document, after_document):
+        document["profiles"] = {
+            "work": {
+                "revision": "work-1",
+                "architectures": [
+                    {
+                        "architecture": "amd64",
+                        "images": [
+                            {
+                                "kind": "rootfs",
+                                "url": "http://127.0.0.1:8765/rootfs.erofs",
+                                "bytes": 13,
+                                "digest": {
+                                    "sha256": "a" * 64,
+                                    "blake3": "b" * 64,
+                                },
+                                "status": "current",
+                            }
+                        ],
+                    }
+                ],
+            }
+        }
     before_manifest = tmp_path / "before.json"
     after_manifest = tmp_path / "after.json"
     current_manifest = tmp_path / "current" / "manifest.json"
@@ -1124,10 +1147,11 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
         evidence_dir=tmp_path / "evidence",
     )
 
-    assert len(calls) == 2
+    assert len(calls) == 3
     before_script = calls[0][-1]
     after_script = calls[1][-1]
-    for script in (before_script, after_script):
+    tamper_script = calls[2][-1]
+    for script in (before_script, after_script, tamper_script):
         subprocess.run(["bash", "-n"], input=script, text=True, check=True)
     assert "CAPSEM_MANIFEST_URL=" in before_script
     assert "update --assets --channel" in before_script
@@ -1137,14 +1161,20 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     assert "probe_installed_transition fresh-install" in before_script
     assert "wait_for_exact_transition" in after_script
     assert "probe_installed_transition candidate-after" in after_script
+    assert "wait_for_automatic_rejection" in tamper_script
+    assert "automatic release update failed" in tamper_script
+    assert "tampered-before-manifest.json" in tamper_script
+    assert "tampered-rejection.json" in tamper_script
     for script in (before_script, after_script):
         assert "scripts/verify-installed-release.py" in script
         assert '"$CAPSEM_BIN" doctor' in script
         assert "scripts/run-installed-winterfell.py" in script
         assert "update --yes" not in script
+    assert "update --yes" not in tamper_script
     assert current_manifest.read_bytes() == after_manifest.read_bytes()
     assert evidence.fresh_installed.name == "fresh-install-installed.json"
     assert evidence.candidate_winterfell.name == "candidate-after-winterfell.json"
+    assert evidence.tamper_rejection.name == "tampered-rejection.json"
 
 
 def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Path) -> None:
@@ -1177,6 +1207,7 @@ def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Pa
         candidate_installed=tmp_path / "candidate-installed.json",
         candidate_doctor=tmp_path / "candidate-doctor.json",
         candidate_winterfell=tmp_path / "candidate-winterfell.json",
+        tamper_rejection=tmp_path / "tampered-rejection.json",
     )
     for path, package_version in (
         (evidence.fresh_installed, before.package_version),

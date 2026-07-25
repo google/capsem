@@ -123,6 +123,7 @@ class ExactInstalledGlowupEvidence:
     candidate_installed: Path
     candidate_doctor: Path
     candidate_winterfell: Path
+    tamper_rejection: Path
 
 
 @dataclass(frozen=True)
@@ -1314,6 +1315,25 @@ wait_for_exact_transition() {{
   journalctl --user-unit capsem.service --no-pager -n 200 >&2 || true
   return 1
 }}
+installed_profile_tree_digest() {{
+  find "$CAPSEM_HOME_DIR/profiles" -type f -print0 \
+    | sort -z \
+    | xargs -0 sha256sum \
+    | sha256sum \
+    | cut -d' ' -f1
+}}
+wait_for_automatic_rejection() {{
+  since="$1"
+  for attempt in $(seq 1 90); do
+    if journalctl --user-unit capsem.service --since "$since" --no-pager -o cat \
+      | grep -Fq "automatic release update failed"; then
+      return 0
+    fi
+    sleep 2
+  done
+  journalctl --user-unit capsem.service --since "$since" --no-pager -o cat >&2 || true
+  return 1
+}}
 """
 
 
@@ -1385,6 +1405,42 @@ probe_installed_transition candidate-after \
 """
     run(["bash", "-lc", after_script])
 
+    adversarial = stage_adversarial_exact_candidates(
+        pairing,
+        transport,
+        output_dir=evidence_dir / "adversarial",
+    )
+    tamper_evidence = evidence_dir / "tampered-rejection.json"
+    promote_exact_manifest(
+        adversarial.tampered_manifest,
+        transport.current_manifest,
+    )
+    tamper_script = f"""
+set -euxo pipefail
+export DEBIAN_FRONTEND=noninteractive
+{probe_functions}
+cp "$CAPSEM_HOME_DIR/assets/manifest.json" \
+  "$EVIDENCE_DIR/tampered-before-manifest.json"
+profile_digest_before=$(installed_profile_tree_digest)
+rejection_since=$(date --iso-8601=seconds)
+systemctl --user restart capsem.service
+wait_for_automatic_rejection "$rejection_since"
+cmp "$EVIDENCE_DIR/tampered-before-manifest.json" \
+  "$CAPSEM_HOME_DIR/assets/manifest.json"
+! cmp -s {shlex.quote(str(transport.current_manifest))} \
+  "$CAPSEM_HOME_DIR/assets/manifest.json"
+test "$(installed_profile_tree_digest)" = "$profile_digest_before"
+dpkg-query -W -f='${{Version}}' capsem \
+  | grep -Fx {shlex.quote(after_artifact.version)}
+printf '%s\n' \
+  '{{"schema":"capsem.installed_rejection.v1","kind":"tampered_artifact","result":"rejected","preserved_previous":true}}' \
+  > {shlex.quote(str(tamper_evidence))}
+"""
+    try:
+        run(["bash", "-lc", tamper_script])
+    finally:
+        promote_exact_candidate_transport(transport)
+
     return ExactInstalledGlowupEvidence(
         fresh_installed=evidence_dir / "fresh-install-installed.json",
         fresh_doctor=evidence_dir / "fresh-install-doctor.json",
@@ -1392,6 +1448,7 @@ probe_installed_transition candidate-after \
         candidate_installed=evidence_dir / "candidate-after-installed.json",
         candidate_doctor=evidence_dir / "candidate-after-doctor.json",
         candidate_winterfell=evidence_dir / "candidate-after-winterfell.json",
+        tamper_rejection=tamper_evidence,
     )
 
 
