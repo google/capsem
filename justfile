@@ -1734,12 +1734,15 @@ _gate-install:
     INSTALL_PROFILE_INPUTS="${CAPSEM_INSTALL_PROFILE_INPUTS:-}"
     HOST_ROSETTA_REGISTRATION=not_applicable
     cleanup() {
+        install_gate_exit=$?
+        trap - EXIT
         docker exec "$CONTAINER" bash -c "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" >/dev/null 2>&1 || true
         docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
         uv run python "$ROOT/scripts/docker-storage-policy.py" release \
             --boundary after-install --rail install || true
         uv run python "$ROOT/scripts/docker-storage-policy.py" gc \
             --rail install || true
+        exit "$install_gate_exit"
     }
     # Install preflight has already created the disposable image. Own its
     # cleanup before any later capacity, platform, or container check can fail.

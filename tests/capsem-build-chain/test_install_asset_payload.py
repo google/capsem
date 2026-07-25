@@ -434,6 +434,18 @@ def test_install_test_restores_host_workspace_ownership() -> None:
     assert "--boundary after-install" in cleanup
 
 
+def test_install_test_cleanup_preserves_the_original_gate_failure() -> None:
+    block = _just_recipe_block("_gate-install")
+    cleanup = block.split("cleanup() {", maxsplit=1)[1].split("}", maxsplit=1)[0]
+
+    capture = cleanup.index("install_gate_exit=$?")
+    disable_trap = cleanup.index("trap - EXIT")
+    remove_container = cleanup.index('docker rm -f "$CONTAINER"')
+    restore_status = cleanup.index('exit "$install_gate_exit"')
+
+    assert capture < disable_trap < remove_container < restore_status
+
+
 def test_install_test_keeps_frontend_build_outputs_container_owned() -> None:
     block = _just_recipe_block("_gate-install")
 
