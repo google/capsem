@@ -1683,6 +1683,29 @@ _gate-install:
     # masked the asset-URL bug for v1.0.1777065213).
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
+    DEVICE_ARGS=("--device" "/dev/kvm" "--device" "/dev/vhost-vsock")
+    if [ "$(uname -s)" = "Darwin" ]; then
+        if ! command -v colima >/dev/null 2>&1 \
+            || ! colima status >/dev/null 2>&1 \
+            || ! colima ssh -- test -r /dev/kvm -a -w /dev/kvm \
+            || ! colima ssh -- test -r /dev/vhost-vsock -a -w /dev/vhost-vsock; then
+            echo "ERROR: installed doctor requires KVM and vhost-vsock in the active Colima VM." >&2
+            echo "Run bootstrap.sh to enable and prove VZ nested virtualization before retrying." >&2
+            exit 1
+        fi
+        if colima ssh -- test -r /dev/vsock -a -w /dev/vsock; then
+            DEVICE_ARGS+=("--device" "/dev/vsock")
+        fi
+    else
+        if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ] \
+            || [ ! -r /dev/vhost-vsock ] || [ ! -w /dev/vhost-vsock ]; then
+            echo "ERROR: installed doctor requires KVM and vhost-vsock on the Linux runner." >&2
+            exit 1
+        fi
+        if [ -r /dev/vsock ] && [ -w /dev/vsock ]; then
+            DEVICE_ARGS+=("--device" "/dev/vsock")
+        fi
+    fi
     # A completed install target retains only top-level runtime binaries and
     # the previous package after the post-install purge below; it no longer
     # contains the dependency graph needed for the next build. Release that
@@ -1740,6 +1763,8 @@ _gate-install:
     echo "Starting systemd container..."
     docker run -d --name "$CONTAINER" \
         --privileged --cgroupns=host \
+        --security-opt seccomp=unconfined \
+        "${DEVICE_ARGS[@]}" \
         -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
         --tmpfs /run --tmpfs /tmp \
         -v "$PWD":/src \
@@ -1749,6 +1774,8 @@ _gate-install:
         -v capsem-install-frontend-node-modules:/src/frontend/node_modules \
         -v capsem-install-frontend-dist:/src/frontend/dist \
         "$IMAGE" /usr/lib/systemd/systemd
+    docker exec "$CONTAINER" test -r /dev/kvm -a -w /dev/kvm
+    docker exec "$CONTAINER" test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
     # Wait for systemd to be ready
     for i in $(seq 1 30); do
         if docker exec "$CONTAINER" systemctl is-system-running --wait 2>/dev/null | grep -qE "running|degraded"; then

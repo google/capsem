@@ -951,12 +951,28 @@ def test_host_builder_uses_digest_pinned_prebuilt_node_runtime() -> None:
 def test_standalone_install_gate_preflights_privileged_helper() -> None:
     block = _just_recipe_block("_gate-install")
 
+    capability = block.index("installed doctor requires KVM")
     release_install_target = block.index("just _release-deferred-install-target")
     capacity = block.index('"$ROOT/scripts/ensure-docker-space.sh" install-preflight')
     preflight = block.index("just _test-install-harness-preflight")
     start_container = block.index('echo "Starting systemd container..."')
 
-    assert release_install_target < capacity < preflight < start_container
+    assert capability < release_install_target < capacity < preflight < start_container
+
+
+def test_install_gate_passes_vm_devices_to_full_installed_proofs() -> None:
+    block = _just_recipe_block("_gate-install")
+
+    assert 'DEVICE_ARGS=("--device" "/dev/kvm" "--device" "/dev/vhost-vsock")' in block
+    assert 'DEVICE_ARGS+=("--device" "/dev/vsock")' in block
+    assert "--security-opt seccomp=unconfined" in block
+    assert '"${DEVICE_ARGS[@]}"' in block
+    assert 'docker exec "$CONTAINER" test -r /dev/kvm -a -w /dev/kvm' in block
+    assert (
+        'docker exec "$CONTAINER" test -r /dev/vhost-vsock '
+        "-a -w /dev/vhost-vsock"
+    ) in block
+    assert "CAPSEM_SKIP_KVM_CHECK" not in block
 
 
 def test_binary_release_sbom_jobs_install_zstd_for_deb_payloads() -> None:
