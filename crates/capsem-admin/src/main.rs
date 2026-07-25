@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap},
     fs,
-    io::{ErrorKind, Read, Write},
+    io::{ErrorKind, Read},
     path::{Path, PathBuf},
     process::{Command, Stdio},
 };
@@ -5682,8 +5682,7 @@ fn copy_profile_release_files(out_dir: &Path, copies: &[ProfileReleaseFileCopy])
                 .ok_or_else(|| anyhow!("profile release file path has no parent"))?,
         )
         .with_context(|| format!("create parent for {}", dst.display()))?;
-        fs::copy(&copy.source, &dst)
-            .with_context(|| format!("copy {} -> {}", copy.source.display(), dst.display()))?;
+        hardlink_or_copy(&copy.source, &dst)?;
     }
     Ok(())
 }
@@ -5715,37 +5714,28 @@ fn file_digest(path: &Path) -> Result<(u64, serde_json::Value)> {
 }
 
 fn copy_file_with_digest(source: &Path, destination: &Path) -> Result<(u64, serde_json::Value)> {
-    let mut input = fs::File::open(source).with_context(|| format!("open {}", source.display()))?;
-    let mut output = fs::File::create(destination)
-        .with_context(|| format!("create {}", destination.display()))?;
-    let mut sha256 = Sha256::new();
-    let mut blake3 = blake3::Hasher::new();
-    let mut bytes = 0_u64;
-    let mut buffer = [0_u8; 1024 * 1024];
-    loop {
-        let read = input
-            .read(&mut buffer)
-            .with_context(|| format!("read {}", source.display()))?;
-        if read == 0 {
-            break;
-        }
-        output
-            .write_all(&buffer[..read])
-            .with_context(|| format!("write {}", destination.display()))?;
-        bytes += read as u64;
-        sha256.update(&buffer[..read]);
-        blake3.update(&buffer[..read]);
+    hardlink_or_copy(source, destination)?;
+    file_digest(destination)
+}
+
+fn hardlink_or_copy(source: &Path, destination: &Path) -> Result<()> {
+    if destination.exists() {
+        fs::remove_file(destination)
+            .with_context(|| format!("replace {}", destination.display()))?;
     }
-    output
-        .flush()
-        .with_context(|| format!("flush {}", destination.display()))?;
-    Ok((
-        bytes,
-        serde_json::json!({
-            "sha256": format!("{:x}", sha256.finalize()),
-            "blake3": blake3.finalize().to_hex().to_string(),
-        }),
-    ))
+    match fs::hard_link(source, destination) {
+        Ok(()) => Ok(()),
+        Err(link_error) => {
+            fs::copy(source, destination).with_context(|| {
+                format!(
+                    "copy {} -> {} after hardlink failed: {link_error}",
+                    source.display(),
+                    destination.display()
+                )
+            })?;
+            Ok(())
+        }
+    }
 }
 
 fn validate_asset_digest(
@@ -10354,6 +10344,18 @@ decision = "block"
             fs::read(release_dir.join("arm64-vmlinuz")).expect("published kernel"),
             b"kernel-arm64"
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            let source = fs::metadata(assets_dir.join("arm64/vmlinuz")).unwrap();
+            let release = fs::metadata(release_dir.join("arm64-vmlinuz")).unwrap();
+            assert_eq!(
+                source.ino(),
+                release.ino(),
+                "same-filesystem immutable VM publication must hardlink instead of copying"
+            );
+        }
         assert!(release_dir.join("arm64-initrd.img").is_file());
         assert!(release_dir.join("arm64-rootfs.erofs").is_file());
         assert!(release_dir.join("arm64-obom.cdx.json").is_file());
@@ -10378,6 +10380,24 @@ decision = "block"
             })
             .find(|artifact| artifact["kind"].as_str() == Some("kernel"))
             .expect("arm64 kernel artifact");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+
+            let published = out_dir.join(
+                kernel_artifact["url"]
+                    .as_str()
+                    .expect("kernel publication URL")
+                    .trim_start_matches('/'),
+            );
+            assert_eq!(
+                fs::metadata(assets_dir.join("arm64/vmlinuz"))
+                    .unwrap()
+                    .ino(),
+                fs::metadata(published).unwrap().ino(),
+                "duplicate profile references must hardlink immutable VM bytes"
+            );
+        }
         assert_eq!(
             kernel_artifact["digest"]["blake3"],
             source_manifest_json["assets"]["releases"]["2030.0101.1"]["arches"]["arm64"]["vmlinuz"]
