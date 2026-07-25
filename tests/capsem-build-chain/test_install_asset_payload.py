@@ -1390,14 +1390,18 @@ def test_release_skills_require_space_efficient_immutable_staging() -> None:
         assert "constrained-disk" in skill
 
 
-def test_local_release_glowup_rejects_root_relative_runtime_asset_urls() -> None:
+def test_local_release_glowup_uses_the_safe_manifest_url_resolver() -> None:
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
     checker = script.split("def check_generated_release(", maxsplit=1)[1].split(
         "\ndef release_asset_urls", maxsplit=1
     )[0]
+    resolver = script.split("def local_release_artifact_path(", maxsplit=1)[1].split(
+        "\ndef release_asset_urls", maxsplit=1
+    )[0]
 
-    assert 'elif url.startswith("/")' not in checker
-    assert "generated VM asset URL is not absolute" in checker
+    assert "local_release_artifact_path(base_url, url, dist)" in checker
+    assert "safe_relative(" in resolver
+    assert "unquote(parsed.path)" in resolver
 
 
 def test_local_release_glowup_validates_vm_asset_blobs_are_served() -> None:
