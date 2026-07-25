@@ -113,6 +113,23 @@ def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     assert frontend < clippy < install_preflight
 
 
+def test_reusable_fast_gate_installs_workspace_clippy_prerequisites() -> None:
+    workflow = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(encoding="utf-8")
+    prerequisites = workflow.index("Install Linux workspace lint prerequisites")
+    shared_module = workflow.index("Run shared static module")
+
+    assert prerequisites < shared_module
+    for package in (
+        "pkg-config",
+        "libssl-dev",
+        "libgtk-3-dev",
+        "libwebkit2gtk-4.1-dev",
+        "libayatana-appindicator3-dev",
+        "libxdo-dev",
+    ):
+        assert package in workflow[prerequisites:shared_module]
+
+
 def test_standalone_functional_scripts_use_the_project_python() -> None:
     for recipe in ("_test-candidate-run", "smoke"):
         body = _recipe(recipe)

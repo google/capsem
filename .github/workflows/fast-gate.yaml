@@ -41,6 +41,17 @@ jobs:
             site/pnpm-lock.yaml
             release-site/pnpm-lock.yaml
 
+      - name: Install Linux workspace lint prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libssl-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev
+
       - name: Install prebuilt Rust gate tools
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
         with:
