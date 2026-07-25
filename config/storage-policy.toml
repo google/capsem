@@ -186,6 +186,12 @@ retention = "cache"
 owner = "install"
 reason = "Resolved pnpm dependencies are reused; generated dist is tracked separately."
 
+[resources.capsem-install-release-site-node-modules]
+kind = "volume"
+retention = "cache"
+owner = "install"
+reason = "Linux-native release-site dependencies are reused without sharing host-native optional bindings."
+
 [resources.capsem-linux-python-venv]
 kind = "volume"
 retention = "obsolete"

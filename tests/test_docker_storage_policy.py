@@ -67,6 +67,7 @@ def test_policy_declares_last_consumers_before_release_boundaries() -> None:
     assert resources["capsem-install-target"]["retention"] == "working"
     assert resources["capsem-cargo-registry"]["retention"] == "cache"
     assert resources["capsem-install-frontend-node-modules"]["retention"] == "cache"
+    assert resources["capsem-install-release-site-node-modules"]["retention"] == "cache"
     assert resources["capsem-linux-python-venv"]["retention"] == "obsolete"
 
 

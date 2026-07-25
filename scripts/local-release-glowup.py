@@ -36,7 +36,7 @@ import sys
 import threading
 from typing import cast
 import urllib.request
-from urllib.parse import urljoin
+from urllib.parse import unquote, urljoin, urlparse
 
 try:
     from release_glowup import (
@@ -68,9 +68,13 @@ except ModuleNotFoundError:
     )
 
 try:
-    from release_inputs import load_verified_release_inputs, safe_relative
+    from release_inputs import load_verified_release_inputs, safe_relative, verify_payload
 except ModuleNotFoundError:
-    from scripts.release_inputs import load_verified_release_inputs, safe_relative
+    from scripts.release_inputs import (
+        load_verified_release_inputs,
+        safe_relative,
+        verify_payload,
+    )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -299,7 +303,10 @@ def main() -> int:
         shutil.copy2(args.assets_dir / "manifest.json", stable_manifest)
         shutil.copy2(args.assets_dir / "manifest.json", nightly_manifest)
         report_disk_capacity(args.work_dir, "before immutable VM blob staging")
-        stage_vm_asset_blobs(stable_manifest, args.assets_dir, dist)
+        stage_manifest_artifacts(stable_manifest, args.assets_dir, dist, base_url)
+        # Both channels begin with the same verified profile cohort. Binary
+        # authoring below mutates only each manifest's package inventory.
+        shutil.copy2(stable_manifest, nightly_manifest)
 
         record_binary(
             admin, stable_manifest, stable_version, stable_deb, stable_sbom, stable_download_base
@@ -1105,8 +1112,17 @@ def copy_artifact_tree(source: Path, target: Path) -> None:
         shutil.copy2(source, target)
 
 
-def stage_vm_asset_blobs(manifest_path: Path, assets_dir: Path, dist: Path) -> None:
+def stage_manifest_artifacts(
+    manifest_path: Path,
+    assets_dir: Path,
+    dist: Path,
+    base_url: str,
+) -> None:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if isinstance(manifest.get("profiles"), dict):
+        _stage_graph_manifest_artifacts(manifest_path, manifest, dist, base_url)
+        return
+
     assets = manifest.get("assets")
     if not isinstance(assets, dict):
         raise SystemExit("local glow-up asset manifest has no assets object")
@@ -1131,6 +1147,88 @@ def stage_vm_asset_blobs(manifest_path: Path, assets_dir: Path, dist: Path) -> N
             # The immediately following capsem-admin channel build validates
             # every source digest against this same manifest.
             copy_artifact_tree(source, release_dir / f"{arch}-{logical_name}")
+
+
+def _stage_graph_manifest_artifacts(
+    manifest_path: Path,
+    manifest: dict[str, object],
+    dist: Path,
+    base_url: str,
+) -> None:
+    profiles = manifest.get("profiles")
+    if not isinstance(profiles, dict) or not profiles:
+        raise SystemExit("local glow-up release graph has no profiles")
+
+    staged: list[tuple[dict[str, object], Path, Path, bytes]] = []
+    for profile_id, profile in sorted(profiles.items()):
+        if not isinstance(profile, dict) or profile.get("status") == "revoked":
+            continue
+        architectures = profile.get("architectures")
+        if not isinstance(architectures, list) or not architectures:
+            raise SystemExit(f"local glow-up release profile {profile_id} has no architectures")
+        for architecture in architectures:
+            if not isinstance(architecture, dict):
+                raise SystemExit(
+                    f"local glow-up release profile {profile_id} has malformed architecture"
+                )
+            arch = architecture.get("architecture", "unknown")
+            for section in ("config", "images", "evidence"):
+                rows = architecture.get(section, [])
+                if not isinstance(rows, list):
+                    raise SystemExit(
+                        f"local glow-up release profile {profile_id}/{arch} "
+                        f"has malformed {section}"
+                    )
+                for index, row in enumerate(rows):
+                    if not isinstance(row, dict) or row.get("status") == "revoked":
+                        continue
+                    url = row.get("url")
+                    if not isinstance(url, str):
+                        raise SystemExit(
+                            f"local glow-up release profile {profile_id}/{arch} "
+                            f"{section}[{index}] has no URL"
+                        )
+                    parsed = urlparse(url)
+                    if parsed.scheme != "file" or parsed.netloc:
+                        raise SystemExit(
+                            f"local glow-up graph artifact must be a staged file URL: {url}"
+                        )
+                    source = Path(unquote(parsed.path))
+                    if not source.is_file():
+                        raise SystemExit(f"local glow-up graph artifact is missing: {source}")
+                    payload = source.read_bytes()
+                    label = (
+                        f"profile {profile_id}/{arch} {section}[{index}] "
+                        f"{row.get('name') or row.get('path') or row.get('kind') or url}"
+                    )
+                    try:
+                        verify_payload(payload, row, label)
+                    except ValueError as error:
+                        raise SystemExit(str(error)) from error
+                    digest = cast(dict[str, object], row["digest"])
+                    sha256 = cast(str, digest["sha256"]).lower()
+                    filename = source.name
+                    if not filename or filename in {".", ".."}:
+                        raise SystemExit(f"local glow-up graph artifact has unsafe name: {url}")
+                    relative = Path("artifacts") / "sha256" / sha256 / filename
+                    staged.append((row, source, dist / relative, payload))
+
+    if not staged:
+        raise SystemExit("local glow-up release graph resolved no profile artifacts")
+
+    for row, source, target, payload in staged:
+        if target.exists():
+            if not target.is_file() or target.read_bytes() != payload:
+                raise SystemExit(f"local glow-up graph artifact collision: {target}")
+        else:
+            copy_artifact_tree(source, target)
+        relative = target.relative_to(dist).as_posix()
+        row["url"] = f"{base_url.rstrip('/')}/{relative}"
+
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def check_generated_release(
@@ -1172,23 +1270,43 @@ def check_generated_release(
     )
     if expected_version is not None and expected_architecture is not None:
         package = assert_manifest_artifact(manifest, artifact)
+    profile_artifacts = release_profile_artifacts(manifest)
     missing_assets: list[str] = []
-    for url in release_asset_urls(manifest):
+    staged_assets: list[tuple[str, Path, dict[str, object]]] = []
+    for record in profile_artifacts:
+        url = cast(str, record["url"])
         if url.startswith(f"{base_url}/"):
             relative = url.removeprefix(f"{base_url}/")
         else:
             raise SystemExit(f"generated VM asset URL is not absolute and local: {url}")
-        if not (dist / relative).is_file():
+        artifact_path = dist / relative
+        if not artifact_path.is_file():
             missing_assets.append(url)
+        else:
+            staged_assets.append((url, artifact_path, record))
     if missing_assets:
         raise SystemExit(
             f"generated {channel} release is missing VM asset blob(s): " + ", ".join(missing_assets)
         )
+    for url, artifact_path, record in staged_assets:
+        try:
+            verify_payload(
+                artifact_path.read_bytes(),
+                record,
+                f"generated {channel} profile artifact {url}",
+            )
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
     return artifact
 
 
 def release_asset_urls(manifest: dict[str, object]) -> list[str]:
-    urls: list[str] = []
+    return [cast(str, record["url"]) for record in release_profile_artifacts(manifest)]
+
+
+def release_profile_artifacts(manifest: dict[str, object]) -> list[dict[str, object]]:
+    artifacts: list[dict[str, object]] = []
+    image_count = 0
     profiles = manifest.get("profiles")
     if not isinstance(profiles, dict):
         raise SystemExit("generated stable release manifest has no profile graph")
@@ -1203,7 +1321,7 @@ def release_asset_urls(manifest: dict[str, object]) -> list[str]:
             if not isinstance(architecture, dict):
                 continue
             architecture_fields = cast(dict[str, object], architecture)
-            for section in ("images", "evidence"):
+            for section in ("config", "images", "evidence"):
                 rows = architecture_fields.get(section)
                 if not isinstance(rows, list):
                     continue
@@ -1212,12 +1330,12 @@ def release_asset_urls(manifest: dict[str, object]) -> list[str]:
                         continue
                     row_fields = cast(dict[str, object], row)
                     if isinstance(row_fields.get("url"), str):
-                        url = cast(str, row_fields["url"])
-                        if "/assets/releases/" in url:
-                            urls.append(url)
-    if not urls:
+                        artifacts.append(row_fields)
+                        if section == "images":
+                            image_count += 1
+    if image_count == 0:
         raise SystemExit("generated stable release manifest has no VM asset URLs")
-    return urls
+    return artifacts
 
 
 def _exact_installed_probe_shell(evidence_dir: Path) -> str:

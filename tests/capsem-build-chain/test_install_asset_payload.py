@@ -1,7 +1,9 @@
 """Install package asset-payload contract tests."""
 
 import errno
+import hashlib
 import importlib.util
+import json
 import os
 import re
 import subprocess
@@ -11,6 +13,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
+from blake3 import blake3
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -451,17 +454,34 @@ def test_install_test_keeps_frontend_build_outputs_container_owned() -> None:
 
     assert "-v capsem-install-frontend-node-modules:/src/frontend/node_modules" in block
     assert "-v capsem-install-frontend-dist:/src/frontend/dist" in block
+    assert (
+        "-v capsem-install-release-site-node-modules:/src/release-site/node_modules"
+        in block
+    )
     assert "chown -R capsem:capsem /src/frontend/node_modules /src/frontend/dist" in block
+    assert "chown -R capsem:capsem /src/release-site/node_modules" in block
+    install_release_site = block.index(
+        "cd /src/release-site && pnpm install --frozen-lockfile"
+    )
+    build_release_site = block.index("scripts/check-web-surface.sh release-site-build")
+    assert install_release_site < build_release_site
+    release_site_exec = block.rfind("docker exec", install_release_site, build_release_site)
+    assert 'docker exec "$CONTAINER"' in block[release_site_exec:build_release_site]
+    assert "docker exec -u capsem" not in block[release_site_exec:build_release_site]
 
 
 def test_install_test_removes_stale_container_before_controller_preflight() -> None:
-    block = _just_recipe_block("_gate-install")
+    block = _just_recipe_block("_gate-install").replace(r"\"", '"')
 
     remove_stale = block.index('docker rm -f "$CONTAINER"')
     release_working = block.index("just _release-completed-package-rails")
     capacity = block.index('scripts/ensure-docker-space.sh" install', release_working)
+    remove_partial_channel = block.index('rm -rf "$INSTALL_CHANNEL_DIR"')
+    start_container = block.index('echo "Starting systemd container..."')
 
     assert remove_stale < release_working < capacity
+    assert remove_partial_channel < start_container
+    assert 'INSTALL_CHANNEL_DIR="target/install-test-channel"' in block
     assert "docker system df -v" not in block
     assert "docker volume rm" not in block
 
@@ -481,6 +501,7 @@ def test_install_test_runs_local_release_glowup_from_real_package() -> None:
 def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> None:
     block = _just_recipe_block("_gate-install").replace(r"\"", '"').replace(r"\$", "$")
     update_tests = (PROJECT_ROOT / "tests/capsem-install/test_update.py").read_text()
+    layout_tests = (PROJECT_ROOT / "tests/capsem-install/test_installed_layout.py").read_text()
 
     assert 'INSTALL_ASSETS_DIR="target/install-test-assets"' in block
     assert 'INSTALL_CONFIG_DIR="target/install-test-config"' in block
@@ -496,12 +517,26 @@ def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> No
         "bash scripts/materialize-config.sh"
     ) in block
     assert '"$INSTALL_CONFIG_DIR" "$INSTALL_ASSETS_DIR"' in block
-    assert 'CAPSEM_TEST_ASSET_MANIFEST="/src/$INSTALL_ASSETS_DIR/manifest.json"' in block
+    assert 'INSTALL_SOURCE_MANIFEST="$INSTALL_CHANNEL_DIR/assets/local/manifest.json"' in block
+    assert "scripts/serve-release-test-root.py" in block
+    assert "capsem-admin assets channel build" in block
+    assert "capsem-admin assets channel check" in block
+    build_graph = block.index("capsem-admin assets channel build")
+    build_site = block.index("scripts/check-web-surface.sh release-site-build")
+    check_graph = block.index("capsem-admin assets channel check")
+    assert build_graph < build_site < check_graph
+    assert "CAPSEM_RELEASE_CHANNEL_DIST=" in block
+    assert "/src/$INSTALL_CHANNEL_DIR" in block
+    assert 'CAPSEM_TEST_ASSET_MANIFEST="/src/$INSTALL_SOURCE_MANIFEST"' in block
     assert '--assets-dir "$INSTALL_ASSETS_DIR"' in block
     assert '--config-root "$INSTALL_CONFIG_DIR"' in block
-    assert '"target" / "install-test-assets" / "manifest.json"' in update_tests
+    assert 'TEST_ASSET_MANIFEST = os.environ.get("CAPSEM_TEST_ASSET_MANIFEST")' in update_tests
+    assert "def _default_release_graph() -> dict:" in update_tests
+    assert "install tests require an authoritative release graph" in update_tests
     assert 'REPO_ROOT / "assets" / "manifest.json"' not in update_tests
-    assert "run just _gate-install with rebuilt or pulled profile assets" in update_tests
+    assert "native package installed a legacy/runtime projection" in layout_tests
+    assert "installed.read_bytes() == SOURCE_MANIFEST.read_bytes()" in layout_tests
+    assert "assets downloaded on first use, not bundled in .deb" not in layout_tests
 
 
 def test_install_test_authors_exact_candidate_manifest_before_dpkg() -> None:
@@ -1047,7 +1082,10 @@ def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:
     assert 'f"{base_url}/releases/download/{channel}"' in build_channel
     assert "--asset-source-base" in build_channel
     assert 'f"{base_url}/assets/releases/{{asset_version}}"' in build_channel
-    assert "stage_vm_asset_blobs(stable_manifest, args.assets_dir, dist)" in script
+    assert (
+        "stage_manifest_artifacts("
+        in script
+    )
 
 
 def test_local_release_glowup_uses_preserved_admin_binary_without_rebuild() -> None:
@@ -1172,6 +1210,116 @@ def test_local_release_glowup_does_not_copy_after_real_disk_exhaustion(
     assert not copy_attempted
 
 
+def test_local_release_glowup_stages_graph_bytes_by_manifest_digest(
+    tmp_path: Path,
+) -> None:
+    glowup = _load_local_release_glowup()
+    source = tmp_path / "inputs" / "profile.toml"
+    source.parent.mkdir()
+    payload = b'id = "code"\nrevision = "2030.0101.1"\n'
+    source.write_bytes(payload)
+    record = {
+        "kind": "profile",
+        "path": "profiles/code/profile.toml",
+        "url": source.resolve().as_uri(),
+        "bytes": len(payload),
+        "digest": {
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "blake3": blake3(payload).hexdigest(),
+        },
+        "status": "current",
+    }
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "packages": [{"status": "current"}],
+                "profiles": {
+                    "code": {
+                        "status": "current",
+                        "architectures": [
+                            {
+                                "architecture": "arm64",
+                                "config": [record],
+                                "images": [],
+                                "evidence": [],
+                            }
+                        ],
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    dist = tmp_path / "dist"
+    base_url = "http://127.0.0.1:43123"
+
+    glowup.stage_manifest_artifacts(manifest_path, tmp_path / "unused", dist, base_url)
+
+    staged = json.loads(manifest_path.read_text(encoding="utf-8"))
+    staged_record = staged["profiles"]["code"]["architectures"][0]["config"][0]
+    expected_relative = (
+        Path("artifacts")
+        / "sha256"
+        / hashlib.sha256(payload).hexdigest()
+        / "profile.toml"
+    )
+    assert staged_record["url"] == f"{base_url}/{expected_relative.as_posix()}"
+    assert (dist / expected_relative).read_bytes() == payload
+    assert os.path.samefile(source, dist / expected_relative)
+
+
+def test_local_release_glowup_rejects_graph_bytes_not_matching_manifest(
+    tmp_path: Path,
+) -> None:
+    glowup = _load_local_release_glowup()
+    source = tmp_path / "inputs" / "rootfs.erofs"
+    source.parent.mkdir()
+    payload = b"corrupt-rootfs"
+    source.write_bytes(payload)
+    record = {
+        "kind": "rootfs",
+        "name": "rootfs.erofs",
+        "url": source.resolve().as_uri(),
+        "bytes": len(payload),
+        "digest": {
+            "sha256": "0" * 64,
+            "blake3": blake3(payload).hexdigest(),
+        },
+        "status": "current",
+    }
+    manifest_path = tmp_path / "manifest.json"
+    original = json.dumps(
+        {
+            "packages": [{"status": "current"}],
+            "profiles": {
+                "code": {
+                    "status": "current",
+                    "architectures": [
+                        {
+                            "architecture": "arm64",
+                            "config": [],
+                            "images": [record],
+                            "evidence": [],
+                        }
+                    ],
+                }
+            },
+        }
+    )
+    manifest_path.write_text(original, encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="SHA-256 mismatch"):
+        glowup.stage_manifest_artifacts(
+            manifest_path,
+            tmp_path / "unused",
+            tmp_path / "dist",
+            "http://127.0.0.1:43123",
+        )
+
+    assert manifest_path.read_text(encoding="utf-8") == original
+
+
 def test_local_release_glowup_reports_capacity_before_late_asset_staging(
     tmp_path: Path,
     monkeypatch,
@@ -1190,6 +1338,44 @@ def test_local_release_glowup_reports_capacity_before_late_asset_staging(
     assert capsys.readouterr().out == (
         "Disk capacity (before immutable VM blob staging): 12.0 GiB free of 20.0 GiB\n"
     )
+
+
+def test_release_site_overlay_replaces_partial_files_without_clobbering_artifacts(
+    tmp_path: Path,
+) -> None:
+    site = tmp_path / "release-site"
+    source = site / "dist"
+    source.joinpath("profiles", "code").mkdir(parents=True)
+    source.joinpath("index.html").write_text("complete-index", encoding="utf-8")
+    source.joinpath("profiles", "code", "index.html").write_text(
+        "complete-profile",
+        encoding="utf-8",
+    )
+    target = tmp_path / "release-channel"
+    target.joinpath("profiles", "releases").mkdir(parents=True)
+    immutable = target / "profiles" / "releases" / "profile.toml"
+    immutable.write_text("immutable-profile-artifact", encoding="utf-8")
+    stale = target / "index.html"
+    stale.write_text("", encoding="utf-8")
+    stale.chmod(0o200)
+
+    result = subprocess.run(
+        [
+            "node",
+            str(PROJECT_ROOT / "release-site" / "scripts" / "overlay-dist.mjs"),
+        ],
+        cwd=site,
+        env={**os.environ, "CAPSEM_RELEASE_CHANNEL_DIST": str(target)},
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert stale.read_text(encoding="utf-8") == "complete-index"
+    assert target.joinpath("profiles", "code", "index.html").read_text(
+        encoding="utf-8"
+    ) == "complete-profile"
+    assert immutable.read_text(encoding="utf-8") == "immutable-profile-artifact"
 
 
 def test_release_skills_require_space_efficient_immutable_staging() -> None:
@@ -1219,7 +1405,8 @@ def test_local_release_glowup_validates_vm_asset_blobs_are_served() -> None:
 
     assert "release_asset_urls" in script
     assert "release is missing VM asset blob" in script
-    assert '"/assets/releases/"' in script
+    assert '"artifacts") / "sha256"' in script
+    assert "verify_payload(" in script
 
 
 def test_local_release_glowup_preflights_stable_and_nightly_manifests() -> None:
@@ -1289,6 +1476,73 @@ def test_local_release_glowup_generated_release_checker_rejects_missing_asset_bl
             raise AssertionError("missing VM asset blob was accepted")
 
 
+def test_local_release_glowup_generated_release_checker_rejects_tampered_blob(
+    tmp_path: Path,
+) -> None:
+    glowup = _load_local_release_glowup()
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    deb = tmp_path / "Capsem_1.5.1_amd64.deb"
+
+    with glowup.local_release_server(dist) as base_url:
+        package_path = dist / "releases/download/v1.5.1/Capsem_1.5.1_amd64.deb"
+        package_path.parent.mkdir(parents=True)
+        package_path.write_bytes(b"fixture deb")
+        expected = b"verified-rootfs"
+        artifact_path = dist / "artifacts/sha256" / hashlib.sha256(expected).hexdigest() / "rootfs.erofs"
+        artifact_path.parent.mkdir(parents=True)
+        artifact_path.write_bytes(b"tampered-rootfs")
+        manifest_path = dist / "assets" / "stable" / "manifest.json"
+        manifest_path.parent.mkdir(parents=True)
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "packages": [
+                        {
+                            "name": "Capsem_1.5.1_amd64.deb",
+                            "url": (
+                                f"{base_url}/releases/download/v1.5.1/"
+                                "Capsem_1.5.1_amd64.deb"
+                            ),
+                        }
+                    ],
+                    "profiles": {
+                        "code": {
+                            "architectures": [
+                                {
+                                    "images": [
+                                        {
+                                            "kind": "rootfs",
+                                            "name": "rootfs.erofs",
+                                            "url": f"{base_url}/{artifact_path.relative_to(dist)}",
+                                            "bytes": len(expected),
+                                            "digest": {
+                                                "sha256": hashlib.sha256(expected).hexdigest(),
+                                                "blake3": blake3(expected).hexdigest(),
+                                            },
+                                        }
+                                    ],
+                                    "config": [],
+                                    "evidence": [],
+                                }
+                            ]
+                        }
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with pytest.raises(SystemExit, match="SHA-256 mismatch|byte size mismatch"):
+            glowup.check_generated_release(
+                base_url,
+                f"{base_url}/assets/stable/manifest.json",
+                deb,
+                dist,
+                "stable",
+            )
+
+
 def test_local_release_glowup_generated_release_checker_accepts_local_assets(
     tmp_path: Path,
 ) -> None:
@@ -1301,40 +1555,65 @@ def test_local_release_glowup_generated_release_checker_accepts_local_assets(
         package_path = dist / "releases/download/v1.5.1/Capsem_1.5.1_amd64.deb"
         package_path.parent.mkdir(parents=True)
         package_path.write_bytes(b"fixture deb")
+        payload = b"fixture"
         for relative in (
             "assets/releases/2026.0709.13/x86_64-rootfs.erofs",
             "assets/releases/2026.0709.13/obom.cdx.json",
         ):
             target = dist / relative
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(b"fixture")
+            target.write_bytes(payload)
         manifest_path = dist / "assets" / "nightly" / "manifest.json"
         manifest_path.parent.mkdir(parents=True)
         manifest_path.write_text(
-            """{
-  "packages": [
-    {
-      "name": "Capsem_1.5.1_amd64.deb",
-      "url": "%s/releases/download/v1.5.1/Capsem_1.5.1_amd64.deb"
-    }
-  ],
-  "profiles": {
-    "co-work": {
-      "architectures": [
-        {
-          "images": [
-            {"url": "%s/assets/releases/2026.0709.13/x86_64-rootfs.erofs"}
-          ],
-          "evidence": [
-            {"url": "%s/assets/releases/2026.0709.13/obom.cdx.json"}
-          ]
-        }
-      ]
-    }
-  }
-}
-"""
-            % (base_url, base_url, base_url),
+            json.dumps(
+                {
+                    "packages": [
+                        {
+                            "name": "Capsem_1.5.1_amd64.deb",
+                            "url": (
+                                f"{base_url}/releases/download/v1.5.1/"
+                                "Capsem_1.5.1_amd64.deb"
+                            ),
+                        }
+                    ],
+                    "profiles": {
+                        "co-work": {
+                            "architectures": [
+                                {
+                                    "images": [
+                                        {
+                                            "url": (
+                                                f"{base_url}/assets/releases/2026.0709.13/"
+                                                "x86_64-rootfs.erofs"
+                                            ),
+                                            "bytes": len(payload),
+                                            "digest": {
+                                                "sha256": hashlib.sha256(payload).hexdigest(),
+                                                "blake3": blake3(payload).hexdigest(),
+                                            },
+                                        }
+                                    ],
+                                    "config": [],
+                                    "evidence": [
+                                        {
+                                            "url": (
+                                                f"{base_url}/assets/releases/2026.0709.13/"
+                                                "obom.cdx.json"
+                                            ),
+                                            "bytes": len(payload),
+                                            "digest": {
+                                                "sha256": hashlib.sha256(payload).hexdigest(),
+                                                "blake3": blake3(payload).hexdigest(),
+                                            },
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    },
+                }
+            ),
             encoding="utf-8",
         )
 

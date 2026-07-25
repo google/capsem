@@ -1731,8 +1731,23 @@ _gate-install:
     CONTAINER="capsem-install-test"
     INSTALL_ASSETS_DIR="target/install-test-assets"
     INSTALL_CONFIG_DIR="target/install-test-config"
+    INSTALL_CHANNEL_DIR="target/install-test-channel"
     INSTALL_PROFILE_INPUTS="${CAPSEM_INSTALL_PROFILE_INPUTS:-}"
+    BUILD_LOCAL_RELEASE_GRAPH=0
+    INSTALL_SOURCE_MANIFEST="$INSTALL_ASSETS_DIR/manifest.json"
+    INSTALL_MANIFEST_URL="file:///src/$INSTALL_SOURCE_MANIFEST"
     HOST_ROSETTA_REGISTRATION=not_applicable
+    case "$INSTALL_CHANNEL_DIR" in
+        target/*) ;;
+        *)
+            echo "ERROR: install channel scratch path escaped target/: $INSTALL_CHANNEL_DIR" >&2
+            exit 1
+            ;;
+    esac
+    # A failed site overlay can leave write-only partial HTML on a macOS bind
+    # mount. The host owns this generated scratch tree, so clear it before the
+    # container exists; profile artifacts are regenerated from the manifest.
+    rm -rf "$INSTALL_CHANNEL_DIR"
     cleanup() {
         install_gate_exit=$?
         trap - EXIT
@@ -1783,6 +1798,7 @@ _gate-install:
         -v capsem-install-rustup:/usr/local/rustup \
         -v capsem-install-frontend-node-modules:/src/frontend/node_modules \
         -v capsem-install-frontend-dist:/src/frontend/dist \
+        -v capsem-install-release-site-node-modules:/src/release-site/node_modules \
         "$IMAGE" /usr/lib/systemd/systemd
     if [ "$LINUX_VM_PROOF" -eq 1 ]; then
         docker exec "$CONTAINER" test -r /dev/kvm -a -w /dev/kvm
@@ -1804,7 +1820,7 @@ _gate-install:
     # chown below; pnpm can then install successfully while Vite fails later
     # when it creates node_modules/.vite. Dedicated volumes make both writes
     # behave exactly like the non-root Linux CI filesystem.
-    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target /src/frontend/node_modules /src/frontend/dist && chown -R capsem:capsem /cargo-target /usr/local/cargo /usr/local/rustup && chown -R capsem:capsem /src/frontend/node_modules /src/frontend/dist"
+    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target /src/frontend/node_modules /src/frontend/dist /src/release-site/node_modules && chown -R capsem:capsem /cargo-target /usr/local/cargo /usr/local/rustup && chown -R capsem:capsem /src/frontend/node_modules /src/frontend/dist && chown -R capsem:capsem /src/release-site/node_modules"
     # On GitHub runners the bind-mounted /src is owned by uid 1001
     # (runner), but the container builds as uid 1000 (capsem). Anything
     # that tries to write into /src (pnpm/vite temp files, Tauri build.rs
@@ -1838,13 +1854,27 @@ _gate-install:
             "cd /src && test -f assets/manifest.json || { echo 'ERROR: installed VM proof requires rebuilt local assets or verified pulled profile inputs' >&2; exit 1; }"
         docker exec -u capsem "$CONTAINER" bash -c \
             "cd /src && rm -rf \"$INSTALL_ASSETS_DIR\" \"$INSTALL_CONFIG_DIR\" && mkdir -p \"$INSTALL_ASSETS_DIR\" && cp -R assets/. \"$INSTALL_ASSETS_DIR/\""
+        BUILD_LOCAL_RELEASE_GRAPH=1
+        INSTALL_SOURCE_MANIFEST="$INSTALL_CHANNEL_DIR/assets/local/manifest.json"
+        docker exec -u capsem "$CONTAINER" bash -c \
+            "cd /src && rm -rf \"$INSTALL_CHANNEL_DIR\" && mkdir -p \"$INSTALL_CHANNEL_DIR\" && rm -f /tmp/capsem-install-release.json"
+        docker exec -d -u capsem "$CONTAINER" bash -c \
+            "cd /src && python3 scripts/serve-release-test-root.py --root \"$INSTALL_CHANNEL_DIR\" --ready-file /tmp/capsem-install-release.json"
+        for _ in $(seq 1 100); do
+            if docker exec -u capsem "$CONTAINER" test -f /tmp/capsem-install-release.json; then
+                break
+            fi
+            sleep 0.05
+        done
+        INSTALL_RELEASE_BASE="$(docker exec -u capsem "$CONTAINER" python3 -c 'import json; print(json.load(open("/tmp/capsem-install-release.json"))["base_url"])')"
+        INSTALL_MANIFEST_URL="$INSTALL_RELEASE_BASE/assets/local/manifest.json"
     fi
     echo "Materializing runtime config..."
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && CAPSEM_ASSETS_DIR=\"$INSTALL_ASSETS_DIR\" CAPSEM_CONFIG_OUTPUT_ROOT=\"/src/$INSTALL_CONFIG_DIR\" bash scripts/materialize-config.sh"
     echo "Repacking .deb with companion binaries..."
     docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh --manifest \"file://\$PWD/$INSTALL_ASSETS_DIR/manifest.json\" \"\$DEB\" /cargo-target/debug \"$INSTALL_CONFIG_DIR\" \"$INSTALL_ASSETS_DIR\""
+        "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh --manifest \"$INSTALL_MANIFEST_URL\" \"\$DEB\" /cargo-target/debug \"$INSTALL_CONFIG_DIR\" \"$INSTALL_ASSETS_DIR\""
     echo "Authoring exact candidate manifest for the installed package..."
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && \
@@ -1864,6 +1894,27 @@ _gate-install:
             --version \"\$VERSION\" \
             --artifact \"\$CANDIDATE_DEB\" \
             --artifact \"\$SBOM\""
+    if [ "$BUILD_LOCAL_RELEASE_GRAPH" -eq 1 ]; then
+        echo "Generating authoritative local release graph..."
+        docker exec -u capsem "$CONTAINER" bash -c \
+            "cd /src && /cargo-target/debug/capsem-admin assets channel build \
+                --manifest \"file:///src/$INSTALL_ASSETS_DIR/manifest.json\" \
+                --assets-dir \"$INSTALL_ASSETS_DIR\" \
+                --profiles-dir \"$INSTALL_CONFIG_DIR/profiles\" \
+                --channel local \
+                --manifest-version 1.0.0 \
+                --out-dir \"$INSTALL_CHANNEL_DIR\""
+        docker exec -u capsem "$CONTAINER" bash -c \
+            "cd /src/release-site && pnpm install --frozen-lockfile"
+        docker exec "$CONTAINER" bash -c \
+            "cd /src && CAPSEM_RELEASE_CHANNEL_DIST=\"/src/$INSTALL_CHANNEL_DIR\" \
+                bash scripts/check-web-surface.sh release-site-build"
+        docker exec -u capsem "$CONTAINER" bash -c \
+            "cd /src && test -f \"$INSTALL_SOURCE_MANIFEST\" && \
+                /cargo-target/debug/capsem-admin assets channel check \
+                    --channel local \
+                    --dist \"$INSTALL_CHANNEL_DIR\""
+    fi
     echo "Installing .deb via dpkg..."
     docker exec "$CONTAINER" bash -c \
         "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"
@@ -1886,7 +1937,7 @@ _gate-install:
     # of deep inside a fixture after hours of otherwise-green release work.
     "$ROOT/scripts/ensure-docker-space.sh" install
     echo "Running install e2e tests..."
-    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_BIN_SRC=/cargo-target/debug -e CAPSEM_TEST_ASSET_MANIFEST="/src/$INSTALL_ASSETS_DIR/manifest.json" "$CONTAINER" bash -c \
+    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_BIN_SRC=/cargo-target/debug -e CAPSEM_TEST_ASSET_MANIFEST="/src/$INSTALL_SOURCE_MANIFEST" "$CONTAINER" bash -c \
         "mkdir -p /home/capsem/tmp && cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test TMPDIR=/home/capsem/tmp uv run python -m pytest tests/capsem-install/ -v --tb=short"
     if [ "$LINUX_VM_PROOF" -eq 1 ]; then
         echo "Running Linux native release glow-up (install, channel switch, upgrade)..."

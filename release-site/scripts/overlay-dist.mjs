@@ -1,5 +1,12 @@
-import { cpSync, existsSync, statSync } from 'node:fs';
-import { isAbsolute, resolve } from 'node:path';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
+import { isAbsolute, join, resolve } from 'node:path';
 
 const channelDist = process.env.CAPSEM_RELEASE_CHANNEL_DIST;
 if (!channelDist) {
@@ -21,7 +28,24 @@ if (statSync(target).isFile()) {
   process.exit(0);
 }
 
-cpSync(source, target, { recursive: true });
+overlayTree(source, target);
+
+function overlayTree(sourceDir, targetDir) {
+  mkdirSync(targetDir, { recursive: true });
+  for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+    const sourcePath = join(sourceDir, entry.name);
+    const targetPath = join(targetDir, entry.name);
+    if (entry.isDirectory()) {
+      if (existsSync(targetPath) && !statSync(targetPath).isDirectory()) {
+        rmSync(targetPath, { recursive: true, force: true });
+      }
+      overlayTree(sourcePath, targetPath);
+      continue;
+    }
+    rmSync(targetPath, { recursive: true, force: true });
+    cpSync(sourcePath, targetPath);
+  }
+}
 
 function resolveReleaseDist(path) {
   if (isAbsolute(path)) {
