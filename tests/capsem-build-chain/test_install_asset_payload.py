@@ -964,10 +964,14 @@ def test_install_gate_passes_vm_devices_to_full_installed_proofs() -> None:
     block = _just_recipe_block("_gate-install")
 
     assert 'if [ "$(uname -s)" = "Linux" ]; then' in block
-    assert 'DEVICE_ARGS=("--device" "/dev/kvm" "--device" "/dev/vhost-vsock")' in block
-    assert 'DEVICE_ARGS+=("--device" "/dev/vsock")' in block
+    assert "DOCKER_RUNTIME_ARGS=(" in block
     assert "--security-opt seccomp=unconfined" in block
-    assert '"${DEVICE_ARGS[@]}"' in block
+    assert (
+        'DOCKER_RUNTIME_ARGS+=("--device" "/dev/kvm" '
+        '"--device" "/dev/vhost-vsock")'
+    ) in block
+    assert 'DOCKER_RUNTIME_ARGS+=("--device" "/dev/vsock")' in block
+    assert '"${DOCKER_RUNTIME_ARGS[@]}"' in block
     assert 'docker exec "$CONTAINER" test -r /dev/kvm -a -w /dev/kvm' in block
     assert (
         'docker exec "$CONTAINER" test -r /dev/vhost-vsock '

@@ -1684,7 +1684,9 @@ _gate-install:
     # masked the asset-URL bug for v1.0.1777065213).
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
-    DEVICE_ARGS=()
+    DOCKER_RUNTIME_ARGS=(
+        --security-opt seccomp=unconfined
+    )
     LINUX_VM_PROOF=0
     if [ "$(uname -s)" = "Linux" ]; then
         if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ] \
@@ -1692,9 +1694,9 @@ _gate-install:
             echo "ERROR: installed doctor requires KVM and vhost-vsock on the Linux runner." >&2
             exit 1
         fi
-        DEVICE_ARGS=("--device" "/dev/kvm" "--device" "/dev/vhost-vsock")
+        DOCKER_RUNTIME_ARGS+=("--device" "/dev/kvm" "--device" "/dev/vhost-vsock")
         if [ -r /dev/vsock ] && [ -w /dev/vsock ]; then
-            DEVICE_ARGS+=("--device" "/dev/vsock")
+            DOCKER_RUNTIME_ARGS+=("--device" "/dev/vsock")
         fi
         LINUX_VM_PROOF=1
     fi
@@ -1755,8 +1757,7 @@ _gate-install:
     echo "Starting systemd container..."
     docker run -d --name "$CONTAINER" \
         --privileged --cgroupns=host \
-        --security-opt seccomp=unconfined \
-        "${DEVICE_ARGS[@]}" \
+        "${DOCKER_RUNTIME_ARGS[@]}" \
         -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
         --tmpfs /run --tmpfs /tmp \
         -v "$PWD":/src \
