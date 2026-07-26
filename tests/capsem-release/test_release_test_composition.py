@@ -318,10 +318,12 @@ def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) 
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert trace.read_text(encoding="utf-8").splitlines() == [
-        f"pnpm:{PROJECT_ROOT / 'release-site'}:install --frozen-lockfile",
-        "just:release-contracts:_test-candidate-run",
-    ]
+    trace_lines = trace.read_text(encoding="utf-8").splitlines()
+    pnpm_command, pnpm_cwd, pnpm_args = trace_lines[0].split(":", maxsplit=2)
+    assert pnpm_command == "pnpm"
+    assert Path(pnpm_cwd).resolve() == (PROJECT_ROOT / "release-site").resolve()
+    assert pnpm_args == "install --frozen-lockfile"
+    assert trace_lines[1:] == ["just:release-contracts:_test-candidate-run"]
 
 
 def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
