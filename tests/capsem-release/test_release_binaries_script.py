@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import sys
 from typing import Sequence
@@ -33,14 +34,24 @@ class FakeRunner:
         current_release_tag: str = "",
         omit_cargo_lock_change: bool = False,
         mixed_version_cohort: bool = False,
+        current_release_channel: str | None = None,
+        run_rows: list[dict[str, object]] | None = None,
+        pending_local_release: bool = False,
+        divergent_pending_release: bool = False,
     ) -> None:
         self.root = root
         self.unexpected = unexpected
         self.current_release_tag = current_release_tag
         self.omit_cargo_lock_change = omit_cargo_lock_change
         self.mixed_version_cohort = mixed_version_cohort
+        self.current_release_channel = current_release_channel
+        self.run_rows = run_rows
+        self.pending_local_release = pending_local_release
+        self.divergent_pending_release = divergent_pending_release
         self.calls: list[tuple[str, ...]] = []
         self.stamped = False
+        self.dispatched_tag = ""
+        self.dispatched_channel = ""
 
     def run(
         self,
@@ -67,11 +78,37 @@ class FakeRunner:
             return RELEASE.CommandResult("main\n")
         if command in (
             ("git", "rev-parse", "HEAD"),
-            ("git", "rev-parse", "origin/main"),
         ):
             return RELEASE.CommandResult("a" * 40 + "\n")
+        if command == ("git", "rev-parse", "origin/main"):
+            value = "b" * 40 if self.pending_local_release else "a" * 40
+            return RELEASE.CommandResult(value + "\n")
+        if command == ("git", "rev-parse", "HEAD^"):
+            value = "c" * 40 if self.divergent_pending_release else "b" * 40
+            return RELEASE.CommandResult(value + "\n")
+        if command == ("git", "rev-list", "--count", "origin/main..HEAD"):
+            return RELEASE.CommandResult("1\n" if self.pending_local_release else "0\n")
+        if command == ("git", "log", "-1", "--format=%s"):
+            return RELEASE.CommandResult(
+                f"release({self.current_release_channel}): {self.current_release_tag}\n"
+            )
         if command == ("git", "tag", "--points-at", "HEAD", "--list", "v*"):
             return RELEASE.CommandResult(f"{self.current_release_tag}\n")
+        if command == (
+            "git",
+            "tag",
+            "--list",
+            self.current_release_tag,
+            "--format=%(contents)",
+        ):
+            suffix = (
+                f" channel={self.current_release_channel}"
+                if self.current_release_channel is not None
+                else ""
+            )
+            return RELEASE.CommandResult(
+                f"Capsem {self.current_release_tag.removeprefix('v')}{suffix}\n"
+            )
         if command == ("just", "_stamp-version"):
             self.stamped = True
             for path in RELEASE.MUTATED_PATHS:
@@ -110,8 +147,35 @@ class FakeRunner:
             return RELEASE.CommandResult("")
         if command[:3] == ("git", "tag", "--list"):
             return RELEASE.CommandResult("")
+        if command[:3] == ("gh", "workflow", "run"):
+            self.dispatched_tag = command[command.index("--ref") + 1]
+            fields = [
+                command[index + 1]
+                for index, value in enumerate(command)
+                if value == "-f"
+            ]
+            self.dispatched_channel = next(
+                value.removeprefix("channel=")
+                for value in fields
+                if value.startswith("channel=")
+            )
+            return RELEASE.CommandResult("")
         if command[:4] == ("gh", "run", "list", "--workflow"):
-            return RELEASE.CommandResult("42\n")
+            rows = self.run_rows
+            if rows is None:
+                rows = []
+            if not rows and self.dispatched_tag:
+                tag = self.dispatched_tag or self.current_release_tag or "v1.6.2000000000"
+                channel = self.dispatched_channel or self.current_release_channel or "nightly"
+                rows = [
+                    {
+                        "databaseId": 42,
+                        "displayTitle": f"Release {channel} {tag}",
+                        "status": "in_progress",
+                        "conclusion": "",
+                    }
+                ]
+            return RELEASE.CommandResult(json.dumps(rows))
         return RELEASE.CommandResult("")
 
 
@@ -227,12 +291,138 @@ def test_nightly_release_skips_when_main_has_no_unreleased_binary_change(
     assert not any(call[:3] == ("gh", "workflow", "run") for call in runner.calls)
 
 
+def test_tagged_nightly_with_missing_dispatch_resumes_without_new_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    tag = "v1.6.1000000000"
+    runner = FakeRunner(
+        tmp_path,
+        current_release_tag=tag,
+        current_release_channel="nightly",
+        run_rows=[],
+    )
+
+    resumed_tag, run_id = RELEASE.release_binaries("nightly", runner)
+
+    assert (resumed_tag, run_id) == (tag, "42")
+    assert ("just", "_stamp-version") not in runner.calls
+    assert any(call[:3] == ("gh", "workflow", "run") for call in runner.calls)
+    assert ("gh", "run", "watch", "42", "--exit-status") in runner.calls
+
+
+def test_tagged_failed_nightly_reruns_matching_channel_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    tag = "v1.6.1000000000"
+    runner = FakeRunner(
+        tmp_path,
+        current_release_tag=tag,
+        current_release_channel="nightly",
+        run_rows=[
+            {
+                "databaseId": 17,
+                "displayTitle": f"Release nightly {tag}",
+                "status": "completed",
+                "conclusion": "failure",
+            },
+            {
+                "databaseId": 99,
+                "displayTitle": f"Release stable {tag}",
+                "status": "completed",
+                "conclusion": "success",
+            },
+        ],
+    )
+
+    resumed_tag, run_id = RELEASE.release_binaries("nightly", runner)
+
+    assert (resumed_tag, run_id) == (tag, "17")
+    assert ("gh", "run", "rerun", "17") in runner.calls
+    assert ("gh", "run", "watch", "17", "--exit-status") in runner.calls
+    assert ("just", "_stamp-version") not in runner.calls
+
+
+def test_tagged_successful_nightly_is_idempotent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    tag = "v1.6.1000000000"
+    runner = FakeRunner(
+        tmp_path,
+        current_release_tag=tag,
+        current_release_channel="nightly",
+        run_rows=[
+            {
+                "databaseId": 23,
+                "displayTitle": f"Release nightly {tag}",
+                "status": "completed",
+                "conclusion": "success",
+            }
+        ],
+    )
+
+    assert RELEASE.release_binaries("nightly", runner) == (tag, "23")
+    assert not any(call[:3] == ("gh", "workflow", "run") for call in runner.calls)
+    assert not any(call[:3] == ("gh", "run", "rerun") for call in runner.calls)
+    assert not any(call[:3] == ("gh", "run", "watch") for call in runner.calls)
+
+
+def test_unpushed_local_release_commit_is_pushed_and_dispatched_without_restamping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    tag = "v1.6.1000000000"
+    runner = FakeRunner(
+        tmp_path,
+        current_release_tag=tag,
+        current_release_channel="stable",
+        pending_local_release=True,
+        run_rows=[],
+    )
+
+    resumed_tag, run_id = RELEASE.release_binaries("stable", runner)
+
+    assert (resumed_tag, run_id) == (tag, "42")
+    assert ("git", "push", "--atomic", "origin", "main", tag) in runner.calls
+    assert ("just", "_stamp-version") not in runner.calls
+    assert not any(call[:2] == ("git", "commit") for call in runner.calls)
+
+
+def test_divergent_local_release_commit_is_not_force_pushed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    runner = FakeRunner(
+        tmp_path,
+        current_release_tag="v1.6.1000000000",
+        current_release_channel="stable",
+        pending_local_release=True,
+        divergent_pending_release=True,
+    )
+
+    with pytest.raises(ValueError, match="not one resumable stable release commit"):
+        RELEASE.release_binaries("stable", runner)
+
+    assert not any(call[:2] == ("git", "push") for call in runner.calls)
+
+
 def test_stable_binary_release_remains_explicit_even_at_a_version_tag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _release_tree(tmp_path)
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
-    runner = FakeRunner(tmp_path, current_release_tag="v1.6.1000000000")
+    runner = FakeRunner(
+        tmp_path,
+        current_release_tag="v1.6.1000000000",
+        current_release_channel="nightly",
+    )
 
     tag, run_id = RELEASE.release_binaries("stable", runner)
 

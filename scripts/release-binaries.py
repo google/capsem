@@ -33,6 +33,13 @@ class CommandResult:
     stdout: str
 
 
+@dataclass(frozen=True)
+class ReleaseRun:
+    database_id: str
+    status: str
+    conclusion: str
+
+
 class Runner:
     def run(
         self,
@@ -78,7 +85,39 @@ def _capture(runner: Runner, *argv: str) -> str:
     return runner.run(argv, capture=True).stdout.strip()
 
 
-def _validate_start(runner: Runner, channel: str) -> None:
+def _single_head_tag(runner: Runner) -> str | None:
+    tags = [
+        line
+        for line in _capture(
+            runner,
+            "git",
+            "tag",
+            "--points-at",
+            "HEAD",
+            "--list",
+            "v*",
+        ).splitlines()
+        if line
+    ]
+    if len(tags) > 1:
+        raise ValueError(f"release HEAD has multiple immutable tags: {tags}")
+    return tags[0] if tags else None
+
+
+def _tag_channel(runner: Runner, tag: str) -> str | None:
+    contents = _capture(
+        runner,
+        "git",
+        "tag",
+        "--list",
+        tag,
+        "--format=%(contents)",
+    )
+    match = re.search(r"(?:^|\s)channel=(stable|nightly)(?:\s|$)", contents)
+    return match.group(1) if match is not None else None
+
+
+def _validate_start(runner: Runner, channel: str) -> str | None:
     if channel not in CHANNELS:
         raise ValueError(f"channel must be stable or nightly, got {channel!r}")
     if _capture(runner, "git", "status", "--porcelain", "--untracked-files=all"):
@@ -88,8 +127,26 @@ def _validate_start(runner: Runner, channel: str) -> None:
     runner.run(("git", "fetch", "origin", "main"))
     head = _capture(runner, "git", "rev-parse", "HEAD")
     remote = _capture(runner, "git", "rev-parse", "origin/main")
-    if head != remote:
-        raise ValueError("local main must exactly match origin/main before release")
+    if head == remote:
+        return None
+
+    tag = _single_head_tag(runner)
+    ahead = _capture(runner, "git", "rev-list", "--count", "origin/main..HEAD")
+    parent = _capture(runner, "git", "rev-parse", "HEAD^")
+    subject = _capture(runner, "git", "log", "-1", "--format=%s")
+    expected_tag = f"v{_project_version()}"
+    if (
+        ahead == "1"
+        and parent == remote
+        and tag == expected_tag
+        and _tag_channel(runner, tag) == channel
+        and subject == f"release({channel}): {tag}"
+    ):
+        return tag
+    raise ValueError(
+        "local main differs from origin/main and is not one resumable "
+        f"{channel} release commit"
+    )
 
 
 def _project_version() -> str:
@@ -178,46 +235,106 @@ def _changed_paths(runner: Runner) -> set[Path]:
     return {Path(line[3:]) for line in output.splitlines() if len(line) >= 4}
 
 
-def _wait_for_run(runner: Runner, tag: str) -> str:
+def _matching_run(runner: Runner, tag: str, channel: str) -> ReleaseRun | None:
+    raw = _capture(
+        runner,
+        "gh",
+        "run",
+        "list",
+        "--workflow",
+        "release.yaml",
+        "--branch",
+        tag,
+        "--event",
+        "workflow_dispatch",
+        "--limit",
+        "20",
+        "--json",
+        "databaseId,displayTitle,status,conclusion",
+    )
+    try:
+        rows = json.loads(raw or "[]")
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"GitHub returned invalid release run JSON: {error}") from error
+    if not isinstance(rows, list):
+        raise RuntimeError("GitHub release run query did not return a list")
+    title = f"Release {channel} {tag}"
+    matches = [
+        row
+        for row in rows
+        if isinstance(row, dict) and row.get("displayTitle") == title
+    ]
+    if not matches:
+        return None
+    row = matches[0]
+    database_id = row.get("databaseId")
+    status = row.get("status")
+    conclusion = row.get("conclusion")
+    if not isinstance(database_id, int) or not isinstance(status, str):
+        raise RuntimeError(f"GitHub returned a malformed matching release run: {row}")
+    if conclusion is None:
+        conclusion = ""
+    if not isinstance(conclusion, str):
+        raise RuntimeError(f"GitHub returned a malformed matching release conclusion: {row}")
+    return ReleaseRun(str(database_id), status, conclusion)
+
+
+def _wait_for_run(runner: Runner, tag: str, channel: str) -> ReleaseRun:
     deadline = time.monotonic() + 120
     while time.monotonic() < deadline:
-        run_id = _capture(
-            runner,
-            "gh",
-            "run",
-            "list",
-            "--workflow",
-            "release.yaml",
-            "--branch",
-            tag,
-            "--event",
-            "workflow_dispatch",
-            "--limit",
-            "1",
-            "--json",
-            "databaseId",
-            "--jq",
-            ".[0].databaseId",
-        )
-        if run_id:
-            return run_id
+        run = _matching_run(runner, tag, channel)
+        if run is not None:
+            return run
         time.sleep(2)
-    raise RuntimeError(f"timed out waiting for release.yaml run for {tag}")
+    raise RuntimeError(f"timed out waiting for release.yaml run for {channel}/{tag}")
+
+
+def _dispatch_release(runner: Runner, tag: str, channel: str) -> None:
+    runner.run(
+        (
+            "gh",
+            "workflow",
+            "run",
+            "release.yaml",
+            "--ref",
+            tag,
+            "-f",
+            f"tag={tag}",
+            "-f",
+            f"channel={channel}",
+        )
+    )
+
+
+def _resume_release(runner: Runner, tag: str, channel: str) -> str:
+    run = _matching_run(runner, tag, channel)
+    if run is None:
+        _dispatch_release(runner, tag, channel)
+        run = _wait_for_run(runner, tag, channel)
+    if run.status == "completed" and run.conclusion == "success":
+        return run.database_id
+    if run.status == "completed":
+        runner.run(("gh", "run", "rerun", run.database_id))
+    runner.run(("gh", "run", "watch", run.database_id, "--exit-status"))
+    return run.database_id
 
 
 def release_binaries(
     channel: str, runner: Runner
 ) -> tuple[str | None, str | None]:
-    _validate_start(runner, channel)
-    current_release_tag = _capture(
-        runner,
-        "git",
-        "tag",
-        "--points-at",
-        "HEAD",
-        "--list",
-        "v*",
-    )
+    pending_release_tag = _validate_start(runner, channel)
+    if pending_release_tag is not None:
+        runner.run(("git", "push", "--atomic", "origin", "main", pending_release_tag))
+        run_id = _resume_release(runner, pending_release_tag, channel)
+        return pending_release_tag, run_id
+
+    current_release_tag = _single_head_tag(runner)
+    if (
+        current_release_tag is not None
+        and _tag_channel(runner, current_release_tag) == channel
+    ):
+        run_id = _resume_release(runner, current_release_tag, channel)
+        return current_release_tag, run_id
     if channel == "nightly" and current_release_tag:
         return None, None
 
@@ -257,30 +374,17 @@ def release_binaries(
         if existing:
             raise RuntimeError(f"immutable release tag already exists: {tag}")
         runner.run(("git", "add", "--", *(str(path) for path in MUTATED_PATHS)))
-        runner.run(("git", "commit", "-m", f"release: {tag}"))
-        runner.run(("git", "tag", "-a", tag, "-m", f"Capsem {version}"))
+        runner.run(("git", "commit", "-m", f"release({channel}): {tag}"))
+        runner.run(
+            ("git", "tag", "-a", tag, "-m", f"Capsem {version} channel={channel}")
+        )
         mutation.committed = True
     except Exception:
         mutation.restore()
         raise
 
     runner.run(("git", "push", "--atomic", "origin", "main", tag))
-    runner.run(
-        (
-            "gh",
-            "workflow",
-            "run",
-            "release.yaml",
-            "--ref",
-            tag,
-            "-f",
-            f"tag={tag}",
-            "-f",
-            f"channel={channel}",
-        )
-    )
-    run_id = _wait_for_run(runner, tag)
-    runner.run(("gh", "run", "watch", run_id, "--exit-status"))
+    run_id = _resume_release(runner, tag, channel)
     return tag, run_id
 
 
