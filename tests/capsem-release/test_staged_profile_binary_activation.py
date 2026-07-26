@@ -179,3 +179,20 @@ def test_profile_then_binary_reuses_authored_source_without_rebuilding_assets() 
     assert "Prove binary candidate preserved every profile" in binary
     assert 'before.get("profiles") != after.get("profiles")' in binary
     assert "name: binary-channel-candidate" in binary
+
+
+def test_existing_profile_publication_is_reused_only_after_exact_byte_comparison() -> None:
+    workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
+    publish = _job(workflow, "publish-profile-release", "deploy-channel")
+    immutable = _step(
+        publish,
+        "Publish immutable GitHub profile release",
+        "Attest VM asset provenance",
+    )
+
+    assert "gh release download" in immutable
+    assert "scripts/verify-immutable-publication.py" in immutable
+    assert "--expected" in immutable
+    assert "--actual" in immutable
+    assert "gh release upload" not in immutable
+    assert "immutable profile release already exists" not in immutable

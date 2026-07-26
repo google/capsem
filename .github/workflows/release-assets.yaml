@@ -578,8 +578,11 @@ jobs:
             echo '#!/usr/bin/env bash'
             echo 'set -euo pipefail'
             printf 'if gh release view %q >/dev/null 2>&1; then\n' "$TAG"
-            printf '  echo %q >&2\n' "immutable profile release already exists: $TAG"
-            printf '  exit 1\n'
+            printf '  existing=$(mktemp -d)\n'
+            printf '  trap '"'"'rm -rf "$existing"'"'"' EXIT\n'
+            printf '  gh release download %q --dir "$existing"\n' "$TAG"
+            printf '  uv run python scripts/verify-immutable-publication.py --expected %q --actual "$existing"\n' "$RELEASE_DIR"
+            printf '  echo %q\n' "reusing byte-identical immutable profile release: $TAG"
             printf 'else\n'
             printf '  gh release create %q' "$TAG"
             printf ' %q' "${files[@]}"
