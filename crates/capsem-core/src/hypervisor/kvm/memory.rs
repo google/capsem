@@ -547,8 +547,10 @@ mod tests {
     #[cfg(target_arch = "aarch64")]
     #[test]
     fn gic_below_ram() {
-        assert!(GIC_DIST_BASE + GIC_DIST_SIZE <= RAM_BASE);
-        assert!(GIC_REDIST_BASE < RAM_BASE);
+        const {
+            assert!(GIC_DIST_BASE + GIC_DIST_SIZE <= RAM_BASE);
+            assert!(GIC_REDIST_BASE < RAM_BASE);
+        }
     }
 
     #[cfg(target_arch = "aarch64")]
@@ -834,7 +836,7 @@ mod tests {
         let ram_end = RAM_BASE + ram_size;
 
         let initrd_start = page_align_down(ram_end - initrd_size);
-        assert!(initrd_start % PAGE_SIZE == 0);
+        assert!(initrd_start.is_multiple_of(PAGE_SIZE));
         assert!(initrd_start + initrd_size <= ram_end);
         assert!(initrd_start > RAM_BASE + KERNEL_TEXT_OFFSET); // doesn't overlap kernel region
     }
@@ -846,7 +848,7 @@ mod tests {
         let kernel_end = RAM_BASE + KERNEL_TEXT_OFFSET + kernel_size;
         let fdt_start = page_align_up(kernel_end);
 
-        assert!(fdt_start % PAGE_SIZE == 0);
+        assert!(fdt_start.is_multiple_of(PAGE_SIZE));
         assert!(fdt_start >= kernel_end);
         // FDT must be within 512MB of kernel entry
         assert!(fdt_start - (RAM_BASE + KERNEL_TEXT_OFFSET) < 512 * 1024 * 1024);
@@ -1026,10 +1028,12 @@ mod tests {
     #[cfg(target_arch = "aarch64")]
     #[test]
     fn aarch64_gic_spi_range_valid() {
-        assert!(
-            VIRTIO_MMIO_IRQ_BASE >= 32,
-            "virtio IRQs must be in GIC SPI range (>=32)"
-        );
+        const {
+            assert!(
+                VIRTIO_MMIO_IRQ_BASE >= 32,
+                "virtio IRQs must be in GIC SPI range (>=32)"
+            );
+        }
         let max_irq = VIRTIO_MMIO_IRQ_BASE + VIRTIO_MMIO_MAX_DEVICES;
         assert!(
             max_irq < 1020,

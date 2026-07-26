@@ -70,9 +70,7 @@ fn verify_image(path: &Path, digest: &str, label: &str) -> Result<()> {
     }
     let actual = hasher.finalize().to_hex();
     if actual.as_str() != digest {
-        bail!(
-            "{label} does not match the manifest digest: expected {digest}, got {actual}"
-        );
+        bail!("{label} does not match the manifest digest: expected {digest}, got {actual}");
     }
     Ok(())
 }
@@ -115,21 +113,9 @@ fn run() -> Result<()> {
     let kernel = PathBuf::from(required(&values, "--kernel")?);
     let initrd = PathBuf::from(required(&values, "--initrd")?);
     let rootfs = PathBuf::from(required(&values, "--rootfs")?);
-    verify_image(
-        &kernel,
-        required(&values, "--kernel-blake3")?,
-        "kernel",
-    )?;
-    verify_image(
-        &initrd,
-        required(&values, "--initrd-blake3")?,
-        "initrd",
-    )?;
-    verify_image(
-        &rootfs,
-        required(&values, "--rootfs-blake3")?,
-        "rootfs",
-    )?;
+    verify_image(&kernel, required(&values, "--kernel-blake3")?, "kernel")?;
+    verify_image(&initrd, required(&values, "--initrd-blake3")?, "initrd")?;
+    verify_image(&rootfs, required(&values, "--rootfs-blake3")?, "rootfs")?;
     let timeout = required(&values, "--timeout")?
         .parse::<u64>()
         .context("invalid --timeout")?;
@@ -196,7 +182,10 @@ fn run() -> Result<()> {
 
     if result.is_ok() {
         std::fs::remove_dir_all(&session_root).with_context(|| {
-            format!("remove successful boot-proof session {}", session_root.display())
+            format!(
+                "remove successful boot-proof session {}",
+                session_root.display()
+            )
         })?;
     } else {
         eprintln!(

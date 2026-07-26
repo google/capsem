@@ -682,14 +682,14 @@ impl Hypervisor for KvmHypervisor {
             serial: serial_console,
             shutdown,
             control,
-            _vm: Some(vm),
-            _vcpu_handles: vcpu_handles,
-            _guest_mem: guest_mem,
-            _mmio_bus: mmio_bus,
+            _vcpu_handles: std::sync::Mutex::new(vcpu_handles),
+            _vsock_listener_handles: std::sync::Mutex::new(vsock_listener_handles),
+            _vsock_irq_handles: std::sync::Mutex::new(vsock_irq_handles),
             #[cfg(target_arch = "x86_64")]
             _mmio_transports: mmio_transports,
-            _vsock_listener_handles: vsock_listener_handles,
-            _vsock_irq_handles: vsock_irq_handles,
+            _mmio_bus: mmio_bus,
+            _vm: Some(vm),
+            _guest_mem: guest_mem,
         };
 
         Ok((Box::new(handle), vsock_rx))
@@ -702,25 +702,92 @@ struct KvmHandle {
     serial: serial::KvmSerialConsole,
     shutdown: Arc<AtomicBool>,
     control: Arc<vcpu::VcpuControl>,
-    _vm: Option<sys::VmFd>,
-    _vcpu_handles: Vec<std::thread::JoinHandle<Result<()>>>,
-    _guest_mem: memory::GuestMemory,
-    _mmio_bus: Arc<mmio::MmioBus>,
+    _vcpu_handles: std::sync::Mutex<Vec<std::thread::JoinHandle<Result<()>>>>,
+    _vsock_listener_handles: std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>,
+    _vsock_irq_handles: std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>,
+    // Rust drops fields in declaration order. Device transports and their
+    // workers own non-owning GuestMemoryRef values, so every device owner and
+    // the VM fd must be destroyed before GuestMemory unmaps the allocation.
     #[cfg(target_arch = "x86_64")]
     _mmio_transports: Vec<(u32, Arc<virtio_mmio::VirtioMmioTransport>)>,
-    _vsock_listener_handles: Vec<std::thread::JoinHandle<()>>,
-    _vsock_irq_handles: Vec<std::thread::JoinHandle<()>>,
+    _mmio_bus: Arc<mmio::MmioBus>,
+    _vm: Option<sys::VmFd>,
+    _guest_mem: memory::GuestMemory,
 }
 
 // Safety: all fields are Send, vCPU threads are managed via JoinHandles.
 unsafe impl Send for KvmHandle {}
 
-impl VmHandle for KvmHandle {
-    fn stop(&self) -> Result<()> {
+impl KvmHandle {
+    fn request_stop(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
         self.control.request_stop();
         self.state.store(VmState::Stopped as u8, Ordering::SeqCst);
-        Ok(())
+    }
+
+    fn join_workers(&self) -> Result<()> {
+        let vcpu_handles = {
+            let mut handles = self
+                ._vcpu_handles
+                .lock()
+                .map_err(|_| anyhow::anyhow!("KVM vCPU worker lock poisoned"))?;
+            std::mem::take(&mut *handles)
+        };
+        let vsock_listener_handles = {
+            let mut handles = self
+                ._vsock_listener_handles
+                .lock()
+                .map_err(|_| anyhow::anyhow!("KVM vsock listener worker lock poisoned"))?;
+            std::mem::take(&mut *handles)
+        };
+        let vsock_irq_handles = {
+            let mut handles = self
+                ._vsock_irq_handles
+                .lock()
+                .map_err(|_| anyhow::anyhow!("KVM vsock IRQ worker lock poisoned"))?;
+            std::mem::take(&mut *handles)
+        };
+
+        let mut failures = Vec::new();
+        for handle in vcpu_handles {
+            match handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => failures.push(format!("vCPU worker failed: {error:#}")),
+                Err(_) => failures.push("vCPU worker panicked".to_string()),
+            }
+        }
+        for handle in vsock_listener_handles {
+            if handle.join().is_err() {
+                failures.push("vsock listener worker panicked".to_string());
+            }
+        }
+        for handle in vsock_irq_handles {
+            if handle.join().is_err() {
+                failures.push("vsock IRQ worker panicked".to_string());
+            }
+        }
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            anyhow::bail!("KVM worker shutdown failed: {}", failures.join("; "))
+        }
+    }
+}
+
+impl Drop for KvmHandle {
+    fn drop(&mut self) {
+        self.request_stop();
+        if let Err(error) = self.join_workers() {
+            tracing::warn!(error = %error, "KVM worker shutdown failed during drop");
+        }
+    }
+}
+
+impl VmHandle for KvmHandle {
+    fn stop(&self) -> Result<()> {
+        self.request_stop();
+        self.join_workers()
     }
 
     fn state(&self) -> VmState {
@@ -980,14 +1047,14 @@ mod tests {
             serial: serial::KvmSerialConsole::new(-1, -1),
             shutdown: Arc::new(AtomicBool::new(false)),
             control,
-            _vm: None,
-            _vcpu_handles: Vec::new(),
-            _guest_mem: memory::GuestMemory::new(4096).unwrap(),
-            _mmio_bus: Arc::new(mmio::MmioBus::new()),
+            _vcpu_handles: std::sync::Mutex::new(Vec::new()),
+            _vsock_listener_handles: std::sync::Mutex::new(Vec::new()),
+            _vsock_irq_handles: std::sync::Mutex::new(Vec::new()),
             #[cfg(target_arch = "x86_64")]
             _mmio_transports: Vec::new(),
-            _vsock_listener_handles: Vec::new(),
-            _vsock_irq_handles: Vec::new(),
+            _mmio_bus: Arc::new(mmio::MmioBus::new()),
+            _vm: None,
+            _guest_mem: memory::GuestMemory::new(4096).unwrap(),
         }
     }
 
@@ -1120,6 +1187,62 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("stopped"));
+    }
+
+    #[test]
+    fn kvm_stop_joins_vcpu_workers_before_returning() {
+        let control = Arc::new(vcpu::VcpuControl::new(0));
+        let worker_exited = Arc::new(AtomicBool::new(false));
+        let worker = {
+            let control = Arc::clone(&control);
+            let worker_exited = Arc::clone(&worker_exited);
+            std::thread::spawn(move || {
+                while !control.is_stopped() {
+                    std::thread::yield_now();
+                }
+                std::thread::sleep(Duration::from_millis(50));
+                worker_exited.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+        };
+        let mut handle = test_handle_with_control(control);
+        handle._vcpu_handles.get_mut().unwrap().push(worker);
+
+        handle.stop().unwrap();
+
+        assert!(
+            worker_exited.load(Ordering::SeqCst),
+            "stop returned while a vCPU worker could still access VM-owned memory"
+        );
+    }
+
+    #[test]
+    fn kvm_drop_joins_vsock_workers_before_releasing_resources() {
+        let worker_exited = Arc::new(AtomicBool::new(false));
+        let mut handle = test_handle();
+        let shutdown = Arc::clone(&handle.shutdown);
+        let worker = {
+            let worker_exited = Arc::clone(&worker_exited);
+            std::thread::spawn(move || {
+                while !shutdown.load(Ordering::SeqCst) {
+                    std::thread::yield_now();
+                }
+                std::thread::sleep(Duration::from_millis(50));
+                worker_exited.store(true, Ordering::SeqCst);
+            })
+        };
+        handle
+            ._vsock_listener_handles
+            .get_mut()
+            .unwrap()
+            .push(worker);
+
+        drop(handle);
+
+        assert!(
+            worker_exited.load(Ordering::SeqCst),
+            "drop released VM-owned resources before a vsock worker exited"
+        );
     }
 
     #[test]
