@@ -714,6 +714,7 @@ _test-candidate-run:
     SOURCE_CONTRACT_TESTS=(
         tests/test_agent_skill_index.py
         tests/test_build_assets_profile.py
+        tests/test_builder_probe_timeouts.py
         tests/test_cargo_audit_gate.py
         tests/test_check_cargo_audit.py
         tests/test_complete_release_channel.py

@@ -17,6 +17,7 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +37,9 @@ OBOM_ASSET = "obom.cdx.json"
 CDXGEN_VERSION = "12.7.0"
 SOFTWARE_INVENTORY_ASSET = "software-inventory.json"
 BUILD_LEDGER_NAME = "build-ledger.log"
+CONTAINER_PROBE_TIMEOUT_SECONDS = 60
+CONTAINER_PROBE_CLEANUP_TIMEOUT_SECONDS = 15
+OBOM_COMMAND_TIMEOUT_SECONDS = 600
 
 # Guest binaries COPY'd into the rootfs (cross-compiled Rust binaries).
 GUEST_BINARIES = [
@@ -766,15 +770,18 @@ def extract_tool_versions(
     version_script = build_version_script(config)
     if not version_script:
         return
-    result = run_cmd(
-        [runtime, "run", "--rm", "--platform", platform,
-         image_tag, "bash", "-c", version_script],
-        capture=True,
+    output = _container_output(
+        runtime,
+        image_tag,
+        platform,
+        version_script,
+        probe="tool versions",
+        shell_option="-c",
     )
     versions_path = output_dir / "tool-versions.txt"
-    versions_path.write_text(result.stdout)
+    versions_path.write_text(output)
     if validate:
-        _validate_tool_versions(result.stdout, config)
+        _validate_tool_versions(output, config)
 
 
 def _container_output(
@@ -782,11 +789,50 @@ def _container_output(
     image_tag: str,
     platform: str,
     command: str,
+    *,
+    probe: str,
+    shell_option: str = "-lc",
 ) -> str:
-    result = run_cmd(
-        [runtime, "run", "--rm", "--platform", platform, image_tag, "bash", "-lc", command],
-        capture=True,
-    )
+    safe_probe = re.sub(r"[^a-z0-9]+", "-", probe.lower()).strip("-") or "command"
+    container_name = f"capsem-probe-{safe_probe}-{uuid.uuid4().hex[:12]}"
+    run_command = [
+        runtime,
+        "run",
+        "--rm",
+        "--name",
+        container_name,
+        "--platform",
+        platform,
+        image_tag,
+        "bash",
+        shell_option,
+        command,
+    ]
+    try:
+        result = run_cmd(
+            run_command,
+            capture=True,
+            timeout=CONTAINER_PROBE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as error:
+        cleanup_error: Exception | None = None
+        try:
+            run_cmd(
+                [runtime, "rm", "-f", container_name],
+                capture=True,
+                echo=False,
+                timeout=CONTAINER_PROBE_CLEANUP_TIMEOUT_SECONDS,
+            )
+        except Exception as caught:
+            cleanup_error = caught
+        detail = (
+            f"{probe} container probe timed out after "
+            f"{CONTAINER_PROBE_TIMEOUT_SECONDS}s "
+            f"(image={image_tag}, platform={platform}, container={container_name})"
+        )
+        if cleanup_error is not None:
+            detail += f"; forced cleanup failed: {cleanup_error}"
+        raise RuntimeError(detail) from error
     return result.stdout
 
 
@@ -805,18 +851,21 @@ def extract_software_inventory(
         image_tag,
         platform,
         "dpkg-query -W -f='${Package}\\t${Version}\\t${Architecture}\\n'",
+        probe="dpkg inventory",
     )
     pip_output = _container_output(
         runtime,
         image_tag,
         platform,
         "python3 -m pip list --format json",
+        probe="Python inventory",
     )
     npm_output = _container_output(
         runtime,
         image_tag,
         platform,
         "npm ls --json --global --depth=0 --prefix /opt/ai-clis 2>/dev/null || npm ls --json --global --depth=0",
+        probe="npm inventory",
     )
     manifest = collect_bom(
         arch=arch_name,
@@ -1072,7 +1121,7 @@ def generate_cyclonedx_obom(
             str(rootfs_tar),
             "-C",
             str(rootfs_dir),
-        ])
+        ], timeout=OBOM_COMMAND_TIMEOUT_SECONDS)
         # cdxgen's rootfs mode is the only offline mode that inventories the
         # extracted guest. Its internal validation rejects Debian's lowercase
         # `sendmail` spelling before writing output, so emit first, normalize
@@ -1085,7 +1134,7 @@ def generate_cyclonedx_obom(
             "--no-validate",
             "-o",
             str(output_path),
-        ], capture=True)
+        ], capture=True, timeout=OBOM_COMMAND_TIMEOUT_SECONDS)
         _normalize_cyclonedx_obom(output_path, rootfs_dir, architecture=architecture)
     _validate_cyclonedx_obom(output_path)
     run_cmd([
@@ -1097,7 +1146,7 @@ def generate_cyclonedx_obom(
         "--no-include-manual",
         "-i",
         str(output_path),
-    ], capture=True)
+    ], capture=True, timeout=OBOM_COMMAND_TIMEOUT_SECONDS)
     return output_path
 
 
