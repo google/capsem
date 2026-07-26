@@ -69,14 +69,21 @@ def _read_url(url: str, *, token: str | None = None, api: bool = False) -> bytes
 
 
 def _github_releases(repository: str, token: str) -> list[dict[str, Any]]:
-    payload = _read_url(
-        f"https://api.github.com/repos/{repository}/releases?per_page=100",
-        token=token,
-    )
-    releases = json.loads(payload)
-    if not isinstance(releases, list):
-        raise ValueError("GitHub releases response is not an array")
-    return releases
+    releases: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        payload = _read_url(
+            f"https://api.github.com/repos/{repository}/releases"
+            f"?per_page=100&page={page}",
+            token=token,
+        )
+        rows = json.loads(payload)
+        if not isinstance(rows, list):
+            raise ValueError(f"GitHub releases page {page} is not an array")
+        releases.extend(row for row in rows if isinstance(row, dict))
+        if len(rows) < 100:
+            return releases
+        page += 1
 
 
 def validate_source_manifest(payload: bytes, channel: str) -> dict[str, Any]:

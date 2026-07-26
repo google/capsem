@@ -108,6 +108,69 @@ def test_latest_channel_source_manifest_is_selected_without_parallel_state() -> 
     assert SOURCE.select_latest_source_asset(releases, "experimental") is None
 
 
+def test_channel_source_discovery_paginates_past_daily_nightly_releases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page_one = [
+        {
+            "draft": False,
+            "prerelease": False,
+            "published_at": f"2026-07-{index + 1:02d}T12:00:00Z",
+            "assets": [],
+        }
+        for index in range(100)
+    ]
+    stable_source = {
+        "draft": False,
+        "prerelease": False,
+        "published_at": "2026-04-01T12:00:00Z",
+        "assets": [
+            {
+                "name": "channel-source-stable.json",
+                "url": "https://api.github.test/assets/staged-stable",
+            }
+        ],
+    }
+    requested: list[str] = []
+
+    def read_url(url: str, **_kwargs: object) -> bytes:
+        requested.append(url)
+        if url.endswith("page=1"):
+            return json.dumps(page_one).encode()
+        if url.endswith("page=2"):
+            return json.dumps([stable_source]).encode()
+        raise AssertionError(f"unexpected release page: {url}")
+
+    monkeypatch.setattr(SOURCE, "_read_url", read_url)
+
+    releases = SOURCE._github_releases("google/capsem", "token")
+
+    assert SOURCE.select_latest_source_asset(releases, "stable") == {
+        "name": "channel-source-stable.json",
+        "url": "https://api.github.test/assets/staged-stable",
+    }
+    assert requested == [
+        "https://api.github.com/repos/google/capsem/releases?per_page=100&page=1",
+        "https://api.github.com/repos/google/capsem/releases?per_page=100&page=2",
+    ]
+
+
+def test_channel_source_discovery_rejects_malformed_later_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def read_url(url: str, **_kwargs: object) -> bytes:
+        if url.endswith("page=1"):
+            return json.dumps([{}] * 100).encode()
+        if url.endswith("page=2"):
+            return b'{"message":"pagination drift"}'
+        raise AssertionError(f"unexpected release page: {url}")
+
+    monkeypatch.setattr(SOURCE, "_read_url", read_url)
+
+    with pytest.raises(ValueError, match="page 2 is not an array"):
+        SOURCE._github_releases("google/capsem", "token")
+
+
 def test_channel_source_manifest_validation_is_channel_scoped() -> None:
     payload = json.dumps({"channel": "nightly", "profiles": {"code": {}}, "packages": []}).encode()
 
