@@ -177,7 +177,8 @@ release-binaries -> adversarial binary script + locked package workflow
 | `_check-assets` | Verifies VM assets exist, tells you to run `build-assets` if not |
 | `_generate-settings` | Generates settings schema, UI metadata, and frontend mock data |
 | `_ensure-service` | Builds/signs host binaries and starts or reuses the service |
-| `_test-static` | Audits, lint, coverage, frontend/docs/sites, cross-compilation, and source contracts |
+| `_test-fast` | YAML/source syntax, source contracts, Clippy, Python/JavaScript checks, web surfaces, and all dependency audits |
+| `_test-static` | Rust/Python coverage, install-harness preflight, and cross-compilation |
 | `_test-artifacts` | Packages, inventories, SBOM/OBOM, images, evidence, digests, architecture coverage, and boot |
 | `_test-functional` | VM suites, Winterfell, MCP lifecycle, IronBank, injection, integration, benchmarks, and full doctor |
 | `_test-glowup` | Native install and manifest-driven binary/profile/channel update transitions |

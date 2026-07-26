@@ -77,10 +77,9 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
 
     assert "_bootstrap:\n    sh {{justfile_directory()}}/bootstrap.sh -y" in justfile
     assert "just _test-candidate" in justfile
-    assert (
-        "_test-candidate: _bootstrap _bound-docker-test-storage _install-tools "
-        "_clean-stale _pnpm-install"
-    ) in justfile
+    assert "just _test-fast" in justfile
+    assert "just _bootstrap" in justfile
+    assert "just _bound-docker-test-storage" in justfile
     for command in [
         "uv run ruff check .",
         "uv run ty check src/capsem",
@@ -108,6 +107,7 @@ def test_both_release_lanes_reuse_fail_closed_static_module() -> None:
 
     assert "uses: ./.github/workflows/fast-gate.yaml" in binary_workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in profile_workflow
+    assert "run: just _test-fast" in fast_gate
     assert "run: just _test-static" in fast_gate
     assert "run: just test" not in binary_workflow
     assert "run: just test" not in profile_workflow

@@ -623,6 +623,7 @@ test:
         return "$status"
     }
     trap capture_candidate_failure EXIT
+    just _test-fast
     scripts/with-gate-colima.sh just _test-candidate
     trap - EXIT
     test "$(git rev-parse HEAD)" = "$TESTED_HEAD" || {
@@ -638,14 +639,34 @@ test:
     fi
     echo "=== Verified source state $TESTED_SOURCE ==="
 
-# Local composition constructs every artifact family before running the same
-# checked-in modules used by release CI.
-_test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-stale _check-generated-settings _check-assets _pack-initrd _materialize-config
-    CAPSEM_LOCAL_REBUILT_ARTIFACTS=1 just _test-release-contracts
+# After the source-only fast gate passes, local composition constructs every
+# artifact family before running the remaining modules used by release CI.
+_test-candidate:
+    just _bootstrap
+    just _bound-docker-test-storage
+    just _install-tools
+    just _clean-stale
+    just _check-generated-settings
+    just _check-assets
+    just _pack-initrd
+    just _materialize-config
     just _test-static
     just _test-artifacts
     just _test-functional
     just _test-glowup
+    just _test-recipes
+
+# Parser errors, source contracts, dependency vulnerabilities, lint, Clippy,
+# and every JavaScript/web check run before Colima, bootstrap, artifacts, or
+# VMs. This is private composition, not a public release shortcut.
+_test-fast:
+    uv sync
+    uv run python scripts/check-source-syntax.py
+    just _check-generated-settings
+    just _install-tools
+    just _pnpm-install
+    just _test-release-contracts
+    CAPSEM_TEST_MODULE=fast just _test-candidate-run
 
 _test-static: _install-tools _clean-stale _pnpm-install _check-generated-settings
     uv sync
@@ -680,7 +701,7 @@ _test-candidate-run:
         [ "$TEST_MODULE" = "$1" ]
     }
     case "$TEST_MODULE" in
-        static|artifacts|functional|glowup|release-contracts) ;;
+        fast|static|artifacts|functional|glowup|release-contracts) ;;
         *)
             echo "unknown Capsem test module: $TEST_MODULE" >&2
             exit 1
@@ -689,6 +710,8 @@ _test-candidate-run:
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
     export CAPSEM_BENCHMARK_OUTPUT_ROOT="{{justfile_directory()}}/target/test-benchmarks"
+    export COVERAGE_FILE="{{justfile_directory()}}/target/coverage/.coverage"
+    mkdir -p "$(dirname "$COVERAGE_FILE")"
     rm -rf "$CAPSEM_BENCHMARK_OUTPUT_ROOT"
     # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
     # below. Acquired BEFORE the wipe: if a second `just test` were to run
@@ -722,11 +745,11 @@ _test-candidate-run:
     }
     trap cleanup_test_capsem_home_service EXIT
 
-    if module_enabled static; then
+    if module_enabled fast; then
         echo "=== Hardcoded profile/channel selection guard ==="
         bash scripts/check-hardcoded-release-selections.sh
 
-    # ---- Stage 0: fast-fail (audits + lint + frontend) ---------------------
+    # ---- Fast gate: audits + lint + JavaScript/web surfaces ----------------
     # Cheap, independent, most-common failure class. Clippy (not cargo check)
     # is the Rust lint gate per CLAUDE.md -- it's a strict superset of check
     # and covers --all-targets. capsem-app embeds frontend/dist at compile time,
@@ -774,6 +797,9 @@ _test-candidate-run:
     wait $PID_PUBLIC_SURFACE || { echo "public surface approval failed"; FAIL=1; }
     [ $FAIL -eq 0 ] || exit 1
 
+    fi
+
+    if module_enabled static; then
     # ---- Stage 1: release harness bootstrap --------------------------------
     # Only after the cheap source, dependency, lint, and frontend gates pass,
     # prove the clean Linux install container can launch its test runner.
@@ -863,6 +889,15 @@ _test-candidate-run:
         else
             echo "=== VM assets: all profiles, both arches, real guest shell ==="
             just _gate-assets
+
+            echo "=== Rebuilt build-chain artifact and boot proofs ==="
+            CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
+                tests/capsem-build-chain/test_cargo_build.py \
+                tests/capsem-build-chain/test_codesign.py \
+                tests/capsem-build-chain/test_full_chain.py \
+                tests/capsem-build-chain/test_manifest_regen.py \
+                tests/capsem-build-chain/test_pack_initrd.py \
+                -v --tb=short
         fi
     fi
 
@@ -923,32 +958,21 @@ _test-candidate-run:
     CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short --maxfail=1 -n 4 --dist=loadfile \
         -m "not serial" \
         "${HOST_SNAPSHOT_IGNORE_ARGS[@]}" \
+        --ignore-glob=tests/test_*contract.py \
+        --ignore=tests/test_agent_skill_index.py \
+        --ignore=tests/test_macos_tart_glowup.py \
+        --ignore=tests/test_release_site_review_regressions.py \
         --ignore=tests/capsem-recipes \
         --ignore=tests/capsem-install \
         --ignore=tests/capsem-build-chain \
         --ignore=tests/capsem-release \
-        --ignore=tests/test_release_package_binary_contract.py \
-        --ignore=tests/test_release_profile_architecture_contract.py \
-        --ignore=tests/test_release_profile_contract.py \
         --ignore=tests/test_release_site_generated_from_json.py \
-        --ignore=tests/test_release_site_html_contract.py \
-        --ignore=tests/test_release_site_review_regressions.py \
         --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
 
     echo "=== Python: host snapshot tests (serial) ==="
     CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
         "${HOST_SNAPSHOT_SERIAL[@]}" \
         -v --tb=short --maxfail=1 -m "not serial"
-
-    echo "=== Python: release site shared-dist tests (serial) ==="
-    CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
-        tests/test_release_package_binary_contract.py \
-        tests/test_release_profile_architecture_contract.py \
-        tests/test_release_profile_contract.py \
-        tests/test_release_site_generated_from_json.py \
-        tests/test_release_site_html_contract.py \
-        tests/test_release_site_review_regressions.py \
-        -v --tb=short
 
     echo "=== Python: serial timing and benchmark tests ==="
     CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
@@ -985,6 +1009,10 @@ _test-candidate-run:
             uv run python -m pytest tests/ -v --tb=short --maxfail=1 -n 4 --dist=loadfile \
                 -m "(integration or mcp or e2e) and not serial" \
                 "${HOST_SNAPSHOT_IGNORE_ARGS[@]}" \
+                --ignore-glob=tests/test_*contract.py \
+                --ignore=tests/test_agent_skill_index.py \
+                --ignore=tests/test_macos_tart_glowup.py \
+                --ignore=tests/test_release_site_review_regressions.py \
                 --ignore=tests/capsem-recipes \
                 --ignore=tests/capsem-install \
                 --ignore=tests/capsem-build-chain \
@@ -1093,26 +1121,34 @@ _test-candidate-run:
     fi
 
     if module_enabled release-contracts; then
-    if [ "${CAPSEM_LOCAL_REBUILT_ARTIFACTS:-0}" = "1" ]; then
-        echo "=== Build chain and release contracts (serial) ==="
-        CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
-            tests/capsem-build-chain/ tests/capsem-release/ \
+        echo "=== Fast source and serialized release contracts ==="
+        uv run python -m pytest \
+            tests/capsem-release/ \
+            tests/capsem-build-chain/ \
+            --ignore=tests/capsem-build-chain/test_cargo_build.py \
+            --ignore=tests/capsem-build-chain/test_codesign.py \
+            --ignore=tests/capsem-build-chain/test_full_chain.py \
+            --ignore=tests/capsem-build-chain/test_manifest_regen.py \
+            --ignore=tests/capsem-build-chain/test_pack_initrd.py \
+            tests/test_*contract.py \
+            tests/test_agent_skill_index.py \
+            tests/test_macos_tart_glowup.py \
+            tests/test_release_site_generated_from_json.py \
+            tests/test_release_site_review_regressions.py \
             -v --tb=short
-
-        echo "=== Just recipe contracts (post-VM, serial) ==="
-        uv run python -m pytest tests/capsem-recipes/ -v --tb=short -m recipe
-    else
-        echo "=== Serialized release contracts (serial) ==="
-        uv run python -m pytest tests/capsem-release/ -v --tb=short
-    fi
     fi
 
     # ---- Stage 8: cleanup ---------------------------------------------------
-    echo "=== Pruning stale build artifacts ==="
-    just _clean-stale
-    # Reassert the reserve after the expensive tail while retaining the hot
-    # compiler/toolchain cache for the next deliberate candidate.
-    just _bound-docker-test-storage
+    if ! module_enabled fast && ! module_enabled release-contracts; then
+        echo "=== Pruning stale build artifacts ==="
+        just _clean-stale
+        # Reassert the reserve after the expensive tail while retaining the hot
+        # compiler/toolchain cache for the next deliberate candidate.
+        just _bound-docker-test-storage
+    fi
+
+_test-recipes:
+    uv run python -m pytest tests/capsem-recipes/ -v --tb=short -m recipe
 
 # Build the capsem-host-builder Docker image (cached, only rebuilds changed layers).
 # See docker/Dockerfile.host-builder for contents.
@@ -1457,10 +1493,15 @@ _check-generated-settings:
     ROOT="{{justfile_directory()}}"
     bash "$ROOT/scripts/check-generated-settings.sh" "$ROOT"
 
-# Focused developer feedback; never release qualification.
-smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-config
+# Focused developer feedback; never release qualification. It shares the exact
+# fail-fast source gate with `test` and release CI, then runs a smaller VM loop.
+smoke:
     #!/bin/bash
     set -euo pipefail
+    just _test-fast
+    just _check-assets
+    just _pack-initrd
+    just _materialize-config
     # Smoke runs against an isolated CAPSEM_HOME so it doesn't stomp on a
     # locally installed capsem daemon. _ensure-service is invoked below
     # (not as a just dep) so it inherits the exported env vars.
@@ -1509,32 +1550,6 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     SMOKE_START=$SECONDS
     step() { STEP_START=$SECONDS; echo "=== $1 ==="; }
     step_done() { echo "  -> $(( SECONDS - STEP_START ))s"; echo ""; }
-    step "Rust clippy + audits + frontend lint (parallel)"
-    # Clippy (superset of cargo check) is the lint gate per CLAUDE.md.
-    # Frontend `pnpm run check` runs here too so a broken Svelte/TS type
-    # fails smoke in seconds instead of only surfacing under `just test`.
-    # Background jobs don't trip `set -e`, so aggregate via FAIL=1.
-    cargo clippy --workspace --all-targets -- -D warnings & CLIPPY_PID=$!
-    uv run ruff check . & RUFF_PID=$!
-    uv run ty check src/capsem & TY_PID=$!
-    uv run capsem-builder validate-skills skills & SKILLS_PID=$!
-    uv run python scripts/check_public_surface.py & PUBLIC_SURFACE_PID=$!
-    python3 scripts/check-cargo-audit.py & AUDIT_PID=$!
-    python3 scripts/audit-pnpm-bulk.py & PNPM_AUDIT_PID=$!
-    bash scripts/audit-python-lock.sh & PYTHON_AUDIT_PID=$!
-    (cd frontend && pnpm run check) & FE_CHECK_PID=$!
-    FAIL=0
-    wait $CLIPPY_PID     || { echo "cargo clippy failed"; FAIL=1; }
-    wait $RUFF_PID       || { echo "ruff check failed"; FAIL=1; }
-    wait $TY_PID         || { echo "ty check failed"; FAIL=1; }
-    wait $SKILLS_PID     || { echo "skill validation failed"; FAIL=1; }
-    wait $PUBLIC_SURFACE_PID || { echo "public surface approval failed"; FAIL=1; }
-    wait $AUDIT_PID      || { echo "strict cargo audit failed"; FAIL=1; }
-    wait $PNPM_AUDIT_PID || { echo "JavaScript dependency audit failed"; FAIL=1; }
-    wait $PYTHON_AUDIT_PID || { echo "Python dependency audit failed"; FAIL=1; }
-    wait $FE_CHECK_PID   || { echo "pnpm check failed";   FAIL=1; }
-    [ $FAIL -eq 0 ] || exit 1
-    step_done
     step "capsem-doctor (in-VM diagnostics)"
     {{cli_binary}} doctor
     step_done

@@ -41,9 +41,6 @@ jobs:
             site/pnpm-lock.yaml
             release-site/pnpm-lock.yaml
 
-      - name: Run shared release contracts
-        run: just _test-release-contracts
-
       - name: Install Linux workspace lint prerequisites
         run: |
           sudo apt-get update
@@ -60,6 +57,9 @@ jobs:
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
         with:
           tool: cargo-audit@0.22.1,cargo-llvm-cov@0.8.5,b3sum@1.8.5,cargo-sbom@0.10.0,tauri-cli@2.11.1
+
+      - name: Run complete shared fast module
+        run: just _test-fast
 
       - name: Run shared static module
         env:

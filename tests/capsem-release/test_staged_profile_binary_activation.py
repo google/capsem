@@ -183,7 +183,8 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     assert "fast-gate" in build_assets.splitlines()[0]
     assert "Run shared static module" not in pairing
     assert "if:" not in artifacts
-    assert "Run shared release contracts" in reusable_fast_gate
+    assert "Run complete shared fast module" in reusable_fast_gate
+    assert "run: just _test-fast" in reusable_fast_gate
     assert f"if: ${{{{ {compatible} }}}}" in functional
     assert f"if: ${{{{ {compatible} }}}}" in glowup
     assert f"if: ${{{{ {compatible} }}}}" in deployable

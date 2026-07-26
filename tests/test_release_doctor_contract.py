@@ -108,7 +108,11 @@ def _recipe_block(name: str) -> str:
     block = "\n".join(lines[start:end])
     if name == "test:":
         block = (
-            f"{block}\n{_recipe_block('_test-candidate:')}\n{_recipe_block('_test-candidate-run:')}"
+            f"{block}\n{_recipe_block('_test-fast:')}"
+            f"\n{_recipe_block('_test-candidate:')}"
+            f"\n{_recipe_block('_test-candidate-run:')}"
+            f"\n{_recipe_block('_test-release-contracts:')}"
+            f"\n{_recipe_block('_test-recipes:')}"
         )
     elif name == "_test-candidate:":
         block = f"{block}\n{_recipe_block('_test-candidate-run:')}"
@@ -481,7 +485,7 @@ def test_release_channel_contract_suite_is_in_pr_and_local_gates() -> None:
     assert "Python integration tests (non-VM suites)" in workflow
     assert "tests/capsem-release/" in just_test
     assert "--ignore=tests/capsem-release" in just_test
-    assert "Build chain and release contracts (serial)" in just_test
+    assert "Fast source and serialized release contracts" in just_test
     assert "validator.validate_release_site(" in local_suite
     assert "test_release_channel_contract_rejects_swapped_manifest" in local_suite
     assert "test_release_channel_contract_ignores_stale_health_summary" in local_suite
@@ -569,14 +573,12 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "scripts/repack-deb.sh" not in workflow
     assert "cargo tauri build" not in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
+    assert "run: just _test-fast" in fast_gate
     assert "run: just _test-static" in fast_gate
-    for module in (
-        "_test-artifacts",
-        "_test-functional",
-        "_test-glowup",
-        "_test-release-contracts",
-    ):
+    for module in ("_test-artifacts", "_test-functional", "_test-glowup"):
         assert f"just {module}" in workflow
+    assert "just _test-fast" in fast_gate
+    assert "just _test-release-contracts" not in workflow
     assert "scripts/build-complete-release-channel.py" in workflow
     assert "channel-source-$CHANNEL.json" in workflow
     assert "check-profile-release-delta.py" in workflow
@@ -1348,11 +1350,12 @@ def test_binary_release_uses_asset_channel_and_does_not_publish_vm_assets() -> N
     assert "output: target/candidate-profile-inputs" in workflow
     assert "--input-dir target/candidate-profile-inputs" in workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
+    assert "run: just _test-fast" in fast_gate
     assert "run: just _test-static" in fast_gate
     assert "just _test-artifacts" in workflow
     assert "just _test-functional" in workflow
     assert "just _test-glowup" in workflow
-    assert "just _test-release-contracts" in workflow
+    assert "just _test-release-contracts" not in workflow
     assert "just _build-kernel" not in workflow
     assert "just _build-rootfs" not in workflow
     assert "cargo run -p capsem-admin -- manifest generate assets" not in workflow
@@ -1567,19 +1570,16 @@ def test_release_lanes_reuse_complete_modules_without_independent_sha_authority(
     testing_skill = _source_text("skills/dev-testing/SKILL.md")
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
+    assert "run: just _test-fast" in fast_gate
     assert "run: just _test-static" in fast_gate
-    modules = (
-        "_test-artifacts",
-        "_test-functional",
-        "_test-glowup",
-        "_test-release-contracts",
-    )
+    modules = ("_test-artifacts", "_test-functional", "_test-glowup")
     for workflow in (binary, profile):
         assert "group: capsem-release-${{ inputs.channel }}" in workflow
         assert "cancel-in-progress: false" in workflow
         assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
         for module in modules:
             assert f"just {module}" in workflow
+        assert "just _test-release-contracts" not in workflow
 
     assert "uses: ./.github/workflows/release-runtime-preflight.yaml" in binary
     assert "uses: ./.github/workflows/release-runtime-preflight.yaml" in profile
@@ -2687,7 +2687,7 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
         "Rust: test suite with coverage",
         "Python: non-serial tests (n=4 parallel)",
         "Python: serial timing and benchmark tests",
-        "Build chain and release contracts (serial)",
+        "Fast source and serialized release contracts",
         "Injection test",
         "Integration test",
         "Benchmarks",
@@ -2698,7 +2698,7 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
 
     assert "## PR gate compared with `just test`" in docs
     assert (
-        "| Audits, lint, and all web surfaces | `fast-gate` calls the same `_test-static` module as local and release CI; dedicated web jobs retain platform/deployment evidence | Same checked-in module and dependency audit across all four web workspaces |"
+        "| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test` and `just smoke`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |"
         in docs
     )
     assert (
@@ -2752,6 +2752,7 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     release_skill = _skill_text("skills/release-process/SKILL.md")
 
     assert "test:" in just
+    assert "run: just _test-fast" in fast_gate
     assert "run: just _test-static" in fast_gate
     assert "uses: ./.github/workflows/fast-gate.yaml" in assets
     assert "uses: ./.github/workflows/fast-gate.yaml" in release
@@ -2759,10 +2760,11 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
         "_test-artifacts",
         "_test-functional",
         "_test-glowup",
-        "_test-release-contracts",
     ):
         assert f"just {module}" in assets
         assert f"just {module}" in release
+    assert "just _test-release-contracts" not in assets
+    assert "just _test-release-contracts" not in release
 
     for command in ("just _build-kernel", "just _build-rootfs"):
         assert command in assets
@@ -2885,13 +2887,14 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
         assert "every portable release gate" in document
         assert "`just test`" in document
 
+    assert "run: just _test-fast" in fast_gate
     assert "run: just _test-static" in fast_gate
     for workflow in (binary, profile):
         assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
         assert "just _test-artifacts" in workflow
         assert "just _test-functional" in workflow
         assert "just _test-glowup" in workflow
-        assert "just _test-release-contracts" in workflow
+        assert "just _test-release-contracts" not in workflow
     assert "cargo llvm-cov --workspace --bins --lib --tests" in just
     assert "--fail-under-lines 65" in just
     assert "--cov-fail-under=90" in just
@@ -4165,11 +4168,10 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert frontend_check_pos != -1
     assert "uses: ./.github/workflows/fast-gate.yaml" in binary_release
     assert "uses: ./.github/workflows/fast-gate.yaml" in profile_release
+    assert "run: just _test-fast" in fast_gate
     assert "run: just _test-static" in fast_gate
-    assert (
-        "_test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-stale _pnpm-install _check-generated-settings"
-        in just
-    )
+    assert "just _test-fast" in just
+    assert "_test-candidate:\n    just _bootstrap" in just
     assert "bash scripts/check-web-surface.sh frontend" in just
     assert "pnpm --dir frontend run check" in web_gate
     assert generate_pos < first_frontend_build_pos

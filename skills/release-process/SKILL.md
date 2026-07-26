@@ -43,8 +43,12 @@ just release-profile <channel> <profile>
   2. only after success: invoke capsem-admin release for that channel/profile
 ```
 
-`just smoke` remains useful public developer feedback. It is not release
-qualification and must never replace `just test` in either release command.
+`just smoke` remains useful public developer feedback. It invokes the exact
+private `_test-fast` module used by `just test` and release CI, including YAML
+and source syntax, every source/release contract, Clippy, Python lint/type
+checks, JavaScript checks/builds, and blocking Rust/Python/JavaScript
+vulnerability audits. It is still not release qualification and must never
+replace `just test` in either release command.
 
 `just test` must be the first consequential command. If it fails, the release
 command must stop before stamping versions, changing tracked files, committing,
@@ -79,10 +83,17 @@ explicit product/API decision.
 
 ## Local proof and release-CI composition
 
-`just test` is the complete local CI-equivalent proof, not a smaller developer
-smoke test. It rebuilds every package and every checked-in profile, then runs
-all five checked-in modules:
+Local `just test` is the whole-world proof. Release commands run it in full
+before any release side effect, then CI reuses the same private modules against
+the manifest-selected complementary artifact family.
 
+`just test` is the complete local CI-equivalent proof, not a smaller developer
+smoke test. Before any Docker/Colima, bootstrap, package, profile, asset, or VM
+work, it runs the independently executable `_test-fast` module. It then
+rebuilds every package and every checked-in profile and runs all six checked-in
+modules:
+
+- `_test-fast`
 - `_test-static`
 - `_test-artifacts`
 - `_test-functional`

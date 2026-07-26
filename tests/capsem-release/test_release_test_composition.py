@@ -55,15 +55,17 @@ def _source_digest_module():
 
 
 def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() -> None:
+    public = _recipe("test")
     local = _recipe("_test-candidate")
 
-    assert "_check-assets _pack-initrd _materialize-config" in local.splitlines()[0]
+    assert "just _test-fast" in public
+    assert public.index("just _test-fast") < public.index("scripts/with-gate-colima.sh")
     expected = (
-        "CAPSEM_LOCAL_REBUILT_ARTIFACTS=1 just _test-release-contracts",
         "just _test-static",
         "just _test-artifacts",
         "just _test-functional",
         "just _test-glowup",
+        "just _test-recipes",
     )
     positions = [local.index(command) for command in expected]
     assert positions == sorted(positions)
@@ -73,6 +75,7 @@ def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() ->
 
 def test_private_release_modules_select_one_shared_runner() -> None:
     expected = {
+        "_test-fast": "fast",
         "_test-static": "static",
         "_test-artifacts": "artifacts",
         "_test-functional": "functional",
@@ -84,10 +87,36 @@ def test_private_release_modules_select_one_shared_runner() -> None:
         assert f"CAPSEM_TEST_MODULE={module} just _test-candidate-run" in _recipe(recipe)
 
     runner = _recipe("_test-candidate-run")
-    assert "static|artifacts|functional|glowup|release-contracts" in runner
+    assert "fast|static|artifacts|functional|glowup|release-contracts" in runner
     assert '"all"' not in runner
     for module in expected.values():
         assert f"module_enabled {module}" in runner
+
+
+def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -> None:
+    public = _recipe("test")
+    fast = _recipe("_test-fast")
+    runner = _recipe("_test-candidate-run")
+
+    for required in (
+        "scripts/check-source-syntax.py",
+        "just _test-release-contracts",
+        "scripts/check-cargo-audit.py",
+        "scripts/audit-pnpm-bulk.py",
+        "scripts/audit-python-lock.sh",
+        "uv run ruff check .",
+        "uv run ty check src/capsem",
+        "cargo clippy --workspace --all-targets -- -D warnings",
+        "bash scripts/check-web-surface.sh frontend",
+        "bash scripts/check-web-surface.sh release-site",
+    ):
+        assert required in fast or required in runner
+
+    assert public.index("just _test-fast") < public.index("scripts/with-gate-colima.sh")
+    assert "_bootstrap" not in fast
+    assert "_check-assets" not in fast
+    assert "_pack-initrd" not in fast
+    assert "module_enabled fast" in runner
 
 
 def test_release_static_module_never_bootstraps_or_builds_profile_assets() -> None:
@@ -141,7 +170,8 @@ def test_modules_retain_complete_named_quality_gates() -> None:
         "test_capsem_bench_baseline.py",
         "scripts/local-release-glowup.py",
         "just _gate-install",
-        "tests/capsem-build-chain/ tests/capsem-release/",
+        "tests/capsem-build-chain/",
+        "tests/capsem-release/",
     ):
         assert required in runner
 
@@ -149,19 +179,42 @@ def test_modules_retain_complete_named_quality_gates() -> None:
 def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
     runner = _recipe("_test-candidate-run")
     release_contracts = runner[runner.index("if module_enabled release-contracts;") :]
+    functional = runner[
+        runner.index("if module_enabled functional;") :
+        runner.index("if module_enabled glowup;")
+    ]
 
-    assert 'if [ "${CAPSEM_LOCAL_REBUILT_ARTIFACTS:-0}" = "1" ]; then' in release_contracts
+    assert "tests/capsem-build-chain/" in release_contracts
+    assert "tests/capsem-release/" in release_contracts
+    for artifact_test in (
+        "test_cargo_build.py",
+        "test_codesign.py",
+        "test_full_chain.py",
+        "test_manifest_regen.py",
+        "test_pack_initrd.py",
+    ):
+        assert f"--ignore=tests/capsem-build-chain/{artifact_test}" in release_contracts
+        assert f"tests/capsem-build-chain/{artifact_test}" in runner
+    assert "tests/test_*contract.py" in release_contracts
+    assert "tests/test_agent_skill_index.py" in release_contracts
+    assert "tests/test_macos_tart_glowup.py" in release_contracts
+    assert "tests/test_release_site_generated_from_json.py" in release_contracts
+    assert "tests/test_release_site_review_regressions.py" in release_contracts
+    assert "tests/capsem-recipes/" not in release_contracts
+    assert "tests/capsem-recipes/" in _recipe("_test-recipes")
+    assert "--ignore-glob=tests/test_*contract.py" in functional
+    assert "--ignore=tests/test_agent_skill_index.py" in functional
+    assert "Python: release site shared-dist tests" not in functional
+
+
+def test_parallel_coverage_state_is_kept_out_of_the_source_tree() -> None:
+    runner = _recipe("_test-candidate-run")
+
     assert (
-        "tests/capsem-build-chain/ tests/capsem-release/"
-        in release_contracts
+        'export COVERAGE_FILE="{{justfile_directory()}}/target/coverage/.coverage"'
+        in runner
     )
-    assert (
-        "else\n"
-        '        echo "=== Serialized release contracts (serial) ==="\n'
-        "        uv run python -m pytest tests/capsem-release/"
-        in release_contracts
-    )
-    assert "tests/capsem-recipes/" in release_contracts
+    assert 'mkdir -p "$(dirname "$COVERAGE_FILE")"' in runner
 
 
 def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) -> None:

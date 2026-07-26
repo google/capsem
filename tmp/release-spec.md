@@ -478,6 +478,21 @@ including:
 The exact internal steps may evolve, but the public meaning of `just test`
 remains “construct and verify the whole system.”
 
+Before starting Docker/Colima, bootstrap, package, profile, asset, or VM work,
+`just test` MUST run one checked-in private `_test-fast` module. That same
+module MUST be called independently by ordinary CI, both release workflows,
+and `just smoke`. It MUST own all cheap deterministic failures, including YAML
+and workflow parsing, Python/shell/JSON/TOML syntax, generated-file drift,
+source and release contracts, Rust Clippy, Python lint and type checks,
+JavaScript type/test/build checks, and blocking Rust, Python, and JavaScript
+dependency-vulnerability audits. These checks MUST NOT be duplicated as a
+smaller smoke-only or workflow-only approximation.
+
+`just smoke` remains a public developer-feedback command. Its use of
+`_test-fast` does not make it release qualification: only `just test` adds the
+complete construction, artifact, VM, functional, native-install, and glow-up
+proof required before either release command may dispatch.
+
 ### 8.3 Local rebuilding is intentional
 
 Local asset rebuilding is not waste to optimize away. It is how local

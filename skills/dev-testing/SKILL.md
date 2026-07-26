@@ -40,6 +40,7 @@ recipe.
 
 Release CI reuses the same checked-in private modules as local `just test`:
 
+- `_test-fast`
 - `_test-static`
 - `_test-artifacts`
 - `_test-functional`
@@ -93,10 +94,13 @@ before the host package reaches its mandatory KVM proof. The hosted arm64 runner
 does not expose `/dev/kvm`, so it proves exact package/service operation while
 the x86_64 runner additionally owns the guest-shell marker.
 
-Expensive harnesses need a cheap clean-environment bootstrap proof near the
-start of `just test`. Run source guards, dependency audits, Clippy, Python
-lint/type checks, and JavaScript/frontend checks first; only a green fast gate
-may build the Linux install-test image. That preflight must use a
+Expensive harnesses need a cheap clean-environment bootstrap proof at the
+start of `just test`, before Docker/Colima or artifact preparation. The one
+private `_test-fast` module is also called by `just smoke`, ordinary CI, and
+both release lanes. It owns YAML/workflow and source syntax, source contracts,
+dependency audits, Clippy, Python lint/type checks, and JavaScript/frontend
+checks; no caller may reproduce a subset inline. Only a green fast gate may
+build the Linux install-test image. That preflight must use a
 container-owned `UV_PROJECT_ENVIRONMENT` and prove `python -m pytest` launches
 before VM, package, or asset work consumes hours. Keep an ordering contract.
 It is fail-fast infrastructure

@@ -659,7 +659,11 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke() 
     dependency_line = next(
         line for line in justfile.splitlines() if line.startswith("_test-candidate:")
     )
-    assert dependency_line.split()[1] == "_bootstrap"
+    assert dependency_line == "_test-candidate:"
+    candidate = justfile.split("_test-candidate:", maxsplit=1)[1].split(
+        "\n# Parser errors", maxsplit=1
+    )[0]
+    assert candidate.lstrip().startswith("just _bootstrap")
 
     test_start = justfile.index("test:")
     test_end = justfile.index("\n# Build the capsem-host-builder", test_start)

@@ -939,9 +939,8 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
     candidate = _just_recipe_block("_test-candidate:")
     bound = _just_recipe_block("_bound-docker-test-storage:")
 
-    dependencies = candidate.splitlines()[0].split(":", 1)[1].split()
-    assert "_bound-docker-test-storage" in dependencies
-    assert candidate.index("just _gate-install") < candidate.index(
+    assert "just _bound-docker-test-storage" in candidate
+    assert candidate.index("just _gate-install") < candidate.rindex(
         "just _bound-docker-test-storage"
     )
     capacity = bound.index("scripts/ensure-docker-space.sh")

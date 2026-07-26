@@ -14,6 +14,12 @@ family from the selected channel manifest. Specialized CI jobs may provide
 faster feedback or platform evidence, but they cannot be the only owner of a
 portable requirement.
 
+The first shared module is `_test-fast`. It must run before Docker/Colima or
+artifact preparation and must be independently callable by `just smoke`,
+`just test`, ordinary CI, and both release lanes. YAML/source syntax, source
+contracts, Clippy, Python/JavaScript checks, web builds, and all locked
+dependency audits belong there and nowhere else.
+
 Treat `just test` as a strict superset, not merely a collection of similar
 assertions. Anything a CI workflow builds locally-portably must be built and
 tested by `just test` through the same production primitive. CI is allowed to

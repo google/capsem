@@ -66,8 +66,12 @@ branching, reporting, cleanup, or resource ownership.
   on the installed executable payload, and physical Apple VZ boot from that
   exact package.
 
-Release CI calls the checked-in `_test-static`, `_test-artifacts`,
-`_test-functional`, `_test-glowup`, and `_test-release-contracts` modules.
+Release CI calls the checked-in `_test-fast`, `_test-static`,
+`_test-artifacts`, `_test-functional`, `_test-glowup`, and
+`_test-release-contracts` modules. `_test-fast` is also the first phase of
+`just test` and `just smoke`; it owns YAML/source syntax, source contracts,
+Clippy, Python and JavaScript checks, and every locked-ecosystem vulnerability
+audit. Callers must reuse it whole rather than duplicating a subset.
 Binary CI builds packages and pulls profiles; profile CI builds one profile and
 pulls packages. Both retain complete functional and glow-up proof before
 activation. Do not fork or approximate this graph in another public recipe.

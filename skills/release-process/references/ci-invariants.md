@@ -26,9 +26,10 @@ Every portable release-critical workflow must share the same production
 entrypoint with a local gate. Current required mappings are:
 
 - test composition: local `just test` and both release lanes call
-  `_test-static`, `_test-artifacts`, `_test-functional`, `_test-glowup`, and
-  `_test-release-contracts`; release lanes stage resolved complementary
-  artifacts rather than rebuilding them;
+  `_test-fast`, `_test-static`, `_test-artifacts`, `_test-functional`,
+  `_test-glowup`, and `_test-release-contracts`; `_test-fast` also runs whole
+  in `just smoke`, and release lanes stage resolved complementary artifacts
+  rather than rebuilding them;
 - VM assets: `just test` owns `just _gate-assets`, which executes the same
   `just _build-kernel` and `just _build-rootfs` primitives as
   `release-assets.yaml` for every checked-in profile and both published

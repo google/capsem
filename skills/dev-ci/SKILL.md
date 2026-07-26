@@ -54,11 +54,15 @@ web-surface script must fail immediately with a message naming the `Install
 release site dependencies` step when `release-site/node_modules/.bin/astro`
 is absent.
 
-RustSec and the JavaScript bulk advisory audit are blocking in `just smoke`,
-local `just test`, ordinary CI, both release lanes, and the scheduled/manual
-`security-audit.yaml`. A newly published advisory is a real red gate: diagnose
-and remediate it or record an explicit reviewed exception in the scanner's
-checked-in policy. Never turn the command into a warning or
+The independently executable `_test-fast` module is the first local and CI
+gate. It owns YAML/workflow and source syntax, source contracts, Clippy,
+Python lint/type checks, JavaScript checks/builds, and the blocking Rust,
+Python, and JavaScript vulnerability audits. `just smoke`, local `just test`,
+ordinary CI, and both release lanes call that exact module; workflows must not
+reimplement or trim it. The scheduled/manual `security-audit.yaml` retains its
+dedicated scanner schedule. A newly published advisory is a real red gate:
+diagnose and remediate it or record an explicit reviewed exception in the
+scanner's checked-in policy. Never turn the command into a warning or
 `continue-on-error`.
 
 ## Triage procedure

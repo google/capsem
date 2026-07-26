@@ -155,7 +155,7 @@ started explicitly through the same command.
 ## PR gate compared with `just test`
 
 The Ironbank parity rule is that every portable release gate is owned by
-`just test`. Local testing rebuilds both artifact families and calls the five
+`just test`. Local testing rebuilds both artifact families and calls the six
 private test modules. Release CI calls the same modules while pulling the
 unchanged family. GitHub-hosted PR CI may split feedback across jobs, but those
 jobs do not replace the canonical gate. Unavoidable runner substitutions are
@@ -163,7 +163,7 @@ named below.
 
 | `just test` stage | PR CI proof | Difference |
 |-------------------|-------------|------------|
-| Audits, lint, and all web surfaces | `fast-gate` calls the same `_test-static` module as local and release CI; dedicated web jobs retain platform/deployment evidence | Same checked-in module and dependency audit across all four web workspaces |
+| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test` and `just smoke`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |
 | Cross-compile agent (both arches) | `test` job: musl target check for `capsem-agent`; `test-linux` covers Linux host crates | Hosted PR substitution for Docker release cross-compile |
 | Rust workspace coverage | `test` and `test-linux` jobs run `cargo llvm-cov nextest` on macOS and Linux crate sets | Same coverage rail with runner-specific package sets |
 | Host binary signing prerequisites | `test` job builds and ad-hoc signs host binaries before non-VM integration suites | Same PR prerequisite for artifact-dependent Python suites |

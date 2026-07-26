@@ -833,7 +833,8 @@ def test_profile_release_publishes_incompatible_assets_but_withholds_channel_dep
     assert "scripts/check-profile-release-delta.py" in author
     assert "cargo run -p capsem-admin -- release" in author
     assert "Run shared artifact module" in pairing
-    assert "Run shared release contracts" in reusable_fast_gate
+    assert "Run complete shared fast module" in reusable_fast_gate
+    assert "run: just _test-fast" in reusable_fast_gate
     assert "Run shared release contracts" not in pairing
     assert (
         "if:"

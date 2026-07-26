@@ -217,17 +217,20 @@ def test_binary_and_profile_workflows_share_channel_transaction_lock() -> None:
 def test_release_lanes_run_one_reusable_fast_gate_before_builders() -> None:
     reusable = _workflow("fast-gate.yaml")
     assert "workflow_call:" in reusable
+    assert "run: just _test-fast" in reusable
     assert "run: just _test-static" in reusable
-    contracts = reusable.index("Run shared release contracts")
     linux_prerequisites = reusable.index("Install Linux workspace lint prerequisites")
+    fast = reusable.index("Run complete shared fast module")
     static = reusable.index("Run shared static module")
-    assert contracts < linux_prerequisites < static
+    assert linux_prerequisites < fast < static
 
     binary = _workflow("release.yaml")
     assert "  fast-gate:\n    uses: ./.github/workflows/fast-gate.yaml" in binary
     assert "needs: [runtime-preflight, fast-gate]" in _job_block(binary, "preflight")
     assert "Run shared static module" not in _job_block(binary, "test-binary-pairing")
-    assert "Run shared release contracts" not in _job_block(binary, "test-binary-pairing")
+    assert "Run complete shared fast module" not in _job_block(
+        binary, "test-binary-pairing"
+    )
 
     profile = _workflow("release-assets.yaml")
     assert "  fast-gate:\n    uses: ./.github/workflows/fast-gate.yaml" in profile
