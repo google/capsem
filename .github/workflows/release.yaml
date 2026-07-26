@@ -901,6 +901,7 @@ jobs:
           set -euo pipefail
           package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
           test -n "$package"
+          uv run python scripts/install-deb-runtime-dependencies.py "$package"
           before_package=$(uv run python scripts/stage-release-test-inputs.py \
             --input-dir target/binary-public-before/packages \
             --print-package-path)

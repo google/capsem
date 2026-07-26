@@ -134,6 +134,7 @@ def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
     assert "--shared-config-root config" in workflow
     assert 'CAPSEM_CONFIG_ROOT="$PWD/target/release-config"' in workflow
     assert '--package-file "$package"' in workflow
+    assert 'scripts/install-deb-runtime-dependencies.py "$package"' in workflow
     assert "cp target/release-package-root/usr/bin/capsem*" not in workflow
     assert "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem" in workflow
 
@@ -143,6 +144,21 @@ def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
         "capsem-admin -- image build",
     ):
         assert forbidden not in workflow
+
+
+def test_profile_lane_installs_pulled_package_runtime_dependencies() -> None:
+    workflow = _workflow("release-assets.yaml")
+    pairing = _job_block(workflow, "test-profile-pairing")
+
+    resolve_package = pairing.index("--print-package-path")
+    install_dependencies = pairing.index(
+        'scripts/install-deb-runtime-dependencies.py "$package"'
+    )
+    functional = pairing.index("run: just _test-functional")
+
+    assert resolve_package < install_dependencies < functional
+    assert "sudo dpkg -i" not in pairing
+    assert "sudo apt-get install" not in pairing
 
 
 def test_binary_candidate_manifest_is_authored_once_before_pairing() -> None:
