@@ -28,6 +28,13 @@ STAGE_SPEC = importlib.util.spec_from_file_location(
 assert STAGE_SPEC is not None and STAGE_SPEC.loader is not None
 STAGE = importlib.util.module_from_spec(STAGE_SPEC)
 STAGE_SPEC.loader.exec_module(STAGE)
+BOOT_SPEC = importlib.util.spec_from_file_location(
+    "prove_release_profile_assets",
+    ROOT / "scripts" / "prove-release-profile-assets.py",
+)
+assert BOOT_SPEC is not None and BOOT_SPEC.loader is not None
+BOOT = importlib.util.module_from_spec(BOOT_SPEC)
+BOOT_SPEC.loader.exec_module(BOOT)
 SOURCE_SPEC = importlib.util.spec_from_file_location(
     "fetch_channel_source_manifest",
     ROOT / "scripts" / "fetch-channel-source-manifest.py",
@@ -591,6 +598,111 @@ def test_fetches_every_profile_owned_input(tmp_path: Path) -> None:
     assert (output / "profiles/code/x86_64/images/rootfs.erofs").read_bytes() == artifacts[
         "rootfs.erofs"
     ]
+
+
+def test_profile_boot_proof_uses_exact_manifest_selected_images_without_builders(
+    tmp_path: Path,
+) -> None:
+    manifest, artifacts = _write_manifest(tmp_path)
+    output = tmp_path / "profiles"
+    FETCH.fetch_release_inputs(
+        manifest.as_uri(),
+        "profiles",
+        output,
+        architecture="x86_64",
+    )
+    calls: list[list[str]] = []
+
+    def run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert kwargs == {"check": True}
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    BOOT.prove_profile_assets(
+        output,
+        "code",
+        architecture="x86_64",
+        timeout=41,
+        runner=run,
+    )
+
+    assert len(calls) == 1
+    command = calls[0]
+    assert command[:8] == [
+        "cargo",
+        "run",
+        "--locked",
+        "-p",
+        "capsem-core",
+        "--example",
+        "release_profile_boot",
+        "--",
+    ]
+    assert command[command.index("--profile") + 1] == "code"
+    assert command[command.index("--timeout") + 1] == "41"
+    for kind, filename in (
+        ("kernel", "vmlinuz"),
+        ("initrd", "initrd.img"),
+        ("rootfs", "rootfs.erofs"),
+    ):
+        path = Path(command[command.index(f"--{kind}") + 1])
+        digest = command[command.index(f"--{kind}-blake3") + 1]
+        assert path.read_bytes() == artifacts[filename]
+        assert digest == blake3.blake3(artifacts[filename]).hexdigest()
+    joined = " ".join(command)
+    for forbidden in ("capsem-admin", "_build-assets", "_build-kernel", "_build-rootfs"):
+        assert forbidden not in joined
+
+
+def test_profile_boot_proof_rejects_profile_absent_from_manifest(tmp_path: Path) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    output = tmp_path / "profiles"
+    FETCH.fetch_release_inputs(
+        manifest.as_uri(),
+        "profiles",
+        output,
+        architecture="x86_64",
+    )
+
+    with pytest.raises(ValueError, match="does not select profile missing"):
+        BOOT.resolve_profile_boot_inputs(output, "missing", "x86_64")
+
+
+def test_profile_boot_proof_rejects_duplicate_boot_image_kind(tmp_path: Path) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    images = document["profiles"]["code"]["architectures"][0]["images"]
+    images.append(dict(images[0]))
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    output = tmp_path / "profiles"
+    FETCH.fetch_release_inputs(
+        manifest.as_uri(),
+        "profiles",
+        output,
+        architecture="x86_64",
+    )
+
+    with pytest.raises(ValueError, match="repeats kernel image"):
+        BOOT.resolve_profile_boot_inputs(output, "code", "x86_64")
+
+
+def test_profile_boot_proof_rejects_transport_missing_manifest_image(tmp_path: Path) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    output = tmp_path / "profiles"
+    FETCH.fetch_release_inputs(
+        manifest.as_uri(),
+        "profiles",
+        output,
+        architecture="x86_64",
+    )
+    report = json.loads((output / "release-inputs.json").read_text(encoding="utf-8"))
+    report["artifacts"] = [
+        row for row in report["artifacts"] if not row["path"].endswith("/images/rootfs.erofs")
+    ]
+    (output / "release-inputs.json").write_text(json.dumps(report), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="does not match the resolved manifest artifact set"):
+        BOOT.resolve_profile_boot_inputs(output, "code", "x86_64")
 
 
 def _stage_local_profile_publication(

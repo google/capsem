@@ -203,6 +203,26 @@ def test_standalone_local_glowup_materializes_config_without_release_builders() 
     assert "just _build-images" not in runner
 
 
+def test_release_artifact_module_boots_manifest_selected_profile_bytes_without_builders() -> None:
+    runner = _recipe("_test-candidate-run")
+    artifact_branch = runner[
+        runner.index("if module_enabled artifacts; then") :
+        runner.index("# ---- Stage 5: Python pytest")
+    ]
+
+    assert "scripts/prove-release-profile-assets.py" in artifact_branch
+    assert '--input-dir "$CAPSEM_RELEASE_INPUT_DIR"' in artifact_branch
+    assert '--profile "$CAPSEM_RELEASE_PROFILE"' in artifact_branch
+    for forbidden in (
+        "just _build-assets",
+        "just _build-kernel",
+        "just _build-rootfs",
+        "just _build-images",
+        "just _cross-compile",
+    ):
+        assert forbidden not in artifact_branch
+
+
 def test_functional_module_runs_every_selected_profile_without_rebuilding() -> None:
     runner = _recipe("_test-candidate-run")
 

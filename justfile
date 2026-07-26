@@ -813,6 +813,12 @@ _test-candidate-run:
             echo "=== Release artifacts: verify pulled immutable inputs ==="
             uv run python scripts/verify-release-inputs.py \
                 --input-dir "$CAPSEM_RELEASE_INPUT_DIR"
+            if [ -n "${CAPSEM_RELEASE_PROFILE:-}" ]; then
+                echo "=== Release artifacts: boot selected manifest profile bytes ==="
+                uv run python scripts/prove-release-profile-assets.py \
+                    --input-dir "$CAPSEM_RELEASE_INPUT_DIR" \
+                    --profile "$CAPSEM_RELEASE_PROFILE"
+            fi
         else
             echo "=== VM assets: all profiles, both arches, real guest shell ==="
             just _gate-assets
