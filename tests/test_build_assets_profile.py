@@ -244,6 +244,9 @@ def test_asset_workflow_publishes_obom_not_debug_build_ledger() -> None:
     assert "scripts/verify-profile-publication.py" in stage_step
     assert "scripts/stage-profile-publication.py" not in upload_step
     assert "scripts/verify-profile-publication.py" in upload_step
+    assert "scripts/publish-immutable-release-assets.sh" in upload_step
+    assert "gh release create" not in upload_step
+    assert "gh release upload" not in upload_step
     assert 'files=("$RELEASE_DIR"/*)' in upload_step
     assert 'for section in ("config", "images", "evidence")' in stager
     assert "subject-path: target/asset-release/profile-*/*" in attest_step

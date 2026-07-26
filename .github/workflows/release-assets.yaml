@@ -610,7 +610,7 @@ jobs:
           TAG="${{ needs.author-profile-release.outputs.publication_identity }}"
           PROFILE_REVISION=$(python3 -c 'import json; print(json.load(open("target/profile-release-selection.json"))["profile_revision"])')
           RELEASE_DIR="target/asset-release/$TAG"
-          UPLOAD_SCRIPT="target/asset-release/upload-assets.sh"
+          NOTES_FILE="target/asset-release/profile-release-notes.md"
           PUBLICATION_BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
           uv run python scripts/verify-profile-publication.py \
             --manifest "$RELEASE_DIR/channel-source-$CHANNEL.json" \
@@ -620,27 +620,9 @@ jobs:
 
           files=("$RELEASE_DIR"/*)
           test "${#files[@]}" -gt 0
-          mkdir -p "$(dirname "$UPLOAD_SCRIPT")"
-          # shellcheck disable=SC2016
-          {
-            echo '#!/usr/bin/env bash'
-            echo 'set -euo pipefail'
-            printf 'if gh release view %q >/dev/null 2>&1; then\n' "$TAG"
-            printf '  existing=$(mktemp -d)\n'
-            printf '  trap '"'"'rm -rf "$existing"'"'"' EXIT\n'
-            printf '  gh release download %q --dir "$existing"\n' "$TAG"
-            printf '  uv run python scripts/verify-immutable-publication.py --expected %q --actual "$existing"\n' "$RELEASE_DIR"
-            printf '  echo %q\n' "reusing byte-identical immutable profile release: $TAG"
-            printf 'else\n'
-            printf '  gh release create %q' "$TAG"
-            printf ' %q' "${files[@]}"
-            printf ' --title %q --notes %q --target %q\n' \
-              "Capsem $CHANNEL/${{ inputs.profile }} $PROFILE_REVISION" \
-              "Immutable Capsem profile release for $CHANNEL/${{ inputs.profile }}." \
-              "$GITHUB_SHA"
-            printf 'fi\n'
-          } > "$UPLOAD_SCRIPT"
-          chmod +x "$UPLOAD_SCRIPT"
+          printf '%s\n' \
+            "Immutable Capsem profile release for $CHANNEL/${{ inputs.profile }}." \
+            > "$NOTES_FILE"
 
           {
             echo "## Immutable VM profile release"
@@ -654,9 +636,12 @@ jobs:
 
           if [[ "$DRY_RUN" == "true" ]]; then
             echo "Dry run: would publish immutable VM profile release $TAG"
-            sed 's/^/DRY-RUN: /' "$UPLOAD_SCRIPT"
           else
-            "$UPLOAD_SCRIPT"
+            CAPSEM_RELEASE_CREATE_TITLE="Capsem $CHANNEL/${{ inputs.profile }} $PROFILE_REVISION" \
+            CAPSEM_RELEASE_CREATE_NOTES_FILE="$NOTES_FILE" \
+            CAPSEM_RELEASE_CREATE_TARGET="$GITHUB_SHA" \
+              scripts/publish-immutable-release-assets.sh \
+                "$TAG" "$RELEASE_DIR"
           fi
 
       - name: Attest VM asset provenance

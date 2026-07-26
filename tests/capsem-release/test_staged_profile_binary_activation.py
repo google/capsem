@@ -95,7 +95,8 @@ def test_staged_profile_is_authored_once_before_pairing_tests_and_publication() 
     assert "cargo run -p capsem-admin -- release" not in pairing
     assert "cargo run -p capsem-admin -- release" not in publish
     assert "gh release create" not in author
-    assert "gh release create" in publish
+    assert "scripts/publish-immutable-release-assets.sh" in publish
+    assert "gh release create" not in publish
     assert "name: authored-profile-channel-source" in author
     assert "name: authored-profile-candidate" in author
     assert "name: authored-profile-publication" in author
@@ -212,8 +213,11 @@ def test_profile_then_binary_reuses_authored_source_without_rebuilding_assets() 
     assert "name: binary-channel-candidate" in binary
 
 
-def test_existing_profile_publication_is_reused_only_after_exact_byte_comparison() -> None:
+def test_profile_publication_retry_verifies_owned_bytes_and_uploads_only_missing() -> None:
     workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
+    publisher = (
+        ROOT / "scripts" / "publish-immutable-release-assets.sh"
+    ).read_text(encoding="utf-8")
     publish = _job(workflow, "publish-profile-release", "deploy-channel")
     immutable = _step(
         publish,
@@ -221,12 +225,18 @@ def test_existing_profile_publication_is_reused_only_after_exact_byte_comparison
         "Attest VM asset provenance",
     )
 
-    assert "gh release download" in immutable
-    assert "scripts/verify-immutable-publication.py" in immutable
-    assert "--expected" in immutable
-    assert "--actual" in immutable
+    assert "scripts/publish-immutable-release-assets.sh" in immutable
+    assert "CAPSEM_RELEASE_CREATE_TITLE=" in immutable
+    assert "CAPSEM_RELEASE_CREATE_NOTES_FILE=" in immutable
+    assert 'CAPSEM_RELEASE_CREATE_TARGET="$GITHUB_SHA"' in immutable
+    assert "gh release create" not in immutable
+    assert "gh release download" not in immutable
     assert "gh release upload" not in immutable
-    assert "immutable profile release already exists" not in immutable
+    assert "--clobber" not in immutable
+    assert publisher.count("--resume-owned") == 2
+    assert publisher.count("--missing-output") == 2
+    assert "while IFS= read -r missing" in publisher
+    assert 'gh release upload "$release_tag"' in publisher
 
 
 def test_binary_publication_retry_verifies_owned_bytes_and_uploads_only_missing() -> None:

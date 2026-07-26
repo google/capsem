@@ -35,9 +35,14 @@ if ! gh release view "$release_tag" >/dev/null 2>&1; then
         echo "release $release_tag does not exist and creation metadata is absent" >&2
         exit 1
     fi
-    gh release create "$release_tag" \
-        --title "$CAPSEM_RELEASE_CREATE_TITLE" \
+    create_args=(
+        --title "$CAPSEM_RELEASE_CREATE_TITLE"
         --notes-file "$CAPSEM_RELEASE_CREATE_NOTES_FILE"
+    )
+    if [[ -n "${CAPSEM_RELEASE_CREATE_TARGET:-}" ]]; then
+        create_args+=(--target "$CAPSEM_RELEASE_CREATE_TARGET")
+    fi
+    gh release create "$release_tag" "${create_args[@]}"
 fi
 
 download_existing "$existing_dir"
