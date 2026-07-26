@@ -27,6 +27,22 @@ def _recipe(name: str) -> str:
     return "\n".join(lines[start:end])
 
 
+def _workflow_job(path: str, name: str) -> str:
+    lines = (PROJECT_ROOT / path).read_text(encoding="utf-8").splitlines()
+    start = lines.index(f"  {name}:")
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(lines))
+            if lines[index].startswith("  ")
+            and not lines[index].startswith("    ")
+            and lines[index].endswith(":")
+        ),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
 def _source_digest_module():
     script = PROJECT_ROOT / "scripts" / "source-state-digest.py"
     spec = importlib.util.spec_from_file_location("source_state_digest", script)
@@ -130,6 +146,22 @@ def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
         in release_contracts
     )
     assert "tests/capsem-recipes/" in release_contracts
+
+
+def test_release_contract_module_owns_release_site_dependencies() -> None:
+    contracts = _recipe("_test-release-contracts")
+    install = _recipe("_release-site-pnpm-install")
+
+    assert "_release-site-pnpm-install" in contracts.splitlines()[0]
+    assert "release-site" in install
+    assert "pnpm install --frozen-lockfile" in install
+    for workflow_path, job in (
+        (".github/workflows/release.yaml", "test-binary-pairing"),
+        (".github/workflows/release-assets.yaml", "test-profile-pairing"),
+    ):
+        pairing = _workflow_job(workflow_path, job)
+        assert "cache: pnpm" in pairing
+        assert "release-site/pnpm-lock.yaml" in pairing
 
 
 def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
