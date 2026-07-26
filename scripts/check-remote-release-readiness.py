@@ -58,6 +58,7 @@ ALLOWED_PROFILE_CONFIG_KINDS = {
     "build",
     "tips",
     "root_manifest",
+    "root_payload",
 }
 ALLOWED_RELEASE_STATUSES = {"current", "supported", "deprecated", "revoked"}
 REQUIRED_PROFILE_IMAGE_KINDS = {"kernel", "initrd", "rootfs"}

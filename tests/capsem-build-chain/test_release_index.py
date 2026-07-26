@@ -355,8 +355,23 @@ def _write_profile_catalog(root: Path, revision: str = "profiles-2030.0101.1") -
     (profile_dir / "apt-packages.txt").write_text("zstd\n", encoding="utf-8")
     (profile_dir / "python-requirements.txt").write_text("pytest==8.0.0\n", encoding="utf-8")
     (profile_dir / "npm-packages.txt").write_text("@openai/codex\n", encoding="utf-8")
+    root_payload = b"fixture profile root\n"
+    (profile_dir / "root/root").mkdir(parents=True)
+    (profile_dir / "root/root/.profile").write_bytes(root_payload)
     (profile_dir / "root.manifest.json").write_text(
-        '{"format":"capsem.profile-root.v1","files":[]}\n',
+        json.dumps(
+            {
+                "format": "capsem.profile-root.v1",
+                "files": [
+                    {
+                        "path": "root/.profile",
+                        "hash": f"blake3:{blake3(root_payload).hexdigest()}",
+                        "size": len(root_payload),
+                    }
+                ],
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     (profile_dir / "profile.toml").write_text(

@@ -69,6 +69,7 @@ pub enum ProfileConfigKind {
     Build,
     Tips,
     RootManifest,
+    RootPayload,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -901,6 +902,7 @@ impl ProfileConfigKind {
             Self::Build => "build",
             Self::Tips => "tips",
             Self::RootManifest => "root_manifest",
+            Self::RootPayload => "root_payload",
         }
     }
 }

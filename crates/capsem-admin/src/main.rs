@@ -5303,27 +5303,102 @@ fn graph_profile_config_refs(
 ) -> Result<Vec<serde_json::Value>> {
     let mut files = Vec::new();
     let profile_toml = format!("profiles/{}/profile.toml", profile.id);
-    files.push(("profile", profile_toml));
+    files.push(("profile".to_string(), profile_toml, None));
     for (kind, descriptor) in profile_file_descriptors(profile) {
-        files.push((kind, descriptor.path.clone()));
+        files.push((kind.to_string(), descriptor.path.clone(), None));
+    }
+    if let Some(root_manifest_descriptor) = profile.files.root_manifest.as_ref() {
+        let manifest_path = config_root.join(&root_manifest_descriptor.path);
+        check_profile_root_manifest(&manifest_path)?;
+        let manifest: ProfileRootManifest =
+            serde_json::from_slice(&fs::read(&manifest_path).with_context(|| {
+                format!("read profile root manifest {}", manifest_path.display())
+            })?)
+            .with_context(|| format!("parse profile root manifest {}", manifest_path.display()))?;
+        let manifest_parent = Path::new(&root_manifest_descriptor.path)
+            .parent()
+            .ok_or_else(|| anyhow!("profile {} root manifest has no parent path", profile.id))?;
+        for entry in manifest.files {
+            let relative_path = manifest_parent.join("root").join(&entry.path);
+            let relative = relative_path
+                .to_str()
+                .ok_or_else(|| {
+                    anyhow!(
+                        "profile {} root payload path is not UTF-8: {}",
+                        profile.id,
+                        relative_path.display()
+                    )
+                })?
+                .replace(std::path::MAIN_SEPARATOR, "/");
+            validate_relative_manifest_path("profile root publication path", &relative)?;
+            files.push((
+                "root_payload".to_string(),
+                relative,
+                Some("root-payload".to_string()),
+            ));
+        }
     }
     files.sort_by(|left, right| left.1.cmp(&right.1));
     files.dedup_by(|left, right| left.1 == right.1);
 
     let mut rows = Vec::new();
-    for (kind, relative) in files {
+    let mut urls = BTreeMap::new();
+    let mut digest_urls = BTreeMap::new();
+    for (kind, relative, publication_name) in files {
         let source = config_root.join(&relative);
         let (bytes, digest) = file_digest(&source)?;
-        let file_name = Path::new(&relative)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .ok_or_else(|| {
-                anyhow!(
-                    "profile {} config path has no file name: {relative}",
-                    profile.id
-                )
-            })?;
-        let url = profile_release_url(channel, &profile.id, revision, arch, file_name)?;
+        let file_name = match publication_name {
+            Some(prefix) => format!(
+                "{prefix}-{}",
+                digest
+                    .get("blake3")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "profile {} config path lacks BLAKE3 digest: {relative}",
+                            profile.id
+                        )
+                    })?
+            ),
+            None => Path::new(&relative)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "profile {} config path has no file name: {relative}",
+                        profile.id
+                    )
+                })?
+                .to_string(),
+        };
+        let identity = (
+            bytes,
+            digest
+                .get("sha256")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            digest
+                .get("blake3")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        );
+        let proposed_url = profile_release_url(channel, &profile.id, revision, arch, &file_name)?;
+        let url = digest_urls
+            .entry(identity.clone())
+            .or_insert(proposed_url)
+            .clone();
+        if let Some(previous) = urls.insert(url.clone(), identity.clone()) {
+            if previous != identity {
+                return Err(anyhow!(
+                    "profile {}/{} config publication URL collides: {}",
+                    profile.id,
+                    arch,
+                    url
+                ));
+            }
+        }
         file_copies.push(ProfileReleaseFileCopy {
             source,
             url: url.clone(),
@@ -6853,14 +6928,14 @@ fn collect_profile_root_files_into(
     {
         let entry = entry.with_context(|| format!("read entry in {}", current.display()))?;
         let path = entry.path();
-        let metadata = entry
-            .metadata()
+        let file_type = entry
+            .file_type()
             .with_context(|| format!("stat profile root payload {}", path.display()))?;
-        if metadata.is_dir() {
+        if file_type.is_dir() {
             collect_profile_root_files_into(root_dir, &path, files)?;
             continue;
         }
-        if !metadata.is_file() {
+        if !file_type.is_file() {
             return Err(anyhow!(
                 "profile root payload {} is not a regular file",
                 path.display()
@@ -9187,6 +9262,88 @@ decision = "block"
     }
 
     #[test]
+    fn release_graph_publishes_every_manifested_profile_root_payload() {
+        let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let repo_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root");
+        let config_root = repo_root.join("config");
+        let profile =
+            load_profile(&config_root.join("profiles/code/profile.toml")).expect("load profile");
+        let root_manifest: ProfileRootManifest = serde_json::from_slice(
+            &fs::read(config_root.join("profiles/code/root.manifest.json"))
+                .expect("read root manifest"),
+        )
+        .expect("parse root manifest");
+        let mut copies = Vec::new();
+
+        let rows = graph_profile_config_refs(
+            &profile,
+            &config_root,
+            "nightly",
+            &profile.revision,
+            "x86_64",
+            &mut copies,
+        )
+        .expect("build profile config graph");
+        let root_rows = rows
+            .iter()
+            .filter(|row| row["kind"].as_str() == Some("root_payload"))
+            .collect::<Vec<_>>();
+
+        assert_eq!(root_rows.len(), root_manifest.files.len());
+        let expected_paths = root_manifest
+            .files
+            .iter()
+            .map(|entry| format!("profiles/code/root/{}", entry.path))
+            .collect::<BTreeSet<_>>();
+        let actual_paths = root_rows
+            .iter()
+            .map(|row| row["path"].as_str().expect("root payload path").to_string())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual_paths, expected_paths);
+        let expected_digests = root_rows
+            .iter()
+            .map(|row| {
+                row["digest"]["blake3"]
+                    .as_str()
+                    .expect("root payload BLAKE3")
+            })
+            .collect::<BTreeSet<_>>();
+        let actual_urls = root_rows
+            .iter()
+            .map(|row| row["url"].as_str().expect("root payload URL"))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual_urls.len(), expected_digests.len());
+        let urls_by_digest = root_rows.iter().fold(
+            BTreeMap::<&str, BTreeSet<&str>>::new(),
+            |mut grouped, row| {
+                grouped
+                    .entry(
+                        row["digest"]["blake3"]
+                            .as_str()
+                            .expect("root payload BLAKE3"),
+                    )
+                    .or_default()
+                    .insert(row["url"].as_str().expect("root payload URL"));
+                grouped
+            },
+        );
+        assert!(
+            urls_by_digest.values().all(|urls| urls.len() == 1),
+            "identical root payload bytes must reuse one immutable URL"
+        );
+        for row in root_rows {
+            let path = row["path"].as_str().expect("root payload path");
+            assert!(copies.iter().any(|copy| {
+                copy.url == row["url"].as_str().expect("root payload URL")
+                    && copy.source == config_root.join(path)
+            }));
+        }
+    }
+
+    #[test]
     fn profile_check_rejects_missing_profile_payload_file() {
         let temp = tempfile::tempdir().expect("tempdir");
         let config_root = temp.path().join("config");
@@ -9385,6 +9542,45 @@ decision = "block"
 
         assert!(
             format!("{error:#}").contains("unlisted profile root payload file"),
+            "{error:#}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn profile_check_rejects_symlinked_profile_root_payloads() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profile_dir = temp.path().join("profiles/code");
+        let profile_root = profile_dir.join("root/root");
+        fs::create_dir_all(&profile_root).expect("profile root");
+        let outside = temp.path().join("outside");
+        fs::write(&outside, b"outside").expect("outside payload");
+        symlink(&outside, profile_root.join(".profile")).expect("payload symlink");
+        let root_manifest = format!(
+            r#"{{
+  "format": "capsem.profile-root.v1",
+  "files": [
+    {{
+      "path": "root/.profile",
+      "hash": "blake3:{}",
+      "size": {}
+    }}
+  ]
+}}
+"#,
+            blake3::hash(b"outside").to_hex(),
+            b"outside".len()
+        );
+        let manifest_path = profile_dir.join("root.manifest.json");
+        fs::write(&manifest_path, root_manifest).expect("root manifest");
+
+        let error =
+            check_profile_root_manifest(&manifest_path).expect_err("payload symlink rejected");
+
+        assert!(
+            format!("{error:#}").contains("not a regular file"),
             "{error:#}"
         );
     }

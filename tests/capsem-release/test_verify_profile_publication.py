@@ -108,6 +108,25 @@ def test_profile_publication_rejects_tamper_and_extra_files(tmp_path: Path) -> N
         VERIFY.verify_profile_publication(source, "code", base, release_dir)
 
 
+def test_profile_publication_allows_identical_logical_paths_to_share_one_blob(
+    tmp_path: Path,
+) -> None:
+    source, release_dir, base = _publication(tmp_path)
+    manifest = json.loads(source.read_text(encoding="utf-8"))
+    config = manifest["profiles"]["code"]["architectures"][0]["config"]
+    duplicate = dict(config[0])
+    duplicate["path"] = "profiles/code/root/root/.profile"
+    config.append(duplicate)
+    source.write_text(json.dumps(manifest), encoding="utf-8")
+
+    VERIFY.verify_profile_publication(source, "code", base, release_dir)
+
+    duplicate["bytes"] += 1
+    source.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="conflicting metadata"):
+        VERIFY.verify_profile_publication(source, "code", base, release_dir)
+
+
 def test_profile_publication_stages_only_manifest_described_inputs(
     tmp_path: Path,
 ) -> None:
@@ -118,9 +137,17 @@ def test_profile_publication_stages_only_manifest_described_inputs(
     config.mkdir(parents=True)
     kernel = b"kernel"
     profile = b"id = 'code'\n"
+    root_manifest = (
+        b'{"format":"capsem.profile-root.v1","files":'
+        b'[{"path":"root/.profile","hash":"blake3:test","size":8}]}\n'
+    )
+    root_payload = b"profile\n"
     (assets / "vmlinuz").write_bytes(kernel)
     (assets / "build-ledger.log").write_text("must not publish", encoding="utf-8")
     (config / "profile.toml").write_bytes(profile)
+    (config / "root/root").mkdir(parents=True)
+    (config / "root.manifest.json").write_bytes(root_manifest)
+    (config / "root/root/.profile").write_bytes(root_payload)
     manifest = {
         "channel": "nightly",
         "packages": [],
@@ -135,7 +162,23 @@ def test_profile_publication_stages_only_manifest_described_inputs(
                             {
                                 **_record(f"{base}/x86_64-profile.toml", profile),
                                 "path": "profiles/code/profile.toml",
-                            }
+                            },
+                            {
+                                **_record(
+                                    f"{base}/x86_64-root.manifest.json",
+                                    root_manifest,
+                                ),
+                                "kind": "root_manifest",
+                                "path": "profiles/code/root.manifest.json",
+                            },
+                            {
+                                **_record(
+                                    f"{base}/x86_64-root-payload-test",
+                                    root_payload,
+                                ),
+                                "kind": "root_payload",
+                                "path": "profiles/code/root/root/.profile",
+                            },
                         ],
                         "images": [
                             _record(f"{base}/x86_64-vmlinuz", kernel, name="vmlinuz")
@@ -160,6 +203,8 @@ def test_profile_publication_stages_only_manifest_described_inputs(
 
     assert {path.name for path in staged} == {
         "x86_64-profile.toml",
+        "x86_64-root.manifest.json",
+        "x86_64-root-payload-test",
         "x86_64-vmlinuz",
         "channel-source-nightly.json",
     }

@@ -44,7 +44,7 @@ def verify_profile_publication(
         )
     base = publication_base.rstrip("/") + "/"
     expected: set[Path] = set()
-    seen_urls: set[str] = set()
+    seen_urls: dict[str, tuple[int, str, str]] = {}
     for architecture in profile.get("architectures", []):
         if not isinstance(architecture, dict):
             raise ValueError(f"profile {profile_id!r} architecture is malformed")
@@ -64,9 +64,20 @@ def verify_profile_publication(
                         f"profile {profile_id}/{arch}/{section} URL is outside "
                         f"its immutable publication: {url!r}"
                     )
-                if url in seen_urls:
-                    raise ValueError(f"duplicate immutable profile URL: {url}")
-                seen_urls.add(url)
+                expected_bytes = row.get("bytes")
+                digest = row.get("digest")
+                if not isinstance(expected_bytes, int) or not isinstance(digest, dict):
+                    raise ValueError(f"immutable profile artifact metadata mismatch: {url}")
+                identity = (
+                    expected_bytes,
+                    str(digest.get("sha256")),
+                    str(digest.get("blake3")),
+                )
+                previous_identity = seen_urls.setdefault(url, identity)
+                if previous_identity != identity:
+                    raise ValueError(
+                        f"duplicate immutable profile URL has conflicting metadata: {url}"
+                    )
                 name = url.removeprefix(base)
                 if (
                     not name
@@ -79,9 +90,7 @@ def verify_profile_publication(
                 if not path.is_file():
                     raise ValueError(f"immutable profile artifact is missing: {path}")
                 payload = path.read_bytes()
-                expected_bytes = row.get("bytes")
-                digest = row.get("digest")
-                if expected_bytes != len(payload) or not isinstance(digest, dict):
+                if expected_bytes != len(payload):
                     raise ValueError(f"immutable profile artifact metadata mismatch: {name}")
                 if digest.get("sha256") != hashlib.sha256(payload).hexdigest():
                     raise ValueError(f"immutable profile artifact SHA-256 mismatch: {name}")

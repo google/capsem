@@ -982,6 +982,64 @@ def test_stages_every_verified_profile_image_and_exact_config(
         assert staged.read_bytes() == payload
 
 
+def test_stages_manifest_owned_profile_root_payload_without_checkout_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    document = json.loads(manifest.read_text(encoding="utf-8"))
+    root_payload = b"manifest-owned profile payload\n"
+    root_manifest = json.dumps(
+        {
+            "format": "capsem.profile-root.v1",
+            "files": [
+                {
+                    "path": "root/.profile",
+                    "hash": f"blake3:{blake3.blake3(root_payload).hexdigest()}",
+                    "size": len(root_payload),
+                }
+            ],
+        }
+    ).encode()
+    (tmp_path / "root.manifest.json").write_bytes(root_manifest)
+    (tmp_path / "root-payload").write_bytes(root_payload)
+    config = document["profiles"]["code"]["architectures"][0]["config"]
+    config.extend(
+        [
+            _record(
+                "root.manifest.json",
+                root_manifest,
+                kind="root_manifest",
+                path="profiles/code/root.manifest.json",
+                status="current",
+            ),
+            _record(
+                "root-payload",
+                root_payload,
+                kind="root_payload",
+                path="profiles/code/root/root/.profile",
+                status="current",
+            ),
+        ]
+    )
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    checkout_payload = ROOT / "config/profiles/code/root/root/.profile"
+    assert checkout_payload.read_bytes() != root_payload
+
+    inputs = tmp_path / "profile-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+    config_root = tmp_path / "release-config"
+    STAGE.stage_profiles(
+        inputs,
+        tmp_path / "assets",
+        config_root,
+        ROOT / "config",
+    )
+
+    assert (config_root / "profiles/code/root.manifest.json").read_bytes() == root_manifest
+    assert (config_root / "profiles/code/root/root/.profile").read_bytes() == root_payload
+
+
 def test_staging_reverifies_inputs_instead_of_trusting_the_fetch_report(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

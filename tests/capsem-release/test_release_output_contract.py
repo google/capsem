@@ -593,7 +593,7 @@ def _check_profile_config_complete(dist: Path) -> None:
     for profile_id, profile in _selected_manifest(dist)["profiles"].items():
         expected = _expected_profile_config_files(profile_id)
         actual = {
-            Path(item["path"]).name
+            item["path"]
             for architecture in _profile_architectures(profile).values()
             for item in architecture["config"]
         }
@@ -711,17 +711,28 @@ def _expected_profile_config_files(profile_id: str) -> set[str]:
     profile_dir = PROFILE_CONFIG_ROOT / profile_id
     profile_toml = tomllib.loads((profile_dir / "profile.toml").read_text(encoding="utf-8"))
     declared = {
-        Path(value).name
+        value["path"]
         for value in profile_toml.get("files", {}).values()
-        if isinstance(value, str)
+        if isinstance(value, dict) and isinstance(value.get("path"), str)
     }
     rule_files = {
-        Path(value).name
-        for value in profile_toml.get("rules", {}).get("files", [])
+        value
+        for value in profile_toml.get("rule_files", {}).values()
         if isinstance(value, str)
     }
-    existing_required = {name for name in REQUIRED_PROFILE_CONFIG_FILES if (profile_dir / name).is_file()}
-    return existing_required | declared | rule_files
+    existing_required = {
+        f"profiles/{profile_id}/{name}"
+        for name in REQUIRED_PROFILE_CONFIG_FILES
+        if (profile_dir / name).is_file()
+    }
+    root_manifest = json.loads(
+        (profile_dir / "root.manifest.json").read_text(encoding="utf-8")
+    )
+    root_payloads = {
+        f"profiles/{profile_id}/root/{entry['path']}"
+        for entry in root_manifest["files"]
+    }
+    return existing_required | declared | rule_files | root_payloads
 
 
 def _profile_images(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
