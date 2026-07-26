@@ -338,6 +338,7 @@ def release_binaries(
     if channel == "nightly" and current_release_tag:
         return None, None
 
+    base_head = _capture(runner, "git", "rev-parse", "HEAD")
     mutation = OwnedMutation(ROOT, MUTATED_PATHS)
     try:
         runner.run(("just", "_stamp-version"))
@@ -380,6 +381,12 @@ def release_binaries(
         )
         mutation.committed = True
     except Exception:
+        # Preparation starts from a validated clean tree and has not pushed.
+        # A commit-hook or tag failure may nevertheless leave the release
+        # cohort staged or HEAD advanced to an untagged commit. Restore the
+        # exact local Git position first with a mixed reset (which preserves
+        # unexpected files for inspection), then restore only our owned bytes.
+        runner.run(("git", "reset", "--mixed", base_head))
         mutation.restore()
         raise
 

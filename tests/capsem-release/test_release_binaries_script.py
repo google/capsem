@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
 import sys
 from typing import Sequence
 
@@ -38,6 +39,8 @@ class FakeRunner:
         run_rows: list[dict[str, object]] | None = None,
         pending_local_release: bool = False,
         divergent_pending_release: bool = False,
+        fail_commit: bool = False,
+        fail_tag: bool = False,
     ) -> None:
         self.root = root
         self.unexpected = unexpected
@@ -48,10 +51,13 @@ class FakeRunner:
         self.run_rows = run_rows
         self.pending_local_release = pending_local_release
         self.divergent_pending_release = divergent_pending_release
+        self.fail_commit = fail_commit
+        self.fail_tag = fail_tag
         self.calls: list[tuple[str, ...]] = []
         self.stamped = False
         self.dispatched_tag = ""
         self.dispatched_channel = ""
+        self.head = "a" * 40
 
     def run(
         self,
@@ -79,7 +85,7 @@ class FakeRunner:
         if command in (
             ("git", "rev-parse", "HEAD"),
         ):
-            return RELEASE.CommandResult("a" * 40 + "\n")
+            return RELEASE.CommandResult(self.head + "\n")
         if command == ("git", "rev-parse", "origin/main"):
             value = "b" * 40 if self.pending_local_release else "a" * 40
             return RELEASE.CommandResult(value + "\n")
@@ -146,6 +152,18 @@ class FakeRunner:
         if len(command) >= 2 and command[1] == "scripts/extract-release-notes.py":
             return RELEASE.CommandResult("")
         if command[:3] == ("git", "tag", "--list"):
+            return RELEASE.CommandResult("")
+        if command[:2] == ("git", "commit"):
+            if self.fail_commit:
+                raise subprocess.CalledProcessError(1, command)
+            self.head = "d" * 40
+            return RELEASE.CommandResult("")
+        if command[:2] == ("git", "tag"):
+            if self.fail_tag:
+                raise subprocess.CalledProcessError(1, command)
+            return RELEASE.CommandResult("")
+        if command[:3] == ("git", "reset", "--mixed"):
+            self.head = command[3]
             return RELEASE.CommandResult("")
         if command[:3] == ("gh", "workflow", "run"):
             self.dispatched_tag = command[command.index("--ref") + 1]
@@ -238,6 +256,34 @@ def test_unexpected_write_aborts_before_commit_and_restores_owned_files(
     assert {
         path: (tmp_path / path).read_bytes() for path in RELEASE.MUTATED_PATHS
     } == before
+
+
+@pytest.mark.parametrize("failure", ["commit", "tag"])
+def test_git_preparation_failure_restores_owned_files_index_and_head(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    before = {
+        path: (tmp_path / path).read_bytes() for path in RELEASE.MUTATED_PATHS
+    }
+    runner = FakeRunner(
+        tmp_path,
+        fail_commit=failure == "commit",
+        fail_tag=failure == "tag",
+    )
+
+    with pytest.raises(subprocess.CalledProcessError):
+        RELEASE.release_binaries("nightly", runner)
+
+    assert ("git", "reset", "--mixed", "a" * 40) in runner.calls
+    assert runner.head == "a" * 40
+    assert {
+        path: (tmp_path / path).read_bytes() for path in RELEASE.MUTATED_PATHS
+    } == before
+    assert not any(call[:2] == ("git", "push") for call in runner.calls)
 
 
 def test_binary_release_requires_cargo_lock_to_join_the_version_cut(
