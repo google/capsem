@@ -30,10 +30,10 @@ host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/c
 assets_dir := "assets"
 entitlements := "entitlements.plist"
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
-release_minor := "5"
+release_minor := "6"
 
 # Stamp version as 1.{release_minor}.{unix_timestamp} in Cargo.toml,
-# tauri.conf.json, pyproject.toml, and the frozen Python lockfile.
+# tauri.conf.json, pyproject.toml, and both frozen lockfiles.
 _stamp-version:
     #!/bin/bash
     set -euo pipefail
@@ -52,6 +52,9 @@ _stamp-version:
     sed_in_place "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
     sed_in_place "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
     sed_in_place "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" pyproject.toml
+    # Cargo refreshes workspace package versions in-place while preserving
+    # the already locked dependency graph.
+    cargo update --workspace --offline
     # Keep the editable project metadata in the frozen lockfile on the
     # release version before release-binaries creates its commit and tag.
     uv lock --offline

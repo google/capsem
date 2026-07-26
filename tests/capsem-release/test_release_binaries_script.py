@@ -31,10 +31,14 @@ class FakeRunner:
         *,
         unexpected: bool = False,
         current_release_tag: str = "",
+        omit_cargo_lock_change: bool = False,
+        mixed_version_cohort: bool = False,
     ) -> None:
         self.root = root
         self.unexpected = unexpected
         self.current_release_tag = current_release_tag
+        self.omit_cargo_lock_change = omit_cargo_lock_change
+        self.mixed_version_cohort = mixed_version_cohort
         self.calls: list[tuple[str, ...]] = []
         self.stamped = False
 
@@ -52,6 +56,8 @@ class FakeRunner:
             if not self.stamped:
                 return RELEASE.CommandResult("")
             paths = list(RELEASE.MUTATED_PATHS)
+            if self.omit_cargo_lock_change:
+                paths.remove(Path("Cargo.lock"))
             if self.unexpected:
                 paths.append(Path("config/profiles/code/profile.toml"))
             return RELEASE.CommandResult(
@@ -68,16 +74,35 @@ class FakeRunner:
             return RELEASE.CommandResult(f"{self.current_release_tag}\n")
         if command == ("just", "_stamp-version"):
             self.stamped = True
-            (self.root / "Cargo.toml").write_text(
-                '[workspace.package]\nversion = "1.5.2000000000"\n',
-                encoding="utf-8",
-            )
             for path in RELEASE.MUTATED_PATHS:
                 target = self.root / path
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(f"changed {path}\n", encoding="utf-8")
             (self.root / "Cargo.toml").write_text(
-                '[workspace.package]\nversion = "1.5.2000000000"\n',
+                '[workspace.package]\nversion = "1.6.2000000000"\n',
+                encoding="utf-8",
+            )
+            (self.root / "Cargo.lock").write_text(
+                "[[package]]\n"
+                'name = "capsem"\n'
+                f'version = "{"1.5.1000000000" if self.mixed_version_cohort else "1.6.2000000000"}"\n'
+                "\n[[package]]\n"
+                'name = "capsem-core"\n'
+                'version = "1.6.2000000000"\n',
+                encoding="utf-8",
+            )
+            (self.root / "crates/capsem-app/tauri.conf.json").write_text(
+                '{"version": "1.6.2000000000"}\n',
+                encoding="utf-8",
+            )
+            (self.root / "pyproject.toml").write_text(
+                '[project]\nversion = "1.6.2000000000"\n',
+                encoding="utf-8",
+            )
+            (self.root / "uv.lock").write_text(
+                "[[package]]\n"
+                'name = "capsem"\n'
+                'version = "1.6.2000000000"\n',
                 encoding="utf-8",
             )
             return RELEASE.CommandResult("")
@@ -96,7 +121,7 @@ def _release_tree(tmp_path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"original {relative}\n", encoding="utf-8")
     (tmp_path / "Cargo.toml").write_text(
-        '[workspace.package]\nversion = "1.5.1000000000"\n',
+        '[workspace.package]\nversion = "1.6.1000000000"\n',
         encoding="utf-8",
     )
 
@@ -110,7 +135,7 @@ def test_binary_release_owns_one_scripted_build_and_dispatch(
 
     tag, run_id = RELEASE.release_binaries("nightly", runner)
 
-    assert tag == "v1.5.2000000000"
+    assert tag == "v1.6.2000000000"
     assert run_id == "42"
     assert ("just", "_stamp-version") in runner.calls
     assert (
@@ -151,6 +176,32 @@ def test_unexpected_write_aborts_before_commit_and_restores_owned_files(
     } == before
 
 
+def test_binary_release_requires_cargo_lock_to_join_the_version_cut(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    runner = FakeRunner(tmp_path, omit_cargo_lock_change=True)
+
+    with pytest.raises(RuntimeError, match="Cargo.lock"):
+        RELEASE.release_binaries("nightly", runner)
+
+    assert not any(call[:2] == ("git", "commit") for call in runner.calls)
+
+
+def test_binary_release_rejects_a_mixed_capsem_version_cohort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    runner = FakeRunner(tmp_path, mixed_version_cohort=True)
+
+    with pytest.raises(RuntimeError, match="version cohort"):
+        RELEASE.release_binaries("nightly", runner)
+
+    assert not any(call[:2] == ("git", "commit") for call in runner.calls)
+
+
 def test_invalid_channel_is_rejected_before_git_or_github(tmp_path: Path) -> None:
     runner = FakeRunner(tmp_path)
 
@@ -165,7 +216,7 @@ def test_nightly_release_skips_when_main_has_no_unreleased_binary_change(
 ) -> None:
     _release_tree(tmp_path)
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
-    runner = FakeRunner(tmp_path, current_release_tag="v1.5.1000000000")
+    runner = FakeRunner(tmp_path, current_release_tag="v1.6.1000000000")
 
     tag, run_id = RELEASE.release_binaries("nightly", runner)
 
@@ -181,11 +232,11 @@ def test_stable_binary_release_remains_explicit_even_at_a_version_tag(
 ) -> None:
     _release_tree(tmp_path)
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
-    runner = FakeRunner(tmp_path, current_release_tag="v1.5.1000000000")
+    runner = FakeRunner(tmp_path, current_release_tag="v1.6.1000000000")
 
     tag, run_id = RELEASE.release_binaries("stable", runner)
 
-    assert tag == "v1.5.2000000000"
+    assert tag == "v1.6.2000000000"
     assert run_id == "42"
     assert ("just", "_stamp-version") in runner.calls
     assert (

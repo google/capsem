@@ -61,7 +61,6 @@ benchmarks/**/data_*.json
 
 # Rust
 target/
-Cargo.lock
 
 # Git worktrees
 worktrees/

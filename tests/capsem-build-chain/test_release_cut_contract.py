@@ -38,11 +38,17 @@ def test_release_contract_rejects_wrong_case_even_on_macos() -> None:
         _read_text_exact_case("Justfile")
 
 
-def test_version_stamp_refreshes_frozen_lock() -> None:
+def test_version_stamp_targets_1_6_and_refreshes_both_frozen_locks() -> None:
     stamp = _just_recipe_block("_stamp-version:")
+    justfile = _read_text_exact_case("justfile")
 
+    assert 'release_minor := "6"' in justfile
+    assert "cargo update --workspace --offline" in stamp
     assert 'pyproject.toml' in stamp
     assert "uv lock --offline" in stamp
+    assert stamp.index("Cargo.toml") < stamp.index(
+        "cargo update --workspace --offline"
+    )
     assert stamp.index('pyproject.toml') < stamp.index("uv lock --offline")
 
 
@@ -61,6 +67,30 @@ def test_checked_in_python_lock_matches_project_version() -> None:
     locked_version = lock_lines[package_index + 1].split('"', 2)[1]
 
     assert locked_version == project_version
+
+
+def test_checked_in_rust_lock_matches_every_capsem_workspace_package() -> None:
+    project_version = next(
+        line.split('"', 2)[1]
+        for line in (PROJECT_ROOT / "Cargo.toml").read_text().splitlines()
+        if line.startswith("version = ")
+    )
+    lock = (PROJECT_ROOT / "Cargo.lock").read_text()
+    package_blocks = lock.split("[[package]]")
+    capsem_versions = {
+        version
+        for block in package_blocks
+        if '\nname = "capsem' in block and "\nsource = " not in block
+        for version in [
+            next(
+                line.split('"', 2)[1]
+                for line in block.splitlines()
+                if line.startswith("version = ")
+            )
+        ]
+    }
+
+    assert capsem_versions == {project_version}
 
 
 def test_release_commands_are_not_a_parallel_just_surface() -> None:

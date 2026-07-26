@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -99,6 +100,76 @@ def _project_version() -> str:
     return match.group(1)
 
 
+def _version_line(path: Path) -> str:
+    content = path.read_text(encoding="utf-8")
+    match = re.search(r'^version = "(\d+\.\d+\.\d+)"$', content, re.MULTILINE)
+    if match is None:
+        raise RuntimeError(f"release version cohort is missing a version in {path}")
+    return match.group(1)
+
+
+def _lock_package_versions(
+    path: Path,
+    *,
+    package_name: str | None = None,
+    package_prefix: str | None = None,
+    workspace_only: bool = False,
+) -> set[str]:
+    versions: set[str] = set()
+    for block in re.split(r"(?m)^\[\[package\]\]\s*$", path.read_text(encoding="utf-8")):
+        name_match = re.search(r'^name = "([^"]+)"$', block, re.MULTILINE)
+        version_match = re.search(
+            r'^version = "(\d+\.\d+\.\d+)"$',
+            block,
+            re.MULTILINE,
+        )
+        if name_match is None or version_match is None:
+            continue
+        name = name_match.group(1)
+        if package_name is not None and name != package_name:
+            continue
+        if package_prefix is not None and not name.startswith(package_prefix):
+            continue
+        if workspace_only and re.search(r"^source = ", block, re.MULTILINE):
+            continue
+        versions.add(version_match.group(1))
+    return versions
+
+
+def _validate_version_cohort(version: str) -> None:
+    tauri = json.loads(
+        (ROOT / "crates/capsem-app/tauri.conf.json").read_text(encoding="utf-8")
+    )
+    cohort = {
+        "release line": {".".join(version.split(".")[:2])},
+        "Cargo.toml": {version},
+        "Cargo.lock workspace packages": _lock_package_versions(
+            ROOT / "Cargo.lock",
+            package_prefix="capsem",
+            workspace_only=True,
+        ),
+        "tauri.conf.json": {str(tauri.get("version", ""))},
+        "pyproject.toml": {_version_line(ROOT / "pyproject.toml")},
+        "uv.lock capsem package": _lock_package_versions(
+            ROOT / "uv.lock",
+            package_name="capsem",
+        ),
+    }
+    expected = {
+        label: ({"1.6"} if label == "release line" else {version})
+        for label in cohort
+    }
+    mismatches = {
+        label: sorted(values)
+        for label, values in cohort.items()
+        if values != expected[label]
+    }
+    if mismatches:
+        raise RuntimeError(
+            f"release version cohort is inconsistent for {version}: {mismatches}"
+        )
+
+
 def _changed_paths(runner: Runner) -> set[Path]:
     output = runner.run(
         ("git", "status", "--porcelain", "--untracked-files=all"),
@@ -154,6 +225,7 @@ def release_binaries(
     try:
         runner.run(("just", "_stamp-version"))
         version = _project_version()
+        _validate_version_cohort(version)
         tag = f"v{version}"
         runner.run(
             (
@@ -168,6 +240,7 @@ def release_binaries(
         unexpected = changed - expected
         missing = {
             Path("Cargo.toml"),
+            Path("Cargo.lock"),
             Path("crates/capsem-app/tauri.conf.json"),
             Path("pyproject.toml"),
             Path("uv.lock"),
