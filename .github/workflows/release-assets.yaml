@@ -47,6 +47,8 @@ jobs:
     needs: runtime-preflight
     runs-on: ubuntu-latest
     name: Resolve current channel binary
+    outputs:
+      functional_ready: ${{ steps.functional-cohort.outputs.functional-ready }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
@@ -83,6 +85,14 @@ jobs:
           bootstrap-manifest-url: file://${{ github.workspace }}/target/channel-source/manifest.json
           kind: packages
           output: target/profile-public-before/packages
+
+      - name: Check pulled package functional binary cohort
+        id: functional-cohort
+        run: |
+          uv run python scripts/stage-release-test-inputs.py \
+            --input-dir target/profile-public-before/packages \
+            --check-functional-cohort \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Fetch exact deployed public-before profiles
         uses: ./.github/actions/fetch-release-inputs
@@ -482,7 +492,13 @@ jobs:
             --profile-version "$PROFILE_VERSION" \
             --json > target/profile-release.json
           test "$(python3 -c 'import json; print(json.load(open("target/profile-release.json"))["publication_identity"])')" = "$PUBLICATION_IDENTITY"
-          COMPATIBLE=$(python3 -c 'import json; print(str(json.load(open("target/profile-release.json"))["compatible_with_current_binary"]).lower())')
+          PRODUCT_COMPATIBLE=$(python3 -c 'import json; print(str(json.load(open("target/profile-release.json"))["compatible_with_current_binary"]).lower())')
+          FUNCTIONAL_READY="${{ needs.resolve-current-binary.outputs.functional_ready }}"
+          if [[ "$PRODUCT_COMPATIBLE" == "true" && "$FUNCTIONAL_READY" == "true" ]]; then
+            COMPATIBLE=true
+          else
+            COMPATIBLE=false
+          fi
           echo "compatible=$COMPATIBLE" >> "$GITHUB_OUTPUT"
           echo "publication_identity=$PUBLICATION_IDENTITY" >> "$GITHUB_OUTPUT"
 

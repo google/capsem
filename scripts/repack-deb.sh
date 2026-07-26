@@ -40,6 +40,17 @@ embed_install_diagnostics() {
     mv "$combined" "$maintainer_script"
 }
 
+embed_install_manifest_resolver() {
+    local maintainer_script="$1"
+    local combined="${maintainer_script}.with-install-manifest"
+    {
+        head -n 1 "$maintainer_script"
+        sed -n '2,$p' "$SCRIPT_DIR/pkg-scripts/install-manifest"
+        sed -n '2,$p' "$maintainer_script"
+    } > "$combined"
+    mv "$combined" "$maintainer_script"
+}
+
 usage() {
     echo "usage: repack-deb.sh [--manifest file://...|http://...|https://...] <input.deb> <bin_dir> <config_root> [assets_dir] [output.deb]" >&2
 }
@@ -239,6 +250,7 @@ embed_install_diagnostics "$WORK_DIR/deb/DEBIAN/preinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/preinst"
 cp "$SCRIPT_DIR/deb-postinst.sh" "$WORK_DIR/deb/DEBIAN/postinst"
 embed_install_diagnostics "$WORK_DIR/deb/DEBIAN/postinst"
+embed_install_manifest_resolver "$WORK_DIR/deb/DEBIAN/postinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/postinst"
 
 if [ ! -d "$CONFIG_ROOT/profiles" ]; then

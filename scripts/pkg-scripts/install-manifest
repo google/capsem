@@ -1,0 +1,65 @@
+#!/bin/bash
+# Resolve an optional root-owned pre-activation manifest handoff.
+
+capsem_manifest_request_owner_uid() {
+    stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1" 2>/dev/null
+}
+
+capsem_manifest_request_mode() {
+    stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null
+}
+
+capsem_requested_install_manifest() {
+    local request="$1"
+    local owner mode candidate line_count local_path
+    [ -e "$request" ] || return 1
+    if [ ! -f "$request" ] || [ -L "$request" ]; then
+        echo "capsem: secure install-manifest request must be a regular file: $request" >&2
+        return 2
+    fi
+    owner=$(capsem_manifest_request_owner_uid "$request") || {
+        echo "capsem: secure install-manifest request owner could not be read: $request" >&2
+        return 2
+    }
+    mode=$(capsem_manifest_request_mode "$request") || {
+        echo "capsem: secure install-manifest request mode could not be read: $request" >&2
+        return 2
+    }
+    if [ "$owner" != "$(id -u)" ] || [ "$mode" != "600" ]; then
+        echo "capsem: secure install-manifest request must be owned by the package-script user with mode 0600: $request" >&2
+        return 2
+    fi
+    line_count=$(wc -l < "$request" | tr -d '[:space:]')
+    candidate=$(sed -n '1p' "$request")
+    case "$candidate" in
+        file:///*) ;;
+        *)
+            echo "capsem: secure install-manifest request must select one local file URL: $request" >&2
+            return 2
+            ;;
+    esac
+    if [ "$line_count" != "1" ] || [[ "$candidate" == *"%"* ]]; then
+        echo "capsem: secure install-manifest request must contain one unescaped local file URL: $request" >&2
+        return 2
+    fi
+    local_path="${candidate#file://}"
+    if [ ! -f "$local_path" ] || [ -L "$local_path" ]; then
+        echo "capsem: secure install-manifest target must be a regular local file: $local_path" >&2
+        return 2
+    fi
+    printf '%s\n' "$candidate"
+}
+
+capsem_resolve_install_manifest() {
+    local packaged="${1:?capsem_resolve_install_manifest <packaged> [request]}"
+    local request="${2:-/var/run/capsem/install-manifest}"
+    local requested_status selected
+    if [ -e "$request" ]; then
+        selected=$(capsem_requested_install_manifest "$request")
+        requested_status=$?
+        [ "$requested_status" -eq 0 ] || return "$requested_status"
+        printf '%s\n' "$selected"
+        return 0
+    fi
+    printf '%s\n' "$packaged"
+}

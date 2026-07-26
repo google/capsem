@@ -187,6 +187,19 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     assert "needs.publish-profile-release.outputs.compatible == 'true'" in deploy
 
 
+def test_profile_compatibility_requires_the_pulled_binary_functional_cohort() -> None:
+    workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
+    resolver = _job(workflow, "resolve-current-binary", "cloudflare-release-site-preflight")
+    author = _job(workflow, "author-profile-release", "test-profile-pairing")
+
+    assert "functional_ready:" in resolver
+    assert "--check-functional-cohort" in resolver
+    assert "id: functional-cohort" in resolver
+    assert "needs.resolve-current-binary.outputs.functional_ready" in author
+    assert "compatible_with_current_binary" in author
+    assert "COMPATIBLE=false" in author
+
+
 def test_profile_then_binary_reuses_authored_source_without_rebuilding_assets() -> None:
     profile_workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
     publish = _job(profile_workflow, "publish-profile-release", "deploy-channel")

@@ -41,6 +41,7 @@ REQUIRED_BINARIES = [
     "capsem-tray",
     "capsem-admin",
     "capsem-mock-server",
+    "capsem-bench-rs",
 ]
 
 pytestmark = pytest.mark.skipif(
@@ -255,9 +256,10 @@ def test_postinst_script_is_included(tmp_path):
     assert postinst.read_text().startswith(expected_head), (
         "postinst doesn't look like scripts/deb-postinst.sh"
     )
-    assert "Tester action: copy the output of this command into the bug report:" in (
-        postinst.read_text()
-    )
+    postinst_text = postinst.read_text()
+    assert "Tester action: copy the output of this command into the bug report:" in postinst_text
+    assert "capsem_resolve_install_manifest" in postinst_text
+    assert "CAPSEM_INSTALL_MANIFEST_REQUEST" in postinst_text
 
 
 def test_preinst_script_is_included(tmp_path):

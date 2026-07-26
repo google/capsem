@@ -65,6 +65,21 @@ def test_absent_first_party_profile_channel_uses_existing_donor_graph() -> None:
     }
 
 
+def test_absent_first_party_binary_channel_uses_the_same_existing_donor_graph() -> None:
+    selection = SELECTOR.select_runtime_preflight_manifest(
+        _catalog("stable"),
+        release_site="https://release.capsem.org",
+        channel="nightly",
+        bootstrap_missing_first_party=True,
+    )
+
+    assert selection["manifest_channel"] == "stable"
+    assert selection["manifest_url"] == (
+        "https://release.capsem.org/assets/stable/manifest.json"
+    )
+    assert selection["bootstrap"] is True
+
+
 @pytest.mark.parametrize(
     ("catalog", "channel", "bootstrap", "message"),
     [

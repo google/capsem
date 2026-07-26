@@ -1603,93 +1603,84 @@ def test_clean_build_pins_sse_stream_api() -> None:
 
 def test_binary_release_installs_exact_artifacts_before_publication() -> None:
     workflow = _workflow_text("release.yaml")
-    macos = _workflow_job_block("build-app-macos", "release.yaml")
-    linux = _workflow_job_block("build-app-linux", "release.yaml")
+    macos_build = _workflow_job_block("build-app-macos", "release.yaml")
+    linux_build = _workflow_job_block("build-app-linux", "release.yaml")
+    author = _workflow_job_block("author-binary-candidate", "release.yaml")
+    macos = _workflow_job_block("test-native-macos-package", "release.yaml")
+    linux = _workflow_job_block("test-native-linux-package", "release.yaml")
     create_release = _workflow_job_block("create-release", "release.yaml")
 
     assert "  test-install:" not in workflow
-    assert "needs: preflight" in macos
-    assert "needs: preflight" in linux
-    assert "continue-on-error: true" not in linux
-    assert "Install exact notarized package" in macos
-    assert "Verify macOS package installation path policy" in macos
-    assert "PackageKit bundle relocation must be disabled" in macos
-    assert "package path policy verified: fixed /Applications/Capsem.app" in macos
-    assert "Verify exact notarized package identity and Gatekeeper acceptance" in macos
-    assert 'pkgutil --check-signature "packages/Capsem-$VERSION.pkg"' in macos
-    assert 'spctl -a -vv -t install "packages/Capsem-$VERSION.pkg"' in macos
-    assert 'sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /' in macos
-    assert "Write deterministic macOS install-user request" in macos
-    assert "CAPSEM_INSTALL_USER_REQUEST" in macos
-    assert 'require_equal "install-user request owner" "0"' in macos
-    assert 'require_equal "install-user request mode" "600"' in macos
-    assert "capsem_install_user_resolution_report" in macos
-    assert "capsem-install-user-resolution.txt" in macos
-    assert 'require_contains "resolved install user" "user=$INSTALL_USER"' in macos
-    assert 'require_contains "package receipt id" "package-id: com.capsem.pkg"' in macos
-    assert 'require_contains "package receipt version" "version: $VERSION"' in macos
-    assert 'require_path "application bundle" -d "/Applications/Capsem.app"' in macos
+    assert "needs: [preflight, resolve-channel-source]" in macos_build
+    assert "needs: [preflight, resolve-channel-source]" in linux_build
+    assert "Install exact notarized package" not in macos_build
+    assert "Install and verify exact release deb" not in linux_build
+    assert "sudo /usr/sbin/installer" not in macos_build
+    assert "sudo dpkg -i" not in linux_build
+    assert "Build .pkg installer" in macos_build
+    assert "Verify macOS package installation path policy" in macos_build
+    assert "Notarize and staple .pkg" in macos_build
+    assert "Verify exact notarized package identity and Gatekeeper acceptance" in macos_build
+    assert "Repack .deb with companion binaries" in linux_build
+    assert "Collect Linux artifacts" in linux_build
+    assert "Record binary candidate metadata once" in author
+    assert "Prove binary candidate preserved every profile" in author
+
+    assert "needs: [build-app-macos, author-binary-candidate]" in macos
+    assert "needs: [build-app-linux, author-binary-candidate]" in linux
+    assert "name: binary-channel-candidate" in macos
+    assert "name: binary-channel-candidate" in linux
+    assert "PREACTIVATION_MANIFEST=file://" in macos
+    assert "PREACTIVATION_MANIFEST=file://" in linux
+    assert 'sudo /usr/sbin/installer -pkg "$package" -target /' in macos
+    assert "scripts/install-manifest-request.sh write" in macos
+    assert "pkgutil --pkg-info com.capsem.pkg" in macos
+    assert 'test -d "/Applications/Capsem.app"' in macos
+    assert 'test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"' in macos
     assert (
-        'require_path "application executable" -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"'
+        "for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
         in macos
     )
-    assert 'require_path "per-user CLI" -x "$HOME/.capsem/bin/capsem"' in macos
-    assert 'require_contains "per-user CLI version" "$VERSION"' in macos
-    assert (
-        "for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server"
-        in macos
-    )
-    assert 'require_path "host binary $bin" -x "$HOME/.capsem/bin/$bin"' in macos
-    assert 'require_contains "host binary $bin version" "$VERSION"' in macos
-    assert 'require_contains "installed status" "Installed: true"' in macos
-    assert 'require_contains "running status" "Running:   true"' in macos
+    assert 'grep -F "Installed: true" /tmp/capsem-status.txt' in macos
+    assert 'grep -F "Running:   true" /tmp/capsem-status.txt' in macos
+    assert 'grep -F "Service:   ok" /tmp/capsem-status.txt' in macos
+    assert 'grep -F "Gateway:   ok" /tmp/capsem-status.txt' in macos
+    assert "pgrep -x capsem-tray" in macos
     assert "scripts/verify-installed-release.py" in macos
     assert "Collect macOS install diagnostics" in macos
     assert "if: always()" in macos
-    assert "=== target-user resolution ===" in macos
-    assert 'cat "$RUNNER_TEMP/capsem-install-user-resolution.txt"' in macos
-    assert "pkgutil --pkg-info com.capsem.pkg" in macos
-    assert "stat -f '%Su' /dev/console" in macos
-    assert "/tmp/capsem-install.log" in macos
     assert '"$HOME/.capsem/logs/install-latest.log"' in macos
-    assert "=== build-output application bundle ===" in macos
-    assert 'ls -lde "target/release/bundle/macos/Capsem.app"' in macos
-    assert (
-        macos.index("Build .pkg installer")
-        < macos.index("Verify macOS package installation path policy")
-        < macos.index("Notarize and staple .pkg")
-        < macos.index("Verify exact notarized package identity and Gatekeeper acceptance")
-        < macos.index("Install exact notarized package")
-        < macos.index("Collect macOS install diagnostics")
-        < macos.index("Collect macOS artifacts")
+    assert macos.index("Install and verify exact notarized package") < macos.index(
+        "Collect macOS install diagnostics"
     )
-    assert "Post-install full gate (just test)" not in macos
-    assert "run: just test" not in macos
-    assert "Install exact release deb" in linux
-    assert "sudo dpkg -i target/release/bundle/deb/*.deb" in linux
-    assert "test -x /usr/bin/capsem" in linux
-    assert '/usr/bin/capsem --version | grep -F "$VERSION"' in linux
+
+    assert "Install and verify exact release deb" in linux
+    assert 'python3 scripts/install-deb-runtime-dependencies.py "$package"' in linux
+    assert 'sudo dpkg -i "$package"' in linux
+    assert "sudo apt-get install -f -y" not in linux
+    assert linux.index("install-deb-runtime-dependencies.py") < linux.index(
+        "install-manifest-request.sh write"
+    )
     assert (
-        "for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server"
+        "for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs"
         in linux
     )
     assert "dpkg-query -W -f='${Version}' capsem | grep -Fx \"$VERSION\"" in linux
     assert 'grep -F "Installed: true" /tmp/capsem-status.txt' in linux
     assert 'grep -F "Running:   true" /tmp/capsem-status.txt' in linux
+    assert 'grep -F "Service:   ok" /tmp/capsem-status.txt' in linux
+    assert 'grep -F "Gateway:   ok" /tmp/capsem-status.txt' in linux
     assert "scripts/verify-installed-release.py" in linux
     assert "Enable KVM for exact-package VM proof" in linux
     assert "test -r /dev/kvm -a -w /dev/kvm" in linux
     assert "scripts/prove-installed-shell.py" in linux
     assert "CAPSEM_EXACT_PACKAGE_SHELL_OK" in linux
     assert "/usr/bin/capsem run" not in linux
+    assert "run: just test" not in workflow
     assert (
-        linux.index("Repack .deb with companion binaries")
-        < linux.index("Install exact release deb")
-        < linux.index("Collect Linux artifacts")
+        "needs: [test-native-macos-package, test-native-linux-package, test-binary-pairing]"
+        in create_release
     )
-    assert "Post-install full gate (just test)" not in linux
-    assert "run: just test" not in linux
-    assert "needs: [build-app-macos, build-app-linux, test-binary-pairing]" in create_release
     assert "_gate-install" not in create_release
     assert "continue-on-error: true" not in create_release
 
@@ -4741,12 +4732,16 @@ def test_release_packages_use_the_shared_all_profile_materialization_rail() -> N
 
     assert 'profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)' in materializer
     assert 'for profile_path in "${profile_paths[@]}"' in materializer
-    assert 'CAPSEM_ASSET_MANIFEST="$ASSET_MANIFEST_URL"' in mac_job
+    assert "name: binary-channel-source" in mac_job
+    assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in mac_job
     assert "CAPSEM_ARCH=arm64" in mac_job
     assert "bash scripts/materialize-config.sh" in mac_job
-    assert 'CAPSEM_ASSET_MANIFEST="$ASSET_MANIFEST_URL"' in linux_job
+    assert '--manifest "$ASSET_MANIFEST_URL"' in mac_job
+    assert "name: binary-channel-source" in linux_job
+    assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in linux_job
     assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in linux_job
     assert "bash scripts/materialize-config.sh" in linux_job
+    assert 'scripts/repack-deb.sh --manifest "$ASSET_MANIFEST_URL"' in linux_job
     assert "--profile config/profiles/code/profile.toml" not in release
     for assembler in ("scripts/build-pkg.sh", "scripts/repack-deb.sh"):
         source = _source_text(assembler)

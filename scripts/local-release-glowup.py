@@ -304,13 +304,19 @@ def main() -> int:
 
         stable_manifest = manifests / "stable-assets-manifest.json"
         nightly_manifest = manifests / "nightly-assets-manifest.json"
-        shutil.copy2(args.assets_dir / "manifest.json", stable_manifest)
-        shutil.copy2(args.assets_dir / "manifest.json", nightly_manifest)
+        # Release lanes stage the selected channel's exact candidate manifest.
+        # The channel-switch proof needs both first-party identities regardless
+        # of whether the selected candidate is stable or nightly.
+        clone_manifest_for_channel(
+            args.assets_dir / "manifest.json",
+            stable_manifest,
+            "stable",
+        )
+        clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")
         report_disk_capacity(args.work_dir, "before immutable VM blob staging")
         stage_manifest_artifacts(stable_manifest, args.assets_dir, dist, base_url)
         # Both channels begin with the same verified profile cohort. Binary
         # authoring below mutates only each manifest's package inventory.
-        clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")
 
         record_binary(
             admin, stable_manifest, stable_version, stable_deb, stable_sbom, stable_download_base

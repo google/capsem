@@ -28,6 +28,7 @@ REQUIRED_BINARIES = [
     "capsem-tray",
     "capsem-admin",
     "capsem-mock-server",
+    "capsem-bench-rs",
 ]
 
 pytestmark = pytest.mark.skipif(
@@ -218,6 +219,7 @@ def test_macos_pkg_payload_is_closed_and_manifest_only_for_assets(tmp_path: Path
             "build-output Capsem.app cannot redirect installation away from "
             f"/Applications: {relocatable_bundles}"
         )
+        assert len(list(expanded.rglob("install-manifest"))) == 1
 
         assets = share / "assets"
         assert sorted(path.name for path in assets.iterdir()) == ["manifest-metadata.json"]

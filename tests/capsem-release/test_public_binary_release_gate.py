@@ -407,16 +407,20 @@ def test_release_workflow_verifies_exact_installed_state_before_artifact_publica
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8")
     jobs = _workflow_job_blocks(workflow)
 
-    for job_name in ("build-app-macos", "build-app-linux"):
+    for job_name in ("test-native-macos-package", "test-native-linux-package"):
         job = jobs[job_name]
+        assert "needs:" in job and "author-binary-candidate" in job
+        assert "name: binary-channel-candidate" in job
         assert "scripts/verify-installed-release.py" in job
-        assert job.index("scripts/verify-installed-release.py") < job.index(
-            "Collect macOS artifacts" if job_name == "build-app-macos" else "Collect Linux artifacts"
-        )
+        assert "PREACTIVATION_MANIFEST=file://" in job
+
+    assert "sudo /usr/sbin/installer" not in jobs["build-app-macos"]
+    assert "sudo dpkg -i" not in jobs["build-app-linux"]
+    assert "Record binary candidate metadata once" in jobs["author-binary-candidate"]
 
     assert (
         jobs["create-release"].index(
-            "needs: [build-app-macos, build-app-linux, test-binary-pairing]"
+            "needs: [test-native-macos-package, test-native-linux-package, test-binary-pairing]"
         )
         >= 0
     )

@@ -1008,6 +1008,25 @@ _test-candidate-run:
             --config-root "${CAPSEM_TEST_CONFIG_ROOT:-target/config}" \
             --work-dir target/release-module-glowup \
             --package-ready
+        echo "=== Candidate channel switching with Doctor and Winterfell ==="
+        env \
+            -u CAPSEM_RELEASE_CHANNEL \
+            -u CAPSEM_RELEASE_TRANSITION \
+            -u CAPSEM_RELEASE_BEFORE_MANIFEST \
+            -u CAPSEM_RELEASE_AFTER_MANIFEST \
+            -u CAPSEM_RELEASE_BEFORE_PACKAGE \
+            -u CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS \
+            -u CAPSEM_RELEASE_AFTER_PROFILE_INPUTS \
+            -u CAPSEM_RELEASE_PROFILE \
+            -u CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION \
+            -u CAPSEM_RELEASE_PUBLICATION_BASE \
+            python3 scripts/local-release-glowup.py \
+                --input-deb "$CAPSEM_RELEASE_PACKAGE" \
+                --bin-dir "${CAPSEM_RELEASE_BIN_DIR:-target/debug}" \
+                --assets-dir "${CAPSEM_TEST_ASSETS_DIR:-assets}" \
+                --config-root "${CAPSEM_TEST_CONFIG_ROOT:-target/config}" \
+                --work-dir target/release-module-channel-switch \
+                --package-ready
     else
     # A direct local module run has no earlier artifact stage to materialize
     # package-owned profile configuration. Reuse the checked-in materializer

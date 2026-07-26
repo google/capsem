@@ -200,6 +200,30 @@ def test_release_glowup_consumes_the_exact_pairing_environment() -> None:
     assert "validate_exact_release_pairing(args)" in adapter
 
 
+def test_release_glowup_also_runs_pre_activation_channel_switches() -> None:
+    runner = _recipe("_test-candidate-run")
+    glowup = runner.split(
+        'if [ -n "${CAPSEM_RELEASE_PACKAGE:-}" ]; then', maxsplit=1
+    )[1].split("else", maxsplit=1)[0]
+
+    assert glowup.count("scripts/local-release-glowup.py") == 2
+    assert "--work-dir target/release-module-glowup" in glowup
+    assert "--work-dir target/release-module-channel-switch" in glowup
+    for variable in (
+        "CAPSEM_RELEASE_CHANNEL",
+        "CAPSEM_RELEASE_TRANSITION",
+        "CAPSEM_RELEASE_BEFORE_MANIFEST",
+        "CAPSEM_RELEASE_AFTER_MANIFEST",
+        "CAPSEM_RELEASE_BEFORE_PACKAGE",
+        "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS",
+        "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS",
+        "CAPSEM_RELEASE_PROFILE",
+        "CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION",
+        "CAPSEM_RELEASE_PUBLICATION_BASE",
+    ):
+        assert f"-u {variable}" in glowup
+
+
 def test_standalone_local_glowup_materializes_config_without_release_builders() -> None:
     runner = _recipe("_test-candidate-run")
 

@@ -359,12 +359,18 @@ def test_systemd_install_image_cannot_flush_host_binfmt_registrations() -> None:
 
 def test_binary_release_requires_exact_linux_deb_proof() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
+    native = _workflow_job_blocks(workflow)["test-native-linux-package"]
 
     assert "build-app-linux:" in workflow
     assert "runs-on: ${{ matrix.runner }}" in workflow
-    assert "sudo dpkg -i target/release/bundle/deb/*.deb" in workflow
-    assert "scripts/verify-installed-release.py" in workflow
-    assert "scripts/prove-installed-shell.py" in workflow
+    assert 'python3 scripts/install-deb-runtime-dependencies.py "$package"' in native
+    assert 'sudo dpkg -i "$package"' in native
+    assert "sudo apt-get install -f -y" not in native
+    assert native.index("install-deb-runtime-dependencies.py") < native.index(
+        "install-manifest-request.sh write"
+    )
+    assert "scripts/verify-installed-release.py" in native
+    assert "scripts/prove-installed-shell.py" in native
     assert "just _test-functional" in workflow
     assert "just _test-glowup" in workflow
 
@@ -414,7 +420,7 @@ def test_linux_deb_proof_selector_fails_closed_for_native_package_without_kvm() 
 
 def test_release_matrix_installs_both_architectures_and_keeps_kvm_proof_mandatory() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "release.yaml").read_text()
-    linux = _workflow_job_blocks(workflow)["build-app-linux"]
+    linux = _workflow_job_blocks(workflow)["test-native-linux-package"]
 
     assert "runner: ubuntu-24.04-arm" in linux
     assert "runner: ubuntu-24.04" in linux
@@ -567,7 +573,10 @@ def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> 
     assert "json.dumps({" not in script or "capsem.local_release_glowup.v1" in script
     assert "stable-assets-manifest.json" in script
     assert "nightly-assets-manifest.json" in script
-    assert 'shutil.copy2(args.assets_dir / "manifest.json"' in script
+    assert "clone_manifest_for_channel(" in script
+    assert 'args.assets_dir / "manifest.json",' in script
+    assert 'stable_manifest,\n            "stable",' in script
+    assert 'clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")' in script
     assert "CAPSEM_RELEASE_URL" in script
     assert "CAPSEM_RELEASE_CHANNELS_URL=" in script
     assert "update --yes --channel nightly" in script
@@ -654,6 +663,41 @@ def test_native_packages_include_the_release_functional_benchmark() -> None:
         PROJECT_ROOT / "crates" / "capsem-bench" / "src" / "main.rs"
     ).read_text()
     assert '#[command(version = env!("CARGO_PKG_VERSION")' in benchmark
+
+
+def test_binary_packages_embed_public_url_but_install_against_serialized_source() -> None:
+    workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
+    macos = workflow.split("  build-app-macos:\n", maxsplit=1)[1].split(
+        "\n  build-app-linux:\n", maxsplit=1
+    )[0]
+    linux = workflow.split("  build-app-linux:\n", maxsplit=1)[1].split(
+        "\n  author-binary-candidate:\n", maxsplit=1
+    )[0]
+    native_macos = workflow.split(
+        "  test-native-macos-package:\n", maxsplit=1
+    )[1].split("\n  test-native-linux-package:\n", maxsplit=1)[0]
+    native_linux = workflow.split(
+        "  test-native-linux-package:\n", maxsplit=1
+    )[1].split("\n  test-binary-pairing:\n", maxsplit=1)[0]
+
+    for job in (macos, linux):
+        assert "needs: [preflight, resolve-channel-source]" in job
+        assert "name: binary-channel-source" in job
+        assert "PREACTIVATION_MANIFEST=file://" in job
+        assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in job
+
+    assert macos.count('--manifest "$ASSET_MANIFEST_URL"') == 1
+    assert linux.count('--manifest "$ASSET_MANIFEST_URL"') == 1
+    for job in (native_macos, native_linux):
+        assert "binary-channel-candidate" in job
+        assert "PREACTIVATION_MANIFEST=file://" in job
+        assert "scripts/install-manifest-request.sh write" in job
+        assert '--manifest-url "$PREACTIVATION_MANIFEST"' in job
+        assert "scripts/install-manifest-request.sh clear" in job
+    assert (
+        "needs: [test-native-macos-package, test-native-linux-package, "
+        "test-binary-pairing]"
+    ) in workflow
 
 
 def test_full_gate_runs_fast_checks_before_install_harness_preflight() -> None:
@@ -1414,6 +1458,22 @@ def test_local_release_glowup_clones_graph_with_only_channel_identity_changed(
     expected = dict(source_manifest)
     expected["channel"] = "nightly"
     assert cloned == expected
+
+
+def test_local_release_glowup_projects_both_switch_channels_from_any_candidate() -> None:
+    script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
+    setup = script.split(
+        'stable_manifest = manifests / "stable-assets-manifest.json"', maxsplit=1
+    )[1].split(
+        'report_disk_capacity(args.work_dir, "before immutable VM blob staging")',
+        maxsplit=1,
+    )[0]
+
+    assert 'args.assets_dir / "manifest.json"' in setup
+    assert "stable_manifest," in setup
+    assert '"stable"' in setup
+    assert "clone_manifest_for_channel(stable_manifest, nightly_manifest, \"nightly\")" in setup
+    assert "shutil.copy2(args.assets_dir / \"manifest.json\"" not in setup
 
 
 def test_local_release_glowup_rejects_partially_staged_architecture(

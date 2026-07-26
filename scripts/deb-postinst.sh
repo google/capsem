@@ -10,6 +10,12 @@ set -euo pipefail
 if ! declare -F capsem_install_enable_failure_trap >/dev/null; then
     source "$(dirname "$0")/pkg-scripts/install-diagnostics"
 fi
+if ! declare -F capsem_resolve_install_manifest >/dev/null; then
+    source "$(dirname "$0")/pkg-scripts/install-manifest"
+fi
+
+CAPSEM_INSTALL_MANIFEST_REQUEST="/var/run/capsem/install-manifest"
+trap 'rm -f "$CAPSEM_INSTALL_MANIFEST_REQUEST"' EXIT
 
 # Determine the real user (not root from sudo)
 if [ -n "${SUDO_USER:-}" ]; then
@@ -71,6 +77,9 @@ if [ -z "$MANIFEST_SOURCE" ]; then
     echo "capsem: packaged manifest-metadata.json has no manifest_url" >&2
     exit 1
 fi
+MANIFEST_SOURCE=$(capsem_resolve_install_manifest \
+    "$MANIFEST_SOURCE" \
+    "$CAPSEM_INSTALL_MANIFEST_REQUEST")
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=manifest_source source=$MANIFEST_SOURCE"
 
 CAPSEM_INSTALL_PHASE="install_profiles"

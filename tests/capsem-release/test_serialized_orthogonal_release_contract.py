@@ -194,7 +194,11 @@ def test_binary_pairing_uses_exact_public_before_and_candidate_after_cohorts() -
     resolve = _job_block(workflow, "resolve-channel-source")
     pairing = _job_block(workflow, "test-binary-pairing")
 
-    assert "manifest-url: ${{ env.ASSET_MANIFEST_URL }}" in resolve
+    assert (
+        "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}"
+        in resolve
+    )
+    assert "allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}" in resolve
     assert "kind: packages" in resolve
     assert "kind: profiles" in resolve
     assert "architecture: x86_64" in resolve
@@ -366,7 +370,7 @@ def test_runtime_preflight_is_reused_without_independent_sha_authority() -> None
         assert "uses: ./.github/workflows/release-runtime-preflight.yaml" in workflow
 
 
-def test_profile_runtime_preflight_bootstraps_only_from_manifest_catalog() -> None:
+def test_release_runtime_preflight_bootstraps_only_from_manifest_catalog() -> None:
     preflight = _workflow("release-runtime-preflight.yaml")
     binary = _workflow("release.yaml")
     profile = _workflow("release-assets.yaml")
@@ -378,4 +382,22 @@ def test_profile_runtime_preflight_bootstraps_only_from_manifest_catalog() -> No
     assert "ASSET_MANIFEST_URL" not in preflight
 
     assert "bootstrap_missing_first_party: true" in profile
-    assert "bootstrap_missing_first_party: true" not in binary
+    assert "bootstrap_missing_first_party: true" in binary
+
+
+def test_binary_bootstrap_uses_donor_only_as_public_before() -> None:
+    binary = _workflow("release.yaml")
+    resolver = binary.split("  resolve-channel-source:\n", maxsplit=1)[1].split(
+        "\n  preflight:\n", maxsplit=1
+    )[0]
+
+    assert "scripts/select-runtime-preflight-manifest.py" in resolver
+    assert "--bootstrap-missing-first-party" in resolver
+    assert "steps.public-before.outputs.manifest-url" in resolver
+    assert "steps.public-before.outputs.bootstrap" in resolver
+    assert "scripts/project-first-channel-before.py" in resolver
+    assert "Fetch latest selected channel source manifest" in resolver
+    source_fetch = resolver.split(
+        "- name: Fetch latest selected channel source manifest", maxsplit=1
+    )[1].split("- name:", maxsplit=1)[0]
+    assert "--bootstrap-missing-first-party" not in source_fetch

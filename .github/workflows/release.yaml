@@ -36,6 +36,7 @@ jobs:
     uses: ./.github/workflows/release-runtime-preflight.yaml
     with:
       channel: ${{ inputs.channel }}
+      bootstrap_missing_first_party: true
 
   fast-gate:
     uses: ./.github/workflows/fast-gate.yaml
@@ -49,6 +50,14 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync
 
+      - name: Select exact public-before manifest
+        id: public-before
+        run: |
+          python3 scripts/select-runtime-preflight-manifest.py \
+            --channel "$RELEASE_CHANNEL" \
+            --bootstrap-missing-first-party \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: Fetch latest selected channel source manifest
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -57,17 +66,38 @@ jobs:
             --channel "$RELEASE_CHANNEL" \
             --output target/channel-source/manifest.json
 
+      - name: Project inactive first-channel public-before state
+        if: ${{ steps.public-before.outputs.bootstrap == 'true' }}
+        run: |
+          python3 scripts/project-first-channel-before.py \
+            --source-manifest target/channel-source/manifest.json \
+            --channel "$RELEASE_CHANNEL" \
+            --bootstrap "${{ steps.public-before.outputs.bootstrap }}" \
+            --output target/channel-source/public-before.json
+
+      - name: Select public-before authority for exact pairing
+        id: public-before-authority
+        run: |
+          if [[ "${{ steps.public-before.outputs.bootstrap }}" == "true" ]]; then
+            echo "manifest-url=file://$PWD/target/channel-source/public-before.json" \
+              >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest-url=${{ steps.public-before.outputs.manifest-url }}" \
+              >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Fetch exact deployed public-before packages
         uses: ./.github/actions/fetch-release-inputs
         with:
-          manifest-url: ${{ env.ASSET_MANIFEST_URL }}
+          manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}
           kind: packages
           output: target/binary-public-before/packages
 
       - name: Fetch exact deployed public-before profiles
         uses: ./.github/actions/fetch-release-inputs
         with:
-          manifest-url: ${{ env.ASSET_MANIFEST_URL }}
+          manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}
+          allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}
           kind: profiles
           architecture: x86_64
           output: target/binary-public-before/profiles
@@ -176,10 +206,21 @@ jobs:
           fi
           rm -rf "$RUNNER_TEMP/private_keys"
   build-app-macos:
-    needs: preflight
+    needs: [preflight, resolve-channel-source]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-source
+          path: target/channel-source/
+
+      - name: Select serialized pre-activation manifest
+        run: |
+          test -s target/channel-source/manifest.json
+          echo "PREACTIVATION_MANIFEST=file://$PWD/target/channel-source/manifest.json" \
+            >> "$GITHUB_ENV"
 
       - name: Select Xcode 16.2
         run: sudo xcode-select -s /Applications/Xcode_16.2.app
@@ -193,7 +234,7 @@ jobs:
 
       - name: Materialize runtime config
         run: |
-          CAPSEM_ASSET_MANIFEST="$ASSET_MANIFEST_URL" \
+          CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST" \
           CAPSEM_ARCH=arm64 \
             bash scripts/materialize-config.sh
 
@@ -389,144 +430,6 @@ jobs:
           pkgutil --check-signature "packages/Capsem-$VERSION.pkg"
           spctl -a -vv -t install "packages/Capsem-$VERSION.pkg"
 
-      - name: Write deterministic macOS install-user request
-        run: |
-          set -euo pipefail
-          CAPSEM_INSTALL_USER_REQUEST="/var/run/capsem/install-user"
-          INSTALL_USER="$(id -un)"
-          require_equal() {
-            label="$1"
-            expected="$2"
-            actual="$3"
-            if [ "$actual" != "$expected" ]; then
-              echo "::error::$label assertion failed: expected '$expected', got '$actual'"
-              return 1
-            fi
-            echo "$label verified: $actual"
-          }
-          require_contains() {
-            label="$1"
-            needle="$2"
-            value="$3"
-            if [[ "$value" != *"$needle"* ]]; then
-              echo "::error::$label assertion failed: expected '$needle' in '$value'"
-              return 1
-            fi
-            echo "$label verified: $needle"
-          }
-          bash scripts/macos-install-user-request.sh write "$INSTALL_USER"
-          REQUEST_OWNER="$(sudo stat -f '%u' "$CAPSEM_INSTALL_USER_REQUEST")"
-          REQUEST_MODE="$(sudo stat -f '%Lp' "$CAPSEM_INSTALL_USER_REQUEST")"
-          RESOLVER="$PWD/scripts/pkg-scripts/install-user"
-          if ! RESOLUTION_REPORT="$(sudo bash -c 'source "$1"; capsem_install_user_resolution_report "$2"' bash "$RESOLVER" "$CAPSEM_INSTALL_USER_REQUEST")"; then
-            echo "::error::resolved install user assertion failed: secure resolver rejected $CAPSEM_INSTALL_USER_REQUEST"
-            exit 1
-          fi
-          printf '%s\n' "$RESOLUTION_REPORT" | tee "$RUNNER_TEMP/capsem-install-user-resolution.txt"
-          require_equal "install-user request owner" "0" "$REQUEST_OWNER"
-          require_equal "install-user request mode" "600" "$REQUEST_MODE"
-          require_contains "resolved install user" "user=$INSTALL_USER" "$RESOLUTION_REPORT"
-
-      - name: Install exact notarized package
-        run: |
-          set -euo pipefail
-          VERSION="${RELEASE_TAG#v}"
-          cleanup_install_user_request() {
-            bash scripts/macos-install-user-request.sh clear
-          }
-          trap cleanup_install_user_request EXIT
-          require_path() {
-            label="$1"
-            predicate="$2"
-            path="$3"
-            if ! test "$predicate" "$path"; then
-              echo "::error::$label assertion failed: $predicate $path"
-              return 1
-            fi
-            echo "$label verified: $path"
-          }
-          require_contains() {
-            label="$1"
-            needle="$2"
-            value="$3"
-            if [[ "$value" != *"$needle"* ]]; then
-              echo "::error::$label assertion failed: expected '$needle' in '$value'"
-              return 1
-            fi
-            echo "$label verified: $needle"
-          }
-          sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /
-          PACKAGE_RECEIPT="$(pkgutil --pkg-info com.capsem.pkg)"
-          printf '%s\n' "$PACKAGE_RECEIPT" | tee "$RUNNER_TEMP/capsem-package-receipt.txt"
-          require_contains "package receipt id" "package-id: com.capsem.pkg" "$PACKAGE_RECEIPT"
-          require_contains "package receipt version" "version: $VERSION" "$PACKAGE_RECEIPT"
-          require_path "application bundle" -d "/Applications/Capsem.app"
-          require_path "application executable" -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"
-          require_path "per-user CLI" -x "$HOME/.capsem/bin/capsem"
-          CAPSEM_VERSION_OUTPUT="$("$HOME/.capsem/bin/capsem" --version)"
-          require_contains "per-user CLI version" "$VERSION" "$CAPSEM_VERSION_OUTPUT"
-          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
-            require_path "host binary $bin" -x "$HOME/.capsem/bin/$bin"
-            BIN_VERSION_OUTPUT="$("$HOME/.capsem/bin/$bin" --version)"
-            require_contains "host binary $bin version" "$VERSION" "$BIN_VERSION_OUTPUT"
-          done
-          STATUS_OUTPUT="$("$HOME/.capsem/bin/capsem" status)"
-          printf '%s\n' "$STATUS_OUTPUT" | tee /tmp/capsem-status.txt
-          require_contains "installed status" "Installed: true" "$STATUS_OUTPUT"
-          require_contains "running status" "Running:   true" "$STATUS_OUTPUT"
-          require_contains "service status" "Service:   ok" "$STATUS_OUTPUT"
-          require_contains "gateway status" "Gateway:   ok" "$STATUS_OUTPUT"
-          if ! pgrep -x capsem-tray; then
-            echo "::error::tray process assertion failed: capsem-tray is not running"
-            exit 1
-          fi
-          echo "tray process verified: capsem-tray"
-          python3 scripts/verify-installed-release.py \
-            --capsem "$HOME/.capsem/bin/capsem" \
-            --manifest-url "$ASSET_MANIFEST_URL" \
-            --channel "$RELEASE_CHANNEL" \
-            --package-version "$VERSION"
-
-      - name: Collect macOS install diagnostics
-        if: always()
-        run: |
-          mkdir -p release-diagnostics
-          {
-            echo "=== runner identity ==="
-            id
-            echo "HOME=$HOME USER=${USER:-} SUDO_USER=${SUDO_USER:-}"
-            echo "=== target-user resolution ==="
-            cat "$RUNNER_TEMP/capsem-install-user-resolution.txt" 2>&1 || true
-            echo "=== target-user request ==="
-            sudo ls -lde /var/run/capsem /var/run/capsem/install-user 2>&1 || true
-            sudo cat /var/run/capsem/install-user 2>&1 || true
-            echo "=== console owner ==="
-            stat -f '%Su' /dev/console || true
-            echo "=== package receipt ==="
-            pkgutil --pkg-info com.capsem.pkg || true
-            echo "=== application payload ==="
-            find /Applications -maxdepth 3 -name 'Capsem.app' -print -exec ls -ld {} \; 2>&1 || true
-            ls -la "/Applications/Capsem.app/Contents/MacOS" 2>&1 || true
-            echo "=== build-output application bundle ==="
-            ls -lde "target/release/bundle/macos/Capsem.app" 2>&1 || true
-            echo "=== per-user payload ==="
-            ls -la "$HOME/.capsem" "$HOME/.capsem/bin" "$HOME/.capsem/logs" 2>&1 || true
-            echo "=== PackageKit install log ==="
-            tail -n 400 /var/log/install.log 2>&1 || true
-            echo "=== Capsem fallback install log ==="
-            tail -n 400 /tmp/capsem-install.log 2>&1 || true
-            echo "=== Capsem per-user install log ==="
-            tail -n 400 "$HOME/.capsem/logs/install-latest.log" 2>&1 || true
-          } | tee release-diagnostics/macos-install.txt
-          bash scripts/macos-install-user-request.sh clear || true
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: always()
-        with:
-          name: release-macos-install-diagnostics
-          path: release-diagnostics/
-          if-no-files-found: warn
-
       - name: Collect macOS artifacts
         run: |
           VERSION="${RELEASE_TAG#v}"
@@ -544,7 +447,7 @@ jobs:
           path: release-artifacts/
 
   build-app-linux:
-    needs: preflight
+    needs: [preflight, resolve-channel-source]
     strategy:
       fail-fast: false
       matrix:
@@ -559,6 +462,17 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-source
+          path: target/channel-source/
+
+      - name: Select serialized pre-activation manifest
+        run: |
+          test -s target/channel-source/manifest.json
+          echo "PREACTIVATION_MANIFEST=file://$PWD/target/channel-source/manifest.json" \
+            >> "$GITHUB_ENV"
+
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: 1.97.1
@@ -568,7 +482,7 @@ jobs:
 
       - name: Materialize runtime config
         run: |
-          CAPSEM_ASSET_MANIFEST="$ASSET_MANIFEST_URL" \
+          CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST" \
           CAPSEM_ARCH="${{ matrix.arch }}" \
             bash scripts/materialize-config.sh
 
@@ -640,51 +554,6 @@ jobs:
           dpkg-deb --info target/release/bundle/deb/*.deb
           echo "=== Verify companion binaries in deb ==="
           dpkg-deb --contents target/release/bundle/deb/*.deb | grep -E "capsem-service|capsem-tui|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin|capsem-mock-server|capsem-bench-rs"
-
-      - name: Enable KVM for exact-package VM proof
-        if: matrix.arch == 'x86_64'
-        run: |
-          sudo modprobe kvm
-          sudo chmod 0666 /dev/kvm
-          sudo modprobe vhost_vsock
-          sudo chmod 0666 /dev/vhost-vsock
-          test -r /dev/kvm -a -w /dev/kvm
-          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
-
-      - name: Install exact release deb
-        run: |
-          set -euo pipefail
-          VERSION="${RELEASE_TAG#v}"
-          sudo dpkg -i target/release/bundle/deb/*.deb || sudo apt-get install -f -y
-          test -x /usr/bin/capsem
-          /usr/bin/capsem --version | grep -F "$VERSION"
-          dpkg-query -W -f='${Version}' capsem | grep -Fx "$VERSION"
-          for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
-            test -x "/usr/bin/$bin"
-            if [ "$bin" != "capsem-app" ]; then
-              "/usr/bin/$bin" --version | grep -F "$VERSION"
-            fi
-          done
-          /usr/bin/capsem status | tee /tmp/capsem-status.txt
-          grep -F "Installed: true" /tmp/capsem-status.txt
-          grep -F "Running:   true" /tmp/capsem-status.txt
-          grep -F "Service:   ok" /tmp/capsem-status.txt
-          grep -F "Gateway:   ok" /tmp/capsem-status.txt
-          python3 scripts/verify-installed-release.py \
-            --capsem /usr/bin/capsem \
-            --manifest-url "$ASSET_MANIFEST_URL" \
-            --channel "$RELEASE_CHANNEL" \
-            --package-version "$VERSION"
-
-      - name: Prove exact-package guest shell execution
-        if: matrix.arch == 'x86_64'
-        run: |
-          set -euo pipefail
-          python3 scripts/prove-installed-shell.py \
-            --capsem /usr/bin/capsem \
-            --marker CAPSEM_EXACT_PACKAGE_SHELL_OK \
-            --session-name release-exact-shell-x86_64 \
-            --timeout 300
 
       - name: Collect Linux artifacts
         run: |
@@ -814,6 +683,173 @@ jobs:
           name: binary-host-sbom
           path: release-artifacts/capsem-sbom.spdx.json
 
+  test-native-macos-package:
+    needs: [build-app-macos, author-binary-candidate]
+    runs-on: macos-14
+    name: Install exact candidate macOS package
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-macos
+          path: release-test-package/
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-candidate
+          path: target/binary-channel/
+
+      - name: Select exact candidate manifest
+        run: |
+          manifest="$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          test -s "$manifest"
+          echo "PREACTIVATION_MANIFEST=file://$manifest" >> "$GITHUB_ENV"
+          echo "PREACTIVATION_MANIFEST_PATH=$manifest" >> "$GITHUB_ENV"
+
+      - name: Write secure package install requests
+        run: |
+          set -euo pipefail
+          bash scripts/macos-install-user-request.sh write "$(id -un)"
+          bash scripts/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH"
+          test "$(sudo stat -f '%u' /var/run/capsem/install-manifest)" = "0"
+          test "$(sudo stat -f '%Lp' /var/run/capsem/install-manifest)" = "600"
+
+      - name: Install and verify exact notarized package
+        run: |
+          set -euo pipefail
+          cleanup_requests() {
+            bash scripts/macos-install-user-request.sh clear || true
+            bash scripts/install-manifest-request.sh clear || true
+          }
+          trap cleanup_requests EXIT
+          VERSION="${RELEASE_TAG#v}"
+          package=$(find release-test-package -maxdepth 1 -name '*.pkg' -print -quit)
+          test -n "$package"
+          sudo /usr/sbin/installer -pkg "$package" -target /
+          test ! -e /var/run/capsem/install-manifest
+          pkgutil --pkg-info com.capsem.pkg | tee "$RUNNER_TEMP/capsem-package-receipt.txt"
+          pkgutil --pkg-info com.capsem.pkg | grep -F "version: $VERSION"
+          test -d "/Applications/Capsem.app"
+          test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"
+          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
+            test -x "$HOME/.capsem/bin/$bin"
+            "$HOME/.capsem/bin/$bin" --version | grep -F "$VERSION"
+          done
+          "$HOME/.capsem/bin/capsem" status | tee /tmp/capsem-status.txt
+          grep -F "Installed: true" /tmp/capsem-status.txt
+          grep -F "Running:   true" /tmp/capsem-status.txt
+          grep -F "Service:   ok" /tmp/capsem-status.txt
+          grep -F "Gateway:   ok" /tmp/capsem-status.txt
+          pgrep -x capsem-tray
+          python3 scripts/verify-installed-release.py \
+            --capsem "$HOME/.capsem/bin/capsem" \
+            --manifest-url "$PREACTIVATION_MANIFEST" \
+            --channel "$RELEASE_CHANNEL" \
+            --package-version "$VERSION"
+
+      - name: Collect macOS install diagnostics
+        if: always()
+        run: |
+          mkdir -p release-diagnostics
+          {
+            id
+            pkgutil --pkg-info com.capsem.pkg || true
+            find /Applications -maxdepth 3 -name 'Capsem.app' -print 2>&1 || true
+            ls -la "$HOME/.capsem" "$HOME/.capsem/bin" "$HOME/.capsem/logs" 2>&1 || true
+            tail -n 400 /var/log/install.log 2>&1 || true
+            tail -n 400 "$HOME/.capsem/logs/install-latest.log" 2>&1 || true
+          } | tee release-diagnostics/macos-install.txt
+          bash scripts/macos-install-user-request.sh clear || true
+          bash scripts/install-manifest-request.sh clear || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: release-macos-install-diagnostics
+          path: release-diagnostics/
+          if-no-files-found: warn
+
+  test-native-linux-package:
+    needs: [build-app-linux, author-binary-candidate]
+    name: Install exact candidate Linux package (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: release-test-package/
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-candidate
+          path: target/binary-channel/
+
+      - name: Select exact candidate manifest
+        run: |
+          manifest="$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          test -s "$manifest"
+          echo "PREACTIVATION_MANIFEST=file://$manifest" >> "$GITHUB_ENV"
+          echo "PREACTIVATION_MANIFEST_PATH=$manifest" >> "$GITHUB_ENV"
+
+      - name: Enable KVM for exact-package VM proof
+        if: matrix.arch == 'x86_64'
+        run: |
+          sudo modprobe kvm
+          sudo chmod 0666 /dev/kvm
+          sudo modprobe vhost_vsock
+          sudo chmod 0666 /dev/vhost-vsock
+          test -r /dev/kvm -a -w /dev/kvm
+          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+
+      - name: Install and verify exact release deb
+        run: |
+          set -euo pipefail
+          trap 'bash scripts/install-manifest-request.sh clear || true' EXIT
+          package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
+          test -n "$package"
+          python3 scripts/install-deb-runtime-dependencies.py "$package"
+          bash scripts/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH"
+          VERSION="${RELEASE_TAG#v}"
+          sudo dpkg -i "$package"
+          test ! -e /var/run/capsem/install-manifest
+          dpkg-query -W -f='${Version}' capsem | grep -Fx "$VERSION"
+          for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
+            test -x "/usr/bin/$bin"
+            if [ "$bin" != "capsem-app" ]; then
+              "/usr/bin/$bin" --version | grep -F "$VERSION"
+            fi
+          done
+          /usr/bin/capsem status | tee /tmp/capsem-status.txt
+          grep -F "Installed: true" /tmp/capsem-status.txt
+          grep -F "Running:   true" /tmp/capsem-status.txt
+          grep -F "Service:   ok" /tmp/capsem-status.txt
+          grep -F "Gateway:   ok" /tmp/capsem-status.txt
+          python3 scripts/verify-installed-release.py \
+            --capsem /usr/bin/capsem \
+            --manifest-url "$PREACTIVATION_MANIFEST" \
+            --channel "$RELEASE_CHANNEL" \
+            --package-version "$VERSION"
+
+      - name: Prove exact-package guest shell execution
+        if: matrix.arch == 'x86_64'
+        run: |
+          python3 scripts/prove-installed-shell.py \
+            --capsem /usr/bin/capsem \
+            --marker CAPSEM_EXACT_PACKAGE_SHELL_OK \
+            --session-name release-exact-shell-x86_64 \
+            --timeout 300
+
   test-binary-pairing:
     needs: [build-app-macos, build-app-linux, author-binary-candidate]
     runs-on: ubuntu-24.04
@@ -939,7 +975,7 @@ jobs:
         run: just _test-release-contracts
 
   create-release:
-    needs: [build-app-macos, build-app-linux, test-binary-pairing]
+    needs: [test-native-macos-package, test-native-linux-package, test-binary-pairing]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd

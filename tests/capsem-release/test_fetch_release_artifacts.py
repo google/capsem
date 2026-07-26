@@ -1176,6 +1176,47 @@ def test_pulled_binary_package_staging_uses_and_verifies_complete_inventory(
         assert (binary_dir / name).read_bytes() == payload
 
 
+def test_profile_lane_marks_old_binary_cohort_incomplete_without_building(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    binary_payloads = {
+        name: f"resolved-{name}".encode()
+        for name in STAGE.REQUIRED_LINUX_RELEASE_BINARIES
+        if name not in {"capsem-mock-server", "capsem-bench-rs"}
+    }
+    _package_with_binary_inventory(manifest, binary_payloads)
+    inputs = tmp_path / "package-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "packages", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+
+    readiness = STAGE.functional_binary_cohort_readiness(inputs)
+
+    assert readiness == {
+        "ready": False,
+        "missing": ["capsem-bench-rs", "capsem-mock-server"],
+        "unexpected": [],
+    }
+
+
+def test_profile_lane_accepts_only_the_complete_manifest_binary_cohort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    binary_payloads = {
+        name: f"resolved-{name}".encode()
+        for name in STAGE.REQUIRED_LINUX_RELEASE_BINARIES
+    }
+    _package_with_binary_inventory(manifest, binary_payloads)
+    inputs = tmp_path / "package-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "packages", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+
+    readiness = STAGE.functional_binary_cohort_readiness(inputs)
+
+    assert readiness == {"ready": True, "missing": [], "unexpected": []}
+
+
 def test_package_staging_accepts_manifest_selected_x86_64_debian_package(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

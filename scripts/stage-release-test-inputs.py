@@ -24,6 +24,7 @@ from release_inputs import (  # noqa: E402
     safe_relative,
     verify_payload,
 )
+from release_binary_cohort import REQUIRED_LINUX_RELEASE_BINARIES  # noqa: E402
 
 
 def _host_arch() -> str:
@@ -336,6 +337,28 @@ def select_host_package_path(input_dir: Path) -> Path:
     return _select_host_package(input_dir)[1]
 
 
+def functional_binary_cohort_readiness(input_dir: Path) -> dict[str, Any]:
+    """Report whether the pulled package can run the complete release modules."""
+    package, _ = _select_host_package(input_dir)
+    inventory = package.get("binaries")
+    if not isinstance(inventory, list):
+        raise ValueError("selected host package has no binary inventory")
+    names: set[str] = set()
+    for index, record in enumerate(inventory):
+        if not isinstance(record, dict):
+            raise ValueError(f"package binary[{index}] inventory row is malformed")
+        if record.get("status") == "revoked":
+            continue
+        names.add(safe_component(record.get("name"), f"package binary[{index}] inventory name"))
+    missing = sorted(REQUIRED_LINUX_RELEASE_BINARIES - names)
+    unexpected = sorted(names - REQUIRED_LINUX_RELEASE_BINARIES)
+    return {
+        "ready": not missing and not unexpected,
+        "missing": missing,
+        "unexpected": unexpected,
+    }
+
+
 def stage_package_binaries(input_dir: Path, binary_dir: Path) -> list[Path]:
     package, package_path = _select_host_package(input_dir)
     extract_dir = binary_dir.parent / "resolved-package"
@@ -448,8 +471,21 @@ def main() -> int:
         default=Path("config"),
     )
     parser.add_argument("--print-package-path", action="store_true")
+    parser.add_argument("--check-functional-cohort", action="store_true")
+    parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()
     try:
+        if args.check_functional_cohort:
+            if args.input_dir is None:
+                raise ValueError("--check-functional-cohort requires --input-dir")
+            readiness = functional_binary_cohort_readiness(args.input_dir)
+            if args.github_output is not None:
+                with args.github_output.open("a", encoding="utf-8") as output:
+                    output.write(
+                        f"functional-ready={str(readiness['ready']).lower()}\n"
+                    )
+            print(json.dumps(readiness, indent=2, sort_keys=True))
+            return 0
         if args.print_package_path:
             if args.input_dir is None:
                 raise ValueError("--print-package-path requires --input-dir")
