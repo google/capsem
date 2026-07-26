@@ -647,7 +647,7 @@ _test-functional: _generate-settings
 _test-glowup:
     CAPSEM_TEST_MODULE=glowup just _test-candidate-run
 
-_test-release-contracts:
+_test-release-contracts: _release-site-pnpm-install
     CAPSEM_TEST_MODULE=release-contracts just _test-candidate-run
 
 # Require Docker headroom without discarding content-addressed compiler caches.
@@ -2174,6 +2174,9 @@ _pnpm-install:
     for dir in frontend docs site release-site; do \
         (cd "$dir" && CI=true pnpm install --frozen-lockfile); \
     done
+
+_release-site-pnpm-install:
+    cd release-site && CI=true pnpm install --frozen-lockfile
 
 _frontend: _pnpm-install
     bash scripts/check-web-surface.sh frontend-build
