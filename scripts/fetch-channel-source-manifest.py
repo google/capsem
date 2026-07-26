@@ -37,19 +37,36 @@ def select_latest_source_asset(
     releases: list[dict[str, Any]], channel: str
 ) -> dict[str, Any] | None:
     expected = source_asset_name(channel)
-    candidates: list[tuple[str, dict[str, Any]]] = []
+    candidates: list[tuple[str, int, dict[str, Any]]] = []
     for release in releases:
         if release.get("draft") or release.get("prerelease"):
             continue
-        timestamp = release.get("published_at") or release.get("created_at")
-        if not isinstance(timestamp, str):
+        release_timestamp = release.get("published_at") or release.get(
+            "created_at"
+        )
+        if not isinstance(release_timestamp, str):
             continue
         for asset in release.get("assets", []):
             if isinstance(asset, dict) and asset.get("name") == expected:
-                candidates.append((timestamp, asset))
+                asset_timestamp = asset.get("updated_at") or asset.get(
+                    "created_at"
+                )
+                timestamp = (
+                    asset_timestamp
+                    if isinstance(asset_timestamp, str)
+                    else release_timestamp
+                )
+                asset_id = asset.get("id")
+                candidates.append(
+                    (
+                        timestamp,
+                        asset_id if isinstance(asset_id, int) else -1,
+                        asset,
+                    )
+                )
     if not candidates:
         return None
-    return max(candidates, key=lambda candidate: candidate[0])[1]
+    return max(candidates, key=lambda candidate: candidate[:2])[2]
 
 
 def _read_url(url: str, *, token: str | None = None, api: bool = False) -> bytes:

@@ -108,6 +108,43 @@ def test_latest_channel_source_manifest_is_selected_without_parallel_state() -> 
     assert SOURCE.select_latest_source_asset(releases, "experimental") is None
 
 
+def test_source_selection_uses_asset_mutation_time_for_resumed_publication() -> None:
+    releases = [
+        {
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-07-23T12:00:00Z",
+            "assets": [
+                {
+                    "id": 43,
+                    "name": "channel-source-nightly.json",
+                    "created_at": "2026-07-26T12:00:00Z",
+                    "updated_at": "2026-07-26T12:00:00Z",
+                    "url": "https://api.github.test/assets/resumed-profile",
+                }
+            ],
+        },
+        {
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-07-25T12:00:00Z",
+            "assets": [
+                {
+                    "id": 42,
+                    "name": "channel-source-nightly.json",
+                    "created_at": "2026-07-25T12:00:00Z",
+                    "updated_at": "2026-07-25T12:00:00Z",
+                    "url": "https://api.github.test/assets/earlier-binary",
+                }
+            ],
+        },
+    ]
+
+    selected = SOURCE.select_latest_source_asset(releases, "nightly")
+
+    assert selected == releases[0]["assets"][0]
+
+
 def test_channel_source_discovery_paginates_past_daily_nightly_releases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
