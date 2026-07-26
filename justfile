@@ -63,6 +63,7 @@ _stamp-version:
 release-binaries channel:
     #!/bin/bash
     set -euo pipefail
+    python3 scripts/extract-release-notes.py --check
     TESTED_HEAD=$(git rev-parse HEAD)
     just test
     python3 scripts/publish-tested-main.py --expected-head "$TESTED_HEAD"

@@ -343,6 +343,13 @@ def release_binaries(
         return None, None
 
     base_head = _capture(runner, "git", "rev-parse", "HEAD")
+    runner.run(
+        (
+            sys.executable,
+            "scripts/extract-release-notes.py",
+            "--check",
+        )
+    )
     mutation = OwnedMutation(ROOT, MUTATED_PATHS)
     try:
         runner.run(("just", "_stamp-version"))

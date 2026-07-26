@@ -351,6 +351,11 @@ rails. Their builds remain mandatory source gates.
 
 Keep user-visible changes under `## [Unreleased]` in `CHANGELOG.md`. Historical
 entries describe past behavior and are not normative release instructions.
+`just release-binaries` must validate that this section contains publishable
+notes before it starts `just test`, and the binary release script must recheck
+before version mutation. Never defer release-note validation until after the
+complete local gate or source push. Profile releases are independent and do not
+require binary changelog text.
 
 Binary and profile versions are orthogonal:
 

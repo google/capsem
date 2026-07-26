@@ -238,6 +238,38 @@ def test_binary_release_owns_one_scripted_build_and_dispatch(
     assert "_build-rootfs" not in joined
     assert "release-assets.yaml" not in joined
 
+
+def test_binary_release_checks_notes_before_version_stamp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    runner = FakeRunner(tmp_path)
+
+    RELEASE.release_binaries("nightly", runner)
+
+    check = runner.calls.index(
+        (sys.executable, "scripts/extract-release-notes.py", "--check")
+    )
+    stamp = runner.calls.index(("just", "_stamp-version"))
+    assert check < stamp
+
+
+def test_binary_recipe_checks_notes_before_complete_local_gate_and_push() -> None:
+    justfile = (PROJECT_ROOT / "Justfile").read_text(encoding="utf-8")
+    recipe = justfile.split("\nrelease-binaries channel:", 1)[1].split(
+        "\nrelease-profile channel profile:", 1
+    )[0]
+
+    check = recipe.index("python3 scripts/extract-release-notes.py --check")
+    test = recipe.index("just test")
+    push = recipe.index("scripts/publish-tested-main.py")
+    assert check < test < push
+    assert "extract-release-notes.py" not in justfile.split(
+        "\nrelease-profile channel profile:", 1
+    )[1].split("\n# Compile all host binaries", 1)[0]
+
+
 def test_unexpected_write_aborts_before_commit_and_restores_owned_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -541,6 +573,23 @@ def test_release_notes_promote_unreleased_once() -> None:
 
     with pytest.raises(ValueError, match="already contains release"):
         NOTES.promote_release(updated, "1.5.0", "2026-07-24")
+
+
+def test_release_notes_validate_unreleased_without_mutation() -> None:
+    changelog = """# Changelog
+
+## [Unreleased]
+
+### Fixed
+
+- Fail release prerequisites before expensive work.
+
+## [1.4.0] - 2026-07-01
+"""
+
+    assert NOTES.validate_unreleased(changelog) == (
+        "### Fixed\n\n- Fail release prerequisites before expensive work."
+    )
 
 
 @pytest.mark.parametrize(

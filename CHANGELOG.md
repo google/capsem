@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fail invalid binary release-note state before the complete local gate, push,
+  version, tag, package, image, or VM work.
+
 ## [1.6.1785062334] - 2026-07-26
 
 ### Fixed
