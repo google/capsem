@@ -86,7 +86,7 @@ def test_staged_profile_is_authored_once_before_pairing_tests_and_publication() 
     pairing = _job(workflow, "test-profile-pairing", "publish-profile-release")
     publish = _job(workflow, "publish-profile-release", "deploy-channel")
 
-    assert "needs: [build-assets, resolve-current-binary]" in author
+    assert "needs: [build-assets, reuse-assets, resolve-current-binary]" in author
     assert "profile_changed:" in author
     assert "compatible:" in author
     assert "publication_identity:" in author
@@ -104,8 +104,35 @@ def test_staged_profile_is_authored_once_before_pairing_tests_and_publication() 
     assert "stage-profile-publication.py" in author
     assert "stage-profile-publication.py" not in publish
     assert "needs: [author-profile-release, resolve-current-binary]" in pairing
-    assert "needs: [author-profile-release, build-assets, test-profile-pairing]" in publish
+    assert "needs: [author-profile-release, test-profile-pairing]" in publish
     assert "needs.test-profile-pairing.result == 'success'" in publish
+
+
+def test_profile_retry_reuses_one_prior_artifact_cohort_without_rebuilding() -> None:
+    workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
+    resolver = _job(workflow, "resolve-profile-assets", "build-assets")
+    build = _job(workflow, "build-assets", "reuse-assets")
+    reuse = _job(workflow, "reuse-assets", "test-profile-pairing")
+    author = _job(workflow, "author-profile-release", "publish-profile-release")
+    publish = _job(workflow, "publish-profile-release", "deploy-channel")
+
+    assert "resolve-reusable-profile-assets.py" in resolver
+    permissions = workflow.split("permissions:", 1)[1].split("\nenv:", 1)[0]
+    assert "actions: read" in permissions
+    assert "profile-release-selection" in resolver
+    assert "reuse_run_id:" in resolver
+    assert "needs.resolve-profile-assets.outputs.reuse_run_id == ''" in build
+    assert "needs.resolve-profile-assets.outputs.reuse_run_id != ''" in reuse
+    assert "run-id: ${{ needs.resolve-profile-assets.outputs.reuse_run_id }}" in reuse
+    assert "github-token: ${{ github.token }}" in reuse
+    assert "arch: [arm64, x86_64]" in reuse
+    assert reuse.count("actions/download-artifact@") == 1
+    assert reuse.count("actions/upload-artifact@") == 1
+    assert "just _build-kernel" not in reuse
+    assert "just _build-rootfs" not in reuse
+    assert "needs.build-assets.result == 'success'" in author
+    assert "needs.reuse-assets.result == 'success'" in author
+    assert "build-assets" not in publish.splitlines()[0]
 
 
 def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:

@@ -24,6 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
+  actions: read
   attestations: write
   contents: write
   deployments: write
@@ -139,8 +140,34 @@ jobs:
           python scripts/check-cloudflare-pages-project.py \
             --project "$RELEASE_CHANNEL_PROJECT"
 
+  resolve-profile-assets:
+    needs: resolve-current-binary
+    runs-on: ubuntu-latest
+    name: Resolve reusable profile assets
+    outputs:
+      reuse_run_id: ${{ steps.resolve.outputs.run_id }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: profile-release-selection
+          path: target/
+
+      - name: Resolve exact prior profile asset cohort
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/resolve-reusable-profile-assets.py \
+            --repository "${{ github.repository }}" \
+            --workflow release-assets.yaml \
+            --current-run-id "${{ github.run_id }}" \
+            --selection target/profile-release-selection.json \
+            --github-output "$GITHUB_OUTPUT"
+
   build-assets:
-    needs: [cloudflare-release-site-preflight, resolve-current-binary, fast-gate]
+    needs: [cloudflare-release-site-preflight, resolve-current-binary, fast-gate, resolve-profile-assets]
+    if: ${{ needs.resolve-profile-assets.outputs.reuse_run_id == '' }}
     strategy:
       matrix:
         include:
@@ -192,6 +219,28 @@ jobs:
         run: |
           just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"
           just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: vm-assets-${{ matrix.arch }}
+          path: assets/${{ matrix.arch }}/
+
+  reuse-assets:
+    needs: [cloudflare-release-site-preflight, fast-gate, resolve-profile-assets]
+    if: ${{ needs.resolve-profile-assets.outputs.reuse_run_id != '' }}
+    strategy:
+      matrix:
+        arch: [arm64, x86_64]
+    runs-on: ubuntu-latest
+    name: Reuse VM assets (${{ matrix.arch }})
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: vm-assets-${{ matrix.arch }}
+          path: assets/${{ matrix.arch }}/
+          repository: ${{ github.repository }}
+          run-id: ${{ needs.resolve-profile-assets.outputs.reuse_run_id }}
+          github-token: ${{ github.token }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -286,22 +335,24 @@ jobs:
             --input-dir target/profile-public-before/packages \
             --print-package-path)
           test -n "$package"
-          echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_BIN_DIR=$PWD/target/debug" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/target/candidate-profile-inputs" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_CHANNEL=${{ inputs.channel }}" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_TRANSITION=profile_only" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/target/profile-public-before/profiles/manifest.json" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_AFTER_MANIFEST=$PWD/target/source-channel/manifest.json" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_BEFORE_PACKAGE=$PWD/$package" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS=$PWD/target/profile-public-before/profiles" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS=$PWD/target/candidate-profile-inputs" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_PROFILE=${{ inputs.profile }}" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION=$PWD/$PUBLICATION_DIR" >> "$GITHUB_ENV"
-          echo "CAPSEM_RELEASE_PUBLICATION_BASE=$PUBLICATION_BASE" >> "$GITHUB_ENV"
-          echo "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem" >> "$GITHUB_ENV"
-          echo "CAPSEM_TEST_ASSETS_DIR=$PWD/assets" >> "$GITHUB_ENV"
-          echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/target/config" >> "$GITHUB_ENV"
+          {
+            echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package"
+            echo "CAPSEM_RELEASE_BIN_DIR=$PWD/target/debug"
+            echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/target/candidate-profile-inputs"
+            echo "CAPSEM_RELEASE_CHANNEL=${{ inputs.channel }}"
+            echo "CAPSEM_RELEASE_TRANSITION=profile_only"
+            echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/target/profile-public-before/profiles/manifest.json"
+            echo "CAPSEM_RELEASE_AFTER_MANIFEST=$PWD/target/source-channel/manifest.json"
+            echo "CAPSEM_RELEASE_BEFORE_PACKAGE=$PWD/$package"
+            echo "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS=$PWD/target/profile-public-before/profiles"
+            echo "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS=$PWD/target/candidate-profile-inputs"
+            echo "CAPSEM_RELEASE_PROFILE=${{ inputs.profile }}"
+            echo "CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION=$PWD/$PUBLICATION_DIR"
+            echo "CAPSEM_RELEASE_PUBLICATION_BASE=$PUBLICATION_BASE"
+            echo "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem"
+            echo "CAPSEM_TEST_ASSETS_DIR=$PWD/assets"
+            echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/target/config"
+          } >> "$GITHUB_ENV"
 
       - name: Run shared artifact module
         run: just _test-artifacts
@@ -318,7 +369,8 @@ jobs:
         run: just _test-release-contracts
 
   author-profile-release:
-    needs: [build-assets, resolve-current-binary]
+    needs: [build-assets, reuse-assets, resolve-current-binary]
+    if: ${{ always() && needs.resolve-current-binary.result == 'success' && ((needs.build-assets.result == 'success' && needs.reuse-assets.result == 'skipped') || (needs.build-assets.result == 'skipped' && needs.reuse-assets.result == 'success')) }}
     runs-on: ubuntu-latest
     name: Author selected profile release
     outputs:
@@ -380,11 +432,6 @@ jobs:
 
       - name: Build complete asset channel preview
         run: |
-          PROFILE_REVISION=$(python3 - <<'PY'
-          import json
-          print(json.load(open("target/profile-release-selection.json"))["profile_revision"])
-          PY
-          )
           PROFILE_IDENTITY=$(python3 -c 'import json; print(json.load(open("target/profile-release-selection.json"))["publication_identity"])')
           ASSET_BASE="https://github.com/${{ github.repository }}/releases/download/$PROFILE_IDENTITY"
           MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("target/source-channel/manifest.json"))["version"])')
@@ -486,7 +533,7 @@ jobs:
           path: target/profile-release.json
 
   publish-profile-release:
-    needs: [author-profile-release, build-assets, test-profile-pairing]
+    needs: [author-profile-release, test-profile-pairing]
     if: ${{ always() && needs.author-profile-release.outputs.profile_changed == 'true' && needs.test-profile-pairing.result == 'success' }}
     runs-on: ubuntu-latest
     name: Publish tested profile release
@@ -574,6 +621,7 @@ jobs:
           files=("$RELEASE_DIR"/*)
           test "${#files[@]}" -gt 0
           mkdir -p "$(dirname "$UPLOAD_SCRIPT")"
+          # shellcheck disable=SC2016
           {
             echo '#!/usr/bin/env bash'
             echo 'set -euo pipefail'
@@ -600,6 +648,7 @@ jobs:
             echo "- Tag: \`$TAG\`"
             echo "- Dry run: \`$DRY_RUN\`"
             echo "- Files:"
+            # shellcheck disable=SC2016
             printf '  - `%s`\n' "${files[@]}"
           } >> "$GITHUB_STEP_SUMMARY"
 
