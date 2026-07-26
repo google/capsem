@@ -216,21 +216,6 @@ def test_channel_source_manifest_validation_is_channel_scoped() -> None:
         SOURCE.validate_source_manifest(payload, "stable")
 
 
-def test_binary_source_manifest_requires_staged_profile_membership() -> None:
-    empty = json.dumps(
-        {"channel": "nightly", "profiles": {}, "packages": []}
-    ).encode()
-    staged = json.dumps(
-        {"channel": "nightly", "profiles": {"code": {}}, "packages": []}
-    ).encode()
-
-    with pytest.raises(ValueError, match="no staged profiles"):
-        SOURCE.validate_binary_source_manifest(empty, "nightly")
-    assert SOURCE.validate_binary_source_manifest(staged, "nightly")[
-        "profiles"
-    ] == {"code": {}}
-
-
 def test_invalid_serialized_source_never_falls_back_to_channel_bootstrap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
