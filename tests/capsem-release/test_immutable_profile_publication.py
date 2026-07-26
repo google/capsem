@@ -57,6 +57,13 @@ elif args[:2] == ["release", "upload"]:
         print(f"refusing clobber: {destination}", file=sys.stderr)
         raise SystemExit(1)
     shutil.copy2(source, destination)
+    upload_log = state / "uploads.log"
+    with upload_log.open("a", encoding="utf-8") as output:
+        output.write(f"{source.name}\\n")
+    upload_count = len(upload_log.read_text(encoding="utf-8").splitlines())
+    if upload_count == int(os.environ.get("FAKE_GH_FAIL_AFTER_UPLOAD", "0")):
+        print("simulated interrupted publication", file=sys.stderr)
+        raise SystemExit(1)
 else:
     print(f"unsupported fake gh invocation: {args}", file=sys.stderr)
     raise SystemExit(2)
@@ -156,6 +163,46 @@ def test_publisher_creates_then_reuses_complete_immutable_release(
     assert sorted(path.name for path in (tmp_path / "remote" / "assets").iterdir()) == [
         "channel-source-nightly.json",
         "x86_64-rootfs.erofs",
+    ]
+
+
+def test_publisher_uploads_source_manifest_last_and_resumes_interruption(
+    tmp_path: Path,
+) -> None:
+    expected = tmp_path / "expected"
+    _publication(expected)
+    env = {
+        **_publisher_env(tmp_path),
+        "FAKE_GH_FAIL_AFTER_UPLOAD": "1",
+    }
+
+    interrupted = subprocess.run(
+        [PUBLISHER, "v1.6.test", expected],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    remote = tmp_path / "remote"
+    assert interrupted.returncode != 0
+    assert sorted(path.name for path in (remote / "assets").iterdir()) == [
+        "x86_64-rootfs.erofs"
+    ]
+
+    env.pop("FAKE_GH_FAIL_AFTER_UPLOAD")
+    resumed = subprocess.run(
+        [PUBLISHER, "v1.6.test", expected],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert resumed.returncode == 0, resumed.stderr
+    assert (remote / "uploads.log").read_text(encoding="utf-8").splitlines() == [
+        "x86_64-rootfs.erofs",
+        "channel-source-nightly.json",
     ]
 
 

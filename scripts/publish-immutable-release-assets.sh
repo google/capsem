@@ -54,6 +54,20 @@ python3 "$script_dir/verify-immutable-publication.py" \
 
 while IFS= read -r missing; do
     [[ -n "$missing" ]] || continue
+    if [[ "$missing" == channel-source-*.json ]]; then
+        continue
+    fi
+    gh release upload "$release_tag" "$owned_dir/$missing"
+done < "$missing_file"
+
+# The source manifest is authoritative. Publish it only after every immutable
+# byte it can reference is already available, so an interrupted first
+# publication remains safely resumable.
+while IFS= read -r missing; do
+    [[ -n "$missing" ]] || continue
+    if [[ "$missing" != channel-source-*.json ]]; then
+        continue
+    fi
     gh release upload "$release_tag" "$owned_dir/$missing"
 done < "$missing_file"
 
