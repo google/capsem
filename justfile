@@ -641,7 +641,7 @@ _test-static: _install-tools _clean-stale _pnpm-install _check-generated-setting
 _test-artifacts:
     CAPSEM_TEST_MODULE=artifacts just _test-candidate-run
 
-_test-functional:
+_test-functional: _generate-settings
     CAPSEM_TEST_MODULE=functional just _test-candidate-run
 
 _test-glowup:

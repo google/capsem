@@ -80,6 +80,19 @@ def test_release_static_module_never_bootstraps_or_builds_profile_assets() -> No
         assert forbidden not in static
 
 
+def test_functional_module_materializes_its_gitignored_settings_fixture() -> None:
+    functional = _recipe("_test-functional")
+
+    assert "_generate-settings" in functional.splitlines()[0]
+    for forbidden in (
+        "_build-assets",
+        "_build-kernel",
+        "_build-rootfs",
+        "_cross-compile",
+    ):
+        assert forbidden not in functional.splitlines()[0]
+
+
 def test_modules_retain_complete_named_quality_gates() -> None:
     runner = _recipe("_test-candidate-run")
 
