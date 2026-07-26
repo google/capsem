@@ -238,7 +238,6 @@ def test_binary_release_owns_one_scripted_build_and_dispatch(
     assert "_build-rootfs" not in joined
     assert "release-assets.yaml" not in joined
 
-
 def test_unexpected_write_aborts_before_commit_and_restores_owned_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -61,10 +61,16 @@ _stamp-version:
 
 # Build, test, and publish only Capsem binaries/packages for one channel.
 release-binaries channel:
+    #!/bin/bash
+    set -euo pipefail
+    just test
     python3 scripts/release-binaries.py "{{channel}}"
 
 # Build, test, and publish exactly one channel/profile through capsem-admin.
 release-profile channel profile:
+    #!/bin/bash
+    set -euo pipefail
+    just test
     cargo run -p capsem-admin -- release --channel "{{channel}}" --profile "{{profile}}"
 
 # Compile all host binaries

@@ -52,11 +52,15 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
     assert "capsem-admin" not in binary
     assert "_build-kernel" not in binary
     assert "_build-rootfs" not in binary
+    assert "just test" in binary
+    assert binary.index("just test") < binary.index("scripts/release-binaries.py")
 
     assert "capsem-admin -- release" in profile
     assert "scripts/release-binaries.py" not in profile
     assert "_cross-compile" not in profile
     assert "build-pkg" not in profile
+    assert "just test" in profile
+    assert profile.index("just test") < profile.index("capsem-admin -- release")
 
     retired_commands = (
         "release",
