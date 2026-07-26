@@ -1076,6 +1076,11 @@ def test_exact_release_transport_changes_only_urls_and_reuses_exact_bytes(
 
     assert transport.current_manifest.read_bytes() == transport.after_manifest.read_bytes()
     assert not transport.current_manifest.with_suffix(".next").exists()
+    promoted_catalog = json.loads(transport.channel_catalog.read_text())
+    promoted_record = promoted_catalog["channels"]["nightly"]["manifests"][0]
+    assert promoted_record["digest"]["sha256"] == hashlib.sha256(
+        transport.after_manifest.read_bytes()
+    ).hexdigest()
 
     candidates = module.stage_adversarial_exact_candidates(
         pairing,
@@ -1161,6 +1166,30 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     before_manifest.write_text(json.dumps(before_document, sort_keys=True))
     after_manifest.write_text(json.dumps(after_document, sort_keys=True))
     current_manifest.write_bytes(before_manifest.read_bytes())
+    channel_catalog = tmp_path / "channels.json"
+    channel_catalog.write_text(
+        json.dumps(
+            {
+                "channels": {
+                    "nightly": {
+                        "manifests": [
+                            {
+                                "version": "1.5.100",
+                                "status": "current",
+                                "url": "/transitions/current/manifest.json",
+                                "digest": {
+                                    "sha256": hashlib.sha256(
+                                        before_manifest.read_bytes()
+                                    ).hexdigest(),
+                                    "blake3": "a" * 64,
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+    )
     before = module.PairingIdentity.from_manifest_bytes(
         before_manifest.read_bytes(),
         artifact=before_artifact,
@@ -1188,7 +1217,7 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
         before_manifest=before_manifest,
         after_manifest=after_manifest,
         current_manifest=current_manifest,
-        channel_catalog=tmp_path / "channels.json",
+        channel_catalog=channel_catalog,
         before_manifest_url="http://127.0.0.1:8765/transitions/before/manifest.json",
         after_manifest_url="http://127.0.0.1:8765/transitions/after/manifest.json",
         current_manifest_url="http://127.0.0.1:8765/transitions/current/manifest.json",
@@ -1254,6 +1283,183 @@ def test_exact_installed_glowup_uses_service_poll_and_probes_each_state(
     assert evidence.preserved_installed.name == "rejection-preserved-installed.json"
     assert evidence.preserved_doctor.name == "rejection-preserved-doctor.json"
     assert evidence.preserved_winterfell.name == "rejection-preserved-winterfell.json"
+
+
+def test_first_profile_glowup_never_installs_empty_authoring_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_local_glowup()
+    package = tmp_path / "Capsem_1.5.100_amd64.deb"
+    package.write_bytes(b"existing exact deb")
+    artifact = module.ArtifactIdentity.from_path(
+        package,
+        version="1.5.100",
+        platform="linux",
+        architecture="amd64",
+    )
+    before_document = _manifest(artifact)
+    before_document.update({"channel": "nightly", "profiles": {}})
+    after_document = _manifest(artifact)
+    after_document.update(
+        {
+            "channel": "nightly",
+            "profiles": {
+                "code": {
+                    "revision": "code-1",
+                    "architectures": [
+                        {
+                            "architecture": "x86_64",
+                            "images": [
+                                {
+                                    "kind": "rootfs",
+                                    "url": "https://example.test/rootfs.erofs",
+                                    "bytes": 13,
+                                    "digest": {
+                                        "sha256": "a" * 64,
+                                        "blake3": "b" * 64,
+                                    },
+                                    "status": "current",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            },
+        }
+    )
+    before_manifest = tmp_path / "before.json"
+    after_manifest = tmp_path / "after.json"
+    current_manifest = tmp_path / "current/manifest.json"
+    current_manifest.parent.mkdir()
+    before_manifest.write_text(json.dumps(before_document, sort_keys=True))
+    after_manifest.write_text(json.dumps(after_document, sort_keys=True))
+    current_manifest.write_bytes(before_manifest.read_bytes())
+    channel_catalog = tmp_path / "channels.json"
+    channel_catalog.write_text(
+        json.dumps(
+            {
+                "channels": {
+                    "nightly": {
+                        "manifests": [
+                            {
+                                "version": "1.5.100",
+                                "status": "current",
+                                "url": "/transitions/current/manifest.json",
+                                "digest": {
+                                    "sha256": hashlib.sha256(
+                                        before_manifest.read_bytes()
+                                    ).hexdigest(),
+                                    "blake3": "a" * 64,
+                                },
+                            }
+                        ]
+                    }
+                }
+            }
+        )
+    )
+    before = module.PairingIdentity.from_manifest_bytes(
+        before_manifest.read_bytes(),
+        artifact=artifact,
+        channel="nightly",
+        allow_empty_profiles=True,
+    )
+    after = module.PairingIdentity.from_manifest_bytes(
+        after_manifest.read_bytes(),
+        artifact=artifact,
+        channel="nightly",
+    )
+    pairing = module.ExactReleasePairing(
+        channel="nightly",
+        transition=module.TransitionKind.PROFILE_ONLY,
+        changed_profiles=("code",),
+        before=before,
+        after=after,
+        before_manifest=before_manifest,
+        after_manifest=after_manifest,
+        before_package=package,
+        after_package=package,
+        before_profile_inputs=tmp_path / "before-profiles",
+        after_profile_inputs=tmp_path / "after-profiles",
+    )
+    transport = module.ExactReleaseTransport(
+        before_manifest=before_manifest,
+        after_manifest=after_manifest,
+        current_manifest=current_manifest,
+        channel_catalog=channel_catalog,
+        before_manifest_url="http://127.0.0.1:8765/transitions/before/manifest.json",
+        after_manifest_url="http://127.0.0.1:8765/transitions/after/manifest.json",
+        current_manifest_url="http://127.0.0.1:8765/transitions/current/manifest.json",
+        channel_catalog_url="http://127.0.0.1:8765/transitions/channels.json",
+        before_package=package,
+        after_package=package,
+    )
+    calls: list[list[str]] = []
+    monkeypatch.setattr(module, "run", lambda command, **_kwargs: calls.append(command))
+
+    evidence = module.run_exact_installed_glowup(
+        pairing=pairing,
+        transport=transport,
+        install_script_url="http://127.0.0.1:8765/install.sh",
+        release_base_url="http://127.0.0.1:8765",
+        evidence_dir=tmp_path / "evidence",
+    )
+
+    assert len(calls) == 4
+    fresh_script = calls[0][-1]
+    assert "probe_installed_transition fresh-install" in fresh_script
+    assert "probe_installed_transition candidate-after" not in fresh_script
+    assert transport.before_manifest_url not in fresh_script
+    assert fresh_script.index("CAPSEM_MANIFEST_URL=") < fresh_script.index(
+        "probe_installed_transition fresh-install"
+    )
+    assert evidence.fresh_uses_after is True
+    installed = {
+        "package_version": after.package_version,
+        "channel": "nightly",
+        "manifest_url": transport.current_manifest_url,
+        "installed": True,
+        "running": True,
+        "service": "ok",
+        "gateway": "ok",
+        "profiles_ready": 1,
+        "profiles_total": 1,
+    }
+    for path in (evidence.fresh_installed, evidence.preserved_installed):
+        path.write_text(json.dumps(installed))
+    for path, schema in (
+        (evidence.fresh_doctor, "capsem.installed_doctor.v1"),
+        (evidence.fresh_winterfell, "capsem.installed_winterfell.v1"),
+        (evidence.preserved_doctor, "capsem.installed_doctor.v1"),
+        (evidence.preserved_winterfell, "capsem.installed_winterfell.v1"),
+    ):
+        path.write_text(json.dumps({"schema": schema, "passed": True}))
+    for path, kind in (
+        (evidence.tamper_rejection, "tampered_artifact"),
+        (evidence.incompatible_rejection, "incompatible_profile"),
+    ):
+        path.write_text(
+            json.dumps(
+                {
+                    "schema": "capsem.installed_rejection.v1",
+                    "kind": kind,
+                    "result": "rejected",
+                    "preserved_previous": True,
+                    "blocked_reason": (
+                        "requires Capsem 9999.0.0 or newer"
+                        if kind == "incompatible_profile"
+                        else None
+                    ),
+                }
+            )
+        )
+
+    rows = module.exact_installed_transition_rows(pairing, evidence)
+
+    assert [row["kind"] for row in rows] == ["fresh_install", "tamper_rejection"]
+    assert rows[0]["after"] == after.as_report()
+    assert rows[-1]["preserved_previous"] is True
 
 
 def test_exact_installed_transition_rows_require_real_probe_reports(tmp_path: Path) -> None:

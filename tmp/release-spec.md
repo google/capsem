@@ -408,6 +408,16 @@ The selected profile is then authored through the normal `capsem-admin release`
 path. Bootstrap is not a third public release command, a generic authoring
 shortcut, or permission to relabel a release graph from another channel.
 
+The explicit empty-membership bootstrap manifest is serialized authoring state.
+It MUST NOT be deployed, installed, described as a working pairing, or given
+synthetic Doctor or Winterfell evidence. For the channel's first profile, there
+is no public-before profile transition to claim. The completed candidate pairing
+MUST instead pass a genuine native fresh install, full Doctor, installed
+Winterfell, tamper and incompatibility polling, and preservation proof before
+the channel may become public. Once the channel has an activated profile,
+subsequent profile releases MUST additionally prove the real public-before to
+candidate-after profile transition.
+
 There MUST NOT be a generic release command, a combined command, or a public
 collection of internal release stages.
 
@@ -1191,6 +1201,12 @@ Required scenarios include:
 - Preservation of the prior installed state after rejection.
 - Healthy service and functional command after every successful transition.
 
+An empty first-party bootstrap source is not a successful installed state and
+MUST NOT be inserted into this transition list merely to manufacture an upgrade.
+The first activated profile is proved as a fresh candidate pairing; later
+profile releases retain the required existing-profile to candidate-profile
+transition.
+
 ## 16. Integrity, provenance, and evidence
 
 Every persistent release artifact MUST have:
@@ -1409,6 +1425,10 @@ own revision and digests.
 Given a profile change remains compatible with the channel's currently
 selected binary, when that channel/profile is released, then only its
 profile-owned outputs and manifest references change. No package is rebuilt.
+If this is the channel's first profile, the empty bootstrap source remains
+non-public and the candidate passes complete fresh-install, Doctor, Winterfell,
+rejection, and preservation proof. Otherwise the installed glow-up also proves
+the exact public-before profile to candidate-profile transition.
 
 ### Scenario F: Profile requires a new binary
 

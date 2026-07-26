@@ -48,6 +48,7 @@ try:
         build_report,
         build_transition_evidence,
         classify_pairing_inputs,
+        load_manifest_bytes,
         tamper_profile_artifact_digest,
         validate_installed_evidence,
         validate_pairing_inputs,
@@ -62,6 +63,7 @@ except ModuleNotFoundError:
         build_report,
         build_transition_evidence,
         classify_pairing_inputs,
+        load_manifest_bytes,
         tamper_profile_artifact_digest,
         validate_installed_evidence,
         validate_pairing_inputs,
@@ -135,6 +137,7 @@ class ExactInstalledGlowupEvidence:
     preserved_installed: Path
     preserved_doctor: Path
     preserved_winterfell: Path
+    fresh_uses_after: bool = False
 
 
 @dataclass(frozen=True)
@@ -397,11 +400,10 @@ def main() -> int:
                     exact_pairing,
                     exact_evidence,
                 )
-                expected_transitions = [
-                    TransitionKind.FRESH_INSTALL,
-                    exact_pairing.transition,
-                    TransitionKind.TAMPER_REJECTION,
-                ]
+                expected_transitions = [TransitionKind.FRESH_INSTALL]
+                if not exact_evidence.fresh_uses_after:
+                    expected_transitions.append(exact_pairing.transition)
+                expected_transitions.append(TransitionKind.TAMPER_REJECTION)
                 report = build_report(
                     adapter="linux-docker-systemd",
                     artifact=exact_artifact,
@@ -869,6 +871,38 @@ def promote_exact_candidate_transport(transport: ExactReleaseTransport) -> None:
     """Atomically expose candidate-after bytes at the installed polling URL."""
 
     promote_exact_manifest(transport.after_manifest, transport.current_manifest)
+    catalog = json.loads(transport.channel_catalog.read_text(encoding="utf-8"))
+    channels = catalog.get("channels")
+    if not isinstance(channels, dict):
+        raise SystemExit("exact transition channel catalog is malformed")
+    selected = [
+        manifest
+        for channel in channels.values()
+        if isinstance(channel, dict)
+        for manifest in channel.get("manifests", [])
+        if isinstance(manifest, dict)
+        and manifest.get("url") == "/transitions/current/manifest.json"
+        and manifest.get("status") == "current"
+    ]
+    if len(selected) != 1:
+        raise SystemExit(
+            "exact transition channel catalog must select one current manifest"
+        )
+    contents = transport.after_manifest.read_bytes()
+    selected[0]["version"] = json.loads(contents).get("version", selected[0].get("version"))
+    selected[0]["digest"] = {
+        "sha256": hashlib.sha256(contents).hexdigest(),
+        "blake3": file_blake3(transport.after_manifest),
+    }
+    pending = transport.channel_catalog.with_suffix(".next")
+    try:
+        pending.write_text(
+            json.dumps(catalog, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(pending, transport.channel_catalog)
+    finally:
+        pending.unlink(missing_ok=True)
 
 
 def _adversarial_profile(
@@ -1533,6 +1567,17 @@ wait_for_incompatible_profile_rejection() {{
 """
 
 
+def is_first_profile_activation(pairing: ExactReleasePairing) -> bool:
+    manifest = load_manifest_bytes(pairing.before_manifest.read_bytes())
+    profiles = manifest.get("profiles")
+    if not isinstance(profiles, dict):
+        raise SystemExit("exact public-before manifest profiles must be an object")
+    return not profiles and pairing.transition in {
+        TransitionKind.PROFILE_ONLY,
+        TransitionKind.PROFILE_THEN_BINARY,
+    }
+
+
 def run_exact_installed_glowup(
     *,
     pairing: ExactReleasePairing,
@@ -1554,9 +1599,14 @@ def run_exact_installed_glowup(
     if before_artifact.architecture != after_artifact.architecture:
         raise SystemExit("exact installed transition cannot change package architecture")
 
+    first_profile_activation = is_first_profile_activation(pairing)
+    if first_profile_activation:
+        promote_exact_candidate_transport(transport)
+    fresh_artifact = after_artifact if first_profile_activation else before_artifact
+    fresh_package = pairing.after_package if first_profile_activation else pairing.before_package
     evidence_dir.mkdir(parents=True, exist_ok=True)
     probe_functions = _exact_installed_probe_shell(evidence_dir)
-    before_script = f"""
+    fresh_script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 {probe_functions}
@@ -1576,15 +1626,16 @@ systemctl --user restart capsem.service
 probe_installed_transition fresh-install \
   {shlex.quote(transport.current_manifest_url)} \
   {shlex.quote(pairing.channel)} \
-  {shlex.quote(before_artifact.version)} \
-  {shlex.quote(str(pairing.before_package))} \
-  {shlex.quote(before_artifact.platform)} \
-  {shlex.quote(before_artifact.architecture.value)}
+  {shlex.quote(fresh_artifact.version)} \
+  {shlex.quote(str(fresh_package))} \
+  {shlex.quote(fresh_artifact.platform)} \
+  {shlex.quote(fresh_artifact.architecture.value)}
 """
-    run(["bash", "-lc", before_script])
+    run(["bash", "-lc", fresh_script])
 
-    promote_exact_candidate_transport(transport)
-    after_script = f"""
+    if not first_profile_activation:
+        promote_exact_candidate_transport(transport)
+        after_script = f"""
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 {probe_functions}
@@ -1599,7 +1650,7 @@ probe_installed_transition candidate-after \
   {shlex.quote(after_artifact.platform)} \
   {shlex.quote(after_artifact.architecture.value)}
 """
-    run(["bash", "-lc", after_script])
+        run(["bash", "-lc", after_script])
 
     adversarial = stage_adversarial_exact_candidates(
         pairing,
@@ -1683,18 +1734,34 @@ probe_installed_transition rejection-preserved \
 """
     run(["bash", "-lc", preserved_script])
 
+    fresh_installed = evidence_dir / "fresh-install-installed.json"
+    fresh_doctor = evidence_dir / "fresh-install-doctor.json"
+    fresh_winterfell = evidence_dir / "fresh-install-winterfell.json"
     return ExactInstalledGlowupEvidence(
-        fresh_installed=evidence_dir / "fresh-install-installed.json",
-        fresh_doctor=evidence_dir / "fresh-install-doctor.json",
-        fresh_winterfell=evidence_dir / "fresh-install-winterfell.json",
-        candidate_installed=evidence_dir / "candidate-after-installed.json",
-        candidate_doctor=evidence_dir / "candidate-after-doctor.json",
-        candidate_winterfell=evidence_dir / "candidate-after-winterfell.json",
+        fresh_installed=fresh_installed,
+        fresh_doctor=fresh_doctor,
+        fresh_winterfell=fresh_winterfell,
+        candidate_installed=(
+            fresh_installed
+            if first_profile_activation
+            else evidence_dir / "candidate-after-installed.json"
+        ),
+        candidate_doctor=(
+            fresh_doctor
+            if first_profile_activation
+            else evidence_dir / "candidate-after-doctor.json"
+        ),
+        candidate_winterfell=(
+            fresh_winterfell
+            if first_profile_activation
+            else evidence_dir / "candidate-after-winterfell.json"
+        ),
         tamper_rejection=tamper_evidence,
         incompatible_rejection=incompatible_evidence,
         preserved_installed=evidence_dir / "rejection-preserved-installed.json",
         preserved_doctor=evidence_dir / "rejection-preserved-doctor.json",
         preserved_winterfell=evidence_dir / "rejection-preserved-winterfell.json",
+        fresh_uses_after=first_profile_activation,
     )
 
 
@@ -1754,8 +1821,10 @@ def exact_installed_transition_rows(
     pairing: ExactReleasePairing,
     evidence: ExactInstalledGlowupEvidence,
 ) -> list[dict[str, object]]:
-    _validate_exact_installed_state(evidence.fresh_installed, pairing.before)
-    _validate_exact_installed_state(evidence.candidate_installed, pairing.after)
+    fresh_pairing = pairing.after if evidence.fresh_uses_after else pairing.before
+    _validate_exact_installed_state(evidence.fresh_installed, fresh_pairing)
+    if not evidence.fresh_uses_after:
+        _validate_exact_installed_state(evidence.candidate_installed, pairing.after)
     _validate_exact_installed_state(evidence.preserved_installed, pairing.after)
     _validate_installed_rejection(evidence.tamper_rejection, "tampered_artifact")
     _validate_installed_rejection(evidence.incompatible_rejection, "incompatible_profile")
@@ -1767,14 +1836,18 @@ def exact_installed_transition_rows(
         evidence.fresh_winterfell,
         "capsem.installed_winterfell.v1",
     )
-    candidate_doctor = _probe_report_passed(
-        evidence.candidate_doctor,
-        "capsem.installed_doctor.v1",
-    )
-    candidate_winterfell = _probe_report_passed(
-        evidence.candidate_winterfell,
-        "capsem.installed_winterfell.v1",
-    )
+    if evidence.fresh_uses_after:
+        candidate_doctor = fresh_doctor
+        candidate_winterfell = fresh_winterfell
+    else:
+        candidate_doctor = _probe_report_passed(
+            evidence.candidate_doctor,
+            "capsem.installed_doctor.v1",
+        )
+        candidate_winterfell = _probe_report_passed(
+            evidence.candidate_winterfell,
+            "capsem.installed_winterfell.v1",
+        )
     preserved_doctor = _probe_report_passed(
         evidence.preserved_doctor,
         "capsem.installed_doctor.v1",
@@ -1783,28 +1856,33 @@ def exact_installed_transition_rows(
         evidence.preserved_winterfell,
         "capsem.installed_winterfell.v1",
     )
-    return [
+    transitions = [
         build_transition_evidence(
             kind=TransitionKind.FRESH_INSTALL,
             before=None,
-            after=pairing.before,
+            after=fresh_pairing,
             result="activated",
             doctor_passed=fresh_doctor,
             winterfell_passed=fresh_winterfell,
         ),
-        build_transition_evidence(
-            kind=pairing.transition,
-            before=pairing.before,
-            after=pairing.after,
-            result="activated",
-            doctor_passed=candidate_doctor,
-            winterfell_passed=candidate_winterfell,
-            staged_profiles_sha256=(
-                pairing.after.profiles_sha256
-                if pairing.transition is TransitionKind.PROFILE_THEN_BINARY
-                else None
-            ),
-        ),
+    ]
+    if not evidence.fresh_uses_after:
+        transitions.append(
+            build_transition_evidence(
+                kind=pairing.transition,
+                before=pairing.before,
+                after=pairing.after,
+                result="activated",
+                doctor_passed=candidate_doctor,
+                winterfell_passed=candidate_winterfell,
+                staged_profiles_sha256=(
+                    pairing.after.profiles_sha256
+                    if pairing.transition is TransitionKind.PROFILE_THEN_BINARY
+                    else None
+                ),
+            )
+        )
+    transitions.append(
         build_transition_evidence(
             kind=TransitionKind.TAMPER_REJECTION,
             before=pairing.after,
@@ -1813,8 +1891,9 @@ def exact_installed_transition_rows(
             doctor_passed=preserved_doctor,
             winterfell_passed=preserved_winterfell,
             preserved_previous=True,
-        ),
-    ]
+        )
+    )
+    return transitions
 
 
 def run_installed_glowup(
