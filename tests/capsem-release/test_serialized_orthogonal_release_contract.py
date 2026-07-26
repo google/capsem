@@ -6,7 +6,12 @@ Artifact correctness remains covered by the executable lane and glow-up suites.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import shutil
+import subprocess
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -71,6 +76,113 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
     for retired in retired_commands:
         assert f"\n{retired}:" not in justfile
         assert f"\n{retired} " not in justfile
+
+
+@pytest.mark.parametrize(
+    ("recipe", "arguments", "release_trace"),
+    (
+        (
+            "release-binaries",
+            ("nightly",),
+            "python3:scripts/release-binaries.py nightly",
+        ),
+        (
+            "release-profile",
+            ("nightly", "code"),
+            "cargo:run -p capsem-admin -- release --channel nightly --profile code",
+        ),
+    ),
+)
+def test_public_release_command_executes_full_test_before_release_work(
+    tmp_path: Path,
+    recipe: str,
+    arguments: tuple[str, ...],
+    release_trace: str,
+) -> None:
+    real_just = shutil.which("just")
+    assert real_just is not None
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    trace = tmp_path / "trace"
+    for command in ("just", "python3", "cargo"):
+        executable = fake_bin / command
+        executable.write_text(
+            "#!/bin/sh\n"
+            f'printf "{command}:%s\\n" "$*" >> "$TRACE"\n',
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+
+    result = subprocess.run(
+        [real_just, recipe, *arguments],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "TRACE": str(trace),
+        },
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert trace.read_text(encoding="utf-8").splitlines() == [
+        "just:test",
+        release_trace,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("recipe", "arguments"),
+    (
+        ("release-binaries", ("nightly",)),
+        ("release-profile", ("nightly", "code")),
+    ),
+)
+def test_failed_full_test_prevents_every_release_side_effect(
+    tmp_path: Path,
+    recipe: str,
+    arguments: tuple[str, ...],
+) -> None:
+    real_just = shutil.which("just")
+    assert real_just is not None
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    trace = tmp_path / "trace"
+    fake_just = fake_bin / "just"
+    fake_just.write_text(
+        '#!/bin/sh\nprintf "just:%s\\n" "$*" >> "$TRACE"\nexit 17\n',
+        encoding="utf-8",
+    )
+    fake_just.chmod(0o755)
+    for command in ("python3", "cargo"):
+        executable = fake_bin / command
+        executable.write_text(
+            "#!/bin/sh\n"
+            f'printf "{command}:%s\\n" "$*" >> "$TRACE"\n'
+            "exit 99\n",
+            encoding="utf-8",
+        )
+        executable.chmod(0o755)
+
+    result = subprocess.run(
+        [real_just, recipe, *arguments],
+        cwd=ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "TRACE": str(trace),
+        },
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert trace.read_text(encoding="utf-8").splitlines() == ["just:test"]
 
 
 def test_binary_and_profile_workflows_share_channel_transaction_lock() -> None:
