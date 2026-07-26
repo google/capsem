@@ -104,6 +104,10 @@ def test_staged_profile_is_authored_once_before_pairing_tests_and_publication() 
     assert "stage-profile-publication.py" in author
     assert "stage-profile-publication.py" not in publish
     assert "needs: [author-profile-release, resolve-current-binary]" in pairing
+    assert "if: ${{ always()" in pairing
+    assert "needs.author-profile-release.result == 'success'" in pairing
+    assert "needs.resolve-current-binary.result == 'success'" in pairing
+    assert "needs.author-profile-release.outputs.profile_changed == 'true'" in pairing
     assert "needs: [author-profile-release, test-profile-pairing]" in publish
     assert "needs.test-profile-pairing.result == 'success'" in publish
 

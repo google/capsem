@@ -249,7 +249,7 @@ jobs:
 
   test-profile-pairing:
     needs: [author-profile-release, resolve-current-binary]
-    if: ${{ needs.author-profile-release.outputs.profile_changed == 'true' }}
+    if: ${{ always() && needs.author-profile-release.result == 'success' && needs.resolve-current-binary.result == 'success' && needs.author-profile-release.outputs.profile_changed == 'true' }}
     runs-on: ubuntu-24.04
     name: Complete profile pairing gate
     steps:
