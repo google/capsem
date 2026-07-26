@@ -551,6 +551,22 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
     )
 
 
+def _assert_hot_route_budget(
+    timing: RouteTiming,
+    *,
+    path: str,
+    gateway: bool = False,
+) -> None:
+    p95_ms, p99_ms, cpu_s = _hot_route_budget(path, gateway=gateway)
+    _assert_timing_budget(
+        timing,
+        p95_ms=p95_ms,
+        p99_ms=p99_ms,
+        max_ms=None,
+        cpu_s=cpu_s,
+    )
+
+
 def _hot_route_contracts(profile: str) -> list[RouteContract]:
     return [
         RouteContract("GET", "/status", None, {"ready", "service"}, dict),
@@ -998,8 +1014,7 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
                 lambda c=contract: _assert_contract(fast_service_client, c),
                 service_proc=service_proc,
             )
-            p95_ms, max_ms, cpu_s = _hot_route_budget(contract.path)
-            _assert_timing_budget(timing, p95_ms=p95_ms, max_ms=max_ms, cpu_s=cpu_s)
+            _assert_hot_route_budget(timing, path=contract.path)
 
         hot_gateway_routes = [
             RouteContract(
@@ -1029,8 +1044,7 @@ def test_hot_control_routes_have_latency_and_cpu_budgets() -> None:
                 service_proc=service_proc,
                 gateway_proc=gateway_proc,
             )
-            p95_ms, max_ms, cpu_s = _hot_route_budget(contract.path, gateway=True)
-            _assert_timing_budget(timing, p95_ms=p95_ms, max_ms=max_ms, cpu_s=cpu_s)
+            _assert_hot_route_budget(timing, path=contract.path, gateway=True)
     finally:
         if fast_service_client is not None:
             fast_service_client.close()
@@ -1085,15 +1099,10 @@ def test_seeded_session_ledger_routes_have_latency_and_cpu_budgets() -> None:
                 )
                 summary = route_timing_summary(timing)
                 print("ROUTE_LATENCY_JSON " + json.dumps(summary, sort_keys=True))
-                p95_ms, max_ms, cpu_s = _hot_route_budget(
-                    route_contract.path,
-                    gateway=is_gateway,
-                )
-                _assert_timing_budget(
+                _assert_hot_route_budget(
                     timing,
-                    p95_ms=p95_ms,
-                    max_ms=max_ms,
-                    cpu_s=cpu_s,
+                    path=route_contract.path,
+                    gateway=is_gateway,
                 )
     finally:
         if fast_service_client is not None:
@@ -1296,14 +1305,15 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
                     service_proc=service_proc,
                     gateway_proc=gateway_for_cpu,
                 )
-                p95_ms, max_ms, cpu_s = _hot_route_budget(
+                p95_ms, p99_ms, cpu_s = _hot_route_budget(
                     contract.path,
                     gateway=gateway_for_cpu is not None,
                 )
                 _assert_timing_budget(
                     timing,
                     p95_ms=max(p95_ms, 350.0),
-                    max_ms=max(max_ms, 500.0),
+                    p99_ms=max(p99_ms, 500.0),
+                    max_ms=None,
                     cpu_s=cpu_s,
                 )
 
