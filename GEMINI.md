@@ -9,6 +9,8 @@ binary/profile releases with complete reusable test modules, and the logger DB
 boundary (only `capsem-logger` executes ledger queries). The only release
 commands are `just release-binaries <channel>` and
 `just release-profile <channel> <profile>`.
+Each command runs complete `just test` first and then verifies/publishes the
+exact clean tested `main` HEAD before any release mutation or dispatch.
 For release inputs, the manifest is the bible: absent means nonexistent.
 Mutable manifests are fetched fresh; immutable caches are keyed only by
 manifest-recorded artifact digests, never by channel, and reverified on use.

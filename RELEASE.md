@@ -10,15 +10,14 @@ just release-profile <channel> <profile>
 
 There is no generic or combined release command.
 
-## Before either release
+## One-command gate
 
-- `main` and required PR gates are green.
-- `just doctor` passes.
-- The relevant focused tests pass.
-- `just test` has proved the complete local construction pipeline after the
-  final implementation change.
-- The selected channel/profile and compatibility bounds are intentional.
-- For a binary release, `[Unreleased]` contains the release notes.
+Do not run a separate preparation or qualification command. Each release
+command first runs complete `just test`. If it fails, nothing is pushed,
+stamped, authored, or dispatched. After success, the shared source guard
+requires the exact clean `main` HEAD captured before the test, fast-forwards
+that tested HEAD when needed, and refuses changed, dirty, or diverged source.
+Only then does the selected release implementation run.
 
 ## Binary release
 
@@ -30,9 +29,10 @@ just release-binaries nightly
 just release-binaries stable
 ```
 
-The script validates repository state, stamps the version and release notes,
-creates and pushes the immutable tag, dispatches the binary workflow, and waits
-for it. The serialized workflow:
+The command runs complete `just test`, publishes its exact tested `main` HEAD,
+then the binary script stamps the version and release notes, creates and pushes
+the immutable tag, dispatches the binary workflow, and waits for it. The
+serialized workflow:
 
 1. Acquires `capsem-release-<channel>`.
 2. Resolves the latest channel source manifest inside that lock.
@@ -56,7 +56,8 @@ Run:
 just release-profile nightly code
 ```
 
-This calls `capsem-admin release`. The serialized workflow:
+The command runs complete `just test`, publishes its exact tested `main` HEAD,
+then calls `capsem-admin release`. The serialized workflow:
 
 1. Acquires the same `capsem-release-<channel>` lock.
 2. Resolves the latest source manifest and pulls its current package.

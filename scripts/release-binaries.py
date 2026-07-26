@@ -143,20 +143,6 @@ def _validate_start(runner: Runner, channel: str) -> str | None:
         and subject == f"release({channel}): {tag}"
     ):
         return tag
-    if tag is None and ahead.isdigit() and int(ahead) > 0:
-        try:
-            runner.run(
-                ("git", "merge-base", "--is-ancestor", "origin/main", "HEAD")
-            )
-        except subprocess.CalledProcessError as error:
-            raise ValueError(
-                "local main diverged from origin/main; refusing to push"
-            ) from error
-        # The public Just recipe completed the full source-state-bound local
-        # gate before entering this script. Publish that tested fast-forward
-        # before creating the generated release commit and immutable tag.
-        runner.run(("git", "push", "origin", "main"))
-        return None
     raise ValueError(
         "local main differs from origin/main and is not one resumable "
         f"{channel} release commit"

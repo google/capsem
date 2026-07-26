@@ -63,14 +63,18 @@ _stamp-version:
 release-binaries channel:
     #!/bin/bash
     set -euo pipefail
+    TESTED_HEAD=$(git rev-parse HEAD)
     just test
+    python3 scripts/publish-tested-main.py --expected-head "$TESTED_HEAD"
     python3 scripts/release-binaries.py "{{channel}}"
 
 # Build, test, and publish exactly one channel/profile through capsem-admin.
 release-profile channel profile:
     #!/bin/bash
     set -euo pipefail
+    TESTED_HEAD=$(git rev-parse HEAD)
     just test
+    python3 scripts/publish-tested-main.py --expected-head "$TESTED_HEAD"
     cargo run -p capsem-admin -- release --channel "{{channel}}" --profile "{{profile}}"
 
 # Compile all host binaries

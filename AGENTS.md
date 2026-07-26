@@ -20,6 +20,10 @@ just release-binaries <channel>
 just release-profile <channel> <profile>
 ```
 
+- Each release command itself runs complete `just test` first. There is no
+  separate preparation or qualification command. A shared source guard then
+  requires and, if necessary, fast-forward-pushes the exact clean `main` HEAD
+  that passed; only afterward may stamping, authoring, or dispatch begin.
 - Local `just test` remains the complete all-artifact proof. It rebuilds
   packages and every configured profile, then runs audits, lint, frontend,
   Rust/Python coverage, all VM suites, Winterfell/MCP lifecycle, IronBank,

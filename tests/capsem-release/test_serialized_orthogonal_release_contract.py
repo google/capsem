@@ -59,6 +59,12 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
     assert "_build-rootfs" not in binary
     assert "just test" in binary
     assert binary.index("just test") < binary.index("scripts/release-binaries.py")
+    assert "scripts/publish-tested-main.py" in binary
+    assert (
+        binary.index("just test")
+        < binary.index("scripts/publish-tested-main.py")
+        < binary.index("scripts/release-binaries.py")
+    )
 
     assert "capsem-admin -- release" in profile
     assert "scripts/release-binaries.py" not in profile
@@ -66,6 +72,12 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
     assert "build-pkg" not in profile
     assert "just test" in profile
     assert profile.index("just test") < profile.index("capsem-admin -- release")
+    assert "scripts/publish-tested-main.py" in profile
+    assert (
+        profile.index("just test")
+        < profile.index("scripts/publish-tested-main.py")
+        < profile.index("capsem-admin -- release")
+    )
 
     retired_commands = (
         "release",
@@ -128,10 +140,12 @@ def test_public_release_command_executes_full_test_before_release_work(
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    assert trace.read_text(encoding="utf-8").splitlines() == [
-        "just:test",
-        release_trace,
-    ]
+    lines = trace.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "just:test"
+    assert lines[1].startswith(
+        "python3:scripts/publish-tested-main.py --expected-head "
+    )
+    assert lines[2] == release_trace
 
 
 @pytest.mark.parametrize(
