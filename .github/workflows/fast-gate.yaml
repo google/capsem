@@ -41,6 +41,9 @@ jobs:
             site/pnpm-lock.yaml
             release-site/pnpm-lock.yaml
 
+      - name: Run shared release contracts
+        run: just _test-release-contracts
+
       - name: Install Linux workspace lint prerequisites
         run: |
           sudo apt-get update

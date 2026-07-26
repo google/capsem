@@ -88,17 +88,23 @@ def test_release_lanes_run_one_reusable_fast_gate_before_builders() -> None:
     reusable = _workflow("fast-gate.yaml")
     assert "workflow_call:" in reusable
     assert "run: just _test-static" in reusable
+    contracts = reusable.index("Run shared release contracts")
+    linux_prerequisites = reusable.index("Install Linux workspace lint prerequisites")
+    static = reusable.index("Run shared static module")
+    assert contracts < linux_prerequisites < static
 
     binary = _workflow("release.yaml")
     assert "  fast-gate:\n    uses: ./.github/workflows/fast-gate.yaml" in binary
     assert "needs: [runtime-preflight, fast-gate]" in _job_block(binary, "preflight")
     assert "Run shared static module" not in _job_block(binary, "test-binary-pairing")
+    assert "Run shared release contracts" not in _job_block(binary, "test-binary-pairing")
 
     profile = _workflow("release-assets.yaml")
     assert "  fast-gate:\n    uses: ./.github/workflows/fast-gate.yaml" in profile
     build_assets = _job_block(profile, "build-assets")
     assert "fast-gate" in build_assets.splitlines()[1]
     assert "Run shared static module" not in _job_block(profile, "test-profile-pairing")
+    assert "Run shared release contracts" not in _job_block(profile, "test-profile-pairing")
 
 
 def test_release_profile_downloads_share_one_manifest_addressed_cache_module() -> None:
@@ -111,6 +117,10 @@ def test_release_profile_downloads_share_one_manifest_addressed_cache_module() -
     assert "actions/cache/restore@" in action
     assert "actions/cache/save@" in action
     assert "steps.fetch.outputs.cache-misses != '0'" in action
+    assert "local-publication-base:" in action
+    assert "local-publication-dir:" in action
+    assert '--local-publication-base "${{ inputs.local-publication-base }}"' in action
+    assert '--local-publication-dir "${{ inputs.local-publication-dir }}"' in action
     cache_key = next(line for line in action.splitlines() if line.strip().startswith("key:"))
     assert "inputs.channel" not in cache_key
     assert "inputs.manifest-url" not in cache_key
@@ -129,7 +139,7 @@ def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
     assert "just _test-artifacts" in workflow
     assert "just _test-functional" in workflow
     assert "just _test-glowup" in workflow
-    assert "just _test-release-contracts" in workflow
+    assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
     assert "--config-root target/release-config" in workflow
     assert "--shared-config-root config" in workflow
     assert 'CAPSEM_CONFIG_ROOT="$PWD/target/release-config"' in workflow
@@ -249,7 +259,7 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     assert "just _test-functional" in workflow
     assert "just _test-glowup" in workflow
     assert "--shared-config-root config" in workflow
-    assert "just _test-release-contracts" in workflow
+    assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
     assert "--input-dir target/profile-public-before/packages" in workflow
     assert "--binary-dir target/debug" in workflow
     assert "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem" in workflow

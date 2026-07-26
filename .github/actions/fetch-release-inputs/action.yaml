@@ -23,6 +23,14 @@ inputs:
     description: Permit an explicitly empty bootstrap profile set.
     required: false
     default: "false"
+  local-publication-base:
+    description: Optional immutable publication URL prefix staged by the current workflow.
+    required: false
+    default: ""
+  local-publication-dir:
+    description: Optional local directory containing the staged immutable publication.
+    required: false
+    default: ""
 
 runs:
   using: composite
@@ -54,6 +62,14 @@ runs:
         fi
         if [[ "${{ inputs.allow-empty-profiles }}" == "true" ]]; then
           args+=(--allow-empty-profiles)
+        fi
+        if [[ -n "${{ inputs.local-publication-base }}" || -n "${{ inputs.local-publication-dir }}" ]]; then
+          test -n "${{ inputs.local-publication-base }}"
+          test -n "${{ inputs.local-publication-dir }}"
+          args+=(
+            --local-publication-base "${{ inputs.local-publication-base }}"
+            --local-publication-dir "${{ inputs.local-publication-dir }}"
+          )
         fi
         uv run python scripts/fetch-release-artifacts.py "${args[@]}"
         uv run python scripts/verify-release-inputs.py \

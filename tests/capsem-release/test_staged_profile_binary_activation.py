@@ -111,8 +111,12 @@ def test_staged_profile_is_authored_once_before_pairing_tests_and_publication() 
     assert "needs.author-profile-release.result == 'success'" in pairing
     assert "needs.resolve-current-binary.result == 'success'" in pairing
     assert "needs.author-profile-release.outputs.release_needed == 'true'" in pairing
-    assert "needs: [author-profile-release, test-profile-pairing]" in publish
+    assert (
+        "needs: [author-profile-release, test-profile-pairing, "
+        "test-profile-arm64-boot]" in publish
+    )
     assert "needs.test-profile-pairing.result == 'success'" in publish
+    assert "needs.test-profile-arm64-boot.result == 'success'" in publish
 
 
 def test_profile_retry_reuses_one_prior_artifact_cohort_without_rebuilding() -> None:
@@ -144,6 +148,9 @@ def test_profile_retry_reuses_one_prior_artifact_cohort_without_rebuilding() -> 
 
 def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
+    reusable_fast_gate = (
+        ROOT / ".github" / "workflows" / "fast-gate.yaml"
+    ).read_text(encoding="utf-8")
     fast_gate = _job(workflow, "fast-gate", "resolve-current-binary")
     build_assets = _job(workflow, "build-assets", "test-profile-pairing")
     pairing = _job(workflow, "test-profile-pairing", "publish-profile-release")
@@ -160,12 +167,7 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
         "Run shared complete functional module",
         "Run shared native and update glow-up module",
     )
-    glowup = _step(
-        pairing,
-        "Run shared native and update glow-up module",
-        "Run shared release contracts",
-    )
-    contracts = _step(pairing, "Run shared release contracts", None)
+    glowup = _step(pairing, "Run shared native and update glow-up module", None)
     deployable = _step(
         publish,
         "Build deployable channel from authored source manifest",
@@ -181,12 +183,45 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     assert "fast-gate" in build_assets.splitlines()[0]
     assert "Run shared static module" not in pairing
     assert "if:" not in artifacts
-    assert "if:" not in contracts
+    assert "Run shared release contracts" in reusable_fast_gate
     assert f"if: ${{{{ {compatible} }}}}" in functional
     assert f"if: ${{{{ {compatible} }}}}" in glowup
     assert f"if: ${{{{ {compatible} }}}}" in deployable
     assert "if:" not in immutable
     assert "needs.publish-profile-release.outputs.compatible == 'true'" in deploy
+
+
+def test_profile_publication_requires_exact_native_boot_for_both_architectures() -> None:
+    workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
+    pairing = _job(workflow, "test-profile-pairing", "test-profile-arm64-boot")
+    arm64 = _job(workflow, "test-profile-arm64-boot", "author-profile-release")
+    publish = _job(workflow, "publish-profile-release", "deploy-channel")
+
+    assert 'runs-on: macos-14' in arm64
+    assert "needs: [author-profile-release]" in arm64
+    assert "authored-profile-channel-source" in arm64
+    assert "authored-profile-publication" in arm64
+    assert "uses: ./.github/actions/fetch-release-inputs" in arm64
+    assert "kind: profiles" in arm64
+    assert "architecture: arm64" in arm64
+    assert "local-publication-base:" in arm64
+    assert "local-publication-dir:" in arm64
+    assert "scripts/prove-release-profile-assets.py" in arm64
+    assert "--architecture arm64" in arm64
+    assert '--profile "${{ inputs.profile }}"' in arm64
+    for forbidden in (
+        "just _build-assets",
+        "just _build-kernel",
+        "just _build-rootfs",
+        "capsem-admin -- image build",
+    ):
+        assert forbidden not in arm64
+
+    assert "CAPSEM_RELEASE_PROFILE=${{ inputs.profile }}" in pairing
+    assert "just _test-artifacts" in pairing
+    assert "needs: [author-profile-release, test-profile-pairing, test-profile-arm64-boot]" in publish
+    assert "needs.test-profile-pairing.result == 'success'" in publish
+    assert "needs.test-profile-arm64-boot.result == 'success'" in publish
 
 
 def test_profile_compatibility_requires_the_pulled_binary_functional_cohort() -> None:

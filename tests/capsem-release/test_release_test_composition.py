@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 
@@ -57,7 +58,16 @@ def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() ->
     local = _recipe("_test-candidate")
 
     assert "_check-assets _pack-initrd _materialize-config" in local.splitlines()[0]
-    assert "CAPSEM_TEST_MODULE=all just _test-candidate-run" in local
+    expected = (
+        "CAPSEM_LOCAL_REBUILT_ARTIFACTS=1 just _test-release-contracts",
+        "just _test-static",
+        "just _test-artifacts",
+        "just _test-functional",
+        "just _test-glowup",
+    )
+    positions = [local.index(command) for command in expected]
+    assert positions == sorted(positions)
+    assert "CAPSEM_TEST_MODULE=all" not in local
     assert "scripts/source-state-digest.py" in _recipe("test")
 
 
@@ -74,7 +84,8 @@ def test_private_release_modules_select_one_shared_runner() -> None:
         assert f"CAPSEM_TEST_MODULE={module} just _test-candidate-run" in _recipe(recipe)
 
     runner = _recipe("_test-candidate-run")
-    assert "all|static|artifacts|functional|glowup|release-contracts" in runner
+    assert "static|artifacts|functional|glowup|release-contracts" in runner
+    assert '"all"' not in runner
     for module in expected.values():
         assert f"module_enabled {module}" in runner
 
@@ -100,6 +111,11 @@ def test_functional_module_materializes_its_gitignored_settings_fixture() -> Non
     functional = _recipe("_test-functional")
 
     assert "_generate-settings" in functional.splitlines()[0]
+    assert 'if [ -z "${CAPSEM_RELEASE_INPUT_DIR:-}" ]; then' in functional
+    assert "just _sign" in functional
+    assert functional.index("just _sign") < functional.index(
+        "CAPSEM_TEST_MODULE=functional"
+    )
     for forbidden in (
         "_build-assets",
         "_build-kernel",
@@ -134,7 +150,7 @@ def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
     runner = _recipe("_test-candidate-run")
     release_contracts = runner[runner.index("if module_enabled release-contracts;") :]
 
-    assert 'if [ "$TEST_MODULE" = "all" ]; then' in release_contracts
+    assert 'if [ "${CAPSEM_LOCAL_REBUILT_ARTIFACTS:-0}" = "1" ]; then' in release_contracts
     assert (
         "tests/capsem-build-chain/ tests/capsem-release/"
         in release_contracts
@@ -148,7 +164,7 @@ def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
     assert "tests/capsem-recipes/" in release_contracts
 
 
-def test_release_contract_module_owns_release_site_dependencies() -> None:
+def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) -> None:
     contracts = _recipe("_test-release-contracts")
     install = _recipe("_release-site-pnpm-install")
 
@@ -162,6 +178,42 @@ def test_release_contract_module_owns_release_site_dependencies() -> None:
         pairing = _workflow_job(workflow_path, job)
         assert "cache: pnpm" in pairing
         assert "release-site/pnpm-lock.yaml" in pairing
+
+    real_just = shutil.which("just")
+    assert real_just is not None
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    trace = tmp_path / "trace"
+    for command, body in (
+        ("pnpm", 'printf "pnpm:%s:%s\\n" "$PWD" "$*" >> "$TRACE"'),
+        (
+            "just",
+            'printf "just:%s:%s\\n" "${CAPSEM_TEST_MODULE:-}" "$*" >> "$TRACE"',
+        ),
+    ):
+        executable = fake_bin / command
+        executable.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        executable.chmod(0o755)
+
+    result = subprocess.run(
+        [real_just, "_test-release-contracts"],
+        cwd=PROJECT_ROOT,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+            "TRACE": str(trace),
+        },
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert trace.read_text(encoding="utf-8").splitlines() == [
+        f"pnpm:{PROJECT_ROOT / 'release-site'}:install --frozen-lockfile",
+        "just:release-contracts:_test-candidate-run",
+    ]
 
 
 def test_static_module_orders_fast_checks_before_docker_preflight() -> None:

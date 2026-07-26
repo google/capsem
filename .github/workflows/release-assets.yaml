@@ -378,8 +378,51 @@ jobs:
         if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}
         run: just _test-glowup
 
-      - name: Run shared release contracts
-        run: just _test-release-contracts
+  test-profile-arm64-boot:
+    needs: [author-profile-release]
+    if: ${{ always() && needs.author-profile-release.result == 'success' && needs.author-profile-release.outputs.release_needed == 'true' }}
+    runs-on: macos-14
+    name: Boot exact candidate profile (arm64)
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: uv sync
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          key: profile-arm64-boot
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: authored-profile-channel-source
+          path: target/source-channel/
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: authored-profile-publication
+          path: target/asset-release/
+
+      - name: Resolve exact candidate arm64 profile bytes
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: file://${{ github.workspace }}/target/source-channel/manifest.json
+          kind: profiles
+          architecture: arm64
+          output: target/candidate-profile-inputs-arm64
+          local-publication-base: https://github.com/${{ github.repository }}/releases/download/${{ needs.author-profile-release.outputs.publication_identity }}
+          local-publication-dir: target/asset-release/${{ needs.author-profile-release.outputs.publication_identity }}
+
+      - name: Boot exact manifest-selected arm64 profile bytes
+        run: |
+          uv run python scripts/prove-release-profile-assets.py \
+            --input-dir target/candidate-profile-inputs-arm64 \
+            --profile "${{ inputs.profile }}" \
+            --architecture arm64
 
   author-profile-release:
     needs: [build-assets, reuse-assets, resolve-current-binary]
@@ -559,8 +602,8 @@ jobs:
           path: target/profile-release.json
 
   publish-profile-release:
-    needs: [author-profile-release, test-profile-pairing]
-    if: ${{ always() && needs.author-profile-release.outputs.release_needed == 'true' && needs.test-profile-pairing.result == 'success' }}
+    needs: [author-profile-release, test-profile-pairing, test-profile-arm64-boot]
+    if: ${{ always() && needs.author-profile-release.outputs.release_needed == 'true' && needs.test-profile-pairing.result == 'success' && needs.test-profile-arm64-boot.result == 'success' }}
     runs-on: ubuntu-latest
     name: Publish tested profile release
     outputs:

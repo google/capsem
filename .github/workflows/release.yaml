@@ -973,9 +973,6 @@ jobs:
       - name: Run shared native and update glow-up module
         run: just _test-glowup
 
-      - name: Run shared release contracts
-        run: just _test-release-contracts
-
   create-release:
     needs: [test-native-macos-package, test-native-linux-package, test-binary-pairing]
     runs-on: ubuntu-latest

@@ -630,8 +630,12 @@ test:
 
 # Local composition constructs every artifact family before running the same
 # checked-in modules used by release CI.
-_test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-stale _pnpm-install _check-generated-settings _check-assets _pack-initrd _materialize-config
-    CAPSEM_TEST_MODULE=all just _test-candidate-run
+_test-candidate: _bootstrap _bound-docker-test-storage _install-tools _clean-stale _check-generated-settings _check-assets _pack-initrd _materialize-config
+    CAPSEM_LOCAL_REBUILT_ARTIFACTS=1 just _test-release-contracts
+    just _test-static
+    just _test-artifacts
+    just _test-functional
+    just _test-glowup
 
 _test-static: _install-tools _clean-stale _pnpm-install _check-generated-settings
     uv sync
@@ -642,6 +646,11 @@ _test-artifacts:
     CAPSEM_TEST_MODULE=artifacts just _test-candidate-run
 
 _test-functional: _generate-settings
+    #!/bin/bash
+    set -euo pipefail
+    if [ -z "${CAPSEM_RELEASE_INPUT_DIR:-}" ]; then
+        just _sign
+    fi
     CAPSEM_TEST_MODULE=functional just _test-candidate-run
 
 _test-glowup:
@@ -656,12 +665,12 @@ _test-release-contracts: _release-site-pnpm-install
 _test-candidate-run:
     #!/bin/bash
     set -euo pipefail
-    TEST_MODULE="${CAPSEM_TEST_MODULE:-all}"
+    TEST_MODULE="${CAPSEM_TEST_MODULE:-}"
     module_enabled() {
-        [ "$TEST_MODULE" = "all" ] || [ "$TEST_MODULE" = "$1" ]
+        [ "$TEST_MODULE" = "$1" ]
     }
     case "$TEST_MODULE" in
-        all|static|artifacts|functional|glowup|release-contracts) ;;
+        static|artifacts|functional|glowup|release-contracts) ;;
         *)
             echo "unknown Capsem test module: $TEST_MODULE" >&2
             exit 1
@@ -896,9 +905,9 @@ _test-candidate-run:
     done
 
     echo "=== Python: non-serial tests (n=4 parallel) ==="
-    # CAPSEM_REQUIRE_ARTIFACTS=1 fails closed before collection. Local `all`
-    # mode requires the source-built assets and guest agents produced by
-    # earlier stages. A release consumer instead requires the exact pulled
+    # CAPSEM_REQUIRE_ARTIFACTS=1 fails closed before collection. The local
+    # composed modules require the source-built assets and guest agents
+    # produced before their entrypoints run. A release consumer requires the exact pulled
     # package, staged binary inventory, and manifest-selected profile inputs;
     # the static module already proved the source guest-agent build.
     CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short --maxfail=1 -n 4 --dist=loadfile \
@@ -1074,7 +1083,7 @@ _test-candidate-run:
     fi
 
     if module_enabled release-contracts; then
-    if [ "$TEST_MODULE" = "all" ]; then
+    if [ "${CAPSEM_LOCAL_REBUILT_ARTIFACTS:-0}" = "1" ]; then
         echo "=== Build chain and release contracts (serial) ==="
         CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
             tests/capsem-build-chain/ tests/capsem-release/ \
