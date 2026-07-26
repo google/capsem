@@ -1130,19 +1130,6 @@ jobs:
             --generated-at "$generated_at" \
             --out-dir target/release-channel
 
-      - name: Persist mutated source manifest on the immutable binary release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          source="target/binary-channel/$RELEASE_CHANNEL/manifest.json"
-          owned="target/binary-source-publication"
-          named="$owned/channel-source-$RELEASE_CHANNEL.json"
-          mkdir -p "$owned"
-          cp "$source" "$named"
-          scripts/publish-immutable-release-assets.sh \
-            "$RELEASE_TAG" "$owned"
-
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-preview
@@ -1166,6 +1153,11 @@ jobs:
         with:
           name: binary-channel-preview
           path: candidate-release/
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-candidate
+          path: target/binary-channel/
 
       - name: Install prebuilt digest tool
         uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
@@ -1237,6 +1229,19 @@ jobs:
               dpkg-query -W -f="\${Version}" capsem | grep -Fx "$EXPECTED_VERSION"
               su capsemtest -c "\$HOME/.capsem/bin/capsem --version" | grep -F "$EXPECTED_VERSION"
             '
+
+      - name: Persist mutated source manifest on the immutable binary release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source="target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          owned="target/binary-source-publication"
+          named="$owned/channel-source-$RELEASE_CHANNEL.json"
+          mkdir -p "$owned"
+          cp "$source" "$named"
+          scripts/publish-immutable-release-assets.sh \
+            "$RELEASE_TAG" "$owned"
 
   deploy-release-channel:
     needs: [verify-release-candidate]

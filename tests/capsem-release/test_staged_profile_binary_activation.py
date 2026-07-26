@@ -270,9 +270,12 @@ def test_binary_publication_retry_verifies_owned_bytes_and_uploads_only_missing(
     assemble = _job(
         workflow, "assemble-release-channel", "verify-release-candidate"
     )
+    verify = _job(
+        workflow, "verify-release-candidate", "deploy-release-channel"
+    )
     github_release = _step(create, "Create GitHub release", None)
     source_manifest = _step(
-        assemble,
+        verify,
         "Persist mutated source manifest on the immutable binary release",
         None,
     )
@@ -282,6 +285,12 @@ def test_binary_publication_retry_verifies_owned_bytes_and_uploads_only_missing(
         assert "gh release upload" not in step
         assert "--clobber" not in step
 
+    assert "Persist mutated source manifest" not in assemble
+    assert verify.index(
+        "Prove install.sh selects and installs the candidate Linux package"
+    ) < verify.index(
+        "Persist mutated source manifest on the immutable binary release"
+    )
     assert workflow.count("scripts/publish-immutable-release-assets.sh") == 2
     assert "gh release download" in publisher
     assert "verify-immutable-publication.py" in publisher
