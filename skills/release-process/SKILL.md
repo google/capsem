@@ -52,6 +52,11 @@ tagging, pushing, authoring a shared manifest, or dispatching a workflow. Test
 this fail-stop behavior by executing the public recipes with fake downstream
 commands; inspecting recipe text alone is insufficient.
 
+After that gate succeeds, `release-binaries` may fast-forward-push clean,
+tested commits already ahead of `origin/main` before stamping the release
+cohort. It must prove `origin/main` is an ancestor and refuse divergence,
+force-push, or an unclean tree.
+
 Do not introduce a skip flag, release-only reduced gate, preparation recipe,
 environment-variable bypass, or direct checked-in caller of:
 

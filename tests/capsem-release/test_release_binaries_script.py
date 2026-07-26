@@ -37,6 +37,8 @@ class FakeRunner:
         mixed_version_cohort: bool = False,
         current_release_channel: str | None = None,
         run_rows: list[dict[str, object]] | None = None,
+        regular_local_ahead: bool = False,
+        regular_local_diverged: bool = False,
         pending_local_release: bool = False,
         divergent_pending_release: bool = False,
         fail_commit: bool = False,
@@ -49,6 +51,8 @@ class FakeRunner:
         self.mixed_version_cohort = mixed_version_cohort
         self.current_release_channel = current_release_channel
         self.run_rows = run_rows
+        self.regular_local_ahead = regular_local_ahead
+        self.regular_local_diverged = regular_local_diverged
         self.pending_local_release = pending_local_release
         self.divergent_pending_release = divergent_pending_release
         self.fail_commit = fail_commit
@@ -87,13 +91,34 @@ class FakeRunner:
         ):
             return RELEASE.CommandResult(self.head + "\n")
         if command == ("git", "rev-parse", "origin/main"):
-            value = "b" * 40 if self.pending_local_release else "a" * 40
+            value = (
+                "b" * 40
+                if self.pending_local_release or self.regular_local_ahead
+                else "a" * 40
+            )
             return RELEASE.CommandResult(value + "\n")
         if command == ("git", "rev-parse", "HEAD^"):
             value = "c" * 40 if self.divergent_pending_release else "b" * 40
             return RELEASE.CommandResult(value + "\n")
         if command == ("git", "rev-list", "--count", "origin/main..HEAD"):
-            return RELEASE.CommandResult("1\n" if self.pending_local_release else "0\n")
+            count = (
+                "1"
+                if self.pending_local_release
+                else "4"
+                if self.regular_local_ahead
+                else "0"
+            )
+            return RELEASE.CommandResult(f"{count}\n")
+        if command == (
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            "origin/main",
+            "HEAD",
+        ):
+            if self.regular_local_diverged:
+                raise subprocess.CalledProcessError(1, command)
+            return RELEASE.CommandResult("")
         if command == ("git", "log", "-1", "--format=%s"):
             return RELEASE.CommandResult(
                 f"release({self.current_release_channel}): {self.current_release_tag}\n"
@@ -440,6 +465,39 @@ def test_unpushed_local_release_commit_is_pushed_and_dispatched_without_restampi
     assert ("git", "push", "--atomic", "origin", "main", tag) in runner.calls
     assert ("just", "_stamp-version") not in runner.calls
     assert not any(call[:2] == ("git", "commit") for call in runner.calls)
+
+
+def test_tested_regular_main_commits_are_pushed_before_release_stamping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    runner = FakeRunner(tmp_path, regular_local_ahead=True)
+
+    tag, run_id = RELEASE.release_binaries("nightly", runner)
+
+    assert (tag, run_id) == ("v1.6.2000000000", "42")
+    push = runner.calls.index(("git", "push", "origin", "main"))
+    stamp = runner.calls.index(("just", "_stamp-version"))
+    assert push < stamp
+
+
+def test_diverged_regular_main_is_not_pushed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    runner = FakeRunner(
+        tmp_path,
+        regular_local_ahead=True,
+        regular_local_diverged=True,
+    )
+
+    with pytest.raises(ValueError, match="diverged from origin/main"):
+        RELEASE.release_binaries("nightly", runner)
+
+    assert not any(call[:2] == ("git", "push") for call in runner.calls)
+    assert ("just", "_stamp-version") not in runner.calls
 
 
 def test_divergent_local_release_commit_is_not_force_pushed(
