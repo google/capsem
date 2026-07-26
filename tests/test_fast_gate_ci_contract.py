@@ -57,3 +57,26 @@ def test_smoke_reuses_the_complete_shared_fast_gate() -> None:
         "bash scripts/check-web-surface.sh release-site",
     ):
         assert required in runner
+
+
+def test_fast_release_contracts_do_not_depend_on_ignored_build_outputs() -> None:
+    release_contracts = _recipe("_test-candidate-run")
+    materialized_test = (
+        ROOT / "tests/capsem-build-chain/test_materialized_profile_payload.py"
+    )
+    source_contract = (
+        ROOT / "tests/capsem-build-chain/test_profile_payload_contract.py"
+    ).read_text(encoding="utf-8")
+
+    assert materialized_test.is_file()
+    assert (
+        "--ignore=tests/capsem-build-chain/test_materialized_profile_payload.py"
+        in release_contracts
+    )
+    assert (
+        release_contracts.count(
+            "tests/capsem-build-chain/test_materialized_profile_payload.py"
+        )
+        == 2
+    )
+    assert "MATERIALIZED_PROFILES_DIR" not in source_contract

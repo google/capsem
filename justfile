@@ -934,6 +934,7 @@ _test-candidate-run:
                 tests/capsem-build-chain/test_codesign.py \
                 tests/capsem-build-chain/test_full_chain.py \
                 tests/capsem-build-chain/test_manifest_regen.py \
+                tests/capsem-build-chain/test_materialized_profile_payload.py \
                 tests/capsem-build-chain/test_pack_initrd.py \
                 -v --tb=short
         fi
@@ -1160,6 +1161,7 @@ _test-candidate-run:
             --ignore=tests/capsem-build-chain/test_codesign.py \
             --ignore=tests/capsem-build-chain/test_full_chain.py \
             --ignore=tests/capsem-build-chain/test_manifest_regen.py \
+            --ignore=tests/capsem-build-chain/test_materialized_profile_payload.py \
             --ignore=tests/capsem-build-chain/test_pack_initrd.py \
             tests/test_*contract.py \
             "${SOURCE_CONTRACT_TESTS[@]}" \

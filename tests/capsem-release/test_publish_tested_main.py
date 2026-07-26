@@ -40,6 +40,7 @@ def _repository(tmp_path: Path) -> tuple[Path, Path]:
     _git(work, "commit", "-m", "initial")
     _git(work, "remote", "add", "origin", str(remote))
     _git(work, "push", "-u", "origin", "main")
+    _git(remote, "symbolic-ref", "HEAD", "refs/heads/main")
     return work, remote
 
 
