@@ -314,7 +314,11 @@ def _resume_release(runner: Runner, tag: str, channel: str) -> str:
     if run.status == "completed" and run.conclusion == "success":
         return run.database_id
     if run.status == "completed":
-        runner.run(("gh", "run", "rerun", run.database_id))
+        raise RuntimeError(
+            f"{channel}/{tag} release run {run.database_id} completed with "
+            f"{run.conclusion or 'an unknown conclusion'}; diagnose that run "
+            "before retrying changed code"
+        )
     runner.run(("gh", "run", "watch", run.database_id, "--exit-status"))
     return run.database_id
 

@@ -1074,6 +1074,7 @@ _test-candidate-run:
     fi
 
     if module_enabled release-contracts; then
+    if [ "$TEST_MODULE" = "all" ]; then
         echo "=== Build chain and release contracts (serial) ==="
         CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
             tests/capsem-build-chain/ tests/capsem-release/ \
@@ -1081,6 +1082,10 @@ _test-candidate-run:
 
         echo "=== Just recipe contracts (post-VM, serial) ==="
         uv run python -m pytest tests/capsem-recipes/ -v --tb=short -m recipe
+    else
+        echo "=== Serialized release contracts (serial) ==="
+        uv run python -m pytest tests/capsem-release/ -v --tb=short
+    fi
     fi
 
     # ---- Stage 8: cleanup ---------------------------------------------------

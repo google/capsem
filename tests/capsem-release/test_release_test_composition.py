@@ -114,6 +114,24 @@ def test_modules_retain_complete_named_quality_gates() -> None:
         assert required in runner
 
 
+def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
+    runner = _recipe("_test-candidate-run")
+    release_contracts = runner[runner.index("if module_enabled release-contracts;") :]
+
+    assert 'if [ "$TEST_MODULE" = "all" ]; then' in release_contracts
+    assert (
+        "tests/capsem-build-chain/ tests/capsem-release/"
+        in release_contracts
+    )
+    assert (
+        "else\n"
+        '        echo "=== Serialized release contracts (serial) ==="\n'
+        "        uv run python -m pytest tests/capsem-release/"
+        in release_contracts
+    )
+    assert "tests/capsem-recipes/" in release_contracts
+
+
 def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     runner = _recipe("_test-candidate-run")
 

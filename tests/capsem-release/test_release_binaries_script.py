@@ -358,7 +358,7 @@ def test_tagged_nightly_with_missing_dispatch_resumes_without_new_version(
     assert ("gh", "run", "watch", "42", "--exit-status") in runner.calls
 
 
-def test_tagged_failed_nightly_reruns_matching_channel_run(
+def test_tagged_failed_nightly_stops_for_diagnosis_without_blind_rerun(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _release_tree(tmp_path)
@@ -384,11 +384,14 @@ def test_tagged_failed_nightly_reruns_matching_channel_run(
         ],
     )
 
-    resumed_tag, run_id = RELEASE.release_binaries("nightly", runner)
+    with pytest.raises(
+        RuntimeError,
+        match=r"nightly/v1\.6\.1000000000.*run 17.*diagnose",
+    ):
+        RELEASE.release_binaries("nightly", runner)
 
-    assert (resumed_tag, run_id) == (tag, "17")
-    assert ("gh", "run", "rerun", "17") in runner.calls
-    assert ("gh", "run", "watch", "17", "--exit-status") in runner.calls
+    assert ("gh", "run", "rerun", "17") not in runner.calls
+    assert ("gh", "run", "watch", "17", "--exit-status") not in runner.calls
     assert ("just", "_stamp-version") not in runner.calls
 
 
