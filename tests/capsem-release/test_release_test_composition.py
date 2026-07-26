@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -10,24 +11,25 @@ import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
-SOURCE_CONTRACT_TESTS = (
-    "tests/test_agent_skill_index.py",
-    "tests/test_build_assets_profile.py",
-    "tests/test_cargo_audit_gate.py",
-    "tests/test_check_cargo_audit.py",
-    "tests/test_complete_release_channel.py",
-    "tests/test_docker_storage_policy.py",
-    "tests/test_exec_lock.py",
-    "tests/test_macos_tart_glowup.py",
-    "tests/test_pnpm_bulk_audit.py",
-    "tests/test_release_gate_integrity.py",
-    "tests/test_release_manifest_assets.py",
-    "tests/test_release_site_generated_from_json.py",
-    "tests/test_release_site_review_regressions.py",
-    "tests/test_skills.py",
-    "tests/test_source_syntax_gate.py",
-    "tests/test_sync_container_clock.py",
-)
+
+
+def _source_contract_tests() -> tuple[str, ...]:
+    match = re.search(
+        r"(?ms)^    SOURCE_CONTRACT_TESTS=\(\n(?P<body>.*?)^    \)\n",
+        JUSTFILE,
+    )
+    assert match is not None, "Justfile must define SOURCE_CONTRACT_TESTS"
+    tests = tuple(
+        line.strip()
+        for line in match.group("body").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    assert tests
+    assert all(test.startswith("tests/") for test in tests)
+    return tests
+
+
+SOURCE_CONTRACT_TESTS = _source_contract_tests()
 
 
 def _recipe(name: str) -> str:

@@ -1,11 +1,17 @@
 import importlib.util
 import os
+import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 
 def load_integration_script():
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "integration_test.py"
+    script_path = PROJECT_ROOT / "scripts" / "integration_test.py"
     spec = importlib.util.spec_from_file_location("capsem_integration_test", script_path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -13,18 +19,36 @@ def load_integration_script():
     return module
 
 
-def test_integration_script_loads_under_the_host_python():
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "integration_test.py"
+def _just_python_entrypoints() -> list[Path]:
+    justfile = (PROJECT_ROOT / "Justfile").read_text(encoding="utf-8")
+    referenced = {
+        PROJECT_ROOT / relative
+        for relative in re.findall(r"scripts/[A-Za-z0-9_.-]+\.py", justfile)
+    }
+    referenced.add(PROJECT_ROOT / "scripts" / "doctor_session_test.py")
+    return sorted(
+        path
+        for path in referenced
+        if "ArgumentParser" in path.read_text(encoding="utf-8")
+    )
 
+
+@pytest.mark.parametrize(
+    "script_path",
+    _just_python_entrypoints(),
+    ids=lambda path: path.name,
+)
+def test_just_python_entrypoints_load_under_the_host_python(script_path):
     result = subprocess.run(
         ["python3", str(script_path), "--help"],
+        cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
         timeout=10,
     )
 
     assert result.returncode == 0, result.stderr
-    assert "--profile" in result.stdout
+    assert "usage:" in result.stdout.lower()
 
 
 def test_integration_script_uses_materialized_profiles_dir():

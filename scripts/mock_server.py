@@ -12,7 +12,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from scripts.release_test_binary import ensure_host_test_binary
+if __package__:
+    from scripts.release_test_binary import ensure_host_test_binary
+else:
+    # `integration_test.py` and `doctor_session_test.py` are public script
+    # entrypoints, so Python loads this module from scripts/ without making the
+    # repository root importable as the `scripts` package.
+    from release_test_binary import ensure_host_test_binary
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
