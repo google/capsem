@@ -987,8 +987,6 @@ _test-candidate-run:
     CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short --maxfail=1 -n 4 --dist=loadfile \
         -m "not serial" \
         "${HOST_SNAPSHOT_IGNORE_ARGS[@]}" \
-        "${SOURCE_CONTRACT_IGNORE_ARGS[@]}" \
-        --ignore-glob=tests/test_*contract.py \
         --ignore=tests/capsem-recipes \
         --ignore=tests/capsem-install \
         --ignore=tests/capsem-build-chain \

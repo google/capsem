@@ -255,6 +255,23 @@ def test_parallel_coverage_state_is_kept_out_of_the_source_tree() -> None:
     assert 'mkdir -p "$(dirname "$COVERAGE_FILE")"' in runner
 
 
+def test_functional_coverage_replays_cheap_contracts_after_the_early_gate() -> None:
+    runner = _recipe("_test-candidate-run")
+    functional = runner[
+        runner.index("if module_enabled functional;") :
+        runner.index("if module_enabled glowup;")
+    ]
+    coverage = functional[
+        functional.index('echo "=== Python: non-serial tests (n=4 parallel) ==="') :
+        functional.index('echo "=== Python: host snapshot tests (serial) ==="')
+    ]
+
+    assert "--cov=src/capsem" in coverage
+    assert "--cov-fail-under=90" in coverage
+    assert '"${SOURCE_CONTRACT_IGNORE_ARGS[@]}"' not in coverage
+    assert "--ignore-glob=tests/test_*contract.py" not in coverage
+
+
 def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) -> None:
     contracts = _recipe("_test-release-contracts")
     install = _recipe("_release-site-pnpm-install")
