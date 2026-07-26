@@ -720,6 +720,7 @@ _test-candidate-run:
         tests/test_complete_release_channel.py
         tests/test_docker_storage_policy.py
         tests/test_exec_lock.py
+        tests/test_integration_script_profiles.py
         tests/test_macos_tart_glowup.py
         tests/test_pnpm_bulk_audit.py
         tests/test_prove_installed_shell.py
