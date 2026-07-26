@@ -330,6 +330,7 @@ struct ReleaseGraphManifest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(try_from = "ReleaseGraphPackageWire")]
 struct ReleaseGraphPackage {
     name: String,
     url: String,
@@ -342,6 +343,57 @@ struct ReleaseGraphPackage {
     #[serde(rename = "bytes")]
     size: u64,
     digest: ReleaseGraphDigest,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleaseGraphPackageWire {
+    name: String,
+    url: String,
+    version: String,
+    kind: String,
+    platform: String,
+    architecture: String,
+    #[serde(default)]
+    status: String,
+    #[serde(rename = "bytes")]
+    size: u64,
+    digest: ReleaseGraphDigest,
+}
+
+impl TryFrom<ReleaseGraphPackageWire> for ReleaseGraphPackage {
+    type Error = String;
+
+    fn try_from(package: ReleaseGraphPackageWire) -> Result<Self, Self::Error> {
+        let architecture = match package.architecture.as_str() {
+            "amd64" => PackageArchitecture::Amd64,
+            "arm64" => PackageArchitecture::Arm64,
+            "x86_64"
+                if package.kind == "debian_package"
+                    && package.platform == "linux"
+                    && package.name.ends_with("_amd64.deb")
+                    && package.url.ends_with(&package.name) =>
+            {
+                PackageArchitecture::Amd64
+            }
+            architecture => {
+                return Err(format!(
+                    "unsupported package architecture {architecture:?} for {}/{}/{}",
+                    package.kind, package.platform, package.name
+                ));
+            }
+        };
+        Ok(Self {
+            name: package.name,
+            url: package.url,
+            version: package.version,
+            kind: package.kind,
+            platform: package.platform,
+            architecture,
+            status: package.status,
+            size: package.size,
+            digest: package.digest,
+        })
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1991,13 +2043,22 @@ fn graph_package_matches_layout(
                 && package.name.ends_with(".pkg")
         }
         InstallLayout::LinuxDeb => {
-            package.kind == "debian_package"
-                && package.platform == "linux"
-                && package.architecture == package_architecture()
-                && package.name.ends_with(&format!("_{}.deb", deb_arch()))
+            graph_linux_package_matches_architecture(package, package_architecture())
         }
         InstallLayout::UserDir | InstallLayout::Development => false,
     }
+}
+
+fn graph_linux_package_matches_architecture(
+    package: &ReleaseGraphPackage,
+    architecture: PackageArchitecture,
+) -> bool {
+    package.kind == "debian_package"
+        && package.platform == "linux"
+        && package.architecture == architecture
+        && package
+            .name
+            .ends_with(&format!("_{}.deb", architecture.as_str()))
 }
 
 fn graph_install_layout_name(install_layout: &InstallLayout) -> Option<&'static str> {
@@ -5459,8 +5520,8 @@ mod tests {
     }
 
     #[test]
-    fn release_graph_rejects_machine_architecture_in_package_row() {
-        let error = serde_json::from_value::<ReleaseGraphManifest>(serde_json::json!({
+    fn release_graph_reads_exact_legacy_x86_64_amd64_package_row() {
+        let graph = serde_json::from_value::<ReleaseGraphManifest>(serde_json::json!({
             "packages": [{
                 "name": "Capsem_2.0.0_amd64.deb",
                 "url": "/releases/download/v2.0.0/Capsem_2.0.0_amd64.deb",
@@ -5474,12 +5535,85 @@ mod tests {
             }],
             "profiles": {}
         }))
-        .expect_err("machine architecture must not deserialize as package identity");
+        .expect("the immutable legacy package identity must remain readable");
 
+        assert_eq!(graph.packages[0].architecture, PackageArchitecture::Amd64);
         assert!(
-            format!("{error:#}").contains("unknown variant"),
-            "{error:#}"
+            graph_linux_package_matches_architecture(
+                &graph.packages[0],
+                PackageArchitecture::Amd64
+            ),
+            "the exact x86_64 + _amd64.deb legacy row must select the existing package"
         );
+    }
+
+    #[test]
+    fn release_graph_rejects_non_exact_legacy_package_architecture_aliases() {
+        for (label, name, url, kind, platform, architecture) in [
+            (
+                "wrong filename",
+                "Capsem_2.0.0_arm64.deb",
+                "/releases/download/v2.0.0/Capsem_2.0.0_arm64.deb",
+                "debian_package",
+                "linux",
+                "x86_64",
+            ),
+            (
+                "wrong URL filename",
+                "Capsem_2.0.0_amd64.deb",
+                "/releases/download/v2.0.0/not-the-package.deb",
+                "debian_package",
+                "linux",
+                "x86_64",
+            ),
+            (
+                "wrong package kind",
+                "Capsem_2.0.0_amd64.deb",
+                "/releases/download/v2.0.0/Capsem_2.0.0_amd64.deb",
+                "archive",
+                "linux",
+                "x86_64",
+            ),
+            (
+                "wrong platform",
+                "Capsem_2.0.0_amd64.deb",
+                "/releases/download/v2.0.0/Capsem_2.0.0_amd64.deb",
+                "debian_package",
+                "macos",
+                "x86_64",
+            ),
+            (
+                "unrecognized alias",
+                "Capsem_2.0.0_amd64.deb",
+                "/releases/download/v2.0.0/Capsem_2.0.0_amd64.deb",
+                "debian_package",
+                "linux",
+                "x64",
+            ),
+        ] {
+            let error = serde_json::from_value::<ReleaseGraphManifest>(serde_json::json!({
+                "packages": [{
+                    "name": name,
+                    "url": url,
+                    "version": "2.0.0",
+                    "kind": kind,
+                    "platform": platform,
+                    "architecture": architecture,
+                    "status": "current",
+                    "bytes": 222,
+                    "digest": {"sha256": "2".repeat(64), "blake3": "b".repeat(64)}
+                }],
+                "profiles": {}
+            }))
+            .expect_err(label);
+
+            assert!(
+                error
+                    .to_string()
+                    .contains("unsupported package architecture"),
+                "{label}: {error}"
+            );
+        }
     }
 
     #[test]
