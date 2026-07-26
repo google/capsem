@@ -583,7 +583,7 @@ def test_profile_release_builds_one_profile_against_resolved_binary() -> None:
     assert "uses: ./.github/workflows/release-channel.yaml" in workflow
     assert "dist_artifact: asset-channel-preview" in workflow
     assert (
-        "if: ${{ inputs.dry_run == false && needs.publish-profile-release.outputs.profile_changed == 'true' && needs.publish-profile-release.outputs.compatible == 'true' }}"
+        "if: ${{ inputs.dry_run == false && needs.publish-profile-release.outputs.release_needed == 'true' && needs.publish-profile-release.outputs.compatible == 'true' }}"
         in workflow
     )
 

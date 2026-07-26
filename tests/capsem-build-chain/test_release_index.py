@@ -787,11 +787,13 @@ def test_profile_release_deploys_generated_preview_only_when_changed_and_compati
     assert "releases/download/$PROFILE_IDENTITY" in author
     assert "--source-manifest target/source-channel/manifest.json" in author
     assert "--out-dir target/profile-candidate" in author
-    assert "profile_changed: ${{ steps.profile-delta.outputs.changed }}" in author
+    assert "source_changed: ${{ steps.profile-delta.outputs.source_changed }}" in author
+    assert "activation_needed: ${{ steps.profile-delta.outputs.activation_needed }}" in author
+    assert "release_needed: ${{ steps.profile-delta.outputs.release_needed }}" in author
     assert "compatible: ${{ steps.author-release.outputs.compatible }}" in author
-    assert "if: ${{ steps.profile-delta.outputs.changed == 'true' }}" in author
+    assert "if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}" in author
 
-    assert "needs.author-profile-release.outputs.profile_changed == 'true'" in pairing
+    assert "needs.author-profile-release.outputs.release_needed == 'true'" in pairing
     assert (
         pairing.count("if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}") == 2
     )
@@ -805,7 +807,7 @@ def test_profile_release_deploys_generated_preview_only_when_changed_and_compati
 
     assert (
         "if: ${{ inputs.dry_run == false && "
-        "needs.publish-profile-release.outputs.profile_changed == 'true' && "
+        "needs.publish-profile-release.outputs.release_needed == 'true' && "
         "needs.publish-profile-release.outputs.compatible == 'true' }}" in deploy_channel
     )
     assert "uses: ./.github/workflows/release-channel.yaml" in deploy_channel

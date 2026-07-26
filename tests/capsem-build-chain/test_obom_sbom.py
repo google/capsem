@@ -37,7 +37,7 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     publish_profile = asset_workflow.split("  publish-profile-release:", maxsplit=1)[1].split(
         "  deploy-channel:", maxsplit=1
     )[0]
-    assert "needs.author-profile-release.outputs.profile_changed == 'true'" in publish_profile
+    assert "needs.author-profile-release.outputs.release_needed == 'true'" in publish_profile
     assert "needs.test-profile-pairing.result == 'success'" in publish_profile
     assert "if: ${{ inputs.dry_run == false }}" in publish_profile
     assert "scripts/stage-profile-publication.py" in asset_workflow

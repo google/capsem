@@ -68,3 +68,51 @@ def test_profile_delta_accepts_new_membership_and_rejects_wrong_channel() -> Non
     assert result["reason"] == "new_profile"
     with pytest.raises(ValueError, match="expected 'stable'"):
         DELTA.selected_profile_delta(source, candidate, "stable", "code")
+
+
+def test_profile_delta_retries_staged_source_when_public_activation_is_behind() -> None:
+    source = _manifest()
+    candidate = deepcopy(source)
+    public = deepcopy(source)
+    del public["profiles"]["code"]
+
+    pending = DELTA.selected_profile_delta(
+        source,
+        candidate,
+        "nightly",
+        "code",
+        public_manifest=public,
+    )
+
+    assert pending["source_changed"] is False
+    assert pending["activation_needed"] is True
+    assert pending["release_needed"] is True
+    assert pending["reason"] == "public_activation_pending"
+
+    current = DELTA.selected_profile_delta(
+        source,
+        candidate,
+        "nightly",
+        "code",
+        public_manifest=deepcopy(source),
+    )
+    assert current["source_changed"] is False
+    assert current["activation_needed"] is False
+    assert current["release_needed"] is False
+    assert current["reason"] == "already_public"
+
+
+def test_profile_delta_cannot_activate_a_staged_binary_package() -> None:
+    source = _manifest()
+    candidate = deepcopy(source)
+    public = deepcopy(source)
+    public["packages"] = [{"name": "older-public-capsem.deb"}]
+
+    with pytest.raises(ValueError, match="binary release must finish"):
+        DELTA.selected_profile_delta(
+            source,
+            candidate,
+            "nightly",
+            "code",
+            public_manifest=public,
+        )

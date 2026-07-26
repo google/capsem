@@ -259,7 +259,7 @@ jobs:
 
   test-profile-pairing:
     needs: [author-profile-release, resolve-current-binary]
-    if: ${{ always() && needs.author-profile-release.result == 'success' && needs.resolve-current-binary.result == 'success' && needs.author-profile-release.outputs.profile_changed == 'true' }}
+    if: ${{ always() && needs.author-profile-release.result == 'success' && needs.resolve-current-binary.result == 'success' && needs.author-profile-release.outputs.release_needed == 'true' }}
     runs-on: ubuntu-24.04
     name: Complete profile pairing gate
     steps:
@@ -385,7 +385,9 @@ jobs:
     runs-on: ubuntu-latest
     name: Author selected profile release
     outputs:
-      profile_changed: ${{ steps.profile-delta.outputs.changed }}
+      source_changed: ${{ steps.profile-delta.outputs.source_changed }}
+      activation_needed: ${{ steps.profile-delta.outputs.activation_needed }}
+      release_needed: ${{ steps.profile-delta.outputs.release_needed }}
       compatible: ${{ steps.author-release.outputs.compatible }}
       publication_identity: ${{ steps.author-release.outputs.publication_identity }}
     env:
@@ -428,6 +430,10 @@ jobs:
           path: target/source-channel/
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
+          name: profile-public-before-profiles
+          path: target/profile-public-before/profiles/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
           name: profile-release-selection
           path: target/
 
@@ -461,13 +467,14 @@ jobs:
           uv run python scripts/check-profile-release-delta.py \
             --source-manifest target/source-channel/manifest.json \
             --candidate-manifest "target/profile-candidate/assets/$CHANNEL/manifest.json" \
+            --public-manifest target/profile-public-before/profiles/manifest.json \
             --channel "$CHANNEL" \
             --profile "${{ inputs.profile }}" \
             --json-output target/profile-release-delta/delta.json
 
       - name: Author selected channel profile in the source manifest
         id: author-release
-        if: ${{ steps.profile-delta.outputs.changed == 'true' }}
+        if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}
         run: |
           set -euo pipefail
           MANIFEST_VERSION=$(python3 -c 'import json; print(json.load(open("target/source-channel/manifest.json"))["version"])')
@@ -503,7 +510,7 @@ jobs:
           echo "publication_identity=$PUBLICATION_IDENTITY" >> "$GITHUB_OUTPUT"
 
       - name: Stage and verify immutable profile publication once
-        if: ${{ steps.profile-delta.outputs.changed == 'true' }}
+        if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}
         env:
           PUBLICATION_IDENTITY: ${{ steps.author-release.outputs.publication_identity }}
         run: |
@@ -533,7 +540,7 @@ jobs:
           path: target/profile-candidate/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: ${{ steps.profile-delta.outputs.changed == 'true' }}
+        if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}
         with:
           name: authored-profile-publication
           path: target/asset-release/
@@ -544,18 +551,18 @@ jobs:
           path: target/profile-release-delta/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: ${{ steps.profile-delta.outputs.changed == 'true' }}
+        if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}
         with:
           name: authored-profile-release-report
           path: target/profile-release.json
 
   publish-profile-release:
     needs: [author-profile-release, test-profile-pairing]
-    if: ${{ always() && needs.author-profile-release.outputs.profile_changed == 'true' && needs.test-profile-pairing.result == 'success' }}
+    if: ${{ always() && needs.author-profile-release.outputs.release_needed == 'true' && needs.test-profile-pairing.result == 'success' }}
     runs-on: ubuntu-latest
     name: Publish tested profile release
     outputs:
-      profile_changed: ${{ needs.author-profile-release.outputs.profile_changed }}
+      release_needed: ${{ needs.author-profile-release.outputs.release_needed }}
       compatible: ${{ needs.author-profile-release.outputs.compatible }}
     env:
       CHANNEL: ${{ inputs.channel }}
@@ -686,7 +693,7 @@ jobs:
 
   deploy-channel:
     needs: publish-profile-release
-    if: ${{ inputs.dry_run == false && needs.publish-profile-release.outputs.profile_changed == 'true' && needs.publish-profile-release.outputs.compatible == 'true' }}
+    if: ${{ inputs.dry_run == false && needs.publish-profile-release.outputs.release_needed == 'true' && needs.publish-profile-release.outputs.compatible == 'true' }}
     uses: ./.github/workflows/release-channel.yaml
     with:
       channel: ${{ inputs.channel }}

@@ -241,7 +241,8 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     assert "capsem-admin -- release" in workflow
     assert "--publication-base" in workflow
     assert "channel-source-$CHANNEL.json" in workflow
-    assert "steps.profile-delta.outputs.changed == 'true'" in workflow
+    assert "--public-manifest target/profile-public-before/profiles/manifest.json" in workflow
+    assert "steps.profile-delta.outputs.release_needed == 'true'" in workflow
     assert "check-profile-release-delta.py" in workflow
     assert "check-asset-release-delta.py" not in workflow
     assert "just _test-artifacts" in workflow

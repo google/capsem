@@ -87,7 +87,9 @@ def test_staged_profile_is_authored_once_before_pairing_tests_and_publication() 
     publish = _job(workflow, "publish-profile-release", "deploy-channel")
 
     assert "needs: [build-assets, reuse-assets, resolve-current-binary]" in author
-    assert "profile_changed:" in author
+    assert "source_changed:" in author
+    assert "activation_needed:" in author
+    assert "release_needed:" in author
     assert "compatible:" in author
     assert "publication_identity:" in author
     assert workflow.count("cargo run -p capsem-admin -- release") == 1
@@ -108,7 +110,7 @@ def test_staged_profile_is_authored_once_before_pairing_tests_and_publication() 
     assert "if: ${{ always()" in pairing
     assert "needs.author-profile-release.result == 'success'" in pairing
     assert "needs.resolve-current-binary.result == 'success'" in pairing
-    assert "needs.author-profile-release.outputs.profile_changed == 'true'" in pairing
+    assert "needs.author-profile-release.outputs.release_needed == 'true'" in pairing
     assert "needs: [author-profile-release, test-profile-pairing]" in publish
     assert "needs.test-profile-pairing.result == 'success'" in publish
 
@@ -173,7 +175,7 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
         publish, "Publish immutable GitHub profile release", "Attest VM asset provenance"
     )
 
-    assert "needs.author-profile-release.outputs.profile_changed == 'true'" in pairing
+    assert "needs.author-profile-release.outputs.release_needed == 'true'" in pairing
     assert "uses: ./.github/workflows/fast-gate.yaml" in fast_gate
     assert "if:" not in fast_gate
     assert "fast-gate" in build_assets.splitlines()[0]
