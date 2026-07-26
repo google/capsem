@@ -116,6 +116,23 @@ def resolve_channel_sources(
     return sources, documents
 
 
+def manifest_version_for_channel(
+    *,
+    channel: str,
+    primary_channel: str,
+    document: dict[str, Any],
+    primary_version: str,
+) -> str:
+    if channel == primary_channel or not is_release_graph(document):
+        return primary_version
+    version = document.get("version")
+    if not isinstance(version, str) or not version:
+        raise ValueError(
+            f"untouched {channel} graph has no manifest version to preserve"
+        )
+    return version
+
+
 def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     print("+", " ".join(command))
     subprocess.run(command, check=True, env=env)
@@ -141,6 +158,12 @@ def build_complete_dist(args: argparse.Namespace) -> None:
     build_order.append(args.primary_channel)
     graph_channels: list[str] = []
     for channel in build_order:
+        manifest_version = manifest_version_for_channel(
+            channel=channel,
+            primary_channel=args.primary_channel,
+            document=documents[channel],
+            primary_version=args.manifest_version,
+        )
         command = [
             "cargo",
             "run",
@@ -159,7 +182,7 @@ def build_complete_dist(args: argparse.Namespace) -> None:
             "--channel",
             channel,
             "--manifest-version",
-            args.manifest_version,
+            manifest_version,
             "--generated-at",
             generated_at,
             "--out-dir",

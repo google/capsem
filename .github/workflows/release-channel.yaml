@@ -28,6 +28,10 @@ on:
       CLOUDFLARE_API_TOKEN:
         required: true
 
+concurrency:
+  group: capsem-public-channel-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -86,6 +90,15 @@ jobs:
               if key not in evidence:
                   raise SystemExit(f"missing release evidence key: {key}")
           PY
+
+      - name: Prove untouched public channels remain unchanged
+        env:
+          RELEASE_SITE_URL: ${{ inputs.release_site_url || 'https://release.capsem.org' }}
+        run: |
+          uv run python scripts/check-channel-deploy-freshness.py \
+            --selected-channel "$CHANNEL" \
+            --dist "$DIST_DIR" \
+            --release-site "$RELEASE_SITE_URL"
 
       - name: Require Cloudflare credentials
         run: |

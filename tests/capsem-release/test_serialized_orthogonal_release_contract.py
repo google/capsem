@@ -325,6 +325,10 @@ def test_production_deploy_has_no_unserialized_direct_entrypoint() -> None:
     assert "workflow_call:" in deploy
     assert "capsem-admin -- release" not in deploy
     assert "record-binary" not in deploy
+    assert "group: capsem-public-channel-deploy" in deploy
+    assert "cancel-in-progress: false" in deploy
+    assert "check-channel-deploy-freshness.py" in deploy
+    assert "build-complete-release-channel.py" not in deploy
 
     production_callers = []
     for path in WORKFLOWS.glob("*.yaml"):

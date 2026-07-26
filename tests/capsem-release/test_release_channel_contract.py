@@ -31,6 +31,20 @@ import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL = "stable"
+BUILD_COMPLETE_SPEC = importlib.util.spec_from_file_location(
+    "build_complete_release_channel",
+    PROJECT_ROOT / "scripts" / "build-complete-release-channel.py",
+)
+assert BUILD_COMPLETE_SPEC is not None and BUILD_COMPLETE_SPEC.loader is not None
+BUILD_COMPLETE = importlib.util.module_from_spec(BUILD_COMPLETE_SPEC)
+BUILD_COMPLETE_SPEC.loader.exec_module(BUILD_COMPLETE)
+DEPLOY_FRESHNESS_SPEC = importlib.util.spec_from_file_location(
+    "check_channel_deploy_freshness",
+    PROJECT_ROOT / "scripts" / "check-channel-deploy-freshness.py",
+)
+assert DEPLOY_FRESHNESS_SPEC is not None and DEPLOY_FRESHNESS_SPEC.loader is not None
+DEPLOY_FRESHNESS = importlib.util.module_from_spec(DEPLOY_FRESHNESS_SPEC)
+DEPLOY_FRESHNESS_SPEC.loader.exec_module(DEPLOY_FRESHNESS)
 
 pytestmark = pytest.mark.build_chain
 
@@ -46,6 +60,87 @@ def test_deploy_workflow_runs_authoritative_live_validator_for_both_channels() -
     assert 'CHANNEL_ARGS=(--channel stable --channel nightly)' in workflow
     assert '--base-url "$RELEASE_SITE_URL"' in workflow
     assert "--attempts 30" in workflow
+    assert "group: capsem-public-channel-deploy" in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert workflow.index("check-channel-deploy-freshness.py") < workflow.index(
+        "      - name: Deploy"
+    )
+
+
+def test_complete_dist_preserves_untouched_channel_manifest_version() -> None:
+    stable = {
+        "channel": "stable",
+        "version": "1.0.7",
+        "profiles": {},
+        "packages": [],
+    }
+    nightly = {
+        "channel": "nightly",
+        "version": "1.0.8",
+        "profiles": {},
+        "packages": [],
+    }
+
+    assert (
+        BUILD_COMPLETE.manifest_version_for_channel(
+            channel="stable",
+            primary_channel="stable",
+            document=stable,
+            primary_version="1.0.9",
+        )
+        == "1.0.9"
+    )
+    assert (
+        BUILD_COMPLETE.manifest_version_for_channel(
+            channel="nightly",
+            primary_channel="stable",
+            document=nightly,
+            primary_version="1.0.9",
+        )
+        == "1.0.8"
+    )
+
+    with pytest.raises(ValueError, match="untouched nightly"):
+        BUILD_COMPLETE.manifest_version_for_channel(
+            channel="nightly",
+            primary_channel="stable",
+            document={"channel": "nightly", "profiles": {}, "packages": []},
+            primary_version="1.0.9",
+        )
+
+
+def test_deploy_rejects_stale_untouched_channel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dist = tmp_path / "dist"
+    nightly = dist / "assets" / "nightly" / "manifest.json"
+    nightly.parent.mkdir(parents=True)
+    nightly.write_bytes(b'{"channel":"nightly","version":"1.0.8"}\n')
+    live_nightly = nightly.read_bytes()
+    monkeypatch.setattr(
+        DEPLOY_FRESHNESS,
+        "read_live_manifest",
+        lambda _release_site, channel: (
+            live_nightly
+            if channel == "nightly"
+            else (_ for _ in ()).throw(AssertionError(channel))
+        ),
+    )
+
+    DEPLOY_FRESHNESS.verify_untouched_channels(
+        selected_channel="stable",
+        dist=dist,
+        release_site="https://release.example.test",
+    )
+
+    nightly.write_bytes(b'{"channel":"nightly","version":"stale"}\n')
+    with pytest.raises(ValueError, match="refusing to replace another channel"):
+        DEPLOY_FRESHNESS.verify_untouched_channels(
+            selected_channel="stable",
+            dist=dist,
+            release_site="https://release.example.test",
+        )
 
 
 def _run(
@@ -69,6 +164,63 @@ def _run(
         f"stderr:\n{result.stderr}"
     )
     return result
+
+
+def test_untouched_public_graph_render_is_byte_idempotent(tmp_path: Path) -> None:
+    fixture = json.loads(
+        (
+            PROJECT_ROOT
+            / "tests"
+            / "capsem-release"
+            / "fixtures"
+            / "release-graph-stable-nightly.json"
+        ).read_text(encoding="utf-8")
+    )
+    source = tmp_path / "nightly-source.json"
+    source.write_text(
+        json.dumps(
+            fixture["manifests"]["nightly"]["1.0.2"],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+
+    for manifest, output in (
+        (source, first),
+        (first / "assets" / "nightly" / "manifest.json", second),
+    ):
+        _run(
+            [
+                "cargo",
+                "run",
+                "-p",
+                "capsem-admin",
+                "--quiet",
+                "--",
+                "assets",
+                "channel",
+                "build",
+                "--manifest",
+                manifest.resolve().as_uri(),
+                "--channel",
+                "nightly",
+                "--manifest-version",
+                "1.0.2",
+                "--generated-at",
+                "2026-07-26T00:00:00Z",
+                "--out-dir",
+                str(output),
+            ]
+        )
+
+    assert (
+        first / "assets" / "nightly" / "manifest.json"
+    ).read_bytes() == (
+        second / "assets" / "nightly" / "manifest.json"
+    ).read_bytes()
 
 
 def _prepare_install_test_assets(path: Path) -> dict[str, Any]:
