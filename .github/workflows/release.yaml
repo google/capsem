@@ -64,6 +64,7 @@ jobs:
         run: |
           python3 scripts/fetch-channel-source-manifest.py \
             --channel "$RELEASE_CHANNEL" \
+            --require-profile-membership \
             --output target/channel-source/manifest.json
 
       - name: Project inactive first-channel public-before state

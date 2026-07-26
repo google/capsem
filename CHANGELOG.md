@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Made the shared fast gate reject case-insensitive Justfile references locally,
+  and made binary release fail early when its manifest-authorized staged channel
+  source does not exist.
+
 ## [1.6.1785096259] - 2026-07-26
 
 ### Fixed

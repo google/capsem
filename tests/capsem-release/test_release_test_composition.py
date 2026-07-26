@@ -245,6 +245,21 @@ def test_every_root_workflow_or_just_source_test_is_owned_by_the_fast_gate() -> 
     assert inspected_source_contracts <= inventory
 
 
+def test_python_tests_use_the_tracked_lowercase_justfile_name() -> None:
+    offenders: list[str] = []
+    wrong_case_path = re.compile(
+        r'\b(?:PROJECT_ROOT|ROOT)\s*/\s*["\']Justfile["\']'
+    )
+    for path in (PROJECT_ROOT / "tests").rglob("*.py"):
+        if wrong_case_path.search(path.read_text(encoding="utf-8")):
+            offenders.append(path.relative_to(PROJECT_ROOT).as_posix())
+
+    assert offenders == [], (
+        "case-insensitive local filesystems hide these Linux CI failures: "
+        + ", ".join(offenders)
+    )
+
+
 def test_parallel_coverage_state_is_kept_out_of_the_source_tree() -> None:
     runner = _recipe("_test-candidate-run")
 

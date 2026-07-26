@@ -256,7 +256,7 @@ def test_binary_release_checks_notes_before_version_stamp(
 
 
 def test_binary_recipe_checks_notes_before_complete_local_gate_and_push() -> None:
-    justfile = (PROJECT_ROOT / "Justfile").read_text(encoding="utf-8")
+    justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
     recipe = justfile.split("\nrelease-binaries channel:", 1)[1].split(
         "\nrelease-profile channel profile:", 1
     )[0]
@@ -268,6 +268,21 @@ def test_binary_recipe_checks_notes_before_complete_local_gate_and_push() -> Non
     assert "extract-release-notes.py" not in justfile.split(
         "\nrelease-profile channel profile:", 1
     )[1].split("\n# Compile all host binaries", 1)[0]
+
+
+def test_binary_recipe_fetches_serialized_channel_source_before_full_local_gate() -> None:
+    justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
+    recipe = justfile.split("\nrelease-binaries channel:", 1)[1].split(
+        "\nrelease-profile channel profile:", 1
+    )[0]
+
+    fetch = recipe.index("scripts/fetch-channel-source-manifest.py")
+    full_gate = recipe.index("just test")
+    assert fetch < full_gate
+    assert '--channel "{{channel}}"' in recipe
+    assert "--bootstrap-missing-first-party" not in recipe
+    assert "--require-profile-membership" in recipe
+    assert "GITHUB_TOKEN" in recipe
 
 
 def test_unexpected_write_aborts_before_commit_and_restores_owned_files(

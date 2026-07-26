@@ -119,6 +119,18 @@ def validate_source_manifest(payload: bytes, channel: str) -> dict[str, Any]:
     return manifest
 
 
+def validate_binary_source_manifest(
+    payload: bytes, channel: str
+) -> dict[str, Any]:
+    manifest = validate_source_manifest(payload, channel)
+    if not manifest["profiles"]:
+        raise ValueError(
+            f"source manifest for {channel} has no staged profiles; "
+            "run release-profile first"
+        )
+    return manifest
+
+
 def public_channel_is_absent(payload: bytes, channel: str) -> bool:
     catalog = json.loads(payload)
     if not isinstance(catalog, dict) or not isinstance(catalog.get("channels"), dict):
@@ -236,6 +248,11 @@ def main() -> int:
         "--profile",
         help="Selected profile required when bootstrapping an absent first-party channel.",
     )
+    parser.add_argument(
+        "--require-profile-membership",
+        action="store_true",
+        help="Reject a binary release source that has no staged profiles.",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     fallback_url = args.fallback_url or (
@@ -289,6 +306,8 @@ def main() -> int:
                 output=args.output,
             )
             source = f"capsem-admin bootstrap from {donor_source}"
+        if args.require_profile_membership:
+            validate_binary_source_manifest(payload, args.channel)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_bytes(payload)
     except (

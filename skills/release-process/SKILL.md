@@ -35,8 +35,11 @@ first. Each release command itself has this non-negotiable order:
 
 ```text
 just release-binaries <channel>
-  1. just test
-  2. only after success: run the binary release script and dispatch binary CI
+  1. validate release notes and fetch the fresh serialized channel source
+     manifest read-only; fail immediately if the manifest has no staged
+     channel/profile authority
+  2. just test
+  3. only after success: run the binary release script and dispatch binary CI
 
 just release-profile <channel> <profile>
   1. just test
@@ -50,11 +53,16 @@ checks, JavaScript checks/builds, and blocking Rust/Python/JavaScript
 vulnerability audits. It is still not release qualification and must never
 replace `just test` in either release command.
 
-`just test` must be the first consequential command. If it fails, the release
-command must stop before stamping versions, changing tracked files, committing,
-tagging, pushing, authoring a shared manifest, or dispatching a workflow. Test
-this fail-stop behavior by executing the public recipes with fake downstream
-commands; inspecting recipe text alone is insufficient.
+`just test` must be the first consequential command. Cheap read-only checks may
+precede it so missing notes, a missing serialized channel source, wrong-case
+paths, invalid workflow syntax, and similar deterministic failures stop before
+hours of local work. The binary preflight must fetch the mutable manifest/source
+fresh and may not bootstrap profile state. If the staged channel/profile source
+does not exist, the operator must use `release-profile` first. If `just test`
+fails, the release command must stop before stamping versions, changing tracked
+files, committing, tagging, pushing, authoring a shared manifest, or dispatching
+a workflow. Test this fail-stop behavior by executing the public recipes with
+fake downstream commands; inspecting recipe text alone is insufficient.
 
 After that gate succeeds, both commands run the same checked-in source guard.
 It requires the clean `main` HEAD captured before `just test`, then

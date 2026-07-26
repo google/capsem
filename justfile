@@ -64,6 +64,13 @@ release-binaries channel:
     #!/bin/bash
     set -euo pipefail
     python3 scripts/extract-release-notes.py --check
+    mkdir -p target/release-preflight
+    RELEASE_GITHUB_TOKEN="${GITHUB_TOKEN:-$(gh auth token)}"
+    GITHUB_TOKEN="$RELEASE_GITHUB_TOKEN" \
+        python3 scripts/fetch-channel-source-manifest.py \
+            --channel "{{channel}}" \
+            --require-profile-membership \
+            --output target/release-preflight/channel-source.json
     TESTED_HEAD=$(git rev-parse HEAD)
     just test
     python3 scripts/publish-tested-main.py --expected-head "$TESTED_HEAD"

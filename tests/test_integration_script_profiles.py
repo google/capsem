@@ -20,7 +20,7 @@ def load_integration_script():
 
 
 def _just_python_entrypoints() -> list[Path]:
-    justfile = (PROJECT_ROOT / "Justfile").read_text(encoding="utf-8")
+    justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
     referenced = {
         PROJECT_ROOT / relative
         for relative in re.findall(r"scripts/[A-Za-z0-9_.-]+\.py", justfile)

@@ -105,7 +105,7 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
         ),
     ),
 )
-def test_public_release_command_executes_full_test_before_release_work(
+def test_public_release_command_executes_read_only_preflight_then_full_test_before_mutation(
     tmp_path: Path,
     recipe: str,
     arguments: tuple[str, ...],
@@ -132,6 +132,7 @@ def test_public_release_command_executes_full_test_before_release_work(
             **os.environ,
             "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
             "TRACE": str(trace),
+            "GITHUB_TOKEN": "test-token",
         },
         text=True,
         stdout=subprocess.PIPE,
@@ -144,6 +145,12 @@ def test_public_release_command_executes_full_test_before_release_work(
     if recipe == "release-binaries":
         assert lines.pop(0) == (
             "python3:scripts/extract-release-notes.py --check"
+        )
+        assert lines.pop(0) == (
+            "python3:scripts/fetch-channel-source-manifest.py "
+            "--channel nightly "
+            "--require-profile-membership "
+            "--output target/release-preflight/channel-source.json"
         )
     assert lines[0] == "just:test"
     assert lines[1].startswith(
@@ -180,9 +187,14 @@ def test_failed_full_test_prevents_every_release_side_effect(
         executable.write_text(
             "#!/bin/sh\n"
             f'printf "{command}:%s\\n" "$*" >> "$TRACE"\n'
-            'if [ "$*" = "scripts/extract-release-notes.py --check" ]; then\n'
+            'case "$*" in\n'
+            '  "scripts/extract-release-notes.py --check"'
+            '|"scripts/fetch-channel-source-manifest.py --channel nightly '
+            '--require-profile-membership '
+            '--output target/release-preflight/channel-source.json")\n'
             "  exit 0\n"
-            "fi\n"
+            "  ;;\n"
+            "esac\n"
             "exit 99\n",
             encoding="utf-8",
         )
@@ -195,6 +207,7 @@ def test_failed_full_test_prevents_every_release_side_effect(
             **os.environ,
             "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
             "TRACE": str(trace),
+            "GITHUB_TOKEN": "test-token",
         },
         text=True,
         stdout=subprocess.PIPE,
@@ -205,7 +218,13 @@ def test_failed_full_test_prevents_every_release_side_effect(
     assert result.returncode != 0
     expected = ["just:test"]
     if recipe == "release-binaries":
-        expected.insert(0, "python3:scripts/extract-release-notes.py --check")
+        expected[0:0] = [
+            "python3:scripts/extract-release-notes.py --check",
+            "python3:scripts/fetch-channel-source-manifest.py "
+            "--channel nightly "
+            "--require-profile-membership "
+            "--output target/release-preflight/channel-source.json",
+        ]
     assert trace.read_text(encoding="utf-8").splitlines() == expected
 
 
@@ -559,3 +578,4 @@ def test_binary_bootstrap_uses_donor_only_as_public_before() -> None:
         "- name: Fetch latest selected channel source manifest", maxsplit=1
     )[1].split("- name:", maxsplit=1)[0]
     assert "--bootstrap-missing-first-party" not in source_fetch
+    assert "--require-profile-membership" in source_fetch

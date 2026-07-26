@@ -55,7 +55,7 @@ def test_unmaintained_only_warnings_remain_visible_but_nonblocking() -> None:
 
 
 def test_all_shared_rust_audit_callers_use_the_strict_wrapper() -> None:
-    justfile = (ROOT / "Justfile").read_text(encoding="utf-8")
+    justfile = (ROOT / "justfile").read_text(encoding="utf-8")
     security = (
         ROOT / ".github" / "workflows" / "security-audit.yaml"
     ).read_text(encoding="utf-8")
