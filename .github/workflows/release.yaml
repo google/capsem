@@ -1011,23 +1011,24 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          NOTES="See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
-          NOTES="${NOTES}
+          set -euo pipefail
+          owned="target/binary-release-publication"
+          notes="target/binary-release-notes.md"
+          mkdir -p "$owned"
+          cp release-artifacts/*.pkg "$owned/"
+          cp release-artifacts/*.deb "$owned/"
+          cp release-artifacts/capsem-sbom.spdx.json "$owned/"
+          cat > "$notes" <<EOF
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
 
           ### VM Assets
 
           VM assets are released independently at ${ASSET_MANIFEST_URL}.
-          "
-
-          gh release create "$RELEASE_TAG" \
-            release-artifacts/*.pkg \
-            release-artifacts/capsem-sbom.spdx.json \
-            --title "Capsem $RELEASE_TAG" \
-            --notes "$NOTES"
-
-          for deb in release-artifacts/*.deb; do
-            [ -f "$deb" ] && gh release upload "$RELEASE_TAG" "$deb"
-          done
+          EOF
+          CAPSEM_RELEASE_CREATE_TITLE="Capsem $RELEASE_TAG" \
+          CAPSEM_RELEASE_CREATE_NOTES_FILE="$notes" \
+            scripts/publish-immutable-release-assets.sh \
+              "$RELEASE_TAG" "$owned"
 
   assemble-release-channel:
     needs: [create-release, author-binary-candidate]
@@ -1087,9 +1088,12 @@ jobs:
         run: |
           set -euo pipefail
           source="target/binary-channel/$RELEASE_CHANNEL/manifest.json"
-          named="target/binary-channel/channel-source-$RELEASE_CHANNEL.json"
+          owned="target/binary-source-publication"
+          named="$owned/channel-source-$RELEASE_CHANNEL.json"
+          mkdir -p "$owned"
           cp "$source" "$named"
-          gh release upload "$RELEASE_TAG" "$named"
+          scripts/publish-immutable-release-assets.sh \
+            "$RELEASE_TAG" "$owned"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

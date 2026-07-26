@@ -196,3 +196,35 @@ def test_existing_profile_publication_is_reused_only_after_exact_byte_comparison
     assert "--actual" in immutable
     assert "gh release upload" not in immutable
     assert "immutable profile release already exists" not in immutable
+
+
+def test_binary_publication_retry_verifies_owned_bytes_and_uploads_only_missing() -> None:
+    workflow = BINARY_WORKFLOW.read_text(encoding="utf-8")
+    publisher = (
+        ROOT / "scripts" / "publish-immutable-release-assets.sh"
+    ).read_text(encoding="utf-8")
+    create = _job(workflow, "create-release", "assemble-release-channel")
+    assemble = _job(
+        workflow, "assemble-release-channel", "verify-release-candidate"
+    )
+    github_release = _step(create, "Create GitHub release", None)
+    source_manifest = _step(
+        assemble,
+        "Persist mutated source manifest on the immutable binary release",
+        None,
+    )
+
+    for step in (github_release, source_manifest):
+        assert "scripts/publish-immutable-release-assets.sh" in step
+        assert "gh release upload" not in step
+        assert "--clobber" not in step
+
+    assert workflow.count("scripts/publish-immutable-release-assets.sh") == 2
+    assert "gh release download" in publisher
+    assert "verify-immutable-publication.py" in publisher
+    assert publisher.count("--resume-owned") == 2
+    assert publisher.count("--missing-output") == 2
+    assert "while IFS= read -r missing" in publisher
+    assert 'gh release upload "$release_tag"' in publisher
+    assert "--clobber" not in publisher
+    assert 'gh release create "$release_tag"' in publisher
