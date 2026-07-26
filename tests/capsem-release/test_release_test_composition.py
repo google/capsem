@@ -240,6 +240,67 @@ def test_functional_module_runs_every_selected_profile_without_rebuilding() -> N
     assert "build-assets" not in runner
 
 
+def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tree(
+    tmp_path: Path,
+) -> None:
+    from tests.conftest import (
+        _missing_required_artifacts,
+        _required_artifacts_for_run,
+    )
+
+    source_agent = tmp_path / "target/linux-agent/x86_64"
+    release_inputs = tmp_path / "verified-profile-inputs"
+    release_package = tmp_path / "Capsem_1.5_amd64.deb"
+    release_binary = tmp_path / "target/debug/capsem"
+    required = _required_artifacts_for_run(
+        {
+            "CAPSEM_RELEASE_INPUT_DIR": str(release_inputs),
+            "CAPSEM_RELEASE_PACKAGE": str(release_package),
+            "CAPSEM_TEST_BINARY": str(release_binary),
+        },
+        {
+            "assets/manifest.json": tmp_path / "assets/manifest.json",
+            "target/linux-agent/<arch>": source_agent,
+        },
+    )
+
+    assert "target/linux-agent/<arch>" not in required
+    assert (
+        required["verified release input report"]
+        == release_inputs / "release-inputs.json"
+    )
+    assert required["manifest-selected release package"] == release_package
+    assert required["manifest-selected test binary"] == release_binary
+    assert _missing_required_artifacts(
+        {"CAPSEM_REQUIRE_ARTIFACTS": "1"},
+        required,
+    ) == [
+        "assets/manifest.json",
+        "verified release input report",
+        "manifest-selected release package",
+        "manifest-selected test binary",
+    ]
+
+    source_required = _required_artifacts_for_run(
+        {},
+        {"target/linux-agent/<arch>": source_agent},
+    )
+    assert source_required == {"target/linux-agent/<arch>": source_agent}
+
+
+def test_pulled_binary_static_gate_owns_source_agent_assertions() -> None:
+    runner = _recipe("_test-candidate-run")
+    cross_compile = runner[
+        runner.index("# ---- Stage 2: cross-arch agent cross-compile") :
+        runner.index("# ---- Stage 2b: Linux Rust platform parity")
+    ]
+
+    assert 'if [ "$TEST_MODULE" = "static" ]; then' in cross_compile
+    assert "tests/capsem-bootstrap/test_cross_compile.py" in cross_compile
+    assert "tests/capsem-security/test_binary_perms.py" in cross_compile
+    assert "target/linux-agent/$HOST_AGENT_ARCH" in cross_compile
+
+
 def test_source_state_digest_covers_dirty_and_untracked_nonignored_files(
     tmp_path: Path,
 ) -> None:

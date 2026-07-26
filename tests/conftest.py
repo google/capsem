@@ -172,6 +172,42 @@ _REQUIRED_ARTIFACTS = {
 _DEFAULT_TEST_NOFILE_LIMIT = 8192
 
 
+def _required_artifacts_for_run(
+    env: "os._Environ[str] | dict[str, str]",
+    required: dict[str, Path] | None = None,
+) -> dict[str, Path]:
+    """Return the artifacts that this exact test composition must prove.
+
+    Local ``just test`` owns source-build intermediates such as
+    ``target/linux-agent``. A release functional lane instead consumes an
+    already-verified package and profile input cohort. Requiring the source
+    intermediate there would force an unrelated rebuild and would not prove
+    the pulled package. Keep the manifest-derived release inputs and exact
+    staged binary mandatory in that mode.
+    """
+    selected = dict(_REQUIRED_ARTIFACTS if required is None else required)
+    release_inputs = env.get("CAPSEM_RELEASE_INPUT_DIR", "").strip()
+    if not release_inputs:
+        return selected
+
+    selected.pop("target/linux-agent/<arch>", None)
+
+    def release_path(variable: str) -> Path:
+        value = env.get(variable, "").strip()
+        if value:
+            return Path(value)
+        return _PROJECT_ROOT / "target" / "missing-release-environment" / variable
+
+    selected["verified release input report"] = (
+        Path(release_inputs) / "release-inputs.json"
+    )
+    selected["manifest-selected release package"] = release_path(
+        "CAPSEM_RELEASE_PACKAGE"
+    )
+    selected["manifest-selected test binary"] = release_path("CAPSEM_TEST_BINARY")
+    return selected
+
+
 def _desired_open_file_limit(env: "os._Environ[str] | dict[str, str]") -> int:
     """Return the pytest soft RLIMIT_NOFILE target.
 
@@ -239,14 +275,26 @@ def pytest_sessionstart(session):
     absence goes unnoticed.
     """
     _raise_open_file_limit()
-    missing = _missing_required_artifacts(os.environ, _REQUIRED_ARTIFACTS)
+    missing = _missing_required_artifacts(
+        os.environ,
+        _required_artifacts_for_run(os.environ),
+    )
     if missing:
+        if os.environ.get("CAPSEM_RELEASE_INPUT_DIR", "").strip():
+            guidance = (
+                "The release lane must stage the manifest-selected package, "
+                "binary inventory, and verified profile inputs before invoking pytest."
+            )
+        else:
+            guidance = (
+                "Run `just build-assets code` (for assets/) and "
+                "`uv run capsem-builder agent` (for target/linux-agent/) "
+                "before invoking pytest. Locally, unset the env var to let "
+                "tests skip on missing artifacts."
+            )
         pytest.exit(
             "CAPSEM_REQUIRE_ARTIFACTS=1 but the following artifacts are "
-            f"missing: {missing}. Run `just build-assets code` (for assets/) "
-            "and `uv run capsem-builder agent` (for target/linux-agent/) "
-            "before invoking pytest. Locally, unset the env var to let "
-            "tests skip on missing artifacts.",
+            f"missing: {missing}. {guidance}",
             returncode=1,
         )
 

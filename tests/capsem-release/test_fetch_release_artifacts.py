@@ -1140,7 +1140,7 @@ def _package_with_binary_inventory(
     manifest.write_text(json.dumps(document), encoding="utf-8")
 
 
-def test_package_staging_uses_and_verifies_the_complete_binary_inventory(
+def test_pulled_binary_package_staging_uses_and_verifies_complete_inventory(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     manifest, _ = _write_manifest(tmp_path)

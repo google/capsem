@@ -771,6 +771,28 @@ _test-candidate-run:
     echo "=== Cross-compile agent (both arches) ==="
     uv run capsem-builder agent config/docker/image
 
+    # Release static CI owns the source-build assertions once, immediately
+    # after producing both guest-binary architectures. The later functional
+    # job consumes the manifest-selected package/profile pairing and must not
+    # rebuild or require this source-only intermediate.
+    if [ "$TEST_MODULE" = "static" ]; then
+        case "$(uname -m)" in
+            arm64|aarch64) HOST_AGENT_ARCH=arm64 ;;
+            x86_64|amd64) HOST_AGENT_ARCH=x86_64 ;;
+            *)
+                echo "unsupported host architecture for guest binary proof: $(uname -m)" >&2
+                exit 1
+                ;;
+        esac
+        for guest_binary in capsem-pty-agent capsem-net-proxy capsem-mcp-server; do
+            test -x "target/linux-agent/$HOST_AGENT_ARCH/$guest_binary"
+        done
+        uv run python -m pytest \
+            tests/capsem-bootstrap/test_cross_compile.py \
+            tests/capsem-security/test_binary_perms.py::test_agent_binaries_555 \
+            -q
+    fi
+
     # ---- Stage 2b: Linux Rust platform parity ------------------------------
     # Native Linux runs exercise these cfg branches in Stage 3 below. A Mac
     # host must execute the same checked-in Linux runner inside the existing
@@ -874,13 +896,11 @@ _test-candidate-run:
     done
 
     echo "=== Python: non-serial tests (n=4 parallel) ==="
-    # CAPSEM_REQUIRE_ARTIFACTS=1: fail the suite if any of assets/<arch>/
-    # manifest.json, initrd.img, entitlements.plist, or target/linux-agent/
-    # <arch>/ is missing. Stages 1-4 already produced them (this recipe
-    # depends on _check-assets + _pack-initrd + _sign); if anything is
-    # absent it means an earlier stage silently dropped its output, and
-    # we want that to fail loudly here rather than manifest as a pile of
-    # individually-omitted tests whose absence goes unnoticed.
+    # CAPSEM_REQUIRE_ARTIFACTS=1 fails closed before collection. Local `all`
+    # mode requires the source-built assets and guest agents produced by
+    # earlier stages. A release consumer instead requires the exact pulled
+    # package, staged binary inventory, and manifest-selected profile inputs;
+    # the static module already proved the source guest-agent build.
     CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short --maxfail=1 -n 4 --dist=loadfile \
         -m "not serial" \
         "${HOST_SNAPSHOT_IGNORE_ARGS[@]}" \
