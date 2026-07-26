@@ -169,11 +169,11 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     deployable = _step(
         publish,
         "Build deployable channel from authored source manifest",
-        "Publish immutable GitHub profile release",
+        "Attest VM asset provenance",
     )
     immutable = _step(
-        publish, "Publish immutable GitHub profile release", "Attest VM asset provenance"
-    )
+        publish, "Publish immutable GitHub profile release", None
+    ).split("\n      - uses:", maxsplit=1)[0]
 
     assert "needs.author-profile-release.outputs.release_needed == 'true'" in pairing
     assert "uses: ./.github/workflows/fast-gate.yaml" in fast_gate
@@ -235,10 +235,8 @@ def test_profile_publication_retry_verifies_owned_bytes_and_uploads_only_missing
     ).read_text(encoding="utf-8")
     publish = _job(workflow, "publish-profile-release", "deploy-channel")
     immutable = _step(
-        publish,
-        "Publish immutable GitHub profile release",
-        "Attest VM asset provenance",
-    )
+        publish, "Publish immutable GitHub profile release", None
+    ).split("\n      - uses:", maxsplit=1)[0]
 
     assert "scripts/publish-immutable-release-assets.sh" in immutable
     assert "CAPSEM_RELEASE_CREATE_TITLE=" in immutable
@@ -252,6 +250,15 @@ def test_profile_publication_retry_verifies_owned_bytes_and_uploads_only_missing
     assert publisher.count("--missing-output") == 2
     assert "while IFS= read -r missing" in publisher
     assert 'gh release upload "$release_tag"' in publisher
+
+
+def test_profile_provenance_precedes_authoritative_source_publication() -> None:
+    workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
+    publish = _job(workflow, "publish-profile-release", "deploy-channel")
+
+    assert publish.index("      - name: Attest VM asset provenance") < publish.index(
+        "      - name: Publish immutable GitHub profile release"
+    )
 
 
 def test_binary_publication_retry_verifies_owned_bytes_and_uploads_only_missing() -> None:
