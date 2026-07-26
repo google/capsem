@@ -17,6 +17,7 @@ manifest-recorded artifact digests, never by channel, and reverified on use.
 just doctor        # Check tools (first time)
 just doctor fix    # Install prerequisites and materialize missing VM assets
 just shell         # Build + boot VM (~10s)
+just smoke         # Focused developer feedback; not release qualification
 just test          # ALL tests: unit + integration + cross-compile + Docker e2e. No shortcuts.
 just release-binaries nightly
 just release-profile nightly code

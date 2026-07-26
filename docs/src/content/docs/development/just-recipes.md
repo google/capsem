@@ -26,11 +26,12 @@ quick checks. After frontend changes intended for the desktop app, use
 
 | Recipe | What it does | Boots VM? |
 |--------|-------------|-----------|
+| `just smoke` | Focused developer feedback: audit, doctor, injection, service/CLI/MCP/gateway tests | Yes |
 | `just test` | Full gate: unit/coverage, VM suites, cross-compile, both Linux packages, Docker install, and a clean-Tart exact `.pkg` install/glow-up on macOS | Yes |
 
-`just test` is the only public test gate. Targeted pytest, cargo, pnpm, and
-script commands are for diagnosis and iteration; no focused composite may be
-used to declare release readiness.
+`just smoke` is for developer feedback only. `just test` is the release source
+of truth, and both public release commands execute it before any release work.
+Targeted commands are for diagnosis and iteration, not release readiness.
 
 ## Policy Verification
 
@@ -44,7 +45,7 @@ and telemetry. Use this sequence for focused iteration:
 | Frontend policy UI/model | `pnpm -C frontend test -- settings-model settings-export api settings-store` |
 | Frontend type/check gate | `pnpm -C frontend run check` |
 | Docs gate | `cd docs && pnpm run build` |
-| Focused VM diagnosis | `just shell`, then run the exact diagnostic |
+| Focused VM feedback | `just smoke` |
 | Session integrity | `just inspect-session [id]` |
 | Session SQL proof | `just query-session "SQL" [id]` |
 | Final gate | `just test` |
@@ -122,8 +123,8 @@ the current-build runtime profile under `target/config/` from checked-in
 | `just doctor` | Check tools, colored output, structured recap (exits 1 if failures) |
 | `just doctor fix` | Doctor + auto-fix all fixable issues in dependency order |
 
-Rust and JavaScript vulnerability audits are mandatory parts of `just test`;
-there is no separate public audit or reduced-test recipe that can drift from
+Rust and JavaScript vulnerability audits are mandatory parts of `just smoke`
+and `just test`; there is no separate public audit recipe that can drift from
 the tested composition.
 
 ## Release

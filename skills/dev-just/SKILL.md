@@ -24,16 +24,17 @@ allowlist update in the same change.
 | `just run-service` | Materialize assets/config and start the local daemon idempotently. |
 | `just logs [sandbox-id\|failure]` | Tail service logs, show a sandbox log, or list the latest preserved failure evidence. |
 | `just doctor [fix]` | Validate host tools, Docker/Colima, Tart cache/boot/SSH, signing, and assets. |
+| `just smoke` | Focused developer integration feedback; never release qualification. |
 | `just test` | Complete local all-artifact construction and test proof. |
 | `just release-binaries <channel>` | Run complete `just test`, then build and release only packages for one channel against pulled profiles. |
 | `just release-profile <channel> <profile>` | Run complete `just test`, then call `capsem-admin release` for one profile against the pulled package. |
 
-`just --summary` must print only those 12 names.
+`just --summary` must print only those 13 names.
 
 ## What does not belong in Just
 
-- No reduced or focused public test recipe. `test` is the only public test
-  gate. Focused diagnosis runs its native command directly.
+- `smoke` is the one public focused developer gate. It is never sufficient for
+  release; both release commands must call complete `test`, not `smoke`.
 - No generic or combined release recipe. The two approved release commands
   each run `just test` before delegating to one checked-in implementation, and
   the two workflows share the per-channel lock.

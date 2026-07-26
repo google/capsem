@@ -11,6 +11,7 @@
 #   run-service            idempotent local daemon
 #   logs [sandbox|failure] service, VM, or failure evidence
 #   doctor                 host, Docker/Colima, Tart, and asset readiness
+#   smoke                  focused local integration feedback
 #   test                   complete local all-artifact proof
 #   release-binaries       publish packages for one channel
 #   release-profile        publish one channel/profile
@@ -93,7 +94,7 @@ _sign: _build-host
 # Ensure capsem-service daemon is running with the current binary.
 # Kills any existing dev-owned instance (via pidfile -- never pkill-by-name)
 # and relaunches fresh. Honors CAPSEM_HOME / CAPSEM_RUN_DIR env vars so
-# Test gates run against an isolated test home
+# `just test` and `just smoke` run against an isolated test home
 # without ever touching the user's locally installed capsem.
 _ensure-service: _sign
     #!/bin/bash
@@ -148,8 +149,8 @@ _ensure-service: _sign
     echo "event=dev_profile_assets_materialized assets=$ASSETS_DIR profiles=$PROFILES_DIR"
     echo "Starting capsem-service (CAPSEM_HOME=$CAPSEM_HOME_DIR)..."
     # Close fd 3 on the service; otherwise the backgrounded service inherits
-    # the execution-lock fd from the private smoke helper / `just test` and
-    # keeps the flock held after the outer shell exits, blocking later runs.
+    # the execution-lock fd from `just smoke` / `just test` and keeps the
+    # flock held after the outer shell exits, blocking subsequent runs.
     nohup env CAPSEM_PROFILES_DIR="$GENERATED_PROFILES" RUST_LOG=capsem=debug {{service_binary}} \
         --assets-dir "$ASSETS_DIR" \
         --process-binary {{process_binary}} \
@@ -1452,9 +1453,8 @@ _check-generated-settings:
     ROOT="{{justfile_directory()}}"
     bash "$ROOT/scripts/check-generated-settings.sh" "$ROOT"
 
-# Private focused integration helper. It is deliberately not a public
-# substitute for the complete `just test` gate.
-_smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-config
+# Focused developer feedback; never release qualification.
+smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-config
     #!/bin/bash
     set -euo pipefail
     # Smoke runs against an isolated CAPSEM_HOME so it doesn't stomp on a
@@ -1463,7 +1463,7 @@ _smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-con
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
     # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
-    # below. Acquired BEFORE the wipe: if a second focused helper were to run
+    # below. Acquired BEFORE the wipe: if a second `just smoke` were to run
     # past this line, the first's fd would be pinned to an unlinked inode
     # and the second would flock a brand-new inode unchallenged.
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
@@ -1508,8 +1508,7 @@ _smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-con
     step "Rust clippy + audits + frontend lint (parallel)"
     # Clippy (superset of cargo check) is the lint gate per CLAUDE.md.
     # Frontend `pnpm run check` runs here too so a broken Svelte/TS type
-    # fails this focused helper in seconds instead of only surfacing under
-    # `just test`.
+    # fails smoke in seconds instead of only surfacing under `just test`.
     # Background jobs don't trip `set -e`, so aggregate via FAIL=1.
     cargo clippy --workspace --all-targets -- -D warnings & CLIPPY_PID=$!
     uv run ruff check . & RUFF_PID=$!
@@ -2180,7 +2179,7 @@ _check-assets:
 
 _pnpm-install:
     # CI=true suppresses pnpm's interactive "remove and reinstall
-    # node_modules?" prompt, which hangs test execution
+    # node_modules?" prompt, which hangs `just test` / `just smoke`
     # when the store layout drifts from the lockfile. Matches the
     # `CI=true pnpm install` already used in cross-compile and
     # test-install below.

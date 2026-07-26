@@ -43,6 +43,9 @@ just release-profile <channel> <profile>
   2. only after success: invoke capsem-admin release for that channel/profile
 ```
 
+`just smoke` remains useful public developer feedback. It is not release
+qualification and must never replace `just test` in either release command.
+
 `just test` must be the first consequential command. If it fails, the release
 command must stop before stamping versions, changing tracked files, committing,
 tagging, pushing, authoring a shared manifest, or dispatching a workflow. Test

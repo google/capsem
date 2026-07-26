@@ -46,7 +46,7 @@ When the capsem MCP server is configured, Claude Code has direct VM control via 
 | Read a guest file to understand state | `capsem_read_file` |
 | Verify telemetry was recorded correctly | typed stats/timeline/security routes or Ironbank direct ledger reads |
 | Full regression suite | `just test` |
-| Build + boot for focused diagnosis | `just shell` or `just exec "<command>"` |
+| Build + boot + focused developer validation | `just smoke` |
 | Benchmark performance | `just test` |
 
 MCP tools are for fast, targeted checks during development. Just recipes are for comprehensive validation before committing.

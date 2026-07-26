@@ -155,8 +155,8 @@ def _command_attribute_prefix(source: str, struct_name: str = "Args") -> str:
     return source[: source.index(marker)]
 
 
-def test_private_smoke_helper_runs_full_doctor_without_fast_escape_hatch() -> None:
-    block = _recipe_block("_smoke:")
+def test_smoke_runs_full_doctor_without_fast_escape_hatch() -> None:
+    block = _recipe_block("smoke:")
 
     assert "{{cli_binary}} doctor" in block
     assert FAST_DOCTOR_FLAG not in block

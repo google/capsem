@@ -54,8 +54,8 @@ web-surface script must fail immediately with a message naming the `Install
 release site dependencies` step when `release-site/node_modules/.bin/astro`
 is absent.
 
-RustSec and the JavaScript bulk advisory audit are blocking in local `just
-test`, ordinary CI, both release lanes, and the scheduled/manual
+RustSec and the JavaScript bulk advisory audit are blocking in `just smoke`,
+local `just test`, ordinary CI, both release lanes, and the scheduled/manual
 `security-audit.yaml`. A newly published advisory is a real red gate: diagnose
 and remediate it or record an explicit reviewed exception in the scanner's
 checked-in policy. Never turn the command into a warning or

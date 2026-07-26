@@ -1,6 +1,6 @@
 ---
 name: dev-testing
-description: Capsem testing policy and workflow. Use whenever running tests, writing new tests, or verifying changes work. Covers focused native tests, the single public full gate, TDD red-green-refactor, adversarial security testing, coverage policy, and mandatory end-to-end VM validation. For VM-specific tests see dev-testing-vm, for hypervisor tests see dev-testing-hypervisor, for frontend tests see dev-testing-frontend.
+description: Capsem testing policy and workflow. Use whenever running tests, writing new tests, or verifying changes work. Covers focused native tests, developer smoke feedback, the single public full release gate, TDD red-green-refactor, adversarial security testing, coverage policy, and mandatory end-to-end VM validation. For VM-specific tests see dev-testing-vm, for hypervisor tests see dev-testing-hypervisor, for frontend tests see dev-testing-frontend.
 ---
 
 # Testing
@@ -13,11 +13,12 @@ belongs under `tests/fixtures/`, not root `config/`.
 | Command | What | VM? |
 |---------|------|-----|
 | `just test` | Everything: unit/coverage, cross-compile, frontend, Python/VM integration, injection, benchmarks, Linux install, and exact-package clean-Tart macOS install/glow-up | Yes |
+| `just smoke` | Focused developer feedback: repack, sign, boot, doctor, MCP, and service integration | Yes |
 
-`just test` is the single public source of truth. There is no public fast or
-smoke composite that can be mistaken for release readiness. During TDD run the
-smallest native pytest, cargo, pnpm, or script command directly; `just test` is
-the only completion and release gate.
+`just test` is the single release source of truth. `just smoke` is useful
+developer feedback, but it never qualifies or releases anything. During TDD
+run the smallest native pytest, cargo, pnpm, or script command directly;
+release commands must execute full `just test`.
 
 The full gate is a construction boundary, not the edit loop. During TDD,
 reproduce the failure with the smallest focused test, run that test red/green,
@@ -75,13 +76,13 @@ load Developer ID material or create a signing keychain. The tagged publication
 workflow alone signs, notarizes, staples, and installs the final publishable
 package.
 Tart macOS guests do not support nested virtualization, so these are two
-explicit halves of one script rather than a claimed nested proof. Do not
-create a public partial gate that excludes this boundary.
+explicit halves of one script rather than a claimed nested proof. `just smoke`
+deliberately excludes Tart and therefore cannot be used for release.
 
 Rust is pinned to `1.97.1` across the workspace file, workflow steps,
 host-builder, and bootstrap. Change all pin surfaces together in a deliberate
-toolchain-bump PR. RustSec and JavaScript bulk advisories are blocking gates in
-local `just test`, ordinary CI, and both release lanes,
+toolchain-bump PR. RustSec and JavaScript bulk advisories are blocking in
+`just smoke`, local `just test`, ordinary CI, and both release lanes,
 as well as the scheduled/manual audit. A new advisory fails the candidate
 until it is remediated or explicitly reviewed in checked-in scanner policy.
 
@@ -390,10 +391,10 @@ All Python integration tests live under `tests/capsem-*/` and use pytest markers
 | Session exhaustive | `capsem-session-exhaustive/` | `session_exhaustive` | Yes | Per-table data validation, cross-table FK integrity |
 | Install | `capsem-install/` | `install` | No | Native package installer: layout, auto-launch, service install, manifest placement, update, uninstall, lifecycle, reinstall, error paths |
 
-`just test` is the only public test gate. Suite-specific, focused, and
-install/package rails are private implementation details; run an individual
-pytest/cargo/pnpm command directly for focused diagnosis instead of adding a
-public composite.
+`just test` is the only public complete/release gate and `just smoke` is the
+only public focused composite. Suite-specific and install/package rails are
+private implementation details; run an individual pytest/cargo/pnpm command
+directly for focused diagnosis instead of adding another public composite.
 
 Public Just recipes, Capsem CLI command paths, and service HTTP method/path
 pairs are exact approval-gated surfaces. Any change must pass
@@ -403,7 +404,8 @@ editing `config/public-surface.toml`.
 ## Test matrix: what runs where
 
 Read `references/test-matrix.md` for the per-crate Rust CI matrix and the
-Python suite map (which suites run versus collect in PR CI and the full gate).
+Python suite map (which suites run versus collect in PR CI, smoke, and the full
+gate).
 
 ### Coverage targets
 

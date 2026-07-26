@@ -277,7 +277,7 @@ def test_reusable_fast_gate_installs_workspace_static_prerequisites() -> None:
 
 
 def test_standalone_functional_scripts_use_the_project_python() -> None:
-    for recipe in ("_test-candidate-run", "_smoke"):
+    for recipe in ("_test-candidate-run", "smoke"):
         body = _recipe(recipe)
         for script in ("scripts/injection_test.py", "scripts/integration_test.py"):
             assert f"python3 {script}" not in body
