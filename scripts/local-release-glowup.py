@@ -92,6 +92,7 @@ HOST_BINARIES = (
     "capsem-tray",
     "capsem-admin",
     "capsem-mock-server",
+    "capsem-bench-rs",
 )
 
 

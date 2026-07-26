@@ -304,13 +304,14 @@ jobs:
             -p capsem-gateway \
             -p capsem-tray \
             -p capsem-admin \
-            -p capsem-mock-server
+            -p capsem-mock-server \
+            -p capsem-bench
 
       - name: Codesign companion binaries
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server; do
+          for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
             codesign --sign "$APPLE_SIGNING_IDENTITY" \
               --options runtime \
               --timestamp \
@@ -464,7 +465,7 @@ jobs:
           require_path "per-user CLI" -x "$HOME/.capsem/bin/capsem"
           CAPSEM_VERSION_OUTPUT="$("$HOME/.capsem/bin/capsem" --version)"
           require_contains "per-user CLI version" "$VERSION" "$CAPSEM_VERSION_OUTPUT"
-          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server; do
+          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
             require_path "host binary $bin" -x "$HOME/.capsem/bin/$bin"
             BIN_VERSION_OUTPUT="$("$HOME/.capsem/bin/$bin" --version)"
             require_contains "host binary $bin version" "$VERSION" "$BIN_VERSION_OUTPUT"
@@ -626,7 +627,7 @@ jobs:
 
       - name: Build companion binaries
         run: |
-          cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server
+          cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench
 
       - name: Repack .deb with companion binaries
         run: |
@@ -638,7 +639,7 @@ jobs:
           echo "=== Validate deb ==="
           dpkg-deb --info target/release/bundle/deb/*.deb
           echo "=== Verify companion binaries in deb ==="
-          dpkg-deb --contents target/release/bundle/deb/*.deb | grep -E "capsem-service|capsem-tui|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin|capsem-mock-server"
+          dpkg-deb --contents target/release/bundle/deb/*.deb | grep -E "capsem-service|capsem-tui|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin|capsem-mock-server|capsem-bench-rs"
 
       - name: Enable KVM for exact-package VM proof
         if: matrix.arch == 'x86_64'
@@ -658,7 +659,7 @@ jobs:
           test -x /usr/bin/capsem
           /usr/bin/capsem --version | grep -F "$VERSION"
           dpkg-query -W -f='${Version}' capsem | grep -Fx "$VERSION"
-          for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server; do
+          for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
             test -x "/usr/bin/$bin"
             if [ "$bin" != "capsem-app" ]; then
               "/usr/bin/$bin" --version | grep -F "$VERSION"
@@ -1329,7 +1330,7 @@ jobs:
           test -x /usr/bin/capsem-app
           "$HOME/.capsem/bin/capsem" --version | grep -F "$EXPECTED_VERSION"
           dpkg-query -W -f='${Version}' capsem | grep -Fx "$EXPECTED_VERSION"
-          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server; do
+          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
             test -x "$HOME/.capsem/bin/$bin"
             "$HOME/.capsem/bin/$bin" --version | grep -F "$EXPECTED_VERSION"
           done

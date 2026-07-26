@@ -17,7 +17,7 @@ const HTTP_REQUEST_ATTEMPTS: usize = 5;
 const HTTP_RETRY_BACKOFF_BASE_MS: u64 = 2;
 
 #[derive(Parser, Debug)]
-#[command(about = "Capsem benchmark harness")]
+#[command(version = env!("CARGO_PKG_VERSION"), about = "Capsem benchmark harness")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,

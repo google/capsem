@@ -40,6 +40,7 @@ BINARIES=(
     capsem-tray
     capsem-admin
     capsem-mock-server
+    capsem-bench-rs
 )
 
 exec > >(tee "$SHARE/guest.log") 2>&1

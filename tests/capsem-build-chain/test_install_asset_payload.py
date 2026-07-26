@@ -287,7 +287,7 @@ def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
     assert 'CAPSEM_PROOF_MANIFEST_URL="$MANIFEST_URL"' in block
     assert 'CAPSEM_PROOF_MANIFEST_CHANNEL="$MANIFEST_CHANNEL"' in block
     assert 'CAPSEM_PROOF_DEB="$DEB"' in block
-    assert "capsem-mock-server)\\$'" in block
+    assert "capsem-bench-rs)\\$'" in block
     assert '-e "HOST_UID=$HOST_UID"' in block
     assert '-e "HOST_GID=$HOST_GID"' in block
     assert 'trap \'chown -R \\"\\$HOST_UID:\\$HOST_GID\\"' in block
@@ -626,6 +626,34 @@ def test_native_packages_make_full_doctor_mock_server_self_contained() -> None:
     assert "std::env::current_exe()" in cli
     assert cli.index("std::env::current_exe()") < cli.index("std::env::current_dir()")
     assert "#[command(version" in mock_server
+
+
+def test_native_packages_include_the_release_functional_benchmark() -> None:
+    package_paths = (
+        "scripts/repack-deb.sh",
+        "scripts/deb-postinst.sh",
+        "scripts/build-pkg.sh",
+        "scripts/pkg-scripts/postinstall",
+        "scripts/build-test-macos-package.sh",
+        "scripts/macos_tart_guest.sh",
+        "scripts/local-release-glowup.py",
+        "scripts/simulate-install.sh",
+    )
+    for path in package_paths:
+        assert "capsem-bench-rs" in (PROJECT_ROOT / path).read_text(), path
+
+    workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
+    assert "-p capsem-bench" in workflow
+    assert "capsem-mock-server capsem-bench-rs" in workflow
+
+    justfile = (PROJECT_ROOT / "justfile").read_text()
+    assert "-p capsem-mock-server -p capsem-bench" in justfile
+    assert "capsem-bench-rs; do" in justfile
+
+    benchmark = (
+        PROJECT_ROOT / "crates" / "capsem-bench" / "src" / "main.rs"
+    ).read_text()
+    assert '#[command(version = env!("CARGO_PKG_VERSION")' in benchmark
 
 
 def test_full_gate_runs_fast_checks_before_install_harness_preflight() -> None:

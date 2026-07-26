@@ -60,7 +60,7 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=layout_ready caps
 
 # Copy companion binaries from pkg payload
 CAPSEM_INSTALL_PHASE="copy_binaries"
-for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
     src="$PKG_SHARE/bin/$bin"
     if [ ! -f "$src" ]; then
         echo "capsem: packaged binary missing: $src" >&2
@@ -85,6 +85,7 @@ codesign_identifier_for_bin() {
         capsem-tray) echo "org.capsem.tray" ;;
         capsem-admin) echo "org.capsem.admin" ;;
         capsem-mock-server) echo "org.capsem.mock-server" ;;
+        capsem-bench-rs) echo "org.capsem.bench" ;;
         *) return 1 ;;
     esac
 }

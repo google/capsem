@@ -83,7 +83,7 @@ fi
 
 # Symlink system binaries into user dir
 CAPSEM_INSTALL_PHASE="link_binaries"
-for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
     if [ ! -f "/usr/bin/$bin" ]; then
         echo "capsem: packaged binary missing: /usr/bin/$bin" >&2
         echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=deb-postinst event=binary_missing bin=$bin src=/usr/bin/$bin"

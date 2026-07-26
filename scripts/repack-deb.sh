@@ -21,6 +21,7 @@
 #   /usr/bin/capsem-tray
 #   /usr/bin/capsem-admin
 #   /usr/bin/capsem-mock-server
+#   /usr/bin/capsem-bench-rs
 #   /usr/share/capsem/assets/manifest-metadata.json
 #   /usr/share/capsem/profiles/
 #   DEBIAN/preinst script
@@ -219,7 +220,7 @@ ensure_deb_dependency "$WORK_DIR/deb/DEBIAN/control" "libxdo3"
 
 echo "=== Adding companion binaries ==="
 mkdir -p "$WORK_DIR/deb/usr/bin"
-for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
     src="$BIN_DIR/$bin"
     if [ -f "$src" ]; then
         cp "$src" "$WORK_DIR/deb/usr/bin/$bin"
