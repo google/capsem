@@ -1529,15 +1529,15 @@ fn rewrite_profile_publication_urls(
                     .get("name")
                     .and_then(serde_json::Value::as_str)
                     .or_else(|| {
+                        row.get("url")
+                            .and_then(serde_json::Value::as_str)
+                            .and_then(|url| url.rsplit('/').next())
+                    })
+                    .or_else(|| {
                         row.get("path")
                             .and_then(serde_json::Value::as_str)
                             .and_then(|path| Path::new(path).file_name())
                             .and_then(|name| name.to_str())
-                    })
-                    .or_else(|| {
-                        row.get("url")
-                            .and_then(serde_json::Value::as_str)
-                            .and_then(|url| url.rsplit('/').next())
                     })
                     .ok_or_else(|| {
                         anyhow!("candidate profile {field} row has no publication file name")
