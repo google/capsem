@@ -253,6 +253,22 @@ def test_functional_module_runs_every_selected_profile_without_rebuilding() -> N
     assert "build-assets" not in runner
 
 
+def test_release_functional_helpers_never_hide_host_binary_builds() -> None:
+    helper_paths = (
+        "scripts/mock_server.py",
+        "tests/helpers/gateway.py",
+        "tests/capsem-service/test_profile_assets.py",
+        "tests/capsem-admin/test_profile_materialization.py",
+        "tests/ironbank/test_profile_asset_readiness.py",
+        "tests/test_capsem_bench_rust.py",
+    )
+
+    for path in helper_paths:
+        source = (PROJECT_ROOT / path).read_text(encoding="utf-8")
+        assert "ensure_host_test_binary" in source, path
+        assert '["cargo", "build"' not in source, path
+
+
 def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tree(
     tmp_path: Path,
 ) -> None:

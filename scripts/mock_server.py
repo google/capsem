@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from scripts.release_test_binary import ensure_host_test_binary
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MOCK_SERVER_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-mock-server"
@@ -107,25 +109,17 @@ def stop_process(proc: subprocess.Popen[str] | None) -> None:
         lock_file.close()
 
 
-def _mock_server_binary_is_stale() -> bool:
-    if not MOCK_SERVER_BINARY.exists():
-        return True
-    binary_mtime = MOCK_SERVER_BINARY.stat().st_mtime
-    for path in MOCK_SERVER_CRATE.rglob("*"):
-        if path.is_file() and path.suffix in {".rs", ".toml"} and path.stat().st_mtime > binary_mtime:
-            return True
-    return False
-
-
 def _ensure_mock_server_binary() -> None:
-    if _mock_server_binary_is_stale():
-        subprocess.run(
-            ["cargo", "build", "-p", "capsem-mock-server"],
-            cwd=PROJECT_ROOT,
-            check=True,
-        )
-    if not MOCK_SERVER_BINARY.exists():
-        raise FileNotFoundError(f"{MOCK_SERVER_BINARY} not found after cargo build")
+    ensure_host_test_binary(
+        MOCK_SERVER_BINARY,
+        source_paths=(
+            path
+            for path in MOCK_SERVER_CRATE.rglob("*")
+            if path.is_file() and path.suffix in {".rs", ".toml"}
+        ),
+        build_command=("cargo", "build", "-p", "capsem-mock-server"),
+        project_root=PROJECT_ROOT,
+    )
 
 
 def start_mock_server(

@@ -13,6 +13,8 @@ import time
 
 from pathlib import Path
 
+from scripts.release_test_binary import ensure_host_test_binary
+
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
 GATEWAY_SOURCE_PATHS = [
@@ -23,22 +25,12 @@ GATEWAY_SOURCE_PATHS = [
 
 
 def _ensure_gateway_binary_current() -> None:
-    if GATEWAY_BINARY.exists() and all(
-        GATEWAY_BINARY.stat().st_mtime >= path.stat().st_mtime for path in GATEWAY_SOURCE_PATHS
-    ):
-        return
-    result = subprocess.run(
-        ["cargo", "build", "-p", "capsem-gateway"],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=120,
+    ensure_host_test_binary(
+        GATEWAY_BINARY,
+        source_paths=GATEWAY_SOURCE_PATHS,
+        build_command=("cargo", "build", "-p", "capsem-gateway"),
+        project_root=PROJECT_ROOT,
     )
-    if result.returncode != 0:
-        raise RuntimeError(
-            "cargo build -p capsem-gateway failed\n"
-            f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        )
 
 
 class GatewayInstance:

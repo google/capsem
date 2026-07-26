@@ -10,6 +10,7 @@ import tomllib
 from pathlib import Path
 
 from blake3 import blake3
+from scripts.release_test_binary import ensure_host_test_binary
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ADMIN = PROJECT_ROOT / "target" / "debug" / "capsem-admin"
@@ -22,16 +23,11 @@ def _host_arch() -> str:
 
 
 def _ensure_admin_binary() -> None:
-    admin_source = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
-    if ADMIN.exists() and ADMIN.stat().st_mtime >= admin_source.stat().st_mtime:
-        return
-    subprocess.run(
-        ["cargo", "build", "-p", "capsem-admin"],
-        cwd=PROJECT_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=120,
+    ensure_host_test_binary(
+        ADMIN,
+        source_paths=(PROJECT_ROOT / "crates" / "capsem-admin").rglob("*.rs"),
+        build_command=("cargo", "build", "-p", "capsem-admin"),
+        project_root=PROJECT_ROOT,
     )
 
 
