@@ -816,6 +816,9 @@ def test_profile_release_deploys_generated_preview_only_when_changed_and_compati
 
 def test_profile_release_publishes_incompatible_assets_but_withholds_channel_deploy() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8")
+    reusable_fast_gate = (
+        PROJECT_ROOT / ".github/workflows/fast-gate.yaml"
+    ).read_text(encoding="utf-8")
     pairing = workflow.split("  test-profile-pairing:", maxsplit=1)[1].split(
         "  author-profile-release:", maxsplit=1
     )[0]
@@ -830,7 +833,8 @@ def test_profile_release_publishes_incompatible_assets_but_withholds_channel_dep
     assert "scripts/check-profile-release-delta.py" in author
     assert "cargo run -p capsem-admin -- release" in author
     assert "Run shared artifact module" in pairing
-    assert "Run shared release contracts" in pairing
+    assert "Run shared release contracts" in reusable_fast_gate
+    assert "Run shared release contracts" not in pairing
     assert (
         "if:"
         not in pairing.split("- name: Run shared artifact module", maxsplit=1)[1].split(
@@ -840,7 +844,7 @@ def test_profile_release_publishes_incompatible_assets_but_withholds_channel_dep
     assert "Publish immutable GitHub profile release" in publish
     immutable_release = publish.split(
         "- name: Publish immutable GitHub profile release", maxsplit=1
-    )[1].split("- name: Attest VM asset provenance", maxsplit=1)[0]
+    )[1].split("- uses: actions/upload-artifact@", maxsplit=1)[0]
     assert "outputs.compatible" not in immutable_release
     assert "needs.publish-profile-release.outputs.compatible == 'true'" in deploy_channel
 

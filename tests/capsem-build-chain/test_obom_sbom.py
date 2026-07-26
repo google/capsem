@@ -43,8 +43,8 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     assert "scripts/stage-profile-publication.py" in asset_workflow
     assert "scripts/verify-profile-publication.py" in asset_workflow
     assert "subject-path: target/asset-release/profile-*/*" in asset_workflow
-    assert asset_workflow.index("Publish immutable GitHub profile release") < asset_workflow.index(
-        "Attest VM asset provenance"
+    assert publish_profile.index("Attest VM asset provenance") < publish_profile.index(
+        "Publish immutable GitHub profile release"
     )
     assert (
         'for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations")'
