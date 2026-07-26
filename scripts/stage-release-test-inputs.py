@@ -95,6 +95,59 @@ def _reset_staging_directory(path: Path, label: str) -> None:
     path.mkdir(parents=True)
 
 
+def _validated_shared_config_sources(
+    shared_config_root: Path,
+    *staging_roots: Path,
+) -> list[tuple[Path, str]]:
+    # Settings and corp policy are not profile publication bytes. The release
+    # gate still needs the checked-in defaults in its isolated config root so
+    # capsem-admin can validate and materialize the manifest-owned profiles.
+    if shared_config_root.is_symlink() or not shared_config_root.is_dir():
+        raise ValueError(f"shared config root is missing or unsafe: {shared_config_root}")
+    shared_resolved = shared_config_root.resolve()
+    for staging_root in staging_roots:
+        staging_resolved = staging_root.resolve()
+        if (
+            shared_resolved == staging_resolved
+            or shared_resolved in staging_resolved.parents
+            or staging_resolved in shared_resolved.parents
+        ):
+            raise ValueError(
+                "shared config root and release staging roots must not overlap: "
+                f"{shared_resolved} / {staging_resolved}"
+            )
+
+    sources: list[tuple[Path, str]] = []
+    for name in ("settings", "corp"):
+        source = shared_config_root / name
+        if source.is_symlink() or not source.is_dir():
+            raise ValueError(f"shared config subtree is missing or unsafe: {source}")
+        for child in source.rglob("*"):
+            if child.is_symlink():
+                raise ValueError(
+                    f"shared config must not contain symlinks: {child}"
+                )
+            if not child.is_dir() and not child.is_file():
+                raise ValueError(
+                    f"shared config contains an unsupported entry: {child}"
+                )
+        sources.append((source, name))
+
+    for relative in ("settings/settings.toml", "corp/corp.toml"):
+        required = shared_config_root / relative
+        if not required.is_file():
+            raise ValueError(f"shared config is missing required file: {required}")
+    return sources
+
+
+def _stage_shared_config(
+    sources: list[tuple[Path, str]],
+    config_root: Path,
+) -> None:
+    for source, name in sources:
+        shutil.copytree(source, config_root / name)
+
+
 def _active_profile_architectures(
     manifest: dict[str, Any], arch: str
 ) -> list[tuple[str, dict[str, Any]]]:
@@ -129,10 +182,16 @@ def stage_profiles(
     input_dir: Path,
     assets_dir: Path,
     config_root: Path = Path("target/release-config"),
+    shared_config_root: Path = Path("config"),
 ) -> Path:
     report, manifest = _load(input_dir)
     if report.get("kind") != "profiles":
         raise ValueError("profile staging requires profile release inputs")
+    shared_sources = _validated_shared_config_sources(
+        shared_config_root,
+        assets_dir,
+        config_root,
+    )
     host_arch = _host_arch()
     selected_arch = report.get("architecture")
     if selected_arch is not None and selected_arch != host_arch:
@@ -146,6 +205,7 @@ def stage_profiles(
         raise ValueError("profile assets and config staging roots must differ")
     _reset_staging_directory(assets_dir, "profile asset")
     _reset_staging_directory(config_root, "profile config")
+    _stage_shared_config(shared_sources, config_root)
     manifest_path = assets_dir / "manifest.json"
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -382,6 +442,11 @@ def main() -> int:
         type=Path,
         default=Path("target/release-config"),
     )
+    parser.add_argument(
+        "--shared-config-root",
+        type=Path,
+        default=Path("config"),
+    )
     parser.add_argument("--print-package-path", action="store_true")
     args = parser.parse_args()
     try:
@@ -400,6 +465,7 @@ def main() -> int:
                         args.input_dir,
                         args.assets_dir,
                         args.config_root,
+                        args.shared_config_root,
                     )
                 ]
             elif report.get("kind") == "packages":

@@ -276,7 +276,8 @@ jobs:
           uv run python scripts/stage-release-test-inputs.py \
             --input-dir target/candidate-profile-inputs \
             --assets-dir assets \
-            --config-root target/release-config
+            --config-root target/release-config \
+            --shared-config-root config
           CAPSEM_ASSET_MANIFEST="file://$PWD/assets/manifest.json" \
           CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
           CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/config" \

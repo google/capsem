@@ -832,11 +832,26 @@ def test_stages_every_verified_profile_image_and_exact_config(
     assets = tmp_path / "assets"
     config_root = tmp_path / "release-config"
 
-    staged_manifest = STAGE.stage_profiles(inputs, assets, config_root)
+    staged_manifest = STAGE.stage_profiles(
+        inputs,
+        assets,
+        config_root,
+        ROOT / "config",
+    )
 
     document = json.loads(staged_manifest.read_text(encoding="utf-8"))
     image_url = document["profiles"]["code"]["architectures"][0]["images"][0]["url"]
     assert image_url.startswith("file://")
+    for relative in (
+        Path("settings/settings.toml"),
+        Path("settings/schema.generated.json"),
+        Path("corp/corp.toml"),
+        Path("corp/enforcement.toml"),
+        Path("corp/detection.yaml"),
+    ):
+        assert (config_root / relative).read_bytes() == (
+            ROOT / "config" / relative
+        ).read_bytes()
     assert (config_root / "profiles/code/profile.toml").read_bytes() == artifacts["profile.toml"]
     assert (config_root / "profiles/co-work/profile.toml").read_bytes() == co_work["co-work.toml"]
     assert (assets / "x86_64/vmlinuz").read_bytes() == artifacts["vmlinuz"]
@@ -866,7 +881,71 @@ def test_staging_reverifies_inputs_instead_of_trusting_the_fetch_report(
     monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
 
     with pytest.raises(ValueError, match="byte size mismatch"):
-        STAGE.stage_profiles(inputs, tmp_path / "assets", tmp_path / "config")
+        STAGE.stage_profiles(
+            inputs,
+            tmp_path / "assets",
+            tmp_path / "config",
+            ROOT / "config",
+        )
+
+
+def test_profile_staging_rejects_missing_shared_config_before_resetting_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    inputs = tmp_path / "profile-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+    config_root = tmp_path / "release-config"
+    config_root.mkdir()
+    sentinel = config_root / "keep-on-validation-failure"
+    sentinel.write_text("preserved\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="shared config root is missing"):
+        STAGE.stage_profiles(
+            inputs,
+            tmp_path / "assets",
+            config_root,
+            tmp_path / "missing-shared-config",
+        )
+
+    assert sentinel.read_text(encoding="utf-8") == "preserved\n"
+
+
+def test_profile_staging_rejects_symlinked_or_overlapping_shared_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manifest, _ = _write_manifest(tmp_path)
+    inputs = tmp_path / "profile-inputs"
+    FETCH.fetch_release_inputs(manifest.as_uri(), "profiles", inputs)
+    monkeypatch.setattr(STAGE, "_host_arch", lambda: "x86_64")
+    shared = tmp_path / "shared"
+    (shared / "settings").mkdir(parents=True)
+    (shared / "corp").mkdir()
+    (shared / "settings/settings.toml").write_text("[app]\n", encoding="utf-8")
+    (shared / "corp/corp.toml").write_text(
+        'refresh_policy = "24h"\n',
+        encoding="utf-8",
+    )
+    (shared / "corp/enforcement.toml").symlink_to(
+        ROOT / "config/corp/enforcement.toml"
+    )
+
+    with pytest.raises(ValueError, match="must not contain symlinks"):
+        STAGE.stage_profiles(
+            inputs,
+            tmp_path / "assets",
+            tmp_path / "release-config",
+            shared,
+        )
+
+    with pytest.raises(ValueError, match="must not overlap"):
+        STAGE.stage_profiles(
+            inputs,
+            tmp_path / "assets",
+            shared / "nested-output",
+            shared,
+        )
 
 
 def _package_with_binary_inventory(

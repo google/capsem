@@ -131,6 +131,7 @@ def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
     assert "just _test-glowup" in workflow
     assert "just _test-release-contracts" in workflow
     assert "--config-root target/release-config" in workflow
+    assert "--shared-config-root config" in workflow
     assert 'CAPSEM_CONFIG_ROOT="$PWD/target/release-config"' in workflow
     assert '--package-file "$package"' in workflow
     assert "cp target/release-package-root/usr/bin/capsem*" not in workflow
@@ -226,6 +227,7 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     assert "just _test-artifacts" in workflow
     assert "just _test-functional" in workflow
     assert "just _test-glowup" in workflow
+    assert "--shared-config-root config" in workflow
     assert "just _test-release-contracts" in workflow
     assert "--input-dir target/profile-public-before/packages" in workflow
     assert "--binary-dir target/debug" in workflow
