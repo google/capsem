@@ -14,15 +14,13 @@ import urllib.request
 
 try:
     from release_glowup import (
-        ArtifactIdentity,
         GlowupContractError,
-        assert_manifest_artifact,
+        artifact_identity_from_manifest_package,
     )
 except ModuleNotFoundError:
     from scripts.release_glowup import (
-        ArtifactIdentity,
         GlowupContractError,
-        assert_manifest_artifact,
+        artifact_identity_from_manifest_package,
     )
 
 
@@ -96,13 +94,27 @@ def main() -> int:
     if not isinstance(manifest, dict) or not isinstance(metadata, dict):
         fail("manifest and manifest-metadata must be JSON objects")
     if args.artifact is not None:
-        artifact = ArtifactIdentity.from_path(
+        artifact = artifact_identity_from_manifest_package(
+            installed_bytes,
             args.artifact,
-            version=args.package_version,
-            platform=args.platform,
-            architecture=args.architecture,
         )
-        assert_manifest_artifact(manifest, artifact)
+        expected_identity = {
+            "version": args.package_version,
+            "platform": args.platform,
+            "architecture": args.architecture,
+        }
+        actual_identity = {
+            "version": artifact.version,
+            "platform": artifact.platform,
+            "architecture": artifact.architecture.value,
+        }
+        for field, expected in expected_identity.items():
+            actual = actual_identity[field]
+            if actual != expected:
+                fail(
+                    f"manifest-selected package {field} is {actual!r}, "
+                    f"expected {expected!r}"
+                )
 
     expected_metadata = {
         "schema": METADATA_SCHEMA,
