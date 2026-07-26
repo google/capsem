@@ -141,6 +141,10 @@ def test_public_release_command_executes_full_test_before_release_work(
 
     assert result.returncode == 0, result.stdout + result.stderr
     lines = trace.read_text(encoding="utf-8").splitlines()
+    if recipe == "release-binaries":
+        assert lines.pop(0) == (
+            "python3:scripts/extract-release-notes.py --check"
+        )
     assert lines[0] == "just:test"
     assert lines[1].startswith(
         "python3:scripts/publish-tested-main.py --expected-head "
@@ -176,6 +180,9 @@ def test_failed_full_test_prevents_every_release_side_effect(
         executable.write_text(
             "#!/bin/sh\n"
             f'printf "{command}:%s\\n" "$*" >> "$TRACE"\n'
+            'if [ "$*" = "scripts/extract-release-notes.py --check" ]; then\n'
+            "  exit 0\n"
+            "fi\n"
             "exit 99\n",
             encoding="utf-8",
         )
@@ -196,7 +203,10 @@ def test_failed_full_test_prevents_every_release_side_effect(
     )
 
     assert result.returncode != 0
-    assert trace.read_text(encoding="utf-8").splitlines() == ["just:test"]
+    expected = ["just:test"]
+    if recipe == "release-binaries":
+        expected.insert(0, "python3:scripts/extract-release-notes.py --check")
+    assert trace.read_text(encoding="utf-8").splitlines() == expected
 
 
 def test_binary_and_profile_workflows_share_channel_transaction_lock() -> None:
