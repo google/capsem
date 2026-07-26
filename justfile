@@ -716,7 +716,7 @@ _test-candidate-run:
     # `set -e` does not trip on failed background jobs, so aggregate with
     # FAIL=1.
     echo "=== Audits + lint + web surfaces ==="
-    cargo audit & PID_CARGO_AUDIT=$!
+    python3 scripts/check-cargo-audit.py & PID_CARGO_AUDIT=$!
     python3 scripts/audit-pnpm-bulk.py & PID_PNPM_AUDIT=$!
     bash scripts/audit-python-lock.sh & PID_PYTHON_AUDIT=$!
     uv run ruff check . & PID_RUFF=$!
@@ -743,7 +743,7 @@ _test-candidate-run:
         echo "release site (check/test/generated channel build) failed"
         FAIL=1
     fi
-    wait $PID_CARGO_AUDIT || { echo "cargo audit failed"; FAIL=1; }
+    wait $PID_CARGO_AUDIT || { echo "strict cargo audit failed"; FAIL=1; }
     wait $PID_PNPM_AUDIT || { echo "npm bulk audit failed"; FAIL=1; }
     wait $PID_PYTHON_AUDIT || { echo "Python dependency audit failed"; FAIL=1; }
     if [ -n "$PID_CLIPPY" ]; then
@@ -1456,7 +1456,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     uv run ty check src/capsem & TY_PID=$!
     uv run capsem-builder validate-skills skills & SKILLS_PID=$!
     uv run python scripts/check_public_surface.py & PUBLIC_SURFACE_PID=$!
-    cargo audit & AUDIT_PID=$!
+    python3 scripts/check-cargo-audit.py & AUDIT_PID=$!
     python3 scripts/audit-pnpm-bulk.py & PNPM_AUDIT_PID=$!
     bash scripts/audit-python-lock.sh & PYTHON_AUDIT_PID=$!
     (cd frontend && pnpm run check) & FE_CHECK_PID=$!
@@ -1466,7 +1466,7 @@ smoke: _install-tools _pnpm-install _check-assets _pack-initrd _materialize-conf
     wait $TY_PID         || { echo "ty check failed"; FAIL=1; }
     wait $SKILLS_PID     || { echo "skill validation failed"; FAIL=1; }
     wait $PUBLIC_SURFACE_PID || { echo "public surface approval failed"; FAIL=1; }
-    wait $AUDIT_PID      || { echo "cargo audit failed"; FAIL=1; }
+    wait $AUDIT_PID      || { echo "strict cargo audit failed"; FAIL=1; }
     wait $PNPM_AUDIT_PID || { echo "JavaScript dependency audit failed"; FAIL=1; }
     wait $PYTHON_AUDIT_PID || { echo "Python dependency audit failed"; FAIL=1; }
     wait $FE_CHECK_PID   || { echo "pnpm check failed";   FAIL=1; }

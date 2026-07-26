@@ -152,7 +152,7 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
     assert "schedule:" in security_audit
     assert "cron:" in security_audit
     assert "workflow_dispatch:" in security_audit
-    assert "run: cargo audit" in security_audit
+    assert "run: python3 scripts/check-cargo-audit.py" in security_audit
     assert "run: python3 scripts/audit-pnpm-bulk.py" in security_audit
 
 
@@ -191,7 +191,8 @@ def test_public_release_storage_is_verified_before_channel_deployment() -> None:
     deploy = _job_block(workflow, "deploy-release-channel")
     public = _job_block(workflow, "verify-release-downloads")
 
-    assert 'gh release create "$RELEASE_TAG"' in create
+    assert "scripts/publish-immutable-release-assets.sh" in create
+    assert "gh release create" not in create
     assert "--draft" not in create
     assert "needs: [create-release, assemble-release-channel]" in candidate
     assert "binary-channel-preview" in candidate

@@ -40,8 +40,8 @@ jobs:
       - name: Resolve the current Rust dependency graph
         run: cargo generate-lockfile
 
-      - name: RustSec audit (blocking security signal)
-        run: cargo audit
+      - name: Strict RustSec audit (blocking vulnerabilities, unsoundness, and yanks)
+        run: python3 scripts/check-cargo-audit.py
 
       - name: Locked Python dependency audit (blocking security signal)
         run: bash scripts/audit-python-lock.sh

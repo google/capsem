@@ -84,7 +84,7 @@ def test_modules_retain_complete_named_quality_gates() -> None:
     runner = _recipe("_test-candidate-run")
 
     for required in (
-        "cargo audit",
+        "scripts/check-cargo-audit.py",
         "scripts/audit-pnpm-bulk.py",
         "cargo clippy --workspace --all-targets -- -D warnings",
         "bash scripts/check-web-surface.sh frontend",
@@ -104,7 +104,7 @@ def test_modules_retain_complete_named_quality_gates() -> None:
 def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     runner = _recipe("_test-candidate-run")
 
-    audit = runner.index("cargo audit")
+    audit = runner.index("scripts/check-cargo-audit.py")
     frontend = runner.index("bash scripts/check-web-surface.sh frontend")
     clippy = runner.index("cargo clippy --workspace --all-targets -- -D warnings")
     install_preflight = runner.index("just _test-install-harness-preflight")

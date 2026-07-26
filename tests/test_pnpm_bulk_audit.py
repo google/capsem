@@ -126,10 +126,13 @@ def test_every_fast_gate_blocks_on_bulk_dependency_advisories() -> None:
 
     assert "cargo audit reported advisories; see the security-audit workflow" not in justfile
     assert "npm audit reported advisories; see the security-audit workflow" not in justfile
-    assert "cargo audit & PID_CARGO_AUDIT=$!" in justfile
+    assert "python3 scripts/check-cargo-audit.py & PID_CARGO_AUDIT=$!" in justfile
     assert "python3 scripts/audit-pnpm-bulk.py & PID_PNPM_AUDIT=$!" in justfile
     assert "--project-dir frontend" not in justfile
-    assert 'wait $PID_CARGO_AUDIT || { echo "cargo audit failed"; FAIL=1; }' in justfile
+    assert (
+        'wait $PID_CARGO_AUDIT || { echo "strict cargo audit failed"; FAIL=1; }'
+        in justfile
+    )
     assert 'wait $PID_PNPM_AUDIT || { echo "npm bulk audit failed"; FAIL=1; }' in justfile
     assert "continue-on-error: true" not in fast_gate
 
