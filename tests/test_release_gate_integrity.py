@@ -87,12 +87,12 @@ def test_full_gate_serializes_host_snapshot_files_without_dropping_coverage() ->
 
 def test_local_gate_bootstraps_docker_before_storage_preflight() -> None:
     justfile = _read("justfile")
-    dependency_line = next(
-        line for line in justfile.splitlines() if line.startswith("_test-candidate:")
-    )
+    candidate = justfile.split("\n_test-candidate:", maxsplit=1)[1].split(
+        "\n_test-fast:", maxsplit=1
+    )[0]
 
-    assert dependency_line.index("_bootstrap") < dependency_line.index(
-        "_bound-docker-test-storage"
+    assert candidate.index("just _bootstrap") < candidate.index(
+        "just _bound-docker-test-storage"
     )
 
 

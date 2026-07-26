@@ -707,6 +707,32 @@ _test-candidate-run:
             exit 1
             ;;
     esac
+    # Source-owned tests are one explicit inventory shared by early inclusion
+    # and late exclusion. These files inspect release/CI/Just composition or
+    # adversarially test the cheap gate scripts; none requires built artifacts
+    # or a VM.
+    SOURCE_CONTRACT_TESTS=(
+        tests/test_agent_skill_index.py
+        tests/test_build_assets_profile.py
+        tests/test_cargo_audit_gate.py
+        tests/test_check_cargo_audit.py
+        tests/test_complete_release_channel.py
+        tests/test_docker_storage_policy.py
+        tests/test_exec_lock.py
+        tests/test_macos_tart_glowup.py
+        tests/test_pnpm_bulk_audit.py
+        tests/test_release_gate_integrity.py
+        tests/test_release_manifest_assets.py
+        tests/test_release_site_generated_from_json.py
+        tests/test_release_site_review_regressions.py
+        tests/test_skills.py
+        tests/test_source_syntax_gate.py
+        tests/test_sync_container_clock.py
+    )
+    SOURCE_CONTRACT_IGNORE_ARGS=()
+    for source_contract_test in "${SOURCE_CONTRACT_TESTS[@]}"; do
+        SOURCE_CONTRACT_IGNORE_ARGS+=("--ignore=$source_contract_test")
+    done
     export CAPSEM_HOME="{{justfile_directory()}}/target/test-home/.capsem"
     export CAPSEM_RUN_DIR="$CAPSEM_HOME/run"
     export CAPSEM_BENCHMARK_OUTPUT_ROOT="{{justfile_directory()}}/target/test-benchmarks"
@@ -958,15 +984,12 @@ _test-candidate-run:
     CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest tests/ -v --tb=short --maxfail=1 -n 4 --dist=loadfile \
         -m "not serial" \
         "${HOST_SNAPSHOT_IGNORE_ARGS[@]}" \
+        "${SOURCE_CONTRACT_IGNORE_ARGS[@]}" \
         --ignore-glob=tests/test_*contract.py \
-        --ignore=tests/test_agent_skill_index.py \
-        --ignore=tests/test_macos_tart_glowup.py \
-        --ignore=tests/test_release_site_review_regressions.py \
         --ignore=tests/capsem-recipes \
         --ignore=tests/capsem-install \
         --ignore=tests/capsem-build-chain \
         --ignore=tests/capsem-release \
-        --ignore=tests/test_release_site_generated_from_json.py \
         --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=90
 
     echo "=== Python: host snapshot tests (serial) ==="
@@ -1009,10 +1032,8 @@ _test-candidate-run:
             uv run python -m pytest tests/ -v --tb=short --maxfail=1 -n 4 --dist=loadfile \
                 -m "(integration or mcp or e2e) and not serial" \
                 "${HOST_SNAPSHOT_IGNORE_ARGS[@]}" \
+                "${SOURCE_CONTRACT_IGNORE_ARGS[@]}" \
                 --ignore-glob=tests/test_*contract.py \
-                --ignore=tests/test_agent_skill_index.py \
-                --ignore=tests/test_macos_tart_glowup.py \
-                --ignore=tests/test_release_site_review_regressions.py \
                 --ignore=tests/capsem-recipes \
                 --ignore=tests/capsem-install \
                 --ignore=tests/capsem-build-chain \
@@ -1131,10 +1152,7 @@ _test-candidate-run:
             --ignore=tests/capsem-build-chain/test_manifest_regen.py \
             --ignore=tests/capsem-build-chain/test_pack_initrd.py \
             tests/test_*contract.py \
-            tests/test_agent_skill_index.py \
-            tests/test_macos_tart_glowup.py \
-            tests/test_release_site_generated_from_json.py \
-            tests/test_release_site_review_regressions.py \
+            "${SOURCE_CONTRACT_TESTS[@]}" \
             -v --tb=short
     fi
 

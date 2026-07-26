@@ -10,6 +10,24 @@ import sys
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
+SOURCE_CONTRACT_TESTS = (
+    "tests/test_agent_skill_index.py",
+    "tests/test_build_assets_profile.py",
+    "tests/test_cargo_audit_gate.py",
+    "tests/test_check_cargo_audit.py",
+    "tests/test_complete_release_channel.py",
+    "tests/test_docker_storage_policy.py",
+    "tests/test_exec_lock.py",
+    "tests/test_macos_tart_glowup.py",
+    "tests/test_pnpm_bulk_audit.py",
+    "tests/test_release_gate_integrity.py",
+    "tests/test_release_manifest_assets.py",
+    "tests/test_release_site_generated_from_json.py",
+    "tests/test_release_site_review_regressions.py",
+    "tests/test_skills.py",
+    "tests/test_source_syntax_gate.py",
+    "tests/test_sync_container_clock.py",
+)
 
 
 def _recipe(name: str) -> str:
@@ -196,15 +214,33 @@ def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
         assert f"--ignore=tests/capsem-build-chain/{artifact_test}" in release_contracts
         assert f"tests/capsem-build-chain/{artifact_test}" in runner
     assert "tests/test_*contract.py" in release_contracts
-    assert "tests/test_agent_skill_index.py" in release_contracts
-    assert "tests/test_macos_tart_glowup.py" in release_contracts
-    assert "tests/test_release_site_generated_from_json.py" in release_contracts
-    assert "tests/test_release_site_review_regressions.py" in release_contracts
+    for source_test in SOURCE_CONTRACT_TESTS:
+        assert source_test in runner
+    assert '"${SOURCE_CONTRACT_TESTS[@]}"' in release_contracts
     assert "tests/capsem-recipes/" not in release_contracts
     assert "tests/capsem-recipes/" in _recipe("_test-recipes")
     assert "--ignore-glob=tests/test_*contract.py" in functional
-    assert "--ignore=tests/test_agent_skill_index.py" in functional
+    assert '"${SOURCE_CONTRACT_IGNORE_ARGS[@]}"' in functional
     assert "Python: release site shared-dist tests" not in functional
+
+
+def test_every_root_workflow_or_just_source_test_is_owned_by_the_fast_gate() -> None:
+    inventory = set(SOURCE_CONTRACT_TESTS)
+    inspected_source_contracts = set()
+
+    for path in (PROJECT_ROOT / "tests").glob("test_*.py"):
+        source = path.read_text(encoding="utf-8")
+        if not any(
+            needle in source
+            for needle in (".github/workflows", '"Justfile"', '"justfile"')
+        ):
+            continue
+        relative = path.relative_to(PROJECT_ROOT).as_posix()
+        if path.name.endswith("_contract.py"):
+            continue
+        inspected_source_contracts.add(relative)
+
+    assert inspected_source_contracts <= inventory
 
 
 def test_parallel_coverage_state_is_kept_out_of_the_source_tree() -> None:

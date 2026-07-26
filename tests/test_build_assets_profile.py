@@ -215,7 +215,7 @@ def test_release_workflow_uses_same_config_materializer() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
 
     assert workflow.count("bash scripts/materialize-config.sh") >= 2
-    assert workflow.count('CAPSEM_ASSET_MANIFEST="$ASSET_MANIFEST_URL"') >= 2
+    assert workflow.count('CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"') >= 2
     assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in workflow
 
 
