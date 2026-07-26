@@ -643,7 +643,7 @@ def test_tart_harness_promotes_guest_evidence_to_a_durable_report() -> None:
     assert '"macos-glowup-final"' in source
 
 
-def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke() -> None:
+def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_private_smoke() -> None:
     bootstrap = (PROJECT_ROOT / "bootstrap.sh").read_text()
     doctor = (PROJECT_ROOT / "scripts" / "doctor-macos.sh").read_text()
     justfile = (PROJECT_ROOT / "justfile").read_text()
@@ -666,7 +666,7 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke() 
     canonical_gate = justfile[test_start:test_end]
     assert "python3 scripts/macos_release_glowup.py" in canonical_gate
 
-    smoke_start = justfile.index("smoke:")
+    smoke_start = justfile.index("_smoke:")
     smoke_end = justfile.index("\n# Run install e2e tests", smoke_start)
     smoke = justfile[smoke_start:smoke_end]
     assert "tart run" not in smoke.lower()

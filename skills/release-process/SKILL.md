@@ -20,6 +20,8 @@ Read `tmp/release-spec.md` before changing release commands, manifests,
 workflows, test composition, artifact publication, or update behavior. It is
 the normative contract when older repository text disagrees.
 
+## One command owns the complete release
+
 Capsem has exactly two release-facing Just commands:
 
 ```bash
@@ -27,16 +29,50 @@ just release-binaries <channel>
 just release-profile <channel> <profile>
 ```
 
-Each command owns one artifact family. There is no combined command and no
-operator path that bypasses these entrypoints.
+These are the sole release entrypoints for humans and checked-in automation.
+Do not ask an operator to run a preparation command or a separate `just test`
+first. Each release command itself has this non-negotiable order:
+
+```text
+just release-binaries <channel>
+  1. just test
+  2. only after success: run the binary release script and dispatch binary CI
+
+just release-profile <channel> <profile>
+  1. just test
+  2. only after success: invoke capsem-admin release for that channel/profile
+```
+
+`just test` must be the first consequential command. If it fails, the release
+command must stop before stamping versions, changing tracked files, committing,
+tagging, pushing, authoring a shared manifest, or dispatching a workflow. Test
+this fail-stop behavior by executing the public recipes with fake downstream
+commands; inspecting recipe text alone is insufficient.
+
+Do not introduce a skip flag, release-only reduced gate, preparation recipe,
+environment-variable bypass, or direct checked-in caller of:
+
+- `scripts/release-binaries.py`;
+- `capsem-admin release` for a first-party public profile;
+- `release.yaml` or `release-assets.yaml`.
+
+Daily nightly automation calls `just release-binaries nightly`; it does not
+dispatch the workflow directly. The supported first-party profile path calls
+`just release-profile`. Direct GitHub UI dispatch is not the documented or
+tested release path.
+
+Each command owns one artifact family. There is no combined release command.
+The commands may run sequentially when a profile requires new code, but neither
+may rebuild the other command's artifact family.
 
 `config/public-surface.toml` locks this command surface. Treat any change as an
 explicit product/API decision.
 
 ## Local proof and release-CI composition
 
-Local `just test` is the whole-world proof. It rebuilds every package and every
-checked-in profile, then runs all five checked-in modules:
+`just test` is the complete local CI-equivalent proof, not a smaller developer
+smoke test. It rebuilds every package and every checked-in profile, then runs
+all five checked-in modules:
 
 - `_test-static`
 - `_test-artifacts`
@@ -44,7 +80,25 @@ checked-in profile, then runs all five checked-in modules:
 - `_test-glowup`
 - `_test-release-contracts`
 
-Release CI saves construction time, never test quality:
+Every test, scanner, contract, build validation, and tool dependency required
+by release CI must be reachable from this command. A gate that exists only as
+inline workflow YAML is a parity defect until it is extracted into a
+checked-in module called by `just test`. Each module must own its prerequisites
+and must also be executable independently in a clean local environment. Never
+rely on a package installed incidentally by an earlier workflow job or by a
+developer machine.
+
+The cheap failures run before VM and artifact work. They include formatting,
+lint, Rust clippy, Python checks, JavaScript/frontend checks, action/workflow
+validation, source contracts, and vulnerable-dependency audits for every
+locked ecosystem. The complete proof still includes all expensive gates:
+artifact validation and boot, every VM suite, Winterfell, MCP lifecycle,
+IronBank, injection, integration, benchmarks, full `capsem-doctor`, native
+package installation, and glow-up transitions. None is advisory.
+
+Release automation uses the same public command and therefore receives the
+same complete `just test` gate before dispatch. The dispatched release
+workflows then save construction time, never test quality:
 
 - the binary lane builds packages only and resolves every selected-channel
   profile by manifest-recorded digest;
@@ -53,6 +107,13 @@ Release CI saves construction time, never test quality:
 - both lanes stage those exact resolved artifacts into the same test modules
   used locally;
 - source-built substitutes must not replace the resolved complementary family.
+
+This is one test architecture with two artifact-preparation modes, not a local
+test path and a forked CI test path. The test modules must not silently choose
+different assertions based on ambient release environment variables. Artifact
+preparation may differ—local builds both families, a release lane downloads the
+unchanged family—but the resulting manifest-addressed bundle enters the same
+module implementations.
 
 Before public activation, the resulting pairing must pass manifest/artifact
 integrity, every VM suite, Winterfell and MCP lifecycle, IronBank, injection,
@@ -64,6 +125,11 @@ complete functional and glow-up proof before activation.
 The local gate records `HEAD` and a digest of all tracked and untracked
 non-ignored source bytes. It supports ordinary uncommitted development and
 fails if the source state changes while tests run.
+
+Before dispatching a real release, run the actual public release command, not
+`just test` followed by a hand-written dispatch. Its embedded `just test` is
+the local proof and its remaining steps are the only supported bridge into CI.
+Do not dispatch CI until that embedded local proof completes successfully.
 
 ## Shared per-channel serialization
 

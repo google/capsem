@@ -292,8 +292,8 @@ that exact file into a disposable Tart Mac, installs it, verifies the receipt,
 app bundle, binary cohort, and service/gateway status. Tart macOS guests cannot
 expose nested virtualization, so the recipe then extracts the same package on
 the physical Mac and boots a real Capsem guest from its exact binary/profile
-payload to a shell marker. Tart stays out of `just smoke` so smoke remains a
-fast feedback tier rather than a partial release gate.
+payload to a shell marker. There is no public partial test recipe that omits
+this boundary.
 
 Release packaging materializes runtime profiles through the same profile-derived build rail as
 local development: `capsem-admin profile materialize` copies checked-in config
@@ -457,13 +457,8 @@ Before pushing a PR, run the same checks CI will:
 # Full test suite (what CI runs)
 just test
 
-# Individual components
-just test-unit          # Rust unit tests
-just test-frontend      # Frontend type check + vitest + build
-just test-python        # Python schema tests
-
-# Hermetic smoke test
-just smoke              # doctor + integration tests
+# Focused diagnosis uses the owning cargo, pytest, pnpm, or script command.
+# It does not constitute a release gate.
 ```
 
 ### Debugging CI failures

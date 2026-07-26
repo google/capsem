@@ -26,15 +26,11 @@ quick checks. After frontend changes intended for the desktop app, use
 
 | Recipe | What it does | Boots VM? |
 |--------|-------------|-----------|
-| `just smoke` | Fast end-to-end gate: audit, doctor, injection, service/CLI/MCP/gateway tests | Yes |
 | `just test` | Full gate: unit/coverage, VM suites, cross-compile, both Linux packages, Docker install, and a clean-Tart exact `.pkg` install/glow-up on macOS | Yes |
-| `just test-gateway` | Gateway unit and mock-UDS tests | No |
-| `just test-gateway-e2e` | Gateway E2E tests with real service and VMs | Yes |
-| `just test-install` | Installer E2E plus local release glow-up in Docker/systemd | No host VM |
-| `just bench` | In-VM and host lifecycle benchmarks | Yes |
 
-`just test` is the source of truth. Targeted commands are for iteration, not
-for declaring a sprint done.
+`just test` is the only public test gate. Targeted pytest, cargo, pnpm, and
+script commands are for diagnosis and iteration; no focused composite may be
+used to declare release readiness.
 
 ## Policy Verification
 
@@ -48,7 +44,7 @@ and telemetry. Use this sequence for focused iteration:
 | Frontend policy UI/model | `pnpm -C frontend test -- settings-model settings-export api settings-store` |
 | Frontend type/check gate | `pnpm -C frontend run check` |
 | Docs gate | `cd docs && pnpm run build` |
-| VM smoke | `just smoke` |
+| Focused VM diagnosis | `just shell`, then run the exact diagnostic |
 | Session integrity | `just inspect-session [id]` |
 | Session SQL proof | `just query-session "SQL" [id]` |
 | Final gate | `just test` |
@@ -126,8 +122,8 @@ the current-build runtime profile under `target/config/` from checked-in
 | `just doctor` | Check tools, colored output, structured recap (exits 1 if failures) |
 | `just doctor fix` | Doctor + auto-fix all fixable issues in dependency order |
 
-Rust and JavaScript vulnerability audits are mandatory parts of `just smoke`
-and `just test`; there is no separate public audit recipe that can drift from
+Rust and JavaScript vulnerability audits are mandatory parts of `just test`;
+there is no separate public audit or reduced-test recipe that can drift from
 the tested composition.
 
 ## Release

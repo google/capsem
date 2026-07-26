@@ -97,7 +97,7 @@ capsem_exec { id: "vm-1", command: "chmod +x /tmp/test.sh && /tmp/test.sh" }
 | Verify telemetry was recorded | typed telemetry routes or Ironbank direct ledger reads |
 | Run capsem-doctor diagnostics | `capsem_exec` with `capsem-doctor` |
 | Full regression suite | `just test` |
-| Build + boot + validate in one shot | `just smoke` |
+| Build + boot for focused diagnosis | `just shell` or `just exec "<command>"` |
 | Benchmark performance | `just test` |
 
 MCP tools are for fast, targeted checks during development. Just recipes are for comprehensive validation before committing.

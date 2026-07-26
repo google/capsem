@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import re
 from pathlib import Path
+import tomllib
 
 import pytest
 
@@ -23,6 +24,18 @@ def test_public_surfaces_match_the_approved_exact_allowlists() -> None:
     _load_checker().check_policy()
 
 
+def test_test_is_the_only_public_test_gate() -> None:
+    checker = _load_checker()
+    public_just = set(checker.current_surfaces()["just"])
+    policy = tomllib.loads(
+        (ROOT / "config" / "public-surface.toml").read_text(encoding="utf-8")
+    )["just"]
+
+    assert "test" in public_just
+    assert "smoke" not in public_just
+    assert "smoke" not in policy["approved"]
+
+
 def test_surface_extractors_do_not_silently_return_empty_sets() -> None:
     checker = _load_checker()
     surfaces = checker.current_surfaces()
@@ -36,9 +49,9 @@ def test_declared_count_drift_fails_closed(tmp_path: Path) -> None:
     checker = _load_checker()
     policy = (ROOT / "config" / "public-surface.toml").read_text()
     broken = tmp_path / "public-surface.toml"
-    broken.write_text(policy.replace("[just]\ncount = 13", "[just]\ncount = 14"))
+    broken.write_text(policy.replace("[just]\ncount = 12", "[just]\ncount = 13"))
 
-    with pytest.raises(checker.SurfaceError, match="policy count=14"):
+    with pytest.raises(checker.SurfaceError, match="policy count=13"):
         checker.check_policy(broken)
 
 
@@ -51,7 +64,7 @@ def test_rejects_unapproved_allowlist_entry(tmp_path: Path) -> None:
             '  "build",',
             '  "build",\n  "unapproved-command",',
             1,
-        ).replace("[just]\ncount = 13", "[just]\ncount = 14")
+        ).replace("[just]\ncount = 12", "[just]\ncount = 13")
     )
 
     with pytest.raises(checker.SurfaceError, match="missing=.*unapproved-command"):
@@ -83,6 +96,7 @@ def test_project_skills_do_not_teach_retired_public_just_commands() -> None:
         "release",
         "run-ui",
         "sandbox-logs",
+        "smoke",
         "test-artifacts",
         "test-assets",
         "test-frontend",

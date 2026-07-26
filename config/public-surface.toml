@@ -3,7 +3,7 @@
 # drive-by addition, deletion, rename, or stale count fails closed.
 
 [just]
-count = 13
+count = 12
 approved = [
   "build",
   "build-all",
@@ -16,7 +16,6 @@ approved = [
   "release-profile",
   "run-service",
   "shell",
-  "smoke",
   "test",
 ]
 
