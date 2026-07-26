@@ -45,7 +45,7 @@ def _fake_capsem(tmp_path: Path, *, execute_input: bool) -> tuple[Path, Path]:
         "  delete) exit 0 ;;\n"
         "  info) printf '{\"profile_id\":\"co-work\"}\\n'; exit 0 ;;\n"
         "  shell)\n"
-        "    printf 'guest shell ready\\n'\n"
+        "    printf 'root@%s:~# ' \"$3\"\n"
         f"{shell_body}"
         "    ;;\n"
         "  *) exit 2 ;;\n"
@@ -160,3 +160,75 @@ def test_shell_proof_rejects_typed_but_unexecuted_command(tmp_path: Path) -> Non
     assert result.returncode != 0
     assert "guest shell marker was not observed" in result.stderr
     assert log.read_text(encoding="utf-8").splitlines()[-1] == "delete proof-session"
+
+
+def test_shell_proof_waits_for_guest_prompt_and_sends_one_command(
+    tmp_path: Path,
+) -> None:
+    log = tmp_path / "calls.log"
+    binary = tmp_path / "capsem"
+    binary.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json\n"
+        "import os\n"
+        "import select\n"
+        "import subprocess\n"
+        "import sys\n"
+        "import time\n"
+        "from pathlib import Path\n"
+        "\n"
+        "log = Path(os.environ['CAPSEM_FAKE_LOG'])\n"
+        "args = sys.argv[1:]\n"
+        "with log.open('a', encoding='utf-8') as handle:\n"
+        "    handle.write(' '.join(args) + '\\n')\n"
+        "if args[0] in {'create', 'delete'}:\n"
+        "    raise SystemExit(0)\n"
+        "if args[0] == 'info':\n"
+        "    print(json.dumps({'profile_id': 'co-work'}))\n"
+        "    raise SystemExit(0)\n"
+        "if args[0] != 'shell':\n"
+        "    raise SystemExit(2)\n"
+        "if select.select([sys.stdin], [], [], 0.25)[0]:\n"
+        "    with log.open('a', encoding='utf-8') as handle:\n"
+        "        handle.write('EARLY_INPUT\\n')\n"
+        "    raise SystemExit(9)\n"
+        "session = args[args.index('--name') + 1]\n"
+        "print(f'root@{session}:~# ', end='', flush=True)\n"
+        "command = sys.stdin.readline()\n"
+        "with log.open('a', encoding='utf-8') as handle:\n"
+        "    handle.write('COMMAND ' + command)\n"
+        "subprocess.run(command, shell=True, check=True)\n"
+        "time.sleep(0.25)\n",
+        encoding="utf-8",
+    )
+    binary.chmod(0o755)
+    env = os.environ.copy()
+    env["CAPSEM_FAKE_LOG"] = str(log)
+    env["HOME"] = str(tmp_path)
+
+    result = subprocess.run(
+        [
+            "python3",
+            str(PROOF_SCRIPT),
+            "--capsem",
+            str(binary),
+            "--marker",
+            "CAPSEM_READY_GUEST_SHELL_OK",
+            "--session-name",
+            "ready-proof",
+            "--startup-delay",
+            "0",
+            "--timeout",
+            "3",
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = log.read_text(encoding="utf-8").splitlines()
+    assert "EARLY_INPUT" not in calls
+    assert len([line for line in calls if line.startswith("COMMAND ")]) == 1

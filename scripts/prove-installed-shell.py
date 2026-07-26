@@ -40,6 +40,11 @@ def guest_proof_paths(proof_name: str) -> list[Path]:
     return list(persistent.glob(f"*/guest/workspace/{proof_name}"))
 
 
+def guest_shell_ready(output: bytes, session_name: str) -> bool:
+    """Return whether the focused TUI has rendered this guest's shell prompt."""
+    return f"root@{session_name}:".encode("ascii") in output
+
+
 def stop_process(process: subprocess.Popen[bytes]) -> None:
     if process.poll() is not None:
         return
@@ -69,7 +74,6 @@ def prove_shell(
     profile: str | None,
     timeout: float,
     startup_delay: float,
-    retry_interval: float,
 ) -> None:
     create_args = [str(capsem), "create", "--name", session_name]
     if profile is not None:
@@ -123,16 +127,12 @@ def prove_shell(
     command = guest_marker_command(marker, proof_name)
     output = bytearray()
     deadline = time.monotonic() + timeout
-    next_send = time.monotonic() + startup_delay
+    send_after = time.monotonic() + startup_delay
+    command_sent = False
     observed = False
 
     try:
         while time.monotonic() < deadline:
-            now = time.monotonic()
-            if now >= next_send:
-                os.write(master, command)
-                next_send = now + retry_interval
-
             readable, _, _ = select.select([master], [], [], 0.2)
             if readable:
                 try:
@@ -146,6 +146,13 @@ def prove_shell(
                     if marker_bytes in output:
                         observed = True
                         break
+            if (
+                not command_sent
+                and time.monotonic() >= send_after
+                and guest_shell_ready(output, session_name)
+            ):
+                os.write(master, command)
+                command_sent = True
             if any(
                 path.is_file() and path.read_bytes().rstrip(b"\r\n") == marker_bytes
                 for path in guest_proof_paths(proof_name)
@@ -157,9 +164,13 @@ def prove_shell(
 
         if not observed:
             tail = bytes(output[-4000:]).decode("utf-8", errors="replace")
+            failure = (
+                "guest shell marker was not observed before timeout"
+                if command_sent
+                else "guest shell prompt was not observed before timeout"
+            )
             raise RuntimeError(
-                "guest shell marker was not observed before timeout; "
-                f"terminal tail follows:\n{tail}"
+                f"{failure}; terminal tail follows:\n{tail}"
             )
 
         # Exit the guest shell, then use the TUI's global Alt-Q shortcut.
@@ -186,7 +197,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--profile")
     parser.add_argument("--timeout", type=float, default=300.0)
     parser.add_argument("--startup-delay", type=float, default=2.0)
-    parser.add_argument("--retry-interval", type=float, default=5.0)
     return parser.parse_args()
 
 
@@ -198,7 +208,7 @@ def main() -> int:
     for label, value in values:
         if not SAFE_VALUE.fullmatch(value):
             raise SystemExit(f"{label} contains unsupported characters: {value!r}")
-    if args.timeout <= 0 or args.startup_delay < 0 or args.retry_interval <= 0:
+    if args.timeout <= 0 or args.startup_delay < 0:
         raise SystemExit("timeout values must be positive")
     if not args.capsem.is_file() or not os.access(args.capsem, os.X_OK):
         raise SystemExit(f"capsem executable not found: {args.capsem}")
@@ -211,7 +221,6 @@ def main() -> int:
             args.profile,
             args.timeout,
             args.startup_delay,
-            args.retry_interval,
         )
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f"installed shell proof failed: {error}", file=sys.stderr)

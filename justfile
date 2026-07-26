@@ -721,6 +721,7 @@ _test-candidate-run:
         tests/test_exec_lock.py
         tests/test_macos_tart_glowup.py
         tests/test_pnpm_bulk_audit.py
+        tests/test_prove_installed_shell.py
         tests/test_release_gate_integrity.py
         tests/test_release_manifest_assets.py
         tests/test_release_site_generated_from_json.py
