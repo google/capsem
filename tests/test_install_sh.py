@@ -166,13 +166,18 @@ FAKE_RELEASE_MANIFEST = r"""
 
 
 class TestFindAssetURL:
-    def _run(self, os_val: str, arch_val: str) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self,
+        os_val: str,
+        arch_val: str,
+        manifest: str = FAKE_RELEASE_MANIFEST,
+    ) -> subprocess.CompletedProcess[str]:
         # Escape the JSON for shell embedding via a heredoc.
         script = textwrap.dedent(f"""\
             __INSTALL_SH_SOURCED=1
             . "{INSTALL_SH}"
             RELEASE_MANIFEST=$(cat <<'ENDJSON'
-{FAKE_RELEASE_MANIFEST}
+{manifest}
 ENDJSON
             )
             find_asset_url "$RELEASE_MANIFEST" "{os_val}" "{arch_val}"
@@ -212,6 +217,20 @@ ENDJSON
         r = self._run("linux", "amd64")
         assert r.returncode == 0
         url, version = r.stdout.strip().splitlines()
+        assert url.endswith("/Capsem_1.5.0_amd64.deb")
+        assert version == "1.5.0"
+
+    def test_linux_amd64_accepts_existing_x86_64_manifest_identity(self):
+        existing_manifest = FAKE_RELEASE_MANIFEST.replace(
+            '"architecture": "amd64"',
+            '"architecture": "x86_64"',
+            1,
+        )
+
+        result = self._run("linux", "amd64", existing_manifest)
+
+        assert result.returncode == 0, result.stderr
+        url, version = result.stdout.strip().splitlines()
         assert url.endswith("/Capsem_1.5.0_amd64.deb")
         assert version == "1.5.0"
 
@@ -442,7 +461,14 @@ def test_linux_curl_pipe_entrypoint_installs_verified_deb_end_to_end(tmp_path: P
     bin_dir.mkdir()
     temp_dir.mkdir()
     manifest = tmp_path / "manifest.json"
-    manifest.write_text(FAKE_RELEASE_MANIFEST, encoding="utf-8")
+    manifest.write_text(
+        FAKE_RELEASE_MANIFEST.replace(
+            '"architecture": "amd64"',
+            '"architecture": "x86_64"',
+            1,
+        ),
+        encoding="utf-8",
+    )
     installer_log = tmp_path / "installer-call"
 
     commands = {

@@ -56,6 +56,7 @@ find_asset_url() {
     _manifest_json="$1"
     _os="$2"
     _arch="$3"
+    _manifest_arch_alias=""
     case "$_os" in
         darwin)
             _platform="macos"
@@ -69,6 +70,7 @@ find_asset_url() {
             case "$_arch" in
                 amd64)
                     _manifest_arch="amd64"
+                    _manifest_arch_alias="x86_64"
                     _name_suffix="_amd64.deb"
                     ;;
                 arm64)
@@ -86,7 +88,8 @@ find_asset_url() {
     _asset_record="$(printf '%s\n' "$_manifest_json" | awk \
         -v platform="$_platform" \
         -v kind="$_kind" \
-        -v arch="$_manifest_arch" '
+        -v arch="$_manifest_arch" \
+        -v arch_alias="$_manifest_arch_alias" '
         function count_char(text, char, i, n) {
             n = 0
             for (i = 1; i <= length(text); i++) {
@@ -100,6 +103,7 @@ find_asset_url() {
             platform_re = "\"" "platform" "\"" "[[:space:]]*:[[:space:]]*\"" platform "\""
             kind_re = "\"" "kind" "\"" "[[:space:]]*:[[:space:]]*\"" kind "\""
             arch_re = "\"" "architecture" "\"" "[[:space:]]*:[[:space:]]*\"" arch "\""
+            arch_alias_re = "\"" "architecture" "\"" "[[:space:]]*:[[:space:]]*\"" arch_alias "\""
             status_re = "\"" "status" "\"" "[[:space:]]*:[[:space:]]*\"current\""
         }
         /"packages"[[:space:]]*:/ {
@@ -116,7 +120,9 @@ find_asset_url() {
                 block = block $0 "\n"
                 depth += count_char($0, "{") - count_char($0, "}")
                 if (depth == 0) {
-                    if (block ~ platform_re && block ~ kind_re && block ~ arch_re && block ~ status_re) {
+                    if (block ~ platform_re && block ~ kind_re \
+                        && (block ~ arch_re || (arch_alias != "" && block ~ arch_alias_re)) \
+                        && block ~ status_re) {
                         printf "%s", block
                         exit
                     }
