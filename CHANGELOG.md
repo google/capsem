@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1785062334] - 2026-07-26
+
 ### Fixed
 
 - Restored fail-closed release inputs and early gates: CI now caches
