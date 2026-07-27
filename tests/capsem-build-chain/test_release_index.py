@@ -839,8 +839,12 @@ def test_profile_release_publishes_incompatible_assets_but_withholds_channel_dep
     assert (
         "if:"
         not in pairing.split("- name: Run shared artifact module", maxsplit=1)[1].split(
-            "- name: Run shared complete functional module", maxsplit=1
+            "- name: Record incompatible profile staging boundary", maxsplit=1
         )[0]
+    )
+    assert "compatible profile cannot defer complete pairing gates" in pairing
+    assert (
+        "needs.author-profile-release.outputs.compatible != 'true'" in pairing
     )
     assert "Publish immutable GitHub profile release" in publish
     immutable_release = publish.split(
