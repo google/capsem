@@ -14,6 +14,8 @@ import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FAST_DOCTOR_FLAG = "doctor " + "--" + "fast"
@@ -93,6 +95,27 @@ def _boot_timing_module():
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    return module
+
+
+def _doctor_runtimes_module():
+    module_path = PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_runtimes.py"
+    spec = importlib.util.spec_from_file_location("capsem_doctor_runtimes", module_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    host_conftest = sys.modules.get("conftest")
+    sys.modules["conftest"] = SimpleNamespace(
+        run=lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout="", stderr="")
+    )
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if host_conftest is None:
+            del sys.modules["conftest"]
+        else:
+            sys.modules["conftest"] = host_conftest
     return module
 
 
@@ -5725,13 +5748,64 @@ def test_guest_runtime_doctor_remote_apt_https_probe_is_release_gate() -> None:
     source = (PROJECT_ROOT / "guest" / "artifacts" / "diagnostics" / "test_runtimes.py").read_text()
 
     assert "def test_remote_apt_https_install_works" in source
-    assert "apt-get " in source
-    assert "update 2>&1" in source
+    assert "def _bounded_remote_apt" in source
+    assert "timeout --signal=TERM --kill-after=5s 60s" in source
+    assert "Acquire::Retries=2" in source
+    assert "Acquire::ForceIPv4=true" in source
+    assert '_remote_apt_update()' in source
     assert "https://deb.debian.org" in source
     assert "Certificate verification failed" in source
     assert "No system certificates available" in source
-    assert "apt-get install -y -qq --no-install-recommends hello" in source
+    assert '_remote_apt_install("hello")' in source
+    assert "install -y -qq --no-install-recommends" in source
     assert "Hello, world!" in source
+
+
+def test_guest_runtime_doctor_remote_apt_update_retries_a_stalled_first_fetch() -> None:
+    runtimes = _doctor_runtimes_module()
+    calls: list[tuple[str, int]] = []
+    results = iter(
+        (
+            SimpleNamespace(returncode=124, stdout="first mirror transaction stalled", stderr=""),
+            SimpleNamespace(
+                returncode=0,
+                stdout="Hit:1 https://deb.debian.org/debian bookworm InRelease",
+                stderr="",
+            ),
+        )
+    )
+
+    def fake_run(command: str, timeout: int):
+        calls.append((command, timeout))
+        return next(results)
+
+    result = runtimes._remote_apt_update(run_command=fake_run)
+
+    assert result.returncode == 0
+    assert len(calls) == 2
+    assert all("timeout --signal=TERM --kill-after=5s" in command for command, _ in calls)
+    assert all("Acquire::Retries=2" in command for command, _ in calls)
+    assert "Acquire::ForceIPv4=true" not in calls[0][0]
+    assert "Acquire::ForceIPv4=true" in calls[1][0]
+    assert all(timeout < 180 for _, timeout in calls)
+
+
+def test_guest_runtime_doctor_remote_apt_update_fails_after_bounded_attempts() -> None:
+    runtimes = _doctor_runtimes_module()
+    calls: list[tuple[str, int]] = []
+
+    def fake_run(command: str, timeout: int):
+        calls.append((command, timeout))
+        return SimpleNamespace(
+            returncode=124,
+            stdout=f"stalled attempt {len(calls)}",
+            stderr="",
+        )
+
+    with pytest.raises(pytest.fail.Exception, match="stalled attempt 1.*stalled attempt 2"):
+        runtimes._remote_apt_update(run_command=fake_run)
+
+    assert len(calls) == 2
 
 
 def test_capsem_init_recreates_user_local_ai_cli_shims() -> None:
