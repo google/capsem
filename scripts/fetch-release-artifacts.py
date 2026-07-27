@@ -121,12 +121,12 @@ def _assert_public_channel_absent(
         raise ValueError(f"public channel {channel} exists but its manifest could not be resolved")
 
 
-def _local_publication_payload(
+def _local_publication_path(
     url: str,
     *,
     publication_base: str | None,
     publication_dir: Path | None,
-) -> tuple[bytes, Path] | None:
+) -> Path | None:
     if publication_base is None or publication_dir is None:
         return None
     prefix = publication_base.rstrip("/") + "/"
@@ -143,6 +143,22 @@ def _local_publication_payload(
         raise ValueError(f"local publication artifact escapes {root}: {url}") from error
     if not path.is_file():
         raise ValueError(f"local publication artifact is missing: {path}")
+    return path
+
+
+def _local_publication_payload(
+    url: str,
+    *,
+    publication_base: str | None,
+    publication_dir: Path | None,
+) -> tuple[bytes, Path] | None:
+    path = _local_publication_path(
+        url,
+        publication_base=publication_base,
+        publication_dir=publication_dir,
+    )
+    if path is None:
+        return None
     return path.read_bytes(), path
 
 
@@ -240,8 +256,26 @@ def fetch_release_inputs(
             raise ValueError(
                 "local publication source manifest does not match the candidate manifest"
             )
+        publication_rows = resolved_artifact_rows(
+            manifest,
+            manifest_url,
+            kind,
+            allow_empty_profiles=allow_empty_profiles,
+        )
+        publication_paths = {
+            path
+            for row in publication_rows
+            if (
+                path := _local_publication_path(
+                    row["url"],
+                    publication_base=local_publication_base,
+                    publication_dir=local_publication_dir,
+                )
+            )
+            is not None
+        }
         actual = {path.resolve() for path in local_publication_dir.iterdir() if path.is_file()}
-        expected = local_paths | {source.resolve()}
+        expected = publication_paths | {source.resolve()}
         if actual != expected:
             raise ValueError(
                 "local publication file set mismatch: "

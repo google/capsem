@@ -859,6 +859,50 @@ def test_candidate_profile_inputs_mix_staged_publication_with_manifest_urls(
     VERIFY.verify_release_inputs(output)
 
 
+def test_candidate_profile_architecture_filter_accepts_manifest_owned_siblings_only(
+    tmp_path: Path,
+) -> None:
+    manifest_path, _ = _write_manifest(tmp_path)
+    document = json.loads(manifest_path.read_text(encoding="utf-8"))
+    x86 = document["profiles"]["code"]["architectures"][0]
+    arm = json.loads(json.dumps(x86))
+    arm["architecture"] = "arm64"
+    document["profiles"]["code"]["architectures"].append(arm)
+    manifest_path.write_text(json.dumps(document), encoding="utf-8")
+    publication_dir = tmp_path / "publication"
+    publication_base = _stage_local_profile_publication(
+        manifest_path,
+        publication_dir,
+    )
+
+    output = tmp_path / "candidate-arm64"
+    report = FETCH.fetch_release_inputs(
+        manifest_path.as_uri(),
+        "profiles",
+        output,
+        architecture="arm64",
+        local_publication_base=publication_base,
+        local_publication_dir=publication_dir,
+    )
+
+    assert report["architecture"] == "arm64"
+    assert report["artifacts"]
+    assert all("/arm64/" in row["path"] for row in report["artifacts"])
+    assert not any("/x86_64/" in row["path"] for row in report["artifacts"])
+    VERIFY.verify_release_inputs(output)
+
+    (publication_dir / "not-selected-by-manifest").write_bytes(b"extra")
+    with pytest.raises(ValueError, match="file set mismatch"):
+        FETCH.fetch_release_inputs(
+            manifest_path.as_uri(),
+            "profiles",
+            tmp_path / "candidate-with-extra",
+            architecture="arm64",
+            local_publication_base=publication_base,
+            local_publication_dir=publication_dir,
+        )
+
+
 def test_candidate_profile_override_is_all_or_nothing_and_exact(
     tmp_path: Path,
 ) -> None:
