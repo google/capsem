@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Made binary package jobs consume only digest-verified, manifest-selected
+  profile inputs instead of regenerating the checked-in profile catalog.
+
 ## [1.6.1785138870] - 2026-07-27
 
 ### Fixed
