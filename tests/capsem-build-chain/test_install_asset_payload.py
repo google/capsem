@@ -435,17 +435,23 @@ def test_install_test_restores_host_workspace_ownership() -> None:
 
     assert "HOST_UID=$(id -u)" in block
     assert "HOST_GID=$(id -g)" in block
-    assert "chown -R $HOST_UID:$HOST_GID /src" in block
+    assert "chown -R $HOST_UID:$HOST_GID /src 2>" not in block
+    assert "INSTALL_OWNED_PATHS=(" in block
+    assert 'chown -R "$HOST_UID:$HOST_GID" "${INSTALL_OWNED_PATHS[@]}"' in block
     assert "trap cleanup EXIT" in block
     assert 'docker rm -f "$CONTAINER"' in block
-    cleanup = block.split("cleanup() {", maxsplit=1)[1].split("}", maxsplit=1)[0]
+    cleanup = block.split("cleanup() {", maxsplit=1)[1].split(
+        "\n    }", maxsplit=1
+    )[0]
     assert 'docker-storage-policy.py" release' in cleanup
     assert "--boundary after-install" in cleanup
 
 
 def test_install_test_cleanup_preserves_the_original_gate_failure() -> None:
     block = _just_recipe_block("_gate-install")
-    cleanup = block.split("cleanup() {", maxsplit=1)[1].split("}", maxsplit=1)[0]
+    cleanup = block.split("cleanup() {", maxsplit=1)[1].split(
+        "\n    }", maxsplit=1
+    )[0]
 
     capture = cleanup.index("install_gate_exit=$?")
     disable_trap = cleanup.index("trap - EXIT")
@@ -455,17 +461,19 @@ def test_install_test_cleanup_preserves_the_original_gate_failure() -> None:
     assert capture < disable_trap < remove_container < restore_status
 
 
-def test_install_test_keeps_frontend_build_outputs_container_owned() -> None:
+def test_install_test_does_not_rebuild_frontend_and_owns_release_site_scratch() -> None:
     block = _just_recipe_block("_gate-install")
 
-    assert "-v capsem-install-frontend-node-modules:/src/frontend/node_modules" in block
-    assert "-v capsem-install-frontend-dist:/src/frontend/dist" in block
+    assert "-v capsem-install-frontend-node-modules:/src/frontend/node_modules" not in block
+    assert "-v capsem-install-frontend-dist:/src/frontend/dist" not in block
+    assert "pnpm build" not in block
     assert (
         "-v capsem-install-release-site-node-modules:/src/release-site/node_modules"
         in block
     )
-    assert "chown -R capsem:capsem /src/frontend/node_modules /src/frontend/dist" in block
-    assert "chown -R capsem:capsem /src/release-site/node_modules" in block
+    assert "-v capsem-install-release-site-dist:/src/release-site/dist" in block
+    assert '"/src/release-site/node_modules"' in block
+    assert '"/src/release-site/dist"' in block
     install_release_site = block.index(
         "cd /src/release-site && pnpm install --frozen-lockfile"
     )
@@ -497,8 +505,9 @@ def test_install_test_runs_local_release_glowup_from_real_package() -> None:
 
     assert "Running Linux native release glow-up" in block
     assert "scripts/local-release-glowup.py" in block
-    assert '--input-deb "$DEB"' in block
-    assert "--bin-dir /cargo-target/debug" in block
+    assert '--input-deb "$CONTAINER_DEB"' in block
+    assert "--bin-dir /usr/bin" in block
+    assert "--package-ready" in block
     assert '--assets-dir "$INSTALL_ASSETS_DIR"' in block
     assert '--config-root "$INSTALL_CONFIG_DIR"' in block
     assert "just _gate-install" in _just_recipe_block("test:")
@@ -517,12 +526,8 @@ def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> No
     assert "scripts/stage-release-test-inputs.py" in block
     assert 'cp -R assets/. "$INSTALL_ASSETS_DIR/"' in block
     assert "requires rebuilt local assets or verified pulled profile inputs" in block
-    assert (
-        'CAPSEM_ASSETS_DIR="$INSTALL_ASSETS_DIR" '
-        'CAPSEM_CONFIG_OUTPUT_ROOT="/src/$INSTALL_CONFIG_DIR" '
-        "bash scripts/materialize-config.sh"
-    ) in block
-    assert '"$INSTALL_CONFIG_DIR" "$INSTALL_ASSETS_DIR"' in block
+    assert "bash scripts/materialize-config.sh" not in block
+    assert 'cp -R target/config/. "$INSTALL_CONFIG_DIR/"' in block
     assert 'INSTALL_SOURCE_MANIFEST="$INSTALL_CHANNEL_DIR/assets/local/manifest.json"' in block
     assert "scripts/serve-release-test-root.py" in block
     assert "capsem-admin assets channel build" in block
@@ -533,7 +538,10 @@ def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> No
     assert build_graph < build_site < check_graph
     assert "CAPSEM_RELEASE_CHANNEL_DIST=" in block
     assert "/src/$INSTALL_CHANNEL_DIR" in block
-    assert 'CAPSEM_TEST_ASSET_MANIFEST="/src/$INSTALL_SOURCE_MANIFEST"' in block
+    assert (
+        "CAPSEM_TEST_ASSET_MANIFEST=/home/capsem/.capsem/assets/manifest.json"
+        in block
+    )
     assert '--assets-dir "$INSTALL_ASSETS_DIR"' in block
     assert '--config-root "$INSTALL_CONFIG_DIR"' in block
     assert 'TEST_ASSET_MANIFEST = os.environ.get("CAPSEM_TEST_ASSET_MANIFEST")' in update_tests
@@ -545,22 +553,29 @@ def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> No
     assert "assets downloaded on first use, not bundled in .deb" not in layout_tests
 
 
-def test_install_test_authors_exact_candidate_manifest_before_dpkg() -> None:
+def test_install_test_consumes_exact_publishable_package_without_rebuild() -> None:
     block = _just_recipe_block("_gate-install").replace(r"\"", '"').replace(r"\$", "$")
 
-    repack = block.index("scripts/repack-deb.sh")
-    generate_sbom = block.index("scripts/generate-host-binary-sbom.py", repack)
-    record_binary = block.index("capsem-admin assets channel record-binary", generate_sbom)
-    install = block.index("dpkg -i /cargo-target/debug/bundle/deb/*.deb", record_binary)
-
-    assert repack < generate_sbom < record_binary < install
-    assert 'VERSION=$(dpkg-deb -f "$DEB" Version)' in block
-    assert 'CAPSEM_RELEASE_URL="file://$CANDIDATE_BASE"' in block
-    assert '--manifest-path "$INSTALL_ASSETS_DIR/manifest.json"' in block
-    assert '--artifact "$CANDIDATE_DEB"' in block
-    assert '--artifact "$SBOM"' in block
-    assert 'manifest["packages"]' not in block
-    assert 'jq ' not in block
+    select = block.index('DEB="$ROOT/dist/Capsem_${SOURCE_VERSION}_${DEB_ARCH}.deb"')
+    install = block.index('dpkg -i "$CONTAINER_DEB"', select)
+    assert select < install
+    assert 'test -s "$DEB"' in block
+    assert 'VERSION="$SOURCE_VERSION"' in block
+    assert (
+        'PACKAGE_VERSION=$(docker exec "$CONTAINER" dpkg-deb -f '
+        '"$CONTAINER_DEB" Version)'
+    ) in block
+    host_selection = block[: block.index("DOCKER_RUNTIME_ARGS")]
+    assert "dpkg-deb" not in host_selection
+    assert 'CONTAINER_DEB="/src/${DEB#$ROOT/}"' in block
+    for forbidden in (
+        "cargo build",
+        "cargo tauri build",
+        "scripts/repack-deb.sh",
+        "pnpm build",
+        "/cargo-target/debug/bundle/deb",
+    ):
+        assert forbidden not in block
 
 
 def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> None:
@@ -979,27 +994,19 @@ def test_docker_gc_reclaims_old_created_debug_containers() -> None:
     assert "--filter status=exited" not in controller
 
 
-def test_install_gate_releases_disposable_build_state_before_pytest() -> None:
+def test_install_gate_has_no_disposable_compiler_state_before_pytest() -> None:
     block = _just_recipe_block("_gate-install")
 
-    package_install = block.index("Installing .deb via dpkg")
-    trim_build_state = block.index(
-        "rm -rf /cargo-target/debug/incremental /cargo-target/debug/deps "
-        "/cargo-target/debug/build /cargo-target/debug/.fingerprint "
-        "/cargo-target/debug/examples",
-        package_install,
-    )
+    package_install = block.index("Installing exact release package via dpkg")
     ledger_handoff = block.index(
         "chown -R $HOST_UID:$HOST_GID /src/target/storage",
-        trim_build_state,
+        package_install,
     )
     final_capacity = block.index('scripts/ensure-docker-space.sh" install', package_install)
     pytest_launch = block.index("Running install e2e tests")
 
-    assert package_install < trim_build_state < ledger_handoff < final_capacity < pytest_launch
-    cleanup = block[trim_build_state:final_capacity]
-    assert "/cargo-target/debug/bundle" not in cleanup
-    assert "rm -rf /cargo-target/debug/*" not in cleanup
+    assert package_install < ledger_handoff < final_capacity < pytest_launch
+    assert "/cargo-target" not in block
 
 
 def test_cross_compile_does_not_bypass_apt_date_validation() -> None:
@@ -1263,6 +1270,21 @@ def test_local_release_glowup_falls_back_to_copy_across_filesystems(
 
     assert target.read_bytes() == source.read_bytes()
     assert not os.path.samefile(source, target)
+
+
+def test_local_release_glowup_stages_package_ready_artifact_into_fresh_tree(
+    tmp_path: Path,
+) -> None:
+    """Reusing a release package must not rely on the repacker creating dirs."""
+    glowup = _load_local_release_glowup()
+    source = tmp_path / "dist" / "Capsem_1.2.3_arm64.deb"
+    target = tmp_path / "work" / "artifacts" / "stable" / "v1.2.3" / source.name
+    source.parent.mkdir()
+    source.write_bytes(b"exact-publishable-package")
+
+    glowup.stage_package_ready_artifact(source, target)
+
+    assert target.read_bytes() == source.read_bytes()
 
 
 def test_local_release_glowup_does_not_copy_after_real_disk_exhaustion(

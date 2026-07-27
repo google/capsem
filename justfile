@@ -1814,13 +1814,24 @@ _test-install-harness-preflight:
 
 _gate-install:
     #!/bin/bash
-    # No _build-host dep: the container does its own `cargo build` (line ~847)
-    # against the GTK/glib -dev libs baked into Dockerfile.host-builder.
-    # Pre-building on the CI runner duplicated work and broke on Linux
-    # runners that lack libglib2.0-dev/libgtk-3-dev (the failure mode that
-    # masked the asset-URL bug for v1.0.1777065213).
+    # Install the exact release-mode package already produced by the package
+    # rail. Rebuilding a debug package here both wastes time and proves bytes
+    # that can never be published.
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
+    SOURCE_VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    case "$(uname -m)" in
+        arm64|aarch64) DEB_ARCH=arm64 ;;
+        x86_64|amd64) DEB_ARCH=amd64 ;;
+        *)
+            echo "ERROR: unsupported native Debian proof architecture: $(uname -m)" >&2
+            exit 1
+            ;;
+    esac
+    DEB="$ROOT/dist/Capsem_${SOURCE_VERSION}_${DEB_ARCH}.deb"
+    test -s "$DEB"
+    VERSION="$SOURCE_VERSION"
+    CONTAINER_DEB="/src/${DEB#$ROOT/}"
     DOCKER_RUNTIME_ARGS=(
         --security-opt seccomp=unconfined
     )
@@ -1860,6 +1871,15 @@ _gate-install:
     BUILD_LOCAL_RELEASE_GRAPH=0
     INSTALL_SOURCE_MANIFEST="$INSTALL_ASSETS_DIR/manifest.json"
     INSTALL_MANIFEST_URL="file:///src/$INSTALL_SOURCE_MANIFEST"
+    INSTALL_OWNED_PATHS=(
+        "/src/$INSTALL_ASSETS_DIR"
+        "/src/$INSTALL_CONFIG_DIR"
+        "/src/$INSTALL_CHANNEL_DIR"
+        "/src/target/install-test-packages"
+        "/src/target/local-release-glowup"
+        "/src/release-site/node_modules"
+        "/src/release-site/dist"
+    )
     HOST_ROSETTA_REGISTRATION=not_applicable
     case "$INSTALL_CHANNEL_DIR" in
         target/*) ;;
@@ -1875,7 +1895,9 @@ _gate-install:
     cleanup() {
         install_gate_exit=$?
         trap - EXIT
-        docker exec "$CONTAINER" bash -c "chown -R $HOST_UID:$HOST_GID /src 2>/dev/null || true" >/dev/null 2>&1 || true
+        docker exec "$CONTAINER" \
+            chown -R "$HOST_UID:$HOST_GID" "${INSTALL_OWNED_PATHS[@]}" \
+            >/dev/null 2>&1 || true
         docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
         uv run python "$ROOT/scripts/docker-storage-policy.py" release \
             --boundary after-install --rail install || true
@@ -1917,12 +1939,8 @@ _gate-install:
         -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
         --tmpfs /run --tmpfs /tmp \
         -v "$PWD":/src \
-        -v capsem-install-target:/cargo-target \
-        -v capsem-install-cargo:/usr/local/cargo/registry \
-        -v capsem-install-rustup:/usr/local/rustup \
-        -v capsem-install-frontend-node-modules:/src/frontend/node_modules \
-        -v capsem-install-frontend-dist:/src/frontend/dist \
         -v capsem-install-release-site-node-modules:/src/release-site/node_modules \
+        -v capsem-install-release-site-dist:/src/release-site/dist \
         "$IMAGE" /usr/lib/systemd/systemd
     if [ "$LINUX_VM_PROOF" -eq 1 ]; then
         docker exec "$CONTAINER" test -r /dev/kvm -a -w /dev/kvm
@@ -1935,38 +1953,16 @@ _gate-install:
         fi
         sleep 0.5
     done
-    # Fix ownership for capsem user builds. /usr/local/rustup is included
-    # because rustup may install pinned components/targets into its
-    # root-owned state -- without this chown, cargo build as
-    # the capsem user dies with `Permission denied (os error 13)`.
-    # Frontend dependencies and output must remain container-owned. A macOS
-    # bind mount preserves host ownership even after the best-effort /src
-    # chown below; pnpm can then install successfully while Vite fails later
-    # when it creates node_modules/.vite. Dedicated volumes make both writes
-    # behave exactly like the non-root Linux CI filesystem.
-    docker exec "$CONTAINER" bash -c "mkdir -p /cargo-target /src/frontend/node_modules /src/frontend/dist /src/release-site/node_modules && chown -R capsem:capsem /cargo-target /usr/local/cargo /usr/local/rustup && chown -R capsem:capsem /src/frontend/node_modules /src/frontend/dist && chown -R capsem:capsem /src/release-site/node_modules"
-    # On GitHub runners the bind-mounted /src is owned by uid 1001
-    # (runner), but the container builds as uid 1000 (capsem). Anything
-    # that tries to write into /src (pnpm/vite temp files, Tauri build.rs
-    # generating context into OUT_DIR but traversing /src, cargo's lock
-    # checks, etc.) hits EACCES. Chown the whole tree once up front.
-    docker exec "$CONTAINER" bash -c "chown -R capsem:capsem /src 2>/dev/null || true"
-    echo "Building host binaries..."
-    docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && cargo build {{host_crates}}"
-    echo "Building frontend..."
-    docker exec -u capsem -e CI=true "$CONTAINER" bash -c \
-        "cd /src/frontend && pnpm install && pnpm build"
-    echo "Building Tauri .deb..."
-    # Clear stale bundles before the build: /cargo-target is a persistent
-    # Docker volume, and any previous version's .deb lingers there. The
-    # subsequent `ls *.deb` pickup would otherwise match both the stale
-    # and current files -- `ls -t | head -1` below is belt-and-braces for
-    # the same class of bug.
-    docker exec -u capsem "$CONTAINER" bash -c \
-        "rm -f /cargo-target/debug/bundle/deb/*.deb"
-    docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && cargo tauri build --debug --bundles deb --config '{\"bundle\":{\"createUpdaterArtifacts\":false}}'"
+    docker exec "$CONTAINER" mkdir -p "${INSTALL_OWNED_PATHS[@]}"
+    docker exec "$CONTAINER" \
+        chown -R capsem:capsem "${INSTALL_OWNED_PATHS[@]}"
+    PACKAGE_VERSION=$(docker exec "$CONTAINER" dpkg-deb -f "$CONTAINER_DEB" Version)
+    test "$PACKAGE_VERSION" = "$VERSION"
+    echo "Installing exact release package via dpkg: $DEB"
+    docker exec "$CONTAINER" bash -c \
+        "dpkg -i \"$CONTAINER_DEB\" 2>&1 || apt-get install -f -y"
+    INSTALLED_VERSION=$(docker exec "$CONTAINER" dpkg-query -W -f='${Version}' capsem)
+    test "$INSTALLED_VERSION" = "$VERSION"
     echo "Staging real profile assets for installed VM proofs..."
     if [ -n "$INSTALL_PROFILE_INPUTS" ]; then
         docker exec -u capsem "$CONTAINER" bash -c \
@@ -1977,7 +1973,7 @@ _gate-install:
         docker exec -u capsem "$CONTAINER" bash -c \
             "cd /src && test -f assets/manifest.json || { echo 'ERROR: installed VM proof requires rebuilt local assets or verified pulled profile inputs' >&2; exit 1; }"
         docker exec -u capsem "$CONTAINER" bash -c \
-            "cd /src && rm -rf \"$INSTALL_ASSETS_DIR\" \"$INSTALL_CONFIG_DIR\" && mkdir -p \"$INSTALL_ASSETS_DIR\" && cp -R assets/. \"$INSTALL_ASSETS_DIR/\""
+            "cd /src && test -d target/config/profiles && rm -rf \"$INSTALL_ASSETS_DIR\" \"$INSTALL_CONFIG_DIR\" && mkdir -p \"$INSTALL_ASSETS_DIR\" \"$INSTALL_CONFIG_DIR\" && cp -R assets/. \"$INSTALL_ASSETS_DIR/\" && cp -R target/config/. \"$INSTALL_CONFIG_DIR/\""
         BUILD_LOCAL_RELEASE_GRAPH=1
         INSTALL_SOURCE_MANIFEST="$INSTALL_CHANNEL_DIR/assets/local/manifest.json"
         docker exec -u capsem "$CONTAINER" bash -c \
@@ -1993,16 +1989,10 @@ _gate-install:
         INSTALL_RELEASE_BASE="$(docker exec -u capsem "$CONTAINER" python3 -c 'import json; print(json.load(open("/tmp/capsem-install-release.json"))["base_url"])')"
         INSTALL_MANIFEST_URL="$INSTALL_RELEASE_BASE/assets/local/manifest.json"
     fi
-    echo "Materializing runtime config..."
-    docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && CAPSEM_ASSETS_DIR=\"$INSTALL_ASSETS_DIR\" CAPSEM_CONFIG_OUTPUT_ROOT=\"/src/$INSTALL_CONFIG_DIR\" bash scripts/materialize-config.sh"
-    echo "Repacking .deb with companion binaries..."
-    docker exec -u capsem "$CONTAINER" bash -c \
-        "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && bash scripts/repack-deb.sh --manifest \"$INSTALL_MANIFEST_URL\" \"\$DEB\" /cargo-target/debug \"$INSTALL_CONFIG_DIR\" \"$INSTALL_ASSETS_DIR\""
     echo "Authoring exact candidate manifest for the installed package..."
     docker exec -u capsem "$CONTAINER" bash -c \
         "cd /src && \
-        DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && \
+        DEB=\"$CONTAINER_DEB\" && \
         VERSION=\$(dpkg-deb -f \"\$DEB\" Version) && \
         CANDIDATE_BASE=\"\$PWD/target/install-test-packages\" && \
         CANDIDATE_DIR=\"\$CANDIDATE_BASE/v\$VERSION\" && \
@@ -2013,7 +2003,7 @@ _gate-install:
         SBOM=\"\$CANDIDATE_DIR/capsem-sbom.spdx.json\" && \
         python3 scripts/generate-host-binary-sbom.py --output \"\$SBOM\" \"\$CANDIDATE_DEB\" && \
         CAPSEM_RELEASE_URL=\"file://\$CANDIDATE_BASE\" \
-            /cargo-target/debug/capsem-admin assets channel record-binary \
+            /usr/bin/capsem-admin assets channel record-binary \
             --manifest-path \"$INSTALL_ASSETS_DIR/manifest.json\" \
             --version \"\$VERSION\" \
             --artifact \"\$CANDIDATE_DEB\" \
@@ -2021,7 +2011,7 @@ _gate-install:
     if [ "$BUILD_LOCAL_RELEASE_GRAPH" -eq 1 ]; then
         echo "Generating authoritative local release graph..."
         docker exec -u capsem "$CONTAINER" bash -c \
-            "cd /src && /cargo-target/debug/capsem-admin assets channel build \
+            "cd /src && /usr/bin/capsem-admin assets channel build \
                 --manifest \"file:///src/$INSTALL_ASSETS_DIR/manifest.json\" \
                 --assets-dir \"$INSTALL_ASSETS_DIR\" \
                 --profiles-dir \"$INSTALL_CONFIG_DIR/profiles\" \
@@ -2035,20 +2025,10 @@ _gate-install:
                 bash scripts/check-web-surface.sh release-site-build"
         docker exec -u capsem "$CONTAINER" bash -c \
             "cd /src && test -f \"$INSTALL_SOURCE_MANIFEST\" && \
-                /cargo-target/debug/capsem-admin assets channel check \
+                /usr/bin/capsem-admin assets channel check \
                     --channel local \
                     --dist \"$INSTALL_CHANNEL_DIR\""
     fi
-    echo "Installing .deb via dpkg..."
-    docker exec "$CONTAINER" bash -c \
-        "dpkg -i /cargo-target/debug/bundle/deb/*.deb 2>&1 || apt-get install -f -y"
-    # The package is linked and installed, so compiler object graphs are no
-    # longer needed by pytest or the glow-up. They account for several GiB in
-    # the active target volume and the global cleaner correctly refuses to
-    # touch a mounted volume. Release them here while retaining the top-level
-    # linked binaries and exact package bundle consumed by the runtime proofs.
-    docker exec "$CONTAINER" bash -c \
-        "rm -rf /cargo-target/debug/incremental /cargo-target/debug/deps /cargo-target/debug/build /cargo-target/debug/.fingerprint /cargo-target/debug/examples"
     # The Linux CI container chowns the bind-mounted checkout to uid 1000 so
     # its non-root build can write there. Hand the host-owned storage ledger
     # back before invoking the host controller (runner uid 1001 on GitHub);
@@ -2061,12 +2041,12 @@ _gate-install:
     # of deep inside a fixture after hours of otherwise-green release work.
     "$ROOT/scripts/ensure-docker-space.sh" install
     echo "Running install e2e tests..."
-    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_BIN_SRC=/cargo-target/debug -e CAPSEM_TEST_ASSET_MANIFEST="/src/$INSTALL_SOURCE_MANIFEST" "$CONTAINER" bash -c \
+    docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_BIN_SRC=/usr/bin -e CAPSEM_TEST_ASSET_MANIFEST=/home/capsem/.capsem/assets/manifest.json "$CONTAINER" bash -c \
         "mkdir -p /home/capsem/tmp && cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test TMPDIR=/home/capsem/tmp uv run python -m pytest tests/capsem-install/ -v --tb=short"
     if [ "$LINUX_VM_PROOF" -eq 1 ]; then
         echo "Running Linux native release glow-up (install, channel switch, upgrade)..."
         docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
-            "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test uv run python scripts/local-release-glowup.py --input-deb \"\$DEB\" --bin-dir /cargo-target/debug --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\" --work-dir target/local-release-glowup"
+            "cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test uv run python scripts/local-release-glowup.py --input-deb \"$CONTAINER_DEB\" --bin-dir /usr/bin --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\" --work-dir target/local-release-glowup --package-ready"
     else
         echo "Validating the native macOS installed doctor/Winterfell proof..."
         if [ -z "${CAPSEM_MACOS_NATIVE_GLOWUP_REPORT:-}" ]; then
@@ -2079,7 +2059,7 @@ _gate-install:
             --cargo-toml "$ROOT/Cargo.toml"
         echo "Validating Linux package/channel assembly without unsupported nested ARM VM boot..."
         docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
-            "cd /src && DEB=\$(ls -t /cargo-target/debug/bundle/deb/*.deb | head -1) && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test uv run python scripts/local-release-glowup.py --input-deb \"\$DEB\" --bin-dir /cargo-target/debug --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\" --work-dir target/local-release-glowup --skip-install"
+            "cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test uv run python scripts/local-release-glowup.py --input-deb \"$CONTAINER_DEB\" --bin-dir /usr/bin --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\" --work-dir target/local-release-glowup --package-ready --skip-install"
     fi
     if [ "$HOST_ROSETTA_REGISTRATION" = "required" ] \
         && ! colima ssh -- test -f /proc/sys/fs/binfmt_misc/rosetta >/dev/null 2>&1; then

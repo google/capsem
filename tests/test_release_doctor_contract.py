@@ -336,22 +336,25 @@ def test_canonical_gate_builds_both_linux_release_architectures() -> None:
     assert "just _cross-compile\n" not in canonical_gate
 
 
-def test_install_e2e_materializes_config_before_repacking_package() -> None:
+def test_install_e2e_reuses_exact_package_and_materialized_profile_config() -> None:
     block = _recipe_block("_gate-install:")
 
     stage_pos = block.find("scripts/stage-release-test-inputs.py")
     local_copy_pos = block.find('cp -R assets/. \\"$INSTALL_ASSETS_DIR/\\"')
-    materialize_pos = block.find("bash scripts/materialize-config.sh")
-    repack_pos = block.find("scripts/repack-deb.sh")
+    config_copy_pos = block.find('cp -R target/config/. \\"$INSTALL_CONFIG_DIR/\\"')
+    package_pos = block.find('DEB="$ROOT/dist/Capsem_${SOURCE_VERSION}_${DEB_ARCH}.deb"')
+    install_pos = block.find('dpkg -i \\"$CONTAINER_DEB\\"')
 
     assert "scripts/prepare-install-test-assets.sh" not in block
     assert stage_pos != -1
     assert local_copy_pos != -1
-    assert materialize_pos != -1
-    assert repack_pos != -1
-    assert stage_pos < materialize_pos
-    assert local_copy_pos < materialize_pos
-    assert materialize_pos < repack_pos
+    assert config_copy_pos != -1
+    assert package_pos != -1
+    assert install_pos != -1
+    assert package_pos < install_pos < stage_pos
+    assert stage_pos < local_copy_pos < config_copy_pos
+    assert "bash scripts/materialize-config.sh" not in block
+    assert "scripts/repack-deb.sh" not in block
     assert "just _materialize-config" not in block
 
 
