@@ -1,7 +1,6 @@
-version: 1.6.1785138870
+version: 1.6.1785192352
 ---
 ### Fixed
 
-- Made the shared fast gate reject case-insensitive Justfile references locally,
-  and made binary release fail early when its manifest-authorized staged channel
-  source does not exist.
+- Made binary package jobs consume only digest-verified, manifest-selected
+  profile inputs instead of regenerating the checked-in profile catalog.
