@@ -3,6 +3,8 @@
 from pathlib import Path
 import re
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 JUSTFILE = (ROOT / "justfile").read_text(encoding="utf-8")
@@ -80,3 +82,35 @@ def test_fast_release_contracts_do_not_depend_on_ignored_build_outputs() -> None
         == 2
     )
     assert "MATERIALIZED_PROFILES_DIR" not in source_contract
+
+
+def test_every_pnpm_cache_owner_materializes_its_store() -> None:
+    offenders: list[str] = []
+    for workflow_path in sorted((ROOT / ".github/workflows").glob("*.yaml")):
+        workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
+        for job_name, job in (workflow.get("jobs") or {}).items():
+            steps = job.get("steps") or []
+            owns_pnpm_cache = any(
+                isinstance(step, dict)
+                and str(step.get("uses", "")).startswith("actions/setup-node@")
+                and (step.get("with") or {}).get("cache") == "pnpm"
+                for step in steps
+            )
+            if not owns_pnpm_cache:
+                continue
+            commands = "\n".join(
+                str(step.get("run", "")) for step in steps if isinstance(step, dict)
+            )
+            creates_store = (
+                ("pnpm" in commands and " install" in commands)
+                or "just _test-fast" in commands
+            )
+            if not creates_store:
+                offenders.append(
+                    f"{workflow_path.relative_to(ROOT).as_posix()}:{job_name}"
+                )
+
+    assert offenders == [], (
+        "cache-enabled setup-node jobs must create their pnpm store before "
+        "the post-job save step: " + ", ".join(offenders)
+    )

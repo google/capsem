@@ -195,14 +195,9 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
-        with:
-          version: 10
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
-          cache: pnpm
-          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install musl C toolchain
         run: |
@@ -277,6 +272,10 @@ jobs:
           cache-dependency-path: |
             frontend/pnpm-lock.yaml
             release-site/pnpm-lock.yaml
+      - name: Install shared functional web dependencies
+        run: |
+          (cd frontend && pnpm install --frozen-lockfile)
+          (cd release-site && pnpm install --frozen-lockfile)
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: 1.97.1
