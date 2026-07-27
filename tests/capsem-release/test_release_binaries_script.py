@@ -280,6 +280,8 @@ def test_binary_recipe_fetches_serialized_channel_source_before_full_local_gate(
     full_gate = recipe.index("just test")
     assert fetch < full_gate
     assert '--channel "{{channel}}"' in recipe
+    assert '--repository "$RELEASE_REPOSITORY"' in recipe
+    assert 'RELEASE_REPOSITORY="${GITHUB_REPOSITORY:-' in recipe
     assert "--bootstrap-missing-first-party" not in recipe
     assert "--require-profile-membership" in recipe
     assert "GITHUB_TOKEN" in recipe

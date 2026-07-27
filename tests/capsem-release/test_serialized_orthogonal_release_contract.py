@@ -149,6 +149,7 @@ def test_public_release_command_executes_read_only_preflight_then_full_test_befo
         assert lines.pop(0) == (
             "python3:scripts/fetch-channel-source-manifest.py "
             "--channel nightly "
+            "--repository google/capsem "
             "--require-profile-membership "
             "--output target/release-preflight/channel-source.json"
         )
@@ -190,6 +191,7 @@ def test_failed_full_test_prevents_every_release_side_effect(
             'case "$*" in\n'
             '  "scripts/extract-release-notes.py --check"'
             '|"scripts/fetch-channel-source-manifest.py --channel nightly '
+            '--repository google/capsem '
             '--require-profile-membership '
             '--output target/release-preflight/channel-source.json")\n'
             "  exit 0\n"
@@ -222,6 +224,7 @@ def test_failed_full_test_prevents_every_release_side_effect(
             "python3:scripts/extract-release-notes.py --check",
             "python3:scripts/fetch-channel-source-manifest.py "
             "--channel nightly "
+            "--repository google/capsem "
             "--require-profile-membership "
             "--output target/release-preflight/channel-source.json",
         ]

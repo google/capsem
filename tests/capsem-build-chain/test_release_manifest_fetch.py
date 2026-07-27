@@ -37,5 +37,6 @@ def test_binary_release_fetches_fresh_source_without_bootstrapping_profiles() ->
     )[0]
 
     assert "scripts/fetch-channel-source-manifest.py" in recipe
+    assert '--repository "$RELEASE_REPOSITORY"' in recipe
     assert "--require-profile-membership" in recipe
     assert "--bootstrap-missing-first-party" not in recipe

@@ -66,9 +66,11 @@ release-binaries channel:
     python3 scripts/extract-release-notes.py --check
     mkdir -p target/release-preflight
     RELEASE_GITHUB_TOKEN="${GITHUB_TOKEN:-$(gh auth token)}"
+    RELEASE_REPOSITORY="${GITHUB_REPOSITORY:-google/capsem}"
     GITHUB_TOKEN="$RELEASE_GITHUB_TOKEN" \
         python3 scripts/fetch-channel-source-manifest.py \
             --channel "{{channel}}" \
+            --repository "$RELEASE_REPOSITORY" \
             --require-profile-membership \
             --output target/release-preflight/channel-source.json
     TESTED_HEAD=$(git rev-parse HEAD)
