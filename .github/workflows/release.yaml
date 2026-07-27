@@ -233,9 +233,29 @@ jobs:
         with:
           key: build-app-macos
 
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      - name: Fetch exact selected arm64 profiles
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: file://${{ github.workspace }}/target/channel-source/manifest.json
+          kind: profiles
+          architecture: arm64
+          output: target/binary-selected-profiles
+
+      - name: Stage exact selected profile inputs
+        run: |
+          uv run python scripts/stage-release-test-inputs.py \
+            --input-dir target/binary-selected-profiles \
+            --assets-dir target/release-assets \
+            --config-root target/release-config \
+            --shared-config-root config
+
       - name: Materialize runtime config
         run: |
           CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST" \
+          CAPSEM_ASSETS_PATH="$PWD/target/release-assets" \
+          CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
           CAPSEM_ARCH=arm64 \
             bash scripts/materialize-config.sh
 
@@ -247,7 +267,6 @@ jobs:
           node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: cd frontend && pnpm install --frozen-lockfile
 
       - name: Build frontend
@@ -481,9 +500,29 @@ jobs:
         with:
           key: build-app-linux-${{ matrix.arch }}
 
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      - name: Fetch exact selected ${{ matrix.arch }} profiles
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: file://${{ github.workspace }}/target/channel-source/manifest.json
+          kind: profiles
+          architecture: ${{ matrix.arch }}
+          output: target/binary-selected-profiles
+
+      - name: Stage exact selected profile inputs
+        run: |
+          uv run python scripts/stage-release-test-inputs.py \
+            --input-dir target/binary-selected-profiles \
+            --assets-dir target/release-assets \
+            --config-root target/release-config \
+            --shared-config-root config
+
       - name: Materialize runtime config
         run: |
           CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST" \
+          CAPSEM_ASSETS_PATH="$PWD/target/release-assets" \
+          CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
           CAPSEM_ARCH="${{ matrix.arch }}" \
             bash scripts/materialize-config.sh
 

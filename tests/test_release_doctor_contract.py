@@ -4752,23 +4752,48 @@ def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     assert "scripts/generate-host-binary-sbom.py" in release
 
 
-def test_release_packages_use_the_shared_all_profile_materialization_rail() -> None:
+def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     release = _source_text(".github/workflows/release.yaml")
     mac_job = _workflow_job_block("build-app-macos", "release.yaml")
     linux_job = _workflow_job_block("build-app-linux", "release.yaml")
     materializer = _source_text("scripts/materialize-config.sh")
 
+    assert 'manifest_schema="release"' in materializer
+    assert 'profile_path="$CONFIG_ROOT/profiles/$profile_id/profile.toml"' in materializer
     assert 'profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)' in materializer
-    assert 'for profile_path in "${profile_paths[@]}"' in materializer
     assert "name: binary-channel-source" in mac_job
+    assert "Fetch exact selected arm64 profiles" in mac_job
+    assert "uses: ./.github/actions/fetch-release-inputs" in mac_job
+    assert "architecture: arm64" in mac_job
+    assert "output: target/binary-selected-profiles" in mac_job
+    assert "--input-dir target/binary-selected-profiles" in mac_job
+    assert "--assets-dir target/release-assets" in mac_job
+    assert "--config-root target/release-config" in mac_job
     assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in mac_job
+    assert 'CAPSEM_CONFIG_ROOT="$PWD/target/release-config"' in mac_job
+    assert 'CAPSEM_ASSETS_PATH="$PWD/target/release-assets"' in mac_job
     assert "CAPSEM_ARCH=arm64" in mac_job
     assert "bash scripts/materialize-config.sh" in mac_job
+    assert mac_job.index("Fetch exact selected arm64 profiles") < mac_job.index(
+        "bash scripts/materialize-config.sh"
+    )
     assert '--manifest "$ASSET_MANIFEST_URL"' in mac_job
     assert "name: binary-channel-source" in linux_job
+    assert "Fetch exact selected ${{ matrix.arch }} profiles" in linux_job
+    assert "uses: ./.github/actions/fetch-release-inputs" in linux_job
+    assert "architecture: ${{ matrix.arch }}" in linux_job
+    assert "output: target/binary-selected-profiles" in linux_job
+    assert "--input-dir target/binary-selected-profiles" in linux_job
+    assert "--assets-dir target/release-assets" in linux_job
+    assert "--config-root target/release-config" in linux_job
     assert 'CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST"' in linux_job
+    assert 'CAPSEM_CONFIG_ROOT="$PWD/target/release-config"' in linux_job
+    assert 'CAPSEM_ASSETS_PATH="$PWD/target/release-assets"' in linux_job
     assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in linux_job
     assert "bash scripts/materialize-config.sh" in linux_job
+    assert linux_job.index(
+        "Fetch exact selected ${{ matrix.arch }} profiles"
+    ) < linux_job.index("bash scripts/materialize-config.sh")
     assert 'scripts/repack-deb.sh --manifest "$ASSET_MANIFEST_URL"' in linux_job
     assert "--profile config/profiles/code/profile.toml" not in release
     for assembler in ("scripts/build-pkg.sh", "scripts/repack-deb.sh"):

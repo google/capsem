@@ -180,12 +180,16 @@ def test_materialize_config_falls_back_to_sole_manifest_arch_for_ci_runner() -> 
     assert "materialize arch $arch from $arch_source is not present" in script
 
 
-def test_materialize_config_materializes_entire_selected_profile_catalog() -> None:
+def test_materialize_config_uses_release_manifest_profile_membership() -> None:
     block = _recipe_block("_materialize-config:")
     script = (PROJECT_ROOT / "scripts" / "materialize-config.sh").read_text()
 
     assert 'rm -rf "$OUTPUT_ROOT"' in script
     assert 'rm -rf "$ROOT/target/config"' not in script
+    assert 'manifest_schema="release"' in script
+    assert 'profile_ids="$(' in script
+    assert 'profile_path="$CONFIG_ROOT/profiles/$profile_id/profile.toml"' in script
+    assert "selected release profile source is missing" in script
     assert 'profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)' in script
     assert 'for profile_path in "${profile_paths[@]}"; do' in script
     assert '--profile "$profile_path"' in script

@@ -21,14 +21,20 @@ EXPECTED_RELEASE_USER_AGENT = "capsem-release-client/1"
 
 def _fake_materializer_repo(tmp_path: Path) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
-    (repo / "config" / "profiles" / "code").mkdir(parents=True)
-    (repo / "config" / "profiles" / "code" / "profile.toml").write_text(
-        'id = "code"\n'
-    )
+    for profile_id in ("code", "co-work"):
+        profile_root = repo / "config" / "profiles" / profile_id
+        profile_root.mkdir(parents=True)
+        (profile_root / "profile.toml").write_text(f'id = "{profile_id}"\n')
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     fake_cargo = fake_bin / "cargo"
-    fake_cargo.write_text("#!/bin/sh\nexit 0\n")
+    fake_cargo.write_text(
+        "#!/bin/sh\n"
+        'if [ -n "${FAKE_CARGO_LOG:-}" ]; then\n'
+        '  printf "%s\\n" "$*" >> "$FAKE_CARGO_LOG"\n'
+        "fi\n"
+        "exit 0\n"
+    )
     fake_cargo.chmod(0o755)
     return repo, fake_bin
 
@@ -38,6 +44,7 @@ def _run_materializer(
     manifest: dict[str, object],
     *,
     arch: str = "arm64",
+    cargo_log: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     repo, fake_bin = _fake_materializer_repo(tmp_path)
     manifest_path = tmp_path / "manifest.json"
@@ -51,6 +58,8 @@ def _run_materializer(
             "PATH": f"{fake_bin}{os.pathsep}{env['PATH']}",
         }
     )
+    if cargo_log is not None:
+        env["FAKE_CARGO_LOG"] = str(cargo_log)
     return subprocess.run(
         ["bash", str(MATERIALIZER)],
         env=env,
@@ -155,6 +164,7 @@ def test_materializer_accepts_legacy_asset_manifest(tmp_path: Path) -> None:
 
 
 def test_materializer_accepts_release_graph_manifest(tmp_path: Path) -> None:
+    cargo_log = tmp_path / "cargo.log"
     result = _run_materializer(
         tmp_path,
         {
@@ -164,9 +174,63 @@ def test_materializer_accepts_release_graph_manifest(tmp_path: Path) -> None:
             },
             "packages": [],
         },
+        cargo_log=cargo_log,
     )
 
     assert result.returncode == 0, result.stderr
+    calls = cargo_log.read_text().splitlines()
+    assert len(calls) == 1
+    assert "/profiles/code/profile.toml" in calls[0]
+    assert "co-work" not in calls[0]
+
+
+def test_materializer_uses_every_active_manifest_member_and_skips_revoked(
+    tmp_path: Path,
+) -> None:
+    cargo_log = tmp_path / "cargo.log"
+    result = _run_materializer(
+        tmp_path,
+        {
+            "channel": "nightly",
+            "profiles": {
+                "code": {"architectures": [{"architecture": "arm64"}]},
+                "co-work": {
+                    "status": "revoked",
+                    "architectures": [{"architecture": "arm64"}],
+                },
+            },
+            "packages": [],
+        },
+        cargo_log=cargo_log,
+    )
+
+    assert result.returncode == 0, result.stderr
+    calls = cargo_log.read_text().splitlines()
+    assert len(calls) == 1
+    assert "/profiles/code/profile.toml" in calls[0]
+    assert "co-work" not in calls[0]
+
+
+def test_materializer_rejects_missing_selected_profile_before_cargo(
+    tmp_path: Path,
+) -> None:
+    cargo_log = tmp_path / "cargo.log"
+    result = _run_materializer(
+        tmp_path,
+        {
+            "channel": "nightly",
+            "profiles": {
+                "experimental": {"architectures": [{"architecture": "arm64"}]},
+            },
+            "packages": [],
+        },
+        cargo_log=cargo_log,
+    )
+
+    assert result.returncode != 0
+    assert "selected release profile source is missing" in result.stderr
+    assert "experimental/profile.toml" in result.stderr
+    assert not cargo_log.exists(), "membership mismatch must fail before compiling capsem-admin"
 
 
 def test_materializer_custom_output_preserves_shared_default_config(
