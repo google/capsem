@@ -1,6 +1,7 @@
-version: 1.6.1785096259
+version: 1.6.1785138870
 ---
 ### Fixed
 
-- Fail invalid binary release-note state before the complete local gate, push,
-  version, tag, package, image, or VM work.
+- Made the shared fast gate reject case-insensitive Justfile references locally,
+  and made binary release fail early when its manifest-authorized staged channel
+  source does not exist.

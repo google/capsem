@@ -123,7 +123,7 @@ filecache = [
 
 [[package]]
 name = "capsem"
-version = "1.6.1785096259"
+version = "1.6.1785138870"
 source = { editable = "." }
 dependencies = [
     { name = "blake3" },
