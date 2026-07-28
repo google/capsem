@@ -431,6 +431,7 @@ class ServiceInstance:
         self.profiles_dir = None
         self.proc = None
         self._log_file = None
+        self._failure_evidence_preserved = False
 
     def start(self):
         # Sign binaries before spawning (macOS needs virtualization entitlement)
@@ -517,7 +518,17 @@ class ServiceInstance:
         raise RuntimeError("capsem-service failed to accept connections within 15s")
 
     def client(self):
-        return UdsHttpClient(self.uds_path)
+        return UdsHttpClient(
+            self.uds_path,
+            before_vm_delete=self._preserve_failure_evidence_before_delete,
+        )
+
+    def _preserve_failure_evidence_before_delete(self):
+        """Archive a failing test's VM evidence before cleanup destroys it."""
+        if self._failure_evidence_preserved or sys.exc_info()[0] is None:
+            return
+        preserve_tmp_dir_on_failure(self.home_dir, force=True)
+        self._failure_evidence_preserved = True
 
     def stop(self, *, cleanup: bool = True):
         """Stop the service and clean up temporary directory.
@@ -548,10 +559,11 @@ class ServiceInstance:
         # happens before pytest's makereport hook records FAILED_NODEIDS, so
         # use the actively-propagating exception as authoritative failure
         # evidence instead of deleting the only service/process logs.
-        if sys.exc_info()[0] is not None:
-            preserve_tmp_dir_on_failure(self.home_dir, force=True)
-        else:
-            preserve_tmp_dir_on_failure(self.home_dir)
+        if not self._failure_evidence_preserved:
+            if sys.exc_info()[0] is not None:
+                preserve_tmp_dir_on_failure(self.home_dir, force=True)
+            else:
+                preserve_tmp_dir_on_failure(self.home_dir)
 
         if self.home_dir.exists():
             shutil.rmtree(self.home_dir, ignore_errors=True)

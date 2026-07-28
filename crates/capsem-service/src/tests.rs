@@ -7421,6 +7421,164 @@ fn cull_ignores_non_failed_dirs() {
     );
 }
 
+#[tokio::test]
+async fn delete_route_destroys_retained_state_before_success() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().to_path_buf());
+    let id = new_persistent_vm_id();
+    let name = "delete-contract";
+    let session_dir = state.run_dir.join("persistent").join(&id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(session_dir.join("session.db"), b"retained state").unwrap();
+    std::fs::write(session_dir.join("process.log"), b"retained logs").unwrap();
+
+    let mut entry = test_persistent_entry(name, session_dir.clone());
+    entry.id.clone_from(&id);
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert(name.into(), entry);
+
+    let app = build_service_router(Arc::clone(&state));
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::DELETE,
+        &format!("/vms/{id}/delete"),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["success"], true);
+    assert!(
+        !session_dir.exists(),
+        "DELETE must not respond before the retained session directory is gone"
+    );
+    let failed_prefix = format!("{id}-failed-");
+    let failed_dirs: Vec<_> = std::fs::read_dir(state.run_dir.join("sessions"))
+        .unwrap()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&failed_prefix)
+        })
+        .collect();
+    assert!(
+        failed_dirs.is_empty(),
+        "clean DELETE must destroy state, not relabel it as failed: {failed_dirs:?}"
+    );
+    assert!(
+        !state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .data
+            .vms
+            .contains_key(name),
+        "DELETE must unregister the retained session"
+    );
+}
+
+#[tokio::test]
+async fn delete_route_rejects_registry_path_outside_run_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().join("service"));
+    let id = new_persistent_vm_id();
+    let name = "unsafe-delete-contract";
+    let outside_dir = dir.path().join("must-not-delete");
+    std::fs::create_dir_all(&outside_dir).unwrap();
+    std::fs::write(outside_dir.join("owner-data"), b"preserve me").unwrap();
+
+    let mut entry = test_persistent_entry(name, outside_dir.clone());
+    entry.id.clone_from(&id);
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert(name.into(), entry);
+
+    let app = build_service_router(Arc::clone(&state));
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::DELETE,
+        &format!("/vms/{id}/delete"),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(
+        outside_dir.join("owner-data").exists(),
+        "a registry path outside the service run directory must never be deleted"
+    );
+    assert!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .data
+            .vms
+            .contains_key(name),
+        "an unsafe path rejection must leave the registry entry intact"
+    );
+}
+
+#[tokio::test]
+async fn delete_route_rejects_symlinked_session_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().join("service"));
+    let id = new_persistent_vm_id();
+    let name = "symlink-delete-contract";
+    let outside_root = dir.path().join("outside-persistent");
+    let outside_session = outside_root.join(&id);
+    std::fs::create_dir_all(&outside_session).unwrap();
+    std::fs::write(outside_session.join("owner-data"), b"preserve me").unwrap();
+    std::os::unix::fs::symlink(&outside_root, state.run_dir.join("persistent")).unwrap();
+
+    let session_dir = state.run_dir.join("persistent").join(&id);
+    let mut entry = test_persistent_entry(name, session_dir);
+    entry.id.clone_from(&id);
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert(name.into(), entry);
+
+    let app = build_service_router(Arc::clone(&state));
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::DELETE,
+        &format!("/vms/{id}/delete"),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(
+        outside_session.join("owner-data").exists(),
+        "a symlinked service root must never redirect recursive deletion"
+    );
+    assert!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .data
+            .vms
+            .contains_key(name),
+        "a symlink-root rejection must leave the registry entry intact"
+    );
+}
+
 // -----------------------------------------------------------------------
 // Auto-ID generation format
 // -----------------------------------------------------------------------

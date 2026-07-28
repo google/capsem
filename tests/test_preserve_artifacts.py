@@ -122,6 +122,46 @@ def test_logs_and_session_db_are_preserved(artifact_env, tmp_path):
         )
 
 
+def test_service_client_preserves_failure_evidence_before_delete(
+    tmp_path, monkeypatch
+):
+    """A cleanup DELETE in an exception handler must not erase the evidence
+    before the test harness can archive it.
+
+    Production DELETE remains a real destructive operation. The test-only
+    client callback captures the isolated test home exactly once while the
+    original assertion is still propagating.
+    """
+    preserved = []
+
+    def _record_preserve(path, *, force=False):
+        preserved.append((Path(path), force))
+
+    monkeypatch.setattr(svc_mod, "preserve_tmp_dir_on_failure", _record_preserve)
+    service = svc_mod.ServiceInstance()
+    client = service.client()
+    monkeypatch.setattr(
+        client,
+        "_curl",
+        lambda *_args, **_kwargs: {"success": True},
+    )
+
+    try:
+        try:
+            raise AssertionError("original test failure")
+        except AssertionError:
+            client.delete("/vms/first/delete")
+            client.delete("/vms/second/delete")
+
+        assert preserved == [(service.home_dir, True)]
+
+        # Passing-test cleanup must not create failure artifacts.
+        client.delete("/vms/third/delete")
+        assert preserved == [(service.home_dir, True)]
+    finally:
+        service.stop()
+
+
 def test_no_op_when_no_failures(artifact_env, tmp_path, monkeypatch):
     # Override artifact_env's FAILED_NODEIDS to be empty.
     monkeypatch.setattr(tests_conftest, "FAILED_NODEIDS", [])

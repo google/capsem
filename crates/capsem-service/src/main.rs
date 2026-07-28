@@ -765,16 +765,12 @@ fn prewarm_vm_asset_hash_cache(
     }
 }
 
-/// Maximum number of `-failed-*` session dirs preserved across crashes /
-/// wait_for_vm_ready timeouts / dead-process cleanup -- and now also for
-/// every clean DELETE, so post-mortem of Python-side test assertions that
-/// fire after /exec but before the test's `finally: delete()` works (the
-/// previous unlink-on-delete left only service.log, which doesn't show
-/// what the per-VM process or guest were doing). The preserved dirs hold
-/// the only host-side post-mortem signal we have (process.log,
-/// mcp-aggregator.stderr.log, serial.log, session.db). 32 is enough to
-/// span a 10-iteration stress suite that creates 1-3 VMs per iteration
-/// without losing earlier failures to the cull.
+/// Maximum number of `-failed-*` session dirs preserved across crashes,
+/// wait_for_vm_ready timeouts, and dead-process cleanup. The preserved dirs
+/// hold the host-side post-mortem signal for genuinely failed sessions
+/// (process.log, mcp-aggregator.stderr.log, serial.log, and session.db).
+/// Clean DELETE is deliberately excluded: its public contract is to destroy
+/// all retained state.
 const MAX_FAILED_SESSIONS: usize = 32;
 
 impl ServiceState {
@@ -1282,6 +1278,100 @@ impl ServiceState {
             }
         }
         Ok(())
+    }
+
+    /// Permanently remove one service-owned session directory.
+    ///
+    /// Persistent registry data is user-writable state, so never pass its
+    /// `session_dir` directly to `remove_dir_all`. Restrict deletion to a
+    /// real, direct child of this service's sessions/ or persistent/ roots
+    /// and reject symlinks before performing the recursive removal.
+    fn delete_session_dir(&self, session_dir: &StdPath) -> Result<()> {
+        let parent = session_dir.parent().ok_or_else(|| {
+            anyhow!(
+                "refusing to delete session path without a parent: {}",
+                session_dir.display()
+            )
+        })?;
+        let allowed_parents = [
+            self.run_dir.join("sessions"),
+            self.run_dir.join("persistent"),
+        ];
+        let allowed_parent = allowed_parents
+            .iter()
+            .find(|allowed| parent == allowed.as_path())
+            .ok_or_else(|| {
+                anyhow!(
+                    "refusing to delete session path outside service roots: {}",
+                    session_dir.display()
+                )
+            })?;
+
+        let metadata = match std::fs::symlink_metadata(session_dir) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "inspect session path before delete: {}",
+                        session_dir.display()
+                    )
+                });
+            }
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(anyhow!(
+                "refusing to recursively delete non-directory session path: {}",
+                session_dir.display()
+            ));
+        }
+
+        let parent_metadata = std::fs::symlink_metadata(allowed_parent).with_context(|| {
+            format!(
+                "inspect service session root before delete: {}",
+                allowed_parent.display()
+            )
+        })?;
+        if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
+            return Err(anyhow!(
+                "refusing to delete through non-directory service session root: {}",
+                allowed_parent.display()
+            ));
+        }
+
+        let canonical_run_dir = self.run_dir.canonicalize().with_context(|| {
+            format!(
+                "canonicalize service run directory before delete: {}",
+                self.run_dir.display()
+            )
+        })?;
+        let canonical_parent = allowed_parent.canonicalize().with_context(|| {
+            format!(
+                "canonicalize service session root before delete: {}",
+                allowed_parent.display()
+            )
+        })?;
+        if canonical_parent.parent() != Some(canonical_run_dir.as_path()) {
+            return Err(anyhow!(
+                "refusing to delete through session root outside canonical run directory: {}",
+                allowed_parent.display()
+            ));
+        }
+        let canonical_session = session_dir.canonicalize().with_context(|| {
+            format!(
+                "canonicalize service session path before delete: {}",
+                session_dir.display()
+            )
+        })?;
+        if canonical_session.parent() != Some(canonical_parent.as_path()) {
+            return Err(anyhow!(
+                "refusing to delete session path outside canonical service root: {}",
+                session_dir.display()
+            ));
+        }
+
+        std::fs::remove_dir_all(session_dir)
+            .with_context(|| format!("delete session directory: {}", session_dir.display()))
     }
 
     fn provision_sandbox(self: &Arc<Self>, options: ProvisionOptions) -> Result<()> {
@@ -11562,31 +11652,41 @@ async fn handle_delete(
             }
         };
 
-    // Unregister from persistent registry if applicable
-    {
-        if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
-            let mut registry = state.persistent_registry.lock().unwrap();
-            if registry.contains(&key) {
-                let _ = registry.unregister(&key);
-            }
+    // DELETE is a destructive contract. Validate registry-derived paths,
+    // perform the blocking removal off the async runtime, and do not report
+    // success until the directory is actually gone. Failed VM exits use the
+    // separate `preserve_failed_session_dir` path; a clean delete must never
+    // be relabelled as a failure.
+    let state_clone = Arc::clone(&state);
+    tokio::task::spawn_blocking(move || state_clone.delete_session_dir(&session_dir))
+        .await
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("delete session task failed: {error}"),
+            )
+        })?
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("delete session state failed: {error:#}"),
+            )
+        })?;
+
+    // Unregister from persistent registry only after filesystem deletion
+    // succeeds. An unsafe or failed delete therefore remains discoverable
+    // and can be retried after the underlying problem is repaired.
+    if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        if registry.contains(&key) {
+            registry.unregister(&key).map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("unregister deleted session failed: {error:#}"),
+                )
+            })?;
         }
     }
-
-    // Preserve the session dir under sessions/<id>-failed-<rand>/ instead
-    // of unlinking it outright. preserve_failed_session_dir renames + culls
-    // down to MAX_FAILED_SESSIONS so disk stays bounded, but each delete
-    // still leaves a fresh process.log / serial.log / session.db window for
-    // post-mortem (e.g. when a Python-side test assertion fails after
-    // /exec but before the test's `finally: delete()` -- the existing
-    // failure-path preservation only fires on host-side error routes,
-    // never on a clean DELETE, so without this the only artifact left is
-    // service.log, which doesn't show what the per-VM process or guest
-    // were doing). The cull keeps the most recent N around.
-    let state_clone = Arc::clone(&state);
-    let id_clone = id.clone();
-    tokio::task::spawn_blocking(move || {
-        state_clone.preserve_failed_session_dir(&session_dir, &id_clone);
-    });
 
     Ok(Json(json!({ "success": true })))
 }
