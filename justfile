@@ -1111,19 +1111,10 @@ _test-candidate-run:
                 --package-ready
     else
     # A direct local module run has no earlier artifact stage to materialize
-    # package-owned profile configuration. Reuse the checked-in materializer
-    # against the already-present local assets; release CI enters the branch
-    # above with its explicitly staged pulled profile/config cohort.
-    LOCAL_CONFIG_ROOT="target/config"
-    LOCAL_PROFILE=$(
-        find "$LOCAL_CONFIG_ROOT/profiles" \
-            -mindepth 2 -maxdepth 2 -name profile.toml -print -quit \
-            2>/dev/null || true
-    )
-    if [ -z "$LOCAL_PROFILE" ]; then
-        echo "=== Materialize local runtime config for standalone glow-up ==="
-        just _materialize-config
-    fi
+    # package-owned profile configuration. `_cross-compile` now depends on the
+    # materializer itself, so this branch no longer has to remember it; release
+    # CI enters the branch above with its explicitly staged profile/config
+    # cohort and never reaches the package rail at all.
     echo "=== Cross-compile Linux releases (Docker, both arches) ==="
     just _cross-compile arm64
     uv run python scripts/docker-storage-policy.py release \
@@ -1325,7 +1316,11 @@ _release-deferred-install-target:
     @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
         --boundary before-packages --rail package
 
-_cross-compile arch="": _clean-stale _check-assets _generate-settings
+# repack-deb.sh below reads the materialized profile catalog from target/config,
+# so this recipe owns filling it rather than leaving each call site to remember.
+# Release CI never enters here: it consumes an already-built package with its
+# staged profile cohort, so nothing it pulled can be clobbered.
+_cross-compile arch="": _clean-stale _check-assets _generate-settings _materialize-config
     #!/bin/bash
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
