@@ -31,26 +31,34 @@ See `/dev-just` for the full recipe reference and dependency chains.
 crates/capsem-core/            VM library (config, boot, serial, vsock, machine)
 crates/capsem-service/         Daemon service (axum HTTP over UDS, VM lifecycle)
 crates/capsem-process/         Per-VM process (boots VM, bridges vsock, job store)
-crates/capsem/                 CLI client (create, shell, list, status, setup, update)
+crates/capsem/                 CLI client (create, shell, exec, list, install, assets, update)
+crates/capsem-tui/             Terminal control UI (reads and drives state via the gateway)
+crates/capsem-admin/           Profile/asset/release administration (validate, materialize, publish)
 crates/capsem-gateway/         TCP-to-UDS HTTP gateway (frontend + tray + remote auth)
 crates/capsem-mcp/             Host MCP server for AI agents (stdio, bridges to service)
 crates/capsem-mcp-aggregator/  Low-privilege subprocess: connects to external MCP servers
 crates/capsem-mcp-builtin/     Stdio MCP server for built-in tools (HTTP, file/snapshot)
-crates/capsem-agent/           Guest PTY agent + net-proxy + mcp-server + sysutil (musl)
+crates/capsem-agent/           Guest PTY agent + net-proxy + dns-proxy + mcp-server + sysutil (musl)
 crates/capsem-app/             Thin Tauri desktop shell (points at gateway)
 crates/capsem-tray/            System tray (polls gateway, quick actions)
 crates/capsem-proto/           Shared protocol types (host-guest, service-process IPC)
 crates/capsem-logger/          Session DB schema, queries, async writer
 crates/capsem-guard/           Companion lifecycle primitives (parent-watch + flock singleton)
+crates/capsem-bench/           Benchmark harness, ships as capsem-bench-rs (guest musl + host)
+crates/capsem-mock-server/     Hermetic mock upstream (HTTP/TLS/WS) for tests and benchmarks
 frontend/                 Astro 7 + Svelte 5 + Tailwind v4 + owned semantic CSS
 site/                     Marketing website (Astro + Svelte 5)
 docs/                     Documentation site (Astro Starlight)
-src/capsem/builder/       capsem-builder CLI (config-driven image builder)
-guest/config/             Guest image configuration (TOML configs)
+release-site/             Release channel site (Astro, built from target/release-channel/)
+config/                   Runtime product config source -- never developer skills (see Skills)
+config/profiles/<id>/     Profile ledgers (code, co-work): profile.toml + packages, MCP, rules, root seed
+src/capsem/builder/       capsem-builder backend helpers (image builds are driven by capsem-admin)
 guest/artifacts/          Guest scripts and diagnostics (capsem-init, bashrc, tests)
 assets/                   Built VM assets (gitignored, per-arch: assets/{arch}/)
 graphics/                 Brand icons and Tauri app icons (source of truth)
 skills/                   Shared AI agent skills (SKILL.md format)
+tests/                    Cross-crate suites (ironbank/ black-box gates, citadel/ guards)
+scripts/                  CI and release gate scripts invoked by just recipes
 ```
 
 ## Skills

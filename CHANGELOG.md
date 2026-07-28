@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Corrected the `CLAUDE.md` project layout against the real tree: `guest/config/`
+  has not existed since the ontology cleanup, so profile definitions now point at
+  `config/profiles/<id>/` and are named as runtime product config rather than
+  developer skill source, `src/capsem/builder/` is described as the admin-driven
+  backend it became, and the four shipped crates plus `config/`, `tests/`, and
+  `scripts/` are no longer missing from the map.
+- Repointed the MITM skill's static CA keypair at `security/keys/`, where
+  `net/cert_authority.rs` actually reads it from, instead of a `config/` path
+  that the five-directory config contract would never allow.
 - Retried transient release-catalog reads in the runtime preflight instead of
   letting one reset CDN connection fail the first gating step of both release
   lanes. Authoritative 4xx answers still fail closed on the first attempt.
