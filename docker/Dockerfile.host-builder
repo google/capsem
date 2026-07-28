@@ -129,4 +129,12 @@ RUN mkdir -p /usr/local/cargo && printf '%s\n' \
 #   4. Configure linker in cargo config above
 # Note: codesigning + notarization must happen outside the container.
 
+# /src is always a bind mount of the host checkout. On Linux the host UID does
+# not match this container's user, so git refuses the repository as "dubious
+# ownership". That failure is quiet where it matters most: capsem's build.rs
+# falls back to embedding "unknown" for the build hash, leaving the separate
+# provenance check as the only thing standing between that and a released
+# binary with no source identity.
+RUN git config --system --add safe.directory /src
+
 WORKDIR /src

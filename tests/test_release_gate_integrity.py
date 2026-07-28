@@ -156,6 +156,18 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
     assert "run: python3 scripts/audit-pnpm-bulk.py" in security_audit
 
 
+def test_host_builder_trusts_the_bind_mounted_source_checkout() -> None:
+    """/src is a bind mount of the host checkout, so on Linux its owner is not
+    the container user and git rejects it as "dubious ownership". That failure
+    is quiet where it matters: crates/capsem/build.rs embeds "unknown" for the
+    build hash rather than failing, so without this the only thing between a
+    provenance-less binary and a release is check-build-provenance.sh."""
+    builder = _read("docker/Dockerfile.host-builder")
+
+    assert "git config --system --add safe.directory /src" in builder
+    assert "/src" in _read("justfile"), "the builder still bind-mounts /src"
+
+
 def test_remote_storage_images_are_immutable() -> None:
     policy = tomllib.loads(_read("config/storage-policy.toml"))
     floating: list[str] = []

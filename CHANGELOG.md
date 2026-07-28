@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Covered the installed-product half of candidate channel preservation: a
   preserved transition must leave `manifest-metadata.json` on its packaged
   public channel, which is exactly what the published release gate reads back.
+- Made the host-builder container trust its bind-mounted `/src` checkout. On
+  Linux the host UID differs from the container user, so git rejected the
+  repository and the package build died after a successful compile; the same
+  condition silently degrades the embedded build hash to `unknown`.
 - Generalized the pnpm cache-ownership gate to follow the Just recipe graph
   instead of accepting one hardcoded recipe name, so every just-driven CI job
   can cache its pnpm store. Re-enabled that cache on the install and Linux
