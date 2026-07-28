@@ -238,7 +238,9 @@ Key implementation details:
 
 - **Container runtime auto-detection.** Docker CLI.
 - **CI cache integration.** Docker buildx with GitHub Actions cache (`type=gha`) when `GITHUB_ACTIONS` is set.
-- **Kernel version resolution.** Fetches the latest stable version for the configured LTS branch from `kernel.org/releases.json`, falls back to a hardcoded version on network failure.
+- **Kernel version resolution.** Fetches the latest non-EOL version for the
+  configured LTS branch from `kernel.org/releases.json` and fails closed when
+  freshness or support status cannot be established.
 - **Cross-compilation.** Guest agent binaries are cross-compiled with `cargo build --target {rust_target}` using `rust-lld` as the linker (configured in `.cargo/config.toml`).
 - **Clock skew resilience.** All `apt-get update` calls use `-o Acquire::Check-Valid-Until=false` to handle container VM clock drift.
 

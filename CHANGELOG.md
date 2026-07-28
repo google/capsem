@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refreshed embedded package provenance across cached commits and worktrees,
   and made every local and CI package builder reject a binary whose build
   identity does not match the exact release source.
+- Made guest-kernel resolution fail closed when kernel.org is unavailable or
+  the configured branch is EOL, and moved both architectures from EOL 7.0 to
+  the supported 6.18 LTS branch.
 
 ## [1.6.1785192352] - 2026-07-27
 

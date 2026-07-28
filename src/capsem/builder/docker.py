@@ -28,7 +28,6 @@ from capsem.builder.models import ErofsConfig, GuestImageConfig
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
 CLOCK_SYNC_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "sync-container-clock.py"
-FALLBACK_KERNEL_VERSION = "7.0.11"
 DEFAULT_EROFS_UTILS_IMAGE = "debian:bookworm-slim"
 ZSTD_EROFS_UTILS_IMAGE = "debian:trixie-slim"
 BOOT_ASSETS = ("vmlinuz", "initrd.img")
@@ -168,7 +167,12 @@ def generate_build_context(
     if template_name == "Dockerfile.rootfs.j2":
         ctx = _rootfs_context(config, arch_name)
     elif template_name == "Dockerfile.kernel.j2":
-        kernel_version = kwargs.get("kernel_version", FALLBACK_KERNEL_VERSION)
+        kernel_version = kwargs.get("kernel_version")
+        if not isinstance(kernel_version, str) or not kernel_version:
+            raise ValueError(
+                "kernel_version is required for Dockerfile.kernel.j2; "
+                "resolve and validate it before rendering"
+            )
         ctx = _kernel_context(config, arch_name, kernel_version)
     else:
         raise ValueError(f"Unknown template: {template_name}")
@@ -237,9 +241,13 @@ def run_cmd(
     except subprocess.CalledProcessError as error:
         if capture:
             if error.stdout:
-                print(error.stdout, file=sys.stderr, end="" if error.stdout.endswith("\n") else "\n")
+                print(
+                    error.stdout, file=sys.stderr, end="" if error.stdout.endswith("\n") else "\n"
+                )
             if error.stderr:
-                print(error.stderr, file=sys.stderr, end="" if error.stderr.endswith("\n") else "\n")
+                print(
+                    error.stderr, file=sys.stderr, end="" if error.stderr.endswith("\n") else "\n"
+                )
         raise
 
 
@@ -291,8 +299,12 @@ def resolve_kernel_version(branch: str = "auto") -> str:
       - "X.Y" (e.g. "7.0" or "6.18"): pin to that stable/LTS branch,
         latest patch. Use for reproducibility / security freeze.
 
-    Falls back to `FALLBACK_KERNEL_VERSION` on any network/parse error.
+    Resolution is fail-closed: a build must not continue when freshness or
+    non-EOL status cannot be established from kernel.org.
     """
+    if branch != "auto" and not re.fullmatch(r"\d+\.\d+", branch):
+        raise RuntimeError(f"invalid kernel_branch {branch!r} (want 'auto' or 'X.Y')")
+
     try:
         req = urllib.request.Request(
             "https://www.kernel.org/releases.json",
@@ -301,9 +313,7 @@ def resolve_kernel_version(branch: str = "auto") -> str:
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
     except Exception as e:
-        print(f"  Warning: failed to fetch kernel.org releases: {e}")
-        print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
-        return FALLBACK_KERNEL_VERSION
+        raise RuntimeError(f"failed to fetch kernel.org releases: {e}") from e
 
     # Collect (major, minor, patch) for every non-EOL stable/LTS release with
     # a strict X.Y.Z version string. Mainline rc releases are deliberately
@@ -320,17 +330,13 @@ def resolve_kernel_version(branch: str = "auto") -> str:
         stable_or_lts.append((a, b, c, moniker))
 
     if not stable_or_lts:
-        print("  Warning: no stable/LTS releases found in kernel.org feed")
-        print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
-        return FALLBACK_KERNEL_VERSION
+        raise RuntimeError("no non-EOL stable/LTS releases found in kernel.org feed")
 
     if branch == "auto":
         # Highest LTS branch (by major, minor), then highest patch on it.
         lts = [(a, b, c) for (a, b, c, moniker) in stable_or_lts if moniker == "longterm"]
         if not lts:
-            print("  Warning: no longterm releases found in kernel.org feed")
-            print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
-            return FALLBACK_KERNEL_VERSION
+            raise RuntimeError("no non-EOL longterm releases found in kernel.org feed")
         lts.sort()
         a, b, _ = lts[-1]
         patches = sorted(c for (x, y, c) in lts if (x, y) == (a, b))
@@ -339,17 +345,10 @@ def resolve_kernel_version(branch: str = "auto") -> str:
         return version
 
     # Explicit pin: keep only the requested major.minor branch.
-    try:
-        want_a, want_b = (int(x) for x in branch.split("."))
-    except ValueError:
-        print(f"  Warning: invalid kernel_branch {branch!r} (want 'auto' or 'X.Y')")
-        print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
-        return FALLBACK_KERNEL_VERSION
+    want_a, want_b = (int(x) for x in branch.split("."))
     patches = sorted(c for (a, b, c, _) in stable_or_lts if (a, b) == (want_a, want_b))
     if not patches:
-        print(f"  Warning: no non-EOL {branch}.x stable/LTS releases on kernel.org")
-        print(f"  Falling back to hardcoded {FALLBACK_KERNEL_VERSION}")
-        return FALLBACK_KERNEL_VERSION
+        raise RuntimeError(f"no non-EOL {branch}.x stable/LTS releases on kernel.org")
     return f"{want_a}.{want_b}.{patches[-1]}"
 
 
@@ -393,26 +392,41 @@ def docker_build(
         args_flags.extend(["--build-arg", f"{k}={v}"])
 
     if ci_cache:
-        run_cmd([
-            "docker", "buildx", "build",
-            "--platform", platform,
-            "--cache-from", f"type=gha,scope={tag}",
-            "--cache-to", f"type=gha,mode=max,scope={tag}",
-            "--load",
-            *args_flags,
-            "-t", tag,
-            "-f", str(dockerfile_path),
-            str(context_dir),
-        ])
+        run_cmd(
+            [
+                "docker",
+                "buildx",
+                "build",
+                "--platform",
+                platform,
+                "--cache-from",
+                f"type=gha,scope={tag}",
+                "--cache-to",
+                f"type=gha,mode=max,scope={tag}",
+                "--load",
+                *args_flags,
+                "-t",
+                tag,
+                "-f",
+                str(dockerfile_path),
+                str(context_dir),
+            ]
+        )
     else:
-        run_cmd([
-            runtime, "build",
-            "--platform", platform,
-            *args_flags,
-            "-t", tag,
-            "-f", str(dockerfile_path),
-            str(context_dir),
-        ])
+        run_cmd(
+            [
+                runtime,
+                "build",
+                "--platform",
+                platform,
+                *args_flags,
+                "-t",
+                tag,
+                "-f",
+                str(dockerfile_path),
+                str(context_dir),
+            ]
+        )
 
 
 def extract_kernel_assets(
@@ -503,18 +517,28 @@ def create_erofs(
     host_gid = os.getgid()
     host_platform = _native_linux_platform()
 
-    run_cmd([
-        runtime, "run", "--rm", "--platform", host_platform,
-        "-v", f"{common_dir}:/assets",
-        image, "bash", "-c",
-        f"DEBIAN_FRONTEND=noninteractive apt-get "
-        f"-o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && "
-        f"DEBIAN_FRONTEND=noninteractive apt-get install -y erofs-utils && "
-        f"mkdir /rootfs && {mkdir_output}tar xf /assets/{tar_rel} -C /rootfs && "
-        f"mkfs.erofs -Enosbcrc -z{compression}{level_flag}{cluster_flag} "
-        f"/assets/{out_rel} /rootfs && "
-        f"chown {host_uid}:{host_gid} /assets/{out_rel}",
-    ], capture=True)
+    run_cmd(
+        [
+            runtime,
+            "run",
+            "--rm",
+            "--platform",
+            host_platform,
+            "-v",
+            f"{common_dir}:/assets",
+            image,
+            "bash",
+            "-c",
+            f"DEBIAN_FRONTEND=noninteractive apt-get "
+            f"-o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update && "
+            f"DEBIAN_FRONTEND=noninteractive apt-get install -y erofs-utils && "
+            f"mkdir /rootfs && {mkdir_output}tar xf /assets/{tar_rel} -C /rootfs && "
+            f"mkfs.erofs -Enosbcrc -z{compression}{level_flag}{cluster_flag} "
+            f"/assets/{out_rel} /rootfs && "
+            f"chown {host_uid}:{host_gid} /assets/{out_rel}",
+        ],
+        capture=True,
+    )
 
 
 def erofs_utils_image_for(compression: str) -> str:
@@ -535,14 +559,11 @@ def experimental_erofs_build_config(
         enabled = source.get("CAPSEM_BUILD_EXPERIMENTAL_EROFS") == "1"
     if not enabled:
         raise ValueError("EROFS build cannot be disabled for the 1.3 asset contract")
-    compression = (
-        source.get("CAPSEM_BUILD_EROFS_COMPRESSION")
-        or (defaults.compression.value if defaults is not None else "lz4hc")
+    compression = source.get("CAPSEM_BUILD_EROFS_COMPRESSION") or (
+        defaults.compression.value if defaults is not None else "lz4hc"
     )
     if compression not in {"lz4", "lz4hc", "zstd"}:
-        raise ValueError(
-            "CAPSEM_BUILD_EROFS_COMPRESSION must be one of: lz4, lz4hc, zstd"
-        )
+        raise ValueError("CAPSEM_BUILD_EROFS_COMPRESSION must be one of: lz4, lz4hc, zstd")
     cluster_size = source.get("CAPSEM_BUILD_EROFS_CLUSTER_SIZE") or (
         str(defaults.cluster_size) if defaults is not None and defaults.cluster_size else None
     )
@@ -603,25 +624,39 @@ def container_compile_agent(
     # a writable /build dir so cargo can generate Cargo.lock without modifying
     # the host. The target dir and registry are persistent named volumes.
     rustup_volume = f"capsem-rustup-{arch_suffix}"
-    run_cmd([
-        runtime, "run", "--rm",
-        "--platform", platform,
-        "-v", f"{repo_root.resolve()}:/src:ro",
-        "-v", f"{output_dir.resolve()}:/output",
-        "-v", "capsem-cargo-registry:/usr/local/cargo/registry",
-        "-v", "capsem-cargo-git:/usr/local/cargo/git",
-        "-v", f"{rustup_volume}:/usr/local/rustup",
-        "-v", f"{target_volume}:/build/target",
-        "-w", "/build",
-        image, "bash", "-c",
-        f'for f in /src/*; do b=$(basename "$f"); [ "$b" != target ] && [ "$b" != Cargo.lock ] && [ "$b" != crates ] && ln -s "$f" /build/; done && '
-        f"cp -r /src/crates /build/crates && "
-        f"apt-get update -qq && apt-get install -y -qq musl-tools >/dev/null 2>&1 && "
-        f"rustup target add {rust_target} && "
-        f"cargo build --release --target {rust_target} -p capsem-agent -p capsem-bench && "
-        f"rm -f {rm_cmds} && "
-        f"{cp_cmds} && chmod 555 {chmod_cmds} && {file_cmds}",
-    ])
+    run_cmd(
+        [
+            runtime,
+            "run",
+            "--rm",
+            "--platform",
+            platform,
+            "-v",
+            f"{repo_root.resolve()}:/src:ro",
+            "-v",
+            f"{output_dir.resolve()}:/output",
+            "-v",
+            "capsem-cargo-registry:/usr/local/cargo/registry",
+            "-v",
+            "capsem-cargo-git:/usr/local/cargo/git",
+            "-v",
+            f"{rustup_volume}:/usr/local/rustup",
+            "-v",
+            f"{target_volume}:/build/target",
+            "-w",
+            "/build",
+            image,
+            "bash",
+            "-c",
+            f'for f in /src/*; do b=$(basename "$f"); [ "$b" != target ] && [ "$b" != Cargo.lock ] && [ "$b" != crates ] && ln -s "$f" /build/; done && '
+            f"cp -r /src/crates /build/crates && "
+            f"apt-get update -qq && apt-get install -y -qq musl-tools >/dev/null 2>&1 && "
+            f"rustup target add {rust_target} && "
+            f"cargo build --release --target {rust_target} -p capsem-agent -p capsem-bench && "
+            f"rm -f {rm_cmds} && "
+            f"{cp_cmds} && chmod 555 {chmod_cmds} && {file_cmds}",
+        ]
+    )
 
     copied: list[Path] = []
     for binary in GUEST_BINARIES:
@@ -662,7 +697,8 @@ def cross_compile_agent(
     try:
         result = run_cmd(
             ["rustup", "target", "list", "--installed"],
-            capture=True, echo=False,
+            capture=True,
+            echo=False,
         )
         if rust_target not in result.stdout.split():
             print(f"  Installing missing rustup target: {rust_target}")
@@ -670,12 +706,20 @@ def cross_compile_agent(
     except Exception:
         run_cmd(["rustup", "target", "add", rust_target])
 
-    run_cmd([
-        "cargo", "build", "--release",
-        "--target", rust_target,
-        "-p", "capsem-agent",
-        "-p", "capsem-bench",
-    ], cwd=repo_root)
+    run_cmd(
+        [
+            "cargo",
+            "build",
+            "--release",
+            "--target",
+            rust_target,
+            "-p",
+            "capsem-agent",
+            "-p",
+            "capsem-bench",
+        ],
+        cwd=repo_root,
+    )
 
     release_dir = repo_root / "target" / rust_target / "release"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -732,7 +776,7 @@ def build_version_script(config: GuestImageConfig) -> str:
     if system_cmds:
         lines.append('echo "# System";')
         for key, cmd in system_cmds:
-            lines.append(f'echo "{key}=$({cmd} || echo \'N/A\')";')
+            lines.append(f"echo \"{key}=$({cmd} || echo 'N/A')\";")
 
     # -- Python packages --
     if "python" in config.package_sets:
@@ -740,13 +784,14 @@ def build_version_script(config: GuestImageConfig) -> str:
         if py_cmds:
             lines.append('echo "# Python";')
             for key, cmd in py_cmds.items():
-                lines.append(f'echo "{key}=$({cmd} || echo \'N/A\')";')
+                lines.append(f"echo \"{key}=$({cmd} || echo 'N/A')\";")
 
     return "\n".join(lines)
 
 
 def _validate_tool_versions(
-    content: str, config: GuestImageConfig,
+    content: str,
+    config: GuestImageConfig,
 ) -> None:
     """Reserved hook for version-output validation."""
     versions: dict[str, str] = {}
@@ -1008,9 +1053,7 @@ def _normalize_cyclonedx_obom(
                 continue
             depends_on = dependency.get("dependsOn")
             if isinstance(depends_on, list):
-                dependency["dependsOn"] = [
-                    ref for ref in depends_on if ref not in removed_refs
-                ]
+                dependency["dependsOn"] = [ref for ref in depends_on if ref not in removed_refs]
             retained_dependencies.append(dependency)
         document["dependencies"] = retained_dependencies
 
@@ -1028,10 +1071,7 @@ def _normalize_cyclonedx_obom(
                 tool["properties"] = [
                     prop
                     for prop in properties
-                    if not (
-                        isinstance(prop, dict)
-                        and prop.get("name") == "internal:binary_path"
-                    )
+                    if not (isinstance(prop, dict) and prop.get("name") == "internal:binary_path")
                 ]
 
     path.write_text(json.dumps(document, sort_keys=True, separators=(",", ":")) + "\n")
@@ -1076,8 +1116,7 @@ def _validate_cyclonedx_obom(path: Path) -> None:
     if not isinstance(components, list) or not components:
         raise RuntimeError(f"OBOM {path} must inventory guest rootfs components")
     if not any(
-        isinstance(item, dict)
-        and str(item.get("purl", "")).startswith("pkg:deb/debian/")
+        isinstance(item, dict) and str(item.get("purl", "")).startswith("pkg:deb/debian/")
         for item in components
     ):
         raise RuntimeError(f"OBOM {path} does not contain Debian guest packages")
@@ -1112,47 +1151,59 @@ def generate_cyclonedx_obom(
     with tempfile.TemporaryDirectory(prefix="capsem-obom-", dir=tmp_parent) as tmp:
         rootfs_dir = Path(tmp) / "rootfs"
         rootfs_dir.mkdir()
-        run_cmd([
-            "tar",
-            "--exclude=dev/*",
-            "--exclude=proc/*",
-            "--exclude=sys/*",
-            "-xf",
-            str(rootfs_tar),
-            "-C",
-            str(rootfs_dir),
-        ], timeout=OBOM_COMMAND_TIMEOUT_SECONDS)
+        run_cmd(
+            [
+                "tar",
+                "--exclude=dev/*",
+                "--exclude=proc/*",
+                "--exclude=sys/*",
+                "-xf",
+                str(rootfs_tar),
+                "-C",
+                str(rootfs_dir),
+            ],
+            timeout=OBOM_COMMAND_TIMEOUT_SECONDS,
+        )
         # cdxgen's rootfs mode is the only offline mode that inventories the
         # extracted guest. Its internal validation rejects Debian's lowercase
         # `sendmail` spelling before writing output, so emit first, normalize
         # that known SPDX spelling, then run the paired strict schema validator.
-        run_cmd([
-            *_cdxgen_command(),
-            str(rootfs_dir),
-            "-t",
-            "rootfs",
-            "--no-validate",
-            "-o",
-            str(output_path),
-        ], capture=True, timeout=OBOM_COMMAND_TIMEOUT_SECONDS)
+        run_cmd(
+            [
+                *_cdxgen_command(),
+                str(rootfs_dir),
+                "-t",
+                "rootfs",
+                "--no-validate",
+                "-o",
+                str(output_path),
+            ],
+            capture=True,
+            timeout=OBOM_COMMAND_TIMEOUT_SECONDS,
+        )
         _normalize_cyclonedx_obom(output_path, rootfs_dir, architecture=architecture)
     _validate_cyclonedx_obom(output_path)
-    run_cmd([
-        *_cdx_validate_command(),
-        "--strict",
-        "--no-deep",
-        "--fail-severity",
-        "critical",
-        "--no-include-manual",
-        "-i",
-        str(output_path),
-    ], capture=True, timeout=OBOM_COMMAND_TIMEOUT_SECONDS)
+    run_cmd(
+        [
+            *_cdx_validate_command(),
+            "--strict",
+            "--no-deep",
+            "--fail-severity",
+            "critical",
+            "--no-include-manual",
+            "-i",
+            str(output_path),
+        ],
+        capture=True,
+        timeout=OBOM_COMMAND_TIMEOUT_SECONDS,
+    )
     return output_path
 
 
 def _blake3_hex(path: Path) -> str:
     """Compute BLAKE3 hash of a file, returning the hex digest."""
     import blake3
+
     hasher = blake3.blake3()
     with open(path, "rb") as f:
         while chunk := f.read(1 << 20):
@@ -1205,6 +1256,7 @@ def _directory_file_entries(directory: Path) -> list[dict[str, Any]]:
 def _directory_tree_hash(directory: Path) -> str:
     """Hash a directory tree from relative paths and file BLAKE3 hashes."""
     import blake3
+
     hasher = blake3.blake3()
     for entry in _directory_file_entries(directory):
         hasher.update(entry["path"].encode())
@@ -1453,8 +1505,10 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
     for arch_dir in sorted(arch_dirs):
         arch_name = arch_dir.name
         rootfs_name = _select_rootfs_asset(arch_dir)
-        arch_has_assets = rootfs_name is not None or (arch_dir / OBOM_ASSET).is_file() or any(
-            (arch_dir / filename).is_file() for filename in BOOT_ASSETS
+        arch_has_assets = (
+            rootfs_name is not None
+            or (arch_dir / OBOM_ASSET).is_file()
+            or any((arch_dir / filename).is_file() for filename in BOOT_ASSETS)
         )
         if arch_has_assets:
             for filename in BOOT_ASSETS:
@@ -1475,8 +1529,10 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
     if not all_files:
         # Flat layout fallback
         flat_rootfs_name = _select_rootfs_asset(output_dir)
-        flat_has_assets = flat_rootfs_name is not None or (output_dir / OBOM_ASSET).is_file() or any(
-            (output_dir / f).is_file() for f in BOOT_ASSETS
+        flat_has_assets = (
+            flat_rootfs_name is not None
+            or (output_dir / OBOM_ASSET).is_file()
+            or any((output_dir / f).is_file() for f in BOOT_ASSETS)
         )
         if flat_has_assets:
             for filename in BOOT_ASSETS:
@@ -1519,13 +1575,16 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
             filename = filepath
 
         arch_assets.setdefault(arch_name, {})[filename] = {
-            "hash": b3hash, "sha256": sha256, "size": size,
+            "hash": b3hash,
+            "sha256": sha256,
+            "size": size,
         }
 
     # Build v2 manifest with separate assets/binaries sections. Reuse the
     # current release for identical assets so dev initrd repacks do not mint
     # endless no-op asset versions.
     import datetime
+
     today = datetime.date.today()
     date_prefix = today.strftime("%Y.%m%d")
     asset_version = _next_or_existing_asset_version(
@@ -1713,7 +1772,7 @@ def build_image(
     # On macOS, system temp dirs (/var/folders) are often not mountable by Docker/Colima.
     build_tmp = repo_root / "target" / "tmp"
     build_tmp.mkdir(parents=True, exist_ok=True)
-    
+
     with tempfile.TemporaryDirectory(prefix=f"capsem-build-{template}-", dir=build_tmp) as tmpdir:
         context_dir = Path(tmpdir)
 
@@ -1724,7 +1783,11 @@ def build_image(
             print(f"Kernel: {kernel_version}")
 
             dockerfile_path = prepare_build_context(
-                config, arch_name, template_name, context_dir, repo_root,
+                config,
+                arch_name,
+                template_name,
+                context_dir,
+                repo_root,
                 kernel_version=kernel_version,
             )
             build_inputs = _build_input_record(
@@ -1739,24 +1802,33 @@ def build_image(
                 runtime=runtime,
             )
             docker_build(
-                runtime, tag, context_dir / "Dockerfile", context_dir,
+                runtime,
+                tag,
+                context_dir / "Dockerfile",
+                context_dir,
                 arch.docker_platform,
                 build_args={"KERNEL_VERSION": kernel_version},
                 ci_cache=ci,
             )
             vmlinuz, initrd = extract_kernel_assets(
-                runtime, tag, arch.docker_platform, arch_output,
+                runtime,
+                tag,
+                arch.docker_platform,
+                arch_output,
             )
             remove_image(runtime, tag)
-            _append_build_ledger(arch_output, {
-                "stage": "kernel.assets",
-                "inputs": build_inputs,
-                "kernel_version": kernel_version,
-                "outputs": [
-                    _file_ledger_entry(vmlinuz, base=arch_output),
-                    _file_ledger_entry(initrd, base=arch_output),
-                ],
-            })
+            _append_build_ledger(
+                arch_output,
+                {
+                    "stage": "kernel.assets",
+                    "inputs": build_inputs,
+                    "kernel_version": kernel_version,
+                    "outputs": [
+                        _file_ledger_entry(vmlinuz, base=arch_output),
+                        _file_ledger_entry(initrd, base=arch_output),
+                    ],
+                },
+            )
             print(f"  vmlinuz:    {vmlinuz}")
             print(f"  initrd.img: {initrd}")
 
@@ -1768,7 +1840,11 @@ def build_image(
                 print(f"  {b.name}: {b.stat().st_size} bytes")
 
             dockerfile_path = prepare_build_context(
-                config, arch_name, template_name, context_dir, repo_root,
+                config,
+                arch_name,
+                template_name,
+                context_dir,
+                repo_root,
             )
             build_inputs = _build_input_record(
                 repo_root=repo_root,
@@ -1786,8 +1862,12 @@ def build_image(
                 _rootfs_config_input_record(config, arch_name),
             )
             docker_build(
-                runtime, tag, context_dir / "Dockerfile", context_dir,
-                arch.docker_platform, ci_cache=ci,
+                runtime,
+                tag,
+                context_dir / "Dockerfile",
+                context_dir,
+                arch.docker_platform,
+                ci_cache=ci,
             )
 
             print("Extracting installed software inventory...")
@@ -1798,22 +1878,28 @@ def build_image(
                 arch_name,
                 arch_output,
             )
-            _append_build_ledger(arch_output, {
-                "stage": "rootfs.software_inventory",
-                "inputs": build_inputs,
-                "outputs": [_file_ledger_entry(software_inventory_path, base=arch_output)],
-            })
+            _append_build_ledger(
+                arch_output,
+                {
+                    "stage": "rootfs.software_inventory",
+                    "inputs": build_inputs,
+                    "outputs": [_file_ledger_entry(software_inventory_path, base=arch_output)],
+                },
+            )
 
             # Export and compress
             tar_path = arch_output / "rootfs.tar"
             print("Exporting rootfs filesystem...")
             export_container_fs(runtime, tag, arch.docker_platform, tar_path)
             tar_entry = _file_ledger_entry(tar_path, base=arch_output)
-            _append_build_ledger(arch_output, {
-                "stage": "rootfs.export",
-                "inputs": build_inputs,
-                "intermediates": [tar_entry],
-            })
+            _append_build_ledger(
+                arch_output,
+                {
+                    "stage": "rootfs.export",
+                    "inputs": build_inputs,
+                    "intermediates": [tar_entry],
+                },
+            )
 
             erofs_enabled, erofs_compression, erofs_cluster_size, erofs_level = (
                 experimental_erofs_build_config(defaults=config.build.erofs)
@@ -1827,24 +1913,29 @@ def build_image(
                 f"{', cluster ' + erofs_cluster_size if erofs_cluster_size else ''})..."
             )
             create_erofs(
-                runtime, tar_path, erofs_path,
+                runtime,
+                tar_path,
+                erofs_path,
                 erofs_compression,
                 erofs_cluster_size,
                 erofs_level,
             )
             erofs_entry = _file_ledger_entry(erofs_path, base=arch_output)
-            _append_build_ledger(arch_output, {
-                "stage": "rootfs.erofs",
-                "inputs": build_inputs,
-                "intermediates": [tar_entry],
-                "erofs": {
-                    "compression": erofs_compression,
-                    "compression_level": erofs_level,
-                    "cluster_size": erofs_cluster_size,
-                    "utils_image": erofs_utils_image_for(erofs_compression),
+            _append_build_ledger(
+                arch_output,
+                {
+                    "stage": "rootfs.erofs",
+                    "inputs": build_inputs,
+                    "intermediates": [tar_entry],
+                    "erofs": {
+                        "compression": erofs_compression,
+                        "compression_level": erofs_level,
+                        "cluster_size": erofs_cluster_size,
+                        "utils_image": erofs_utils_image_for(erofs_compression),
+                    },
+                    "outputs": [erofs_entry],
                 },
-                "outputs": [erofs_entry],
-            })
+            )
             print("Generating CycloneDX OBOM...")
             obom_path = arch_output / OBOM_ASSET
             generate_cyclonedx_obom(
@@ -1854,24 +1945,30 @@ def build_image(
                 architecture=arch_name,
             )
             obom_entry = _file_ledger_entry(obom_path, base=arch_output)
-            _append_build_ledger(arch_output, {
-                "stage": "rootfs.obom",
-                "inputs": build_inputs,
-                "intermediates": [tar_entry],
-                "generator": "cdxgen",
-                "outputs": [obom_entry],
-            })
+            _append_build_ledger(
+                arch_output,
+                {
+                    "stage": "rootfs.obom",
+                    "inputs": build_inputs,
+                    "intermediates": [tar_entry],
+                    "generator": "cdxgen",
+                    "outputs": [obom_entry],
+                },
+            )
             tar_path.unlink(missing_ok=True)
 
             print("Extracting tool versions...")
             extract_tool_versions(runtime, tag, arch.docker_platform, arch_output, config)
             versions_path = arch_output / "tool-versions.txt"
             if versions_path.is_file():
-                _append_build_ledger(arch_output, {
-                    "stage": "rootfs.tool_versions",
-                    "inputs": build_inputs,
-                    "outputs": [_file_ledger_entry(versions_path, base=arch_output)],
-                })
+                _append_build_ledger(
+                    arch_output,
+                    {
+                        "stage": "rootfs.tool_versions",
+                        "inputs": build_inputs,
+                        "outputs": [_file_ledger_entry(versions_path, base=arch_output)],
+                    },
+                )
             remove_image(runtime, tag)
 
             print(f"  rootfs.erofs:    {erofs_path}")
@@ -1894,7 +1991,8 @@ def build_all_architectures(
     for arch_name in config.build.architectures:
         print(f"\n=== Building {template} for {arch_name} ===")
         build_image(
-            config, arch_name,
+            config,
+            arch_name,
             template=template,
             output_dir=output_dir,
             kernel_version=kernel_version,

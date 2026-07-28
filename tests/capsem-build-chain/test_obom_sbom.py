@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 import re
 
@@ -56,19 +57,19 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     assert "--output release-artifacts/capsem-sbom.spdx.json" in binary_workflow
     assert "cargo sbom --output-format spdx_json_2_3" not in binary_workflow
     assert "install_cargo_tool cargo-sbom" not in binary_workflow
-    author_sbom = binary_workflow.split(
-        "  author-binary-candidate:", maxsplit=1
-    )[1].split("  test-binary-pairing:", maxsplit=1)[0]
+    author_sbom = binary_workflow.split("  author-binary-candidate:", maxsplit=1)[1].split(
+        "  test-binary-pairing:", maxsplit=1
+    )[0]
     assert "Generate packaged host SBOM once" in author_sbom
     assert "scripts/generate-host-binary-sbom.py" in author_sbom
-    assembly = binary_workflow.split(
-        "  assemble-release-channel:", maxsplit=1
-    )[1].split("  verify-release-candidate:", maxsplit=1)[0]
+    assembly = binary_workflow.split("  assemble-release-channel:", maxsplit=1)[1].split(
+        "  verify-release-candidate:", maxsplit=1
+    )[0]
     assert "Generate packaged host SBOM" not in assembly
     assert "name: binary-channel-candidate" in assembly
-    create_release = binary_workflow.split(
-        "  create-release:", maxsplit=1
-    )[1].split("  assemble-release-channel:", maxsplit=1)[0]
+    create_release = binary_workflow.split("  create-release:", maxsplit=1)[1].split(
+        "  assemble-release-channel:", maxsplit=1
+    )[0]
     assert "name: binary-host-sbom" in create_release
     assert "Generate packaged host SBOM" not in create_release
     assert "Attest SBOM" in binary_workflow
@@ -87,19 +88,43 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
 
 def test_builder_emits_obom_and_keeps_build_ledger_debug_scoped() -> None:
     builder = _read("src/capsem/builder/docker.py")
+    syntax = ast.parse(builder)
+    cdxgen_commands: list[list[str]] = []
+    for node in ast.walk(syntax):
+        if (
+            not isinstance(node, ast.Call)
+            or not isinstance(node.func, ast.Name)
+            or node.func.id != "run_cmd"
+            or not node.args
+            or not isinstance(node.args[0], ast.List)
+        ):
+            continue
+        command = node.args[0]
+        if not any(
+            isinstance(element, ast.Starred)
+            and isinstance(element.value, ast.Call)
+            and isinstance(element.value.func, ast.Name)
+            and element.value.func.id == "_cdxgen_command"
+            for element in command.elts
+        ):
+            continue
+        cdxgen_commands.append(
+            [
+                element.value
+                for element in command.elts
+                if isinstance(element, ast.Constant) and isinstance(element.value, str)
+            ]
+        )
 
     assert 'OBOM_ASSET = "obom.cdx.json"' in builder
     assert 'BUILD_LEDGER_NAME = "build-ledger.log"' in builder
     assert f'CDXGEN_VERSION = "{CDXGEN_VERSION}"' in builder
-    assert '"-t",\n            "rootfs"' in builder
-    assert '"-t",\n            "os"' not in builder
-    assert '"--no-validate"' in builder
+    assert cdxgen_commands == [["-t", "rootfs", "--no-validate", "-o"]]
     assert "def _normalize_cyclonedx_obom" in builder
     assert "def _cdx_validate_command" in builder
     assert '"capsem:evidence:scope", "value": "exported-rootfs"' in builder
     assert 'prop.get("name") == "cdx:osquery:category"' in builder
-    assert 'run_cmd([\n            *_cdxgen_command(),' in builder
-    assert '], capture=True)' in builder
+    assert "], capture=True)" in builder
     assert "def generate_cyclonedx_obom" in builder
     assert "cdxgen" in builder
     assert "CAPSEM_CDXGEN_CMD" in builder
@@ -115,13 +140,11 @@ def test_cdxgen_is_pinned_identically_across_local_and_ci_asset_rails() -> None:
 
     pins = {
         "builder": re.search(r'CDXGEN_VERSION = "([0-9.]+)"', builder),
-        "host_builder": re.search(r'@cyclonedx/cdxgen@([0-9.]+)', host_builder),
-        "asset_workflow": re.search(r'@cyclonedx/cdxgen@([0-9.]+)', asset_workflow),
+        "host_builder": re.search(r"@cyclonedx/cdxgen@([0-9.]+)", host_builder),
+        "asset_workflow": re.search(r"@cyclonedx/cdxgen@([0-9.]+)", asset_workflow),
     }
     assert all(match is not None for match in pins.values())
-    assert {match.group(1) for match in pins.values() if match is not None} == {
-        CDXGEN_VERSION
-    }
+    assert {match.group(1) for match in pins.values() if match is not None} == {CDXGEN_VERSION}
     for text in (builder, host_builder, asset_workflow):
         assert "@cyclonedx/cdxgen@latest" not in text
 
