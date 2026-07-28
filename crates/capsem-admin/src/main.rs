@@ -3854,7 +3854,6 @@ fn validate_assets_channel_graph_page_state(
     health: &serde_json::Value,
 ) -> Result<()> {
     let generated_at = require_json_string(health, &["generated_at"])?;
-    let profile_revision = require_json_string(health, &["profiles", "revision"])?;
     let manifest_version = require_json_string(manifest, &["version"])?;
     let current_binary = require_json_string(health, &["current", "binary"])?;
     let channel_manifest = format!("/assets/{channel}/manifest.json");
@@ -3862,7 +3861,6 @@ fn validate_assets_channel_graph_page_state(
         ("generated timestamp", generated_at.as_str()),
         ("manifest version", manifest_version.as_str()),
         ("channel manifest", channel_manifest.as_str()),
-        ("profile revision", profile_revision.as_str()),
     ];
     if !require_json_array(health, &["evidence", "host_binary_files"])?.is_empty() {
         expected.push(("current binary", current_binary.as_str()));
@@ -3870,6 +3868,20 @@ fn validate_assets_channel_graph_page_state(
     for (label, value) in expected {
         if !channel_html.contains(&escape_html(value)) {
             return Err(anyhow!("asset channel page missing {label} {value}"));
+        }
+    }
+    let profiles = manifest
+        .get("profiles")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow!("graph manifest profiles must be an object"))?;
+    for (profile_id, profile) in profiles {
+        let revision = require_json_string(profile, &["revision"])?;
+        if !channel_html.contains(&escape_html(profile_id))
+            || !channel_html.contains(&escape_html(&revision))
+        {
+            return Err(anyhow!(
+                "asset channel page missing profile revision {profile_id} {revision}"
+            ));
         }
     }
     Ok(())
@@ -8775,6 +8787,48 @@ fn infer_config_root(profile_path: &Path) -> Result<PathBuf> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn graph_channel_page_validates_each_mixed_profile_revision() {
+        let manifest = serde_json::json!({
+            "version": "1.0.0",
+            "profiles": {
+                "co-work": {"revision": "2026.06.08.7"},
+                "code": {"revision": "2026.06.08.8"},
+            },
+        });
+        let health = serde_json::json!({
+            "generated_at": "2026-07-28T00:00:00Z",
+            "current": {"binary": "1.6.0"},
+            "profiles": {"revision": "profiles-derived-set-identity"},
+            "evidence": {"host_binary_files": []},
+        });
+        let complete_page = concat!(
+            "2026-07-28T00:00:00Z 1.0.0 /assets/nightly/manifest.json ",
+            "co-work 2026.06.08.7 code 2026.06.08.8"
+        );
+
+        validate_assets_channel_graph_page_state(complete_page, "nightly", &manifest, &health)
+            .expect("all manifest-owned profile revisions are rendered");
+
+        let missing_code_revision = concat!(
+            "2026-07-28T00:00:00Z 1.0.0 /assets/nightly/manifest.json ",
+            "co-work 2026.06.08.7 code profiles-derived-set-identity"
+        );
+        let error = validate_assets_channel_graph_page_state(
+            missing_code_revision,
+            "nightly",
+            &manifest,
+            &health,
+        )
+        .expect_err("aggregate identity cannot replace a missing profile revision");
+        assert!(
+            error
+                .to_string()
+                .contains("missing profile revision code 2026.06.08.8"),
+            "{error:#}"
+        );
+    }
 
     #[test]
     fn cli_accepts_materialized_profile_validation() {
