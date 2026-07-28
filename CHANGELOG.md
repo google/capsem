@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Covered the installed-product half of candidate channel preservation: a
   preserved transition must leave `manifest-metadata.json` on its packaged
   public channel, which is exactly what the published release gate reads back.
+- Generalized the pnpm cache-ownership gate to follow the Just recipe graph
+  instead of accepting one hardcoded recipe name, so every just-driven CI job
+  can cache its pnpm store. Re-enabled that cache on the install and Linux
+  gates, and factored the recipe reachability both contracts need into one
+  shared `scripts/justfile-graph.py`.
 - Installed the musl C toolchain in the ordinary CI install gate, which runs
   `just doctor` through `_cross-compile` and needs it to build guest binaries.
 - Provisioned the tools each CI job actually invokes: `just` in the macOS

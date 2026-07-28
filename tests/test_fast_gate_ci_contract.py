@@ -1,13 +1,28 @@
 """Contracts for deterministic failures shared by smoke, test, and CI."""
 
+import importlib.util
 from pathlib import Path
 import re
+import sys
 
 import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
 JUSTFILE = (ROOT / "justfile").read_text(encoding="utf-8")
+
+
+def _justfile_graph():
+    script = ROOT / "scripts" / "justfile-graph.py"
+    spec = importlib.util.spec_from_file_location("justfile_graph", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+GRAPH = _justfile_graph()
 
 
 def _recipe(name: str) -> str:
@@ -101,10 +116,13 @@ def test_every_pnpm_cache_owner_materializes_its_store() -> None:
             commands = "\n".join(
                 str(step.get("run", "")) for step in steps if isinstance(step, dict)
             )
+            # A `just` recipe creates the store just as surely as a literal
+            # `pnpm install`; follow the recipe graph rather than accepting one
+            # recipe by name, which left every other just-driven job unable to
+            # cache at all.
             creates_store = (
-                ("pnpm" in commands and " install" in commands)
-                or "just _test-fast" in commands
-            )
+                "pnpm" in commands and " install" in commands
+            ) or GRAPH.shell_reaches_pnpm(commands, JUSTFILE)
             if not creates_store:
                 offenders.append(
                     f"{workflow_path.relative_to(ROOT).as_posix()}:{job_name}"

@@ -74,41 +74,20 @@ PROVISIONED_WORKFLOWS = (
     ".github/workflows/release-assets.yaml",
 )
 
-# `just`/`pnpm` must be followed by a real argument on the SAME line. `\s` would
-# span newlines and match the trailing "just" of `uses: extractions/setup-just`.
-_JUST_CALL = re.compile(r"(?<![\w-])just[ \t]+[-_A-Za-z]")
-_JUST_RECIPE = re.compile(r"(?<![\w-])just[ \t]+([-_A-Za-z][\w-]*)")
-_PNPM_CALL = re.compile(r"(?<![\w-])pnpm[ \t]")
-_RECIPE_HEADER = re.compile(
-    r"(?m)^(?P<name>[A-Za-z_][\w-]*)(?P<params>[^:\n]*):(?![=])(?P<deps>[^\n]*)$"
-)
 _TEST_PATH = re.compile(r"(?<![\w./-])tests/[\w./-]*")
 
 
-def _recipe_dependency_graph() -> dict[str, tuple[str, ...]]:
-    return {
-        match.group("name"): tuple(match.group("deps").split())
-        for match in _RECIPE_HEADER.finditer(JUSTFILE)
-    }
+def _justfile_graph():
+    script = PROJECT_ROOT / "scripts" / "justfile-graph.py"
+    spec = importlib.util.spec_from_file_location("justfile_graph", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
-def _recipes_reaching_pnpm() -> frozenset[str]:
-    """Every recipe that runs pnpm itself or through a dependency."""
-    graph = _recipe_dependency_graph()
-    reaching = {name for name in graph if _PNPM_CALL.search(_recipe(name))}
-    changed = True
-    while changed:
-        changed = False
-        for name, dependencies in graph.items():
-            if name in reaching:
-                continue
-            invoked = set(_JUST_RECIPE.findall(_recipe(name)))
-            if any(dep in reaching for dep in dependencies) or any(
-                call in reaching for call in invoked
-            ):
-                reaching.add(name)
-                changed = True
-    return frozenset(reaching)
+GRAPH = _justfile_graph()
 
 
 def _tests_requiring_just() -> tuple[str, ...]:
@@ -167,7 +146,6 @@ def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
     `pnpm`, `node`). System packages like musl-tools are deliberately excluded:
     `_gate-linux-rust` reaches `doctor` statically but exits before it on
     Linux, so requiring them here would fail jobs that are already correct."""
-    reaching_pnpm = _recipes_reaching_pnpm()
     just_tests = _tests_requiring_just()
     assert just_tests, "the just-dependent test scan must find the release contracts"
 
@@ -176,12 +154,10 @@ def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
         for name in _workflow_job_names(path):
             job = _workflow_job(path, name)
             shell = _job_shell(job)
-            needs_just = bool(_JUST_CALL.search(shell)) or _selects_a_just_dependent_test(
-                shell, just_tests
-            )
-            needs_pnpm = bool(_PNPM_CALL.search(shell)) or any(
-                recipe in reaching_pnpm for recipe in _JUST_RECIPE.findall(shell)
-            )
+            needs_just = bool(
+                GRAPH.JUST_CALL.search(shell)
+            ) or _selects_a_just_dependent_test(shell, just_tests)
+            needs_pnpm = GRAPH.shell_reaches_pnpm(shell, JUSTFILE)
             for required, needed in (
                 (SETUP_JUST, needs_just),
                 (SETUP_PNPM, needs_pnpm),
