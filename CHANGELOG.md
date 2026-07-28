@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added a Rust test-layout contract to the shared fast gate. It fails on an
+  inline `#[cfg(test)] mod tests { ... }` block, a `tests.rs` that no parent
+  module declares (which silently never compiles or runs), a crate shipping no
+  Rust tests at all, and any Rust source a `.gitignore` rule would drop.
+  `just test`, `just smoke`, ordinary CI and both release lanes all reach it
+  through `_test-fast`.
+
 ### Changed
 
 - Moved every Rust unit-test module out of its production file and into the

@@ -740,6 +740,7 @@ _test-candidate-run:
         tests/test_release_manifest_assets.py
         tests/test_release_site_generated_from_json.py
         tests/test_release_site_review_regressions.py
+        tests/test_rust_test_layout.py
         tests/test_skills.py
         tests/test_source_syntax_gate.py
         tests/test_sync_container_clock.py
