@@ -1297,15 +1297,69 @@ impl ServiceState {
             self.run_dir.join("sessions"),
             self.run_dir.join("persistent"),
         ];
-        let allowed_parent = allowed_parents
-            .iter()
-            .find(|allowed| parent == allowed.as_path())
-            .ok_or_else(|| {
-                anyhow!(
-                    "refusing to delete session path outside service roots: {}",
-                    session_dir.display()
+
+        let canonical_run_dir = self.run_dir.canonicalize().with_context(|| {
+            format!(
+                "canonicalize service run directory before delete: {}",
+                self.run_dir.display()
+            )
+        })?;
+        let canonical_requested_parent = parent.canonicalize().with_context(|| {
+            format!(
+                "canonicalize requested session root before delete: {}",
+                parent.display()
+            )
+        })?;
+        let mut canonical_parent = None;
+        for allowed_parent in &allowed_parents {
+            let parent_metadata = match std::fs::symlink_metadata(allowed_parent) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "inspect service session root before delete: {}",
+                            allowed_parent.display()
+                        )
+                    });
+                }
+            };
+            if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
+                if parent == allowed_parent.as_path() {
+                    return Err(anyhow!(
+                        "refusing to delete through non-directory service session root: {}",
+                        allowed_parent.display()
+                    ));
+                }
+                continue;
+            }
+
+            let candidate = allowed_parent.canonicalize().with_context(|| {
+                format!(
+                    "canonicalize service session root before delete: {}",
+                    allowed_parent.display()
                 )
             })?;
+            if candidate.parent() != Some(canonical_run_dir.as_path()) {
+                if canonical_requested_parent == candidate {
+                    return Err(anyhow!(
+                        "refusing to delete through session root outside canonical run directory: {}",
+                        allowed_parent.display()
+                    ));
+                }
+                continue;
+            }
+            if canonical_requested_parent == candidate {
+                canonical_parent = Some(candidate);
+                break;
+            }
+        }
+        let canonical_parent = canonical_parent.ok_or_else(|| {
+            anyhow!(
+                "refusing to delete session path outside service roots: {}",
+                session_dir.display()
+            )
+        })?;
 
         let metadata = match std::fs::symlink_metadata(session_dir) {
             Ok(metadata) => metadata,
@@ -1326,37 +1380,6 @@ impl ServiceState {
             ));
         }
 
-        let parent_metadata = std::fs::symlink_metadata(allowed_parent).with_context(|| {
-            format!(
-                "inspect service session root before delete: {}",
-                allowed_parent.display()
-            )
-        })?;
-        if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
-            return Err(anyhow!(
-                "refusing to delete through non-directory service session root: {}",
-                allowed_parent.display()
-            ));
-        }
-
-        let canonical_run_dir = self.run_dir.canonicalize().with_context(|| {
-            format!(
-                "canonicalize service run directory before delete: {}",
-                self.run_dir.display()
-            )
-        })?;
-        let canonical_parent = allowed_parent.canonicalize().with_context(|| {
-            format!(
-                "canonicalize service session root before delete: {}",
-                allowed_parent.display()
-            )
-        })?;
-        if canonical_parent.parent() != Some(canonical_run_dir.as_path()) {
-            return Err(anyhow!(
-                "refusing to delete through session root outside canonical run directory: {}",
-                allowed_parent.display()
-            ));
-        }
         let canonical_session = session_dir.canonicalize().with_context(|| {
             format!(
                 "canonicalize service session path before delete: {}",
@@ -1370,8 +1393,16 @@ impl ServiceState {
             ));
         }
 
-        std::fs::remove_dir_all(session_dir)
-            .with_context(|| format!("delete session directory: {}", session_dir.display()))
+        // Remove the already verified canonical child, not a registry-provided
+        // alias. This keeps a legitimate macOS /var -> /private/var spelling
+        // difference working without giving a mutable alias another path
+        // resolution opportunity at the destructive operation.
+        std::fs::remove_dir_all(&canonical_session).with_context(|| {
+            format!(
+                "delete canonical session directory: {}",
+                canonical_session.display()
+            )
+        })
     }
 
     fn provision_sandbox(self: &Arc<Self>, options: ProvisionOptions) -> Result<()> {

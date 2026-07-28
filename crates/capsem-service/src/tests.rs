@@ -7485,6 +7485,46 @@ async fn delete_route_destroys_retained_state_before_success() {
 }
 
 #[tokio::test]
+async fn delete_route_accepts_canonical_alias_to_trusted_run_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().join("service"));
+    let id = new_persistent_vm_id();
+    let name = "canonical-alias-delete-contract";
+    let trusted_session_dir = state.run_dir.join("persistent").join(&id);
+    std::fs::create_dir_all(&trusted_session_dir).unwrap();
+    std::fs::write(trusted_session_dir.join("owner-data"), b"delete me").unwrap();
+
+    let run_dir_alias = dir.path().join("run-dir-alias");
+    std::os::unix::fs::symlink(&state.run_dir, &run_dir_alias).unwrap();
+    let aliased_session_dir = run_dir_alias.join("persistent").join(&id);
+    let mut entry = test_persistent_entry(name, aliased_session_dir);
+    entry.id.clone_from(&id);
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert(name.into(), entry);
+
+    let app = build_service_router(Arc::clone(&state));
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::DELETE,
+        &format!("/vms/{id}/delete"),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["success"], true);
+    assert!(
+        !trusted_session_dir.exists(),
+        "a canonical alias to the trusted run directory must delete the owned session"
+    );
+}
+
+#[tokio::test]
 async fn delete_route_rejects_registry_path_outside_run_dir() {
     let dir = tempfile::tempdir().unwrap();
     let state = make_state_in(dir.path().join("service"));
