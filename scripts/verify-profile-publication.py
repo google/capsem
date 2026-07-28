@@ -97,6 +97,27 @@ def verify_profile_publication(
                 if digest.get("blake3") != blake3.blake3(payload).hexdigest():
                     raise ValueError(f"immutable profile artifact BLAKE3 mismatch: {name}")
                 expected.add(path)
+        software = architecture.get("software")
+        if not isinstance(software, list):
+            raise ValueError(f"profile {profile_id}/{arch} has no software array")
+        if software:
+            inventory_urls = [
+                row.get("url")
+                for row in architecture["evidence"]
+                if isinstance(row, dict) and row.get("kind") == "software_inventory"
+            ]
+            if len(inventory_urls) != 1 or not isinstance(inventory_urls[0], str):
+                raise ValueError(
+                    f"profile {profile_id}/{arch} software evidence must have exactly "
+                    "one manifest-owned software_inventory URL"
+                )
+            inventory_url = inventory_urls[0]
+            for row in software:
+                if not isinstance(row, dict) or row.get("evidence") != inventory_url:
+                    raise ValueError(
+                        f"profile {profile_id}/{arch} software evidence does not match "
+                        f"its manifest-owned software_inventory URL: {row!r}"
+                    )
     if not expected:
         raise ValueError(f"profile {profile_id!r} contains no immutable artifacts")
     source_name = f"channel-source-{manifest.get('channel')}.json"

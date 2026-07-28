@@ -47,10 +47,15 @@ def _publication(tmp_path: Path) -> tuple[Path, Path, str]:
     config = b"id = 'code'\n"
     kernel = b"kernel"
     obom = b'{"bomFormat":"CycloneDX"}'
+    software_inventory = (
+        b'{"schema":"capsem.profile_software_inventory.v1","architecture":"x86_64",'
+        b'"packages":[{"name":"python","version":"3.12.11","source":"apt"}]}'
+    )
     files = {
         "x86_64-profile.toml": config,
         "x86_64-vmlinuz": kernel,
         "x86_64-obom.cdx.json": obom,
+        "x86_64-software-inventory.json": software_inventory,
     }
     for name, payload in files.items():
         (release_dir / name).write_bytes(payload)
@@ -65,14 +70,35 @@ def _publication(tmp_path: Path) -> tuple[Path, Path, str]:
                     {
                         "architecture": "x86_64",
                         "config": [_record(f"{base}/x86_64-profile.toml", config)],
-                        "images": [
-                            _record(f"{base}/x86_64-vmlinuz", kernel, name="vmlinuz")
-                        ],
+                        "images": [_record(f"{base}/x86_64-vmlinuz", kernel, name="vmlinuz")],
                         "evidence": [
-                            _record(f"{base}/x86_64-obom.cdx.json", obom)
+                            {
+                                **_record(f"{base}/x86_64-obom.cdx.json", obom),
+                                "kind": "obom",
+                            },
+                            {
+                                **_record(
+                                    f"{base}/x86_64-software-inventory.json",
+                                    software_inventory,
+                                ),
+                                "kind": "software_inventory",
+                            },
+                        ],
+                        "software": [
+                            {
+                                "name": "python",
+                                "version": "3.12.11",
+                                "source": "apt",
+                                "architecture": "x86_64",
+                                "evidence": (f"{base}/x86_64-software-inventory.json"),
+                                "digest": {
+                                    "sha256": "a" * 64,
+                                    "blake3": "b" * 64,
+                                },
+                            }
                         ],
                     }
-                ]
+                ],
             }
         },
     }
@@ -84,15 +110,27 @@ def _publication(tmp_path: Path) -> tuple[Path, Path, str]:
 def test_profile_publication_exactly_matches_manifest(tmp_path: Path) -> None:
     source, release_dir, base = _publication(tmp_path)
 
-    verified = VERIFY.verify_profile_publication(
-        source, "code", base, release_dir
-    )
+    verified = VERIFY.verify_profile_publication(source, "code", base, release_dir)
 
     assert {path.name for path in verified} == {
         "x86_64-profile.toml",
         "x86_64-vmlinuz",
         "x86_64-obom.cdx.json",
+        "x86_64-software-inventory.json",
     }
+
+
+def test_profile_publication_rejects_unresolvable_software_evidence(
+    tmp_path: Path,
+) -> None:
+    source, release_dir, base = _publication(tmp_path)
+    manifest = json.loads(source.read_text(encoding="utf-8"))
+    software = manifest["profiles"]["code"]["architectures"][0]["software"]
+    software[0]["evidence"] = f"{base}/asset-revision/x86_64-software-inventory.json"
+    source.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="software evidence"):
+        VERIFY.verify_profile_publication(source, "code", base, release_dir)
 
 
 def test_profile_publication_rejects_tamper_and_extra_files(tmp_path: Path) -> None:
@@ -180,12 +218,11 @@ def test_profile_publication_stages_only_manifest_described_inputs(
                                 "path": "profiles/code/root/root/.profile",
                             },
                         ],
-                        "images": [
-                            _record(f"{base}/x86_64-vmlinuz", kernel, name="vmlinuz")
-                        ],
+                        "images": [_record(f"{base}/x86_64-vmlinuz", kernel, name="vmlinuz")],
                         "evidence": [],
+                        "software": [],
                     }
-                ]
+                ],
             }
         },
     }

@@ -1563,6 +1563,50 @@ fn rewrite_profile_publication_urls(
                 ));
             }
         }
+        let software_inventory_urls = architecture
+            .get("evidence")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| anyhow!("candidate profile architecture has no evidence array"))?
+            .iter()
+            .filter(|row| {
+                row.get("kind").and_then(serde_json::Value::as_str) == Some("software_inventory")
+            })
+            .map(|row| {
+                row.get("url")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToOwned::to_owned)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "candidate profile software_inventory evidence has no publication URL"
+                        )
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let software = architecture
+            .get_mut("software")
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(|| anyhow!("candidate profile architecture has no software array"))?;
+        if !software.is_empty() {
+            let [software_inventory_url] = software_inventory_urls.as_slice() else {
+                return Err(anyhow!(
+                    "candidate profile architecture must have exactly one software_inventory \
+                     evidence URL for its software rows"
+                ));
+            };
+            for row in software {
+                if !row.is_object()
+                    || row
+                        .get("evidence")
+                        .and_then(serde_json::Value::as_str)
+                        .is_none()
+                {
+                    return Err(anyhow!(
+                        "candidate profile software row has no evidence URL"
+                    ));
+                }
+                row["evidence"] = serde_json::Value::String(software_inventory_url.to_string());
+            }
+        }
     }
     Ok(())
 }
@@ -12440,6 +12484,14 @@ decision = "block"
                 "https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1/arm64-vmlinuz"
             )
         );
+        assert!(merged["profiles"]["code"]["architectures"][0]["software"]
+            .as_array()
+            .expect("software rows")
+            .iter()
+            .all(|row| row["evidence"].as_str()
+                == Some(
+                    "https://github.com/google/capsem/releases/download/profile-nightly-code-2026.07.24.1/arm64-software-inventory.json"
+                )));
         assert!(merged["profiles"]["code"]["architectures"][0]["evidence"]
             .as_array()
             .expect("evidence rows")
