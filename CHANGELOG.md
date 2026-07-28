@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Covered the two Rust surfaces that had no unit tests worth the name.
+  `capsem-mcp-aggregator` was the only crate in the workspace with none at all,
+  and `StreamTracker` in the MITM MCP frame path had none despite being the
+  only thing standing between a hostile guest and response confusion. Both
+  parse guest-controlled input, so the new tests assert the rejections: reused,
+  backwards and reserved stream ids, and unresolvable tool, resource and prompt
+  names returning a structured error instead of panicking the process.
 - Narrowed the `*_Store` ignore rule to `*.DS_Store`. macOS sets
   `core.ignorecase=true`, so the bare pattern matched source directories such
   as `crates/capsem-process/src/job_store/` case-insensitively and silently:
