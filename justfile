@@ -724,6 +724,7 @@ _test-candidate-run:
     SOURCE_CONTRACT_TESTS=(
         tests/test_agent_skill_index.py
         tests/test_build_assets_profile.py
+        tests/test_build_provenance.py
         tests/test_builder_probe_timeouts.py
         tests/test_cargo_audit_gate.py
         tests/test_check_cargo_audit.py
@@ -1436,6 +1437,7 @@ _cross-compile arch="": _clean-stale _check-assets _generate-settings
                cp /cargo-target/\$RUST_TARGET/release/capsem-pty-agent /cargo-target/\$RUST_TARGET/release/capsem-mcp-server /cargo-target/\$RUST_TARGET/release/capsem-net-proxy /cargo-target/\$RUST_TARGET/release/capsem-dns-proxy /cargo-target/\$RUST_TARGET/release/capsem-sysutil /cargo-target/linux-agent/\$TARGET_ARCH/ && \
                echo '--- Build companion host binaries ---' && \
                cargo build --release --target \$RUST_TARGET -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench && \
+               bash scripts/check-build-provenance.sh \"/cargo-target/\$RUST_TARGET/release/capsem\" && \
                echo '--- Resolve Tauri signing key ---' && \
                DEV_KEY=/cargo-target/dev-tauri-private && \
                if [ -z \"\${TAURI_SIGNING_PRIVATE_KEY:-}\" ]; then \

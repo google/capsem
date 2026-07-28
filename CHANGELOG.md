@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made ordinary CI build the exact native release-mode Debian package before
   the install/glow-up gate, with an actionable fail-closed diagnostic when the
   expected package is absent.
+- Refreshed embedded package provenance across cached commits and worktrees,
+  and made every local and CI package builder reject a binary whose build
+  identity does not match the exact release source.
 
 ## [1.6.1785192352] - 2026-07-27
 
