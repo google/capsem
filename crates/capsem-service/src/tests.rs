@@ -11664,3 +11664,81 @@ fn apple_vz_host_lock_is_required_only_on_macos() {
         "the host-wide save/restore lock protects Apple VZ, not independent KVM VMs"
     );
 }
+
+// ── Spawn environment leak boundary ────────────────────────────────
+//
+// Both provision and resume call `child_cmd.env_clear()` and then re-add only
+// PROCESS_ENV_ALLOWLIST. That allowlist is the entire boundary between the
+// service's own environment -- which on a developer or CI machine routinely
+// holds ANTHROPIC_API_KEY, AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN -- and the
+// per-VM process that talks to the guest. Nothing else enforces it, so these
+// tests fail the build the moment a secret-shaped name is added.
+
+/// Substrings that mark a variable as likely secret-bearing.
+const SECRET_MARKERS: &[&str] = &[
+    "KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH", "SESSION", "COOKIE",
+];
+
+/// The one allowlisted name that trips the marker scan without carrying a
+/// secret: it is a filesystem path to the broker's store, deliberately
+/// redirected by the hermetic integration and Ironbank rails.
+const SECRET_MARKER_EXCEPTIONS: &[&str] = &["CAPSEM_CREDENTIAL_STORE_PATH"];
+
+#[test]
+fn spawn_env_allowlist_carries_no_secret_bearing_names() {
+    let offenders: Vec<&str> = PROCESS_ENV_ALLOWLIST
+        .iter()
+        .copied()
+        .filter(|key| !SECRET_MARKER_EXCEPTIONS.contains(key))
+        .filter(|key| {
+            let upper = key.to_ascii_uppercase();
+            SECRET_MARKERS.iter().any(|marker| upper.contains(marker))
+        })
+        .collect();
+
+    assert!(
+        offenders.is_empty(),
+        "these keys would forward host secrets into the per-VM process: {offenders:?}. \
+         If one is genuinely not a secret, add it to SECRET_MARKER_EXCEPTIONS with a reason."
+    );
+}
+
+#[test]
+fn spawn_env_allowlist_forwards_only_capsem_vars_and_a_minimal_os_set() {
+    // Anything outside this set is third-party environment the guest-facing
+    // process has no reason to inherit.
+    const OS_BASELINE: &[&str] = &["HOME", "PATH", "USER", "TMPDIR"];
+
+    let unexpected: Vec<&str> = PROCESS_ENV_ALLOWLIST
+        .iter()
+        .copied()
+        .filter(|key| !key.starts_with("CAPSEM_") && !OS_BASELINE.contains(key))
+        .collect();
+
+    assert!(
+        unexpected.is_empty(),
+        "only CAPSEM_-prefixed vars and the minimal OS baseline may cross into \
+         the per-VM process: {unexpected:?}"
+    );
+}
+
+#[test]
+fn spawn_env_allowlist_is_deduplicated() {
+    let unique: std::collections::HashSet<&str> = PROCESS_ENV_ALLOWLIST.iter().copied().collect();
+
+    assert_eq!(
+        unique.len(),
+        PROCESS_ENV_ALLOWLIST.len(),
+        "duplicate entries hide review churn in the leak boundary"
+    );
+}
+
+#[test]
+fn spawn_env_allowlist_keeps_the_vars_the_child_actually_needs() {
+    for required in ["HOME", "PATH", "CAPSEM_HOME"] {
+        assert!(
+            PROCESS_ENV_ALLOWLIST.contains(&required),
+            "{required} is required for the per-VM process to start"
+        );
+    }
+}

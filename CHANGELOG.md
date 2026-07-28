@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Put a test under the service's spawn environment boundary.
+  `PROCESS_ENV_ALLOWLIST` is the whole barrier between the daemon's own
+  environment -- which on a developer or CI machine routinely holds
+  `ANTHROPIC_API_KEY`, `AWS_SECRET_ACCESS_KEY` and the like -- and the per-VM
+  process that talks to the guest. Nothing enforced its contents, so adding a
+  secret-shaped or non-Capsem name now fails the build instead of silently
+  forwarding a host secret.
+- Covered the MCP server manager's reserved-header check, `WWW-Authenticate`
+  scope parsing, JSON-RPC error sniffing and pool-routing guard conditions.
+  Without the header test, a server definition could have contested
+  `Mcp-Session-Id` and steered another session's stream.
 - Covered the two Rust surfaces that had no unit tests worth the name.
   `capsem-mcp-aggregator` was the only crate in the workspace with none at all,
   and `StreamTracker` in the MITM MCP frame path had none despite being the

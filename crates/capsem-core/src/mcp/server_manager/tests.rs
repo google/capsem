@@ -356,3 +356,161 @@ async fn local_http_mcp_unresolved_broker_ref_fails_before_network_dispatch() {
         "unresolved broker refs must fail before any remote MCP request"
     );
 }
+
+// ── Pool routing edges ─────────────────────────────────────────────
+//
+// Round-robin distribution is already covered above. These pin down the two
+// guard conditions around it: a degenerate pool must never index out of
+// bounds, and pinning a pool-unsafe tool must not consume a round-robin turn
+// (if it did, safe tools would skip peers).
+
+#[test]
+fn degenerate_pools_always_pick_the_first_peer() {
+    let counter = AtomicUsize::new(0);
+    for safe in [true, false] {
+        assert_eq!(next_peer_index(1, safe, &counter), 0, "single-peer pool");
+        assert_eq!(next_peer_index(0, safe, &counter), 0, "empty pool");
+    }
+}
+
+#[test]
+fn pinning_a_pool_unsafe_tool_does_not_consume_a_round_robin_turn() {
+    let counter = AtomicUsize::new(0);
+
+    assert_eq!(next_peer_index(3, false, &counter), 0);
+    assert_eq!(next_peer_index(3, false, &counter), 0);
+
+    assert_eq!(
+        next_peer_index(3, true, &counter),
+        0,
+        "the first pool-safe call still starts at peer 0"
+    );
+    assert_eq!(next_peer_index(3, true, &counter), 1);
+}
+
+// ── Outbound header safety ─────────────────────────────────────────
+//
+// Custom headers come from server definitions, not from this process. One that
+// collided with `Mcp-Session-Id` would let configuration steer another
+// session's stream, so the reserved set must stay rejected -- case included,
+// since header names are compared case-insensitively.
+
+fn header(name: &str) -> HeaderName {
+    HeaderName::from_bytes(name.as_bytes()).expect("valid header name")
+}
+
+#[test]
+fn reserved_mcp_headers_cannot_be_overridden_by_a_server_definition() {
+    for name in [
+        "accept",
+        "Accept",
+        "ACCEPT",
+        "mcp-session-id",
+        "Mcp-Session-Id",
+        "last-event-id",
+        "Last-Event-Id",
+    ] {
+        assert!(
+            validate_mcp_custom_header(&header(name)).is_err(),
+            "{name} is reserved and must be refused"
+        );
+    }
+}
+
+#[test]
+fn protocol_version_is_the_one_reserved_header_a_definition_may_set() {
+    for name in ["mcp-protocol-version", "MCP-Protocol-Version"] {
+        assert!(
+            validate_mcp_custom_header(&header(name)).is_ok(),
+            "{name} is explicitly carved out"
+        );
+    }
+}
+
+#[test]
+fn ordinary_headers_pass_validation() {
+    for name in ["authorization", "x-api-key", "user-agent", "content-type"] {
+        assert!(validate_mcp_custom_header(&header(name)).is_ok(), "{name}");
+    }
+}
+
+#[test]
+fn rejected_header_error_names_the_offending_header() {
+    let err = validate_mcp_custom_header(&header("mcp-session-id")).unwrap_err();
+    assert!(err.contains("mcp-session-id"), "unexpected error: {err}");
+}
+
+// ── WWW-Authenticate scope parsing ─────────────────────────────────
+
+#[test]
+fn scope_is_read_from_a_quoted_challenge() {
+    let scope = extract_mcp_scope_from_header(
+        r#"Bearer realm="https://idp.example.com", scope="mcp:read mcp:write""#,
+    );
+    assert_eq!(scope.as_deref(), Some("mcp:read mcp:write"));
+}
+
+#[test]
+fn unquoted_scope_stops_at_the_first_delimiter() {
+    for (header, want) in [
+        ("Bearer scope=mcp:read, realm=x", "mcp:read"),
+        ("Bearer scope=mcp:read;realm=x", "mcp:read"),
+        ("Bearer scope=mcp:read realm=x", "mcp:read"),
+        ("Bearer scope=mcp:read", "mcp:read"),
+    ] {
+        assert_eq!(
+            extract_mcp_scope_from_header(header).as_deref(),
+            Some(want),
+            "{header}"
+        );
+    }
+}
+
+#[test]
+fn scope_key_matches_case_insensitively_but_keeps_the_original_value_case() {
+    let scope = extract_mcp_scope_from_header(r#"Bearer SCOPE="MCP:Read""#);
+    assert_eq!(scope.as_deref(), Some("MCP:Read"));
+}
+
+#[test]
+fn a_challenge_without_a_scope_yields_none() {
+    for header in [
+        "Bearer realm=\"https://idp.example.com\"",
+        "Basic",
+        "",
+        "Bearer scope=",
+        "Bearer scope=,realm=x",
+    ] {
+        assert_eq!(
+            extract_mcp_scope_from_header(header),
+            None,
+            "{header:?} carries no usable scope"
+        );
+    }
+}
+
+// ── JSON-RPC error sniffing ────────────────────────────────────────
+
+#[test]
+fn only_a_json_rpc_error_body_parses_as_an_error() {
+    let error = parse_mcp_json_rpc_error(
+        r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32600,"message":"bad request"}}"#,
+    );
+    assert!(error.is_some(), "an error envelope must be recognized");
+}
+
+#[test]
+fn success_and_malformed_bodies_are_not_treated_as_errors() {
+    for body in [
+        r#"{"jsonrpc":"2.0","id":1,"result":{}}"#,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+        r#"{"error":"not a json-rpc envelope"}"#,
+        "not json at all",
+        "",
+    ] {
+        assert!(
+            parse_mcp_json_rpc_error(body).is_none(),
+            "{body:?} must not be reported as a JSON-RPC error"
+        );
+    }
+}
