@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Covered the installed-product half of candidate channel preservation: a
   preserved transition must leave `manifest-metadata.json` on its packaged
   public channel, which is exactly what the published release gate reads back.
+- Brought the build-provenance invariant into the test suite: the embedded
+  build hash must carry the real source revision whenever one is readable,
+  rather than relying on `check-build-provenance.sh` alone to keep a binary
+  with no source identity out of a release.
 - Made the host-builder container trust its bind-mounted `/src` checkout. On
   Linux the host UID differs from the container user, so git rejected the
   repository and the package build died after a successful compile; the same

@@ -2607,6 +2607,43 @@ mod tests {
     use capsem_core::net::policy_config::{ResolvedSetting, SettingValue};
     use clap::Parser;
 
+    fn git_short_head() -> Option<String> {
+        let output = std::process::Command::new("git")
+            .args(["rev-parse", "--short", "HEAD"])
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (!value.is_empty()).then_some(value)
+    }
+
+    #[test]
+    fn the_embedded_build_hash_carries_the_real_source_revision() {
+        // build.rs treats a failing `git rev-parse` as absent rather than
+        // fatal and embeds "unknown", so any environment that cannot read the
+        // repository -- a Linux bind mount whose owner is not the container
+        // user, most recently -- yields a binary with no source identity.
+        // check-build-provenance.sh catches that when packaging; without this
+        // the invariant lives entirely outside the test suite.
+        let Some(head) = git_short_head() else {
+            // Building from an exported tarball has no revision to carry, and
+            // "unknown" is the honest answer there.
+            return;
+        };
+        let embedded = env!("CAPSEM_BUILD_HASH");
+
+        assert!(
+            !embedded.starts_with("unknown"),
+            "build hash lost its source revision: {embedded}"
+        );
+        assert!(
+            embedded.starts_with(&head),
+            "build hash {embedded} does not carry HEAD {head}"
+        );
+    }
+
     #[test]
     fn cli_runtime_paths_are_derived_from_one_run_dir() {
         let run_dir = tempfile::tempdir().unwrap();
