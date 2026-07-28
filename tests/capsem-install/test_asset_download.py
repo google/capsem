@@ -643,6 +643,76 @@ def test_update_assets_records_channel_change_audit_log(
     assert "package_version" not in complete["changed_fields"]
 
 
+def test_package_preactivation_manifest_preserves_its_declared_public_channel(
+    tmp_path: Path,
+    http_fixture,
+    installed_layout,
+):
+    base_url, serve_dir, requested_paths = http_fixture
+    arch = _arch()
+    old_files = {
+        "vmlinuz": b"preactivation-old-kernel",
+        "initrd.img": b"preactivation-old-initrd",
+        "rootfs.erofs": b"preactivation-old-rootfs",
+    }
+    new_files = {
+        "vmlinuz": b"preactivation-new-kernel",
+        "initrd.img": b"preactivation-new-initrd",
+        "rootfs.erofs": b"preactivation-new-rootfs",
+    }
+    candidate_url = f"{base_url}/candidate/manifest.json"
+    candidate = _make_manifest(arch, new_files, NEW_ASSET_VERSION)
+    candidate["channel"] = "nightly"
+    candidate["asset_base"] = f"{base_url}/candidate/blobs/{{asset_version}}"
+    candidate_path = serve_dir / "candidate" / "manifest.json"
+    candidate_path.parent.mkdir(parents=True)
+    candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+    blob_dir = serve_dir / "candidate" / "blobs" / NEW_ASSET_VERSION
+    blob_dir.mkdir(parents=True)
+    for name, blob in new_files.items():
+        (blob_dir / f"{arch}-{name}").write_bytes(blob)
+
+    capsem_home = tmp_path / ".capsem"
+    assets = capsem_home / "assets"
+    _write_installed_manifest_and_assets(
+        assets,
+        arch,
+        old_files,
+        asset_version=ASSET_VERSION,
+        origin={
+            "schema": "capsem.manifest_metadata.v1",
+            "origin": "package",
+            "manifest_url": "https://release.capsem.org/assets/nightly/manifest.json",
+            "channel": "nightly",
+            "channel_kind": "public",
+            "channel_locked": False,
+            "package_version": "1.6.1785192352",
+        },
+    )
+
+    result = _run_binary(
+        _fresh_capsem_binary(),
+        {"CAPSEM_HOME": str(capsem_home)},
+        "update",
+        "--assets",
+        "--manifest",
+        candidate_url,
+    )
+
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    metadata = json.loads((assets / "manifest-metadata.json").read_text())
+    assert metadata["manifest_url"] == candidate_url
+    assert metadata["checked_url"] == candidate_url
+    assert metadata["channel"] == "nightly"
+    assert metadata["channel_kind"] == "public"
+    assert metadata["channel_locked"] is False
+    assert metadata["package_version"] == "1.6.1785192352"
+    assert "/candidate/manifest.json" in requested_paths
+    assert {
+        f"/candidate/blobs/{NEW_ASSET_VERSION}/{arch}-{name}" for name in new_files
+    }.issubset(set(requested_paths))
+
+
 def test_update_assets_accepts_release_channel_profile_manifest(
     tmp_path: Path,
     http_fixture,

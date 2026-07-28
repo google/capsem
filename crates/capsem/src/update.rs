@@ -3273,15 +3273,6 @@ async fn refresh_assets(
 ) -> Result<()> {
     let assets_dir = capsem_core::asset_manager::default_assets_dir()
         .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
-    let transition = channel_transition_for_request(
-        &assets_dir,
-        selected_channel.map(|selection| selection.channel.as_str()),
-        if selected_channel.is_none() {
-            manifest_source
-        } else {
-            None
-        },
-    )?;
     let refresh_source = if let Some(source) = manifest_source {
         Some(source.to_string())
     } else {
@@ -3299,15 +3290,28 @@ async fn refresh_assets(
             "previous": previous_state
         }));
         let refresh_result: Result<()> = async {
-            if let Some(bytes) = selected_payload {
+            let fetched_payload = if selected_payload.is_none() && manifest_source.is_some() {
+                Some(read_manifest_source(&source).await?)
+            } else {
+                None
+            };
+            let payload = selected_payload.or(fetched_payload.as_deref());
+            let transition = if let Some(selection) = selected_channel {
+                channel_transition_for_request(&assets_dir, Some(selection.channel.as_str()), None)?
+            } else if manifest_source.is_some() {
+                channel_transition_for_explicit_manifest_payload(
+                    &assets_dir,
+                    &source,
+                    payload.context("explicit manifest payload was not fetched")?,
+                )?
+            } else {
+                ChannelTransition::Preserve
+            };
+            if let Some(bytes) = payload {
                 if let Some(selection) = selected_channel {
                     verify_selected_channel_manifest(selection, bytes)?;
                 }
                 install_manifest_bytes(&assets_dir, &source, bytes).await?;
-            } else if let Some(selection) = selected_channel {
-                let bytes = read_manifest_source(&source).await?;
-                verify_selected_channel_manifest(selection, &bytes)?;
-                install_manifest_bytes(&assets_dir, &source, &bytes).await?;
             } else {
                 install_manifest_source(&assets_dir, &source).await?;
             }
@@ -3452,6 +3456,40 @@ fn channel_from_source(source: &str) -> Option<String> {
             .map(|segment| (*segment).to_string());
     }
     None
+}
+
+fn channel_transition_for_explicit_manifest_payload(
+    assets_dir: &Path,
+    source: &str,
+    payload: &[u8],
+) -> Result<ChannelTransition> {
+    let document: serde_json::Value = serde_json::from_slice(payload)
+        .with_context(|| format!("parse manifest JSON from {source}"))?;
+    let declared_channel = match document.get("channel") {
+        Some(value) => Some(
+            value
+                .as_str()
+                .context("release manifest channel must be a string")?,
+        ),
+        None => None,
+    };
+    let metadata = installed_manifest_metadata(assets_dir)?;
+    let preserves_packaged_public_channel = metadata.as_ref().is_some_and(|value| {
+        value.get("origin").and_then(serde_json::Value::as_str) == Some("package")
+            && value
+                .get("channel_kind")
+                .and_then(serde_json::Value::as_str)
+                == Some("public")
+            && value
+                .get("channel_locked")
+                .and_then(serde_json::Value::as_bool)
+                == Some(false)
+            && value.get("channel").and_then(serde_json::Value::as_str) == declared_channel
+    });
+    if preserves_packaged_public_channel {
+        return Ok(ChannelTransition::Preserve);
+    }
+    channel_transition_for_request(assets_dir, None, Some(source))
 }
 
 fn installed_manifest_metadata(assets_dir: &Path) -> Result<Option<serde_json::Value>> {

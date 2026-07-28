@@ -1,6 +1,107 @@
 use super::*;
 
 #[test]
+fn package_preactivation_preserves_the_channel_declared_by_the_candidate_manifest() {
+    let temp = tempfile::tempdir().unwrap();
+    let assets_dir = temp.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    std::fs::write(
+        assets_dir.join("manifest-metadata.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "capsem.manifest_metadata.v1",
+            "origin": "package",
+            "manifest_url": "https://release.capsem.org/assets/nightly/manifest.json",
+            "channel": "nightly",
+            "channel_kind": "public",
+            "channel_locked": false,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let candidate = serde_json::to_vec(&serde_json::json!({
+        "version": "1.6.1785192352",
+        "channel": "nightly",
+        "status": "current",
+        "packages": [],
+        "profiles": {},
+    }))
+    .unwrap();
+
+    let transition = channel_transition_for_explicit_manifest_payload(
+        &assets_dir,
+        "file:///tmp/binary-channel/nightly/manifest.json",
+        &candidate,
+    )
+    .unwrap();
+
+    assert_eq!(transition, ChannelTransition::Preserve);
+}
+
+#[test]
+fn explicit_manifest_without_the_packaged_public_channel_remains_corporate() {
+    let temp = tempfile::tempdir().unwrap();
+    let assets_dir = temp.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    std::fs::write(
+        assets_dir.join("manifest-metadata.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "capsem.manifest_metadata.v1",
+            "origin": "package",
+            "manifest_url": "https://release.capsem.org/assets/nightly/manifest.json",
+            "channel": "nightly",
+            "channel_kind": "public",
+            "channel_locked": false,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    for candidate in [
+        serde_json::json!({"version": "1", "packages": [], "profiles": {}}),
+        serde_json::json!({
+            "version": "1",
+            "channel": "stable",
+            "packages": [],
+            "profiles": {},
+        }),
+    ] {
+        let transition = channel_transition_for_explicit_manifest_payload(
+            &assets_dir,
+            "file:///tmp/corporate/manifest.json",
+            &serde_json::to_vec(&candidate).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(transition, ChannelTransition::Corporate);
+    }
+}
+
+#[test]
+fn explicit_manifest_rejects_a_non_string_declared_channel() {
+    let temp = tempfile::tempdir().unwrap();
+    let assets_dir = temp.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    let candidate = serde_json::to_vec(&serde_json::json!({
+        "version": "1",
+        "channel": ["nightly"],
+        "packages": [],
+        "profiles": {},
+    }))
+    .unwrap();
+
+    let error = channel_transition_for_explicit_manifest_payload(
+        &assets_dir,
+        "file:///tmp/binary-channel/nightly/manifest.json",
+        &candidate,
+    )
+    .expect_err("a malformed manifest channel must fail closed");
+
+    assert!(
+        format!("{error:#}").contains("release manifest channel must be a string"),
+        "{error:#}"
+    );
+}
+
+#[test]
 fn shared_release_payload_parser_rejects_missing_runtime_image_revision() {
     let arch = if cfg!(target_arch = "aarch64") {
         "arm64"
