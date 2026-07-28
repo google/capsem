@@ -60,6 +60,14 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
       - run: uv sync
 
+      - name: Select exact public-before manifest
+        id: public-before
+        run: |
+          python3 scripts/select-runtime-preflight-manifest.py \
+            --channel "${{ inputs.channel }}" \
+            --bootstrap-missing-first-party \
+            --github-output "$GITHUB_OUTPUT"
+
       - name: Validate selected channel profile through capsem-admin
         run: |
           mkdir -p target
@@ -78,11 +86,30 @@ jobs:
             --bootstrap-missing-first-party \
             --output target/channel-source/manifest.json
 
+      - name: Project inactive first-channel public-before state
+        if: ${{ steps.public-before.outputs.bootstrap == 'true' }}
+        run: |
+          python3 scripts/project-first-channel-before.py \
+            --source-manifest target/channel-source/manifest.json \
+            --channel "${{ inputs.channel }}" \
+            --bootstrap "${{ steps.public-before.outputs.bootstrap }}" \
+            --output target/channel-source/public-before.json
+
+      - name: Select public-before authority for exact pairing
+        id: public-before-authority
+        run: |
+          if [[ "${{ steps.public-before.outputs.bootstrap }}" == "true" ]]; then
+            echo "manifest-url=file://$PWD/target/channel-source/public-before.json" \
+              >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest-url=${{ steps.public-before.outputs.manifest-url }}" \
+              >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Fetch exact deployed public-before package
         uses: ./.github/actions/fetch-release-inputs
         with:
-          manifest-url: ${{ env.ASSET_MANIFEST_URL }}
-          bootstrap-manifest-url: file://${{ github.workspace }}/target/channel-source/manifest.json
+          manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}
           kind: packages
           output: target/profile-public-before/packages
 
@@ -97,9 +124,8 @@ jobs:
       - name: Fetch exact deployed public-before profiles
         uses: ./.github/actions/fetch-release-inputs
         with:
-          manifest-url: ${{ env.ASSET_MANIFEST_URL }}
-          bootstrap-manifest-url: file://${{ github.workspace }}/target/channel-source/manifest.json
-          allow-empty-profiles: "true"
+          manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}
+          allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}
           kind: profiles
           architecture: x86_64
           output: target/profile-public-before/profiles

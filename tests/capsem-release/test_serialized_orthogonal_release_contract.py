@@ -404,15 +404,24 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     workflow = _workflow("release-assets.yaml")
 
     assert "Validate selected channel profile through capsem-admin" in workflow
+    assert "Select exact public-before manifest" in workflow
     assert "Fetch latest selected channel source manifest" in workflow
     assert "--bootstrap-missing-first-party" in workflow
     assert '--profile "${{ inputs.profile }}"' in workflow
+    assert "Project inactive first-channel public-before state" in workflow
+    assert "scripts/project-first-channel-before.py" in workflow
+    assert "Select public-before authority for exact pairing" in workflow
+    assert (
+        "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}"
+        in workflow
+    )
     assert "Fetch exact deployed public-before package" in workflow
     assert "Fetch exact deployed public-before profiles" in workflow
-    assert "manifest-url: ${{ env.ASSET_MANIFEST_URL }}" in workflow
-    assert workflow.count("bootstrap-manifest-url:") == 2
-    assert "--bootstrap-manifest-url" not in workflow
-    assert 'allow-empty-profiles: "true"' in workflow
+    assert "bootstrap-manifest-url:" not in workflow
+    assert (
+        "allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}"
+        in workflow
+    )
     assert "capsem-admin -- release" in workflow
     assert "--publication-base" in workflow
     assert "channel-source-$CHANNEL.json" in workflow
@@ -455,7 +464,10 @@ def test_profile_pairing_reuses_one_staged_publication_and_exact_public_before()
     pairing = _job_block(workflow, "test-profile-pairing")
     publish = _job_block(workflow, "publish-profile-release")
 
-    assert "manifest-url: ${{ env.ASSET_MANIFEST_URL }}" in resolve
+    assert (
+        "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}"
+        in resolve
+    )
     assert "kind: packages" in resolve
     assert "kind: profiles" in resolve
     assert "architecture: x86_64" in resolve
