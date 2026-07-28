@@ -2689,6 +2689,11 @@ pub async fn run_update(
             .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
         channel_transition_for_request(&assets_dir, Some(channel), None)?
     } else {
+        if let Some(source) = manifest_source {
+            let assets_dir = capsem_core::asset_manager::default_assets_dir()
+                .context("cannot resolve CAPSEM_HOME -- set $HOME or $CAPSEM_HOME")?;
+            channel_transition_for_request(&assets_dir, None, Some(source))?;
+        }
         ChannelTransition::Preserve
     };
 
@@ -7228,6 +7233,16 @@ url = "https://old.example/rootfs.erofs"
         assert_eq!(
             channel_transition_for_request(&assets_dir, None, Some(corp_source)).unwrap(),
             ChannelTransition::Preserve
+        );
+        let error = channel_transition_for_request(
+            &assets_dir,
+            None,
+            Some("https://other-corp.example/capsem/manifest.json"),
+        )
+        .unwrap_err();
+        assert!(
+            format!("{error:#}").contains("corporate channel is locked to"),
+            "{error:#}"
         );
     }
 
