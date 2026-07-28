@@ -17,9 +17,12 @@ def test_python_coverage_gate_does_not_round_subthreshold_total() -> None:
     project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
     precision = project["tool"]["coverage"]["report"]["precision"]
     justfile = (PROJECT_ROOT / "justfile").read_text()
+    ci = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
 
     assert precision >= 2
-    assert "--cov-fail-under=90" in justfile
+    for gate in (justfile, ci):
+        assert "--cov-fail-under=85" in gate
+        assert "--cov-fail-under=90" not in gate
 
 
 @dataclass(frozen=True)

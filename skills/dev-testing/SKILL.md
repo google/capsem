@@ -416,8 +416,8 @@ gate).
 | Component | Floor | Enforced | Where |
 |-----------|------:|:--------:|-------|
 | Rust workspace | 65% | `--fail-under-lines 65` | CI (`cargo llvm-cov`), `just test` |
-| Python top-level contracts | 89% | `--cov-fail-under=89` | PR CI (`tests/test_*.py`) |
-| Python full suite | 90% | `--cov-fail-under=90` | `just test` |
+| Python selected CI suite | 85% | `--cov-fail-under=85` | Ordinary CI |
+| Python full suite | 85% | `--cov-fail-under=85` | `just test` |
 | capsem-service | 80% | Codecov component | `codecov.yml` |
 | capsem-mcp | 80% | Codecov component | `codecov.yml` |
 | capsem-gateway | 80% | Codecov component | `codecov.yml` |
@@ -426,7 +426,7 @@ gate).
 ## Coverage
 
 - Rust: `cargo llvm-cov` via `just test` (floor: 65% line coverage)
-- Python: PR top-level contract lane uses 89%; full `just test` uses 90%.
+- Python: ordinary CI and the full `just test` suite both enforce 85%.
 - `codecov.yml` maps components to code paths. Update it when files or directories are added, moved, or renamed.
 
 ## Fast debug with capsem MCP tools

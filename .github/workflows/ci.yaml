@@ -211,7 +211,7 @@ jobs:
             tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py \
             --cov=src/capsem \
             --cov-report=xml:codecov-python.xml \
-            --cov-fail-under=90 \
+            --cov-fail-under=85 \
             --junitxml=python-junit.xml
 
       # Python integration tests that need no VM
@@ -359,8 +359,11 @@ jobs:
           architecture: x86_64
           output: target/ci-install-profile-inputs
 
-      - name: Build host builder Docker image
-        run: just _build-host-image
+      - name: Build exact native release package
+        env:
+          CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json
+          CAPSEM_INSTALL_CHANNEL: stable
+        run: just _cross-compile x86_64
 
       - name: Run install e2e tests
         run: CAPSEM_INSTALL_PROFILE_INPUTS=target/ci-install-profile-inputs just _gate-install

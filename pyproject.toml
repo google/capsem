@@ -74,7 +74,7 @@ target-version = "py311"
 select = ["E4", "E7", "E9", "F"]
 
 [tool.coverage.report]
-# Do not round 89.99% up to a passing 90% release gate.
+# Keep two decimal places so the blocking 85% release floor is exact.
 precision = 2
 
 [dependency-groups]

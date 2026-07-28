@@ -58,7 +58,7 @@ Hosted-runner quality suite on macOS:
 2. **Rust unit tests with coverage** -- every workspace crate, including macOS-only app/tray crates
 3. **Rust integration tests** -- cross-crate tests from `tests/` directory
 4. **Frontend** -- type check (`astro check` + `svelte-check`), vitest with coverage, production build
-5. **Python schema tests** -- capsem-builder tests with 90% coverage floor
+5. **Python schema tests** -- capsem-builder tests with 85% coverage floor
 6. **Python integration tests** -- bootstrap, codesign, rootfs artifact suites
 7. **Import verification** -- all test suites import cleanly
 8. **Schema drift check** -- regenerates settings schema and verifies no uncommitted changes
@@ -67,7 +67,7 @@ The same RustSec and four-workspace JavaScript audit also runs weekly and on
 demand in `security-audit.yaml`; neither path converts new advisories to
 warnings.
 
-### test-install (ubuntu-24.04-arm)
+### test-install (ubuntu-24.04 x86_64)
 
 Installer/update package contract tests run in Docker with systemd. This proves
 the `.deb` install layout, service unit, manifest URL provenance, channel
@@ -196,7 +196,7 @@ Coverage is uploaded to [Codecov](https://codecov.io) with flags:
 | `linux-unit` | Rust unit tests (Linux/KVM) | 70% lines |
 | `integration` | Rust integration tests | -- |
 | `unit` (frontend) | vitest coverage | -- |
-| `unit` (Python) | pytest coverage | 90% |
+| `unit` (Python) | pytest coverage | 85% |
 
 Component-level targets in `codecov.yml`:
 
@@ -471,5 +471,5 @@ Common failure patterns:
 | KVM tests skipped | `/dev/kvm` not available on runner | Check udev rules in workflow |
 | Schema drift | `config/settings/schema.generated.json` out of sync | Run `just _generate-settings` and commit |
 | Frontend build fails | Missing `@source` directive | Add pattern to `global.css` |
-| Coverage below floor | New code without tests | Add tests to meet 70%/80%/90% threshold |
+| Coverage below floor | New code without tests | Add tests to meet the configured Rust, frontend, or 85% Python threshold |
 | Python import errors | New test file with bad import | Fix the import path |

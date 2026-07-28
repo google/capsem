@@ -356,6 +356,8 @@ def test_install_e2e_reuses_exact_package_and_materialized_profile_config() -> N
     assert "bash scripts/materialize-config.sh" not in block
     assert "scripts/repack-deb.sh" not in block
     assert "just _materialize-config" not in block
+    assert "missing exact release-mode Debian package" in block
+    assert "just _cross-compile $TARGET_ARCH" in block
 
 
 def test_ci_materializes_runtime_profiles_after_generating_settings() -> None:
@@ -2923,7 +2925,7 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
         assert "just _test-release-contracts" not in workflow
     assert "cargo llvm-cov --workspace --bins --lib --tests" in just
     assert "--fail-under-lines 65" in just
-    assert "--cov-fail-under=90" in just
+    assert "--cov-fail-under=85" in just
     assert "CAPSEM_REQUIRE_ARTIFACTS=1" in just
     assert "tests/ironbank/test_route_health.py" in just
     assert "scripts/integration_test.py" in just

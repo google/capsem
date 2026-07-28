@@ -7,10 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Standardized the blocking Python coverage floor at an exact 85% in ordinary
+  CI and the complete local release gate.
+
 ### Fixed
 
 - Preserved manifest-declared channels during candidate package installation
   and accepted selected release graphs in the shared bootstrap suite.
+- Made ordinary CI build the exact native release-mode Debian package before
+  the install/glow-up gate, with an actionable fail-closed diagnostic when the
+  expected package is absent.
 
 ## [1.6.1785192352] - 2026-07-27
 

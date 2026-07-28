@@ -559,7 +559,8 @@ def test_install_test_consumes_exact_publishable_package_without_rebuild() -> No
     select = block.index('DEB="$ROOT/dist/Capsem_${SOURCE_VERSION}_${DEB_ARCH}.deb"')
     install = block.index('dpkg -i "$CONTAINER_DEB"', select)
     assert select < install
-    assert 'test -s "$DEB"' in block
+    assert 'if [ ! -s "$DEB" ]; then' in block
+    assert "missing exact release-mode Debian package" in block
     assert 'VERSION="$SOURCE_VERSION"' in block
     assert (
         'PACKAGE_VERSION=$(docker exec "$CONTAINER" dpkg-deb -f '
@@ -2440,11 +2441,18 @@ def test_ci_install_job_pulls_existing_profiles_before_building_packages() -> No
     ).read_text()
 
     fetch_pos = install_job.index("./.github/actions/fetch-release-inputs")
+    package_pos = install_job.index("just _cross-compile x86_64")
     gate_pos = install_job.index("just _gate-install")
-    assert fetch_pos < gate_pos
+    assert fetch_pos < package_pos < gate_pos
     assert "kind: profiles" in install_job
     assert "architecture: x86_64" in install_job
     assert "output: target/ci-install-profile-inputs" in install_job
+    assert "Build exact native release package" in install_job
+    assert "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json" in (
+        install_job
+    )
+    assert "CAPSEM_INSTALL_CHANNEL: stable" in install_job
+    assert "just _build-host-image" not in install_job
     assert "actions/cache/restore@" in fetch_action
     assert "actions/cache/save@" in fetch_action
     assert "--cache-dir target/release-input-cache" in fetch_action

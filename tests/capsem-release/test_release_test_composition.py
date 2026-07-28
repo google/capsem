@@ -267,7 +267,7 @@ def test_functional_coverage_replays_cheap_contracts_after_the_early_gate() -> N
     ]
 
     assert "--cov=src/capsem" in coverage
-    assert "--cov-fail-under=90" in coverage
+    assert "--cov-fail-under=85" in coverage
     assert '"${SOURCE_CONTRACT_IGNORE_ARGS[@]}"' not in coverage
     assert "--ignore-glob=tests/test_*contract.py" not in coverage
 

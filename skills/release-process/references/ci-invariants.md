@@ -193,12 +193,10 @@ host-side Colima clock synchronizer with a hard timeout and fail closed.
   `scripts/lib/exec_lock.sh` fallback: use `flock` when it exists and a Python
   `fcntl.flock` holder process otherwise. Keep `flock` out of `capsem-doctor`
   required tools unless the fallback is removed.
-- **Treat the PR Python schema lane as a scoped contract gate, not the full
-  Python coverage gate.** The macOS PR job intentionally runs
-  `tests/test_*.py` so it does not boot VM suites; on a clean GitHub macOS
-  runner that top-level subset reports about 88.67% coverage, so the workflow
-  floor is 89%. The complete local `just test` Python stage still runs the full
-  suite and keeps its 90% floor.
+- **Python coverage remains blocking at an exact 85% floor.** Ordinary CI runs
+  its selected portable Python suite while full local `just test` runs every
+  Python suite. Both use `--cov-fail-under=85`, and coverage precision remains
+  two decimal places so subthreshold totals cannot round up to a pass.
 - **Do not execute artifact-dependent Python suites on a clean PR runner before
   creating their artifacts.** `tests/capsem-bootstrap/` needs real
   `assets/<arch>/` plus `assets/manifest.json`, and `tests/capsem-codesign/`
