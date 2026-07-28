@@ -62,7 +62,11 @@ def test_smoke_reuses_the_complete_shared_fast_gate() -> None:
     fast = _recipe("_test-fast")
     runner = _recipe("_test-candidate-run")
 
-    assert smoke.index("just _test-fast") < smoke.index("just _check-assets")
+    # The cheap shared gate must fail before smoke spends time preparing a
+    # bootable runtime. `_prepared-runtime` is that preparation, named once so
+    # `test` and `smoke` cannot drift apart on which steps it takes.
+    assert smoke.index("just _test-fast") < smoke.index("just _prepared-runtime")
+    assert "_check-assets" in _recipe("_prepared-runtime").splitlines()[0]
     assert "scripts/check-source-syntax.py" in fast
     assert "just _test-release-contracts" in fast
     for required in (

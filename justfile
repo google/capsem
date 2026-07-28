@@ -657,9 +657,7 @@ _test-candidate:
     just _install-tools
     just _clean-stale
     just _check-generated-settings
-    just _check-assets
-    just _pack-initrd
-    just _materialize-config
+    just _prepared-runtime
     just _test-static
     just _test-artifacts
     just _test-functional
@@ -1528,9 +1526,7 @@ smoke:
     #!/bin/bash
     set -euo pipefail
     just _test-fast
-    just _check-assets
-    just _pack-initrd
-    just _materialize-config
+    just _prepared-runtime
     # Smoke runs against an isolated CAPSEM_HOME so it doesn't stomp on a
     # locally installed capsem daemon. _ensure-service is invoked below
     # (not as a just dep) so it inherits the exported env vars.
@@ -2362,3 +2358,9 @@ _materialize-config:
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
     bash "$ROOT/scripts/materialize-config.sh"
+
+# One bootable local runtime: verified assets, the initrd repacked around the
+# current guest binaries, and a materialized profile catalog. `test` and
+# `smoke` both need exactly this before they can run anything against a VM, so
+# they name it once instead of repeating the sequence.
+_prepared-runtime: _check-assets _pack-initrd _materialize-config
