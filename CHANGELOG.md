@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Moved every Rust unit-test module out of its production file and into the
+  sibling `tests.rs` the project convention requires. 86 files carried inline
+  `#[cfg(test)] mod tests { ... }` blocks; the largest buried 4,070 lines of
+  tests under 8,855 lines of production code, so every read, grep, and scroll
+  to reach that code walked the tests first. Bodies moved verbatim -- the only
+  content edits are three `include_str!` paths that follow their file one
+  directory deeper.
 - Standardized the blocking Python coverage floor at an exact 85% in ordinary
   CI and the complete local release gate.
 
