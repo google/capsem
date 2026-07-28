@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Covered the installed-product half of candidate channel preservation: a
   preserved transition must leave `manifest-metadata.json` on its packaged
   public channel, which is exactly what the published release gate reads back.
+- Installed the musl C toolchain in the ordinary CI install gate, which runs
+  `just doctor` through `_cross-compile` and needs it to build guest binaries.
 - Provisioned the tools each CI job actually invokes: `just` in the macOS
   `test` job, whose `tests/capsem-release/` contracts shell out to it, and
   pnpm/Node in `test-install` and `test-linux`, whose `just` recipes reach

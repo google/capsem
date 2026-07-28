@@ -371,6 +371,14 @@ jobs:
         with:
           node-version: 24
 
+      # `just _cross-compile` runs `just doctor`, whose Linux check requires a
+      # musl C toolchain to build the guest agent binaries. Same install as
+      # release-assets.yaml's asset builder.
+      - name: Install musl C toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+
       - name: Enable required KVM and vsock devices
         run: |
           sudo modprobe kvm

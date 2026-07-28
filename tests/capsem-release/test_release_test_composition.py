@@ -156,7 +156,17 @@ def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
     observe that a CI job never installed one. That blind spot is what let
     `test` lose `just` and `test-install` lose `pnpm` while every local gate
     stayed green. This test moves CI tool provisioning into the checked-in
-    contract so the fast local gate fails first."""
+    contract so the fast local gate fails first.
+
+    Recipe reachability deliberately over-approximates: it follows the justfile
+    dependency graph without modelling shell branches, so a job may be required
+    to install a tool one of its conditional paths would skip. That bias is the
+    safe one -- a spare tool costs seconds, a missing one is a red gate.
+
+    It only covers tools whose need is unconditional once reached (`just`,
+    `pnpm`, `node`). System packages like musl-tools are deliberately excluded:
+    `_gate-linux-rust` reaches `doctor` statically but exits before it on
+    Linux, so requiring them here would fail jobs that are already correct."""
     reaching_pnpm = _recipes_reaching_pnpm()
     just_tests = _tests_requiring_just()
     assert just_tests, "the just-dependent test scan must find the release contracts"
