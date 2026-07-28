@@ -64,6 +64,125 @@ def _workflow_job(path: str, name: str) -> str:
     return "\n".join(lines[start:end])
 
 
+SETUP_JUST = "extractions/setup-just"
+SETUP_PNPM = "pnpm/action-setup"
+SETUP_NODE = "actions/setup-node"
+
+PROVISIONED_WORKFLOWS = (
+    ".github/workflows/ci.yaml",
+    ".github/workflows/release.yaml",
+    ".github/workflows/release-assets.yaml",
+)
+
+# `just`/`pnpm` must be followed by a real argument on the SAME line. `\s` would
+# span newlines and match the trailing "just" of `uses: extractions/setup-just`.
+_JUST_CALL = re.compile(r"(?<![\w-])just[ \t]+[-_A-Za-z]")
+_JUST_RECIPE = re.compile(r"(?<![\w-])just[ \t]+([-_A-Za-z][\w-]*)")
+_PNPM_CALL = re.compile(r"(?<![\w-])pnpm[ \t]")
+_RECIPE_HEADER = re.compile(
+    r"(?m)^(?P<name>[A-Za-z_][\w-]*)(?P<params>[^:\n]*):(?![=])(?P<deps>[^\n]*)$"
+)
+_TEST_PATH = re.compile(r"(?<![\w./-])tests/[\w./-]*")
+
+
+def _recipe_dependency_graph() -> dict[str, tuple[str, ...]]:
+    return {
+        match.group("name"): tuple(match.group("deps").split())
+        for match in _RECIPE_HEADER.finditer(JUSTFILE)
+    }
+
+
+def _recipes_reaching_pnpm() -> frozenset[str]:
+    """Every recipe that runs pnpm itself or through a dependency."""
+    graph = _recipe_dependency_graph()
+    reaching = {name for name in graph if _PNPM_CALL.search(_recipe(name))}
+    changed = True
+    while changed:
+        changed = False
+        for name, dependencies in graph.items():
+            if name in reaching:
+                continue
+            invoked = set(_JUST_RECIPE.findall(_recipe(name)))
+            if any(dep in reaching for dep in dependencies) or any(
+                call in reaching for call in invoked
+            ):
+                reaching.add(name)
+                changed = True
+    return frozenset(reaching)
+
+
+def _tests_requiring_just() -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            str(path.relative_to(PROJECT_ROOT))
+            for path in PROJECT_ROOT.glob("tests/**/*.py")
+            if 'shutil.which("just")' in path.read_text(encoding="utf-8")
+        )
+    )
+
+
+def _job_shell(job: str) -> str:
+    """The shell a job runs, without `uses:` action references."""
+    return "\n".join(line for line in job.splitlines() if "uses:" not in line)
+
+
+def _selects_a_just_dependent_test(shell: str, just_tests: tuple[str, ...]) -> bool:
+    """A directory argument selects everything under it; a file selects itself."""
+    for selected in _TEST_PATH.findall(shell):
+        if selected.endswith("/"):
+            if any(test.startswith(selected) for test in just_tests):
+                return True
+        elif selected in just_tests:
+            return True
+    return False
+
+
+def _workflow_job_names(path: str) -> tuple[str, ...]:
+    lines = (PROJECT_ROOT / path).read_text(encoding="utf-8").splitlines()
+    start = lines.index("jobs:")
+    names = []
+    for line in lines[start + 1 :]:
+        if line and not line.startswith(" "):
+            break
+        match = re.match(r"^  ([A-Za-z_][\w-]*):$", line)
+        if match:
+            names.append(match.group(1))
+    assert names, f"{path} must declare jobs"
+    return tuple(names)
+
+
+def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
+    """Local `just test` runs where every tool is already on PATH, so it cannot
+    observe that a CI job never installed one. That blind spot is what let
+    `test` lose `just` and `test-install` lose `pnpm` while every local gate
+    stayed green. This test moves CI tool provisioning into the checked-in
+    contract so the fast local gate fails first."""
+    reaching_pnpm = _recipes_reaching_pnpm()
+    just_tests = _tests_requiring_just()
+    assert just_tests, "the just-dependent test scan must find the release contracts"
+
+    missing: list[str] = []
+    for path in PROVISIONED_WORKFLOWS:
+        for name in _workflow_job_names(path):
+            job = _workflow_job(path, name)
+            shell = _job_shell(job)
+            needs_just = bool(_JUST_CALL.search(shell)) or _selects_a_just_dependent_test(
+                shell, just_tests
+            )
+            needs_pnpm = bool(_PNPM_CALL.search(shell)) or any(
+                recipe in reaching_pnpm for recipe in _JUST_RECIPE.findall(shell)
+            )
+            for required, needed in (
+                (SETUP_JUST, needs_just),
+                (SETUP_PNPM, needs_pnpm),
+                (SETUP_NODE, needs_pnpm),
+            ):
+                if needed and required not in job:
+                    missing.append(f"{path}::{name} invokes it but never installs {required}")
+
+    assert not missing, "CI jobs missing tool provisioning:\n" + "\n".join(missing)
+
+
 def _source_digest_module():
     script = PROJECT_ROOT / "scripts" / "source-state-digest.py"
     spec = importlib.util.spec_from_file_location("source_state_digest", script)

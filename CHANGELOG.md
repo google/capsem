@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Provisioned the tools each CI job actually invokes: `just` in the macOS
+  `test` job, whose `tests/capsem-release/` contracts shell out to it, and
+  pnpm/Node in `test-install` and `test-linux`, whose `just` recipes reach
+  `_pnpm-install`. Both gaps failed only on CI, because local `just test` runs
+  where every tool is already on PATH.
+- Added a checked-in contract asserting every job in `ci.yaml`, `release.yaml`,
+  and `release-assets.yaml` installs the tools its own steps invoke, resolving
+  justfile recipe dependencies transitively so the fast local gate fails first
+  instead of discovering provisioning drift in CI.
 - Preserved manifest-declared channels during candidate package installation
   and accepted selected release graphs in the shared bootstrap suite.
 - Made ordinary CI build the exact native release-mode Debian package before

@@ -27,6 +27,18 @@ jobs:
 
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
 
+      # `just` recipes reach `_pnpm-install`, which installs every Node
+      # workspace. Without pnpm on PATH those recipes die with exit 127.
+      # No `cache: pnpm` here: the store is created inside a just recipe, which
+      # test_every_pnpm_cache_owner_materializes_its_store cannot see, and an
+      # unmaterialized cache declaration is exactly what that gate forbids.
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 10
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
           toolchain: 1.97.1
@@ -117,6 +129,10 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      # tests/capsem-release/ shells out to `just` to prove the release recipes
+      # sequence their side effects; without it those contracts cannot run.
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
@@ -342,6 +358,18 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
       - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
+
+      # `just _cross-compile` reaches `_build-assets` -> `_pnpm-install`, which
+      # installs every Node workspace. Without pnpm on PATH it exits 127.
+      # No `cache: pnpm` here: the store is created inside a just recipe, which
+      # test_every_pnpm_cache_owner_materializes_its_store cannot see, and an
+      # unmaterialized cache declaration is exactly what that gate forbids.
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 10
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
 
       - name: Enable required KVM and vsock devices
         run: |
