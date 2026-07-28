@@ -29,18 +29,16 @@ jobs:
 
       # `just` recipes reach `_pnpm-install`, which installs every Node
       # workspace. Without pnpm on PATH those recipes die with exit 127.
+      # No `cache: pnpm`: `_gate-linux-rust` hands off to test-linux-rust.sh and
+      # exits before `_pnpm-install`, so no store is ever created here and the
+      # post-job save fails with "Path(s) ... do(es) not exist". Static recipe
+      # reachability can justify installing a tool, never declaring a cache.
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
-          cache: pnpm
-          cache-dependency-path: |
-            frontend/pnpm-lock.yaml
-            docs/pnpm-lock.yaml
-            site/pnpm-lock.yaml
-            release-site/pnpm-lock.yaml
 
       - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
         with:
