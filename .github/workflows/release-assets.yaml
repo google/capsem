@@ -198,6 +198,7 @@ jobs:
             --repository "${{ github.repository }}" \
             --workflow release-assets.yaml \
             --current-run-id "${{ github.run_id }}" \
+            --source-commit "${{ github.sha }}" \
             --selection target/profile-release-selection.json \
             --github-output "$GITHUB_OUTPUT"
 
@@ -398,21 +399,31 @@ jobs:
       - name: Run shared artifact module
         run: just _test-artifacts
 
-      - name: Record incompatible profile staging boundary
-        if: ${{ needs.author-profile-release.outputs.compatible != 'true' }}
+      - name: Record deferred profile staging boundary
+        if: ${{ needs.author-profile-release.outputs.activation_ready != 'true' }}
         run: |
-          test "${{ needs.author-profile-release.outputs.compatible }}" = "false"
+          set -euo pipefail
+          PRODUCT_COMPATIBLE="${{ needs.author-profile-release.outputs.product_compatible }}"
+          FUNCTIONAL_READY="${{ needs.author-profile-release.outputs.functional_ready }}"
+          [[ "$PRODUCT_COMPATIBLE" == "true" || "$PRODUCT_COMPATIBLE" == "false" ]]
+          [[ "$FUNCTIONAL_READY" == "true" || "$FUNCTIONAL_READY" == "false" ]]
+          [[ "$PRODUCT_COMPATIBLE" != "true" || "$FUNCTIONAL_READY" != "true" ]]
           echo "::notice::Profile assets passed static, integrity, isolation, and x86_64 KVM boot gates."
-          echo "::notice::The manifest-selected binary is below this profile's minimum version."
-          echo "::notice::A compatible profile cannot defer complete pairing gates."
+          if [[ "$PRODUCT_COMPATIBLE" == "false" ]]; then
+            echo "::notice::The manifest-selected binary is outside this profile's declared compatibility range."
+          fi
+          if [[ "$FUNCTIONAL_READY" == "false" ]]; then
+            echo "::notice::The pulled package does not contain the complete functional release binary cohort."
+          fi
+          echo "::notice::An activation-ready profile cannot defer complete pairing gates."
           echo "::notice::Functional and glow-up gates are deferred to release-binaries; public activation remains blocked."
 
       - name: Run shared complete functional module
-        if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}
+        if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
         run: just _test-functional
 
       - name: Run shared native and update glow-up module
-        if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}
+        if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
         run: just _test-glowup
 
   author-profile-release:
@@ -424,7 +435,9 @@ jobs:
       source_changed: ${{ steps.profile-delta.outputs.source_changed }}
       activation_needed: ${{ steps.profile-delta.outputs.activation_needed }}
       release_needed: ${{ steps.profile-delta.outputs.release_needed }}
-      compatible: ${{ steps.author-release.outputs.compatible }}
+      product_compatible: ${{ steps.author-release.outputs.product_compatible }}
+      functional_ready: ${{ steps.author-release.outputs.functional_ready }}
+      activation_ready: ${{ steps.author-release.outputs.activation_ready }}
       publication_identity: ${{ steps.author-release.outputs.publication_identity }}
     env:
       CHANNEL: ${{ inputs.channel }}
@@ -537,12 +550,13 @@ jobs:
           test "$(python3 -c 'import json; print(json.load(open("target/profile-release.json"))["publication_identity"])')" = "$PUBLICATION_IDENTITY"
           PRODUCT_COMPATIBLE=$(python3 -c 'import json; print(str(json.load(open("target/profile-release.json"))["compatible_with_current_binary"]).lower())')
           FUNCTIONAL_READY="${{ needs.resolve-current-binary.outputs.functional_ready }}"
+          ACTIVATION_READY=false
           if [[ "$PRODUCT_COMPATIBLE" == "true" && "$FUNCTIONAL_READY" == "true" ]]; then
-            COMPATIBLE=true
-          else
-            COMPATIBLE=false
+            ACTIVATION_READY=true
           fi
-          echo "compatible=$COMPATIBLE" >> "$GITHUB_OUTPUT"
+          echo "product_compatible=$PRODUCT_COMPATIBLE" >> "$GITHUB_OUTPUT"
+          echo "functional_ready=$FUNCTIONAL_READY" >> "$GITHUB_OUTPUT"
+          echo "activation_ready=$ACTIVATION_READY" >> "$GITHUB_OUTPUT"
           echo "publication_identity=$PUBLICATION_IDENTITY" >> "$GITHUB_OUTPUT"
 
       - name: Stage and verify immutable profile publication once
@@ -599,7 +613,7 @@ jobs:
     name: Publish verified profile assets
     outputs:
       release_needed: ${{ needs.author-profile-release.outputs.release_needed }}
-      compatible: ${{ needs.author-profile-release.outputs.compatible }}
+      activation_ready: ${{ needs.author-profile-release.outputs.activation_ready }}
     env:
       CHANNEL: ${{ inputs.channel }}
     steps:
@@ -651,7 +665,7 @@ jobs:
           path: target/
 
       - name: Build deployable channel from authored source manifest
-        if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}
+        if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
         run: |
           uv run python scripts/build-complete-release-channel.py \
             --channel-source "$CHANNEL=file://$PWD/target/source-channel/manifest.json" \
@@ -722,14 +736,14 @@ jobs:
           path: target/asset-release/
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}
+        if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}
         with:
           name: asset-channel-preview
           path: target/release-channel/
 
   deploy-channel:
     needs: publish-profile-release
-    if: ${{ inputs.dry_run == false && needs.publish-profile-release.outputs.release_needed == 'true' && needs.publish-profile-release.outputs.compatible == 'true' }}
+    if: ${{ inputs.dry_run == false && needs.publish-profile-release.outputs.release_needed == 'true' && needs.publish-profile-release.outputs.activation_ready == 'true' }}
     uses: ./.github/workflows/release-channel.yaml
     with:
       channel: ${{ inputs.channel }}

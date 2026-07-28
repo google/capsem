@@ -90,7 +90,9 @@ def test_staged_profile_is_authored_once_before_pairing_tests_and_publication() 
     assert "source_changed:" in author
     assert "activation_needed:" in author
     assert "release_needed:" in author
-    assert "compatible:" in author
+    assert "product_compatible:" in author
+    assert "functional_ready:" in author
+    assert "activation_ready:" in author
     assert "publication_identity:" in author
     assert workflow.count("cargo run -p capsem-admin -- release") == 1
     assert "cargo run -p capsem-admin -- release" in author
@@ -128,6 +130,7 @@ def test_profile_retry_reuses_one_prior_artifact_cohort_without_rebuilding() -> 
     assert "actions: read" in permissions
     assert "profile-release-selection" in resolver
     assert "reuse_run_id:" in resolver
+    assert '--source-commit "${{ github.sha }}"' in resolver
     assert "needs.resolve-profile-assets.outputs.reuse_run_id == ''" in build
     assert "needs.resolve-profile-assets.outputs.reuse_run_id != ''" in reuse
     assert "run-id: ${{ needs.resolve-profile-assets.outputs.reuse_run_id }}" in reuse
@@ -152,15 +155,17 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     pairing = _job(workflow, "test-profile-pairing", "publish-profile-release")
     publish = _job(workflow, "publish-profile-release", "deploy-channel")
     deploy = workflow.split("  deploy-channel:\n", maxsplit=1)[1]
-    compatible = "needs.author-profile-release.outputs.compatible == 'true'"
+    activation_ready = (
+        "needs.author-profile-release.outputs.activation_ready == 'true'"
+    )
     artifacts = _step(
         pairing,
         "Run shared artifact module",
-        "Record incompatible profile staging boundary",
+        "Record deferred profile staging boundary",
     )
     deferred = _step(
         pairing,
-        "Record incompatible profile staging boundary",
+        "Record deferred profile staging boundary",
         "Run shared complete functional module",
     )
     functional = _step(
@@ -187,14 +192,18 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
     assert "Run complete shared fast module" in reusable_fast_gate
     assert "run: just _test-fast" in reusable_fast_gate
     assert (
-        "needs.author-profile-release.outputs.compatible != 'true'" in deferred
+        "needs.author-profile-release.outputs.activation_ready != 'true'" in deferred
     )
-    assert "compatible profile cannot defer complete pairing gates" in deferred
-    assert f"if: ${{{{ {compatible} }}}}" in functional
-    assert f"if: ${{{{ {compatible} }}}}" in glowup
-    assert f"if: ${{{{ {compatible} }}}}" in deployable
+    assert "outputs.product_compatible" in deferred
+    assert "outputs.functional_ready" in deferred
+    assert "outside this profile's declared compatibility range" in deferred
+    assert "complete functional release binary cohort" in deferred
+    assert "activation-ready profile cannot defer complete pairing gates" in deferred
+    assert f"if: ${{{{ {activation_ready} }}}}" in functional
+    assert f"if: ${{{{ {activation_ready} }}}}" in glowup
+    assert f"if: ${{{{ {activation_ready} }}}}" in deployable
     assert "if:" not in immutable
-    assert "needs.publish-profile-release.outputs.compatible == 'true'" in deploy
+    assert "needs.publish-profile-release.outputs.activation_ready == 'true'" in deploy
 
 
 def test_hosted_macos_never_claims_the_local_apple_vz_proof() -> None:
@@ -216,7 +225,7 @@ def test_hosted_macos_never_claims_the_local_apple_vz_proof() -> None:
     )
 
 
-def test_profile_compatibility_requires_the_pulled_binary_functional_cohort() -> None:
+def test_profile_activation_readiness_requires_the_pulled_binary_functional_cohort() -> None:
     workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
     resolver = _job(workflow, "resolve-current-binary", "cloudflare-release-site-preflight")
     author = _job(workflow, "author-profile-release", "test-profile-pairing")
@@ -226,7 +235,9 @@ def test_profile_compatibility_requires_the_pulled_binary_functional_cohort() ->
     assert "id: functional-cohort" in resolver
     assert "needs.resolve-current-binary.outputs.functional_ready" in author
     assert "compatible_with_current_binary" in author
-    assert "COMPATIBLE=false" in author
+    assert "PRODUCT_COMPATIBLE=" in author
+    assert "FUNCTIONAL_READY=" in author
+    assert "ACTIVATION_READY=false" in author
 
 
 def test_profile_then_binary_reuses_authored_source_without_rebuilding_assets() -> None:

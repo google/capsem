@@ -14,6 +14,8 @@ SPEC = importlib.util.spec_from_file_location("resolve_reusable_profile_assets",
 assert SPEC is not None and SPEC.loader is not None
 RESOLVE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RESOLVE)
+CURRENT_SOURCE = "0" * 40
+STALE_SOURCE = "1" * 40
 
 
 def _selection(
@@ -55,10 +57,10 @@ def _artifacts(run_id: int, *, complete: bool = True) -> list[dict[str, object]]
 def test_newest_exact_completed_run_reuses_one_complete_artifact_cohort() -> None:
     expected = _selection()
     runs = [
-        {"id": 50, "status": "in_progress"},
-        {"id": 49, "status": "completed"},
-        {"id": 48, "status": "completed"},
-        {"id": 47, "status": "completed"},
+        {"id": 50, "status": "in_progress", "head_sha": CURRENT_SOURCE},
+        {"id": 49, "status": "completed", "head_sha": CURRENT_SOURCE},
+        {"id": 48, "status": "completed", "head_sha": CURRENT_SOURCE},
+        {"id": 47, "status": "completed", "head_sha": CURRENT_SOURCE},
     ]
     artifacts = {
         49: _artifacts(49, complete=False),
@@ -73,6 +75,7 @@ def test_newest_exact_completed_run_reuses_one_complete_artifact_cohort() -> Non
     selected = RESOLVE.select_reusable_run(
         runs=runs,
         current_run_id=50,
+        source_commit=CURRENT_SOURCE,
         expected_selection=expected,
         artifact_loader=lambda run_id: artifacts[run_id],
         selection_loader=lambda artifact: selections[int(artifact["id"]) // 10],
@@ -81,13 +84,32 @@ def test_newest_exact_completed_run_reuses_one_complete_artifact_cohort() -> Non
     assert selected == 48
 
 
+def test_exact_selection_from_a_different_source_commit_is_never_reused() -> None:
+    expected = _selection()
+    runs = [
+        {"id": 80, "status": "completed", "head_sha": STALE_SOURCE},
+        {"id": 79, "status": "completed", "head_sha": CURRENT_SOURCE},
+    ]
+
+    selected = RESOLVE.select_reusable_run(
+        runs=runs,
+        current_run_id=81,
+        source_commit=CURRENT_SOURCE,
+        expected_selection=expected,
+        artifact_loader=lambda run_id: _artifacts(run_id),
+        selection_loader=lambda _artifact: _selection(),
+    )
+
+    assert selected == 79
+
+
 def test_reuse_never_mixes_runs_or_accepts_expired_duplicate_or_wrong_selection() -> None:
     expected = _selection()
     runs = [
-        {"id": 60, "status": "completed"},
-        {"id": 59, "status": "completed"},
-        {"id": 58, "status": "completed"},
-        {"id": 57, "status": "completed"},
+        {"id": 60, "status": "completed", "head_sha": CURRENT_SOURCE},
+        {"id": 59, "status": "completed", "head_sha": CURRENT_SOURCE},
+        {"id": 58, "status": "completed", "head_sha": CURRENT_SOURCE},
+        {"id": 57, "status": "completed", "head_sha": CURRENT_SOURCE},
     ]
     expired = _artifacts(60)
     expired[1]["expired"] = True
@@ -103,6 +125,7 @@ def test_reuse_never_mixes_runs_or_accepts_expired_duplicate_or_wrong_selection(
     selected = RESOLVE.select_reusable_run(
         runs=runs,
         current_run_id=61,
+        source_commit=CURRENT_SOURCE,
         expected_selection=expected,
         artifact_loader=lambda run_id: artifacts[run_id],
         selection_loader=lambda _artifact: _selection(profile="co-work"),
@@ -116,6 +139,28 @@ def test_artifact_cohort_rejects_non_github_download_origin() -> None:
     artifacts[0]["archive_download_url"] = "https://attacker.example/profile-release-selection.zip"
 
     assert RESOLVE._artifact_cohort(artifacts) is None
+
+
+@pytest.mark.parametrize(
+    "source_commit",
+    [
+        "",
+        "0" * 39,
+        "0" * 41,
+        "A" * 40,
+        "g" * 40,
+    ],
+)
+def test_source_commit_rejects_noncanonical_git_sha(source_commit: str) -> None:
+    with pytest.raises(ValueError, match="lowercase 40-character Git SHA"):
+        RESOLVE.select_reusable_run(
+            runs=[],
+            current_run_id=1,
+            source_commit=source_commit,
+            expected_selection=_selection(),
+            artifact_loader=lambda _run_id: [],
+            selection_loader=lambda _artifact: _selection(),
+        )
 
 
 @pytest.mark.parametrize(
@@ -146,7 +191,13 @@ def test_cli_writes_only_the_reusable_run_id_to_github_output(
     selection_path.write_text(json.dumps(_selection()), encoding="utf-8")
     output = tmp_path / "github-output"
     monkeypatch.setenv("GITHUB_TOKEN", "test-token")
-    monkeypatch.setattr(RESOLVE, "find_reusable_run", lambda **_kwargs: 30185378359)
+    captured: dict[str, object] = {}
+
+    def find_reusable_run(**kwargs: object) -> int:
+        captured.update(kwargs)
+        return 30185378359
+
+    monkeypatch.setattr(RESOLVE, "find_reusable_run", find_reusable_run)
 
     assert (
         RESOLVE.main(
@@ -157,6 +208,8 @@ def test_cli_writes_only_the_reusable_run_id_to_github_output(
                 "release-assets.yaml",
                 "--current-run-id",
                 "99",
+                "--source-commit",
+                "079bb5ad9550ca6a3f4a64b875b78ba418877e58",
                 "--selection",
                 str(selection_path),
                 "--github-output",
@@ -165,6 +218,7 @@ def test_cli_writes_only_the_reusable_run_id_to_github_output(
         )
         == 0
     )
+    assert captured["source_commit"] == "079bb5ad9550ca6a3f4a64b875b78ba418877e58"
     assert output.read_text(encoding="utf-8") == "run_id=30185378359\n"
 
 

@@ -763,7 +763,7 @@ def test_asset_channel_deprecate_release_reports_history_without_moving_current(
     _run_admin("assets", "channel", "check", "--channel", "stable", "--dist", str(dist))
 
 
-def test_profile_release_deploys_generated_preview_only_when_changed_and_compatible() -> None:
+def test_profile_release_deploys_generated_preview_only_when_activation_ready() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8")
     pairing = workflow.split("  test-profile-pairing:", maxsplit=1)[1].split(
         "  author-profile-release:", maxsplit=1
@@ -790,12 +790,20 @@ def test_profile_release_deploys_generated_preview_only_when_changed_and_compati
     assert "source_changed: ${{ steps.profile-delta.outputs.source_changed }}" in author
     assert "activation_needed: ${{ steps.profile-delta.outputs.activation_needed }}" in author
     assert "release_needed: ${{ steps.profile-delta.outputs.release_needed }}" in author
-    assert "compatible: ${{ steps.author-release.outputs.compatible }}" in author
+    assert (
+        "product_compatible: ${{ steps.author-release.outputs.product_compatible }}"
+        in author
+    )
+    assert "functional_ready: ${{ steps.author-release.outputs.functional_ready }}" in author
+    assert "activation_ready: ${{ steps.author-release.outputs.activation_ready }}" in author
     assert "if: ${{ steps.profile-delta.outputs.release_needed == 'true' }}" in author
 
     assert "needs.author-profile-release.outputs.release_needed == 'true'" in pairing
     assert (
-        pairing.count("if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}") == 2
+        pairing.count(
+            "if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}"
+        )
+        == 2
     )
 
     assert "needs.test-profile-pairing.result == 'success'" in publish
@@ -803,18 +811,22 @@ def test_profile_release_deploys_generated_preview_only_when_changed_and_compati
     assert "--out-dir target/release-channel" in publish
     assert "name: asset-channel-preview" in publish
     assert "path: target/release-channel/" in publish
-    assert "if: ${{ needs.author-profile-release.outputs.compatible == 'true' }}" in publish
+    assert (
+        "if: ${{ needs.author-profile-release.outputs.activation_ready == 'true' }}"
+        in publish
+    )
 
     assert (
         "if: ${{ inputs.dry_run == false && "
         "needs.publish-profile-release.outputs.release_needed == 'true' && "
-        "needs.publish-profile-release.outputs.compatible == 'true' }}" in deploy_channel
+        "needs.publish-profile-release.outputs.activation_ready == 'true' }}"
+        in deploy_channel
     )
     assert "uses: ./.github/workflows/release-channel.yaml" in deploy_channel
     assert "dist_artifact: asset-channel-preview" in deploy_channel
 
 
-def test_profile_release_publishes_incompatible_assets_but_withholds_channel_deploy() -> None:
+def test_profile_release_publishes_deferred_assets_but_withholds_channel_deploy() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text(encoding="utf-8")
     reusable_fast_gate = (
         PROJECT_ROOT / ".github/workflows/fast-gate.yaml"
@@ -839,19 +851,23 @@ def test_profile_release_publishes_incompatible_assets_but_withholds_channel_dep
     assert (
         "if:"
         not in pairing.split("- name: Run shared artifact module", maxsplit=1)[1].split(
-            "- name: Record incompatible profile staging boundary", maxsplit=1
+            "- name: Record deferred profile staging boundary", maxsplit=1
         )[0]
     )
-    assert "compatible profile cannot defer complete pairing gates" in pairing
+    assert "activation-ready profile cannot defer complete pairing gates" in pairing
+    assert "complete functional release binary cohort" in pairing
     assert (
-        "needs.author-profile-release.outputs.compatible != 'true'" in pairing
+        "needs.author-profile-release.outputs.activation_ready != 'true'" in pairing
     )
     assert "Publish immutable GitHub profile release" in publish
     immutable_release = publish.split(
         "- name: Publish immutable GitHub profile release", maxsplit=1
     )[1].split("- uses: actions/upload-artifact@", maxsplit=1)[0]
-    assert "outputs.compatible" not in immutable_release
-    assert "needs.publish-profile-release.outputs.compatible == 'true'" in deploy_channel
+    assert "outputs.activation_ready" not in immutable_release
+    assert (
+        "needs.publish-profile-release.outputs.activation_ready == 'true'"
+        in deploy_channel
+    )
 
 
 def test_release_index_check_rejects_profile_catalog_index_drift(tmp_path: Path) -> None:

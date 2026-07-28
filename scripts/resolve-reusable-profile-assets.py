@@ -65,6 +65,19 @@ def _safe_component(value: object, label: str) -> str:
     return value
 
 
+def _validate_source_commit(value: str) -> str:
+    if len(value) != 40 or any(character not in "0123456789abcdef" for character in value):
+        raise ValueError("source commit must be one lowercase 40-character Git SHA")
+    return value
+
+
+def _source_commit(value: str) -> str:
+    try:
+        return _validate_source_commit(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
 def selection_identity(document: object) -> SelectionIdentity:
     if not isinstance(document, dict):
         raise ValueError("profile release selection must be a JSON object")
@@ -124,10 +137,12 @@ def select_reusable_run(
     *,
     runs: object,
     current_run_id: int,
+    source_commit: str,
     expected_selection: object,
     artifact_loader: Callable[[int], object],
     selection_loader: Callable[[dict[str, Any]], object],
 ) -> int | None:
+    _validate_source_commit(source_commit)
     expected_identity = selection_identity(expected_selection)
     if not isinstance(runs, list):
         raise ValueError("GitHub workflow runs response is not a list")
@@ -139,6 +154,7 @@ def select_reusable_run(
             not isinstance(run_id, int)
             or run_id == current_run_id
             or run.get("status") != "completed"
+            or run.get("head_sha") != source_commit
         ):
             continue
         cohort = _artifact_cohort(artifact_loader(run_id))
@@ -244,6 +260,7 @@ def find_reusable_run(
     repository: str,
     workflow: str,
     current_run_id: int,
+    source_commit: str,
     expected_selection: object,
     token: str,
 ) -> int | None:
@@ -251,6 +268,7 @@ def find_reusable_run(
     return select_reusable_run(
         runs=runs,
         current_run_id=current_run_id,
+        source_commit=source_commit,
         expected_selection=expected_selection,
         artifact_loader=lambda run_id: _run_artifacts(repository, run_id, token),
         selection_loader=lambda artifact: _selection_from_artifact(artifact, token),
@@ -281,6 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repository", required=True, type=_repository)
     parser.add_argument("--workflow", required=True, type=_workflow)
     parser.add_argument("--current-run-id", required=True, type=int)
+    parser.add_argument("--source-commit", required=True, type=_source_commit)
     parser.add_argument("--selection", required=True, type=Path)
     parser.add_argument("--github-output", required=True, type=Path)
     args = parser.parse_args(argv)
@@ -296,6 +315,7 @@ def main(argv: list[str] | None = None) -> int:
             repository=args.repository,
             workflow=args.workflow,
             current_run_id=args.current_run_id,
+            source_commit=args.source_commit,
             expected_selection=expected_selection,
             token=token,
         )
