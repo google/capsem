@@ -122,6 +122,24 @@ def test_asset_ci_uses_primitives_owned_by_just_test() -> None:
     assert "just _build-image-template" in asset_gate
 
 
+def test_asset_ci_installs_pinned_pnpm_before_running_build_primitives() -> None:
+    workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
+    build_assets = workflow.split("\n  build-assets:\n", maxsplit=1)[1].split(
+        "\n  reuse-assets:", maxsplit=1
+    )[0]
+    pnpm_setup = (
+        "- uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320\n"
+        "        with:\n"
+        "          version: 10"
+    )
+
+    assert pnpm_setup in build_assets
+    assert build_assets.index(pnpm_setup) < build_assets.index(
+        "actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444"
+    )
+    assert build_assets.index(pnpm_setup) < build_assets.index("just _build-kernel")
+
+
 def test_asset_matrix_preflights_once_and_reuses_the_public_build_primitive() -> None:
     asset_gate = _recipe_block("_gate-assets:")
     kernel = _recipe_block("_build-kernel")
