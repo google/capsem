@@ -38,6 +38,53 @@ fn package_preactivation_preserves_the_channel_declared_by_the_candidate_manifes
 }
 
 #[test]
+fn preserving_a_candidate_channel_leaves_metadata_the_release_gate_accepts() {
+    // The published release gate reads manifest-metadata.json back and fails on
+    // `channel is 'corp', expected 'nightly'`. Returning Preserve is only half
+    // the contract; persisting it must leave the packaged public channel
+    // untouched, or every candidate install re-brands itself as corporate.
+    let temp = tempfile::tempdir().unwrap();
+    let assets_dir = temp.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    std::fs::write(
+        assets_dir.join("manifest-metadata.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "schema": "capsem.manifest_metadata.v1",
+            "origin": "package",
+            "manifest_url": "https://release.capsem.org/assets/nightly/manifest.json",
+            "channel": "nightly",
+            "channel_kind": "public",
+            "channel_locked": false,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let candidate = serde_json::to_vec(&serde_json::json!({
+        "version": "1.6.1785192352",
+        "channel": "nightly",
+        "status": "current",
+        "packages": [],
+        "profiles": {},
+    }))
+    .unwrap();
+
+    let transition = channel_transition_for_explicit_manifest_payload(
+        &assets_dir,
+        "file:///tmp/binary-channel/nightly/manifest.json",
+        &candidate,
+    )
+    .unwrap();
+    assert_eq!(transition, ChannelTransition::Preserve);
+
+    persist_channel_transition(&assets_dir, &transition).unwrap();
+
+    let metadata = installed_manifest_metadata(&assets_dir).unwrap().unwrap();
+    assert_eq!(metadata["channel"], "nightly");
+    assert_eq!(metadata["channel_kind"], "public");
+    assert_eq!(metadata["channel_locked"], false);
+}
+
+#[test]
 fn explicit_manifest_without_the_packaged_public_channel_remains_corporate() {
     let temp = tempfile::tempdir().unwrap();
     let assets_dir = temp.path().join("assets");

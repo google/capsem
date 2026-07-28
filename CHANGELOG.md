@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retried transient release-catalog reads in the runtime preflight instead of
+  letting one reset CDN connection fail the first gating step of both release
+  lanes. Authoritative 4xx answers still fail closed on the first attempt.
+- Covered the installed-product half of candidate channel preservation: a
+  preserved transition must leave `manifest-metadata.json` on its packaged
+  public channel, which is exactly what the published release gate reads back.
 - Provisioned the tools each CI job actually invokes: `just` in the macOS
   `test` job, whose `tests/capsem-release/` contracts shell out to it, and
   pnpm/Node in `test-install` and `test-linux`, whose `just` recipes reach

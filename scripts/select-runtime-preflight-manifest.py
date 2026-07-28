@@ -6,13 +6,21 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
 
 USER_AGENT = "capsem-runtime-preflight/1"
+# The catalog read is the first gating step of both release lanes, so a single
+# reset connection to the CDN kills an otherwise releasable graph. Retry only
+# transport faults and 5xx; a 4xx is an authoritative answer about the catalog
+# and must stay fail-closed.
+CATALOG_READ_ATTEMPTS = 4
+CATALOG_RETRY_BACKOFF_SECONDS = 2.0
 
 
 def _current_manifest_url(
@@ -97,11 +105,31 @@ def _read_catalog(release_site: str) -> dict[str, Any]:
             "Pragma": "no-cache",
         },
     )
-    with urlopen(request, timeout=60) as response:
-        payload = json.load(response)
+    payload = _read_catalog_payload(request)
     if not isinstance(payload, dict):
         raise ValueError("public manifest catalog must be a JSON object")
     return payload
+
+
+def _read_catalog_payload(request: Request) -> Any:
+    for attempt in range(1, CATALOG_READ_ATTEMPTS + 1):
+        try:
+            with urlopen(request, timeout=60) as response:
+                return json.load(response)
+        except HTTPError as error:
+            if error.code < 500 or attempt == CATALOG_READ_ATTEMPTS:
+                raise
+            reason: object = error
+        except OSError as error:
+            if attempt == CATALOG_READ_ATTEMPTS:
+                raise
+            reason = error
+        print(
+            f"release catalog read attempt {attempt}/{CATALOG_READ_ATTEMPTS} failed: {reason}",
+            file=sys.stderr,
+        )
+        time.sleep(CATALOG_RETRY_BACKOFF_SECONDS * attempt)
+    raise AssertionError("unreachable: catalog retry loop must return or raise")
 
 
 def _write_github_output(path: Path, selection: dict[str, Any]) -> None:
