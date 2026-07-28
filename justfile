@@ -251,7 +251,7 @@ build-all profile="debug":
     just build-docs
 
 # Start service daemon + boot temporary VM + shell (~10s after first build)
-shell: _check-assets _pack-initrd _materialize-config _ensure-service
+shell: _prepared-runtime _ensure-service
     #!/bin/bash
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
@@ -259,7 +259,7 @@ shell: _check-assets _pack-initrd _materialize-config _ensure-service
     {{cli_binary}} shell
 
 # Start capsem-service daemon (builds, signs, launches or reuses running instance)
-run-service: _check-assets _pack-initrd _materialize-config _ensure-service
+run-service: _prepared-runtime _ensure-service
 
 # Execute a command in a fresh temporary VM (auto-provisioned and destroyed)
 # Usage: just exec "echo hello"   or   just exec "ls -la"
@@ -1959,6 +1959,12 @@ _gate-install:
     docker exec "$CONTAINER" mkdir -p "${INSTALL_OWNED_PATHS[@]}"
     docker exec "$CONTAINER" \
         chown -R capsem:capsem "${INSTALL_OWNED_PATHS[@]}"
+    # Unlinking target/install-test-* needs write permission on their parent,
+    # not on the entries themselves. On Linux /src/target belongs to the host
+    # user, which is not the container's capsem, so the staging step's `rm -rf`
+    # fails with "Permission denied" before it can restage. Grant the directory
+    # entry alone -- a recursive chown here would walk every cargo artifact.
+    docker exec "$CONTAINER" chown capsem:capsem /src/target
     PACKAGE_VERSION=$(docker exec "$CONTAINER" dpkg-deb -f "$CONTAINER_DEB" Version)
     test "$PACKAGE_VERSION" = "$VERSION"
     echo "Installing exact release package via dpkg: $DEB"
