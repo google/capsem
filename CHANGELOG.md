@@ -14,6 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Narrowed the `*_Store` ignore rule to `*.DS_Store`. macOS sets
+  `core.ignorecase=true`, so the bare pattern matched source directories such
+  as `crates/capsem-process/src/job_store/` case-insensitively and silently:
+  the tree still built locally, and a fresh clone would have failed on an
+  unresolved `mod tests;`.
 - Retried transient release-catalog reads in the runtime preflight instead of
   letting one reset CDN connection fail the first gating step of both release
   lanes. Authoritative 4xx answers still fail closed on the first attempt.

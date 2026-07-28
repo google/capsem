@@ -40,7 +40,10 @@ dist/*
 *.bak
 .s.yml
 .DS_Store
-*_Store
+# Narrow: bare `*_Store` also matches source directories such as
+# crates/capsem-process/src/job_store/, and macOS sets core.ignorecase=true,
+# so the match is case-insensitive and silent.
+*.DS_Store
 private/
 
 # Dev setup sentinel (written by just doctor)
