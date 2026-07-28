@@ -3971,6 +3971,20 @@ fn write_test_assets_channel_index_fixture(dist: &Path, channel: &str) -> Result
     let manifest_version = require_json_string(&manifest, &["version"])?;
     let generated_at = require_json_string(&health, &["generated_at"])?;
     let profile_revision = require_json_string(&health, &["profiles", "revision"])?;
+    let profile_revisions = manifest
+        .get("profiles")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| anyhow!("test graph manifest profiles must be an object"))?
+        .iter()
+        .map(|(profile_id, profile)| {
+            Ok(format!(
+                "{} {}",
+                escape_html(profile_id),
+                escape_html(&require_json_string(profile, &["revision"])?)
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?
+        .join(" ");
     let asset_base = require_json_string(&health, &["urls", "asset_base"])?;
     let binary = require_json_string(&health, &["current", "binary"])?;
     let assets = require_json_string(&health, &["current", "assets"])?;
@@ -4011,7 +4025,7 @@ fn write_test_assets_channel_index_fixture(dist: &Path, channel: &str) -> Result
         <h2>Profile References</h2><p>SBOM</p>\
         <p>{generated_at}</p><p>{manifest_version}</p><p>{binary}</p><p>{assets}</p>\
         <a href=\"{channel_manifest}\">{channel_manifest}</a>\
-        <p>{profile_revision}</p>\
+        <p>{profile_revision}</p><p>{profile_revisions}</p>\
         </main></body></html>",
         channel = escape_html(channel),
         generated_at = escape_html(&generated_at),
@@ -4020,6 +4034,7 @@ fn write_test_assets_channel_index_fixture(dist: &Path, channel: &str) -> Result
         assets = escape_html(&assets),
         channel_manifest = escape_html(&channel_manifest),
         profile_revision = escape_html(&profile_revision),
+        profile_revisions = profile_revisions,
     );
     fs::write(channel_dir.join("index.html"), channel_html)
         .context("write test release channel page fixture")
