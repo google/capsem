@@ -1933,13 +1933,21 @@ def packaged_manifest_metadata(deb: Path) -> dict[str, str]:
     """
     with tempfile.TemporaryDirectory() as extracted:
         subprocess.run(["dpkg-deb", "-x", str(deb), extracted], check=True)
-        metadata = (
-            Path(extracted)
-            / "usr/local/share/capsem/assets/manifest-metadata.json"
-        )
-        if not metadata.is_file():
-            raise SystemExit(f"package has no manifest metadata to declare: {deb}")
-        packaged = json.loads(metadata.read_text(encoding="utf-8"))
+        # Locate the metadata rather than assume a prefix: repack-deb.sh writes
+        # /usr/share/capsem while build-pkg.sh uses /usr/local/share/capsem.
+        found = sorted(Path(extracted).rglob("assets/manifest-metadata.json"))
+        if len(found) != 1:
+            root = Path(extracted)
+            layout = sorted(
+                str(path.relative_to(root))
+                for path in root.rglob("*capsem*")
+                if path.is_dir()
+            )[:10]
+            raise SystemExit(
+                f"package must declare exactly one manifest metadata, found "
+                f"{len(found)} in {deb}; capsem directories present: {layout or 'none'}"
+            )
+        packaged = json.loads(found[0].read_text(encoding="utf-8"))
     url = packaged.get("manifest_url")
     channel = packaged.get("channel")
     if not isinstance(url, str) or not isinstance(channel, str):
