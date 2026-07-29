@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Covered the guest control-channel leak detector adversarially.
+  `looks_like_ipc_frame` is the only signal that a guest is writing IPC
+  protocol bytes into its own PTY stream, and it was asserted only negatively.
+  It now has positive cases pinned to real encoder output, so a wire-format
+  change breaks the test instead of silently disabling the detector, plus the
+  short/empty reads a PTY can always return, each byte of the frame prefix in
+  isolation, the fixstr range boundaries, and ordinary terminal output that
+  must not be flagged.
 - Attached every remaining Rust source to a codecov component. Sixteen
   capsem-core files belonged to none: `credential_broker.rs` now reports under
   Security, `telemetry.rs` under Monitoring, `host_state.rs` under
