@@ -657,6 +657,9 @@ _test-candidate:
     just _install-tools
     just _clean-stale
     just _check-generated-settings
+    # Clear stale VM performance recordings once per gate run, so the modules
+    # below accumulate one complete set instead of overwriting each other.
+    rm -rf "{{justfile_directory()}}/target/test-benchmarks"
     just _prepared-runtime
     just _test-static
     just _test-artifacts
@@ -751,7 +754,11 @@ _test-candidate-run:
     export CAPSEM_BENCHMARK_OUTPUT_ROOT="{{justfile_directory()}}/target/test-benchmarks"
     export COVERAGE_FILE="{{justfile_directory()}}/target/coverage/.coverage"
     mkdir -p "$(dirname "$COVERAGE_FILE")"
-    rm -rf "$CAPSEM_BENCHMARK_OUTPUT_ROOT"
+    # Do NOT clear the benchmark root here. `just test` runs several modules
+    # through this recipe in sequence, and the VM performance recordings are
+    # written by `functional` -- a later `glowup` wiping them is why a fortnight
+    # of full gates left target/test-benchmarks empty and froze the published
+    # arm64 history at 1.3. The gate entry point owns clearing it once.
     # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
     # below. Acquired BEFORE the wipe: if a second `just test` were to run
     # past this line, the first's fd would be pinned to an unlinked inode

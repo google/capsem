@@ -40,6 +40,29 @@ def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> N
     assert "benchmarks/**/data_*.json" in _read(".gitignore")
 
 
+def test_gate_run_retains_the_vm_performance_recordings_it_produces() -> None:
+    """`functional` writes the VM performance recordings and `glowup` runs after
+    it. While the wipe lived in the per-module runner, the later module deleted
+    the earlier one's numbers, so a full gate produced a complete set and then
+    destroyed it -- a fortnight of green runs left target/test-benchmarks empty
+    and froze the published arm64 history at 1.3. Clearing belongs to the gate
+    run, once, not to each module inside it."""
+    justfile = _read("justfile")
+    runner = justfile.split("\n_test-candidate-run:", maxsplit=1)[1].split(
+        "\n\n_", maxsplit=1
+    )[0]
+
+    assert 'rm -rf "$CAPSEM_BENCHMARK_OUTPUT_ROOT"' not in runner
+
+    # The composition recipe clears it once, before the module sequence runs.
+    candidate = justfile.split("\n_test-candidate:", maxsplit=1)[1].split(
+        "\n_test-candidate-run:", maxsplit=1
+    )[0]
+    clear = candidate.index('rm -rf "{{justfile_directory()}}/target/test-benchmarks"')
+    assert clear < candidate.index("just _test-functional")
+    assert clear < candidate.index("just _test-glowup")
+
+
 def test_full_gate_runs_capsem_bench_baseline_for_every_selected_profile() -> None:
     justfile = _read("justfile")
     candidate = justfile.split("\n_test-candidate:", maxsplit=1)[1].split(
