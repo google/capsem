@@ -30,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Repointed four stale `codecov.yml` component paths at files that no longer
+  exist. Three sat in `network` (`mitm_proxy.rs`, deleted `domain_policy.rs`
+  and `http_policy.rs`) and one in `security` (deleted `host_config.rs`), so
+  both components silently measured less than their own comments claimed --
+  `network` excluded the entire MITM proxy it is named for, along with DNS,
+  the AI-provider interpreters and the SSE/DNS parsers. Both now match their
+  documented scope: all of `net/` except `policy_config`, and the policy
+  engine including `security_engine/`. This drops `network` from a flattering
+  91.7% to an honest 71.7%, so its first `target: auto` build will re-baseline
+  against the wider scope.
 - Followed the moved unit tests in four source-contract assertions. Contracts
   in `test_release_doctor_contract.py` and `test_dbwriter_snapshot_contract.py`
   read a production file and asserted that test names or fixture strings

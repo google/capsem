@@ -72,20 +72,22 @@ component_management:
     - component_id: network
       name: Network
       paths:
-        - crates/capsem-core/src/net/mitm_proxy.rs
-        - crates/capsem-core/src/net/cert_authority.rs
-        - crates/capsem-core/src/net/domain_policy.rs
-        - crates/capsem-core/src/net/http_policy.rs
-        - crates/capsem-core/src/net/policy.rs
+        - crates/capsem-core/src/net/mod.rs
         - crates/capsem-core/src/net/ai_traffic/**
+        - crates/capsem-core/src/net/cert_authority.rs
+        - crates/capsem-core/src/net/dns/**
+        - crates/capsem-core/src/net/interpreters/**
+        - crates/capsem-core/src/net/mitm_proxy/**
+        - crates/capsem-core/src/net/parsers/**
+        - crates/capsem-core/src/net/policy.rs
 
-    # Policy engine, settings registry, host_config, corp
+    # Policy engine and security-rule evaluation, settings registry, corp
     # lockdown/MDM. Small now, grows with corp features.
     - component_id: security
       name: Security
       paths:
         - crates/capsem-core/src/net/policy_config/**
-        - crates/capsem-core/src/host_config.rs
+        - crates/capsem-core/src/security_engine/**
 
     # MCP endpoint, builtin HTTP tools, file/snapshot tools,
     # MCP policy, auto-snapshots, FS monitor.
