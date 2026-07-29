@@ -194,7 +194,13 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def wait_for_ssh(ip: str, timeout: int = 180) -> None:
+# Each readiness run clones the base image and boots that clone for the first
+# time, which on a loaded host takes longer than a warm boot does. At 180s this
+# failed roughly every other run -- cold after an idle gap, fine when a previous
+# boot had just warmed the image -- and reported it as an unreachable guest
+# rather than a slow one. The bound still fails a genuinely broken VM, just not
+# a merely slow one.
+def wait_for_ssh(ip: str, timeout: int = 600) -> None:
     deadline = time.monotonic() + timeout
     last_error = ""
     while time.monotonic() < deadline:
