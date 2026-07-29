@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Closed two leaks in the support-bundle redactor, which exists so a bundle can
+  be attached to a public bug report without shipping credentials. It matched
+  only a bare `Authorization:`, so the JSON-shaped
+  `{"Authorization": "Bearer <token>"}` that Capsem's own JSON logs actually
+  produce passed through untouched; the header prefix is now preserved and only
+  the credential replaced, so a redacted line stays valid JSON. GitHub tokens
+  (`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`) were not matched at all despite
+  `github_token` already being treated as a secret key name in the same module.
 - Covered the guest agent's auditd record parsers, which turn kernel audit
   lines into the exec attribution the security ledger records. All four were
   untested. The tests pin the sharp edges deliberately: field lookup is a
