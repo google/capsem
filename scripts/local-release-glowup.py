@@ -314,9 +314,14 @@ def main() -> int:
             stable_manifest,
             "stable",
         )
-        clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")
         report_disk_capacity(args.work_dir, "before immutable VM blob staging")
         stage_manifest_artifacts(stable_manifest, args.assets_dir, dist, base_url)
+        # Clone nightly from the *staged* stable manifest. Staging drops any
+        # architecture whose blobs are not present locally, and ordinary CI
+        # pulls one architecture's profile inputs. Cloning first left nightly
+        # describing an unstaged architecture whose URLs still pointed at
+        # GitHub, which the hermetic channel rejected as "not local".
+        clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")
         # Both channels begin with the same verified profile cohort. Binary
         # authoring below mutates only each manifest's package inventory.
 

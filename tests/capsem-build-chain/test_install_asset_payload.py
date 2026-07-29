@@ -1486,16 +1486,22 @@ def test_local_release_glowup_projects_both_switch_channels_from_any_candidate()
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
     setup = script.split(
         'stable_manifest = manifests / "stable-assets-manifest.json"', maxsplit=1
-    )[1].split(
-        'report_disk_capacity(args.work_dir, "before immutable VM blob staging")',
-        maxsplit=1,
-    )[0]
+    )[1].split("record_binary(", maxsplit=1)[0]
 
     assert 'args.assets_dir / "manifest.json"' in setup
     assert "stable_manifest," in setup
     assert '"stable"' in setup
     assert "clone_manifest_for_channel(stable_manifest, nightly_manifest, \"nightly\")" in setup
     assert "shutil.copy2(args.assets_dir / \"manifest.json\"" not in setup
+
+    # Nightly must be projected from the *staged* stable manifest. Staging drops
+    # architectures whose blobs are absent locally -- ordinary CI pulls one
+    # architecture's profile inputs -- so cloning first left nightly describing
+    # an unstaged architecture whose URLs still pointed at GitHub, which the
+    # hermetic channel then rejected as "not local".
+    assert setup.index("stage_manifest_artifacts(stable_manifest") < setup.index(
+        'clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")'
+    )
 
 
 def test_local_release_glowup_rejects_partially_staged_architecture(
