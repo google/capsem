@@ -321,7 +321,8 @@ pub(crate) async fn handle_ipc_connection(
                                         id,
                                         stdout,
                                         stderr,
-                                        exit_code
+                                        exit_code,
+                                        truncated
                                     })
                                     .await
                             );
@@ -337,7 +338,8 @@ pub(crate) async fn handle_ipc_connection(
                                         id,
                                         stdout: vec![],
                                         stderr: message.into_bytes(),
-                                        exit_code: -1
+                                        exit_code: -1,
+                                        truncated: false
                                     })
                                     .await
                             );
@@ -360,6 +362,7 @@ pub(crate) async fn handle_ipc_connection(
                                         stdout: vec![],
                                         stderr: msg.into_bytes(),
                                         exit_code: -1,
+                                        truncated: false,
                                     })
                                     .await
                             );

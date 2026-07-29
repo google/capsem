@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Carried exec output truncation across the process/service IPC boundary, so a
+  capped result can no longer reach a caller looking like a complete one. The
+  field is `#[serde(default)]`, so a producer built before it existed still
+  decodes as not truncated rather than failing the frame.
 - Bounded guest exec output at 10 MiB. The Exec vsock port is a raw stream, so
   the `MAX_FRAME_SIZE` bound applied to length-prefixed control frames never
   reached it and `read_exec_output` accumulated without limit: a guest running

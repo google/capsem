@@ -188,6 +188,7 @@ fn exec_result_roundtrip() {
         stdout: b"hello\n".to_vec(),
         stderr: b"".to_vec(),
         exit_code: 0,
+        truncated: false,
     };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
@@ -197,6 +198,7 @@ fn exec_result_roundtrip() {
             stdout,
             stderr,
             exit_code,
+            ..
         } => {
             assert_eq!(id, 42);
             assert_eq!(stdout, b"hello\n");
@@ -214,6 +216,7 @@ fn exec_result_nonzero_exit() {
         stdout: vec![],
         stderr: b"not found\n".to_vec(),
         exit_code: 127,
+        truncated: false,
     };
     let bytes = serde_json::to_vec(&msg).unwrap();
     let msg2: ProcessToService = serde_json::from_slice(&bytes).unwrap();
@@ -677,5 +680,42 @@ fn mcp_refresh_result_roundtrip() {
             assert!(error.is_none());
         }
         _ => panic!("wrong variant"),
+    }
+}
+
+#[test]
+fn exec_result_truncation_flag_survives_the_wire() {
+    let msg = ProcessToService::ExecResult {
+        id: 7,
+        stdout: b"prefix".to_vec(),
+        stderr: vec![],
+        exit_code: 0,
+        truncated: true,
+    };
+
+    let bytes = bincode::serialize(&msg).expect("serialize");
+    let back: ProcessToService = bincode::deserialize(&bytes).expect("deserialize");
+
+    match back {
+        ProcessToService::ExecResult {
+            truncated, stdout, ..
+        } => {
+            assert!(truncated, "a capped result must not arrive looking complete");
+            assert_eq!(stdout, b"prefix");
+        }
+        other => panic!("expected ExecResult, got {other:?}"),
+    }
+}
+
+#[test]
+fn exec_result_defaults_to_not_truncated_when_the_field_is_absent() {
+    // `#[serde(default)]` keeps a producer built before the field was added
+    // from being read as a truncated result.
+    let json = r#"{"ExecResult":{"id":1,"stdout":[],"stderr":[],"exit_code":0}}"#;
+    let msg: ProcessToService = serde_json::from_str(json).expect("older shape still decodes");
+
+    match msg {
+        ProcessToService::ExecResult { truncated, .. } => assert!(!truncated),
+        other => panic!("expected ExecResult, got {other:?}"),
     }
 }

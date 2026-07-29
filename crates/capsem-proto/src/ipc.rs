@@ -99,6 +99,11 @@ pub enum ProcessToService {
         stdout: Vec<u8>,
         stderr: Vec<u8>,
         exit_code: i32,
+        /// The guest wrote more output than the per-exec cap, so `stdout`
+        /// holds the retained prefix only. Callers that render output need
+        /// this to say so rather than presenting a short result as complete.
+        #[serde(default)]
+        truncated: bool,
     },
     /// Result of a WriteFile operation.
     WriteFileResult {
