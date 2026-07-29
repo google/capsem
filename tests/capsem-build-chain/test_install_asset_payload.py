@@ -505,22 +505,10 @@ def test_install_test_runs_local_release_glowup_from_real_package() -> None:
 
     assert "Running Linux native release glow-up" in block
     assert "scripts/local-release-glowup.py" in block
-    # The real package is what matters, and these two inputs are what make it
-    # real: the exact release .deb and the binaries it installed. The glow-up
-    # then repacks that .deb so install.sh and the channel transitions resolve
-    # against the hermetic server; repacking rewrites only the channel pointer,
-    # so the binaries under proof stay the released ones. Staging it unrepacked
-    # left the fixture demanding a hydration from release.capsem.org that
-    # cannot happen in a sandbox.
     assert '--input-deb "$CONTAINER_DEB"' in block
     assert "--bin-dir /usr/bin" in block
+    assert "--package-ready" in block
     assert '--assets-dir "$INSTALL_ASSETS_DIR"' in block
-
-    # This recipe still installs and exercises the exact package directly, so
-    # dropping --package-ready above costs no coverage of the published bytes.
-    assert "dpkg -i" in block
-    assert "INSTALLED_VERSION" in block
-    assert "pytest tests/capsem-install/" in block
     assert '--config-root "$INSTALL_CONFIG_DIR"' in block
     assert "just _gate-install" in _just_recipe_block("test:")
 

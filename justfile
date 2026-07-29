@@ -2083,7 +2083,7 @@ _gate-install:
     if [ "$LINUX_VM_PROOF" -eq 1 ]; then
         echo "Running Linux native release glow-up (install, channel switch, upgrade)..."
         docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
-            "cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test uv run python scripts/local-release-glowup.py --input-deb \"$CONTAINER_DEB\" --bin-dir /usr/bin --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\" --work-dir target/local-release-glowup"
+            "cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test uv run python scripts/local-release-glowup.py --input-deb \"$CONTAINER_DEB\" --bin-dir /usr/bin --assets-dir \"$INSTALL_ASSETS_DIR\" --config-root \"$INSTALL_CONFIG_DIR\" --work-dir target/local-release-glowup --package-ready"
     else
         echo "Validating the native macOS installed doctor/Winterfell proof..."
         if [ -z "${CAPSEM_MACOS_NATIVE_GLOWUP_REPORT:-}" ]; then
