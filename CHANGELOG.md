@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Covered the benchmark harness's JSON scrape of guest command output and the
+  latency-summary edges. Both feed published numbers: a scrape that picks the
+  wrong object reports a figure that was never measured, and a degenerate
+  sample set must summarise to zeros rather than to something plausible.
 - Closed a guest-triggerable bypass of support-bundle redaction.
   `redact_log_bytes` decoded the whole file and passed it through untouched if
   any of it was not UTF-8, so a guest writing a single invalid byte to its

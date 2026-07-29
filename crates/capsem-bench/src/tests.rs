@@ -378,3 +378,135 @@ fn build_delta_report_keeps_inline_artifact_identity() {
     assert_eq!(delta.host_lane, "host_direct");
     assert_eq!(delta.guest_lane, "guest_capsem");
 }
+
+// ── JSON extraction from guest command output ──────────────────────
+//
+// extract_first_json_value scrapes a JSON document out of whatever a guest
+// command printed on stdout: banners, shell noise, progress lines. The bench
+// harness then treats that value as the measurement. If it picks the wrong
+// object or silently finds none, a benchmark reports a number that was never
+// measured, so the scan's exact behaviour matters.
+
+#[test]
+fn json_is_extracted_from_surrounding_shell_noise() {
+    let output = "warning: locale unset\n{\"requests\":10,\"ok\":true}\ndone\n";
+
+    let value = extract_first_json_value(output).expect("object found");
+
+    assert_eq!(value["requests"], 10);
+    assert_eq!(value["ok"], true);
+}
+
+#[test]
+fn the_first_parseable_object_wins() {
+    // Two candidates: the earlier one is the result, the later one must not
+    // overwrite it.
+    let output = r#"{"round":1} then later {"round":2}"#;
+
+    assert_eq!(extract_first_json_value(output).unwrap()["round"], 1);
+}
+
+#[test]
+fn a_brace_inside_prose_falls_through_to_the_real_object() {
+    // The scan is not string-aware: it tries every `{` in order, including one
+    // sitting inside quoted prose. That candidate simply fails to parse, so
+    // the next one wins. Worth stating, because it means correctness here
+    // rests on the parse failing rather than on the brace being skipped.
+    let output = r#"note: "a { brace" then {"real":true}"#;
+
+    let value = extract_first_json_value(output).expect("object found");
+
+    assert_eq!(value["real"], true);
+}
+
+#[test]
+fn nested_objects_are_returned_whole() {
+    let output = r#"prefix {"outer":{"inner":[1,2,3]}} suffix"#;
+
+    let value = extract_first_json_value(output).expect("object found");
+
+    assert_eq!(value["outer"]["inner"][2], 3);
+}
+
+#[test]
+fn output_without_a_parseable_object_yields_none() {
+    for output in [
+        "",
+        "no braces here",
+        "{ unterminated",
+        "{not: valid json}",
+    ] {
+        assert_eq!(
+            extract_first_json_value(output),
+            None,
+            "{output:?} should not parse"
+        );
+    }
+}
+
+#[test]
+fn trailing_output_after_the_object_is_tolerated() {
+    // The guest command's own exit banner follows the payload; the scan uses a
+    // streaming deserializer precisely so this still parses.
+    let output = "{\"ok\":true}\nexit code 0\n";
+
+    assert_eq!(extract_first_json_value(output).unwrap()["ok"], true);
+}
+
+// ── Latency summary edges ──────────────────────────────────────────
+//
+// These numbers get published as benchmark results, so a degenerate sample set
+// must not produce a plausible-looking figure.
+
+#[test]
+fn an_empty_sample_set_summarises_to_zeros() {
+    let summary = latency_summary(Vec::new());
+
+    assert_eq!(summary.min, 0.0);
+    assert_eq!(summary.max, 0.0);
+    assert_eq!(summary.mean, 0.0);
+    assert_eq!(summary.p50, 0.0);
+    assert_eq!(summary.p99, 0.0);
+}
+
+#[test]
+fn a_single_sample_is_every_percentile() {
+    let summary = latency_summary(vec![7.5]);
+
+    assert_eq!(summary.min, 7.5);
+    assert_eq!(summary.max, 7.5);
+    assert_eq!(summary.mean, 7.5);
+    assert_eq!(summary.p50, 7.5);
+    assert_eq!(summary.p95, 7.5);
+    assert_eq!(summary.p99, 7.5);
+}
+
+#[test]
+fn samples_are_sorted_before_percentiles_are_taken() {
+    // Arrival order is not latency order; summarising unsorted input would
+    // report whichever sample happened to land at the percentile index.
+    let ascending = latency_summary(vec![1.0, 2.0, 3.0, 4.0, 100.0]);
+    let shuffled = latency_summary(vec![100.0, 3.0, 1.0, 4.0, 2.0]);
+
+    assert_eq!(ascending.p50, shuffled.p50);
+    assert_eq!(ascending.p95, shuffled.p95);
+    assert_eq!(ascending.min, shuffled.min);
+    assert_eq!(ascending.max, shuffled.max);
+}
+
+#[test]
+fn percentiles_never_index_past_the_sample_set() {
+    // p99 of two samples lands between them, not past the end.
+    let summary = latency_summary(vec![10.0, 20.0]);
+
+    assert!(summary.p99 <= summary.max, "{summary:?}");
+    assert!(summary.p50 >= summary.min, "{summary:?}");
+}
+
+#[test]
+fn round3_keeps_three_decimals_without_drifting() {
+    assert_eq!(round3(1.23456), 1.235);
+    assert_eq!(round3(1.0), 1.0);
+    assert_eq!(round3(0.0005), 0.001);
+    assert_eq!(round3(-1.23456), -1.235);
+}
