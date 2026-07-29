@@ -295,7 +295,15 @@ pub(crate) async fn handle_ipc_connection(
                             stdout,
                             stderr,
                             exit_code,
+                            truncated,
                         }) => {
+                            if truncated {
+                                warn!(
+                                    id,
+                                    retained_bytes = stdout.len(),
+                                    "exec output was capped; the caller receives the retained prefix"
+                                );
+                            }
                             // The guest may close the command process before
                             // host-side MITM/audit socket handlers enqueue
                             // their terminal telemetry. Keep /exec a bounded

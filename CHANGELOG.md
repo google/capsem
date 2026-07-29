@@ -30,6 +30,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bounded guest exec output at 10 MiB. The Exec vsock port is a raw stream, so
+  the `MAX_FRAME_SIZE` bound applied to length-prefixed control frames never
+  reached it and `read_exec_output` accumulated without limit: a guest running
+  `yes` grew capsem-process until the OOM killer took it and every in-flight
+  job with it. The 5s deposit timeout did not help, because the reader thread
+  is detached and keeps allocating after `ExecDone` has given up and dropped
+  the slot -- so the memory was spent on output nobody would read. The cap
+  matches capsem-gateway's `MAX_BODY_SIZE`, reading continues to EOF so the
+  guest is never left blocked on a full socket, and `stdout_bytes` telemetry
+  now reports the bytes the guest actually wrote rather than the retained
+  slice.
 - Covered two untested boundaries in the per-VM process. `parse_pty_log` walks
   a length-prefixed binary format off disk and was only ever exercised through
   its own writer, so nothing checked a recording truncated by a crash or a

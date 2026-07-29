@@ -933,7 +933,16 @@ fn dispatch_aux_connection(
                 };
                 if let Ok(GuestToHost::ExecStarted { id }) = read_control_msg(&mut file) {
                     info!(id, "exec port: received ExecStarted");
-                    let local_buf = read_exec_output(&mut file);
+                    let (local_buf, total_seen) = read_exec_output(&mut file);
+                    if total_seen > local_buf.len() as u64 {
+                        warn!(
+                            id,
+                            retained = local_buf.len(),
+                            total_bytes = total_seen,
+                            cap = MAX_EXEC_OUTPUT_BYTES,
+                            "exec output exceeded the cap; retaining the prefix"
+                        );
+                    }
                     // Deposit captured bytes and signal ExecDone it can
                     // proceed. notify_one stores a permit if ExecDone is
                     // not yet parked, so the common "deposit finishes
@@ -943,6 +952,7 @@ fn dispatch_aux_connection(
                         if let Some(ref mut active) = *guard {
                             if active.id == id {
                                 active.captured = local_buf;
+                                active.total_bytes = total_seen;
                                 Some(active.deposited.clone())
                             } else {
                                 None
@@ -1075,23 +1085,48 @@ fn dispatch_aux_connection(
     }
 }
 
-/// Drain one exec-output stream through EOF.
+/// Maximum guest exec output retained in memory.
+///
+/// The Exec vsock port is a raw stream, so the `MAX_FRAME_SIZE` bound that
+/// `read_control_msg` applies to length-prefixed control frames never reaches
+/// it. Without a cap here, a guest running `yes` grows this process until the
+/// OOM killer takes it and every in-flight job with it.
+///
+/// 10 MiB matches capsem-gateway's `MAX_BODY_SIZE`: output past that already
+/// cannot traverse the gateway to a remote client, so this moves an existing
+/// ceiling to before the allocation instead of after it.
+const MAX_EXEC_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
+
+/// Drain one exec-output stream through EOF, retaining at most
+/// [`MAX_EXEC_OUTPUT_BYTES`].
+///
+/// Returns the retained bytes and the total number of bytes seen, which differ
+/// exactly when the guest exceeded the cap. Reading continues past the cap so
+/// the guest is not left blocked on a full socket and so the reported total is
+/// the real one; only the retained buffer stops growing.
 ///
 /// Signals can interrupt a blocking socket read. `Interrupted` is not EOF:
 /// treating it as completion publishes an empty/partial buffer before the
 /// guest's `ExecDone`, while still returning the child's successful exit code.
-fn read_exec_output(reader: &mut impl std::io::Read) -> Vec<u8> {
+fn read_exec_output(reader: &mut impl std::io::Read) -> (Vec<u8>, u64) {
     let mut output = Vec::new();
+    let mut total_seen: u64 = 0;
     let mut read_buf = [0u8; 8192];
     loop {
         match reader.read(&mut read_buf) {
             Ok(0) => break,
-            Ok(n) => output.extend_from_slice(&read_buf[..n]),
+            Ok(n) => {
+                total_seen = total_seen.saturating_add(n as u64);
+                let room = MAX_EXEC_OUTPUT_BYTES.saturating_sub(output.len());
+                if room > 0 {
+                    output.extend_from_slice(&read_buf[..n.min(room)]);
+                }
+            }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         }
     }
-    output
+    (output, total_seen)
 }
 
 /// Persistent DNS query handler over the vsock DNS port (T3.2).
@@ -1386,15 +1421,19 @@ async fn handle_guest_msg(
                 let _ = tokio::time::timeout(EXEC_OUTPUT_DEPOSIT_TIMEOUT, n.notified()).await;
             }
             let active_exec = js.active_exec.lock().unwrap().take().filter(|a| a.id == id);
-            let (event_id, duration_ms, stdout) = active_exec
+            let (event_id, duration_ms, stdout, total_bytes) = active_exec
                 .map(|active| {
                     (
                         active.event_id,
                         active.started_at.elapsed().as_millis() as u64,
                         active.captured,
+                        active.total_bytes,
                     )
                 })
-                .unwrap_or((None, 0, Vec::new()));
+                .unwrap_or((None, 0, Vec::new(), 0));
+            // `total_bytes` is what the guest wrote; `stdout` is what survived
+            // the cap. They differ only on truncation.
+            let truncated = total_bytes > stdout.len() as u64;
 
             let complete = capsem_logger::ExecEventComplete {
                 exec_id: id,
@@ -1404,7 +1443,7 @@ async fn handle_guest_msg(
                     String::from_utf8_lossy(&stdout[..stdout.len().min(1024)]).into(),
                 ),
                 stderr_preview: None,
-                stdout_bytes: stdout.len() as u64,
+                stdout_bytes: total_bytes,
                 stderr_bytes: 0,
                 pid: None,
             };
@@ -1430,7 +1469,8 @@ async fn handle_guest_msg(
                     tx.send(JobResult::Exec {
                         stdout,
                         stderr: vec![],
-                        exit_code
+                        exit_code,
+                        truncated
                     })
                 );
             }

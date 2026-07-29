@@ -42,6 +42,10 @@ pub(crate) struct ActiveExec {
     pub(crate) started_at: Instant,
     pub(crate) event_id: Option<capsem_core::security_engine::SecurityEventId>,
     pub(crate) captured: Vec<u8>,
+    /// Bytes the guest actually wrote, which exceeds `captured.len()` when the
+    /// output was capped. Telemetry reports this so `stdout_bytes` stays the
+    /// real volume rather than the retained slice.
+    pub(crate) total_bytes: u64,
     pub(crate) deposited: Arc<Notify>,
 }
 
@@ -52,6 +56,7 @@ impl ActiveExec {
             started_at: Instant::now(),
             event_id: None,
             captured: Vec::new(),
+            total_bytes: 0,
             deposited: Arc::new(Notify::new()),
         }
     }
@@ -106,6 +111,9 @@ pub(crate) enum JobResult {
         stdout: Vec<u8>,
         stderr: Vec<u8>,
         exit_code: i32,
+        /// The guest wrote more than `MAX_EXEC_OUTPUT_BYTES`; `stdout` holds
+        /// the retained prefix only.
+        truncated: bool,
     },
     WriteFile {
         success: bool,

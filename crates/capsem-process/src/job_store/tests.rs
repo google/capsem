@@ -89,12 +89,14 @@ fn job_result_exec_fields() {
         stdout: b"output".to_vec(),
         stderr: b"err".to_vec(),
         exit_code: 0,
+        truncated: false,
     };
     match r {
         JobResult::Exec {
             stdout,
             stderr,
             exit_code,
+            ..
         } => {
             assert_eq!(stdout, b"output");
             assert_eq!(stderr, b"err");
@@ -110,6 +112,7 @@ fn job_result_exec_nonzero_exit() {
         stdout: vec![],
         stderr: b"command not found".to_vec(),
         exit_code: 127,
+        truncated: false,
     };
     match r {
         JobResult::Exec { exit_code, .. } => assert_eq!(exit_code, 127),
@@ -245,6 +248,7 @@ fn job_oneshot_send_receive() {
         stdout: b"hello".to_vec(),
         stderr: vec![],
         exit_code: 0,
+        truncated: false,
     })
     .unwrap();
 
