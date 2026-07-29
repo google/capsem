@@ -82,12 +82,13 @@ component_management:
         - crates/capsem-core/src/net/policy.rs
 
     # Policy engine and security-rule evaluation, settings registry, corp
-    # lockdown/MDM. Small now, grows with corp features.
+    # lockdown/MDM, and the credential broker's storage boundary.
     - component_id: security
       name: Security
       paths:
         - crates/capsem-core/src/net/policy_config/**
         - crates/capsem-core/src/security_engine/**
+        - crates/capsem-core/src/credential_broker.rs
 
     # MCP endpoint, builtin HTTP tools, file/snapshot tools,
     # MCP policy, auto-snapshots, FS monitor.
@@ -97,8 +98,9 @@ component_management:
         - crates/capsem-core/src/mcp/**
         - crates/capsem-core/src/auto_snapshot.rs
         - crates/capsem-core/src/fs_monitor.rs
+        - crates/capsem-core/src/bin/mcp_export.rs
 
-    # Logger DB, session index/maintenance, log layer.
+    # Logger DB, session index/maintenance, log layer, tracing bootstrap.
     # Future: OTEL, reporting, SSH session recording.
     - component_id: monitoring
       name: Monitoring
@@ -106,14 +108,39 @@ component_management:
         - crates/capsem-logger/src/**
         - crates/capsem-core/src/session/**
         - crates/capsem-core/src/log_layer.rs
+        - crates/capsem-core/src/telemetry.rs
 
-    # Machine lifecycle, VM config, vsock manager.
-    # Hypervisor abstraction layer + platform backends.
+    # Machine lifecycle, VM config, vsock manager, host-side lifecycle state
+    # machine. Hypervisor abstraction layer + platform backends.
     - component_id: virtualization
       name: Virtualization
       paths:
         - crates/capsem-core/src/vm/**
         - crates/capsem-core/src/hypervisor/**
+        - crates/capsem-core/src/host_state.rs
+
+    # Runtime half of the asset contract: manifest hash extraction plus the
+    # download/verify path that resolves recorded digests before boot.
+    # capsem-admin owns the generation half, under the `admin` component.
+    - component_id: assets
+      name: Assets
+      paths:
+        - crates/capsem-core/src/asset_manager.rs
+        - crates/capsem-core/src/manifest_compat.rs
+
+    # Cross-cutting capsem-core primitives every other component builds on:
+    # crate root, ~/.capsem path resolution, UDS helpers, IPC handshake and
+    # stream coalescing, backoff polling, shared macros.
+    - component_id: core
+      name: Core Platform
+      paths:
+        - crates/capsem-core/src/lib.rs
+        - crates/capsem-core/src/paths.rs
+        - crates/capsem-core/src/macros.rs
+        - crates/capsem-core/src/poll.rs
+        - crates/capsem-core/src/uds.rs
+        - crates/capsem-core/src/ipc_ext.rs
+        - crates/capsem-core/src/ipc_handshake.rs
 
     # In-VM agent binaries: PTY agent, net-proxy, MCP server
     # relay, wire protocol.
@@ -261,6 +288,8 @@ component_management:
 
 ignore:
   - crates/*/tests/**
+  # `#[cfg(test)]`-only fixture helpers; not product code any component owns.
+  - crates/capsem-core/src/test_support/**
   - crates/capsem-app/gen/**
   - site/**
   - docs/**

@@ -30,6 +30,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Attached every remaining Rust source to a codecov component. Sixteen
+  capsem-core files belonged to none: `credential_broker.rs` now reports under
+  Security, `telemetry.rs` under Monitoring, `host_state.rs` under
+  Virtualization and `bin/mcp_export.rs` under Tooling, with two new components
+  for concerns that had no home -- Assets (`asset_manager.rs`,
+  `manifest_compat.rs`, the runtime half of the manifest contract) and Core
+  Platform (path resolution, UDS helpers, IPC handshake, backoff, macros). The
+  `#[cfg(test)]`-only `test_support/` helpers moved to `ignore`. All 200 Rust
+  sources across every crate now resolve to exactly one component.
 - Repointed four stale `codecov.yml` component paths at files that no longer
   exist. Three sat in `network` (`mitm_proxy.rs`, deleted `domain_policy.rs`
   and `http_policy.rs`) and one in `security` (deleted `host_config.rs`), so
