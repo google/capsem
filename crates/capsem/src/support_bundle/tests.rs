@@ -410,3 +410,127 @@ generator_version = "11.0.0"
     assert_eq!(profile["obom"]["scope"], "base_image");
     assert_eq!(profile["obom"]["route"], "/profiles/code/obom");
 }
+
+
+// ── Redaction over guest-influenced log bytes ──────────────────────
+//
+// serial.log is VM console output, so its bytes are the guest's to choose.
+// Redaction used to decode the whole buffer and give up on the entire file if
+// any of it was not UTF-8, which handed a guest a one-byte switch for turning
+// off redaction of every credential in that log.
+
+#[test]
+fn one_invalid_byte_does_not_disable_redaction_for_the_whole_file() {
+    let secret = "sk-ant-abcdefghijklmnopqrstuvwxyz";
+    let mut log = format!("Authorization: Bearer {secret}\n").into_bytes();
+    log.push(0xff); // a guest writing a single non-UTF-8 byte to its console
+
+    let out = super::redact_log_bytes(&log);
+
+    assert!(
+        !out.windows(secret.len()).any(|w| w == secret.as_bytes()),
+        "the credential survived: {}",
+        String::from_utf8_lossy(&out)
+    );
+}
+
+#[test]
+fn undecodable_lines_pass_through_byte_exact() {
+    // The original intent -- do not mangle binary -- still holds, just per
+    // line instead of per file.
+    let mut log = b"Authorization: Bearer sk-ant-abcdefghijklmnopqrstuvwxyz\n".to_vec();
+    log.extend_from_slice(&[0xff, 0xfe, 0x00, 0x01]);
+    log.push(b'\n');
+    log.extend_from_slice(b"plain trailing line\n");
+
+    let out = super::redact_log_bytes(&log);
+
+    assert!(
+        out.windows(4).any(|w| w == [0xff, 0xfe, 0x00, 0x01]),
+        "binary line was altered"
+    );
+    assert!(out.ends_with(b"plain trailing line\n"), "tail line lost");
+    assert!(!out.windows(3).any(|w| w == b"sk-"), "credential survived");
+}
+
+#[test]
+fn redaction_preserves_line_structure_and_the_trailing_newline() {
+    let log = b"one\ntwo\nthree\n".to_vec();
+    assert_eq!(super::redact_log_bytes(&log), log);
+
+    let no_trailing = b"one\ntwo".to_vec();
+    assert_eq!(super::redact_log_bytes(&no_trailing), no_trailing);
+
+    assert_eq!(super::redact_log_bytes(b""), b"");
+}
+
+#[test]
+fn every_line_is_redacted_not_just_the_first() {
+    let log = concat!(
+        "boot ok\n",
+        "Authorization: Bearer sk-ant-aaaaaaaaaaaaaaaaaaaaaaaa\n",
+        "middle\n",
+        "token ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n"
+    )
+    .as_bytes()
+    .to_vec();
+
+    let out = String::from_utf8(super::redact_log_bytes(&log)).unwrap();
+
+    assert!(!out.contains("sk-ant-aaaaaaaaaaaaaaaaaaaaaaaa"), "{out}");
+    assert!(!out.contains("ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"), "{out}");
+    assert!(out.contains("boot ok") && out.contains("middle"));
+}
+
+// ── Log tail reading ───────────────────────────────────────────────
+
+#[test]
+fn a_file_under_the_limit_is_returned_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("small.log");
+    fs::write(&path, b"line one\nline two\n").unwrap();
+
+    assert_eq!(
+        super::read_tail(&path, 1024).unwrap(),
+        b"line one\nline two\n"
+    );
+}
+
+#[test]
+fn an_oversized_file_returns_the_tail_starting_at_a_record_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("big.log");
+    let body: String = (0..500).map(|i| format!("line {i:04}\n")).collect();
+    fs::write(&path, &body).unwrap();
+
+    let tail = super::read_tail(&path, 200).unwrap();
+
+    assert!(tail.len() <= 200, "tail exceeded the cap: {}", tail.len());
+    let text = String::from_utf8(tail).unwrap();
+    assert!(
+        text.starts_with("line "),
+        "the partial leading record was not dropped: {text:?}"
+    );
+    assert!(text.ends_with("line 0499\n"), "tail is not the end of file");
+}
+
+#[test]
+fn read_tail_reports_nothing_for_missing_paths_and_directories() {
+    let dir = tempfile::tempdir().unwrap();
+
+    assert_eq!(super::read_tail(&dir.path().join("absent.log"), 1024), None);
+    assert_eq!(
+        super::read_tail(dir.path(), 1024),
+        None,
+        "a directory is not a log"
+    );
+}
+
+#[test]
+fn an_empty_file_reads_as_empty_rather_than_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("empty.log");
+    fs::write(&path, b"").unwrap();
+
+    assert_eq!(super::read_tail(&path, 1024), Some(Vec::new()));
+}

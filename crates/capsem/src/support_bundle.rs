@@ -22,7 +22,7 @@
 //! Manifest schema is v1; bump `SCHEMA_VERSION` for breaking changes.
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -703,15 +703,24 @@ fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
         return None;
     }
     let len = metadata.len();
-    let bytes = fs::read(path).ok()?;
-    if len <= max_bytes {
-        return Some(bytes);
+    // Seek to the tail rather than reading the file and slicing it. serial.log
+    // carries guest console output, so it grows on the guest's terms; reading
+    // it whole to return the last few MiB let a chatty VM decide how much
+    // memory `capsem support` allocates.
+    let mut file = fs::File::open(path).ok()?;
+    let over_limit = len > max_bytes;
+    if over_limit {
+        file.seek(std::io::SeekFrom::Start(len - max_bytes)).ok()?;
     }
-    // Skip leading partial line so the first byte starts mid-record-cleanly.
-    let start = (len - max_bytes) as usize;
-    let mut tail = bytes[start..].to_vec();
-    if let Some(idx) = tail.iter().position(|b| *b == b'\n') {
-        tail.drain(..=idx);
+    let mut tail = Vec::with_capacity(max_bytes.min(len) as usize);
+    std::io::Read::take(&mut file, max_bytes)
+        .read_to_end(&mut tail)
+        .ok()?;
+    if over_limit {
+        // Skip the leading partial line so the first byte starts a record.
+        if let Some(idx) = tail.iter().position(|b| *b == b'\n') {
+            tail.drain(..=idx);
+        }
     }
     Some(tail)
 }
@@ -814,17 +823,27 @@ fn config_diagnostics(home: &Path) -> serde_json::Value {
 }
 
 fn redact_log_bytes(bytes: &[u8]) -> Vec<u8> {
-    // Best-effort: split on \n, redact each line. Binary content trips
-    // the from_utf8 path -- we leave it untouched.
-    match std::str::from_utf8(bytes) {
-        Ok(text) => text
-            .lines()
-            .map(redact::redact_line)
-            .collect::<Vec<_>>()
-            .join("\n")
-            .into_bytes(),
-        Err(_) => bytes.to_vec(),
+    // Split on \n at the byte level and decide per line, not per file.
+    //
+    // This used to decode the whole buffer first and pass it through untouched
+    // if that failed. serial.log is guest console output, so a guest emitting a
+    // single invalid UTF-8 byte anywhere in the file disabled redaction for all
+    // of it -- every credential in that log shipped in the bundle in the clear.
+    //
+    // Lines that genuinely are not UTF-8 still pass through byte-exact, so
+    // binary content keeps the property the original was reaching for; only
+    // the blast radius shrinks from the file to the line.
+    let mut out = Vec::with_capacity(bytes.len());
+    for (index, line) in bytes.split(|byte| *byte == b'\n').enumerate() {
+        if index > 0 {
+            out.push(b'\n');
+        }
+        match std::str::from_utf8(line) {
+            Ok(text) => out.extend_from_slice(redact::redact_line(text).as_bytes()),
+            Err(_) => out.extend_from_slice(line),
+        }
     }
+    out
 }
 
 fn ts_filename() -> String {

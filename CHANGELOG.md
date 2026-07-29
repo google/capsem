@@ -30,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Closed a guest-triggerable bypass of support-bundle redaction.
+  `redact_log_bytes` decoded the whole file and passed it through untouched if
+  any of it was not UTF-8, so a guest writing a single invalid byte to its
+  console disabled redaction for all of `serial.log` -- every credential in
+  that log shipped in the bundle in the clear. Redaction is now decided per
+  line, and lines that genuinely are not UTF-8 still pass through byte-exact.
+- Stopped reading whole log files to return their tail. `read_tail` read the
+  entire file before slicing off the last few MiB, which let a chatty guest
+  decide how much memory `capsem support-bundle` allocated via serial.log; it
+  now seeks.
 - Covered the tray against the status casing a real gateway sends. The gateway
   serializes VM state capitalized ("Running", "Suspended"), but every tray test
   used the lowercase form, leaving the production shape the one thing nothing
