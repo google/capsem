@@ -2051,7 +2051,7 @@ _gate-install:
     "$ROOT/scripts/ensure-docker-space.sh" install
     echo "Running install e2e tests..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_BIN_SRC=/usr/bin -e CAPSEM_TEST_ASSET_MANIFEST=/home/capsem/.capsem/assets/manifest.json "$CONTAINER" bash -c \
-        "mkdir -p /home/capsem/tmp && cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test TMPDIR=/home/capsem/tmp uv run python -m pytest tests/capsem-install/ -v --tb=short"
+        "mkdir -p /home/capsem/tmp && cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test TMPDIR=/home/capsem/tmp uv run python -m pytest tests/capsem-install/ -v --tb=short -o cache_dir=/home/capsem/.pytest_cache"
     if [ "$LINUX_VM_PROOF" -eq 1 ]; then
         echo "Running Linux native release glow-up (install, channel switch, upgrade)..."
         docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \

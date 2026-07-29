@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -161,6 +162,30 @@ def test_check_assets_recovers_by_iterating_checked_in_profiles() -> None:
     assert "for profile in config/profiles/*/profile.toml; do" in block
     assert 'just _build-assets "$(basename "$(dirname "$profile")")" "$arch"' in block
     assert "just _build-assets code" not in block
+
+
+def test_in_container_commands_write_only_where_the_container_user_owns() -> None:
+    """/src is a bind mount of the host checkout. On Linux the host UID does not
+    own it, so anything `docker exec -u capsem` writes outside an explicitly
+    chowned path fails with EACCES -- and macOS maps the mount cleanly, so only
+    CI ever sees it. Four separate release-gate failures came from this one
+    shape: the builder's git, the staging rm, pytest's cache, and the
+    unmaterialized profile catalog."""
+    gate = _recipe_block("_gate-install:")
+
+    # Removing target/install-test-* needs write permission on their parent.
+    assert "chown capsem:capsem /src/target" in gate
+
+    for command in re.findall(r'docker exec[^\n]*-u capsem[^\n]*\n?[^\n]*', gate):
+        if "pytest" not in command:
+            continue
+        assert "TMPDIR=/home/capsem" in command, (
+            f"in-container pytest must keep temp files off /src: {command[:120]}"
+        )
+        assert "cache_dir=/home/capsem" in command, (
+            "in-container pytest must keep its cache off /src; the default "
+            f"rootdir cache write fails with EACCES on Linux: {command[:120]}"
+        )
 
 
 def test_runtime_recipes_materialize_generated_config_before_service() -> None:
