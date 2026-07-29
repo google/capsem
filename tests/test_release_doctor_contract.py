@@ -1172,9 +1172,9 @@ def test_linux_doctor_accepts_native_musl_gcc_without_x86_cross_compiler(
 
 def test_cross_surface_update_smoke_prerequisites_are_covered_locally() -> None:
     cli = _source_text("crates/capsem/src/update.rs")
-    cli_status = _source_text("crates/capsem/src/main.rs")
+    cli_status = _source_text("crates/capsem/src/tests.rs")
     service = _source_text("crates/capsem-service/src/tests.rs")
-    tray = _source_text("crates/capsem-tray/src/menu.rs")
+    tray = _source_text("crates/capsem-tray/src/menu/tests.rs")
     tui = _source_text("crates/capsem-tui/src/tests.rs")
     frontend = _source_text("frontend/src/lib/__tests__/update-status.test.ts")
     frontend_api = _source_text("frontend/src/lib/__tests__/api.test.ts")
@@ -2390,7 +2390,11 @@ def test_manifest_source_inputs_are_url_only() -> None:
     release = _workflow_text("release.yaml")
     release_assets = _workflow_text("release-assets.yaml")
     release_channel = _workflow_text("release-channel.yaml")
-    admin = (PROJECT_ROOT / "crates/capsem-admin/src/main.rs").read_text()
+    # Production rejection message plus its unit tests, which live in the
+    # sibling tests.rs; the assertions below span both.
+    admin = (PROJECT_ROOT / "crates/capsem-admin/src/main.rs").read_text() + (
+        PROJECT_ROOT / "crates/capsem-admin/src/tests.rs"
+    ).read_text()
 
     for script in (build_pkg, repack_deb):
         assert "--manifest requires a URL" in script
@@ -5249,10 +5253,16 @@ def test_pr_ci_non_vm_python_tests_prepare_assets_and_signed_binaries() -> None:
 
 
 def test_kvm_checkpoint_x86_state_tests_are_arch_gated() -> None:
-    source = (
-        PROJECT_ROOT / "crates" / "capsem-core" / "src" / "hypervisor" / "kvm" / "checkpoint.rs"
+    tests = (
+        PROJECT_ROOT
+        / "crates"
+        / "capsem-core"
+        / "src"
+        / "hypervisor"
+        / "kvm"
+        / "checkpoint"
+        / "tests.rs"
     ).read_text()
-    tests = source.split("#[cfg(test)]\nmod tests", maxsplit=1)[1]
 
     assert "fn test_header() -> CheckpointHeader" in tests
     assert "let header = test_header();" in tests

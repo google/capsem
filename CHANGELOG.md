@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Followed the moved unit tests in four source-contract assertions. Contracts
+  in `test_release_doctor_contract.py` and `test_dbwriter_snapshot_contract.py`
+  read a production file and asserted that test names or fixture strings
+  appeared in it, which stopped holding once those tests moved to sibling
+  `tests.rs` files; one had been silently reduced to asserting against the
+  two-character remainder of a `split()`.
 - Put a test under the service's spawn environment boundary.
   `PROCESS_ENV_ALLOWLIST` is the whole barrier between the daemon's own
   environment -- which on a developer or CI machine routinely holds

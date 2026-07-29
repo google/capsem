@@ -157,7 +157,11 @@ def test_dbwriter_and_snapshot_source_boundaries_are_single_rail() -> None:
     process_main = (ROOT / "crates/capsem-process/src/main.rs").read_text()
     process_prod = process_main.split("\n#[cfg(test)]\nmod tests", 1)[0]
     process_vsock = (ROOT / "crates/capsem-process/src/vsock.rs").read_text()
-    logger_schema = (ROOT / "crates/capsem-logger/src/schema.rs").read_text()
+    # Schema definition plus its unit tests, which live in the sibling
+    # tests.rs; the assertions below span both.
+    logger_schema = (ROOT / "crates/capsem-logger/src/schema.rs").read_text() + (
+        ROOT / "crates/capsem-logger/src/schema/tests.rs"
+    ).read_text()
     logger_writer = (ROOT / "crates/capsem-logger/src/writer.rs").read_text()
 
     assert 'DbWriter::open(&resolve_session_dir(&state' not in service_prod
