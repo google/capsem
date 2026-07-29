@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Covered the shared mock server's request parsers. It is the single fixture
+  behind benchmarks, doctor, protocol replay, gateway integration and Ironbank,
+  and several of its parsers fail into a default rather than an error -- junk
+  bodies become `{}`, a path that names no model resolves to a fallback model.
+  That is fine for a fixture but means a suite built on a malformed request can
+  pass for the wrong reason, so the silent defaults are now stated behaviour.
 - Told the user when exec output was capped. `capsem exec` and `capsem run`
   now print a notice on stderr, leaving stdout byte-exact so piping and
   programmatic consumers are unaffected; previously a truncated result was
