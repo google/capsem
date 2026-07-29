@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Covered two untested boundaries in the per-VM process. `parse_pty_log` walks
+  a length-prefixed binary format off disk and was only ever exercised through
+  its own writer, so nothing checked a recording truncated by a crash or a
+  corrupt length field claiming 4 GiB of payload; it must return what it can
+  parse rather than panic into the terminal view. `ackable_id` /
+  `ackable_response_id` decide which messages are replayed until acknowledged,
+  where a missing variant loses a message across a reconnect and an extra one
+  replays forever -- including `Shutdown`, which must never be replayed.
 - Closed two leaks in the support-bundle redactor, which exists so a bundle can
   be attached to a public bug report without shipping credentials. It matched
   only a bare `Authorization:`, so the JSON-shaped
