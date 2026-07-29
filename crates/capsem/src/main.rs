@@ -1883,6 +1883,9 @@ async fn main() -> Result<()> {
             if !resp.stderr.is_empty() {
                 eprint!("{}", resp.stderr);
             }
+            if let Some(notice) = resp.truncation_notice() {
+                eprintln!("{notice}");
+            }
             std::process::exit(resp.exit_code);
         }
         Commands::Session(SessionCommands::Run {
@@ -1905,6 +1908,9 @@ async fn main() -> Result<()> {
             }
             if !resp.stderr.is_empty() {
                 eprint!("{}", resp.stderr);
+            }
+            if let Some(notice) = resp.truncation_notice() {
+                eprintln!("{notice}");
             }
             std::process::exit(resp.exit_code);
         }

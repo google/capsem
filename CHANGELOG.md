@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Told the user when exec output was capped. `capsem exec` and `capsem run`
+  now print a notice on stderr, leaving stdout byte-exact so piping and
+  programmatic consumers are unaffected; previously a truncated result was
+  indistinguishable from a command that genuinely produced that much.
 - Surfaced exec output truncation in the service /exec response, so an HTTP
   caller can tell a capped result from a complete one.
 - Carried exec output truncation across the process/service IPC boundary, so a
