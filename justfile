@@ -1182,6 +1182,27 @@ _build-host-image:
         -t capsem-host-builder:latest \
         -f docker/Dockerfile.host-builder \
         docker/
+    # On Linux CI the checkout's owner is not this image's user, so git rejects
+    # /src as "dubious ownership" -- and crates/capsem/build.rs answers that by
+    # embedding "unknown" instead of failing, which is how a binary with no
+    # source identity reaches the provenance check. Forcing a foreign UID
+    # reproduces it here: git compares st_uid to euid in userspace, so the
+    # check works even on macOS bind mounts, which do not enforce write
+    # permission and therefore cannot surface the rest of that family.
+    ROOT="{{justfile_directory()}}"
+    EXPECTED=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo "")
+    if [ -n "$EXPECTED" ]; then
+        ACTUAL=$(docker run --rm -v "$ROOT:/src" -w /src --user 4242:4242 \
+            capsem-host-builder:latest git rev-parse --short HEAD 2>/dev/null || echo "")
+        if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "ERROR: capsem-host-builder cannot read /src as a non-owner user." >&2
+            echo "       Linux package builds will embed an 'unknown' build hash." >&2
+            echo "       Fix: keep 'git config --system --add safe.directory /src'" >&2
+            echo "       in docker/Dockerfile.host-builder." >&2
+            exit 1
+        fi
+        echo "  [pass] host-builder reads /src as a non-owner user ($ACTUAL)"
+    fi
 
 # Execute the portable Linux host-crate suite through one checked-in runner.
 # Linux CI calls this recipe natively. Mac-local `just test` calls it through
