@@ -233,3 +233,88 @@ fn build_deep_link_payload_round_trips_through_json() {
     assert_eq!(parsed["connect"], vm_id);
     assert_eq!(parsed["action"], action);
 }
+
+// ── External-URL scheme allowlist ──────────────────────────────────
+//
+// open_url is a Tauri command, so anything executing in the webview can invoke
+// it with any string. App.svelte forwards any href carrying target="_blank"
+// without inspecting its scheme, so nothing on the page side stops a
+// file:// or javascript: URL reaching the OS opener; this allowlist is the
+// only check between the webview and the host's default handler.
+
+#[test]
+fn ordinary_web_and_mail_links_open() {
+    for url in [
+        "https://capsem.org/docs",
+        "http://127.0.0.1:19222/",
+        "https://example.com/path?q=1#frag",
+        "mailto:support@capsem.org",
+        "mailto:a@b.c?subject=hi",
+    ] {
+        assert!(is_openable_url(url), "{url} should open");
+    }
+}
+
+#[test]
+fn scheme_matching_ignores_case() {
+    for url in ["HTTPS://capsem.org", "HtTp://capsem.org", "MAILTO:a@b.c"] {
+        assert!(is_openable_url(url), "{url} should open");
+    }
+}
+
+#[test]
+fn local_file_and_script_schemes_are_refused() {
+    // The ones that actually cost something: file: hands the OS an arbitrary
+    // local path, and javascript:/data: re-enter a context holding the
+    // gateway token.
+    for url in [
+        "file:///etc/passwd",
+        "file:///Users/elie/.capsem/run/gateway.token",
+        "javascript:alert(document.cookie)",
+        "JavaScript:alert(1)",
+        "data:text/html,<script>fetch('//x')</script>",
+        "vbscript:msgbox(1)",
+    ] {
+        assert!(!is_openable_url(url), "{url} must be refused");
+    }
+}
+
+#[test]
+fn unknown_and_app_schemes_are_refused_by_default() {
+    // The allowlist is positive, so a scheme nobody considered stays refused
+    // rather than being opened because it looked harmless.
+    for url in [
+        "capsem://open/vm1",
+        "ssh://host",
+        "ftp://host/f",
+        "smb://share",
+        "tel:+15551234",
+    ] {
+        assert!(!is_openable_url(url), "{url} must be refused");
+    }
+}
+
+#[test]
+fn malformed_inputs_are_refused_without_panicking() {
+    for url in [
+        "",
+        "not a url",
+        "https",           // scheme with no colon
+        "https:",          // colon with nothing after it
+        "mailto:",
+        ":",
+        "://capsem.org",   // empty scheme
+        " https://capsem.org", // leading whitespace is not a scheme we know
+        "http\n://capsem.org",
+    ] {
+        assert!(!is_openable_url(url), "{url:?} must be refused");
+    }
+}
+
+#[test]
+fn a_disallowed_scheme_hidden_behind_an_allowed_one_is_still_refused() {
+    // The check reads the FIRST colon, so the real scheme is what is judged --
+    // a later "https:" in the path cannot launder the URL.
+    assert!(!is_openable_url("file:///tmp/x?u=https://capsem.org"));
+    assert!(!is_openable_url("javascript:void('https://capsem.org')"));
+}

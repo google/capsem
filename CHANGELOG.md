@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Restricted the desktop shell's `open_url` command to http, https and mailto.
+  It is a Tauri command, so anything running in the webview could invoke it
+  with any string, and the page-side filter forwards any href carrying
+  `target="_blank"` without inspecting its scheme -- so `file:///` and
+  `javascript:` reached the OS opener unchecked. The allowlist is positive, so
+  a scheme nobody considered stays refused rather than being opened because it
+  looked harmless.
 - Covered the benchmark harness's JSON scrape of guest command output and the
   latency-summary edges. Both feed published numbers: a scrape that picks the
   wrong object reports a figure that was never measured, and a degenerate

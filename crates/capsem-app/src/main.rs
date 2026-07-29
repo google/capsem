@@ -52,9 +52,36 @@ async fn dump_frontend_logs() -> Result<String, String> {
         .ok_or_else(|| format!("no jsonl logs in {}", dir.display()))
 }
 
+/// Schemes the desktop shell is willing to hand to the OS opener.
+///
+/// `open_url` is a Tauri command, so anything running in the webview can call
+/// it with any string. The page-side filter in `App.svelte` is a routing
+/// convenience, not a control -- it forwards any href carrying
+/// `target="_blank"` regardless of scheme -- so the trust boundary is here.
+/// The list is positive: `file:` would hand the OS an arbitrary local path and
+/// `javascript:`/`data:` re-enter a context holding the gateway token, and
+/// neither is something a link in this UI ever needs.
+const OPENABLE_URL_SCHEMES: [&str; 3] = ["http", "https", "mailto"];
+
+/// True when `url` carries an allowed scheme and something after it.
+fn is_openable_url(url: &str) -> bool {
+    let Some((scheme, rest)) = url.split_once(':') else {
+        return false;
+    };
+    !rest.is_empty()
+        && OPENABLE_URL_SCHEMES
+            .iter()
+            .any(|allowed| scheme.eq_ignore_ascii_case(allowed))
+}
+
 #[tauri::command]
 async fn open_url(url: String, app: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
+    if !is_openable_url(&url) {
+        // Deliberately does not echo the URL: it is caller-controlled and this
+        // string is surfaced back into the webview console.
+        return Err("refused: only http, https and mailto URLs can be opened".into());
+    }
     app.opener()
         .open_url(&url, None::<&str>)
         .map_err(|e| e.to_string())
