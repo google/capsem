@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Covered the guest agent's auditd record parsers, which turn kernel audit
+  lines into the exec attribution the security ledger records. All four were
+  untested. The tests pin the sharp edges deliberately: field lookup is a
+  substring search, so the leading space in `" pid="` is load-bearing and
+  dropping it silently attributes the parent's pid to the child; `extract_execve_argv`
+  truncates at the first gap in argument numbering rather than mis-ordering;
+  and an absurd timestamp saturates instead of wrapping into a plausible value
+  that would reorder the ledger.
 - Covered builtin MCP tool-failure propagation. `extract_text` decides whether
   a refused tool call reaches the agent as a failure or as a successful result
   whose body happens to contain error prose; the `isError` branch exists

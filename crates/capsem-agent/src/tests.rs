@@ -1683,3 +1683,157 @@ fn parse_boot_timing_duration_at_exact_boundary() {
     assert!(result.is_empty());
     std::fs::remove_file(&path).ok();
 }
+
+// ── auditd record parsing ──────────────────────────────────────────
+//
+// These four parsers turn raw auditd lines into the exec attribution the
+// security ledger records: who ran what, when, under which pid. They are
+// string parsers over kernel-formatted text and had no tests. Everything below
+// pins observed behaviour, including the sharp edges, so a future rewrite has
+// to make a deliberate choice rather than silently changing what gets audited.
+
+const SYSCALL_LINE: &str = concat!(
+    "type=SYSCALL msg=audit(1713100000.001:42): arch=c000003e syscall=59 ",
+    "success=yes exit=0 ppid=100 pid=200 auid=1000 uid=0 gid=0 ",
+    "tty=pts0 comm=\"python3\" exe=\"/usr/bin/python3\" key=\"exec\""
+);
+
+#[test]
+fn audit_id_is_read_from_the_msg_envelope() {
+    assert_eq!(
+        extract_audit_id(SYSCALL_LINE).as_deref(),
+        Some("1713100000.001:42")
+    );
+}
+
+#[test]
+fn audit_id_is_none_when_the_envelope_is_absent_or_unterminated() {
+    for line in [
+        "",
+        "type=SYSCALL arch=c000003e",              // no msg=audit(
+        "type=SYSCALL msg=audit(1713100000.001:42", // no closing paren
+    ] {
+        assert_eq!(extract_audit_id(line), None, "{line:?}");
+    }
+}
+
+#[test]
+fn audit_timestamp_converts_seconds_to_microseconds() {
+    assert_eq!(
+        extract_audit_timestamp_us(SYSCALL_LINE),
+        Some(1_713_100_000_001_000)
+    );
+}
+
+#[test]
+fn audit_timestamp_is_none_when_the_seconds_field_is_not_a_number() {
+    for line in [
+        "msg=audit(not-a-number:42):",
+        "msg=audit(:42):",
+        "type=SYSCALL",
+    ] {
+        assert_eq!(extract_audit_timestamp_us(line), None, "{line:?}");
+    }
+}
+
+#[test]
+fn audit_timestamp_saturates_rather_than_wrapping_on_absurd_input() {
+    // Rust float->int casts saturate, so a nonsense timestamp cannot wrap into
+    // a plausible-looking value that would silently reorder the ledger.
+    assert_eq!(extract_audit_timestamp_us("msg=audit(-1.0:1):"), Some(0));
+    assert_eq!(
+        extract_audit_timestamp_us("msg=audit(1e30:1):"),
+        Some(u64::MAX)
+    );
+}
+
+#[test]
+fn field_keys_must_carry_their_leading_space() {
+    // extract_field is a substring search, so "pid=" also matches inside
+    // "ppid=". Every caller passes " pid=" for exactly this reason. If that
+    // space is ever dropped, the ledger silently attributes the parent's pid
+    // to the child.
+    assert_eq!(extract_field(SYSCALL_LINE, " pid=").as_deref(), Some("200"));
+    assert_eq!(extract_field(SYSCALL_LINE, " ppid=").as_deref(), Some("100"));
+    assert_eq!(
+        extract_field(SYSCALL_LINE, "pid=").as_deref(),
+        Some("100"),
+        "without the leading space the parent's pid wins -- keep the space"
+    );
+}
+
+#[test]
+fn field_values_stop_at_the_next_space_and_keep_their_quotes() {
+    assert_eq!(extract_field(SYSCALL_LINE, " uid=").as_deref(), Some("0"));
+    assert_eq!(
+        extract_field(SYSCALL_LINE, " comm=").as_deref(),
+        Some("\"python3\""),
+        "quotes are retained; callers trim them"
+    );
+}
+
+#[test]
+fn field_value_at_end_of_line_needs_no_trailing_space() {
+    assert_eq!(
+        extract_field("type=SYSCALL pid=7", " pid=").as_deref(),
+        Some("7")
+    );
+}
+
+#[test]
+fn field_is_none_for_an_absent_key_or_unterminated_quote() {
+    assert_eq!(extract_field(SYSCALL_LINE, " nosuch=").as_deref(), None);
+    assert_eq!(
+        extract_field("type=SYSCALL comm=\"unterminated", " comm=").as_deref(),
+        None,
+        "an unclosed quote yields nothing rather than the rest of the line"
+    );
+}
+
+#[test]
+fn execve_argv_is_rebuilt_in_order_and_unquoted() {
+    let line = concat!(
+        "type=EXECVE msg=audit(1713100000.001:42): argc=3 ",
+        "a0=\"python3\" a1=\"train.py\" a2=\"--epochs\""
+    );
+
+    assert_eq!(
+        extract_execve_argv(line).as_deref(),
+        Some("python3 train.py --epochs")
+    );
+}
+
+#[test]
+fn execve_argv_is_none_when_the_record_carries_no_arguments() {
+    assert_eq!(
+        extract_execve_argv("type=EXECVE msg=audit(1713100000.001:42): argc=0"),
+        None
+    );
+}
+
+#[test]
+fn execve_argv_stops_at_the_first_gap_in_the_argument_numbering() {
+    // auditd splits over-long arguments into a1_len/a1[0] rather than a plain
+    // a1=, which leaves a hole. The scan is sequential, so it stops there and
+    // the ledger records a truncated command line rather than a wrong one.
+    let line = concat!(
+        "type=EXECVE msg=audit(1713100000.001:42): argc=3 ",
+        "a0=\"python3\" a2=\"--epochs\""
+    );
+
+    assert_eq!(
+        extract_execve_argv(line).as_deref(),
+        Some("python3"),
+        "a gap truncates argv; it must not skip ahead and mis-order arguments"
+    );
+}
+
+#[test]
+fn execve_argv_passes_hex_encoded_arguments_through_unchanged() {
+    // auditd hex-encodes any argument containing a space or special character.
+    // Nothing decodes it today, so the ledger stores the hex form; asserting it
+    // keeps the behaviour visible instead of surprising.
+    let line = "type=EXECVE msg=audit(1713100000.001:42): argc=2 a0=\"sh\" a1=2D6C61";
+
+    assert_eq!(extract_execve_argv(line).as_deref(), Some("sh 2D6C61"));
+}
