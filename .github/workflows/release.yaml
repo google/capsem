@@ -1019,6 +1019,23 @@ jobs:
       - name: Run shared native and update glow-up module
         run: just _test-glowup
 
+      # This gate blocks publication, so a failure here has to be diagnosable
+      # from outside the runner. Without the session logs a Linux-only failure
+      # is invisible to a macOS developer, which is exactly how
+      # TestRun::test_run_returns_output stalled the 1.6 release: reproducibly
+      # red here, green locally, and no process.log to explain the difference.
+      - name: Upload pairing evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: binary-pairing-evidence-${{ github.run_attempt }}
+          path: |
+            test-artifacts/
+            target/test-home/.capsem/run/sessions/
+            target/test-home/.capsem/logs/
+          retention-days: 7
+          if-no-files-found: warn
+
   create-release:
     needs: [test-native-macos-package, test-native-linux-package, test-binary-pairing]
     runs-on: ubuntu-latest
