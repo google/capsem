@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Covered builtin MCP tool-failure propagation. `extract_text` decides whether
+  a refused tool call reaches the agent as a failure or as a successful result
+  whose body happens to contain error prose; the `isError` branch exists
+  because it once did the latter, and none of it was tested. Both refusal
+  channels are now pinned, along with the precedence between them and the
+  sharp edge that a non-boolean `isError` is not a refusal signal.
 - Covered the guest control-channel leak detector adversarially.
   `looks_like_ipc_frame` is the only signal that a guest is writing IPC
   protocol bytes into its own PTY stream, and it was asserted only negatively.
