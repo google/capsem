@@ -4829,6 +4829,7 @@ async fn handle_exec(
             stdout,
             stderr,
             exit_code,
+            truncated,
             ..
         } => Ok(Json(ExecResponse {
             stdout: String::from_utf8(stdout)
@@ -4836,6 +4837,7 @@ async fn handle_exec(
             stderr: String::from_utf8(stderr)
                 .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
             exit_code,
+            truncated,
         })),
         _ => Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -12179,6 +12181,7 @@ async fn handle_run(
             stdout,
             stderr,
             exit_code,
+            truncated,
             ..
         }) => Ok(Json(ExecResponse {
             stdout: String::from_utf8(stdout)
@@ -12186,6 +12189,7 @@ async fn handle_run(
             stderr: String::from_utf8(stderr)
                 .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
             exit_code,
+            truncated,
         })),
         Ok(_) => Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,

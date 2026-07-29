@@ -286,6 +286,7 @@ fn exec_response_roundtrip() {
         stdout: "hello\n".into(),
         stderr: "".into(),
         exit_code: 0,
+        truncated: false,
     };
     let json = serde_json::to_string(&r).unwrap();
     let r2: ExecResponse = serde_json::from_str(&json).unwrap();
@@ -339,4 +340,33 @@ fn error_response_roundtrip() {
     let json = serde_json::to_string(&r).unwrap();
     let r2: ErrorResponse = serde_json::from_str(&json).unwrap();
     assert!(r2.error.contains("not found"));
+}
+
+#[test]
+fn exec_response_carries_truncation_to_the_client() {
+    let r = ExecResponse {
+        stdout: "first 10 MiB".into(),
+        stderr: String::new(),
+        exit_code: 0,
+        truncated: true,
+    };
+
+    let json = serde_json::to_string(&r).unwrap();
+    let back: ExecResponse = serde_json::from_str(&json).unwrap();
+
+    assert!(
+        back.truncated,
+        "a capped result must not reach the client looking complete"
+    );
+}
+
+#[test]
+fn exec_response_from_an_older_service_decodes_as_not_truncated() {
+    // A client built with the field talking to a service without it must read
+    // absence as "complete", never as truncated.
+    let back: ExecResponse =
+        serde_json::from_str(r#"{"stdout":"ok","stderr":"","exit_code":0}"#).unwrap();
+
+    assert!(!back.truncated);
+    assert_eq!(back.stdout, "ok");
 }

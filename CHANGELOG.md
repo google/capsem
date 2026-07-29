@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Surfaced exec output truncation in the service /exec response, so an HTTP
+  caller can tell a capped result from a complete one.
 - Carried exec output truncation across the process/service IPC boundary, so a
   capped result can no longer reach a caller looking like a complete one. The
   field is `#[serde(default)]`, so a producer built before it existed still

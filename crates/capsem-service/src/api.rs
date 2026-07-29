@@ -655,6 +655,10 @@ pub struct ExecResponse {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+    /// The guest produced more output than the per-exec cap allows, so
+    /// `stdout` is a prefix. Defaulted so an older client still decodes.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
