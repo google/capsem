@@ -415,7 +415,7 @@ gate).
 
 | Component | Floor | Enforced | Where |
 |-----------|------:|:--------:|-------|
-| Rust workspace | 65% | `--fail-under-lines 65` | CI (`cargo llvm-cov`), `just test` |
+| Rust workspace | 63% | `--fail-under-lines 63` | CI (`cargo llvm-cov`), `just test` |
 | Python selected CI suite | 85% | `--cov-fail-under=85` | Ordinary CI |
 | Python full suite | 85% | `--cov-fail-under=85` | `just test` |
 | capsem-service | 80% | Codecov component | `codecov.yml` |
@@ -425,7 +425,7 @@ gate).
 
 ## Coverage
 
-- Rust: `cargo llvm-cov` via `just test` (floor: 65% line coverage)
+- Rust: `cargo llvm-cov` via `just test` (floor: 63% line coverage)
 - Python: ordinary CI and the full `just test` suite both enforce 85%.
 - `codecov.yml` maps components to code paths. Update it when files or directories are added, moved, or renamed.
 

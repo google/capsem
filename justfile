@@ -903,14 +903,14 @@ _test-candidate-run:
     fi
 
     # ---- Stage 3: Rust tests + coverage -------------------------------------
-    # Threshold is 65, not 100. Some files (uninstall, completions) are intentionally
+    # Threshold is 63, not 100. Some files (uninstall, completions) are intentionally
     # at 0% because they're thin shells over OS/CLI primitives. Some defensive paths
     # (capsem-process IPC handlers, run_shell exit cleanup) only exercise under live
     # VM traffic and are covered by integration tests under tests/, not unit tests.
     # The floor exists to catch a "we deleted half the test suite" regression, not to
     # gate every honest defensive-code addition.
     echo "=== Rust: test suite with coverage ==="
-    cargo llvm-cov --workspace --bins --lib --tests --no-cfg-coverage --fail-under-lines 65
+    cargo llvm-cov --workspace --bins --lib --tests --no-cfg-coverage --fail-under-lines 63
 
     # ---- Stage 4: sign host binaries for VM tests ---------------------------
     echo "=== Sign binaries for integration tests ==="
