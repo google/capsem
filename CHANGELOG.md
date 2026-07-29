@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Covered the tray against the status casing a real gateway sends. The gateway
+  serializes VM state capitalized ("Running", "Suspended"), but every tray test
+  used the lowercase form, leaving the production shape the one thing nothing
+  exercised; a regression in either case-folding site would have rendered a live
+  service as unavailable and stripped Connect from every running VM.
 - Covered the shared mock server's request parsers. It is the single fixture
   behind benchmarks, doctor, protocol replay, gateway integration and Ironbank,
   and several of its parsers fail into a default rather than an error -- junk

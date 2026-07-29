@@ -546,3 +546,65 @@ fn spec_sessions_header_disabled_with_mixed_vms() {
         .unwrap();
     assert!(matches!(hdr, MenuEntry::Item { enabled: false, .. }));
 }
+
+// ── Status casing from a real gateway ──────────────────────────────
+//
+// The gateway serializes VmState through its Display impl, which is
+// capitalized: "Running", "Suspended", "Stopped". Every test above uses the
+// lowercase form, so the shape the tray actually receives in production was
+// the one shape nothing exercised. Both comparison sites fold case on purpose;
+// if either regressed to `==`, a live service would render as unavailable and
+// every running VM would lose its Connect entry.
+
+#[test]
+fn service_availability_folds_case_as_the_gateway_capitalizes_it() {
+    for form in ["Running", "running", "RUNNING", "RuNnInG"] {
+        assert!(
+            service_available(&make_service_status(form, vec![])),
+            "{form:?} is a live service"
+        );
+    }
+}
+
+#[test]
+fn service_availability_rejects_every_other_state() {
+    for form in ["Stopped", "stopped", "starting", "", "run", "running "] {
+        assert!(
+            !service_available(&make_service_status(form, vec![])),
+            "{form:?} must not read as available"
+        );
+    }
+}
+
+#[test]
+fn a_capitalized_running_vm_still_offers_connect() {
+    let spec = menu_spec(&make_status(vec![named_vm("vm1", "dev", "Running")]));
+
+    assert!(
+        collect_ids(&spec).iter().any(|id| id == "connect:vm1"),
+        "the gateway's own casing must not hide Connect: {:?}",
+        collect_ids(&spec)
+    );
+}
+
+#[test]
+fn a_capitalized_suspended_vm_still_offers_resume() {
+    let spec = menu_spec(&make_status(vec![named_vm("vm2", "dev", "Suspended")]));
+
+    assert!(
+        collect_ids(&spec).iter().any(|id| id == "resume:vm2"),
+        "expected a resume entry, got {:?}",
+        collect_ids(&spec)
+    );
+}
+
+#[test]
+fn an_unrecognised_status_offers_no_reachability_action() {
+    // A future or garbled state must not be guessed into Connect, which would
+    // dial a VM that is not there.
+    let spec = menu_spec(&make_status(vec![named_vm("vm3", "dev", "Provisioning")]));
+    let ids = collect_ids(&spec);
+
+    assert!(!ids.iter().any(|id| id == "connect:vm3"), "{ids:?}");
+    assert!(!ids.iter().any(|id| id == "resume:vm3"), "{ids:?}");
+}
