@@ -89,6 +89,16 @@ def tart_run_command(
     ]
 
 
+# A freshly cloned guest boots cold, and on a loaded host that takes longer than
+# a warm boot. Two separate waits observe it -- reaching SSH at all, and getting
+# an authenticated command accepted -- and at 180s each they failed about every
+# other run: cold after an idle gap, fine when a previous boot had just warmed
+# the image. Both reported an unreachable guest rather than a slow one. One
+# constant so they cannot drift apart again; still short enough to fail a
+# genuinely broken VM.
+GUEST_READY_TIMEOUT = 600
+
+
 def tart_ip_command(vm_name: str, wait_seconds: int = 300) -> list[str]:
     return ["tart", "ip", vm_name, "--wait", str(wait_seconds)]
 
@@ -194,13 +204,7 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-# Each readiness run clones the base image and boots that clone for the first
-# time, which on a loaded host takes longer than a warm boot does. At 180s this
-# failed roughly every other run -- cold after an idle gap, fine when a previous
-# boot had just warmed the image -- and reported it as an unreachable guest
-# rather than a slow one. The bound still fails a genuinely broken VM, just not
-# a merely slow one.
-def wait_for_ssh(ip: str, timeout: int = 600) -> None:
+def wait_for_ssh(ip: str, timeout: int = GUEST_READY_TIMEOUT) -> None:
     deadline = time.monotonic() + timeout
     last_error = ""
     while time.monotonic() < deadline:
@@ -222,7 +226,7 @@ def run_authenticated_guest(
     remote: str,
     *,
     timeout: int = 1800,
-    readiness_timeout: int = 180,
+    readiness_timeout: int = GUEST_READY_TIMEOUT,
     run: Run = subprocess.run,
     sleep: Callable[[float], None] = time.sleep,
 ) -> subprocess.CompletedProcess[str]:
