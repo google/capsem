@@ -25,8 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to reach that code walked the tests first. Bodies moved verbatim -- the only
   content edits are three `include_str!` paths that follow their file one
   directory deeper.
-- Standardized the blocking Python coverage floor at an exact 85% in ordinary
-  CI and the complete local release gate.
 
 ### Fixed
 
@@ -169,6 +167,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `crates/capsem-process/src/job_store/` case-insensitively and silently:
   the tree still built locally, and a fresh clone would have failed on an
   unresolved `mod tests;`.
+
+## [1.6.1785322564] - 2026-07-29
+
+### Changed
+
+- Standardized the blocking Python coverage floor at an exact 85% in ordinary
+  CI and the complete local release gate.
+
+### Fixed
+
+- Corrected the `CLAUDE.md` project layout against the real tree: `guest/config/`
+  has not existed since the ontology cleanup, so profile definitions now point at
+  `config/profiles/<id>/` and are named as runtime product config rather than
+  developer skill source, `src/capsem/builder/` is described as the admin-driven
+  backend it became, and the four shipped crates plus `config/`, `tests/`, and
+  `scripts/` are no longer missing from the map.
+- Repointed the MITM skill's static CA keypair at `security/keys/`, where
+  `net/cert_authority.rs` actually reads it from, instead of a `config/` path
+  that the five-directory config contract would never allow.
 - Retried transient release-catalog reads in the runtime preflight instead of
   letting one reset CDN connection fail the first gating step of both release
   lanes. Authoritative 4xx answers still fail closed on the first attempt.

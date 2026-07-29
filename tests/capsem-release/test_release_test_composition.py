@@ -548,12 +548,14 @@ def test_standalone_local_glowup_materializes_config_without_release_builders() 
 
     release_branch = runner.index('if [ -n "${CAPSEM_RELEASE_PACKAGE:-}" ]; then')
     local_branch = runner.index("else", release_branch)
-    local_materialize = runner.index("just _materialize-config", local_branch)
-    first_cross_compile = runner.index("just _cross-compile arm64", local_branch)
 
-    assert 'LOCAL_CONFIG_ROOT="target/config"' in runner
-    assert 'find "$LOCAL_CONFIG_ROOT/profiles"' in runner
-    assert local_branch < local_materialize < first_cross_compile
+    # repack-deb.sh reads the materialized catalog from target/config, so the
+    # package rail owns producing it. Asserting the dependency rather than a
+    # call before each `just _cross-compile` is what stops the requirement from
+    # being silently dropped by a new caller -- ordinary CI's install gate hit
+    # exactly that, failing with "no materialized profiles found".
+    assert "_materialize-config" in _recipe("_cross-compile").splitlines()[0]
+    assert local_branch < runner.index("just _cross-compile arm64", local_branch)
     assert "just _build-kernel" not in runner
     assert "just _build-rootfs" not in runner
     assert "just _build-images" not in runner

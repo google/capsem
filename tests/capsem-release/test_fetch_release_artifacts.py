@@ -4,7 +4,9 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
+import tomllib
 
 import blake3
 import pytest
@@ -1480,3 +1482,35 @@ def test_release_profile_axis_rejects_source_profile_fallback(
 
     with pytest.raises(ValueError, match="does not match the selected manifest"):
         PROFILE_AXIS.release_test_profiles(profiles_dir.parent, manifest)
+
+
+def test_staged_profile_keeps_everything_outside_the_architecture_table(
+    tmp_path: Path,
+) -> None:
+    """Scoping must drop unstaged architectures and nothing else -- the profile
+    identity, revision, and rules still have to survive into the package."""
+    profile = tmp_path / "profile.toml"
+    shutil.copy2(ROOT / "config/profiles/co-work/profile.toml", profile)
+    before = tomllib.loads(profile.read_text(encoding="utf-8"))
+    assert {"arm64", "x86_64"} <= set(before["assets"]["arch"])
+
+    STAGE._scope_profile_to_arch(profile, "x86_64", "co-work")
+
+    after = tomllib.loads(profile.read_text(encoding="utf-8"))
+    assert set(after["assets"]["arch"]) == {"x86_64"}
+    assert after["assets"]["arch"]["x86_64"] == before["assets"]["arch"]["x86_64"]
+    assert {key: value for key, value in after.items() if key != "assets"} == {
+        key: value for key, value in before.items() if key != "assets"
+    }
+
+
+def test_staging_refuses_a_profile_without_the_host_architecture(
+    tmp_path: Path,
+) -> None:
+    """A profile that cannot serve this host is a staging error, not something
+    to silently emit an empty architecture table for."""
+    profile = tmp_path / "profile.toml"
+    shutil.copy2(ROOT / "config/profiles/co-work/profile.toml", profile)
+
+    with pytest.raises(ValueError, match="declares no riscv64 assets"):
+        STAGE._scope_profile_to_arch(profile, "riscv64", "co-work")

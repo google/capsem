@@ -43,7 +43,7 @@ so every merged commit retains a post-merge signal and Codecov baseline.
 |-----|--------|--------|----------------------|
 | `test-linux` | ubuntu-24.04-arm | KVM-backend unit tests + coverage | Linux-only cfg regressions; KVM absent is a warning, not a failure |
 | `test` | macos-14 | Full Rust unit+integration, frontend, Python suites, schema drift, cross-compile check | Missing JS/Python dep installs for suites that shell out (see gotcha below); schema drift |
-| `test-install` | ubuntu-24.04-arm | Docker install layout + systemd e2e | Dockerfile/install-script drift |
+| `test-install` | ubuntu-24.04 | Docker install layout + systemd e2e (builds the x86_64 package) | Dockerfile/install-script drift; Linux bind-mount ownership, which macOS cannot reproduce |
 | `docs-build` / `site-build` / `release-site-build` | ubuntu-latest | Astro builds + release-site contract | pnpm lockfile drift; release-channel fixture drift |
 
 Gotcha: Python suites in the macOS `test` job shell out to `pnpm --dir
@@ -53,6 +53,20 @@ found` means a workflow install step is missing, not a test bug. The shared
 web-surface script must fail immediately with a message naming the `Install
 release site dependencies` step when `release-site/node_modules/.bin/astro`
 is absent.
+
+That whole class is now mechanized, so it should never cost a CI round-trip
+again: `tests/capsem-release/test_release_test_composition.py` asserts every
+job in `ci.yaml`, `release.yaml`, and `release-assets.yaml` installs the tools
+its own steps invoke, following justfile recipe dependencies transitively. It
+runs in `_test-fast`, so the gap fails locally in seconds. Local `just test`
+cannot catch provisioning drift any other way -- it runs where `just`, `pnpm`,
+`node`, and `uv` are already on PATH, while CI provisions per job.
+
+Its reachability deliberately over-approximates and does not model shell
+branches. That bias is safe for "install this tool" and unsafe for "declare a
+cache": `test-linux` reaches `_pnpm-install` statically but exits before it,
+so declaring `cache: pnpm` there fails the post-job save with "Path(s) ... do
+not exist". Provision generously; cache only where the store is observed.
 
 The independently executable `_test-fast` module is the first local and CI
 gate. It owns YAML/workflow and source syntax, source contracts, Clippy,

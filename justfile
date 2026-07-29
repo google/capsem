@@ -251,7 +251,7 @@ build-all profile="debug":
     just build-docs
 
 # Start service daemon + boot temporary VM + shell (~10s after first build)
-shell: _check-assets _pack-initrd _materialize-config _ensure-service
+shell: _prepared-runtime _ensure-service
     #!/bin/bash
     set -euo pipefail
     source {{justfile_directory()}}/scripts/lib/exec_lock.sh
@@ -259,7 +259,7 @@ shell: _check-assets _pack-initrd _materialize-config _ensure-service
     {{cli_binary}} shell
 
 # Start capsem-service daemon (builds, signs, launches or reuses running instance)
-run-service: _check-assets _pack-initrd _materialize-config _ensure-service
+run-service: _prepared-runtime _ensure-service
 
 # Execute a command in a fresh temporary VM (auto-provisioned and destroyed)
 # Usage: just exec "echo hello"   or   just exec "ls -la"
@@ -657,9 +657,10 @@ _test-candidate:
     just _install-tools
     just _clean-stale
     just _check-generated-settings
-    just _check-assets
-    just _pack-initrd
-    just _materialize-config
+    # Clear stale VM performance recordings once per gate run, so the modules
+    # below accumulate one complete set instead of overwriting each other.
+    rm -rf "{{justfile_directory()}}/target/test-benchmarks"
+    just _prepared-runtime
     just _test-static
     just _test-artifacts
     just _test-functional
@@ -754,7 +755,11 @@ _test-candidate-run:
     export CAPSEM_BENCHMARK_OUTPUT_ROOT="{{justfile_directory()}}/target/test-benchmarks"
     export COVERAGE_FILE="{{justfile_directory()}}/target/coverage/.coverage"
     mkdir -p "$(dirname "$COVERAGE_FILE")"
-    rm -rf "$CAPSEM_BENCHMARK_OUTPUT_ROOT"
+    # Do NOT clear the benchmark root here. `just test` runs several modules
+    # through this recipe in sequence, and the VM performance recordings are
+    # written by `functional` -- a later `glowup` wiping them is why a fortnight
+    # of full gates left target/test-benchmarks empty and froze the published
+    # arm64 history at 1.3. The gate entry point owns clearing it once.
     # Lockfile lives OUTSIDE $CAPSEM_HOME so it survives `rm -rf $CAPSEM_HOME`
     # below. Acquired BEFORE the wipe: if a second `just test` were to run
     # past this line, the first's fd would be pinned to an unlinked inode
@@ -1112,19 +1117,10 @@ _test-candidate-run:
                 --package-ready
     else
     # A direct local module run has no earlier artifact stage to materialize
-    # package-owned profile configuration. Reuse the checked-in materializer
-    # against the already-present local assets; release CI enters the branch
-    # above with its explicitly staged pulled profile/config cohort.
-    LOCAL_CONFIG_ROOT="target/config"
-    LOCAL_PROFILE=$(
-        find "$LOCAL_CONFIG_ROOT/profiles" \
-            -mindepth 2 -maxdepth 2 -name profile.toml -print -quit \
-            2>/dev/null || true
-    )
-    if [ -z "$LOCAL_PROFILE" ]; then
-        echo "=== Materialize local runtime config for standalone glow-up ==="
-        just _materialize-config
-    fi
+    # package-owned profile configuration. `_cross-compile` now depends on the
+    # materializer itself, so this branch no longer has to remember it; release
+    # CI enters the branch above with its explicitly staged profile/config
+    # cohort and never reaches the package rail at all.
     echo "=== Cross-compile Linux releases (Docker, both arches) ==="
     just _cross-compile arm64
     uv run python scripts/docker-storage-policy.py release \
@@ -1194,6 +1190,27 @@ _build-host-image:
         -t capsem-host-builder:latest \
         -f docker/Dockerfile.host-builder \
         docker/
+    # On Linux CI the checkout's owner is not this image's user, so git rejects
+    # /src as "dubious ownership" -- and crates/capsem/build.rs answers that by
+    # embedding "unknown" instead of failing, which is how a binary with no
+    # source identity reaches the provenance check. Forcing a foreign UID
+    # reproduces it here: git compares st_uid to euid in userspace, so the
+    # check works even on macOS bind mounts, which do not enforce write
+    # permission and therefore cannot surface the rest of that family.
+    ROOT="{{justfile_directory()}}"
+    EXPECTED=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo "")
+    if [ -n "$EXPECTED" ]; then
+        ACTUAL=$(docker run --rm -v "$ROOT:/src" -w /src --user 4242:4242 \
+            capsem-host-builder:latest git rev-parse --short HEAD 2>/dev/null || echo "")
+        if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "ERROR: capsem-host-builder cannot read /src as a non-owner user." >&2
+            echo "       Linux package builds will embed an 'unknown' build hash." >&2
+            echo "       Fix: keep 'git config --system --add safe.directory /src'" >&2
+            echo "       in docker/Dockerfile.host-builder." >&2
+            exit 1
+        fi
+        echo "  [pass] host-builder reads /src as a non-owner user ($ACTUAL)"
+    fi
 
 # Execute the portable Linux host-crate suite through one checked-in runner.
 # Linux CI calls this recipe natively. Mac-local `just test` calls it through
@@ -1326,7 +1343,11 @@ _release-deferred-install-target:
     @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
         --boundary before-packages --rail package
 
-_cross-compile arch="": _clean-stale _check-assets _generate-settings
+# repack-deb.sh below reads the materialized profile catalog from target/config,
+# so this recipe owns filling it rather than leaving each call site to remember.
+# Release CI never enters here: it consumes an already-built package with its
+# staged profile cohort, so nothing it pulled can be clobbered.
+_cross-compile arch="": _clean-stale _check-assets _generate-settings _materialize-config
     #!/bin/bash
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
@@ -1534,9 +1555,7 @@ smoke:
     #!/bin/bash
     set -euo pipefail
     just _test-fast
-    just _check-assets
-    just _pack-initrd
-    just _materialize-config
+    just _prepared-runtime
     # Smoke runs against an isolated CAPSEM_HOME so it doesn't stomp on a
     # locally installed capsem daemon. _ensure-service is invoked below
     # (not as a just dep) so it inherits the exported env vars.
@@ -1969,6 +1988,12 @@ _gate-install:
     docker exec "$CONTAINER" mkdir -p "${INSTALL_OWNED_PATHS[@]}"
     docker exec "$CONTAINER" \
         chown -R capsem:capsem "${INSTALL_OWNED_PATHS[@]}"
+    # Unlinking target/install-test-* needs write permission on their parent,
+    # not on the entries themselves. On Linux /src/target belongs to the host
+    # user, which is not the container's capsem, so the staging step's `rm -rf`
+    # fails with "Permission denied" before it can restage. Grant the directory
+    # entry alone -- a recursive chown here would walk every cargo artifact.
+    docker exec "$CONTAINER" chown capsem:capsem /src/target
     PACKAGE_VERSION=$(docker exec "$CONTAINER" dpkg-deb -f "$CONTAINER_DEB" Version)
     test "$PACKAGE_VERSION" = "$VERSION"
     echo "Installing exact release package via dpkg: $DEB"
@@ -2055,7 +2080,7 @@ _gate-install:
     "$ROOT/scripts/ensure-docker-space.sh" install
     echo "Running install e2e tests..."
     docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 -e CAPSEM_DEB_INSTALLED=1 -e CAPSEM_BIN_SRC=/usr/bin -e CAPSEM_TEST_ASSET_MANIFEST=/home/capsem/.capsem/assets/manifest.json "$CONTAINER" bash -c \
-        "mkdir -p /home/capsem/tmp && cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test TMPDIR=/home/capsem/tmp uv run python -m pytest tests/capsem-install/ -v --tb=short"
+        "mkdir -p /home/capsem/tmp && cd /src && UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test TMPDIR=/home/capsem/tmp uv run python -m pytest tests/capsem-install/ -v --tb=short -o cache_dir=/home/capsem/.pytest_cache"
     if [ "$LINUX_VM_PROOF" -eq 1 ]; then
         echo "Running Linux native release glow-up (install, channel switch, upgrade)..."
         docker exec -u capsem -e XDG_RUNTIME_DIR=/run/user/1000 "$CONTAINER" bash -c \
@@ -2368,3 +2393,9 @@ _materialize-config:
     set -euo pipefail
     ROOT="{{justfile_directory()}}"
     bash "$ROOT/scripts/materialize-config.sh"
+
+# One bootable local runtime: verified assets, the initrd repacked around the
+# current guest binaries, and a materialized profile catalog. `test` and
+# `smoke` both need exactly this before they can run anything against a VM, so
+# they name it once instead of repeating the sequence.
+_prepared-runtime: _check-assets _pack-initrd _materialize-config

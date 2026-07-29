@@ -180,7 +180,18 @@ def repository_files() -> Iterable[Path]:
             capture_output=True,
         )
     except (FileNotFoundError, subprocess.CalledProcessError):
-        ignored_parts = {".astro", ".git", ".venv", "dist", "node_modules", "target"}
+        # `.claude` is agent-local state and holds nested worktree checkouts of
+        # this same repository. Scanning them makes the guard police another
+        # branch's history and fail on strings this tree never contained.
+        ignored_parts = {
+            ".astro",
+            ".claude",
+            ".git",
+            ".venv",
+            "dist",
+            "node_modules",
+            "target",
+        }
         yield from (
             path
             for path in ROOT.rglob("*")
@@ -198,7 +209,10 @@ def repository_files() -> Iterable[Path]:
             relative = path.relative_to(ROOT)
             if any(part.startswith(".sprinty") for part in relative.parts):
                 continue
-            if any(part in {".astro", "dist", "node_modules", "target"} for part in relative.parts):
+            if any(
+                part in {".astro", ".claude", "dist", "node_modules", "target"}
+                for part in relative.parts
+            ):
                 continue
             if path.is_file():
                 yield path

@@ -10,7 +10,10 @@ import platform
 import shutil
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
+
+import tomli_w
 from typing import Any, cast
 from urllib.parse import unquote, urljoin, urlparse
 
@@ -179,6 +182,34 @@ def _active_profile_architectures(
     return selected
 
 
+def _scope_profile_to_arch(path: Path, arch: str, profile_id: str) -> None:
+    """Describe only the architecture these inputs actually staged.
+
+    Release inputs are pulled one architecture at a time, but the published
+    profile.toml describes every architecture the profile supports. Copying it
+    verbatim leaves entries whose images were never staged, and
+    `capsem-admin profile validate --materialized` then rejects the catalog --
+    correctly, since nothing on this host can resolve them. The staged catalog
+    must match the staged assets.
+
+    Only the copy under the config root is rewritten. The release manifest's
+    config URLs point at the pulled input tree, so the digests it records still
+    describe untouched bytes.
+    """
+    document = tomllib.loads(path.read_text(encoding="utf-8"))
+    architectures = document.get("assets", {}).get("arch")
+    if not isinstance(architectures, dict):
+        return
+    if arch not in architectures:
+        raise ValueError(
+            f"staged profile {profile_id} declares no {arch} assets to materialize"
+        )
+    if set(architectures) == {arch}:
+        return
+    document["assets"]["arch"] = {arch: architectures[arch]}
+    path.write_text(tomli_w.dumps(document), encoding="utf-8")
+
+
 def stage_profiles(
     input_dir: Path,
     assets_dir: Path,
@@ -256,6 +287,7 @@ def stage_profiles(
         expected_profile = Path("profiles") / profile_id / "profile.toml"
         if expected_profile not in staged_config_paths:
             raise ValueError(f"release profile {profile_id}/{arch} lacks {expected_profile}")
+        _scope_profile_to_arch(config_root / expected_profile, arch, profile_id)
 
         images = architecture.get("images")
         if not isinstance(images, list):
