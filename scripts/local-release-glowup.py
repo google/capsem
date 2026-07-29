@@ -35,6 +35,7 @@ import shlex
 import socketserver
 import subprocess
 import sys
+import tempfile
 import threading
 from typing import cast
 import urllib.request
@@ -464,6 +465,11 @@ def main() -> int:
                     stable_package=stable_deb,
                     nightly_package=nightly_deb,
                     package_architecture=arch,
+                    packaged_identity=(
+                        packaged_manifest_metadata(stable_deb)
+                        if args.package_ready
+                        else None
+                    ),
                     evidence_out=evidence_path,
                 )
                 installed = json.loads(evidence_path.read_text(encoding="utf-8"))
@@ -1915,6 +1921,32 @@ def exact_installed_transition_rows(
     return transitions
 
 
+def packaged_manifest_metadata(deb: Path) -> dict[str, str]:
+    """The channel identity the package itself declares.
+
+    A package-ready run stages the exact publishable .deb rather than repacking
+    it, so a fresh install of that package records the channel it was built for.
+    The hermetic server can still redirect later `capsem update --channel`
+    transitions, but it cannot rewrite this: the install-manifest override
+    deliberately accepts only local file:// targets, so an install-time request
+    can never repoint an installed product at an arbitrary HTTP endpoint.
+    """
+    with tempfile.TemporaryDirectory() as extracted:
+        subprocess.run(["dpkg-deb", "-x", str(deb), extracted], check=True)
+        metadata = (
+            Path(extracted)
+            / "usr/local/share/capsem/assets/manifest-metadata.json"
+        )
+        if not metadata.is_file():
+            raise SystemExit(f"package has no manifest metadata to declare: {deb}")
+        packaged = json.loads(metadata.read_text(encoding="utf-8"))
+    url = packaged.get("manifest_url")
+    channel = packaged.get("channel")
+    if not isinstance(url, str) or not isinstance(channel, str):
+        raise SystemExit(f"package manifest metadata declares no channel identity: {deb}")
+    return {"manifest_url": url, "channel": channel}
+
+
 def run_installed_glowup(
     *,
     install_script_url: str,
@@ -1926,8 +1958,22 @@ def run_installed_glowup(
     stable_package: Path,
     nightly_package: Path,
     package_architecture: str,
+    packaged_identity: dict[str, str] | None = None,
     evidence_out: Path | None = None,
 ) -> None:
+    # A fresh install records what the package declares. Only a repacked
+    # fixture carries the hermetic URLs; the exact publishable package keeps
+    # its own channel, and asserting otherwise would demand that install-time
+    # input override it -- the very redirect the resolver refuses.
+    fresh_manifest_url = (
+        packaged_identity["manifest_url"] if packaged_identity else stable_manifest_url
+    )
+    fresh_stable_channel = packaged_identity["channel"] if packaged_identity else "stable"
+    fresh_nightly_manifest_url = (
+        packaged_identity["manifest_url"] if packaged_identity else nightly_manifest_url
+    )
+    fresh_nightly_channel = packaged_identity["channel"] if packaged_identity else "nightly"
+
     installed_evidence = (
         evidence_out or PROJECT_ROOT / "target" / "local-release-glowup-evidence.json"
     )
@@ -1972,18 +2018,18 @@ rm -rf "$HOME/.capsem"
 curl -fsSL {install_script_url} | CAPSEM_CHANNEL=stable CAPSEM_RELEASE_BASE_URL={release_base_url} sh
 test -x "$HOME/.capsem/bin/capsem"
 test -f "$HOME/.capsem/assets/manifest.json"
-grep -F {stable_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
+grep -F {fresh_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/assets/manifest-metadata.json"
 stable_manifest_sha=$(sha256sum "$HOME/.capsem/assets/manifest.json" | cut -d' ' -f1)
 probe_installed_transition fresh-stable \
-  {stable_manifest_url} stable {package_version} \
+  {fresh_manifest_url} {fresh_stable_channel} {package_version} \
   {shlex.quote(str(stable_package))} linux {shlex.quote(package_architecture)}
 test -f "$HOME/.capsem/logs/install.log"
-grep -F "event=manifest_source source={stable_manifest_url}" "$HOME/.capsem/logs/install.log"
+grep -F "event=manifest_source source={fresh_manifest_url}" "$HOME/.capsem/logs/install.log"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/logs/install.log"
 grep -F "event=assets_hydrated" "$HOME/.capsem/logs/install.log"
 grep -F "event=service_install_invoked" "$HOME/.capsem/logs/install.log"
-check_update_log asset_update_complete {stable_manifest_url}
+check_update_log asset_update_complete {fresh_manifest_url}
 dpkg-query -W -f='${{Version}}' capsem | grep -Fx {package_version}
 CAPSEM_HOME="$HOME/.capsem" CAPSEM_RUN_DIR="$HOME/.capsem/run" CAPSEM_RELEASE_CHANNELS_URL="$release_channels_url" "$HOME/.capsem/bin/capsem" update --yes --channel nightly
 grep -F {nightly_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
@@ -2032,10 +2078,10 @@ check_origin_channel corp {corp_manifest_url} true
 sudo apt-get remove --purge -y capsem || true
 rm -rf "$HOME/.capsem"
 curl -fsSL {install_script_url} | CAPSEM_CHANNEL=nightly CAPSEM_RELEASE_BASE_URL={release_base_url} sh
-grep -F {nightly_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
+grep -F {fresh_nightly_manifest_url} "$HOME/.capsem/assets/manifest-metadata.json"
 grep -F '"package_version": "{package_version}"' "$HOME/.capsem/assets/manifest-metadata.json"
 probe_installed_transition final-nightly \
-  {nightly_manifest_url} nightly {package_version} \
+  {fresh_nightly_manifest_url} {fresh_nightly_channel} {package_version} \
   {shlex.quote(str(nightly_package))} linux {shlex.quote(package_architecture)}
 cp "$EVIDENCE_DIR/final-nightly-installed.json" {evidence_arg}
 """
