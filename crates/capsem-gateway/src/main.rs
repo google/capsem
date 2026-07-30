@@ -86,13 +86,7 @@ async fn main() -> Result<()> {
     // Surface any gateway panic in the log instead of letting it vanish into
     // the void -- under test load a panicked task would otherwise just drop
     // the connection, leaving the client with no response and no trace.
-    std::panic::set_hook(Box::new(|info| {
-        tracing::error!(
-            panic = %info,
-            location = info.location().map(|l| format!("{l}")).unwrap_or_default(),
-            "gateway panic"
-        );
-    }));
+    capsem_core::telemetry::install_panic_logger("capsem-gateway");
 
     // Companion guards: refuse to run without a live parent service, and
     // refuse if another gateway already holds the singleton lock for this
