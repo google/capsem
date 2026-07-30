@@ -133,3 +133,25 @@ def test_internal_crate_deps_do_not_pin_a_version() -> None:
         "internal crate dependencies must be path-only so the workspace version "
         "lives in exactly one place:\n  " + "\n  ".join(offenders)
     )
+
+
+def test_release_skill_documents_semver_discipline() -> None:
+    """The rule an operator reads must match the rule capsem-admin enforces.
+
+    Corp operators author profiles without touching this repository's code, so
+    the skill is where they meet the requirement. If it drifts from the
+    enforcement, they learn the rule from a rejected release instead.
+    """
+    skill = (PROJECT_ROOT / "skills" / "release-process" / "SKILL.md").read_text(
+        encoding="utf-8"
+    )
+
+    for required in (
+        "parse_profile_revision",
+        "ensure_revision_advances",
+        "min_capsem_version",
+        "profiles-<hash>",
+    ):
+        assert required in skill, f"release skill must document {required!r}"
+
+    assert "semver" in skill.lower(), "release skill must name the versioning scheme"
