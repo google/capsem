@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added a scheduled Live Channel Watch that proves published channels still
+  resolve. `check-release-site-contract.py` already fetches every artifact a
+  manifest references -- GitHub release downloads included -- and verifies size
+  and sha256, but it ran only during a channel deploy. The release system could
+  therefore only notice a broken channel while publishing a new one; anything
+  that broke an already-published channel from outside a deploy, such as a
+  deleted release or an artifact aged out by retention, stayed invisible until
+  the next release and users met it first. Deleting the 1.x releases
+  demonstrated it exactly: stable 1.0.143 went on serving a manifest whose
+  twenty artifact URLs were all 404, with every gate green because no gate was
+  looking.
+
 ### Changed
 
 - **Capsem is 0.6.0.** The version line moves from 1.6 to 0.6 and the patch
@@ -43,6 +57,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exercises it cannot disagree.
 
 ### Changed
+
+- Host logs now rotate daily and keep a week. Every sink appended to one file
+  forever: on a month-old install `gateway.log` had reached 314 MB across
+  943,739 lines, 99.99% of it `tower_http` DEBUG request tracing driven by a
+  5-second status poll -- about 11 MB/day, or 4 GB/year, per user. Worse for
+  debugging than for disk: `support-bundle` caps each log at a 5 MB tail, so
+  that stream offered roughly ten hours of history and a failure from the day
+  before was already unreachable. `LogSink::File` now names a *stream* rather
+  than a file, rotating to `service.<date>.log` -- extension last, so an
+  operator's `*.log` reflex and the asset gate's evidence copy still match --
+  bounded by `LOG_FILES_RETAINED`. `capsem_core::telemetry::log_stream_files`
+  is the one way to read a stream back, and `capsem support-bundle` uses it to
+  ship every rotated file newest-first instead of whichever one holds today.
+  Raw process stderr moved to `run/stderr/`: retention prunes on
+  `starts_with(prefix) && ends_with(suffix)`, so a `service.log` beside the
+  rotated stream was itself a prune candidate, and unlinking it would have
+  left the service writing panics into an inode nobody could open. The bundle
+  collects that directory and its own reading instructions now name it.
+
+- Errors are logged as fields, not baked into message text. 59 call sites
+  across six crates interpolated the error into the message, which makes it
+  ungroupable: every distinct path or errno produced a distinct message, so
+  the one field a bug report is read for could not be filtered or counted.
+  They now pass `error = %e`, or `error = format!("{e:#}")` where the value is
+  an `anyhow::Error` whose cause chain `%` would have flattened away.
+  `tests/test_logging_contract.py` fails on the next one, with no allowlist --
+  a guard needing exemptions is not a guard -- and the bundle's own reading
+  instructions now say to filter on `error` rather than grep message text.
 
 - Raised the Docker storage budget so BuildKit stops discarding a hot cache.
   `buildkit_keep_gib` was 24 while the cache ran at ~65 GB with ~35 GB hot, so

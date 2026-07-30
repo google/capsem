@@ -1,0 +1,59 @@
+name: Live Channel Watch
+
+# `check-release-site-contract.py` fetches every artifact a published manifest
+# references -- including GitHub release downloads -- and verifies size and
+# sha256. Until this workflow existed it ran in exactly one place: the channel
+# deploy. That means the release system could only notice a broken channel
+# while publishing a new one.
+#
+# Anything that breaks an already-published channel from outside a deploy went
+# unseen: a deleted GitHub release, an artifact aged out by a retention policy,
+# a CDN answering a missing manifest with an HTML page and HTTP 200. Users met
+# it first.
+#
+# This is the suspenders to the deploy gate's belt. It asks the only question
+# that matters to somebody installing right now: does what we published still
+# resolve?
+
+on:
+  schedule:
+    # Daily, offset off the hour so it does not contend with release traffic.
+    - cron: "23 6 * * *"
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Release site to validate
+        required: false
+        default: https://release.capsem.org
+
+permissions:
+  contents: read
+
+jobs:
+  watch:
+    name: Published channels still resolve
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      # The contract check hashes artifacts with blake3, which is a project
+      # dependency rather than a stdlib module.
+      - name: Install Python dependencies
+        run: uv sync
+
+      - name: Validate stable and nightly resolve end to end
+        env:
+          RELEASE_SITE_URL: ${{ inputs.base_url || 'https://release.capsem.org' }}
+        run: |
+          # Few attempts, short delay: this is observing steady state, not
+          # waiting for a deploy to propagate. A channel that needs thirty
+          # retries to answer is already failing its users.
+          uv run python scripts/check-release-site-contract.py \
+            --base-url "$RELEASE_SITE_URL" \
+            --channel stable \
+            --channel nightly \
+            --attempts 3 \
+            --delay-seconds 10
