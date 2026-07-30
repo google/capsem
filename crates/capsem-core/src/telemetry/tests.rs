@@ -88,3 +88,104 @@ fn launch_span_names_match_contract() {
         assert!(!name.contains("host"));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Log rotation and retention
+// ---------------------------------------------------------------------------
+
+#[test]
+fn rolling_parts_keeps_rotated_files_matching_a_log_glob() {
+    // `service.2026-07-30.log`, not `service.log.2026-07-30`: the asset gate's
+    // failure-evidence copy and every operator's `ls *.log` filter on the
+    // extension, and a rotated file that stops matching is a file nobody
+    // collects.
+    let (dir, prefix, suffix) = rolling_parts(std::path::Path::new("/run/capsem/service.log"));
+
+    assert_eq!(dir, std::path::Path::new("/run/capsem"));
+    assert_eq!(prefix, "service");
+    assert_eq!(suffix, "log");
+}
+
+#[test]
+fn rolling_parts_survives_a_path_with_no_extension_or_parent() {
+    let (dir, prefix, suffix) = rolling_parts(std::path::Path::new("service"));
+
+    assert_eq!(dir, std::path::Path::new("."));
+    assert_eq!(prefix, "service");
+    assert_eq!(suffix, "log");
+}
+
+#[test]
+fn rolling_appender_writes_a_dated_file_beside_the_requested_path() {
+    use std::io::Write;
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut appender = rolling_appender(&dir.path().join("service.log")).expect("appender");
+    writeln!(appender, "{{\"message\":\"hello\"}}").expect("write");
+    appender.flush().expect("flush");
+
+    let written: Vec<String> = std::fs::read_dir(dir.path())
+        .expect("read_dir")
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+
+    assert_eq!(written.len(), 1, "expected exactly one log file, got {written:?}");
+    let name = &written[0];
+    assert!(name.starts_with("service."), "{name} is not in the service stream");
+    assert!(name.ends_with(".log"), "{name} would not match a *.log collector");
+    assert!(
+        std::fs::read_to_string(dir.path().join(name))
+            .expect("read back")
+            .contains("hello"),
+        "the appender did not write through to disk"
+    );
+}
+
+#[test]
+fn log_stream_files_returns_the_whole_stream_newest_first() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // Written oldest to newest so mtime ordering is unambiguous.
+    for name in ["service.2026-07-28.log", "service.2026-07-29.log", "service.log"] {
+        std::fs::write(dir.path().join(name), name).expect("write");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    // Neighbours that belong to other streams must not be swept in.
+    std::fs::write(dir.path().join("gateway.2026-07-29.log"), "x").expect("write");
+    std::fs::write(dir.path().join("service.pid"), "1").expect("write");
+
+    let found = log_stream_files(&dir.path().join("service.log"));
+    let names: Vec<String> = found
+        .iter()
+        .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+
+    assert_eq!(
+        names,
+        vec!["service.log", "service.2026-07-29.log", "service.2026-07-28.log"],
+        "a support bundle reads this order to spend its byte budget on recent history"
+    );
+}
+
+#[test]
+fn log_stream_files_still_finds_the_unrotated_log_an_older_install_left() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(dir.path().join("service.log"), "legacy").expect("write");
+
+    let found = log_stream_files(&dir.path().join("service.log"));
+
+    assert_eq!(found, vec![dir.path().join("service.log")]);
+}
+
+#[test]
+fn log_stream_files_is_empty_rather_than_panicking_on_a_missing_directory() {
+    assert!(log_stream_files(std::path::Path::new("/nonexistent/capsem/service.log")).is_empty());
+}
+
+#[test]
+fn retained_log_files_is_bounded() {
+    assert!(
+        (1..=31).contains(&LOG_FILES_RETAINED),
+        "retention must be bounded; unbounded logs are what this constant exists to prevent"
+    );
+}

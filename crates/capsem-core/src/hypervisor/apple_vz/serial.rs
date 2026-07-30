@@ -141,7 +141,7 @@ fn read_loop(fd: RawFd, tx: &broadcast::Sender<Vec<u8>>) {
                 let _ = tx.send(buf[..n].to_vec());
             }
             Err(e) => {
-                warn!("serial read error: {e}");
+                warn!(error = %e, "serial read error");
                 break;
             }
         }

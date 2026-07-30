@@ -205,7 +205,7 @@ impl Hypervisor for KvmHypervisor {
         // Same probe used in CI (.github/workflows/release.yaml).
         #[cfg(target_arch = "x86_64")]
         if let Err(e) = kvm.get_supported_cpuid() {
-            tracing::warn!("KVM CPUID probe failed: {e:#}");
+            tracing::warn!(error = format!("{e:#}"), "KVM CPUID probe failed");
             tracing::warn!(
                 "This indicates restricted/nested KVM -- vCPU creation will likely fail"
             );
@@ -985,12 +985,12 @@ fn run_kvm_diagnostics(kvm: &sys::KvmFd) {
                 );
             }
             Err(e) => {
-                tracing::error!("probe: vCPU(0) fails even WITHOUT IRQCHIP: {e:#}");
+                tracing::error!(error = format!("{e:#}"), "probe: vCPU(0) fails even WITHOUT IRQCHIP");
                 tracing::error!("probe: this KVM environment cannot create vCPUs at all");
             }
         },
         Err(e) => {
-            tracing::error!("probe: fresh VM creation failed: {e:#}");
+            tracing::error!(error = format!("{e:#}"), "probe: fresh VM creation failed");
         }
     }
 

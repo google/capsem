@@ -32,9 +32,11 @@ pub enum LogSink {
     /// subprocesses whose parent reaps stderr (capsem-process,
     /// capsem-mcp-aggregator, capsem-mcp-builtin).
     Stderr,
-    /// Append JSON-per-line to `path`. Used by long-lived daemons whose
-    /// log is consumed from disk (service.log, mcp.log, gateway.log,
-    /// tray.log).
+    /// Write JSON-per-line to a daily-rotated stream derived from `path`.
+    /// Used by long-lived daemons whose log is consumed from disk (service,
+    /// mcp, gateway, tray). `path` names the stream, not a single file:
+    /// `<run>/service.log` produces `service.<date>.log`, bounded to
+    /// [`LOG_FILES_RETAINED`]. Read one back with [`log_stream_files`].
     File { path: PathBuf },
     /// File (json) + stderr (pretty). Used by capsem-app so the file
     /// feeds the support bundle and stderr feeds `pnpm tauri dev` output.
@@ -125,6 +127,109 @@ pub fn with_subsys_targets(base: &str) -> String {
     }
 }
 
+/// Files retained per log stream, i.e. days of history at daily rotation.
+///
+/// A week covers a weekend plus the round-trip of a user noticing a problem
+/// and running `capsem support-bundle`. It is also the reason these files are
+/// bounded at all: an append-forever sink reached 314 MB of gateway request
+/// tracing in under a month, which cost far more disk than it ever bought
+/// back in answers.
+pub const LOG_FILES_RETAINED: usize = 7;
+
+/// Split a logical log path into the `(directory, prefix, suffix)` a rolling
+/// appender needs.
+///
+/// `<run>/service.log` becomes `<run>`, `service`, `log`, so a rotated file is
+/// `service.2026-07-30.log` rather than `service.log.2026-07-30`. Keeping the
+/// extension last matters: the asset gate's failure-evidence copy and every
+/// operator reflex filter on `*.log`, and a rotated file that stops matching
+/// is a file nobody collects.
+fn rolling_parts(path: &std::path::Path) -> (PathBuf, String, String) {
+    let dir = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+        _ => PathBuf::from("."),
+    };
+    let prefix = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "capsem".to_string());
+    let suffix = path
+        .extension()
+        .map(|ext| ext.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "log".to_string());
+    (dir, prefix, suffix)
+}
+
+/// Build the rotating appender behind a [`LogSink::File`] sink.
+fn rolling_appender(
+    path: &std::path::Path,
+) -> std::io::Result<tracing_appender::rolling::RollingFileAppender> {
+    let (dir, prefix, suffix) = rolling_parts(path);
+    std::fs::create_dir_all(&dir)?;
+    tracing_appender::rolling::Builder::new()
+        .rotation(tracing_appender::rolling::Rotation::DAILY)
+        .filename_prefix(prefix)
+        .filename_suffix(suffix)
+        .max_log_files(LOG_FILES_RETAINED)
+        .build(&dir)
+        .map_err(std::io::Error::other)
+}
+
+/// Every file belonging to one log stream, newest first.
+///
+/// The single way to answer "where are this binary's logs": rotation means
+/// there is no longer one filename, an install that predates rotation still
+/// has its unrotated `service.log`, and raw stderr (panics, death before
+/// [`init`] returns) lands in that same unrotated file. Callers that read
+/// logs -- the support bundle above all -- must go through here rather than
+/// reconstruct a filename, or they silently ship part of the history.
+pub fn log_stream_files(path: &std::path::Path) -> Vec<PathBuf> {
+    let (dir, prefix, suffix) = rolling_parts(path);
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            let name = path.file_name()?.to_str()?;
+            // `service.log` and `service.<date>.log`, never `services.log`.
+            let in_stream = name == format!("{prefix}.{suffix}")
+                || (name.starts_with(&format!("{prefix}."))
+                    && name.ends_with(&format!(".{suffix}")));
+            if !in_stream || !entry.file_type().ok()?.is_file() {
+                return None;
+            }
+            Some((entry.metadata().ok()?.modified().ok()?, path))
+        })
+        .collect();
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    files.into_iter().map(|(_, path)| path).collect()
+}
+
+/// Route panics into the tracing sink instead of stderr.
+///
+/// A daemon's stderr belongs to whoever spawned it -- launchd, systemd, or a
+/// parent that redirected it -- so an unhooked panic lands somewhere the
+/// binary's own log is not, or nowhere at all. This is the one failure whose
+/// message a user cannot get any other way: by the time the process is gone,
+/// tracing has stopped and the panic text is all there was.
+///
+/// Call once, after [`init`], so the hook has a subscriber to write to.
+pub fn install_panic_logger(service: &'static str) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tracing::error!(
+            target: "service",
+            service,
+            panic = %info,
+            location = info.location().map(|l| l.to_string()).unwrap_or_default(),
+            "process panicked"
+        );
+        previous(info);
+    }));
+}
+
 /// Hold this guard for the lifetime of `main`. Drop flushes any
 /// non-blocking file writer and (in a future sprint) the OTLP exporter.
 pub struct TelemetryGuard {
@@ -170,28 +275,14 @@ pub fn init(cfg: TelemetryConfig) -> std::io::Result<TelemetryGuard> {
                 .init();
         }
         LogSink::File { path } => {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)?;
-            let (nb, guard) = tracing_appender::non_blocking(file);
+            let (nb, guard) = tracing_appender::non_blocking(rolling_appender(&path)?);
             file_guard = Some(guard);
             registry
                 .with(fmt::layer().json().with_writer(nb).boxed())
                 .init();
         }
         LogSink::FileAndPretty { path } => {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-            let file = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)?;
-            let (nb, guard) = tracing_appender::non_blocking(file);
+            let (nb, guard) = tracing_appender::non_blocking(rolling_appender(&path)?);
             file_guard = Some(guard);
             registry
                 .with(fmt::layer().json().with_writer(nb).boxed())

@@ -102,7 +102,7 @@ fn read_loop(fd: RawFd, tx: &broadcast::Sender<Vec<u8>>, log_path: Option<PathBu
                 let _ = tx.send(buf[..n].to_vec());
             }
             Err(e) => {
-                warn!("KVM serial read error: {e}");
+                warn!(error = %e, "KVM serial read error");
                 break;
             }
         }

@@ -392,11 +392,11 @@ pub fn send_boot_config(
                 break;
             }
             if let Err(e) = validate_env_key(&key) {
-                warn!("skipping invalid boot env var key: {e}");
+                warn!(error = %e, "skipping invalid boot env var key");
                 continue;
             }
             if let Err(e) = validate_env_value(&value) {
-                warn!("skipping boot env var {key}: {e}");
+                warn!(error = %e, "skipping boot env var {key}");
                 continue;
             }
             sent_env.insert(key.clone(), value.clone());
@@ -412,11 +412,11 @@ pub fn send_boot_config(
             break;
         }
         if let Err(e) = validate_env_key(key) {
-            warn!("skipping invalid CLI --env key: {e}");
+            warn!(error = %e, "skipping invalid CLI --env key");
             continue;
         }
         if let Err(e) = validate_env_value(value) {
-            warn!("skipping CLI --env {key}: {e}");
+            warn!(error = %e, "skipping CLI --env {key}");
             continue;
         }
         sent_env.insert(key.clone(), value.clone());
@@ -448,7 +448,7 @@ pub fn send_boot_config(
             continue;
         }
         if let Err(e) = validate_file_path(&f.path) {
-            warn!("skipping invalid boot file path: {e}");
+            warn!(error = %e, "skipping invalid boot file path");
             continue;
         }
         total_file_bytes += data.len();

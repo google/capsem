@@ -335,7 +335,7 @@ pub(super) fn spawn_call_irq_bridges(
                 if let Err(e) =
                     call_irq_bridge_loop(queue_index, call_fd, irq_fd, interrupt_status, shutdown)
                 {
-                    warn!(queue_index, "vhost-vsock call irq bridge stopped: {e:#}");
+                    warn!(queue_index, error = format!("{e:#}"), "vhost-vsock call irq bridge stopped");
                 }
             })
             .context("failed to spawn vhost-vsock call irq bridge")?;
@@ -520,7 +520,7 @@ impl VirtioDevice for VhostVsockDevice {
             return;
         }
         if let Err(e) = self.configure_vhost(&mem, queues) {
-            warn!("vhost-vsock activate failed: {e:#}");
+            warn!(error = format!("{e:#}"), "vhost-vsock activate failed");
             return;
         }
         self.activated = true;
@@ -757,7 +757,7 @@ pub(super) fn spawn_vsock_listeners(
             .name(format!("vsock-listen-{physical_port}"))
             .spawn(move || {
                 if let Err(e) = vsock_listener_loop(listener, &tx, &shutdown) {
-                    warn!(logical_port, physical_port, "vsock listener failed: {e:#}");
+                    warn!(logical_port, physical_port, error = format!("{e:#}"), "vsock listener failed");
                 }
             })
             .expect("failed to spawn vsock listener thread");
@@ -812,7 +812,7 @@ fn vsock_listener_loop(
             if err.kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
-            warn!(logical_port, physical_port, "vsock accept failed: {err}");
+            warn!(logical_port, physical_port, error = %err, "vsock accept failed");
             continue;
         }
 
