@@ -405,11 +405,14 @@ fn parse_zero_arg_method_call<'a>(atom: &'a str, method: &str) -> Result<Option<
     Ok(Some(field))
 }
 
+/// Compiled once. `contains_pii()` runs per security event, so building this
+/// regex inside the call put regex compilation on the enforcement hot path.
+static SSN_PATTERN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").expect("PII regex is valid")
+});
+
 fn looks_like_pii(value: &str) -> bool {
-    value.contains('@')
-        || regex::Regex::new(r"\b\d{3}-\d{2}-\d{4}\b")
-            .expect("PII regex is valid")
-            .is_match(value)
+    value.contains('@') || SSN_PATTERN.is_match(value)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

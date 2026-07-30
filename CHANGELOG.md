@@ -135,6 +135,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   including the direction that must never change, since the decision merge is
   escalate-only and no plugin may talk a blocking rule down to allow.
 
+- `contains_pii()` rebuilt its regex on every call, putting regex compilation on
+  the per-event enforcement path. It is now compiled once. The operator also had
+  no test coverage at all -- what it matches, what it does not, and that it reads
+  only the field it names -- so its behavior is now pinned.
+
 - The benchmark retention contract asserted `>= (1, 6)` while its own docstring
   promised retention follows Cargo.toml "without a second place to update". The
   literal was that second place, and it failed the moment the workspace moved to

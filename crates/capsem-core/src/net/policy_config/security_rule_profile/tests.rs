@@ -1580,3 +1580,83 @@ match = 'http.host == "café.example" && has(http.valid)'
         SecurityRuleAction::Block
     );
 }
+
+fn pii_rule_matches(field: &str, event: SecurityEvent) -> bool {
+    let profile = SecurityRuleProfile::parse_toml(&format!(
+        r#"
+[profiles.rules.pii_guard]
+name = "pii_guard"
+action = "block"
+priority = 10
+match = '{field}.contains_pii()'
+"#
+    ))
+    .expect("contains_pii is a supported CEL term");
+    let rules =
+        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("compiles");
+    !rules.evaluate(&event).expect("evaluates").matched_rules().is_empty()
+}
+
+fn export_event(content: Option<&str>) -> SecurityEvent {
+    SecurityEvent::new(RuntimeSecurityEventType::FileExport).with_file(FileSecurityEvent {
+        export_path: Some("/workspace/out.txt".to_string()),
+        export_content: content.map(str::to_string),
+        ..Default::default()
+    })
+}
+
+#[test]
+fn contains_pii_matches_addresses_and_social_security_numbers() {
+    for content in [
+        "mail me at person@example.com",
+        "ssn 123-45-6789 on file",
+        "@",
+        "111-22-3333",
+    ] {
+        assert!(
+            pii_rule_matches("file.export.content", export_event(Some(content))),
+            "contains_pii() must match {content:?}"
+        );
+    }
+}
+
+#[test]
+fn contains_pii_does_not_match_plain_text_or_absent_fields() {
+    for content in [
+        "nothing sensitive here",
+        "1234-56-7890",
+        "12-34-5678",
+        "123-45-678",
+        "",
+    ] {
+        assert!(
+            !pii_rule_matches("file.export.content", export_event(Some(content))),
+            "contains_pii() must not match {content:?}"
+        );
+    }
+
+    assert!(
+        !pii_rule_matches("file.export.content", export_event(None)),
+        "an absent field carries no PII, so the rule must not fire"
+    );
+    assert!(
+        !pii_rule_matches("http.body", export_event(Some("person@example.com"))),
+        "contains_pii() reads only the field it names, not the whole event"
+    );
+}
+
+#[test]
+fn contains_pii_rejects_arguments() {
+    let error = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.pii_guard]
+name = "pii_guard"
+action = "block"
+priority = 10
+match = 'file.export.content.contains_pii("email")'
+"#,
+    )
+    .expect_err("contains_pii takes no arguments");
+
+    assert!(error.contains("contains_pii() does not accept arguments"), "{error}");
+}
