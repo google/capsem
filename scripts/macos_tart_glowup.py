@@ -418,7 +418,8 @@ cat "$HOME/.capsem/logs/install.log"
 echo '=== ~/.capsem/logs/install-failure.txt ==='
 cat "$HOME/.capsem/logs/install-failure.txt"
 echo '=== ~/.capsem/run/service.log (tail) ==='
-tail -n 300 "$HOME/.capsem/run/service.log"
+# Rotated stream: tail the name alone and you get nothing.
+cat "$HOME"/.capsem/run/service*.log 2>/dev/null | tail -n 300
 echo '=== ~/.capsem/logs listing ==='
 ls -la "$HOME/.capsem/logs"
 echo '=== package script log events ==='

@@ -96,7 +96,7 @@ def _write_local_url_profile_catalog(root: Path) -> Path:
 id = "code"
 name = "Code"
 description = "Profile catalog fixture with local source URLs."
-revision = "profiles-2030.0101.1"
+revision = "2.0.0"
 refresh_policy = "24h"
 
 [assets]
@@ -255,7 +255,7 @@ def test_assets_channel_profile_catalog_is_publishable_not_local(tmp_path: Path)
     assert "file://" not in manifest_text
     assert str(tmp_path) not in manifest_text
     publication_root = (
-        "/profiles/releases/stable/code/profiles-2030.0101.1/arm64"
+        "/profiles/releases/stable/code/2.0.0/arm64"
     )
     assert f"{publication_root}/vmlinuz" in manifest_text
     assert f"{publication_root}/obom.cdx.json" in manifest_text
@@ -264,7 +264,7 @@ def test_assets_channel_profile_catalog_is_publishable_not_local(tmp_path: Path)
     manifest = json.loads(manifest_text)
     assert "profile_catalog" not in manifest
     profile = manifest["profiles"]["code"]
-    assert profile["revision"] == "profiles-2030.0101.1"
+    assert profile["revision"] == "2.0.0"
     arm64 = profile["architectures"][0]
     kernel = next(item for item in arm64["images"] if item["kind"] == "kernel")
     assert kernel["url"] == f"{publication_root}/vmlinuz"

@@ -124,3 +124,39 @@ def test_log_streams_are_read_through_the_stream_reader() -> None:
         "stream rotates; read through telemetry::read_log_tail:\n  "
         + "\n  ".join(offenders)
     )
+
+
+# Python and shell read the same rotated streams as Rust, and were not covered
+# until an ironbank ledger test asserted on an empty `service.log`.
+PY_STREAM_READ = re.compile(
+    r"""\(\s*[\w.]+\s*/\s*["'](?:service|gateway|mcp|tray)\.log["']\s*\)\s*\.read_text"""
+)
+SH_STREAM_READ = re.compile(r"""(?:tail|cat|head)\s+[^\n|]*?/(?:service|gateway|mcp|tray)\.log["']?\s""")
+
+
+def test_python_and_shell_read_streams_through_the_helper() -> None:
+    offenders = []
+    roots = [PROJECT_ROOT / "tests", PROJECT_ROOT / "scripts"]
+    scanned = 0
+    for root in roots:
+        for path in sorted(root.rglob("*")):
+            if not path.is_file() or path.suffix not in {".py", ".sh"}:
+                continue
+            if path.name == Path(__file__).name or path.name == "log_streams.py":
+                continue
+            scanned += 1
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for pattern, how in ((PY_STREAM_READ, "read_text"), (SH_STREAM_READ, "shell")):
+                for match in pattern.finditer(text):
+                    line = text[: match.start()].count("\n") + 1
+                    offenders.append(
+                        f"{path.relative_to(PROJECT_ROOT)}:{line} reads a rotated "
+                        f"stream by name ({how})"
+                    )
+
+    assert scanned > 50, "scanned too few files to trust this guard"
+    assert not offenders, (
+        "read rotated streams through tests/log_streams.py (Python) or by "
+        "globbing `<name>*.log` (shell); the bare name is empty after "
+        "rotation:\n  " + "\n  ".join(offenders)
+    )

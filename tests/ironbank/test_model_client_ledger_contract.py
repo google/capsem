@@ -39,6 +39,7 @@ from ironbank.model_client_scripts import (
     openai_responses_api_script,
     openai_two_tool_calls_script,
 )
+from log_streams import log_stream_files
 
 pytestmark = pytest.mark.integration
 
@@ -133,7 +134,7 @@ class ModelClientEnv:
     def log_paths(self) -> tuple[Path, ...]:
         session_dir = vm_session_dir(self.service.tmp_dir, self.client, self.session_id)
         return (
-            self.service.tmp_dir / "service.log",
+            *log_stream_files(self.service.tmp_dir / "service.log"),
             self.service.tmp_dir / "service.stderr.log",
             session_dir / "process.log",
             session_dir / "serial.log",

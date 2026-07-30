@@ -17,6 +17,7 @@ from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXE
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, vm_session_db_path, vm_session_dir, wait_exec_ready, vm_name
+from log_streams import read_log_stream
 
 pytestmark = pytest.mark.integration
 
@@ -443,7 +444,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         assert by_level["informational"] >= 1
         assert by_level["high"] >= 1
 
-        service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
+        service_log = read_log_stream(service.tmp_dir / "service.log")
         process_log = (
             vm_session_dir(service.tmp_dir, client, vm_id) / "process.log"
         ).read_text(encoding="utf-8")

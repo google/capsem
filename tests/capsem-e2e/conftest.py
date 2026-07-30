@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from helpers.constants import EXEC_READY_TIMEOUT
 from helpers.service import make_capsem_tmp_dir, preserve_tmp_dir_on_failure
 from helpers.sign import sign_binary
+from log_streams import read_log_stream
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 SERVICE_BINARY = PROJECT_ROOT / "target/debug/capsem-service"
@@ -158,10 +159,11 @@ class RealService:
 
     def _dump_logs(self):
         for name in ["service.log", "service.stderr.log"]:
-            p = self.tmp_dir / name
-            if p.exists():
-                print(f"\n--- {name} ---\n{p.read_text()}\n---",
-                      file=sys.stderr)
+            # service.log is a rotated stream; reading the name alone dumps
+            # nothing and makes a failure look like a silent one.
+            text = read_log_stream(self.tmp_dir / name)
+            if text:
+                print(f"\n--- {name} ---\n{text}\n---", file=sys.stderr)
 
 
 @pytest.fixture(scope="session")

@@ -19,6 +19,7 @@ from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXE
 from helpers.mcp import content_text, kill_mcp_proc
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready, vm_name
+from log_streams import read_log_stream
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -506,10 +507,10 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             purged = _json_tool_result(mcp.call_tool("capsem_purge", {"all": False}))
             assert isinstance(purged, dict)
 
-            service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
+            service_log = read_log_stream(service.tmp_dir / "service.log")
             assert "profile_mcp_tool_call" in service_log or "mcp" in service_log.lower()
             _close_mcp_proc_gracefully(mcp.proc)
-            mcp_log = (service.tmp_dir / "mcp.log").read_text(encoding="utf-8")
+            mcp_log = read_log_stream(service.tmp_dir / "mcp.log")
             assert "capsem-mcp starting" in mcp_log
             assert "Registered" in mcp_log
     finally:

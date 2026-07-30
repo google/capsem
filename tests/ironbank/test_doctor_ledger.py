@@ -21,6 +21,7 @@ from helpers.service import (
     wait_exec_ready,
     vm_name,
 )
+from log_streams import log_stream_files
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -185,7 +186,7 @@ def _post_bytes_with_status(
 
 def _doctor_failure_diagnostics(service: ServiceInstance) -> str:
     """Return bounded service/VM tails for an opaque doctor IPC failure."""
-    candidates = [service.tmp_dir / "service.log"]
+    candidates = list(log_stream_files(service.tmp_dir / "service.log"))
     for name in ("process.log", "serial.log", "pty.log"):
         candidates.extend(sorted(service.tmp_dir.glob(f"sessions/**/{name}")))
     sections = []

@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Swept the log-rotation blast radius the original change never covered. Twelve
+  Python sites and one shell snippet in the macOS glow-up read `service.log` by
+  name, which is empty after rotation: ironbank ledger tests asserted on an
+  empty string, and failure-diagnostic helpers guarded on `is_file()` so they
+  printed nothing at all rather than failing. `tests/log_streams.py` is the
+  Python half of `telemetry::read_log_tail`, and the wrapper guard now covers
+  Python and shell as well as Rust -- it only scanned `crates/` before, which
+  is why the gate found this one test at a time.
+
+### Fixed
+
 - The service writes `service.pid`, which the harness reaps by. Nothing wrote
   it, so every cleanup targeting `$run_dir/service.pid` no-opped -- silently,
   since a no-op cleanup is indistinguishable from a successful one. The asset
