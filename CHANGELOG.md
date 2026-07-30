@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1785421421] - 2026-07-30
+
 ### Fixed
 
 - Fixed the asset gate's Docker capacity test hardcoding free-space fixtures
