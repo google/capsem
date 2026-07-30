@@ -86,5 +86,56 @@ fn env_nonempty(key: &str) -> Option<String> {
     }
 }
 
+/// Redirect every Capsem path variable at a temporary root, restoring on drop.
+///
+/// Test support, deliberately not `#[cfg(test)]`: fixtures in other crates
+/// need it too, and the whole point is that there is one way to do this.
+///
+/// Set them **together or not at all**. `CAPSEM_RUN_DIR` and
+/// `CAPSEM_ASSETS_DIR` each take precedence over the value derived from
+/// `CAPSEM_HOME`, so a fixture that redirects only the home leaves production
+/// code reading whichever run or assets directory the caller exported --
+/// `just test` exports both. That fixture passes in a bare shell and fails
+/// only inside the gate, which is exactly how the support-bundle tests came to
+/// collect no host logs during a release run.
+#[must_use = "the guard restores the previous environment when dropped"]
+pub struct CapsemPathsGuard {
+    previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
+
+impl CapsemPathsGuard {
+    /// Point `CAPSEM_HOME`, `CAPSEM_RUN_DIR`, and `CAPSEM_ASSETS_DIR` at `root`.
+    pub fn redirect(root: &std::path::Path) -> Self {
+        let values = [
+            ("CAPSEM_HOME", root.to_path_buf()),
+            ("CAPSEM_RUN_DIR", root.join("run")),
+            ("CAPSEM_ASSETS_DIR", root.join("assets")),
+        ];
+        let mut previous = Vec::with_capacity(values.len());
+        for (key, value) in values {
+            previous.push((key, std::env::var_os(key)));
+            // SAFETY: tests that redirect paths serialize on a shared lock.
+            unsafe {
+                std::env::set_var(key, value);
+            }
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for CapsemPathsGuard {
+    fn drop(&mut self) {
+        for (key, value) in self.previous.drain(..) {
+            // SAFETY: as above.
+            unsafe {
+                match value {
+                    Some(previous) => std::env::set_var(key, previous),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;

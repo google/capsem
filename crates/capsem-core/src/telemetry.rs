@@ -207,6 +207,55 @@ pub fn log_stream_files(path: &std::path::Path) -> Vec<PathBuf> {
     files.into_iter().map(|(_, path)| path).collect()
 }
 
+/// Read the last `max_bytes` of a rotated log stream, oldest line first.
+///
+/// `path` names the stream (`<run>/service.log`), not a file on disk. Every
+/// caller wanting "the recent log" needs the same three steps -- resolve the
+/// stream, walk back through rotated files until the tail is full, trim to a
+/// line boundary -- so they live here once. Open the stream name directly and
+/// you get nothing: that is how `/service-logs` came to report an empty log
+/// for a service that was writing normally.
+///
+/// `None` when the stream has no files at all, which is a different answer
+/// from an empty log and should be reported differently.
+pub fn read_log_tail(path: &std::path::Path, max_bytes: usize) -> Option<String> {
+    let files = log_stream_files(path);
+    if files.is_empty() {
+        return None;
+    }
+
+    // Newest first, so stop as soon as the tail is full rather than reading
+    // every retained day to discard most of it.
+    let mut newest_first: Vec<String> = Vec::new();
+    let mut total = 0usize;
+    for file in files {
+        let Ok(bytes) = std::fs::read(&file) else {
+            continue;
+        };
+        let chunk = String::from_utf8_lossy(&bytes).into_owned();
+        total += chunk.len();
+        newest_first.push(chunk);
+        if total >= max_bytes {
+            break;
+        }
+    }
+    newest_first.reverse();
+    let mut text = newest_first.concat();
+
+    if text.len() > max_bytes {
+        let mut cut = text.len() - max_bytes;
+        while cut < text.len() && !text.is_char_boundary(cut) {
+            cut += 1;
+        }
+        text = text[cut..].to_string();
+        // Drop the partial line the cut landed in.
+        if let Some(newline) = text.find('\n') {
+            text = text[newline + 1..].to_string();
+        }
+    }
+    Some(text)
+}
+
 /// Route panics into the tracing sink instead of stderr.
 ///
 /// A daemon's stderr belongs to whoever spawned it -- launchd, systemd, or a

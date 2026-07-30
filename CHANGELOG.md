@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `/service-logs` returning an empty log for a service that was writing
+  normally. `service.log` names a daily-rotated stream rather than a file, and
+  the endpoint still opened that name directly. Resolution and tailing now live
+  in one function, `telemetry::read_log_tail`, so the endpoint and any future
+  consumer read the same log the support bundle does.
+
+### Changed
+
+- Test fixtures redirect Capsem paths through `paths::CapsemPathsGuard`, which
+  sets `CAPSEM_HOME`, `CAPSEM_RUN_DIR`, and `CAPSEM_ASSETS_DIR` from one root.
+  The run and assets variables each take precedence over the home-derived
+  default, so a fixture that set only the home left production code reading the
+  caller's directories -- green in a bare shell, broken inside `just test`.
+  Setting them one at a time is no longer possible.
+
 ### Added
 
 - `tests/test_exit_status_integrity.py` keeps a gate's result from being read out

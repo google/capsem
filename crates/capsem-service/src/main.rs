@@ -4652,24 +4652,10 @@ async fn handle_service_logs(State(state): State<Arc<ServiceState>>) -> Result<S
     let log_path = state.run_dir.join("service.log");
 
     let text = tokio::task::spawn_blocking(move || -> Result<String, String> {
-        use std::io::{Read, Seek, SeekFrom};
-        let mut file = std::fs::File::open(&log_path).map_err(|e| e.to_string())?;
-        let len = file.metadata().map_err(|e| e.to_string())?.len();
-        // Read last 100KB
-        let max = 100 * 1024u64;
-        if len > max {
-            file.seek(SeekFrom::End(-(max as i64)))
-                .map_err(|e| e.to_string())?;
-        }
-        let mut buf = String::new();
-        file.read_to_string(&mut buf).map_err(|e| e.to_string())?;
-        // If we seeked into the middle, skip the first partial line
-        if len > max {
-            if let Some(pos) = buf.find('\n') {
-                buf = buf[pos + 1..].to_string();
-            }
-        }
-        Ok(buf)
+        // `service.log` names a daily-rotated stream, not a file. Resolution
+        // and tailing live in one place so every consumer sees the same log.
+        capsem_core::telemetry::read_log_tail(&log_path, 100 * 1024)
+            .ok_or_else(|| format!("no log files in stream {}", log_path.display()))
     })
     .await
     .map_err(|e| {
