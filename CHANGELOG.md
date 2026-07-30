@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The release stamper no longer builds a version from the clock. It still
+  assembled `1.${RELEASE_MINOR}.$(date +%s)` for the whole semver rewrite, so
+  `just release-binaries` would have stamped `1.6.<timestamp>` and then failed
+  its own cohort check against the `0.6` line. The version is now a human
+  decision recorded in `Cargo.toml` -- only a person knows whether a release is
+  a fix, a feature, or a break, which is what makes `min_capsem_version`
+  meaningful -- and stamping only propagates it to `tauri.conf.json`,
+  `pyproject.toml`, and both frozen lockfiles. Re-releasing an already-tagged
+  version is refused, so the bump stays deliberate.
+- The release write-set no longer requires every version file to change. With a
+  human-chosen version the cohort already agrees when the release runs, so a
+  no-op stamp is the correct outcome; only the release notes must be written. A
+  stale lockfile is still rejected, by its contents rather than its mtime.
 - Swept the log-rotation blast radius the original change never covered. Twelve
   Python sites and one shell snippet in the macOS glow-up read `service.log` by
   name, which is empty after rotation: ironbank ledger tests asserted on an
@@ -36,6 +49,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `tests/test_pidfile_cleanup_is_wired.py` fails when the gate stops a pidfile
   no binary writes.
+- The retired-version guard now reads the justfile, shell scripts, and
+  workflows, not only Python string literals. The stamper survived the semver
+  rewrite because a literal scan cannot see a shell template, and nothing had
+  ever pointed the guard at the file that does the stamping.
 
 ### Fixed
 

@@ -1,4 +1,4 @@
-"""No fixture may teach a version format the project abolished.
+"""No fixture may carry, and no script may construct, an abolished version.
 
 Capsem versions are semver: the binary's patch increments, and every profile
 revision is MAJOR.MINOR.PATCH. Two formats were retired:
@@ -13,7 +13,15 @@ Fixtures carrying them keep the dead schemes alive: they read as the current
 format to anyone learning from the tests, and they break in a body when the
 real scheme moves, reporting a broken release rather than a stale fixture.
 
-Scanned through the AST rather than the raw text, over string literals only.
+Two halves, because scanning only for literals missed the thing that mattered.
+A fixture states a version; the *stamper* builds one. `just _stamp-version`
+went on assembling `1.${RELEASE_MINOR}.$(date +%s)` for the whole rewrite,
+because a literal scan of Python cannot see a shell template in a justfile.
+Nothing prevented reading that file -- the guard simply never looked. The
+second test looks, at every file that participates in stamping, in whatever
+language it is written in.
+
+The literal half is scanned through the AST, over string literals only.
 Docstrings and comments are exempt because they must be able to *name* a
 retired format in order to warn about it -- a raw-text scan flagged the correct
 term "profile pins" for containing the retired "file pins" earlier in the same
@@ -33,6 +41,25 @@ SEARCH_ROOTS = (PROJECT_ROOT / "tests", PROJECT_ROOT / "scripts")
 RETIRED_FORMATS = {
     "a Unix timestamp in the patch": re.compile(r"^v?\d+\.\d+\.[12]\d{9}$"),
     "a dotted-date revision": re.compile(r"^\d{4}\.\d{2,4}\.\d+\.\d+$"),
+}
+
+# Files that can stamp or assemble a version, in any language.
+STAMPING_SOURCES = (
+    PROJECT_ROOT / "justfile",
+    *sorted((PROJECT_ROOT / "scripts").rglob("*.py")),
+    *sorted((PROJECT_ROOT / "scripts").rglob("*.sh")),
+    *sorted((PROJECT_ROOT / ".github" / "workflows").rglob("*.yaml")),
+)
+
+# A version component sourced from a clock. The left side is what makes it a
+# *version*: a digit or the `}` closing an interpolated component, then the dot
+# separating it from the component being appended.
+CLOCK_COMPONENT = {
+    "a shell clock": re.compile(r"[\d}]\.\$\(\(?\s*date\b"),
+    "a Python clock": re.compile(
+        r"[\d}]\.\{[^}]*\b(?:time\.time|datetime\b|utcnow|strftime)"
+    ),
+    "a dotted-date version": re.compile(r"date\s+[\"']?\+%Y[.\-]%m"),
 }
 
 
@@ -83,4 +110,35 @@ def test_no_fixture_carries_a_retired_version_format() -> None:
     assert not offenders, (
         "these fixtures carry a retired version format, which teaches a dead "
         "scheme and breaks when the real one moves:\n  " + "\n  ".join(offenders)
+    )
+
+
+def test_no_script_builds_a_version_component_from_a_clock() -> None:
+    """A version says what changed. A clock says only when someone ran a build.
+
+    Read as raw text on purpose: the offender here is a shell template inside a
+    justfile, which has no AST to walk and no string literal to inspect.
+    """
+    offenders: list[str] = []
+    scanned = 0
+    for path in STAMPING_SOURCES:
+        if not path.is_file() or path.name == Path(__file__).name:
+            continue
+        scanned += 1
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if line.lstrip().startswith("#"):
+                continue
+            for description, pattern in CLOCK_COMPONENT.items():
+                if pattern.search(line):
+                    offenders.append(
+                        f"{path.relative_to(PROJECT_ROOT)}:{line_number} builds a "
+                        f"version component from {description}: {line.strip()}"
+                    )
+
+    assert scanned > 10, "scanned too few files to trust this guard"
+    assert not offenders, (
+        "a version component came from a clock; semver components are chosen "
+        "deliberately, and a timestamp cannot say whether a release is a fix "
+        "or a feature:\n  " + "\n  ".join(offenders)
     )

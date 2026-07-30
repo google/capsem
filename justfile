@@ -30,28 +30,37 @@ host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/c
 assets_dir := "assets"
 entitlements := "entitlements.plist"
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
-release_minor := "6"
-
-# Stamp version as 1.{release_minor}.{unix_timestamp} in Cargo.toml,
-# tauri.conf.json, pyproject.toml, and both frozen lockfiles.
+# Propagate the workspace version across the whole release cohort.
+#
+# The version itself is a human decision recorded in Cargo.toml: only a person
+# knows whether a release is a fix, a feature, or a break, which is the entire
+# point of semver and the reason `min_capsem_version` can mean something. This
+# recipe fans that one value out to tauri.conf.json, pyproject.toml, and both
+# frozen lockfiles -- it never invents a version. A previous scheme appended
+# `$(date +%s)`, which ordered releases but described none of them.
+#
+# Refusing an already-tagged version is what keeps the bump deliberate: the
+# release stops until someone chooses the next MAJOR.MINOR.PATCH.
 _stamp-version:
     #!/bin/bash
     set -euo pipefail
-    CURRENT=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    RELEASE_MINOR="{{release_minor}}"
-    if [[ ! "$RELEASE_MINOR" =~ ^[0-9]+$ ]]; then
-        echo "Invalid release_minor: $RELEASE_MINOR" >&2
+    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+    if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "Cargo.toml version is not semver MAJOR.MINOR.PATCH: ${VERSION}" >&2
         exit 1
     fi
-    NEW="1.${RELEASE_MINOR}.$(date +%s)"
-    echo "Stamping version: ${CURRENT} -> ${NEW}"
+    if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+        echo "v${VERSION} is already tagged. Bump the version in Cargo.toml to" >&2
+        echo "the next semver MAJOR.MINOR.PATCH for this change, then re-run." >&2
+        exit 1
+    fi
+    echo "Stamping release cohort at ${VERSION}"
     sed_in_place() {
         sed -i.bak "$1" "$2"
         rm -f "$2.bak"
     }
-    sed_in_place "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" Cargo.toml
-    sed_in_place "s/\"version\": \"${CURRENT}\"/\"version\": \"${NEW}\"/" crates/capsem-app/tauri.conf.json
-    sed_in_place "s/^version = \"${CURRENT}\"/version = \"${NEW}\"/" pyproject.toml
+    sed_in_place "s/\"version\": \"[0-9]*\.[0-9]*\.[0-9]*\"/\"version\": \"${VERSION}\"/" crates/capsem-app/tauri.conf.json
+    sed_in_place "s/^version = \"[0-9]*\.[0-9]*\.[0-9]*\"/version = \"${VERSION}\"/" pyproject.toml
     # Cargo refreshes workspace package versions in-place while preserving
     # the already locked dependency graph.
     cargo update --workspace --offline

@@ -17,15 +17,24 @@ from typing import Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 CHANNELS = {"stable", "nightly"}
-MUTATED_PATHS = (
+# Every file carrying the released version. Stamping propagates Cargo.toml's
+# human-chosen version into the rest, so these change only when the cohort was
+# not already in agreement -- which is why they are not required to change.
+VERSION_COHORT_PATHS = (
     Path("Cargo.toml"),
     Path("Cargo.lock"),
     Path("crates/capsem-app/tauri.conf.json"),
     Path("pyproject.toml"),
     Path("uv.lock"),
+)
+
+# Produced from the Unreleased section on every release, so these must change.
+RELEASE_NOTE_PATHS = (
     Path("CHANGELOG.md"),
     Path("LATEST_RELEASE.md"),
 )
+
+MUTATED_PATHS = (*VERSION_COHORT_PATHS, *RELEASE_NOTE_PATHS)
 
 
 @dataclass(frozen=True)
@@ -374,15 +383,11 @@ def release_binaries(
         changed = _changed_paths(runner)
         expected = set(MUTATED_PATHS)
         unexpected = changed - expected
-        missing = {
-            Path("Cargo.toml"),
-            Path("Cargo.lock"),
-            Path("crates/capsem-app/tauri.conf.json"),
-            Path("pyproject.toml"),
-            Path("uv.lock"),
-            Path("CHANGELOG.md"),
-            Path("LATEST_RELEASE.md"),
-        } - changed
+        # Only the notes must change. A no-op stamp is the correct outcome when
+        # the cohort already agrees on the released version, and that agreement
+        # is proved above by _validate_version_cohort -- a stronger claim than
+        # "the file was rewritten".
+        missing = set(RELEASE_NOTE_PATHS) - changed
         if unexpected or missing:
             raise RuntimeError(
                 "release preparation write set is invalid: "

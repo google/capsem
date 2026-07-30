@@ -38,18 +38,41 @@ def test_release_contract_rejects_wrong_case_even_on_macos() -> None:
         _read_text_exact_case("Justfile")
 
 
-def test_version_stamp_targets_1_6_and_refreshes_both_frozen_locks() -> None:
+def test_version_stamp_propagates_cargo_toml_and_refreshes_both_frozen_locks() -> None:
+    """Stamping reads the version; it never invents one.
+
+    The recipe used to assemble `1.${RELEASE_MINOR}.$(date +%s)` from a pinned
+    minor, so the released version recorded when a build ran rather than what
+    changed in it. The version is now a human decision in Cargo.toml and this
+    recipe only fans it out, which is why the cohort files are read from, not
+    written by, the release.
+    """
     stamp = _just_recipe_block("_stamp-version:")
     justfile = _read_text_exact_case("justfile")
 
-    assert 'release_minor := "6"' in justfile
+    assert "release_minor" not in justfile
+    assert "Cargo.toml" in stamp
     assert "cargo update --workspace --offline" in stamp
-    assert 'pyproject.toml' in stamp
+    assert "pyproject.toml" in stamp
     assert "uv lock --offline" in stamp
     assert stamp.index("Cargo.toml") < stamp.index(
         "cargo update --workspace --offline"
     )
-    assert stamp.index('pyproject.toml') < stamp.index("uv lock --offline")
+    assert stamp.index("pyproject.toml") < stamp.index("uv lock --offline")
+
+
+def test_version_stamp_refuses_a_version_that_is_already_tagged() -> None:
+    """The only thing forcing a deliberate bump.
+
+    Nothing else stops a second release from reusing a version once the version
+    stopped being machine-generated: the cohort would agree, the notes would
+    regenerate, and the tag collision would surface far later.
+    """
+    stamp = _just_recipe_block("_stamp-version:")
+
+    assert 'rev-parse -q --verify "refs/tags/v${VERSION}"' in stamp
+    assert "already tagged" in stamp
+    assert '^[0-9]+\\.[0-9]+\\.[0-9]+$' in stamp
 
 
 def test_checked_in_python_lock_matches_project_version() -> None:

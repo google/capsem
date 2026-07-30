@@ -44,6 +44,7 @@ class FakeRunner:
         unexpected: bool = False,
         current_release_tag: str = "",
         omit_cargo_lock_change: bool = False,
+        omit_release_notes_change: bool = False,
         mixed_version_cohort: bool = False,
         current_release_channel: str | None = None,
         run_rows: list[dict[str, object]] | None = None,
@@ -56,6 +57,7 @@ class FakeRunner:
         self.unexpected = unexpected
         self.current_release_tag = current_release_tag
         self.omit_cargo_lock_change = omit_cargo_lock_change
+        self.omit_release_notes_change = omit_release_notes_change
         self.mixed_version_cohort = mixed_version_cohort
         self.current_release_channel = current_release_channel
         self.run_rows = run_rows
@@ -85,6 +87,9 @@ class FakeRunner:
             paths = list(RELEASE.MUTATED_PATHS)
             if self.omit_cargo_lock_change:
                 paths.remove(Path("Cargo.lock"))
+            if self.omit_release_notes_change:
+                for path in RELEASE.RELEASE_NOTE_PATHS:
+                    paths.remove(path)
             if self.unexpected:
                 paths.append(Path("config/profiles/code/profile.toml"))
             return RELEASE.CommandResult(
@@ -346,14 +351,37 @@ def test_git_preparation_failure_restores_owned_files_index_and_head(
     assert not any(call[:2] == ("git", "push") for call in runner.calls)
 
 
-def test_binary_release_requires_cargo_lock_to_join_the_version_cut(
+def test_binary_release_accepts_a_cohort_file_that_did_not_need_rewriting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """A stamp that rewrites nothing is the normal case, not a failure.
+
+    The version is a human decision committed ahead of the release, so by the
+    time the release runs the cohort usually already carries it and stamping is
+    pure propagation. Requiring every version file to change would fail every
+    ordinary release. A *stale* lock is still rejected -- by its contents, in
+    `test_binary_release_rejects_a_mixed_capsem_version_cohort`, which is the
+    stronger check because it reads the version rather than the file's mtime.
+    """
     _release_tree(tmp_path)
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
     runner = FakeRunner(tmp_path, omit_cargo_lock_change=True)
 
-    with pytest.raises(RuntimeError, match="Cargo.lock"):
+    tag, _ = RELEASE.release_binaries("nightly", runner)
+
+    assert tag == f"v{COHORT_VERSION}"
+    assert any(call[:2] == ("git", "commit") for call in runner.calls)
+
+
+def test_binary_release_requires_the_release_notes_to_be_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The notes are the one part of the write set that must change."""
+    _release_tree(tmp_path)
+    monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
+    runner = FakeRunner(tmp_path, omit_release_notes_change=True)
+
+    with pytest.raises(RuntimeError, match="CHANGELOG.md"):
         RELEASE.release_binaries("nightly", runner)
 
     assert not any(call[:2] == ("git", "commit") for call in runner.calls)
