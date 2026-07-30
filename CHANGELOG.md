@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed VM boot rejecting correct assets because a pin and its digest were
+  spelled differently. Profile pins derived from the release graph carry
+  `blake3:<hex>`; asset manifests carry bare hex. Boot compared the two
+  verbatim, so every VM in the asset gate died with a mismatch whose expected
+  and actual digests were character-for-character identical apart from the
+  algorithm tag. `VmConfigBuilder::verify_hash` now resolves both spellings in
+  the one place that decides what an expected hash means, and refuses a
+  non-blake3 algorithm outright rather than letting a `sha256:` pin masquerade
+  as asset corruption it can never match. The boot-audit line logs pins in full:
+  truncated to 16 characters, both spellings render as plausible prefixes, which
+  is exactly how this hid.
+
 - Fixed 16 release-contract tests that blocked both release lanes. They asserted
   that specific Rust tests exist, but read only the production `.rs` file after
   those tests moved to sibling `tests.rs` modules, so the whole gate failed on a

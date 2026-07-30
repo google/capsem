@@ -163,11 +163,13 @@ pub fn boot_vm(
             "refusing to boot without the booting profile's pinned asset hashes: \
              an unverified kernel is worse than a failed boot",
         )?;
+        // Logged in full, not truncated. Pins reach here in two spellings --
+        // bare hex and `blake3:<hex>` -- and a truncated line renders both as
+        // plausible-looking prefixes, which is precisely how a spelling
+        // mismatch between pin and digest hides in an audit trail.
         info!(
             "[boot-audit] asset hash verification enabled (kernel={}, initrd={}, rootfs={})",
-            &expected_hashes.kernel[..16],
-            &expected_hashes.initrd[..16],
-            &expected_hashes.rootfs[..16],
+            expected_hashes.kernel, expected_hashes.initrd, expected_hashes.rootfs,
         );
 
         builder = builder.expected_kernel_hash(&expected_hashes.kernel);
