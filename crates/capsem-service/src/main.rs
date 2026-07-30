@@ -1165,6 +1165,7 @@ impl ServiceState {
                 if !entry.defunct {
                     warn!(
                         name,
+                        cause = capsem_core::session::boot_failure_summary(&tail),
                         "marking persistent VM defunct from preserved boot logs"
                     );
                     entry.defunct = true;
@@ -1725,7 +1726,13 @@ impl ServiceState {
                         entry.checkpoint_path = None;
                         if unexpected_exit {
                             entry.defunct = true;
-                            entry.last_error = Some(read_process_log_tail(&session_dir_clone, 20));
+                            let tail = read_process_log_tail(&session_dir_clone, 20);
+                            warn!(
+                                id_clone,
+                                cause = capsem_core::session::boot_failure_summary(&tail),
+                                "persistent VM marked defunct after unexpected exit"
+                            );
+                            entry.last_error = Some(tail);
                         } else {
                             // Graceful stop / delete path -- not a crash.
                             entry.defunct = false;
@@ -1733,7 +1740,7 @@ impl ServiceState {
                         }
                     }
                     if let Err(e) = registry.save() {
-                        error!(id_clone, "failed to save persistent registry: {e}");
+                        error!(id_clone, error = %e, "failed to save persistent registry");
                     }
                 }
             }
@@ -2149,7 +2156,7 @@ impl ServiceState {
             entry.defunct = false;
             entry.last_error = None;
             if let Err(e) = registry.save() {
-                error!(id, "failed to save persistent registry after resume: {e}");
+                error!(id, error = %e, "failed to save persistent registry after resume");
             }
         }
     }
@@ -3378,7 +3385,7 @@ async fn handle_fork(
         )
         .await
         {
-            tracing::warn!("pre-fork guest sync failed (non-fatal): {e}");
+            tracing::warn!(error = %e, "pre-fork guest sync failed (non-fatal)");
         }
     }
 
@@ -3631,10 +3638,17 @@ async fn handle_provision(
             // BootCrash/ProvisionError still produce a user-facing error
             // body via classify_attempt_decision; these logs are for
             // operators reading service.log.
-            if matches!(&outcome, ProvisionAttemptOutcome::BootCrash { .. }) {
-                error!(id, "capsem-process exited before reaching ready");
+            if let ProvisionAttemptOutcome::BootCrash { ref tail } = outcome {
+                // The tail goes to the caller in the 500 body; without it here
+                // service.log records that a boot died but never why, and the
+                // reason survives only inside the session's process.log.
+                error!(
+                    id,
+                    cause = capsem_core::session::boot_failure_summary(tail),
+                    "capsem-process exited before reaching ready"
+                );
             } else if let ProvisionAttemptOutcome::ProvisionError(ref e) = outcome {
-                error!(id, "provision failed: {e}");
+                error!(id, error = %e, "provision failed");
             }
             match classify_attempt_decision(outcome, &id) {
                 AttemptDecision::Succeed(uds_path) => Some(Ok(uds_path)),
@@ -11647,7 +11661,7 @@ async fn handle_suspend(
                 entry.suspended = true;
                 entry.checkpoint_path = Some(RESUME_CHECKPOINT_NAME.to_string());
                 if let Err(e) = registry.save() {
-                    error!(id, "failed to save persistent registry: {e}");
+                    error!(id, error = %e, "failed to save persistent registry");
                 }
             }
         }
@@ -11758,7 +11772,7 @@ async fn handle_resume(
             let uds_path = state.instance_socket_path(&resumed_id);
             if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&resumed_id)).await
             {
-                error!(id, "resume ready-wait failed: {e}");
+                error!(id, error = %e, "resume ready-wait failed");
                 if attempted_checkpoint {
                     warn!(
                         id,
@@ -11812,7 +11826,7 @@ async fn handle_resume(
             provision_response_for_running(&state, resumed_id, uds_path).map(Json)
         }
         Err(e) => {
-            error!(id, "resume failed: {e}");
+            error!(id, error = %e, "resume failed");
             Err(AppError(
                 StatusCode::NOT_FOUND,
                 format!("resume failed: {e}"),
@@ -12862,6 +12876,7 @@ async fn main() -> Result<()> {
         },
         default_filter: "info",
     })?;
+    capsem_core::telemetry::install_panic_logger("capsem-service");
     let service_launch_span = tracing::info_span!(
         target: "capsem.launch",
         capsem_core::telemetry::LAUNCH_SERVICE_SPAN,
@@ -12878,7 +12893,7 @@ async fn main() -> Result<()> {
         match capsem_guard::watch_parent_or_exit(Some(ppid)) {
             Ok(()) => {}
             Err(e) => {
-                info!(parent_pid = ppid, "parent watch not armed: {e}; exiting 0");
+                info!(parent_pid = ppid, error = %e, "parent watch not armed; exiting 0");
                 return Ok(());
             }
         }
@@ -13662,14 +13677,14 @@ async fn spawn_companions(
                         children.push(child);
                     }
                     Err(e) => {
-                        tracing::warn!("failed to spawn capsem-tray: {e} (non-fatal)");
+                        tracing::warn!(error = %e, "failed to spawn capsem-tray (non-fatal)");
                     }
                 }
             }
         }
         Err(e) => {
             gateway_span.record("status", "error");
-            tracing::warn!("failed to spawn capsem-gateway: {e} (non-fatal)");
+            tracing::warn!(error = %e, "failed to spawn capsem-gateway (non-fatal)");
         }
     }
 
