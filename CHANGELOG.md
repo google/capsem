@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Daemon logs rotate daily and retain a bounded history. `LogSink::File` now
+  names a stream rather than a single file: `<run>/service.log` produces
+  `service.<date>.log`, capped at `LOG_FILES_RETAINED` days, read back with
+  `log_stream_files`. An unbounded single file grows until the disk or the
+  reader gives out, and the support bundle had no way to select recent history.
+- Long-lived daemons route panics into their own log instead of losing them to a
+  detached stderr, and errors are logged as structured fields rather than being
+  formatted into the message text, so they stay queryable.
+
 ### Added
 
 - Added a scheduled Live Channel Watch that proves published channels still
