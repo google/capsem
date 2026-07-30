@@ -75,6 +75,13 @@ pub struct BootOptions<'a> {
     pub checkpoint_path: Option<std::path::PathBuf>,
     pub machine_identifier_path: Option<&'a Path>,
     pub serial_log_path: Option<&'a Path>,
+    /// Asset hashes pinned by the profile this VM is booting.
+    ///
+    /// A channel carries one image set per profile, so no channel-wide pointer
+    /// can answer this: the caller knows which profile it is starting and must
+    /// say what that profile pins. Absent means the caller could not determine
+    /// them, which is a hard error rather than a licence to boot unverified.
+    pub expected_asset_hashes: Option<crate::asset_manager::ExpectedAssetHashes>,
 }
 
 /// Build config, boot the VM via the hypervisor trait, and return the handle +
@@ -105,6 +112,7 @@ pub fn boot_vm(
         checkpoint_path,
         machine_identifier_path,
         serial_log_path,
+        expected_asset_hashes,
     } = options;
     let _span = info_span!("boot_vm").entered();
     let mut sm = HostStateMachine::new_host();
@@ -147,28 +155,22 @@ pub fn boot_vm(
             builder = builder.serial_log_path(slp);
         }
 
-        // Load expected asset hashes from the manifest on disk. The manifest is
-        // metadata, not an authority root: profile-selected asset hashes and
-        // corp/profile-controlled asset URLs are the runtime contract.
-        let manifest = crate::asset_manager::load_manifest_for_assets(assets);
-        let expected_hashes = manifest
-            .and_then(|m| m.expected_hashes_current(crate::asset_manager::host_manifest_arch()));
-        match expected_hashes {
-            Some(ref h) => info!(
-                "[boot-audit] asset hash verification enabled (kernel={}, initrd={}, rootfs={})",
-                &h.kernel[..16],
-                &h.initrd[..16],
-                &h.rootfs[..16],
-            ),
-            None => info!(
-                "[boot-audit] asset hash verification disabled (no manifest match for arch={})",
-                crate::asset_manager::host_manifest_arch()
-            ),
-        }
+        // Verify against the hashes the booting profile pins, supplied by the
+        // caller. Reading them from the manifest's channel-wide pointer instead
+        // verified every profile against whichever one that pointer named, which
+        // is correct only while a channel carries exactly one profile.
+        let expected_hashes = expected_asset_hashes.context(
+            "refusing to boot without the booting profile's pinned asset hashes: \
+             an unverified kernel is worse than a failed boot",
+        )?;
+        info!(
+            "[boot-audit] asset hash verification enabled (kernel={}, initrd={}, rootfs={})",
+            &expected_hashes.kernel[..16],
+            &expected_hashes.initrd[..16],
+            &expected_hashes.rootfs[..16],
+        );
 
-        if let Some(ref h) = expected_hashes {
-            builder = builder.expected_kernel_hash(&h.kernel);
-        }
+        builder = builder.expected_kernel_hash(&expected_hashes.kernel);
 
         let initrd_path = initrd_override
             .map(|p| p.to_path_buf())
@@ -179,9 +181,7 @@ pub fn boot_vm(
                 initrd_path.display()
             );
             builder = builder.initrd_path(initrd_path);
-            if let Some(ref h) = expected_hashes {
-                builder = builder.expected_initrd_hash(&h.initrd);
-            }
+            builder = builder.expected_initrd_hash(&expected_hashes.initrd);
         } else {
             info!(
                 "[boot-audit] initrd: {} (exists=false)",
@@ -202,9 +202,7 @@ pub fn boot_vm(
                 rootfs.exists()
             );
             builder = builder.disk_path(rootfs);
-            if let Some(ref h) = expected_hashes {
-                builder = builder.expected_disk_hash(&h.rootfs);
-            }
+            builder = builder.expected_disk_hash(&expected_hashes.rootfs);
         } else {
             info!("[boot-audit] rootfs: none");
         }

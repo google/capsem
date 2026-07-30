@@ -87,6 +87,17 @@ struct Args {
     /// Explicit initrd path (overrides assets_dir/initrd.img)
     #[arg(long)]
     initrd: Option<PathBuf>,
+    /// BLAKE3 hashes the booting profile pins for its boot assets.
+    ///
+    /// Supplied by the service, which resolves the profile: a channel carries one
+    /// image set per profile, so nothing here can derive them from a channel-wide
+    /// pointer without verifying one profile against another's kernel.
+    #[arg(long)]
+    expected_kernel_hash: String,
+    #[arg(long)]
+    expected_initrd_hash: String,
+    #[arg(long)]
+    expected_rootfs_hash: String,
     #[arg(long)]
     session_dir: PathBuf,
     #[arg(long)]
@@ -237,6 +248,11 @@ fn main() -> Result<()> {
         }),
         machine_identifier_path: Some(&machine_identifier_path),
         serial_log_path: Some(&serial_log_path),
+        expected_asset_hashes: Some(capsem_core::asset_manager::ExpectedAssetHashes {
+            kernel: args.expected_kernel_hash.clone(),
+            initrd: args.expected_initrd_hash.clone(),
+            rootfs: args.expected_rootfs_hash.clone(),
+        }),
     })?;
 
     // Delete checkpoint file if we just restored from it, so we don't accidentally suspend on normal shutdown

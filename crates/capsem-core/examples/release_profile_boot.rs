@@ -113,9 +113,16 @@ fn run() -> Result<()> {
     let kernel = PathBuf::from(required(&values, "--kernel")?);
     let initrd = PathBuf::from(required(&values, "--initrd")?);
     let rootfs = PathBuf::from(required(&values, "--rootfs")?);
-    verify_image(&kernel, required(&values, "--kernel-blake3")?, "kernel")?;
-    verify_image(&initrd, required(&values, "--initrd-blake3")?, "initrd")?;
-    verify_image(&rootfs, required(&values, "--rootfs-blake3")?, "rootfs")?;
+    // The digests this harness was told to prove. They are also what boot must
+    // verify against: this path is not behind the service, so boot's own check is
+    // the only one, and it must use the profile under test rather than any
+    // channel-wide pointer.
+    let kernel_blake3 = required(&values, "--kernel-blake3")?.to_string();
+    let initrd_blake3 = required(&values, "--initrd-blake3")?.to_string();
+    let rootfs_blake3 = required(&values, "--rootfs-blake3")?.to_string();
+    verify_image(&kernel, &kernel_blake3, "kernel")?;
+    verify_image(&initrd, &initrd_blake3, "initrd")?;
+    verify_image(&rootfs, &rootfs_blake3, "rootfs")?;
     let timeout = required(&values, "--timeout")?
         .parse::<u64>()
         .context("invalid --timeout")?;
@@ -150,6 +157,11 @@ fn run() -> Result<()> {
             checkpoint_path: None,
             machine_identifier_path: Some(&machine_identifier),
             serial_log_path: Some(&serial_log),
+        expected_asset_hashes: Some(capsem_core::asset_manager::ExpectedAssetHashes {
+            kernel: kernel_blake3.clone(),
+            initrd: initrd_blake3.clone(),
+            rootfs: rootfs_blake3.clone(),
+        }),
         })?;
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()

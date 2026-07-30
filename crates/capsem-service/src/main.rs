@@ -1610,6 +1610,14 @@ impl ServiceState {
                 .arg(&resolved.kernel)
                 .arg("--initrd")
                 .arg(&resolved.initrd)
+                // The profile's own pins. Boot verifies against these, never
+                // against a channel-wide pointer that can only name one profile.
+                .arg("--expected-kernel-hash")
+                .arg(&asset_pins.kernel.hash)
+                .arg("--expected-initrd-hash")
+                .arg(&asset_pins.initrd.hash)
+                .arg("--expected-rootfs-hash")
+                .arg(&asset_pins.rootfs.hash)
                 .arg("--session-dir")
                 .arg(&session_dir)
                 .arg("--active-profile")
@@ -1975,6 +1983,14 @@ impl ServiceState {
                 .arg(&resolved.kernel)
                 .arg("--initrd")
                 .arg(&resolved.initrd)
+                // The profile's own pins. Boot verifies against these, never
+                // against a channel-wide pointer that can only name one profile.
+                .arg("--expected-kernel-hash")
+                .arg(&entry.asset_pins.kernel.hash)
+                .arg("--expected-initrd-hash")
+                .arg(&entry.asset_pins.initrd.hash)
+                .arg("--expected-rootfs-hash")
+                .arg(&entry.asset_pins.rootfs.hash)
                 .arg("--session-dir")
                 .arg(&entry.session_dir)
                 .arg("--active-profile")
