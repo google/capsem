@@ -6100,6 +6100,14 @@ fn validate_profile_revision_path(revision: &str) -> Result<()> {
 }
 
 fn profile_release_revision(profiles: &[ProfileConfigFile]) -> Result<String> {
+    // Every profile's own revision must be semver, whoever authored it. This
+    // runs before the collapse below so a corp profile carrying a date is
+    // refused by name rather than disappearing into a `profiles-<hash>`
+    // identifier that looks perfectly well formed.
+    for profile in profiles {
+        release_graph::parse_profile_revision(&profile.revision)
+            .with_context(|| format!("profile {} declares an unusable revision", profile.id))?;
+    }
     let mut revisions = profiles
         .iter()
         .map(|profile| profile.revision.as_str())
