@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   human-chosen version the cohort already agrees when the release runs, so a
   no-op stamp is the correct outcome; only the release notes must be written. A
   stale lockfile is still rejected, by its contents rather than its mtime.
+- Installing 0.6.0 failed at asset hydration: `no compatible asset release for
+  binary 0.6.0 (min_assets: 2026.0730.16)`. The asset release declared
+  `min_binary` as a hardcoded `1.0.0`, so renumbering the binary from the 1.x
+  line to 0.6 put every binary *below* the floor its own assets demanded, and
+  the sole asset release was skipped as incompatible. The floor is now derived
+  from the binary's release line rather than written as a literal -- and it is
+  the line base, not the exact version, so a compatibility window survives: any
+  0.6.x binary runs these assets and a patch release does not force everyone to
+  re-hydrate.
 - `GET /host-logs/{name}` returned an empty log for a service that was writing
   normally, so the `capsem_host_logs` MCP tool and `capsem` support bundles
   reported nothing. It opened the rotated stream by its bare name with its own

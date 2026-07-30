@@ -1414,6 +1414,22 @@ def _select_rootfs_asset(asset_dir: Path) -> str | None:
     return None
 
 
+def asset_min_binary(binary_version: str) -> str:
+    """Lowest binary these assets support: the base of the binary's release line.
+
+    Derived, never hardcoded. A literal `1.0.0` sat here through the move from
+    the 1.x line to 0.6, which put every binary *below* the floor its own assets
+    declared -- installation failed with "no compatible asset release for binary
+    0.6.0 (min_assets: ...)" because the only asset release demanded >= 1.0.0.
+
+    The line base rather than the exact version, so a compatibility window still
+    exists: any 0.6.x binary runs these assets, and a patch release does not
+    force everyone to re-hydrate.
+    """
+    major, minor, *_ = binary_version.split(".")
+    return f"{major}.{minor}.0"
+
+
 def _next_or_existing_asset_version(
     output_dir: Path,
     date_prefix: str,
@@ -1602,7 +1618,7 @@ def generate_checksums(output_dir: Path, version: str) -> Path:
                 asset_version: {
                     "date": today.isoformat(),
                     "deprecated": False,
-                    "min_binary": "1.0.0",
+                    "min_binary": asset_min_binary(version),
                     "arches": arch_assets,
                 },
             },
