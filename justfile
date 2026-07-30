@@ -752,6 +752,7 @@ _test-candidate-run:
     # or a VM.
     SOURCE_CONTRACT_TESTS=(
         tests/test_agent_skill_index.py
+        tests/test_authoritative_values_are_not_restated.py
         tests/test_build_assets_profile.py
         tests/test_build_provenance.py
         tests/test_builder_probe_timeouts.py
@@ -766,8 +767,11 @@ _test-candidate-run:
         tests/test_live_channel_watch.py
         tests/test_macos_tart_glowup.py
         tests/test_profile_revision_semver.py
+        tests/test_path_and_log_wrappers_are_mandatory.py
+        tests/test_pidfile_cleanup_is_wired.py
         tests/test_pnpm_bulk_audit.py
         tests/test_prove_installed_shell.py
+        tests/test_retired_version_formats.py
         tests/test_release_gate_integrity.py
         tests/test_release_manifest_assets.py
         tests/test_release_site_generated_from_json.py

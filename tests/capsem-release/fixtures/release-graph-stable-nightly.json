@@ -744,8 +744,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "97d9a86ed192b0eeb90e2e9a76737cc676d89c26ed7a9fe58a58c914b721e803",
-                      "blake3": "00638b2b8e8baf67d7f02be3cfca974078e7a85e50b5109c109f98376d783b28"
+                      "sha256": "c149780e4d7e8f491d29483447d0e0d40d194bf08422ccb728b61d9cfd8b0fc2",
+                      "blake3": "0439dda3a765c604311f7d7df538ffbb9b3bc9690775f5835db9de4ca241e8ea"
                     },
                     "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "python",
@@ -755,8 +755,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "77b67479b2601f1561987bda92f4d0fddf8f28fc5dcb47afd7a41c201aebc44e",
-                      "blake3": "667bf6979f3a7221766611644274facba16e09c1104700e76c59686a0751d0d9"
+                      "sha256": "0cc70b66173adf7f813860ac5e93738280ae17586885f7eefb49e3aefbdbd091",
+                      "blake3": "97051106120aee60e637c4227fcbd8efeea35444670b2c043f12736662537db0"
                     },
                     "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "node",
@@ -951,8 +951,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "e7b967afe107697866fb47d9bcb40e713f6276e4349bc528942bc7c504ddbb24",
-                      "blake3": "888931daeadcfac8cfc1e6c0e0b895faecf19945c5d75a7aab50fedacbf672c7"
+                      "sha256": "854a931a01f1abc9703e4a8461310493d7c55e862235a66e0511a62582417584",
+                      "blake3": "265688d9ccaf7a821f295e308791a45a4a3782e5f805b9aa854e3f61b9409819"
                     },
                     "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "python",
@@ -962,8 +962,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "3a31e3bde0e600099c91a6a019d3bb0512a7394e173510d6a0c5f073385d7b3a",
-                      "blake3": "0836e22dbf49375ed61fbb79c15b8a05ce4d52fb3cc1391d79ecb4253a047f8c"
+                      "sha256": "7bc2fd7ae3d10795aa50eb181988dcf0a7840e7c4b1bafabe09b897d84609916",
+                      "blake3": "57349fa603ba8229ca2bc2f42ede33313abe9a59fc02652ef7dfc070fcb4de1b"
                     },
                     "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "node",
@@ -1169,8 +1169,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "97d9a86ed192b0eeb90e2e9a76737cc676d89c26ed7a9fe58a58c914b721e803",
-                      "blake3": "00638b2b8e8baf67d7f02be3cfca974078e7a85e50b5109c109f98376d783b28"
+                      "sha256": "c149780e4d7e8f491d29483447d0e0d40d194bf08422ccb728b61d9cfd8b0fc2",
+                      "blake3": "0439dda3a765c604311f7d7df538ffbb9b3bc9690775f5835db9de4ca241e8ea"
                     },
                     "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "python",
@@ -1180,8 +1180,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "77b67479b2601f1561987bda92f4d0fddf8f28fc5dcb47afd7a41c201aebc44e",
-                      "blake3": "667bf6979f3a7221766611644274facba16e09c1104700e76c59686a0751d0d9"
+                      "sha256": "0cc70b66173adf7f813860ac5e93738280ae17586885f7eefb49e3aefbdbd091",
+                      "blake3": "97051106120aee60e637c4227fcbd8efeea35444670b2c043f12736662537db0"
                     },
                     "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "node",
@@ -1376,8 +1376,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "e7b967afe107697866fb47d9bcb40e713f6276e4349bc528942bc7c504ddbb24",
-                      "blake3": "888931daeadcfac8cfc1e6c0e0b895faecf19945c5d75a7aab50fedacbf672c7"
+                      "sha256": "854a931a01f1abc9703e4a8461310493d7c55e862235a66e0511a62582417584",
+                      "blake3": "265688d9ccaf7a821f295e308791a45a4a3782e5f805b9aa854e3f61b9409819"
                     },
                     "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "python",
@@ -1387,8 +1387,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "3a31e3bde0e600099c91a6a019d3bb0512a7394e173510d6a0c5f073385d7b3a",
-                      "blake3": "0836e22dbf49375ed61fbb79c15b8a05ce4d52fb3cc1391d79ecb4253a047f8c"
+                      "sha256": "7bc2fd7ae3d10795aa50eb181988dcf0a7840e7c4b1bafabe09b897d84609916",
+                      "blake3": "57349fa603ba8229ca2bc2f42ede33313abe9a59fc02652ef7dfc070fcb4de1b"
                     },
                     "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "node",
@@ -2236,8 +2236,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "97d9a86ed192b0eeb90e2e9a76737cc676d89c26ed7a9fe58a58c914b721e803",
-                      "blake3": "00638b2b8e8baf67d7f02be3cfca974078e7a85e50b5109c109f98376d783b28"
+                      "sha256": "c149780e4d7e8f491d29483447d0e0d40d194bf08422ccb728b61d9cfd8b0fc2",
+                      "blake3": "0439dda3a765c604311f7d7df538ffbb9b3bc9690775f5835db9de4ca241e8ea"
                     },
                     "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "python",
@@ -2247,8 +2247,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "77b67479b2601f1561987bda92f4d0fddf8f28fc5dcb47afd7a41c201aebc44e",
-                      "blake3": "667bf6979f3a7221766611644274facba16e09c1104700e76c59686a0751d0d9"
+                      "sha256": "0cc70b66173adf7f813860ac5e93738280ae17586885f7eefb49e3aefbdbd091",
+                      "blake3": "97051106120aee60e637c4227fcbd8efeea35444670b2c043f12736662537db0"
                     },
                     "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "node",
@@ -2443,8 +2443,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "e7b967afe107697866fb47d9bcb40e713f6276e4349bc528942bc7c504ddbb24",
-                      "blake3": "888931daeadcfac8cfc1e6c0e0b895faecf19945c5d75a7aab50fedacbf672c7"
+                      "sha256": "854a931a01f1abc9703e4a8461310493d7c55e862235a66e0511a62582417584",
+                      "blake3": "265688d9ccaf7a821f295e308791a45a4a3782e5f805b9aa854e3f61b9409819"
                     },
                     "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "python",
@@ -2454,8 +2454,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "3a31e3bde0e600099c91a6a019d3bb0512a7394e173510d6a0c5f073385d7b3a",
-                      "blake3": "0836e22dbf49375ed61fbb79c15b8a05ce4d52fb3cc1391d79ecb4253a047f8c"
+                      "sha256": "7bc2fd7ae3d10795aa50eb181988dcf0a7840e7c4b1bafabe09b897d84609916",
+                      "blake3": "57349fa603ba8229ca2bc2f42ede33313abe9a59fc02652ef7dfc070fcb4de1b"
                     },
                     "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "node",
@@ -2661,8 +2661,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "97d9a86ed192b0eeb90e2e9a76737cc676d89c26ed7a9fe58a58c914b721e803",
-                      "blake3": "00638b2b8e8baf67d7f02be3cfca974078e7a85e50b5109c109f98376d783b28"
+                      "sha256": "c149780e4d7e8f491d29483447d0e0d40d194bf08422ccb728b61d9cfd8b0fc2",
+                      "blake3": "0439dda3a765c604311f7d7df538ffbb9b3bc9690775f5835db9de4ca241e8ea"
                     },
                     "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "python",
@@ -2672,8 +2672,8 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "77b67479b2601f1561987bda92f4d0fddf8f28fc5dcb47afd7a41c201aebc44e",
-                      "blake3": "667bf6979f3a7221766611644274facba16e09c1104700e76c59686a0751d0d9"
+                      "sha256": "0cc70b66173adf7f813860ac5e93738280ae17586885f7eefb49e3aefbdbd091",
+                      "blake3": "97051106120aee60e637c4227fcbd8efeea35444670b2c043f12736662537db0"
                     },
                     "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "node",
@@ -2868,8 +2868,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "e7b967afe107697866fb47d9bcb40e713f6276e4349bc528942bc7c504ddbb24",
-                      "blake3": "888931daeadcfac8cfc1e6c0e0b895faecf19945c5d75a7aab50fedacbf672c7"
+                      "sha256": "854a931a01f1abc9703e4a8461310493d7c55e862235a66e0511a62582417584",
+                      "blake3": "265688d9ccaf7a821f295e308791a45a4a3782e5f805b9aa854e3f61b9409819"
                     },
                     "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "python",
@@ -2879,8 +2879,8 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "3a31e3bde0e600099c91a6a019d3bb0512a7394e173510d6a0c5f073385d7b3a",
-                      "blake3": "0836e22dbf49375ed61fbb79c15b8a05ce4d52fb3cc1391d79ecb4253a047f8c"
+                      "sha256": "7bc2fd7ae3d10795aa50eb181988dcf0a7840e7c4b1bafabe09b897d84609916",
+                      "blake3": "57349fa603ba8229ca2bc2f42ede33313abe9a59fc02652ef7dfc070fcb4de1b"
                     },
                     "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "node",
