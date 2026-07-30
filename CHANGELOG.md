@@ -174,6 +174,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reaches the caller, and every rail escalates a plugin decision through one
   shared helper.
 
+- The policy doc's first-party field table listed a `security` root that was
+  never valid and omitted `ip`, `tcp`, and `udp`, which the shipped `code`
+  profile uses in its own rules. Now that unknown fields fail compilation, a
+  drifted table sends authors straight to a rule that will not build, so the
+  table is complete and a guard test compares it against
+  `SECURITY_EVENT_CEL_FIELDS` in both directions. The doc also now states the
+  rule-precedence tie-break -- first match wins, ties broken by rule id, so give
+  the stricter rule the stronger priority rather than trusting the alphabet --
+  and the deny-by-default pattern that a negation cannot express.
+
 - The benchmark retention contract asserted `>= (1, 6)` while its own docstring
   promised retention follows Cargo.toml "without a second place to update". The
   literal was that second place, and it failed the moment the workspace moved to

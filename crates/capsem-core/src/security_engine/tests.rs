@@ -3711,3 +3711,49 @@ async fn plugin_aware_emitter_leaves_an_allowing_plugin_alone() {
     assert!(emission.enforcement.reason.is_none());
     writer.shutdown_blocking();
 }
+
+/// The published field table is what a rule author reads before writing a rule,
+/// and the compiler now rejects anything outside it. A table that drifts from
+/// the contract sends authors to rules that will not compile -- it listed a
+/// `security` root that was never valid and omitted `ip`, `tcp`, and `udp` while
+/// a shipped profile rule used all three.
+#[test]
+fn published_field_table_matches_the_cel_contract() {
+    const POLICY_DOC: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/src/content/docs/security/policy.md"
+    ));
+
+    let section = POLICY_DOC
+        .split("## First-Party Fields")
+        .nth(1)
+        .expect("policy doc has a First-Party Fields section")
+        .split("\n## ")
+        .next()
+        .expect("section ends at the next heading");
+
+    // Only the Fields column of the table counts. The Root column and the
+    // surrounding prose both carry backticks that are not field names.
+    let documented = section
+        .lines()
+        .filter(|line| line.starts_with('|'))
+        .filter_map(|line| line.split('|').nth(2))
+        .flat_map(|cell| cell.split('`').skip(1).step_by(2))
+        .collect::<std::collections::BTreeSet<_>>();
+    let contract = SECURITY_EVENT_CEL_FIELDS
+        .iter()
+        .copied()
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let undocumented = contract.difference(&documented).collect::<Vec<_>>();
+    let invented = documented.difference(&contract).collect::<Vec<_>>();
+
+    assert!(
+        undocumented.is_empty(),
+        "these CEL fields exist but the policy doc does not list them: {undocumented:?}"
+    );
+    assert!(
+        invented.is_empty(),
+        "the policy doc advertises fields the compiler rejects: {invented:?}"
+    );
+}

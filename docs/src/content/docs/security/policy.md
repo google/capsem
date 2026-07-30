@@ -200,6 +200,59 @@ These counters are in-memory debug/benchmark truth and must not require a
 Rules sort by `priority`, then by full rule id. Corporate rules therefore run
 before user/profile rules, and default catch-alls run last.
 
+The first matching `allow`, `ask`, or `block` rule decides the boundary. This is
+first-match-wins, not most-restrictive-wins, and the tie-break is the rule id:
+
+```toml
+# Both match evil.test at priority 10. "aaa_..." sorts first, so it decides,
+# and the block never applies.
+[profiles.rules.aaa_allow_all_http]
+name = "aaa_allow_all_http"
+action = "allow"
+priority = 10
+match = 'has(http.host)'
+
+[profiles.rules.zzz_block_evil]
+name = "zzz_block_evil"
+action = "block"
+priority = 10
+match = 'http.host == "evil.test"'
+```
+
+Give the stricter rule the stronger (lower) priority rather than relying on
+where its name lands in the alphabet. Two rules that can match the same event
+and disagree on the action should never share a priority.
+
+A plugin verdict is the one thing that overrides the selected rule, and only
+upward: a plugin in `ask` or `block` mode raises an allowing rule, and no plugin
+mode can lower a rule that blocks.
+
+### Deny by default
+
+Negation cannot express deny-by-default. Every CEL atom is false when the field
+it reads is missing, so `http.host != "allowed.test"` blocks a host it can see
+and goes quiet on an event carrying no host. Absent-is-false is what keeps a
+`file.*` rule from firing on an HTTP event, so it is not going away.
+
+Express default-deny in the priority ladder instead -- a `block` catch-all at
+weak priority, with `allow` exceptions at stronger priority:
+
+```toml
+[profiles.rules.allow_known_host]
+name = "allow_known_host"
+action = "allow"
+priority = 10
+match = 'http.host == "allowed.test"'
+
+[profiles.rules.deny_the_rest]
+name = "deny_the_rest"
+action = "block"
+priority = 900
+match = 'has(http.valid)'
+```
+
+This still denies when the field the exception reads is absent.
+
 ## CEL Shape
 
 The current CEL subset supports:
@@ -228,26 +281,37 @@ match = 'http.host.matches("(^|.*\\.)(openai\\.com|chatgpt\\.com|oaistatic\\.com
 ## First-Party Fields
 
 Rules must use one of these roots: `http`, `dns`, `mcp`, `model`, `file`,
-`process`, or `security`.
+`process`, `ip`, `tcp`, or `udp`.
 
-| Root | Current fields |
+Every field a rule can read is listed below. The compiler rejects anything else,
+including a misspelled leaf (`file.wrte.path`) and a bare root (`has(http)`),
+because both would compile into a rule that silently never matches. Each root
+also carries a `valid` field that is true whenever the event carries that family
+at all -- `has(http.valid)`, not `has(http)`.
+
+| Root | Fields |
 |---|---|
-| `http` | `host`, `method`, `path`, `status`, `body` |
-| `dns` | `qname`, `qtype` |
-| `mcp` | `method`, `server.name`, `tool_call.name`, `tool_list` |
-| `model` | `provider`, `name`, `request.body`, `response.body`, `request.tool_calls` |
-| `file.import` | `path`, `name`, `ext`, `mime_type`, `content` |
-| `file.export` | `path`, `name`, `ext`, `mime_type`, `content` |
-| `file.read` | `path`, `name`, `ext`, `mime_type`, `content` |
-| `file.create` | `path`, `name`, `ext`, `mime_type`, `content` |
-| `file.write` | `path`, `name`, `ext`, `mime_type`, `content` |
-| `file.delete` | `path`, `name`, `ext`, `mime_type`, `content` |
-| `file` | `content` |
-| `process` | `exec.id`, `exec.path`, `exec.exit_code`, `exec.stdout`, `exec.stderr`, `command` |
+| `http` | `http.valid`, `http.host`, `http.method`, `http.path`, `http.query`, `http.status`, `http.body` |
+| `dns` | `dns.valid`, `dns.qname`, `dns.qtype` |
+| `mcp` | `mcp.valid`, `mcp.method`, `mcp.server.valid`, `mcp.server.name`, `mcp.tool_call.valid`, `mcp.tool_call.name`, `mcp.tool_list.valid`, `mcp.tool_list`, `mcp.request.valid`, `mcp.request.id`, `mcp.request.method`, `mcp.request.arguments`, `mcp.response.valid`, `mcp.response.content`, `mcp.event.valid` |
+| `model` | `model.valid`, `model.provider`, `model.name`, `model.request.valid`, `model.request.body`, `model.request.tool_calls`, `model.response.valid`, `model.response.body`, `model.tool_call.valid` |
+| `file` | `file.valid`, `file.content` |
+| `file.import` | `file.import.valid`, `file.import.path`, `file.import.name`, `file.import.ext`, `file.import.mime_type`, `file.import.content` |
+| `file.export` | `file.export.valid`, `file.export.path`, `file.export.name`, `file.export.ext`, `file.export.mime_type`, `file.export.content` |
+| `file.read` | `file.read.valid`, `file.read.path`, `file.read.name`, `file.read.ext`, `file.read.mime_type`, `file.read.content` |
+| `file.create` | `file.create.valid`, `file.create.path`, `file.create.name`, `file.create.ext`, `file.create.mime_type`, `file.create.content` |
+| `file.write` | `file.write.valid`, `file.write.path`, `file.write.name`, `file.write.ext`, `file.write.mime_type`, `file.write.content` |
+| `file.delete` | `file.delete.valid`, `file.delete.path`, `file.delete.name`, `file.delete.ext`, `file.delete.mime_type`, `file.delete.content` |
+| `process` | `process.valid`, `process.name`, `process.command`, `process.exec.valid`, `process.exec.id`, `process.exec.path`, `process.exec.exit_code`, `process.exec.stdout`, `process.exec.stderr`, `process.audit.valid` |
+| `ip` | `ip.valid`, `ip.value`, `ip.version` |
+| `tcp` | `tcp.valid`, `tcp.port` |
+| `udp` | `udp.valid`, `udp.port` |
+
 Credential broker state is plugin/runtime evidence, exposed through plugin
-status and BLAKE3 references on real events. It is not a CEL root. Workspace
-snapshots are MCP/tool/runtime activity unless and until we deliberately add a
-first-party snapshot parser and rules contract.
+status and BLAKE3 references on real events. It is not a CEL root. Neither is
+`security`: decision state is the engine's output, not an input a rule reads.
+Workspace snapshots are MCP/tool/runtime activity unless and until we
+deliberately add a first-party snapshot parser and rules contract.
 
 Do not use old callback-local roots such as `request.host` or
 `tool.name`. The rule compiler rejects them because they are not
