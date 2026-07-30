@@ -83,6 +83,9 @@ fn fake_capsem_home() -> TempDir {
         b"INFO service line one\nINFO service line two\n",
     );
     write(&home.join("run/mcp.log"), b"INFO mcp starting\n");
+    // Raw stderr lives in its own directory on every install; the rotation
+    // pruner owns run/ and would otherwise be free to delete it.
+    write(&home.join("run/stderr/service.log"), b"");
     write(&home.join("run/gateway.pid"), b"12345");
     write(&home.join("run/gateway.port"), b"19222");
     write(
@@ -533,4 +536,158 @@ fn an_empty_file_reads_as_empty_rather_than_missing() {
     fs::write(&path, b"").unwrap();
 
     assert_eq!(super::read_tail(&path, 1024), Some(Vec::new()));
+}
+
+#[test]
+fn bundle_collects_every_rotated_file_in_a_log_stream() {
+    // Rotation means today's `service.log` holds only today. A user reporting
+    // "it broke on Tuesday" runs support-bundle on Thursday, so a bundle that
+    // reads one filename ships the two days that do not contain the failure.
+    let _g = crate::lock_test_env();
+    let dir = fake_capsem_home();
+    let run = dir.path().join("run");
+    write(&run.join("service.2026-07-28.log"), b"INFO tuesday failure\n");
+    write(&run.join("service.2026-07-29.log"), b"INFO wednesday\n");
+
+    let out = crate::support_bundle::run(None, 0, false, false).unwrap();
+    let entries = read_tar_entries(&out);
+
+    // The rotated stream only -- raw stderr lives under host/stderr/ and is
+    // covered by its own test.
+    let logs: Vec<&String> = entries
+        .iter()
+        .map(|(p, _)| p)
+        .filter(|p| p.contains("/host/service"))
+        .collect();
+    assert_eq!(
+        logs.len(),
+        3,
+        "expected the whole service stream in the bundle, got {logs:?}"
+    );
+
+    let tuesday = entries
+        .iter()
+        .find(|(p, _)| p.ends_with("service.2026-07-28.log"))
+        .expect("rotated file from the day of the failure is missing");
+    assert!(String::from_utf8_lossy(&tuesday.1).contains("tuesday failure"));
+}
+
+#[test]
+fn bundle_keeps_one_stream_out_of_another_streams_files() {
+    let _g = crate::lock_test_env();
+    let dir = fake_capsem_home();
+    write(
+        &dir.path().join("run").join("gateway.2026-07-29.log"),
+        b"INFO gateway rotated\n",
+    );
+
+    let out = crate::support_bundle::run(None, 0, false, false).unwrap();
+    let entries = read_tar_entries(&out);
+
+    let service_entries: Vec<&String> = entries
+        .iter()
+        .map(|(p, _)| p)
+        .filter(|p| p.contains("/host/service"))
+        .collect();
+    assert!(
+        !service_entries.iter().any(|p| p.contains("gateway")),
+        "gateway rotation leaked into the service stream: {service_entries:?}"
+    );
+}
+
+#[test]
+fn bundle_next_steps_name_files_the_bundle_actually_contains() {
+    // The bundle ships its own reading instructions. They are the first thing
+    // a maintainer follows and the last thing anyone remembers to update, so
+    // every path they name -- literal or `<placeholder>` shaped -- must match
+    // something really in the archive.
+    let _g = crate::lock_test_env();
+    let dir = fake_capsem_home();
+    let run = dir.path().join("run");
+    // The shape a live install has: rotated structured files, plus the
+    // unrotated service.log that raw stderr (panics, pre-tracing death)
+    // still lands in.
+    write(&run.join("service.log"), b"thread 'main' panicked at src/main.rs\n");
+    write(&run.join("service.2026-07-29.log"), b"INFO yesterday\n");
+    // A session too, so the instructions that point into sessions/ are
+    // checked against real entries rather than skipped for want of data.
+    let session = dir.path().join("sessions").join("vm-abc");
+    fs::create_dir_all(&session).unwrap();
+    write(&session.join("process.log"), b"INFO process line\n");
+    write(&session.join("serial.log"), b"[    0.0] boot\n");
+
+    // Sessions included, as the default `capsem support-bundle` does.
+    let out = crate::support_bundle::run(None, 3, false, false).unwrap();
+    let entries = read_tar_entries(&out);
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &entries
+            .iter()
+            .find(|(p, _)| p.ends_with("manifest.json"))
+            .expect("manifest")
+            .1,
+    )
+    .unwrap();
+
+    let present: Vec<String> = manifest["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| !s["missing"].as_bool().unwrap_or(false))
+        .map(|s| s["path"].as_str().unwrap().to_string())
+        .collect();
+
+    for step in manifest["next_steps"].as_array().unwrap() {
+        let step = step.as_str().unwrap();
+        for token in step.split_whitespace() {
+            let token = token.trim_matches(|c: char| !c.is_ascii_graphic() || c == '.');
+            if !token.starts_with("host/") && !token.starts_with("sessions/") {
+                continue;
+            }
+            // `<date>` / `<latest>` stand for a real segment; match on the
+            // literal parts around them.
+            let literal: Vec<&str> = token
+                .split(['<', '>'])
+                .step_by(2)
+                .filter(|part| !part.is_empty())
+                .collect();
+            assert!(
+                present.iter().any(|path| {
+                    let mut rest = path.as_str();
+                    literal.iter().all(|part| match rest.find(part) {
+                        Some(at) => {
+                            rest = &rest[at + part.len()..];
+                            true
+                        }
+                        None => false,
+                    })
+                }),
+                "next_steps sends the reader to {token:?}, which no section provides.\n\
+                 sections: {present:#?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn bundle_collects_raw_stderr_where_panics_land() {
+    // A daemon that panicked wrote nothing through tracing -- the message is
+    // in raw stderr and nowhere else. A bundle without it cannot explain the
+    // single failure mode that produces no structured logs at all.
+    let _g = crate::lock_test_env();
+    let dir = fake_capsem_home();
+    let stderr_dir = dir.path().join("run").join("stderr");
+    fs::create_dir_all(&stderr_dir).unwrap();
+    write(
+        &stderr_dir.join("service.log"),
+        b"thread 'main' panicked at crates/capsem-service/src/main.rs:42\n",
+    );
+
+    let out = crate::support_bundle::run(None, 3, false, false).unwrap();
+    let entries = read_tar_entries(&out);
+
+    let panic_entry = entries
+        .iter()
+        .find(|(p, _)| p.contains("stderr") && p.ends_with("service.log"))
+        .expect("raw stderr missing from the bundle");
+    assert!(String::from_utf8_lossy(&panic_entry.1).contains("panicked"));
 }

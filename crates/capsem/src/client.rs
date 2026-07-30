@@ -665,13 +665,33 @@ impl UdsClient {
         // `subprocess.run(..., capture_output=True)`, that pipe inheritance
         // turns every `capsem run` into a 120s hang: Python's communicate()
         // waits for EOF on stdout/stderr, but the detached service keeps
-        // them alive long after the CLI returns. Service logs go to
-        // `<run_dir>/service.log` regardless, so nothing useful is lost.
+        // them alive long after the CLI returns.
+        //
+        // Detach to a file rather than /dev/null. A panic, and any failure
+        // before `telemetry::init` returns, reach stderr and nothing else --
+        // exactly the cases where the service's own log is empty and the user
+        // has a dead daemon to explain.
+        //
+        // Under `run/stderr/`, not beside the rotated streams: retention
+        // prunes anything in the log directory matching `service*.log`, and
+        // unlinking this file would not disturb the fd already open on it.
+        // The service would go on writing panics into an inode nobody can
+        // reach -- the same silence, harder to notice.
+        let stderr_dir = capsem_core::paths::capsem_run_dir().join("stderr");
+        let service_stderr = std::fs::create_dir_all(&stderr_dir)
+            .and_then(|()| {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(stderr_dir.join("service.log"))
+            })
+            .map(std::process::Stdio::from)
+            .unwrap_or_else(|_| std::process::Stdio::null());
         let mut child = tokio::process::Command::new(&paths.service_bin)
             .args(direct_spawn_service_args(&paths, isolation_mode_active()))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(service_stderr)
             .spawn()
             .context("failed to spawn capsem-service")?;
 

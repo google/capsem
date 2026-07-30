@@ -733,12 +733,35 @@ fn print_asset_status(status: &AssetStatusResponse) {
     }
 }
 
+/// The one line saying why a session cannot run, if it cannot.
+///
+/// The service splits the reason across two fields on purpose: a crashed VM
+/// carries its `process.log` tail in `last_error`, one the service refuses to
+/// resume carries the validation failure in `resume_blocked_reason`, and a
+/// healthy session carries neither. Matching a field to a particular status is
+/// how a `Stopped` VM that can never start came to print as a plain row.
+fn session_blocked_reason(info: &SessionInfo) -> Option<&str> {
+    info.last_error
+        .as_deref()
+        .or(info.resume_blocked_reason.as_deref())
+        .map(capsem_core::session::boot_failure_summary)
+}
+
 fn print_session_info(info: &SessionInfo) {
     println!("Session: {}", info.id);
     if let Some(name) = &info.name {
         println!("Name:    {}", name);
     }
     println!("Status:  {}", info.status);
+    // `capsem info` is what a user reaches for after `capsem list` shows a VM
+    // that will not run. Printing the status without the reason sent them to
+    // `capsem logs` to learn something the service had already returned here.
+    if let Some(reason) = session_blocked_reason(info) {
+        println!("Problem: {}", reason);
+        if info.last_error.is_some() {
+            println!("Logs:    capsem logs {}", info.id);
+        }
+    }
     if info.pid > 0 {
         println!("PID:     {}", info.pid);
     }
@@ -1632,12 +1655,11 @@ async fn main() -> Result<()> {
                             for s in &defunct {
                                 let name = s.name.as_deref().unwrap_or(&s.id);
                                 if let Some(err) = &s.last_error {
-                                    let last = err
-                                        .lines()
-                                        .rev()
-                                        .find(|line| !line.trim().is_empty())
-                                        .unwrap_or("(log empty)");
-                                    println!("  - {}: {}", name, last);
+                                    println!(
+                                        "  - {}: {}",
+                                        name,
+                                        capsem_core::session::boot_failure_summary(err)
+                                    );
                                 } else {
                                     println!("  - {}", name);
                                 }
@@ -1829,22 +1851,14 @@ async fn main() -> Result<()> {
                         "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
                         s.id, name, s.status, ram, cpus, uptime
                     );
-                    // Defunct rows: show the tail of process.log inline so
-                    // the user doesn't need a separate `capsem logs` call
-                    // to see why boot failed.
-                    if s.status == VmLifecycleState::Defunct {
-                        if let Some(err) = &s.last_error {
-                            let last = err
-                                .lines()
-                                .rev()
-                                .find(|line| !line.trim().is_empty())
-                                .unwrap_or("(log empty)");
-                            println!("  ! {}", last);
+                    // Any row the service will not run explains itself inline,
+                    // so the problem is visible without a second command. A
+                    // crash also points at its full log; a blocked resume has
+                    // no boot to read.
+                    if let Some(reason) = session_blocked_reason(s) {
+                        println!("  ! {}", reason);
+                        if s.last_error.is_some() {
                             println!("  (`capsem logs {}` for full context)", s.id);
-                        }
-                    } else if s.status == VmLifecycleState::Incompatible {
-                        if let Some(reason) = &s.resume_blocked_reason {
-                            println!("  ! {}", reason);
                         }
                     }
                 }

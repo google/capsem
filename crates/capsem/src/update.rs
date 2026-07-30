@@ -3367,7 +3367,7 @@ fn append_update_audit(mut event: serde_json::Value) {
         object.insert("timestamp".to_string(), serde_json::Value::from(now));
     }
     if let Err(error) = append_update_audit_inner(&event) {
-        warn!("failed to write update audit log: {error:#}");
+        warn!(error = format!("{error:#}"), "failed to write update audit log");
     }
 }
 
