@@ -517,6 +517,24 @@ Read the *first* real error, not the recipe cascade under it — `grep -aE "^FAI
 scripts, and workflows, and requires `set -o pipefail` in any bash recipe that
 pipes. It cannot see an agent's ad-hoc shell — that part is on you.
 
+### Verify with the gate's environment, not a bare shell
+
+`just test` exports `CAPSEM_HOME`, `CAPSEM_RUN_DIR`, `CAPSEM_TEST_PROFILE`, and
+`CAPSEM_BENCHMARK_OUTPUT_ROOT`. A test that reads ambient state passes in your
+shell and fails in the gate:
+
+```bash
+CAPSEM_HOME="$PWD/target/test-home/.capsem" \
+CAPSEM_RUN_DIR="$PWD/target/test-home/.capsem/run" \
+  cargo test -p <crate>
+```
+
+A fixture that overrides `CAPSEM_HOME` must override `CAPSEM_RUN_DIR` too —
+the run dir takes precedence over the home-derived default, so setting only the
+first sends production code to the ambient run directory while the fixture
+writes into a temp one. Bisect by exporting one variable at a time; that names
+the culprit in two runs instead of guessing.
+
 ### Thresholds belong in one place
 
 A number copied next to a rule drifts from it silently. Three separate gate failures in one session traced to this: a coverage floor asserted as `65` after it moved to `63`, a guest kernel check demanding `major >= 7` after the pin moved to `6.18`, and a Docker fixture simulating `30 GiB free` as "plenty" after the floor rose to `40`.

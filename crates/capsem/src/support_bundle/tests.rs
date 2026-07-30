@@ -71,8 +71,15 @@ fn read_tar_entries(path: &Path) -> Vec<(String, Vec<u8>)> {
 fn fake_capsem_home() -> TempDir {
     let dir = TempDir::new().unwrap();
     // Required env so capsem_core::paths::capsem_home() points here.
+    //
+    // CAPSEM_RUN_DIR is overridden too, not just CAPSEM_HOME. It takes
+    // precedence over the home-derived default, so a caller that exports it --
+    // `just test` does -- would otherwise send the bundle to read the ambient
+    // run directory while the fixture wrote into a temp one. That passed
+    // locally and failed only inside the gate.
     unsafe {
         std::env::set_var("CAPSEM_HOME", dir.path());
+        std::env::set_var("CAPSEM_RUN_DIR", dir.path().join("run"));
     }
     let home = dir.path();
     fs::create_dir_all(home.join("run")).unwrap();
