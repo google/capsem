@@ -573,8 +573,7 @@ fn auto_update_setting_can_disable_background_refresh() {
 fn app_auto_update_false_disables_background_refresh_from_settings_file() {
     let _guard = lock_test_env();
     let capsem_home = tempfile::tempdir().unwrap();
-    let previous_home = std::env::var_os("CAPSEM_HOME");
-    std::env::set_var("CAPSEM_HOME", capsem_home.path());
+    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(capsem_home.path());
     std::fs::write(
         capsem_home.path().join("settings.toml"),
         "[settings.\"app.auto_update\"]\nvalue = false\nmodified = \"test\"\n",
@@ -586,10 +585,6 @@ fn app_auto_update_false_disables_background_refresh_from_settings_file() {
     assert!(!should_start_background_update_refresh(Some(command)));
     assert!(!should_start_background_update_refresh(None));
 
-    match previous_home {
-        Some(value) => std::env::set_var("CAPSEM_HOME", value),
-        None => std::env::remove_var("CAPSEM_HOME"),
-    }
 }
 
 #[test]

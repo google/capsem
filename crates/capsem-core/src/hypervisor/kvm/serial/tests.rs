@@ -52,7 +52,7 @@ fn reader_mirrors_bytes_to_serial_log() {
 
     let all = collect_all(&mut rx);
     assert_eq!(all, b"boot line\n");
-    assert_eq!(std::fs::read(&log_path).unwrap(), b"boot line\n");
+    assert_eq!(crate::telemetry::read_log_tail(&log_path, usize::MAX).unwrap().into_bytes(), b"boot line\n");
 }
 
 #[test]

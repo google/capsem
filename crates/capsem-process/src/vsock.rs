@@ -38,14 +38,7 @@ const HANDSHAKE_RETRY_MAX: usize = 3;
 /// imposing any delay on already-deposited or genuinely empty commands.
 const EXEC_OUTPUT_DEPOSIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-fn checkpoint_complete_path(checkpoint_path: &std::path::Path) -> PathBuf {
-    let marker_name = checkpoint_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| format!("{name}.complete"))
-        .unwrap_or_else(|| "checkpoint.vzsave.complete".to_string());
-    checkpoint_path.with_file_name(marker_name)
-}
+use capsem_core::paths::checkpoint_complete_path;
 
 pub(crate) struct VsockOptions {
     pub(crate) vm_id: String,

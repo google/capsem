@@ -219,36 +219,54 @@ pub fn log_stream_files(path: &std::path::Path) -> Vec<PathBuf> {
 /// `None` when the stream has no files at all, which is a different answer
 /// from an empty log and should be reported differently.
 pub fn read_log_tail(path: &std::path::Path, max_bytes: usize) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
     let files = log_stream_files(path);
     if files.is_empty() {
         return None;
     }
 
-    // Newest first, so stop as soon as the tail is full rather than reading
-    // every retained day to discard most of it.
-    let mut newest_first: Vec<String> = Vec::new();
-    let mut total = 0usize;
+    // Seek to each file's tail rather than reading it and slicing. Guest
+    // console output grows on the guest's terms, so reading whole files to
+    // return the last few MiB would let a chatty VM choose how much memory the
+    // caller allocates.
+    let mut newest_first: Vec<Vec<u8>> = Vec::new();
+    let mut budget = max_bytes;
     for file in files {
-        let Ok(bytes) = std::fs::read(&file) else {
-            continue;
-        };
-        let chunk = String::from_utf8_lossy(&bytes).into_owned();
-        total += chunk.len();
-        newest_first.push(chunk);
-        if total >= max_bytes {
+        if budget == 0 {
             break;
         }
+        let Ok(mut handle) = std::fs::File::open(&file) else {
+            continue;
+        };
+        let Ok(meta) = handle.metadata() else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        let len = meta.len();
+        let take = budget.min(len as usize);
+        if (len as usize) > take && handle.seek(SeekFrom::Start(len - take as u64)).is_err() {
+            continue;
+        }
+        let mut buf = Vec::with_capacity(take);
+        if handle.take(take as u64).read_to_end(&mut buf).is_err() {
+            continue;
+        }
+        budget -= buf.len().min(budget);
+        newest_first.push(buf);
+    }
+    if newest_first.is_empty() {
+        return None;
     }
     newest_first.reverse();
-    let mut text = newest_first.concat();
+    let joined = newest_first.concat();
 
-    if text.len() > max_bytes {
-        let mut cut = text.len() - max_bytes;
-        while cut < text.len() && !text.is_char_boundary(cut) {
-            cut += 1;
-        }
-        text = text[cut..].to_string();
-        // Drop the partial line the cut landed in.
+    // Lossy once, at the boundary: a seek can land mid-character, and a
+    // partial first line is noise rather than data.
+    let mut text = String::from_utf8_lossy(&joined).into_owned();
+    if joined.len() >= max_bytes {
         if let Some(newline) = text.find('\n') {
             text = text[newline + 1..].to_string();
         }

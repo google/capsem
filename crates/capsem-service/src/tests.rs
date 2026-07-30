@@ -960,7 +960,7 @@ async fn update_route_check_live_executes_non_mutating_cli_check() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "succeeded");
     assert_eq!(body["command"]["args"], json!(["update", "--check"]));
-    assert_eq!(std::fs::read_to_string(log).unwrap(), "update --check\n");
+    assert_eq!(capsem_core::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --check\n");
 }
 
 #[tokio::test]
@@ -1057,7 +1057,7 @@ async fn update_route_apply_confirmed_dispatches_one_atomic_update() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "succeeded");
     assert_eq!(body["command"]["args"], json!(["update", "--yes"]));
-    assert_eq!(std::fs::read_to_string(log).unwrap(), "update --yes\n");
+    assert_eq!(capsem_core::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --yes\n");
 }
 
 #[tokio::test]
@@ -1115,7 +1115,7 @@ async fn update_route_live_commands_share_one_serial_lock() {
     assert_eq!(first.1["status"], "succeeded");
     assert_eq!(second.0, StatusCode::OK);
     assert_eq!(second.1["status"], "succeeded");
-    let execution = std::fs::read_to_string(log).unwrap();
+    let execution = capsem_core::telemetry::read_log_tail(&log, usize::MAX).unwrap();
     assert!(!execution.contains("overlap"), "{execution}");
     assert_eq!(execution, "start\nend\nstart\nend\n");
 }
@@ -1325,16 +1325,11 @@ async fn automatic_update_disabled_setting_skips_command_execution() {
         "[settings.\"app.auto_update\"]\nvalue = false\nmodified = \"test\"\n",
     )
     .unwrap();
-    let previous_home = std::env::var_os("CAPSEM_HOME");
-    std::env::set_var("CAPSEM_HOME", &capsem_home);
+    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(&capsem_home);
     let state = make_test_state();
 
     let outcome = run_automatic_update_once(&state).await;
 
-    match previous_home {
-        Some(value) => std::env::set_var("CAPSEM_HOME", value),
-        None => std::env::remove_var("CAPSEM_HOME"),
-    }
     assert_eq!(outcome, AutomaticUpdateOutcome::Disabled);
 }
 
@@ -1342,18 +1337,13 @@ async fn automatic_update_disabled_setting_skips_command_execution() {
 async fn automatic_update_skips_without_queueing_when_explicit_update_is_active() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
-    let previous_home = std::env::var_os("CAPSEM_HOME");
-    std::env::set_var("CAPSEM_HOME", dir.path());
+    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(dir.path());
     let state = make_test_state();
     let explicit_guard = state.update_lock.lock().await;
 
     let outcome = run_automatic_update_once(&state).await;
 
     drop(explicit_guard);
-    match previous_home {
-        Some(value) => std::env::set_var("CAPSEM_HOME", value),
-        None => std::env::remove_var("CAPSEM_HOME"),
-    }
     assert_eq!(outcome, AutomaticUpdateOutcome::Busy);
 }
 
@@ -1374,18 +1364,13 @@ async fn automatic_update_runs_one_complete_apply_and_reloads_runtime() {
     let mut permissions = std::fs::metadata(&cli).unwrap().permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
     std::fs::set_permissions(&cli, permissions).unwrap();
-    let previous_home = std::env::var_os("CAPSEM_HOME");
     let previous_cli = std::env::var_os("CAPSEM_CLI");
-    std::env::set_var("CAPSEM_HOME", &capsem_home);
+    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(&capsem_home);
     std::env::set_var("CAPSEM_CLI", &cli);
     let state = make_asset_state(assets_dir);
 
     let outcome = run_automatic_update_once(&state).await;
 
-    match previous_home {
-        Some(value) => std::env::set_var("CAPSEM_HOME", value),
-        None => std::env::remove_var("CAPSEM_HOME"),
-    }
     match previous_cli {
         Some(value) => std::env::set_var("CAPSEM_CLI", value),
         None => std::env::remove_var("CAPSEM_CLI"),
@@ -1394,7 +1379,7 @@ async fn automatic_update_runs_one_complete_apply_and_reloads_runtime() {
         outcome,
         AutomaticUpdateOutcome::Succeeded(UpdateRuntimeDisposition::Reloaded)
     );
-    assert_eq!(std::fs::read_to_string(log).unwrap(), "update --yes\n");
+    assert_eq!(capsem_core::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --yes\n");
 }
 
 #[tokio::test]
@@ -1410,18 +1395,13 @@ async fn automatic_update_reports_command_failure_for_backoff() {
     let mut permissions = std::fs::metadata(&cli).unwrap().permissions();
     std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
     std::fs::set_permissions(&cli, permissions).unwrap();
-    let previous_home = std::env::var_os("CAPSEM_HOME");
     let previous_cli = std::env::var_os("CAPSEM_CLI");
-    std::env::set_var("CAPSEM_HOME", dir.path());
+    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(dir.path());
     std::env::set_var("CAPSEM_CLI", &cli);
     let state = make_test_state();
 
     let outcome = run_automatic_update_once(&state).await;
 
-    match previous_home {
-        Some(value) => std::env::set_var("CAPSEM_HOME", value),
-        None => std::env::remove_var("CAPSEM_HOME"),
-    }
     match previous_cli {
         Some(value) => std::env::set_var("CAPSEM_CLI", value),
         None => std::env::remove_var("CAPSEM_CLI"),
@@ -7326,9 +7306,9 @@ fn preserve_renames_session_dir_and_keeps_logs() {
         })
         .expect("a vm-abc-failed-* dir must exist");
     let preserved = failed.path().join("process.log");
-    assert_eq!(std::fs::read(&preserved).unwrap(), b"boot failed: ...");
+    assert_eq!(capsem_core::telemetry::read_log_tail(&preserved, usize::MAX).unwrap().into_bytes(), b"boot failed: ...");
     let preserved_serial = failed.path().join("serial.log");
-    assert_eq!(std::fs::read(&preserved_serial).unwrap(), b"kernel panic");
+    assert_eq!(capsem_core::telemetry::read_log_tail(&preserved_serial, usize::MAX).unwrap().into_bytes(), b"kernel panic");
 }
 
 #[test]
@@ -10563,7 +10543,8 @@ async fn stats_detail_ledger_exposes_orphan_tool_parent_inconsistency() {
 // -----------------------------------------------------------------------
 
 struct SettingsEnvGuard {
-    previous_home_override: Option<std::ffi::OsString>,
+    // Holds the path redirect for the guard's lifetime; restores on drop.
+    _capsem_paths: capsem_core::paths::CapsemPathsGuard,
     previous_corp: Option<std::ffi::OsString>,
 }
 
@@ -10636,12 +10617,6 @@ impl Drop for TestBuiltinMcpBinaryGuard {
 
 impl Drop for SettingsEnvGuard {
     fn drop(&mut self) {
-        if let Some(previous_home_override) = self.previous_home_override.take() {
-            std::env::set_var("CAPSEM_HOME", previous_home_override);
-        } else {
-            std::env::remove_var("CAPSEM_HOME");
-        }
-
         if let Some(previous_corp) = self.previous_corp.take() {
             std::env::set_var("CAPSEM_CORP_CONFIG", previous_corp);
         } else {
@@ -10665,10 +10640,9 @@ fn install_empty_settings_env(dir: &tempfile::TempDir) -> (SettingsEnvGuard, Pat
     .unwrap();
 
     let guard = SettingsEnvGuard {
-        previous_home_override: std::env::var_os("CAPSEM_HOME"),
+        _capsem_paths: capsem_core::paths::CapsemPathsGuard::redirect(dir.path()),
         previous_corp: std::env::var_os("CAPSEM_CORP_CONFIG"),
     };
-    std::env::set_var("CAPSEM_HOME", dir.path());
     std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
     (guard, settings_path, corp_path)
 }

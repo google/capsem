@@ -23,7 +23,7 @@
 //! Manifest schema is v1; bump `SCHEMA_VERSION` for breaking changes.
 
 use std::fs;
-use std::io::{Read, Seek, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -759,31 +759,10 @@ fn add_bytes<W: Write>(tar: &mut TarBuilder<W>, path: &str, bytes: &[u8]) -> Res
 }
 
 fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
-    let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
-    let len = metadata.len();
-    // Seek to the tail rather than reading the file and slicing it. serial.log
-    // carries guest console output, so it grows on the guest's terms; reading
-    // it whole to return the last few MiB let a chatty VM decide how much
-    // memory `capsem support` allocates.
-    let mut file = fs::File::open(path).ok()?;
-    let over_limit = len > max_bytes;
-    if over_limit {
-        file.seek(std::io::SeekFrom::Start(len - max_bytes)).ok()?;
-    }
-    let mut tail = Vec::with_capacity(max_bytes.min(len) as usize);
-    std::io::Read::take(&mut file, max_bytes)
-        .read_to_end(&mut tail)
-        .ok()?;
-    if over_limit {
-        // Skip the leading partial line so the first byte starts a record.
-        if let Some(idx) = tail.iter().position(|b| *b == b'\n') {
-            tail.drain(..=idx);
-        }
-    }
-    Some(tail)
+    // Delegates: the shared reader seeks to each file's tail, so guest console
+    // output cannot decide how much memory `capsem support` allocates, and a
+    // rotated stream resolves the same way it does for every other consumer.
+    capsem_core::telemetry::read_log_tail(path, max_bytes as usize).map(String::into_bytes)
 }
 
 fn config_diagnostics(home: &Path) -> serde_json::Value {

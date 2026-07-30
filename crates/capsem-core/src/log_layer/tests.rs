@@ -153,7 +153,7 @@ fn vm_writer_writes_jsonl() {
     // Give writer thread time to finish
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    let content = std::fs::read_to_string(&path).unwrap();
+    let content = crate::telemetry::read_log_tail(&path, usize::MAX).unwrap();
     let lines: Vec<&str> = content.lines().collect();
     assert_eq!(lines.len(), 2);
 

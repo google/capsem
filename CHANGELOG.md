@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed `triage` reporting no errors for a daemon that was logging them. It
+  `metadata()`d the log stream name and returned `None` once rotation landed --
+  the same bug as `/service-logs`, in the second of four copies of "read the
+  recent log". All four now call `telemetry::read_log_tail`.
+- The shared log reader seeks to each file's tail instead of reading whole
+  files. `support_bundle` already did this and explained why: guest console
+  output grows on the guest's terms, so reading whole files let a chatty VM
+  choose how much memory `capsem support` allocated. Unifying took the better
+  implementation rather than the first one.
+- `checkpoint_complete_path` existed in capsem-process and capsem-service,
+  identical except that one hardcoded the fallback marker name and the other
+  used a constant. Changing that constant would have left the process writing a
+  resume marker the service never looked for, with nothing wrong at either
+  site. It now lives in `capsem-core::paths`.
+
+### Added
+
+- `tests/test_path_and_log_wrappers_are_mandatory.py` fails when a log path is
+  opened as a file, or when a Capsem path variable is set outside
+  `CapsemPathsGuard`. Wrappers nobody must use are suggestions.
+
+### Fixed
+
 - Fixed `/service-logs` returning an empty log for a service that was writing
   normally. `service.log` names a daily-rotated stream rather than a file, and
   the endpoint still opened that name directly. Resolution and tailing now live

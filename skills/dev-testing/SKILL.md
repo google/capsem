@@ -517,6 +517,19 @@ Read the *first* real error, not the recipe cascade under it — `grep -aE "^FAI
 scripts, and workflows, and requires `set -o pipefail` in any bash recipe that
 pipes. It cannot see an agent's ad-hoc shell — that part is on you.
 
+### Fixtures use the wrapper, never the raw variable
+
+Redirect Capsem paths with `paths::CapsemPathsGuard::redirect(root)`. It sets
+`CAPSEM_HOME`, `CAPSEM_RUN_DIR`, and `CAPSEM_ASSETS_DIR` from one root and
+restores on drop, so a fixture cannot set one and inherit the rest.
+
+Read logs with `telemetry::read_log_tail`, including in assertions: a test that
+opens a `*.log` path directly stops exercising what the product does the moment
+that stream rotates.
+
+Both are enforced by `tests/test_path_and_log_wrappers_are_mandatory.py`. See
+`/dev-rust-patterns` "One rule, one function" for why.
+
 ### Verify with the gate's environment, not a bare shell
 
 `just test` exports `CAPSEM_HOME`, `CAPSEM_RUN_DIR`, `CAPSEM_TEST_PROFILE`, and

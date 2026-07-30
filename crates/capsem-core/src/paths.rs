@@ -86,6 +86,23 @@ fn env_nonempty(key: &str) -> Option<String> {
     }
 }
 
+/// The marker written beside a checkpoint once it is fully flushed.
+///
+/// Both the process that writes the checkpoint and the service that waits for
+/// it must agree on this name. They had a copy each, identical except that one
+/// hardcoded the fallback and the other used a constant -- so changing the
+/// constant would have left the process writing a marker the service never
+/// looked for, and resume would fail with nothing wrong on either side.
+pub fn checkpoint_complete_path(checkpoint_path: &std::path::Path) -> PathBuf {
+    const FALLBACK: &str = "checkpoint.vzsave.complete";
+    let marker = checkpoint_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| format!("{name}.complete"))
+        .unwrap_or_else(|| FALLBACK.to_string());
+    checkpoint_path.with_file_name(marker)
+}
+
 /// Redirect every Capsem path variable at a temporary root, restoring on drop.
 ///
 /// Test support, deliberately not `#[cfg(test)]`: fixtures in other crates

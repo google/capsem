@@ -43,7 +43,6 @@ use tracing::{error, info, warn, Instrument};
 mod startup;
 
 const RESUME_CHECKPOINT_NAME: &str = "checkpoint.vzsave";
-const RESUME_CHECKPOINT_COMPLETE_NAME: &str = "checkpoint.vzsave.complete";
 const SUSPEND_CONFIRM_TIMEOUT_SECS: u64 = 45;
 const UPDATE_CACHE_TTL_SECS: u64 = 24 * 3600;
 const AUTOMATIC_UPDATE_INITIAL_DELAY_SECS: u64 = 60;
@@ -53,14 +52,7 @@ const AUTOMATIC_UPDATE_MAX_BACKOFF_SECS: u64 = 24 * 60 * 60;
 const AUTOMATIC_UPDATE_INITIAL_DELAY_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS";
 const AUTOMATIC_UPDATE_POLL_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS";
 
-fn checkpoint_complete_path(checkpoint_path: &StdPath) -> PathBuf {
-    let marker_name = checkpoint_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| format!("{name}.complete"))
-        .unwrap_or_else(|| RESUME_CHECKPOINT_COMPLETE_NAME.to_string());
-    checkpoint_path.with_file_name(marker_name)
-}
+use capsem_core::paths::checkpoint_complete_path;
 
 #[cfg(test)]
 thread_local! {

@@ -4,7 +4,8 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 
 struct EnvGuard {
-    old_home_override: Option<String>,
+    // Redirects CAPSEM_HOME/RUN_DIR/ASSETS_DIR together; restores on drop.
+    _capsem_paths: crate::paths::CapsemPathsGuard,
     old_home: Option<String>,
     old_store: Option<String>,
 }
@@ -16,14 +17,12 @@ impl EnvGuard {
         test_store: &std::path::Path,
     ) -> Self {
         CredentialStore::global().clear_for_test();
-        let old_home_override = std::env::var("CAPSEM_HOME").ok();
         let old_home = std::env::var("HOME").ok();
         let old_store = std::env::var(STORE_PATH_ENV).ok();
-        std::env::set_var("CAPSEM_HOME", capsem_home);
         std::env::set_var("HOME", home);
         std::env::set_var(STORE_PATH_ENV, test_store);
         Self {
-            old_home_override,
+            _capsem_paths: crate::paths::CapsemPathsGuard::redirect(capsem_home),
             old_home,
             old_store,
         }
@@ -33,10 +32,6 @@ impl EnvGuard {
 impl Drop for EnvGuard {
     fn drop(&mut self) {
         CredentialStore::global().clear_for_test();
-        match &self.old_home_override {
-            Some(v) => std::env::set_var("CAPSEM_HOME", v),
-            None => std::env::remove_var("CAPSEM_HOME"),
-        }
         match &self.old_home {
             Some(v) => std::env::set_var("HOME", v),
             None => std::env::remove_var("HOME"),
@@ -52,9 +47,8 @@ impl Drop for EnvGuard {
 fn credential_store_uses_disk_backend_by_default() {
     let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
-    let old_home_override = std::env::var("CAPSEM_HOME").ok();
     let old_store = std::env::var(STORE_PATH_ENV).ok();
-    std::env::set_var("CAPSEM_HOME", dir.path().join("capsem-home"));
+    let _capsem_paths = crate::paths::CapsemPathsGuard::redirect(&dir.path().join("capsem-home"));
     std::env::remove_var(STORE_PATH_ENV);
     CredentialStore::global().clear_for_test();
 
@@ -65,10 +59,6 @@ fn credential_store_uses_disk_backend_by_default() {
     );
 
     CredentialStore::global().clear_for_test();
-    match old_home_override {
-        Some(v) => std::env::set_var("CAPSEM_HOME", v),
-        None => std::env::remove_var("CAPSEM_HOME"),
-    }
     match old_store {
         Some(v) => std::env::set_var(STORE_PATH_ENV, v),
         None => std::env::remove_var(STORE_PATH_ENV),
@@ -80,9 +70,8 @@ fn default_credential_store_writes_capsem_home_disk_file() {
     let _lock = TEST_ENV_LOCK.blocking_lock();
     let dir = tempfile::tempdir().unwrap();
     let capsem_home = dir.path().join("capsem-home");
-    let old_home_override = std::env::var("CAPSEM_HOME").ok();
     let old_store = std::env::var(STORE_PATH_ENV).ok();
-    std::env::set_var("CAPSEM_HOME", &capsem_home);
+    let _capsem_paths = crate::paths::CapsemPathsGuard::redirect(&capsem_home);
     std::env::remove_var(STORE_PATH_ENV);
     CredentialStore::global().clear_for_test();
 
@@ -112,10 +101,6 @@ fn default_credential_store_writes_capsem_home_disk_file() {
     );
 
     CredentialStore::global().clear_for_test();
-    match old_home_override {
-        Some(v) => std::env::set_var("CAPSEM_HOME", v),
-        None => std::env::remove_var("CAPSEM_HOME"),
-    }
     match old_store {
         Some(v) => std::env::set_var(STORE_PATH_ENV, v),
         None => std::env::remove_var(STORE_PATH_ENV),
