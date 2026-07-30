@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -24,6 +25,15 @@ NOTES_SPEC = importlib.util.spec_from_file_location(
 assert NOTES_SPEC is not None and NOTES_SPEC.loader is not None
 NOTES = importlib.util.module_from_spec(NOTES_SPEC)
 NOTES_SPEC.loader.exec_module(NOTES)
+
+# Fixture versions follow the release line the script enforces rather than
+# restating it. Hardcoded 1.6.x fixtures failed this whole suite the moment the
+# line moved to 0.6, reporting an inconsistent cohort instead of a stale test.
+_LINE_MAJOR, _LINE_MINOR = (int(part) for part in RELEASE.RELEASE_LINE.split("."))
+COHORT_VERSION = f"{RELEASE.RELEASE_LINE}.2"
+OLDER_VERSION = f"{RELEASE.RELEASE_LINE}.1"
+# Deliberately off the release line, to prove a mixed cohort is rejected.
+OFF_LINE_VERSION = f"{_LINE_MAJOR}.{_LINE_MINOR - 1}.1"
 
 
 class FakeRunner:
@@ -122,30 +132,30 @@ class FakeRunner:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(f"changed {path}\n", encoding="utf-8")
             (self.root / "Cargo.toml").write_text(
-                '[workspace.package]\nversion = "1.6.2000000000"\n',
+                f'[workspace.package]\nversion = "{COHORT_VERSION}"\n',
                 encoding="utf-8",
             )
             (self.root / "Cargo.lock").write_text(
                 "[[package]]\n"
                 'name = "capsem"\n'
-                f'version = "{"1.5.1000000000" if self.mixed_version_cohort else "1.6.2000000000"}"\n'
+                f'version = "{OFF_LINE_VERSION if self.mixed_version_cohort else COHORT_VERSION}"\n'
                 "\n[[package]]\n"
                 'name = "capsem-core"\n'
-                'version = "1.6.2000000000"\n',
+                f'version = "{COHORT_VERSION}"\n',
                 encoding="utf-8",
             )
             (self.root / "crates/capsem-app/tauri.conf.json").write_text(
-                '{"version": "1.6.2000000000"}\n',
+                f'{{"version": "{COHORT_VERSION}"}}\n',
                 encoding="utf-8",
             )
             (self.root / "pyproject.toml").write_text(
-                '[project]\nversion = "1.6.2000000000"\n',
+                f'[project]\nversion = "{COHORT_VERSION}"\n',
                 encoding="utf-8",
             )
             (self.root / "uv.lock").write_text(
                 "[[package]]\n"
                 'name = "capsem"\n'
-                'version = "1.6.2000000000"\n',
+                f'version = "{COHORT_VERSION}"\n',
                 encoding="utf-8",
             )
             return RELEASE.CommandResult("")
@@ -183,7 +193,7 @@ class FakeRunner:
             if rows is None:
                 rows = []
             if not rows and self.dispatched_tag:
-                tag = self.dispatched_tag or self.current_release_tag or "v1.6.2000000000"
+                tag = self.dispatched_tag or self.current_release_tag or f"v{COHORT_VERSION}"
                 channel = self.dispatched_channel or self.current_release_channel or "nightly"
                 rows = [
                     {
@@ -203,7 +213,7 @@ def _release_tree(tmp_path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"original {relative}\n", encoding="utf-8")
     (tmp_path / "Cargo.toml").write_text(
-        '[workspace.package]\nversion = "1.6.1000000000"\n',
+        f'[workspace.package]\nversion = "{OLDER_VERSION}"\n',
         encoding="utf-8",
     )
 
@@ -217,7 +227,7 @@ def test_binary_release_owns_one_scripted_build_and_dispatch(
 
     tag, run_id = RELEASE.release_binaries("nightly", runner)
 
-    assert tag == "v1.6.2000000000"
+    assert tag == f"v{COHORT_VERSION}"
     assert run_id == "42"
     assert ("just", "_stamp-version") in runner.calls
     assert (
@@ -263,7 +273,9 @@ def test_binary_recipe_checks_notes_before_complete_local_gate_and_push() -> Non
 
     check = recipe.index("python3 scripts/extract-release-notes.py --check")
     test = recipe.index("just test")
-    push = recipe.index("scripts/publish-tested-main.py")
+    # The publishing invocation, not the --precheck precondition that now
+    # runs before the gate; both share a script name.
+    push = recipe.index("publish-tested-main.py --expected-head")
     assert check < test < push
     assert "extract-release-notes.py" not in justfile.split(
         "\nrelease-profile channel profile:", 1
@@ -374,7 +386,7 @@ def test_nightly_release_skips_when_main_has_no_unreleased_binary_change(
 ) -> None:
     _release_tree(tmp_path)
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
-    runner = FakeRunner(tmp_path, current_release_tag="v1.6.1000000000")
+    runner = FakeRunner(tmp_path, current_release_tag=f"v{OLDER_VERSION}")
 
     tag, run_id = RELEASE.release_binaries("nightly", runner)
 
@@ -390,7 +402,7 @@ def test_tagged_nightly_with_missing_dispatch_resumes_without_new_version(
 ) -> None:
     _release_tree(tmp_path)
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
-    tag = "v1.6.1000000000"
+    tag = f"v{OLDER_VERSION}"
     runner = FakeRunner(
         tmp_path,
         current_release_tag=tag,
@@ -411,7 +423,7 @@ def test_tagged_failed_nightly_stops_for_diagnosis_without_blind_rerun(
 ) -> None:
     _release_tree(tmp_path)
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
-    tag = "v1.6.1000000000"
+    tag = f"v{OLDER_VERSION}"
     runner = FakeRunner(
         tmp_path,
         current_release_tag=tag,
@@ -434,7 +446,7 @@ def test_tagged_failed_nightly_stops_for_diagnosis_without_blind_rerun(
 
     with pytest.raises(
         RuntimeError,
-        match=r"nightly/v1\.6\.1000000000.*run 17.*diagnose",
+        match=rf"nightly/v{re.escape(OLDER_VERSION)}.*run 17.*diagnose",
     ):
         RELEASE.release_binaries("nightly", runner)
 
@@ -448,7 +460,7 @@ def test_tagged_successful_nightly_is_idempotent(
 ) -> None:
     _release_tree(tmp_path)
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
-    tag = "v1.6.1000000000"
+    tag = f"v{OLDER_VERSION}"
     runner = FakeRunner(
         tmp_path,
         current_release_tag=tag,
@@ -474,7 +486,7 @@ def test_unpushed_local_release_commit_is_pushed_and_dispatched_without_restampi
 ) -> None:
     _release_tree(tmp_path)
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
-    tag = "v1.6.1000000000"
+    tag = f"v{OLDER_VERSION}"
     runner = FakeRunner(
         tmp_path,
         current_release_tag=tag,
@@ -498,7 +510,7 @@ def test_divergent_local_release_commit_is_not_force_pushed(
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
     runner = FakeRunner(
         tmp_path,
-        current_release_tag="v1.6.1000000000",
+        current_release_tag=f"v{OLDER_VERSION}",
         current_release_channel="stable",
         pending_local_release=True,
         divergent_pending_release=True,
@@ -517,13 +529,13 @@ def test_stable_binary_release_remains_explicit_even_at_a_version_tag(
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
     runner = FakeRunner(
         tmp_path,
-        current_release_tag="v1.6.1000000000",
+        current_release_tag=f"v{OLDER_VERSION}",
         current_release_channel="nightly",
     )
 
     tag, run_id = RELEASE.release_binaries("stable", runner)
 
-    assert tag == "v1.6.2000000000"
+    assert tag == f"v{COHORT_VERSION}"
     assert run_id == "42"
     assert ("just", "_stamp-version") in runner.calls
     assert (

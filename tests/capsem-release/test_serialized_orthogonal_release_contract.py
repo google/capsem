@@ -59,10 +59,15 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
     assert "_build-rootfs" not in binary
     assert "just test" in binary
     assert binary.index("just test") < binary.index("scripts/release-binaries.py")
-    assert "scripts/publish-tested-main.py" in binary
+    # publish-tested-main.py appears twice, so the ordering is asserted per
+    # invocation rather than by script name: --precheck is a read-only
+    # precondition that must run before the gate, --expected-head is the
+    # publication that must run after it.
+    assert "scripts/publish-tested-main.py --precheck" in binary
+    assert binary.index("--precheck") < binary.index("just test")
     assert (
         binary.index("just test")
-        < binary.index("scripts/publish-tested-main.py")
+        < binary.index("publish-tested-main.py --expected-head")
         < binary.index("scripts/release-binaries.py")
     )
 
@@ -72,10 +77,11 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
     assert "build-pkg" not in profile
     assert "just test" in profile
     assert profile.index("just test") < profile.index("capsem-admin -- release")
-    assert "scripts/publish-tested-main.py" in profile
+    assert "scripts/publish-tested-main.py --precheck" in profile
+    assert profile.index("--precheck") < profile.index("just test")
     assert (
         profile.index("just test")
-        < profile.index("scripts/publish-tested-main.py")
+        < profile.index("publish-tested-main.py --expected-head")
         < profile.index("capsem-admin -- release")
     )
 
@@ -142,6 +148,10 @@ def test_public_release_command_executes_read_only_preflight_then_full_test_befo
 
     assert result.returncode == 0, result.stdout + result.stderr
     lines = trace.read_text(encoding="utf-8").splitlines()
+    # Both recipes verify the publication preconditions first. A dirty tree or
+    # the wrong branch invalidates everything after it, so learning that costs
+    # seconds rather than a complete gate.
+    assert lines.pop(0) == "python3:scripts/publish-tested-main.py --precheck"
     if recipe == "release-binaries":
         assert lines.pop(0) == (
             "python3:scripts/extract-release-notes.py --check"
@@ -188,8 +198,12 @@ def test_failed_full_test_prevents_every_release_side_effect(
         executable.write_text(
             "#!/bin/sh\n"
             f'printf "{command}:%s\\n" "$*" >> "$TRACE"\n'
+            # Only read-only preflight may succeed before the gate. Anything
+            # else exits 99, so a mutation reached early fails the test rather
+            # than being recorded as an ordinary step.
             'case "$*" in\n'
-            '  "scripts/extract-release-notes.py --check"'
+            '  "scripts/publish-tested-main.py --precheck"'
+            '|"scripts/extract-release-notes.py --check"'
             '|"scripts/fetch-channel-source-manifest.py --channel nightly '
             '--repository google/capsem '
             '--require-profile-membership '
@@ -218,9 +232,9 @@ def test_failed_full_test_prevents_every_release_side_effect(
     )
 
     assert result.returncode != 0
-    expected = ["just:test"]
+    expected = ["python3:scripts/publish-tested-main.py --precheck"]
     if recipe == "release-binaries":
-        expected[0:0] = [
+        expected += [
             "python3:scripts/extract-release-notes.py --check",
             "python3:scripts/fetch-channel-source-manifest.py "
             "--channel nightly "
@@ -228,6 +242,7 @@ def test_failed_full_test_prevents_every_release_side_effect(
             "--require-profile-membership "
             "--output target/release-preflight/channel-source.json",
         ]
+    expected.append("just:test")
     assert trace.read_text(encoding="utf-8").splitlines() == expected
 
 
