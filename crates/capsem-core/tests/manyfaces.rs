@@ -315,8 +315,17 @@ fn updating_one_profile_leaves_the_others_addressable() {
 // Lifetime: reference-counted, never "not in the current set".
 // ---------------------------------------------------------------------------
 
+/// The manifest's own reference set must cover every profile.
+///
+/// The daemon additionally preserves the profile catalog and persistent-VM boot
+/// pins (see `cleanup_unused_assets_preserving` at its call site in
+/// capsem-service), so a manifest that dropped profiles was covered in practice.
+/// This asserts the manifest does not depend on that: a reference set derived
+/// from the manifest alone must already name every installed profile's assets,
+/// so cleanup is safe for any caller rather than only the one with the extra
+/// preserve list.
 #[test]
-fn refresh_must_not_delete_another_profiles_kernel() {
+fn a_manifest_alone_references_every_profiles_kernel() {
     let graph = wheel_breaker();
     let manifest = ManifestV2::from_json(&graph.to_string()).expect("channel graph is accepted");
     let temp = tempfile::tempdir().expect("tempdir");
