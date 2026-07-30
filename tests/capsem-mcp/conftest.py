@@ -12,6 +12,8 @@ import os
 import shutil
 import subprocess
 import sys
+
+from log_streams import read_log_stream
 import time
 import uuid
 
@@ -191,8 +193,9 @@ def _start_capsem_service():
     else:
         proc.terminate()
         stderr_file.close()
-        if log_path.exists():
-            print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
+        service_log = read_log_stream(log_path)
+        if service_log:
+            print(f"\n--- SERVICE LOG ---\n{service_log}\n---", file=sys.stderr)
         if stderr_path.exists():
             print(f"\n--- SERVICE STDERR ---\n{stderr_path.read_text()}\n---", file=sys.stderr)
         raise RuntimeError("capsem-service failed to create socket within 15s")
@@ -210,8 +213,9 @@ def _start_capsem_service():
 
         stderr_file.close()
 
-        if log_path.exists():
-            print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
+        service_log = read_log_stream(log_path)
+        if service_log:
+            print(f"\n--- SERVICE LOG ---\n{service_log}\n---", file=sys.stderr)
         if stderr_path.exists():
             print(f"\n--- SERVICE STDERR ---\n{stderr_path.read_text()}\n---", file=sys.stderr)
 

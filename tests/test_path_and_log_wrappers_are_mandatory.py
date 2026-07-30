@@ -131,6 +131,16 @@ def test_log_streams_are_read_through_the_stream_reader() -> None:
 PY_STREAM_READ = re.compile(
     r"""\(\s*[\w.]+\s*/\s*["'](?:service|gateway|mcp|tray)\.log["']\s*\)\s*\.read_text"""
 )
+
+# The same read, one variable removed. `self._log_path` was bound to the
+# gateway stream in the constructor and read two hundred lines away, so the
+# single-expression pattern above never saw it -- the helper returned "" for a
+# gateway that had logged normally, and an ironbank test asserted against the
+# empty string. The Rust half has tracked bindings from the start; this is the
+# Python equivalent.
+PY_STREAM_BINDING = re.compile(
+    r"""(\w+(?:\.\w+)*)\s*=\s*[^\n=]*?/\s*["'](?:service|gateway|mcp|tray)\.log["']"""
+)
 SH_STREAM_READ = re.compile(r"""(?:tail|cat|head)\s+[^\n|]*?/(?:service|gateway|mcp|tray)\.log["']?\s""")
 
 
@@ -152,6 +162,16 @@ def test_python_and_shell_read_streams_through_the_helper() -> None:
                     offenders.append(
                         f"{path.relative_to(PROJECT_ROOT)}:{line} reads a rotated "
                         f"stream by name ({how})"
+                    )
+            for binding in PY_STREAM_BINDING.finditer(text):
+                name = binding.group(1)
+                for read in re.finditer(
+                    rf"{re.escape(name)}\.read_text\b", text
+                ):
+                    line = text[: read.start()].count("\n") + 1
+                    offenders.append(
+                        f"{path.relative_to(PROJECT_ROOT)}:{line} reads log path "
+                        f"`{name}` directly"
                     )
 
     assert scanned > 50, "scanned too few files to trust this guard"

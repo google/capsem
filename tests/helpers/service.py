@@ -11,6 +11,8 @@ import uuid
 
 from dataclasses import dataclass
 from pathlib import Path
+
+from log_streams import read_log_stream
 from typing import Mapping
 
 from .constants import EXEC_READY_TIMEOUT
@@ -513,8 +515,9 @@ class ServiceInstance:
             time.sleep(0.5)
 
         self.stop()
-        if log_path.exists():
-            print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
+        service_log = read_log_stream(log_path)
+        if service_log:
+            print(f"\n--- SERVICE LOG ---\n{service_log}\n---", file=sys.stderr)
         raise RuntimeError("capsem-service failed to accept connections within 15s")
 
     def client(self):

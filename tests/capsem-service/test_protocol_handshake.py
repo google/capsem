@@ -11,6 +11,8 @@ import socket
 import time
 from pathlib import Path
 
+from log_streams import read_log_stream
+
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -51,8 +53,8 @@ def test_pre_handshake_client_disconnects_quickly(service_env, fresh_vm):
     # message because the wording may shift; the `target=ipc` prefix is
     # the load-bearing contract.
     log_path = Path(service_env.tmp_dir) / "service.log"
-    if log_path.exists():
-        text = log_path.read_text(errors="ignore")
+    text = read_log_stream(log_path)
+    if text:
         assert (
             '"target":"ipc"' in text or "ipc" in text
         ), "expected an ipc-targeted log line in service.log"
