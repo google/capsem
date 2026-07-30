@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from rust_sources import sibling_tests
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_GRAPH = (
@@ -38,4 +40,7 @@ def test_manifest_version_independent() -> None:
     assert "fn validate_graph_manifest_version" in admin_source
     assert 'version.contains("+assets.")' in admin_source
     assert "manifest version must be independent from asset and binary versions" in admin_source
-    assert "release_graph_manifest_version_is_independent_from_package_and_assets" in admin_source
+    assert (
+        "release_graph_manifest_version_is_independent_from_package_and_assets"
+        in sibling_tests(PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs")
+    )

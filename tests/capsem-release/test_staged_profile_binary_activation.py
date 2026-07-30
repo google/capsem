@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from rust_sources import sibling_tests
+
 
 ROOT = Path(__file__).resolve().parents[2]
 ADMIN = ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
@@ -76,7 +78,8 @@ def test_staged_profile_cannot_activate_until_binary_bounds_match() -> None:
     )
     assert record.index("validate_graph_profiles_match_current_binary") < record.index("fs::write")
     assert (
-        "staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_profile" in source
+        "staged_profile_then_binary_activation_enforces_bounds_without_rebuilding_profile"
+        in sibling_tests(ADMIN)
     )
 
 

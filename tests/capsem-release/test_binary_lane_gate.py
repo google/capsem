@@ -11,6 +11,8 @@ from pathlib import Path
 
 import blake3
 
+from rust_sources import sibling_tests
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
 ADMIN_MAIN = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
@@ -28,7 +30,9 @@ def test_package_rows_are_not_binary_rows() -> None:
     assert "pub package: String" not in source
     assert "pub installed_path: String" in source
     assert "pub sbom_component_ref: String" in source
-    assert "package_inventory_rows_are_separate_from_binary_rows" in source
+    assert "package_inventory_rows_are_separate_from_binary_rows" in sibling_tests(
+        RELEASE_GRAPH
+    )
 
 
 def test_every_packaged_executable_has_hashes_and_sbom_ref() -> None:
@@ -41,13 +45,15 @@ def test_every_packaged_executable_has_hashes_and_sbom_ref() -> None:
     assert "blake3::hash(&file.bytes)" in source
     assert "sbom_component_refs" in source
     assert "missing SBOM component reference" in source
+
+    tests = sibling_tests(RELEASE_GRAPH)
     assert (
         "executable_inventory_records_every_packaged_binary_with_hashes_and_sbom_refs"
-        in source
+        in tests
     )
-    assert "executable_inventory_rejects_missing_sbom_component_ref" in source
-    assert "executable_inventory_matches_macos_and_deb_package_contents" in source
-    assert "executable_inventory_rejects_package_content_hash_drift" in source
+    assert "executable_inventory_rejects_missing_sbom_component_ref" in tests
+    assert "executable_inventory_matches_macos_and_deb_package_contents" in tests
+    assert "executable_inventory_rejects_package_content_hash_drift" in tests
 
 
 def test_sha1_only_spdx_is_rejected() -> None:
@@ -59,7 +65,7 @@ def test_sha1_only_spdx_is_rejected() -> None:
     assert "channel manifest host binary {} has malformed blake3" in source
     assert 'algorithm.eq_ignore_ascii_case("SHA256")' in source
     assert "missing SHA256 checksum" in source
-    assert "host_spdx_requires_sha256_file_checksums" in source
+    assert "host_spdx_requires_sha256_file_checksums" in sibling_tests(ADMIN_MAIN)
 
 
 def test_binary_lane_allowed_diff_gate_is_channel_scoped() -> None:

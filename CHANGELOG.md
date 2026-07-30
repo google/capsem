@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed 16 release-contract tests that blocked both release lanes. They asserted
+  that specific Rust tests exist, but read only the production `.rs` file after
+  those tests moved to sibling `tests.rs` modules, so the whole gate failed on a
+  layout change that broke nothing. Source contracts now read production code
+  and its test module through `tests/rust_sources.py`, which resolves `mod
+  tests;` the way Rust does and raises when the module is absent instead of
+  passing on an empty string. The two sources stay separate deliberately:
+  several contracts assert a symbol is *absent* from production, and a test
+  module legitimately names what it proves is rejected.
+- Fixed the Rust line-coverage floor asserted by two separate contracts, which
+  still demanded 65 after the measured surface grew to include previously
+  unmonitored crates and the real floor became 63. The value is now named once
+  as `RUST_LINE_COVERAGE_FLOOR`, since a floor that disagrees with itself is
+  worse than no floor.
+
 ### Added
 
 - Added `manyfaces`, a Rust suite holding the asset model to Docker's: blobs
