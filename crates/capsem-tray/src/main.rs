@@ -184,7 +184,7 @@ fn main() -> Result<()> {
                             icon_error.clone()
                         };
                         tray.set_icon_with_as_template(Some(icon), true)
-                            .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
+                            .unwrap_or_else(|e| warn!(error = %e, "failed to set icon"));
                         last_state = Some(desired_state);
                     }
 
@@ -197,7 +197,7 @@ fn main() -> Result<()> {
                 PollResult::Unavailable(reason) => {
                     if last_state != Some(TrayState::Error) {
                         tray.set_icon_with_as_template(Some(icon_error.clone()), true)
-                            .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
+                            .unwrap_or_else(|e| warn!(error = %e, "failed to set icon"));
                         tray.set_menu(Some(Box::new(menu::build_unavailable_menu())));
                         last_state = Some(TrayState::Error);
                         last_status = None;
@@ -275,7 +275,7 @@ async fn async_worker(
         match GatewayClient::discover(port_override).await {
             Ok(c) => break c,
             Err(e) => {
-                warn!("gateway discovery failed: {e}");
+                warn!(error = %e, "gateway discovery failed");
                 let _ = poll_tx.send(PollResult::Unavailable(e.to_string()));
                 tokio::time::sleep(interval_duration).await;
             }
@@ -293,7 +293,7 @@ async fn async_worker(
                         let _ = poll_tx.send(PollResult::Status(Box::new(status)));
                     }
                     Err(e) => {
-                        warn!("status poll failed: {e}");
+                        warn!(error = %e, "status poll failed");
                         // Try re-discovery (token/port may have changed)
                         match GatewayClient::discover(port_override).await {
                             Ok(new_client) => {
@@ -364,7 +364,7 @@ async fn dispatch_action(client: &GatewayClient, action: Action) {
     };
 
     if let Err(e) = result {
-        error!("action {action:?} failed: {e}");
+        error!(error = %e, "action {action:?} failed");
     }
 }
 
@@ -390,7 +390,7 @@ fn launch_capsem_start() {
                 info!("capsem start dispatched from tray");
                 let _ = child.wait();
             }
-            Err(e) => warn!("failed to start Capsem service from tray: {e}"),
+            Err(e) => warn!(error = %e, "failed to start Capsem service from tray"),
         }
     });
 }
@@ -522,7 +522,7 @@ fn launch_capsem_app(vm_id: Option<&str>, action: Option<&str>) {
                 info!(?vm_id, ?action, "Capsem.app launch dispatched");
                 let _ = child.wait();
             }
-            Err(e) => warn!("failed to launch UI: {e}"),
+            Err(e) => warn!(error = %e, "failed to launch UI"),
         }
     });
 }
