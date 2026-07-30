@@ -54,6 +54,19 @@ const AUTOMATIC_UPDATE_POLL_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS";
 
 use capsem_core::paths::checkpoint_complete_path;
 
+/// Removes the service pidfile on clean shutdown so a stale pid cannot make a
+/// dead service look alive to whatever is waiting to reap it.
+struct ServicePidfile {
+    path: std::path::PathBuf,
+}
+
+impl Drop for ServicePidfile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+
 #[cfg(test)]
 thread_local! {
     static TEST_PROFILE_DIR_OVERRIDE: std::cell::RefCell<Option<PathBuf>> =
@@ -12876,6 +12889,18 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    // Write the pidfile the harness reaps by. Without it, every cleanup that
+    // targets `$run_dir/service.pid` no-ops silently -- indistinguishable from
+    // success -- and the asset gate left a service (and its tray) behind on
+    // every run.
+    let service_pidfile = run_dir.join("service.pid");
+    if let Err(error) = std::fs::write(&service_pidfile, std::process::id().to_string()) {
+        warn!(path = %service_pidfile.display(), %error, "failed to write service pidfile");
+    }
+    let _pidfile_guard = ServicePidfile {
+        path: service_pidfile,
+    };
 
     let instances_dir = run_dir.join("instances");
     let sessions_dir = run_dir.join("sessions");

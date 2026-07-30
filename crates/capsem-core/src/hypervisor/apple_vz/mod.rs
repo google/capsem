@@ -40,11 +40,13 @@ impl Hypervisor for AppleVzHypervisor {
             let mut rx = SerialConsole::subscribe(&serial_console);
             let path = log_path.to_path_buf();
             std::thread::spawn(move || {
-                let mut file = match std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&path)
-                {
+                // Capped: guest console output is guest-controlled and a
+                // persistent VM runs for weeks, so appending forever bounds
+                // the log only by the disk.
+                let mut file = match crate::telemetry::CappedLogWriter::open(
+                    &path,
+                    crate::telemetry::SERIAL_LOG_MAX_BYTES,
+                ) {
                     Ok(f) => f,
                     Err(e) => {
                         tracing::warn!(error = %e, path = %path.display(), "failed to open serial log file");

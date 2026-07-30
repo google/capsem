@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The service writes `service.pid`, which the harness reaps by. Nothing wrote
+  it, so every cleanup targeting `$run_dir/service.pid` no-opped -- silently,
+  since a no-op cleanup is indistinguishable from a successful one. The asset
+  gate left a `capsem-service` behind on every run, each holding a
+  `capsem-tray`; sixteen accumulated in a day, all reparented to launchd.
+- VM serial logs are capped instead of appended forever. Guest console output
+  is guest-controlled and a persistent VM runs for weeks, so the log was
+  bounded only by the disk. Both hypervisor backends had their own writer and
+  neither was bounded; they now share `telemetry::CappedLogWriter`, which
+  rotates to `<stem>.1.<ext>` so the rotated file stays inside the stream
+  readers already enumerate.
+
+### Added
+
+- `tests/test_pidfile_cleanup_is_wired.py` fails when the gate stops a pidfile
+  no binary writes.
+
+### Fixed
+
 - Fixed `triage` reporting no errors for a daemon that was logging them. It
   `metadata()`d the log stream name and returned `None` once rotation landed --
   the same bug as `/service-logs`, in the second of four copies of "read the

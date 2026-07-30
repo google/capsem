@@ -189,3 +189,43 @@ fn retained_log_files_is_bounded() {
         "retention must be bounded; unbounded logs are what this constant exists to prevent"
     );
 }
+
+#[test]
+fn a_capped_writer_rotates_instead_of_growing_without_bound() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("serial.log");
+
+    let mut writer = CappedLogWriter::open(&path, 64).unwrap();
+    for _ in 0..20 {
+        writer.write_all(b"0123456789").unwrap();
+    }
+    writer.flush().unwrap();
+
+    // Bounded by two files of the cap, not by the guest's appetite.
+    let total: u64 = log_stream_files(&path)
+        .iter()
+        .filter_map(|f| std::fs::metadata(f).ok())
+        .map(|m| m.len())
+        .sum();
+    assert!(total <= 2 * 64, "serial log grew unbounded: {total} bytes");
+}
+
+#[test]
+fn a_rotated_serial_file_stays_inside_its_stream() {
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("serial.log");
+
+    let mut writer = CappedLogWriter::open(&path, 16).unwrap();
+    writer.write_all(b"first half aaaaaaaaaaaaaaaaaaaa").unwrap();
+    writer.write_all(b"second half bbbbbbbbbbbbbbbbbbb").unwrap();
+    writer.flush().unwrap();
+
+    // A rotated name outside the stream is a file nobody collects.
+    assert_eq!(
+        log_stream_files(&path).len(),
+        2,
+        "rotated file must remain in the stream the readers enumerate"
+    );
+}

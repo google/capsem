@@ -207,6 +207,87 @@ pub fn log_stream_files(path: &std::path::Path) -> Vec<PathBuf> {
     files.into_iter().map(|(_, path)| path).collect()
 }
 
+/// Bytes a single VM's serial log may reach before it rotates.
+///
+/// Guest console output is guest-controlled and a persistent VM runs for
+/// weeks, so an append-forever serial log is bounded only by the disk. Two
+/// files of this size keep recent history without letting a chatty guest
+/// decide how much disk Capsem uses.
+pub const SERIAL_LOG_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+/// An appender that rotates once instead of growing without bound.
+///
+/// The rotated file is named `<stem>.1.<ext>`, which keeps it inside the
+/// stream [`log_stream_files`] enumerates, so readers pick up both halves with
+/// no extra knowledge. Both hypervisor backends write serial output through
+/// this rather than each opening the file themselves.
+pub struct CappedLogWriter {
+    path: PathBuf,
+    file: std::fs::File,
+    written: u64,
+    max_bytes: u64,
+}
+
+impl CappedLogWriter {
+    pub fn open(path: &std::path::Path, max_bytes: u64) -> std::io::Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        let written = file.metadata().map(|m| m.len()).unwrap_or(0);
+        Ok(Self {
+            path: path.to_path_buf(),
+            file,
+            written,
+            max_bytes,
+        })
+    }
+
+    fn rotated_path(&self) -> PathBuf {
+        let stem = self
+            .path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "serial".to_string());
+        let ext = self
+            .path
+            .extension()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "log".to_string());
+        self.path.with_file_name(format!("{stem}.1.{ext}"))
+    }
+
+    fn rotate(&mut self) -> std::io::Result<()> {
+        let rotated = self.rotated_path();
+        let _ = std::fs::remove_file(&rotated);
+        std::fs::rename(&self.path, &rotated)?;
+        self.file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
+        self.written = 0;
+        Ok(())
+    }
+}
+
+impl std::io::Write for CappedLogWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.written + buf.len() as u64 > self.max_bytes {
+            self.rotate()?;
+        }
+        let n = self.file.write(buf)?;
+        self.written += n as u64;
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.file.flush()
+    }
+}
+
 /// Read the last `max_bytes` of a rotated log stream, oldest line first.
 ///
 /// `path` names the stream (`<run>/service.log`), not a file on disk. Every

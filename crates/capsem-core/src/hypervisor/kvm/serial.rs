@@ -76,11 +76,10 @@ impl crate::hypervisor::SerialConsole for KvmSerialConsole {
 /// Core read loop: reads bytes from fd and sends through broadcast.
 fn read_loop(fd: RawFd, tx: &broadcast::Sender<Vec<u8>>, log_path: Option<PathBuf>) {
     let mut file = unsafe { std::fs::File::from_raw_fd(fd) };
+    // Same capped writer the Apple VZ backend uses: one rule, one function,
+    // and a persistent VM cannot fill the disk with console output.
     let mut log_file = log_path.and_then(|path| {
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
+        crate::telemetry::CappedLogWriter::open(&path, crate::telemetry::SERIAL_LOG_MAX_BYTES)
             .map_err(|e| {
                 warn!(error = %e, path = %path.display(), "failed to open KVM serial log file");
                 e
