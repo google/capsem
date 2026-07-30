@@ -165,6 +165,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   boundary and accidentally not enforce. Guest `execve` audit records stay
   detection-only by nature -- they describe a process that already started.
 
+- `emit_matching_security_rules_with_plugins` and its blocking twin ran the
+  plugin stages and then returned a row count, discarding the block or ask
+  verdict the plugins had just produced. Nothing calls them yet, which is the
+  point: they are the surface a custom plugin will be evaluated through, and the
+  count-returning shape made "ran the plugin, ignored what it said" the path of
+  least resistance. They now return `SecurityRuleEmission`, so the verdict
+  reaches the caller, and every rail escalates a plugin decision through one
+  shared helper.
+
 - The benchmark retention contract asserted `>= (1, 6)` while its own docstring
   promised retention follows Cargo.toml "without a second place to update". The
   literal was that second place, and it failed the moment the workspace moved to

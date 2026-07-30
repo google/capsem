@@ -3587,3 +3587,127 @@ async fn process_exec_boundary_honors_a_blocking_plugin() {
     writer.flush().await;
     writer.shutdown_blocking();
 }
+
+fn allow_everything_file_rules() -> SecurityRuleSet {
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[default.file]
+name = "file"
+action = "allow"
+priority = "default"
+match = "has(file.export.path)"
+"#,
+    )
+    .expect("profile parses");
+    SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
+        .expect("rules compile")
+}
+
+fn blocking_plugin_policy() -> BTreeMap<String, SecurityPluginConfig> {
+    let mut policy = BTreeMap::new();
+    policy.insert(
+        "dummy_post_allow".to_string(),
+        SecurityPluginConfig {
+            mode: SecurityPluginMode::Block,
+            detection_level: crate::net::policy_config::DetectionLevel::Critical,
+        },
+    );
+    policy
+}
+
+fn file_export_event() -> SecurityEvent {
+    SecurityEvent::new(RuntimeSecurityEventType::FileExport).with_file(FileSecurityEvent {
+        export_path: Some("/workspace/x.txt".to_string()),
+        ..Default::default()
+    })
+}
+
+/// The plugin-aware emitters are the surface a custom plugin will eventually be
+/// evaluated through, so a plugin verdict has to reach the caller. They used to
+/// return a row count, which made "ran the plugin, ignored what it said" the
+/// path of least resistance.
+#[tokio::test]
+async fn plugin_aware_emitter_returns_the_plugin_verdict() {
+    let tmp = tempfile::tempdir().unwrap();
+    let writer = capsem_logger::DbWriter::open(&tmp.path().join("session.db"), 32).unwrap();
+    let event_id = SecurityEventId::new_uuid4();
+
+    let emission = emit_matching_security_rules_with_plugins(
+        &writer,
+        event_id.clone(),
+        RuntimeSecurityEventType::FileExport,
+        &allow_everything_file_rules(),
+        blocking_plugin_policy(),
+        file_export_event(),
+        current_unix_ms(),
+    )
+    .await
+    .expect("emission succeeds");
+
+    assert_eq!(
+        emission.enforcement.action,
+        SecurityEnforcementAction::Block,
+        "a blocking plugin over an allowing rule must come back as a block"
+    );
+    assert_eq!(
+        emission.enforcement.reason.as_deref(),
+        Some("file.export blocked by plugin")
+    );
+    assert_eq!(emission.event_id, event_id);
+    writer.shutdown_blocking();
+}
+
+#[test]
+fn plugin_aware_blocking_emitter_returns_the_plugin_verdict() {
+    let tmp = tempfile::tempdir().unwrap();
+    let writer = capsem_logger::DbWriter::open(&tmp.path().join("session.db"), 32).unwrap();
+    let event_id = SecurityEventId::new_uuid4();
+
+    let emission = emit_matching_security_rules_with_plugins_blocking(
+        &writer,
+        event_id.clone(),
+        RuntimeSecurityEventType::FileExport,
+        &allow_everything_file_rules(),
+        blocking_plugin_policy(),
+        file_export_event(),
+        current_unix_ms(),
+    )
+    .expect("emission succeeds");
+
+    assert_eq!(
+        emission.enforcement.action,
+        SecurityEnforcementAction::Block
+    );
+    assert_eq!(emission.event_id, event_id);
+    writer.shutdown_blocking();
+}
+
+#[tokio::test]
+async fn plugin_aware_emitter_leaves_an_allowing_plugin_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let writer = capsem_logger::DbWriter::open(&tmp.path().join("session.db"), 32).unwrap();
+    let mut policy = BTreeMap::new();
+    policy.insert(
+        "dummy_post_allow".to_string(),
+        SecurityPluginConfig {
+            mode: SecurityPluginMode::Allow,
+            detection_level: crate::net::policy_config::DetectionLevel::Informational,
+        },
+    );
+
+    let emission = emit_matching_security_rules_with_plugins(
+        &writer,
+        SecurityEventId::new_uuid4(),
+        RuntimeSecurityEventType::FileExport,
+        &allow_everything_file_rules(),
+        policy,
+        file_export_event(),
+        current_unix_ms(),
+    )
+    .await
+    .expect("emission succeeds");
+
+    assert_eq!(emission.enforcement.action, SecurityEnforcementAction::Allow);
+    assert!(emission.enforcement.reason.is_none());
+    writer.shutdown_blocking();
+}

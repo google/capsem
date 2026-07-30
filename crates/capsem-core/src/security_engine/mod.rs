@@ -497,13 +497,26 @@ async fn emit_security_boundary_with_plugins(
         current_unix_ms(),
     )
     .await?;
+    apply_plugin_decision_to_emission_labelled(plugin_decision, boundary, &mut emission);
+    Ok(Some(emission))
+}
+
+/// Raise an emission's enforcement to the decision the plugin stages produced.
+///
+/// Rules and plugins share the escalate-only decision rail, so this can only
+/// tighten: a plugin never talks a blocking rule down. The label names the
+/// boundary in the reason the user eventually reads.
+fn apply_plugin_decision_to_emission_labelled(
+    plugin_decision: SecurityDecisionKind,
+    boundary: &str,
+    emission: &mut SecurityRuleEmission,
+) {
     match plugin_decision {
         SecurityDecisionKind::Allow => {}
         SecurityDecisionKind::Ask => {
             if emission.enforcement.is_allowed() {
                 emission.enforcement.action = SecurityEnforcementAction::Ask;
-                emission.enforcement.reason =
-                    Some(format!("{boundary} requires plugin approval"));
+                emission.enforcement.reason = Some(format!("{boundary} requires plugin approval"));
             }
         }
         SecurityDecisionKind::Block => {
@@ -511,7 +524,14 @@ async fn emit_security_boundary_with_plugins(
             emission.enforcement.reason = Some(format!("{boundary} blocked by plugin"));
         }
     }
-    Ok(Some(emission))
+}
+
+fn apply_plugin_decision_to_emission(
+    plugin_decision: SecurityDecisionKind,
+    emission: &mut SecurityRuleEmission,
+) {
+    let boundary = emission.event.event_type.as_str().to_string();
+    apply_plugin_decision_to_emission_labelled(plugin_decision, &boundary, emission);
 }
 
 pub async fn emit_explicit_file_security_write_and_rules_with_plugins(
@@ -893,6 +913,13 @@ pub async fn emit_matching_security_rules(
     .map(|emission| emission.emitted)
 }
 
+/// Run the plugin stages over an event, evaluate the rule set, write the ledger
+/// rows, and return the decision the caller must honor.
+///
+/// This is the entry point a boundary reaches for when it already owns its
+/// primary event id. It returns `SecurityRuleEmission` rather than a row count
+/// on purpose: a plugin verdict that never reaches the caller is a plugin that
+/// does not enforce, and the count-returning shape made that the easy default.
 pub async fn emit_matching_security_rules_with_plugins(
     db: &DbWriter,
     event_id: SecurityEventId,
@@ -901,11 +928,24 @@ pub async fn emit_matching_security_rules_with_plugins(
     plugin_policy: BTreeMap<String, SecurityPluginConfig>,
     event: SecurityEvent,
     timestamp_unix_ms: i64,
-) -> Result<usize, String> {
+) -> Result<SecurityRuleEmission, String> {
     let event = prepare_event_for_security_rule_ledger(plugin_policy, event)?;
-    emit_matching_security_rules(db, event_id, event_type, rules, &event, timestamp_unix_ms).await
+    let plugin_decision = event.decision.effective;
+    let mut emission = emit_matching_security_rules_with_decision(
+        db,
+        event_id,
+        event_type,
+        rules,
+        &event,
+        timestamp_unix_ms,
+    )
+    .await?;
+    apply_plugin_decision_to_emission(plugin_decision, &mut emission);
+    Ok(emission)
 }
 
+/// Blocking twin of [`emit_matching_security_rules_with_plugins`], for callers
+/// on a synchronous thread. Same contract: the decision comes back to you.
 pub fn emit_matching_security_rules_with_plugins_blocking(
     db: &DbWriter,
     event_id: SecurityEventId,
@@ -914,16 +954,19 @@ pub fn emit_matching_security_rules_with_plugins_blocking(
     plugin_policy: BTreeMap<String, SecurityPluginConfig>,
     event: SecurityEvent,
     timestamp_unix_ms: i64,
-) -> Result<usize, String> {
+) -> Result<SecurityRuleEmission, String> {
     let event = prepare_event_for_security_rule_ledger(plugin_policy, event)?;
-    emit_matching_security_rules_blocking(
+    let plugin_decision = event.decision.effective;
+    let mut emission = emit_matching_security_rules_with_decision_blocking(
         db,
         event_id,
         event_type,
         rules,
         &event,
         timestamp_unix_ms,
-    )
+    )?;
+    apply_plugin_decision_to_emission(plugin_decision, &mut emission);
+    Ok(emission)
 }
 
 pub fn emit_matching_security_rules_for_evaluated_event_blocking(
