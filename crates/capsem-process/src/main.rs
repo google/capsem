@@ -297,7 +297,7 @@ fn main() -> Result<()> {
         )
         .await
         {
-            error!("async loop failed: {e:#}");
+            error!(error = format!("{e:#}"), "async loop failed");
             drain_background_owners(&shutdown_for_loop_error).await;
             std::process::exit(1);
         }
@@ -418,7 +418,7 @@ async fn run_async_main_loop(
             shutdown.lock().await.fs_monitor = Some(monitor);
         }
         Err(e) => {
-            error!("failed to start host file monitor: {e}");
+            error!(error = %e, "failed to start host file monitor");
         }
     }
 
@@ -606,8 +606,8 @@ async fn run_async_main_loop(
                         "auto snapshot captured"
                     );
                 }
-                Ok(Err(e)) => tracing::warn!("auto-snapshot failed: {e}"),
-                Err(e) => tracing::warn!("auto-snapshot task panicked: {e}"),
+                Ok(Err(e)) => tracing::warn!(error = %e, "auto-snapshot failed"),
+                Err(e) => tracing::warn!(error = %e, "auto-snapshot task panicked"),
             }
         }
     });
@@ -650,7 +650,7 @@ async fn run_async_main_loop(
     let pty_log = match pty_log::PtyLog::open(&session_dir.join("pty.log")) {
         Ok(pl) => Some(Arc::new(pl)),
         Err(e) => {
-            warn!("failed to open pty.log: {e}");
+            warn!(error = %e, "failed to open pty.log");
             None
         }
     };
@@ -688,7 +688,7 @@ async fn run_async_main_loop(
             // here lets the service's child-exit handler clean up the
             // instance promptly so the caller (test, CLI, MCP) sees the
             // failure in <1s instead of 30s.
-            error!("vsock failed: {e:#}");
+            error!(error = format!("{e:#}"), "vsock failed");
             drain_background_owners(&shutdown_for_vsock_error).await;
             std::process::exit(1);
         }
@@ -781,7 +781,7 @@ async fn run_async_main_loop(
             )
             .await
             {
-                error!("IPC error: {e:#}");
+                error!(error = format!("{e:#}"), "IPC error");
             }
         });
     }

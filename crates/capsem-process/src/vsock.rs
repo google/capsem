@@ -135,7 +135,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     break (Arc::new(terminal_conn), Arc::new(control_conn));
                 }
                 Err(e) if attempt < HANDSHAKE_RETRY_MAX && is_retryable_handshake_error(&e) => {
-                    warn!(attempt, "initial handshake failed (retryable), dropping fds and awaiting guest reconnect: {e:#}");
+                    warn!(attempt, error = format!("{e:#}"), "initial handshake failed (retryable), dropping fds and awaiting guest reconnect");
                     drop(terminal_conn);
                     drop(control_conn);
                     drop(attempt_deferred);
@@ -175,7 +175,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     vm_ready.store(true, Ordering::Release);
     let ready_path = uds_path.with_extension("ready");
     if let Err(e) = std::fs::File::create(&ready_path) {
-        warn!("failed to create ready sentinel: {e}");
+        warn!(error = %e, "failed to create ready sentinel");
     }
 
     // -----------------------------------------------------------------------
@@ -333,7 +333,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 let mut replay_failed = false;
                 for msg in &to_replay {
                     if let Err(e) = write_control_msg(&mut writer_fd, msg) {
-                        error!("control bridge: replay write failed: {e}");
+                        error!(error = %e, "control bridge: replay write failed");
                         replay_failed = true;
                         break;
                     }
@@ -364,7 +364,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             pending.pending_acks.lock().unwrap().insert(id, msg.clone());
                         }
                         if let Err(e) = write_control_msg(&mut writer_fd, &msg) {
-                            error!("control bridge: write failed: {e}");
+                            error!(error = %e, "control bridge: write failed");
                             break;
                         }
                     }
@@ -383,7 +383,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             Some(Ok(msg)) => {
                                 if let Some(id) = ackable_response_id(&msg) {
                                     if let Err(e) = write_control_msg(&mut writer_fd, &HostToGuest::AckReply { id }) {
-                                        error!("control bridge: AckReply write failed: {e}");
+                                        error!(error = %e, "control bridge: AckReply write failed");
                                         break;
                                     }
                                 }
@@ -837,11 +837,11 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             }
                         }
                         Ok(Err(e)) => {
-                            error!("control port: handshake failed: {e:#}");
+                            error!(error = format!("{e:#}"), "control port: handshake failed");
                             pending_aux.clear(); // Drop dead FDs
                         }
                         Err(e) => {
-                            error!("control port: handshake panicked: {e}");
+                            error!(error = %e, "control port: handshake panicked");
                             pending_aux.clear();
                         }
                     }
@@ -927,7 +927,7 @@ fn dispatch_aux_connection(
                 let mut file = match clone_fd(conn.fd) {
                     Ok(f) => f,
                     Err(e) => {
-                        error!("exec port: clone_fd failed: {e}");
+                        error!(error = %e, "exec port: clone_fd failed");
                         return;
                     }
                 };
@@ -975,7 +975,7 @@ fn dispatch_aux_connection(
                 let mut file = match clone_fd(conn.fd) {
                     Ok(f) => f,
                     Err(e) => {
-                        error!("audit port: clone_fd failed: {e}");
+                        error!(error = %e, "audit port: clone_fd failed");
                         return;
                     }
                 };
