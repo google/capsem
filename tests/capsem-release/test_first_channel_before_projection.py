@@ -31,6 +31,33 @@ def _source() -> dict[str, object]:
     }
 
 
+def _bootstrapped_source() -> dict[str, object]:
+    """What `bootstrap_first_party_channel_source` actually emits.
+
+    A channel being bootstrapped is absent, so it has no profiles yet. This is
+    the only shape the workflow can hand the projector, and the projector used
+    to reject it -- the hand-written fixture below carried profiles no cold
+    start could produce, so the tests agreed with the code and both were wrong.
+    """
+    source = _source()
+    source["profiles"] = {}
+    return source
+
+
+def test_projection_accepts_the_profileless_source_a_bootstrap_emits() -> None:
+    source = _bootstrapped_source()
+
+    before = PROJECTOR.project_first_channel_before(
+        source,
+        channel="nightly",
+        bootstrap=True,
+    )
+
+    assert before == source
+    assert before["packages"] == source["packages"]
+    assert before["packages"] is not source["packages"]
+
+
 def test_projection_removes_only_profiles_from_the_serialized_candidate() -> None:
     source = _source()
 
@@ -51,7 +78,7 @@ def test_projection_removes_only_profiles_from_the_serialized_candidate() -> Non
     [
         ("nightly", False, None, "absent public channel"),
         ("stable", True, None, "declares channel"),
-        ("nightly", True, ("profiles", {}), "non-empty profiles"),
+        ("nightly", True, ("profiles", []), "profiles must be an object"),
         ("nightly", True, ("packages", []), "package cohort"),
     ],
 )

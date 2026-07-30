@@ -35,9 +35,15 @@ def project_first_channel_before(
         for package in packages
     ):
         raise ValueError("serialized source package cohort must be entirely current")
+    # Deliberately not "profiles must be non-empty". The only input this can
+    # ever receive is the bootstrapped source for an absent channel, and
+    # `bootstrap_first_party_channel_source` emits `profiles: {}` because a new
+    # channel has none yet. Requiring them made the cold start unreachable: the
+    # projection rejected the sole manifest the workflow could hand it, and
+    # then would have set profiles to empty anyway. Only the shape is checked.
     profiles = source.get("profiles")
-    if not isinstance(profiles, dict) or not profiles:
-        raise ValueError("serialized source must contain non-empty profiles")
+    if not isinstance(profiles, dict):
+        raise ValueError("serialized source profiles must be an object")
 
     projected = copy.deepcopy(source)
     projected["profiles"] = {}

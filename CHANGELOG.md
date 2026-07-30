@@ -22,6 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   human-chosen version the cohort already agrees when the release runs, so a
   no-op stamp is the correct outcome; only the release notes must be written. A
   stale lockfile is still rejected, by its contents rather than its mtime.
+- Cold-starting a first-party channel is reachable again. The first-channel
+  projection required the serialized source to carry non-empty profiles, but
+  the only manifest it can ever be handed is the bootstrapped source for an
+  *absent* channel, which by construction has none -- and the projection then
+  set profiles to empty anyway. It rejected its sole valid input, so no channel
+  could ever be bootstrapped. Its test fixture hand-built a nightly source with
+  profiles that no bootstrap could emit, which is why the tests agreed with the
+  code and both were wrong.
 - Swept the log-rotation blast radius the original change never covered. Twelve
   Python sites and one shell snippet in the macOS glow-up read `service.log` by
   name, which is empty after rotation: ironbank ledger tests asserted on an
