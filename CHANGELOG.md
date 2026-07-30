@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added `manyfaces`, a Rust suite holding the asset model to Docker's: blobs
+  content-addressed and shared between profiles, a profile's `image_revision`
+  behaving as a tag so several revisions coexist on disk, and blob lifetime
+  reference-counted rather than governed by a channel-wide pointer. Fifteen
+  tests pass, describing what already holds. Five are deliberately red and are
+  the specification for removing that pointer: three profiles currently collapse
+  to one asset set, a profile's kernel becomes unreachable, one global hash
+  cannot verify three profiles, and a refresh deletes an installed profile's
+  kernel as unreferenced.
 - Added a Rust test-layout contract to the shared fast gate. It fails on an
   inline `#[cfg(test)] mod tests { ... }` block, a `tests.rs` that no parent
   module declares (which silently never compiles or runs), a crate shipping no
