@@ -121,6 +121,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   continuation byte never collides with one. Non-ASCII string literals such as
   `http.host == "café.example"` still compile and still match.
 
+- The explicit-file security boundary dropped `credential_ref` on its way to the
+  rule ledger. The `fs_events` row kept it, but the `SecurityEvent` handed to
+  rule evaluation did not, so `security_rule_events` and
+  `security_decision_events` rows for imports and exports could not be
+  correlated back to the credential while ordinary file events could.
+
 - The benchmark retention contract asserted `>= (1, 6)` while its own docstring
   promised retention follows Cargo.toml "without a second place to update". The
   literal was that second place, and it failed the moment the workspace moved to

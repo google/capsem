@@ -647,11 +647,15 @@ pub fn security_event_from_explicit_file_event(event: &ExplicitFileSecurityEvent
             file.export_content = content;
         }
     }
-    let security_event = SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
-    match event.trace_id.clone() {
-        Some(trace_id) => security_event.with_trace_id(trace_id),
-        None => security_event,
+    let mut security_event =
+        SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
+    if let Some(trace_id) = event.trace_id.clone() {
+        security_event = security_event.with_trace_id(trace_id);
     }
+    if let Some(credential_ref) = event.credential_ref.clone() {
+        security_event = security_event.with_credential_ref(credential_ref);
+    }
+    security_event
 }
 
 pub async fn emit_process_exec_security_write_and_rules(

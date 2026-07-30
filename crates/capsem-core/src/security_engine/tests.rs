@@ -3167,3 +3167,97 @@ fn every_cel_root_exposes_at_least_one_field() {
         );
     }
 }
+
+#[test]
+fn explicit_file_events_carry_credential_ref_into_the_rule_ledger() {
+    let event = security_event_from_explicit_file_event(&ExplicitFileSecurityEvent {
+        action: FileAction::Exported,
+        path: "/workspace/secret.txt".to_string(),
+        size: Some(4),
+        content: Some("body".to_string()),
+        mime_type: None,
+        trace_id: Some("trace-1".to_string()),
+        credential_ref: Some("credential:blake3:abababababababababababababababababababababababababababababababab".to_string()),
+    });
+
+    assert_eq!(event.trace_id.as_deref(), Some("trace-1"));
+    assert_eq!(
+        event.credential_ref.as_deref(),
+        Some("credential:blake3:abababababababababababababababababababababababababababababababab"),
+        "rule and decision ledger rows correlate on credential_ref, so the \
+         explicit-file boundary must not drop it"
+    );
+}
+
+#[tokio::test]
+async fn explicit_file_credential_ref_reaches_the_rule_and_decision_ledger() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 32).unwrap();
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.credentialed_export]
+name = "credentialed_export"
+action = "block"
+priority = 10
+detection_level = "high"
+match = 'file.export.path == "/workspace/secret.txt"'
+"#,
+    )
+    .unwrap();
+    let rules = crate::net::policy_config::SecurityRuleSet::compile_profile(
+        &profile,
+        SecurityRuleSource::User,
+    )
+    .unwrap();
+
+    emit_explicit_file_security_write_and_rules(
+        &writer,
+        &rules,
+        ExplicitFileSecurityEvent {
+            action: FileAction::Exported,
+            path: "/workspace/secret.txt".to_string(),
+            size: Some(4),
+            content: Some("body".to_string()),
+            mime_type: Some("text/plain".to_string()),
+            trace_id: Some("trace_export".to_string()),
+            credential_ref: Some("credential:blake3:abababababababababababababababababababababababababababababababab".to_string()),
+        },
+    )
+    .await
+    .expect("explicit file event must receive id");
+    writer.flush().await;
+    writer.shutdown_blocking();
+
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let file_ref: Option<String> = conn
+        .query_row("SELECT credential_ref FROM fs_events", [], |row| row.get(0))
+        .unwrap();
+    let rule_ref: Option<String> = conn
+        .query_row(
+            "SELECT credential_ref FROM security_rule_events",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let decision_ref: Option<String> = conn
+        .query_row(
+            "SELECT credential_ref FROM security_decision_events",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    assert_eq!(file_ref.as_deref(), Some("credential:blake3:abababababababababababababababababababababababababababababababab"));
+    assert_eq!(
+        rule_ref.as_deref(),
+        Some("credential:blake3:abababababababababababababababababababababababababababababababab"),
+        "the rule row must be correlatable to the credential the file event named"
+    );
+    assert_eq!(
+        decision_ref.as_deref(),
+        Some("credential:blake3:abababababababababababababababababababababababababababababababab"),
+        "the decision row must carry the same credential as the rule row"
+    );
+}
+
