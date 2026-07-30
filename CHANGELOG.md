@@ -127,6 +127,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `security_decision_events` rows for imports and exports could not be
   correlated back to the credential while ordinary file events could.
 
+- A postprocess plugin running in `ask` mode was silently downgraded to `allow`.
+  `evaluate_security_boundary` re-read the event decision after the postprocess
+  stage but honored only `block`, so an asking plugin raised the event's decision
+  state and left enforcement allowing. Both stages now escalate through one
+  helper, and a plugin-mode matrix covers every stage, mode, and rule action --
+  including the direction that must never change, since the decision merge is
+  escalate-only and no plugin may talk a blocking rule down to allow.
+
 - The benchmark retention contract asserted `>= (1, 6)` while its own docstring
   promised retention follows Cargo.toml "without a second place to update". The
   literal was that second place, and it failed the moment the workspace moved to

@@ -3261,3 +3261,138 @@ match = 'file.export.path == "/workspace/secret.txt"'
     );
 }
 
+
+/// The rule action a boundary fixture compiles, paired with the plugin policy
+/// applied over it. Both stages feed the same escalate-only decision state, so
+/// the matrix below is the contract for how the two combine.
+fn boundary_enforcement_for(
+    rule_action: &str,
+    plugin_id: &str,
+    mode: SecurityPluginMode,
+    content: &str,
+) -> SecurityEnforcementAction {
+    let profile = SecurityRuleProfile::parse_toml(&format!(
+        r#"
+[default.file]
+name = "file"
+action = "{rule_action}"
+priority = "default"
+match = "has(file.export.path)"
+"#
+    ))
+    .expect("profile parses");
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
+        .expect("rules compile");
+    let mut plugin_policy = BTreeMap::new();
+    plugin_policy.insert(
+        plugin_id.to_string(),
+        SecurityPluginConfig {
+            mode,
+            detection_level: crate::net::policy_config::DetectionLevel::High,
+        },
+    );
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::FileExport).with_file(FileSecurityEvent {
+            export_path: Some("/workspace/x.txt".to_string()),
+            export_content: Some(content.to_string()),
+            ..Default::default()
+        });
+
+    evaluate_security_boundary(&rules, plugin_policy, event)
+        .expect("boundary evaluates")
+        .enforcement
+        .action
+}
+
+#[test]
+fn plugin_modes_escalate_the_boundary_decision_at_both_stages() {
+    use SecurityEnforcementAction::{Allow, Ask, Block};
+    use SecurityPluginMode as Mode;
+
+    // (rule action, plugin, mode, content, expected enforcement)
+    let matrix = [
+        // A postprocess plugin used to be read for `block` only, so `ask` was
+        // silently downgraded to `allow`.
+        ("allow", "dummy_post_allow", Mode::Ask, "plain", Ask),
+        ("allow", "dummy_post_allow", Mode::Block, "plain", Block),
+        ("allow", "dummy_post_allow", Mode::Allow, "plain", Allow),
+        ("allow", "dummy_post_allow", Mode::Rewrite, "plain", Allow),
+        // A preprocess plugin has always been read for both.
+        ("allow", "dummy_pre_eicar", Mode::Ask, "EICAR", Ask),
+        ("allow", "dummy_pre_eicar", Mode::Block, "EICAR", Block),
+        ("allow", "dummy_pre_eicar", Mode::Allow, "EICAR", Allow),
+        // A plugin that does not apply leaves the rule verdict alone.
+        ("allow", "dummy_pre_eicar", Mode::Block, "plain", Allow),
+        ("allow", "dummy_pre_eicar", Mode::Ask, "plain", Allow),
+        // Escalate-only: no plugin mode can talk a stricter rule down.
+        ("block", "dummy_post_allow", Mode::Allow, "plain", Block),
+        ("block", "dummy_post_allow", Mode::Ask, "plain", Block),
+        ("block", "dummy_pre_eicar", Mode::Allow, "EICAR", Block),
+        ("ask", "dummy_post_allow", Mode::Allow, "plain", Ask),
+        ("ask", "dummy_post_allow", Mode::Block, "plain", Block),
+        // A disabled plugin never runs, whatever the stage.
+        ("allow", "dummy_post_allow", Mode::Disable, "plain", Allow),
+        ("allow", "dummy_pre_eicar", Mode::Disable, "EICAR", Allow),
+    ];
+
+    for (rule_action, plugin_id, mode, content, expected) in matrix {
+        let actual = boundary_enforcement_for(rule_action, plugin_id, mode, content);
+        assert_eq!(
+            actual,
+            expected,
+            "rule '{rule_action}' with plugin '{plugin_id}' in '{}' mode over {content:?} \
+             must enforce {expected:?}, got {actual:?}",
+            mode.as_str()
+        );
+    }
+}
+
+#[test]
+fn postprocess_plugin_ask_is_recorded_on_the_event_and_the_decision() {
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[default.file]
+name = "file"
+action = "allow"
+priority = "default"
+match = "has(file.export.path)"
+"#,
+    )
+    .expect("profile parses");
+    let rules = SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::BuiltinDefault)
+        .expect("rules compile");
+    let mut plugin_policy = BTreeMap::new();
+    plugin_policy.insert(
+        "dummy_post_allow".to_string(),
+        SecurityPluginConfig {
+            mode: SecurityPluginMode::Ask,
+            detection_level: crate::net::policy_config::DetectionLevel::High,
+        },
+    );
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::FileExport).with_file(FileSecurityEvent {
+            export_path: Some("/workspace/x.txt".to_string()),
+            ..Default::default()
+        });
+
+    let evaluation =
+        evaluate_security_boundary(&rules, plugin_policy, event).expect("boundary evaluates");
+
+    assert_eq!(
+        evaluation.enforcement.action,
+        SecurityEnforcementAction::Ask,
+        "enforcement must agree with the decision state the plugin produced"
+    );
+    assert_eq!(
+        evaluation.event.decision.effective,
+        SecurityDecisionKind::Ask
+    );
+    let detection = evaluation
+        .event
+        .detections
+        .iter()
+        .find(|detection| detection.plugin_id.as_deref() == Some("dummy_post_allow"))
+        .expect("the asking plugin records a detection");
+    assert_eq!(detection.plugin_mode, Some(SecurityPluginMode::Ask));
+    assert_eq!(detection.source, SecurityDetectionSource::Plugin);
+}

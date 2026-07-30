@@ -1349,6 +1349,27 @@ fn decision_transition_rules<'a>(
     }
 }
 
+/// Escalate an enforcement decision to match the event's merged decision state.
+///
+/// Plugins request decisions on the same rail as rules, so a plugin running in
+/// `ask` or `block` mode has to be able to raise an allowing rule verdict. The
+/// merge behind `decision.effective` is escalate-only, so this can only ever
+/// tighten the decision -- a plugin cannot talk a blocking rule down to allow.
+fn apply_event_decision_to_enforcement(
+    event: &SecurityEvent,
+    enforcement: &mut SecurityEnforcementDecision,
+) {
+    match event.decision.effective {
+        SecurityDecisionKind::Block => enforcement.action = SecurityEnforcementAction::Block,
+        SecurityDecisionKind::Ask => {
+            if matches!(enforcement.action, SecurityEnforcementAction::Allow) {
+                enforcement.action = SecurityEnforcementAction::Ask;
+            }
+        }
+        SecurityDecisionKind::Allow => {}
+    }
+}
+
 fn security_enforcement_decision(
     rule: Option<&CompiledSecurityRule>,
 ) -> SecurityEnforcementDecision {
@@ -1391,18 +1412,10 @@ pub fn evaluate_security_boundary(
         event.request_decision(requested_decision_for_rule(rule.action));
     }
     let mut enforcement = security_enforcement_decision(selected_rule);
-    if matches!(event.decision.effective, SecurityDecisionKind::Block) {
-        enforcement.action = SecurityEnforcementAction::Block;
-    } else if matches!(event.decision.effective, SecurityDecisionKind::Ask)
-        && matches!(enforcement.action, SecurityEnforcementAction::Allow)
-    {
-        enforcement.action = SecurityEnforcementAction::Ask;
-    }
+    apply_event_decision_to_enforcement(&event, &mut enforcement);
 
     event = action_registry.apply_security_plugins(SecurityPluginStage::Postprocess, event)?;
-    if matches!(event.decision.effective, SecurityDecisionKind::Block) {
-        enforcement.action = SecurityEnforcementAction::Block;
-    }
+    apply_event_decision_to_enforcement(&event, &mut enforcement);
 
     Ok(SecurityBoundaryEvaluation {
         event,
