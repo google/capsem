@@ -53,12 +53,17 @@ def test_projection_accepts_the_profileless_source_a_bootstrap_emits() -> None:
         bootstrap=True,
     )
 
-    assert before == source
-    assert before["packages"] == source["packages"]
-    assert before["packages"] is not source["packages"]
+    assert before == {**source, "packages": []}
 
 
-def test_projection_removes_only_profiles_from_the_serialized_candidate() -> None:
+def test_projection_empties_both_families_because_the_channel_did_not_exist() -> None:
+    """An absent channel has no before-state at all -- no profiles, no packages.
+
+    The packages are inherited from the donor channel and validated for shape,
+    never for existence. Once a donor is retired its URLs are dead, and a
+    before-state claiming packages nobody can fetch sends the pairing gate to a
+    404. The binary release that follows publishes this channel's own packages.
+    """
     source = _source()
 
     before = PROJECTOR.project_first_channel_before(
@@ -67,10 +72,9 @@ def test_projection_removes_only_profiles_from_the_serialized_candidate() -> Non
         bootstrap=True,
     )
 
-    assert before == {**source, "profiles": {}}
-    assert source["profiles"]
-    assert before["packages"] == source["packages"]
-    assert before["packages"] is not source["packages"]
+    assert before == {**source, "profiles": {}, "packages": []}
+    assert source["profiles"], "the caller's manifest must not be mutated"
+    assert source["packages"], "the caller's manifest must not be mutated"
 
 
 @pytest.mark.parametrize(

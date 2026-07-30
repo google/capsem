@@ -1514,3 +1514,67 @@ def test_staging_refuses_a_profile_without_the_host_architecture(
 
     with pytest.raises(ValueError, match="declares no riscv64 assets"):
         STAGE._scope_profile_to_arch(profile, "riscv64", "co-work")
+
+
+def test_empty_package_cohort_is_permitted_only_when_stated(tmp_path: Path) -> None:
+    """A cold-started channel has no package cohort, and says so explicitly.
+
+    The before-state of an absent channel is empty of both families. Silence is
+    still an error: a live channel whose packages stopped resolving is exactly
+    the breakage users would hit, so it must never be mistaken for a channel
+    that has not shipped yet.
+    """
+    manifest = tmp_path / "nightly.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": "1.0.143",
+                "channel": "nightly",
+                "status": "current",
+                "packages": [],
+                "profiles": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    url = manifest.as_uri()
+
+    with pytest.raises(ValueError, match="contains no packages"):
+        FETCH.fetch_release_inputs(url, "packages", tmp_path / "strict")
+
+    report = FETCH.fetch_release_inputs(
+        url,
+        "packages",
+        tmp_path / "cold",
+        allow_empty_packages=True,
+    )
+
+    assert report["artifacts"] == []
+    assert report["allow_empty_packages"] is True
+    assert VERIFY.verify_release_inputs(tmp_path / "cold")["verified"] == []
+
+
+def test_empty_package_tolerance_is_rejected_for_the_profile_family(
+    tmp_path: Path,
+) -> None:
+    manifest = tmp_path / "nightly.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": "1.0.143",
+                "channel": "nightly",
+                "status": "current",
+                "packages": [],
+                "profiles": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="package-only|only for packages"):
+        FETCH.fetch_release_inputs(
+            manifest.as_uri(),
+            "profiles",
+            tmp_path / "profiles",
+            allow_empty_packages=True,
+        )

@@ -23,6 +23,10 @@ inputs:
     description: Permit an explicitly empty bootstrap profile set.
     required: false
     default: "false"
+  allow-empty-packages:
+    description: Permit an explicitly empty bootstrap package cohort.
+    required: false
+    default: "false"
   local-publication-base:
     description: Optional immutable publication URL prefix staged by the current workflow.
     required: false
@@ -62,6 +66,9 @@ runs:
         fi
         if [[ "${{ inputs.allow-empty-profiles }}" == "true" ]]; then
           args+=(--allow-empty-profiles)
+        fi
+        if [[ "${{ inputs.allow-empty-packages }}" == "true" ]]; then
+          args+=(--allow-empty-packages)
         fi
         if [[ -n "${{ inputs.local-publication-base }}" || -n "${{ inputs.local-publication-dir }}" ]]; then
           test -n "${{ inputs.local-publication-base }}"

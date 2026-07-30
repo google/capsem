@@ -170,6 +170,7 @@ def fetch_release_inputs(
     local_publication_base: str | None = None,
     local_publication_dir: Path | None = None,
     allow_empty_profiles: bool = False,
+    allow_empty_packages: bool = False,
     bootstrap_manifest_url: str | None = None,
     architecture: str | None = None,
     cache_dir: Path | None = None,
@@ -218,6 +219,7 @@ def fetch_release_inputs(
         manifest_url,
         kind,
         allow_empty_profiles=allow_empty_profiles,
+        allow_empty_packages=allow_empty_packages,
         architecture=architecture,
     )
     local_paths: set[Path] = set()
@@ -261,6 +263,7 @@ def fetch_release_inputs(
             manifest_url,
             kind,
             allow_empty_profiles=allow_empty_profiles,
+            allow_empty_packages=allow_empty_packages,
         )
         publication_paths = {
             path
@@ -294,6 +297,8 @@ def fetch_release_inputs(
     }
     if allow_empty_profiles:
         report["allow_empty_profiles"] = True
+    if allow_empty_packages:
+        report["allow_empty_packages"] = True
     if architecture is not None:
         report["architecture"] = architecture
     if cache_dir is not None:
@@ -315,6 +320,7 @@ def main() -> int:
     parser.add_argument("--local-publication-base")
     parser.add_argument("--local-publication-dir", type=Path)
     parser.add_argument("--allow-empty-profiles", action="store_true")
+    parser.add_argument("--allow-empty-packages", action="store_true")
     parser.add_argument("--bootstrap-manifest-url")
     parser.add_argument("--architecture", choices=("arm64", "x86_64"))
     parser.add_argument("--cache-dir", type=Path)
@@ -328,6 +334,7 @@ def main() -> int:
             local_publication_base=args.local_publication_base,
             local_publication_dir=args.local_publication_dir,
             allow_empty_profiles=args.allow_empty_profiles,
+            allow_empty_packages=args.allow_empty_packages,
             bootstrap_manifest_url=args.bootstrap_manifest_url,
             architecture=args.architecture,
             cache_dir=args.cache_dir,

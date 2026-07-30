@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   human-chosen version the cohort already agrees when the release runs, so a
   no-op stamp is the correct outcome; only the release notes must be written. A
   stale lockfile is still rejected, by its contents rather than its mtime.
+- A cold-started channel no longer pairs against a retired donor's artifacts.
+  Bootstrapping inherits the other channel's package cohort so a new channel's
+  first profile can be proved against shipped binaries, but those URLs are
+  validated for shape and never for existence. Once the donor was retired the
+  inherited cohort 404'd, and every release lane died fetching a package that no
+  longer exists. An absent channel's before-state is now empty of both families,
+  which is what it actually was; the first profile release stages deferred and
+  the binary release that follows publishes that channel's own packages and
+  activates it. An empty cohort must still be stated explicitly -- a live
+  channel whose packages stop resolving stays a hard failure, because that is
+  precisely the breakage users would hit.
 - Cold-starting a first-party channel is reachable again. The first-channel
   projection required the serialized source to carry non-empty profiles, but
   the only manifest it can ever be handed is the bootstrapped source for an

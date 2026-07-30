@@ -110,6 +110,7 @@ jobs:
         uses: ./.github/actions/fetch-release-inputs
         with:
           manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}
+          allow-empty-packages: ${{ steps.public-before.outputs.bootstrap }}
           kind: packages
           output: target/profile-public-before/packages
 

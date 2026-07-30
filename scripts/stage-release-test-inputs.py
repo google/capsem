@@ -371,6 +371,17 @@ def select_host_package_path(input_dir: Path) -> Path:
 
 def functional_binary_cohort_readiness(input_dir: Path) -> dict[str, Any]:
     """Report whether the pulled package can run the complete release modules."""
+    report, _ = _load(input_dir)
+    if report.get("allow_empty_packages") and not report.get("artifacts"):
+        # A channel being cold-started has no published package to pair with,
+        # so there is nothing to run the functional modules against. That is an
+        # answer, not an error: the profile stages deferred and the binary
+        # release that follows publishes this channel's packages and activates.
+        return {
+            "ready": False,
+            "missing": sorted(REQUIRED_LINUX_RELEASE_BINARIES),
+            "unexpected": [],
+        }
     package, _ = _select_host_package(input_dir)
     inventory = package.get("binaries")
     if not isinstance(inventory, list):

@@ -45,8 +45,15 @@ def project_first_channel_before(
     if not isinstance(profiles, dict):
         raise ValueError("serialized source profiles must be an object")
 
+    # The channel did not exist, so its before-state is empty of both families.
+    # The packages above are inherited from the donor and are validated for
+    # shape, not for existence -- once a donor is retired its URLs are dead, and
+    # carrying them here would make the pairing gate fetch artifacts that no
+    # longer resolve. The following binary release publishes this channel's own
+    # packages and activates it.
     projected = copy.deepcopy(source)
     projected["profiles"] = {}
+    projected["packages"] = []
     return projected
 
 

@@ -202,17 +202,28 @@ def resolved_artifact_rows(
     kind: str,
     *,
     allow_empty_profiles: bool = False,
+    allow_empty_packages: bool = False,
     architecture: str | None = None,
 ) -> list[dict[str, Any]]:
     if kind not in {"packages", "profiles"}:
         raise ValueError(f"invalid release input kind: {kind!r}")
     if allow_empty_profiles and kind != "profiles":
         raise ValueError("empty release inputs are permitted only for profiles")
+    if allow_empty_packages and kind != "packages":
+        raise ValueError("empty release inputs are permitted only for packages")
     if architecture is not None:
         architecture = safe_component(architecture, "release input architecture")
         if kind != "profiles":
             raise ValueError("architecture filtering is permitted only for profiles")
-    if allow_empty_profiles and manifest.get("profiles") == {}:
+    # An absent channel has no public before-state at all: no profiles, and no
+    # packages either. Bootstrapping inherits the donor channel's cohort so a
+    # new channel's first profile can be proved against shipped binaries, but
+    # when that donor has itself been retired the inherited URLs are dead, and
+    # a manifest claiming packages nobody can fetch is worse than one claiming
+    # none. Empty is only ever accepted when the caller states it explicitly.
+    if {"profiles": allow_empty_profiles, "packages": allow_empty_packages}[
+        kind
+    ] and manifest.get(kind) == {"profiles": {}, "packages": []}[kind]:
         return []
     source = (
         _package_rows(manifest, manifest_url)
@@ -280,6 +291,9 @@ def load_verified_release_inputs(
     allow_empty_profiles = report.get("allow_empty_profiles", False)
     if not isinstance(allow_empty_profiles, bool):
         raise ValueError("release input report has an invalid empty-profile policy")
+    allow_empty_packages = report.get("allow_empty_packages", False)
+    if not isinstance(allow_empty_packages, bool):
+        raise ValueError("release input report has an invalid empty-package policy")
     architecture = report.get("architecture")
     if architecture is not None:
         architecture = safe_component(architecture, "release input report architecture")
@@ -290,6 +304,7 @@ def load_verified_release_inputs(
         manifest_url,
         kind,
         allow_empty_profiles=allow_empty_profiles,
+        allow_empty_packages=allow_empty_packages,
         architecture=architecture,
     )
     expected = report_artifacts(expected_rows)
