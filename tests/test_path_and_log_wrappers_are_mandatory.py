@@ -38,6 +38,18 @@ RAW_SET = re.compile(
 ENV_OWNER = "paths.rs"
 LOG_OWNER = "telemetry.rs"
 
+# Streams whose writer rotates, so the bare name holds only the newest slice.
+# Derived from the writers, not from what the readers happen to do: the daemon
+# streams go through `tracing-appender`'s daily rotation, and `serial.log` goes
+# through `telemetry::CappedLogWriter` in both hypervisor backends.
+#
+# `pty.log` and `process.log` are deliberately absent. `pty.log` is a binary
+# transcript read as bytes and base64-encoded -- routing it through a `String`
+# reader would corrupt it -- and `process.log` is a plain appended file. Listing
+# a stream here is a claim about its writer; adding one to silence a reader
+# would invert the rule.
+ROTATING_STREAMS = ("service", "gateway", "mcp", "tray", "serial")
+
 # Reads a file's whole contents directly.
 DIRECT_READ = re.compile(r"(File::open|fs::read\b|fs::read_to_string|read_to_string\()")
 # Every log path, not just today's rotated daemon streams. A per-session
@@ -86,10 +98,17 @@ def test_log_streams_are_read_through_the_stream_reader() -> None:
     sources = _rust_sources()
     assert len(sources) > 50, "scanned too few Rust files to trust this guard"
 
-    # `let <name> = ... .join("<something>.log")`
+    # `let <name> = ... .join("<something>.log")`, or a path handed back by a
+    # helper whose entire purpose is to name a host log stream. `handle_host_logs`
+    # took its path from `triage::host_log_path` and opened it by hand, which the
+    # literal `.join` shape could not see.
+    streams = "|".join(ROTATING_STREAMS)
     binding = re.compile(
-        r"""let\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*[^;]*?\.join\(\s*"""
-        r"""(?:&?format!\()?["'][a-z_]+\.log["'][^;]*;""",
+        r"let\s+(?:mut\s+)?(\w+)\s*(?::[^=]+)?=\s*[^;]*?(?:"
+        rf"""\.join\(\s*(?:&?format!\()?["'](?:{streams})\.log["']"""
+        r"|host_log_path\("
+        r"|latest_app_log\("
+        r")[^;]*;",
         re.S,
     )
 
@@ -98,11 +117,14 @@ def test_log_streams_are_read_through_the_stream_reader() -> None:
         if path.name == LOG_OWNER:
             continue
         text = path.read_text(encoding="utf-8", errors="ignore")
-        if "read_log_tail" in text or "log_stream_files" in text:
-            continue
-        # Per function body: a binding named `path` in one function says
-        # nothing about a parameter named `path` in another.
+        # Per function body, for both the exemption and the binding. A file-level
+        # exemption is why this guard stayed quiet while `/host-logs/{name}`
+        # returned an empty log for a service that was writing normally:
+        # `main.rs` reads one stream through the reader and read another by
+        # hand, and one correct call bought silence for the whole file.
         for body in re.split(r"\n(?=\s*(?:pub\s+)?(?:async\s+)?fn\s)", text):
+            if "read_log_tail" in body or "log_stream_files" in body:
+                continue
             for match in binding.finditer(body):
                 name = match.group(1)
                 raw_read = re.search(

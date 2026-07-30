@@ -42,6 +42,11 @@ use tracing::{error, info, warn, Instrument};
 
 mod startup;
 
+/// Ceiling on a session log tail returned over the API. `serial.log` is guest
+/// console output written through `CappedLogWriter`, so its size is the guest's
+/// choice, not ours; every reader takes a bounded tail.
+const SESSION_LOG_TAIL_MAX_BYTES: usize = 5 * 1024 * 1024;
+
 const RESUME_CHECKPOINT_NAME: &str = "checkpoint.vzsave";
 const SUSPEND_CONFIRM_TIMEOUT_SECS: u64 = 45;
 const UPDATE_CACHE_TTL_SECS: u64 = 24 * 3600;
@@ -2754,20 +2759,31 @@ fn is_boot_fatal_log_tail(tail: &str) -> bool {
         || tail.contains("Kernel panic")
 }
 
-fn read_log_tail(session_dir: &std::path::Path, file_name: &str, n: usize) -> Option<String> {
-    let content = std::fs::read_to_string(session_dir.join(file_name)).ok()?;
+/// Last `n` lines of a session log stream.
+///
+/// Named for what it does rather than shadowing `telemetry::read_log_tail`,
+/// which it now delegates to. The old local copy read the bare file name and
+/// carried the same name as the shared reader, so it both lost rotated content
+/// and made the crate look like it already used the shared one. `serial.log`
+/// is written through `CappedLogWriter` and rotates, so the bare name holds
+/// only the newest slice.
+fn read_session_log_lines(
+    session_dir: &std::path::Path,
+    file_name: &str,
+    n: usize,
+) -> Option<String> {
+    let content = capsem_core::telemetry::read_log_tail(
+        &session_dir.join(file_name),
+        SESSION_LOG_TAIL_MAX_BYTES,
+    )?;
     let lines: Vec<&str> = content.lines().collect();
-    let tail = if lines.len() > n {
-        &lines[lines.len() - n..]
-    } else {
-        &lines[..]
-    };
-    Some(tail.join("\n"))
+    let start = lines.len().saturating_sub(n);
+    Some(lines[start..].join("\n"))
 }
 
 fn read_boot_failure_tail(session_dir: &std::path::Path) -> Option<String> {
     for file_name in ["serial.log", "process.log"] {
-        let Some(tail) = read_log_tail(session_dir, file_name, 80) else {
+        let Some(tail) = read_session_log_lines(session_dir, file_name, 80) else {
             continue;
         };
         if is_boot_fatal_log_tail(&tail) {
@@ -4294,9 +4310,19 @@ async fn handle_logs(
     let serial_log_path = session_dir.join("serial.log");
     let process_log_path = session_dir.join("process.log");
 
+    // Bounded and rotation-aware. `serial.log` is guest-controlled console
+    // output written through `CappedLogWriter`, so it both rotates and can be
+    // arbitrarily large -- reading the whole bare file lost the rotated slice
+    // and let the guest choose the allocation.
     let (serial_logs, process_logs) = tokio::task::spawn_blocking(move || {
-        let serial = std::fs::read_to_string(&serial_log_path).ok();
-        let process = std::fs::read_to_string(&process_log_path).ok();
+        let serial = capsem_core::telemetry::read_log_tail(
+            &serial_log_path,
+            SESSION_LOG_TAIL_MAX_BYTES,
+        );
+        let process = capsem_core::telemetry::read_log_tail(
+            &process_log_path,
+            SESSION_LOG_TAIL_MAX_BYTES,
+        );
         (serial, process)
     })
     .await
@@ -4602,22 +4628,13 @@ async fn handle_host_logs(
             .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, format!("unknown log name: {name}")))?
     };
     let max_bytes = params.max_bytes.unwrap_or(100 * 1024).min(5 * 1024 * 1024);
-    let text = tokio::task::spawn_blocking(move || -> Result<String, String> {
-        use std::io::{Read, Seek, SeekFrom};
-        let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-        let len = file.metadata().map_err(|e| e.to_string())?.len();
-        if len > max_bytes {
-            file.seek(SeekFrom::End(-(max_bytes as i64)))
-                .map_err(|e| e.to_string())?;
-        }
-        let mut buf = String::new();
-        file.read_to_string(&mut buf).map_err(|e| e.to_string())?;
-        if len > max_bytes {
-            if let Some(pos) = buf.find('\n') {
-                buf = buf[pos + 1..].to_string();
-            }
-        }
-        Ok(buf)
+    // `service.log` names a daily-rotated stream, so opening that exact name
+    // returns nothing the moment it has rotated -- this endpoint reported an
+    // empty log for a service that was writing normally. Reading through the
+    // stream reader also removes the fourth hand-rolled copy of seek-from-end
+    // and trim-the-partial-line in this crate.
+    let text = tokio::task::spawn_blocking(move || {
+        capsem_core::telemetry::read_log_tail(&path, max_bytes as usize).unwrap_or_default()
     })
     .await
     .map_err(|e| {
@@ -4625,8 +4642,7 @@ async fn handle_host_logs(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("log read failed: {e}"),
         )
-    })?
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    })?;
 
     // Apply grep + tail post-filters here so the wire surface to the
     // capsem_host_logs MCP tool can avoid two round-trips.

@@ -22,6 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   human-chosen version the cohort already agrees when the release runs, so a
   no-op stamp is the correct outcome; only the release notes must be written. A
   stale lockfile is still rejected, by its contents rather than its mtime.
+- `GET /host-logs/{name}` returned an empty log for a service that was writing
+  normally, so the `capsem_host_logs` MCP tool and `capsem` support bundles
+  reported nothing. It opened the rotated stream by its bare name with its own
+  hand-rolled seek-from-end, a fourth copy of the rule `telemetry::read_log_tail`
+  already owns. Same defect as the earlier `/service-logs` regression, in the
+  endpoint next door.
+- Session log readers follow the rotation this release introduced. `serial.log`
+  is written through `CappedLogWriter` in both hypervisor backends, so it
+  rotates -- but boot-failure diagnostics and `GET` of a session's logs still
+  read the bare name and lost the rotated slice. Those reads were also
+  unbounded, letting guest-controlled console output choose the allocation;
+  they now take a bounded tail. A local `read_log_tail` in `capsem-service`
+  shadowed the shared one with different behaviour and is gone.
+- The wrapper guard stopped exempting a whole file because one function in it
+  used the stream reader. That file-level pass is why `/host-logs` stayed
+  invisible: `main.rs` reads one stream correctly and read another by hand, and
+  the correct call bought silence for the rest. The exemption is now per
+  function, and the guard follows a path handed back by a helper rather than
+  only a literal `.join("x.log")`. It is scoped to streams whose writer
+  actually rotates, so `pty.log` -- binary, read as bytes -- stays out.
 - The gateway test helper read `gateway.log` by name and returned `""` when it
   was absent, so an ironbank black-box test asserted `"gateway.proxy.ok" in ""`
   against a gateway that had logged normally into `gateway.<date>.log`. The
