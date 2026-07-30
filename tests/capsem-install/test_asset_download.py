@@ -123,7 +123,7 @@ def _make_release_channel_manifest(
 ) -> dict:
     """Build the split-lane release graph shape published at /assets/<channel>/manifest.json."""
     return {
-        "version": "1.5.2030010102",
+        "version": "1.5.1",
         "status": "current",
         "packages": [],
         "profiles": {
@@ -686,7 +686,7 @@ def test_package_preactivation_manifest_preserves_its_declared_public_channel(
             "channel": "nightly",
             "channel_kind": "public",
             "channel_locked": False,
-            "package_version": "1.6.1785192352",
+            "package_version": "1.6.1",
         },
     )
 
@@ -706,7 +706,7 @@ def test_package_preactivation_manifest_preserves_its_declared_public_channel(
     assert metadata["channel"] == "nightly"
     assert metadata["channel_kind"] == "public"
     assert metadata["channel_locked"] is False
-    assert metadata["package_version"] == "1.6.1785192352"
+    assert metadata["package_version"] == "1.6.1"
     assert "/candidate/manifest.json" in requested_paths
     assert {
         f"/candidate/blobs/{NEW_ASSET_VERSION}/{arch}-{name}" for name in new_files

@@ -21,7 +21,7 @@ def _write_asset_set(base: Path, arch: str | None = None, marker: bytes = b"") -
     (output / "rootfs.erofs").write_bytes(b"rootfs" + marker)
 
 
-def _run_admin_manifest_generate(path: Path, version: str = "1.0.1000000000") -> subprocess.CompletedProcess[str]:
+def _run_admin_manifest_generate(path: Path, version: str = "1.0.1") -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [
             "cargo",
@@ -73,8 +73,8 @@ class TestGenManifestV2:
 
         # Binaries section
         assert "binaries" in manifest
-        assert manifest["binaries"]["current"] == "1.0.1000000000"
-        bin_rel = manifest["binaries"]["releases"]["1.0.1000000000"]
+        assert manifest["binaries"]["current"] == "1.0.1"
+        bin_rel = manifest["binaries"]["releases"]["1.0.1"]
         assert bin_rel["min_assets"] == asset_ver
 
         # Metadata

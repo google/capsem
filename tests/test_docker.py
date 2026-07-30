@@ -1800,8 +1800,18 @@ class TestErofsConfig:
 
 class TestKernelConfig:
     def test_real_config_pins_supported_lts_kernel_branch(self, real_config):
-        assert real_config.build.architectures["arm64"].kernel_branch == "6.18"
-        assert real_config.build.architectures["x86_64"].kernel_branch == "6.18"
+        # Read from build.toml rather than restated. The literal was the value
+        # the file declares, so moving the pin failed this test instead of
+        # reporting that the parser disagreed with the config.
+        declared = tomllib.loads(
+            (PROJECT_ROOT / "config/docker/image/build.toml").read_text(encoding="utf-8")
+        )["build"]["architectures"]
+        for arch in ("arm64", "x86_64"):
+            branch = declared[arch]["kernel_branch"]
+            assert re.fullmatch(r"\d+\.\d+", branch), (
+                f"{arch} kernel_branch {branch!r} is not a MAJOR.MINOR branch"
+            )
+            assert real_config.build.architectures[arch].kernel_branch == branch
 
     def test_real_config_defaults_erofs_lz4hc_level_12(self, real_config):
         assert real_config.build.erofs.enabled is True

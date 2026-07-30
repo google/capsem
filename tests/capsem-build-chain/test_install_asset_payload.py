@@ -1494,7 +1494,7 @@ def test_local_release_glowup_clones_graph_with_only_channel_identity_changed(
         "profiles": {
             "code": {
                 "status": "current",
-                "revision": "2026.06.08.7",
+                "revision": "1.0.0",
                 "architectures": [{"architecture": "x86_64"}],
             }
         },

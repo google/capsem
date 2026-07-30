@@ -108,7 +108,7 @@ def _write_minimal_deb(path: Path, executable_name: str = "capsem-app") -> bytes
     executable = b"#!/bin/sh\nexit 0\n"
     control = (
         b"Package: capsem\n"
-        b"Version: 1.4.2234567890\n"
+        b"Version: 1.4.2\n"
         b"Architecture: arm64\n"
         b"Maintainer: Capsem <release@capsem.org>\n"
         b"Description: Capsem contract-test package\n"
@@ -156,7 +156,7 @@ def _write_minimal_pkg(path: Path) -> bytes:
                 "--identifier",
                 "org.capsem.test.fixture",
                 "--version",
-                "1.4.2234567890",
+                "1.4.2",
                 str(path),
             ],
             check=True,
@@ -190,7 +190,7 @@ def _write_release_manifest(
     root: Path,
     *,
     asset_version: str = "2030.0101.1",
-    binary_version: str = "1.4.1234567890",
+    binary_version: str = "1.4.1",
     date: str = "2030-01-01",
     include_binary_files: bool = True,
     include_x86_64: bool = False,
@@ -352,7 +352,9 @@ def _hydrate_asset_sha256_in_manifest(manifest_path: Path) -> None:
 # collapsed `profiles-<hash>` identifier here, which names a *set* of
 # profiles at differing versions -- not a version any single profile can
 # hold. capsem-admin rejects it now, correctly.
-PROFILE_REVISION = "0.6.0"
+# Deliberately not the workspace version: a fixture equal to the real one
+# hides whether the code under test depends on it.
+PROFILE_REVISION = "1.4.0"
 
 
 def _write_profile_catalog(root: Path, revision: str = PROFILE_REVISION) -> Path:
@@ -519,7 +521,7 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert 'href="/assets/stable/manifest.json"' in channel_html
     assert "/assets/stable/manifest.json" in channel_html
     assert f"/profiles/releases/{PROFILE_REVISION}/catalog.json" not in channel_html
-    assert "Capsem-1.4.1234567890.pkg" in channel_html
+    assert "Capsem-1.4.1.pkg" in channel_html
     assert "capsem-1-4-1234567890-pkg-sbom.spdx.json" in channel_html
     assert "The fastest way to ship with AI securely." not in index_html
     profile_html = (
@@ -564,10 +566,10 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert health["urls"]["manifest"] == "/assets/stable/manifest.json"
     assert health["urls"]["asset_base"] == "/assets/releases"
     assert health["current"] == {
-        "binary": "1.4.1234567890",
+        "binary": "1.4.1",
         "assets": "2030.0101.1",
     }
-    assert health["updates"]["binary"]["latest"] == "1.4.1234567890"
+    assert health["updates"]["binary"]["latest"] == "1.4.1"
     assert health["updates"]["assets"]["manifest"] == "/assets/stable/manifest.json"
     assert health["profiles"]["revision"] == PROFILE_REVISION
     assert health["profiles"]["source"] == "manifest.profiles"
@@ -637,7 +639,7 @@ def test_release_index_bootstraps_before_binary_evidence_exists(tmp_path: Path) 
 
     health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
     assert health["current"] == {
-        "binary": "1.4.1234567890",
+        "binary": "1.4.1",
         "assets": "2030.0101.1",
     }
     assert health["evidence"]["host_binary_files"] == []
@@ -661,7 +663,7 @@ def test_asset_release_updates_release_index_without_moving_binary_pointer(
     manifest_path = _write_release_manifest(
         tmp_path,
         asset_version="2030.0102.1",
-        binary_version="1.4.1234567890",
+        binary_version="1.4.1",
         date="2030-01-02",
     )
     profiles_dir = _write_profile_catalog(tmp_path)
@@ -688,11 +690,11 @@ def test_asset_release_updates_release_index_without_moving_binary_pointer(
     health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
     assert health["generated_at"] == "2030-01-02T00:00:00Z"
     assert health["current"] == {
-        "binary": "1.4.1234567890",
+        "binary": "1.4.1",
         "assets": "2030.0102.1",
     }
-    assert health["updates"]["binary"]["latest"] == "1.4.1234567890"
-    assert health["updates"]["binary"]["current"] == "1.4.1234567890"
+    assert health["updates"]["binary"]["latest"] == "1.4.1"
+    assert health["updates"]["binary"]["current"] == "1.4.1"
     assert health["updates"]["assets"]["latest"] == "2030.0102.1"
     assert health["updates"]["assets"]["current"] == "2030.0102.1"
     assert health["updates"]["assets"]["manifest"] == "/assets/stable/manifest.json"
@@ -714,7 +716,7 @@ def test_asset_channel_deprecate_release_reports_history_without_moving_current(
     manifest_path = _write_release_manifest(
         tmp_path,
         asset_version="2030.0102.1",
-        binary_version="1.4.1234567890",
+        binary_version="1.4.1",
         date="2030-01-02",
     )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -748,7 +750,7 @@ def test_asset_channel_deprecate_release_reports_history_without_moving_current(
 
     health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
     assert health["current"] == {
-        "binary": "1.4.1234567890",
+        "binary": "1.4.1",
         "assets": "2030.0102.1",
     }
     releases = {release["version"]: release for release in health["asset_releases"]}
@@ -1456,8 +1458,8 @@ def test_binary_release_index_records_host_artifacts_without_changing_assets(
     before = json.loads(manifest_path.read_text(encoding="utf-8"))
     artifacts = tmp_path / "release-artifacts"
     artifacts.mkdir()
-    pkg = artifacts / "Capsem-1.4.2234567890.pkg"
-    deb = artifacts / "Capsem_1.4.2234567890_arm64.deb"
+    pkg = artifacts / "Capsem-1.4.2.pkg"
+    deb = artifacts / "Capsem_1.4.2_arm64.deb"
     sbom = artifacts / "capsem-sbom.spdx.json"
     pkg_bytes = _write_minimal_pkg(pkg)
     deb_bytes = _write_minimal_deb(deb)
@@ -1470,7 +1472,7 @@ def test_binary_release_index_records_host_artifacts_without_changing_assets(
         "--manifest-path",
         str(manifest_path),
         "--version",
-        "1.4.2234567890",
+        "1.4.2",
         "--date",
         "2030-02-03",
         "--artifact",
@@ -1485,13 +1487,13 @@ def test_binary_release_index_records_host_artifacts_without_changing_assets(
     report = json.loads(result.stdout)
     after = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert report["schema"] == "capsem.admin.assets_channel_record_binary.v1"
-    assert report["version"] == "1.4.2234567890"
+    assert report["version"] == "1.4.2"
     assert report["min_assets"] == before["assets"]["current"]
     assert after["assets"] == before["assets"]
-    assert after["binaries"]["current"] == "1.4.2234567890"
-    release = after["binaries"]["releases"]["1.4.2234567890"]
+    assert after["binaries"]["current"] == "1.4.2"
+    release = after["binaries"]["releases"]["1.4.2"]
     assert release["min_assets"] == "2030.0101.1"
-    assert release["version"] == "1.4.2234567890"
+    assert release["version"] == "1.4.2"
     assert release["date"] == "2030-02-03"
     files = {entry["name"]: entry for entry in release["files"]}
     assert files[pkg.name]["sha256"] == hashlib.sha256(pkg_bytes).hexdigest()
@@ -1504,7 +1506,7 @@ def test_binary_release_index_rejects_bad_spdx_sbom(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     artifacts = tmp_path / "release-artifacts"
     artifacts.mkdir()
-    pkg = artifacts / "Capsem-1.4.2234567890.pkg"
+    pkg = artifacts / "Capsem-1.4.2.pkg"
     sbom = artifacts / "capsem-sbom.spdx.json"
     _write_minimal_pkg(pkg)
     sbom.write_bytes(b'{"spdxVersion":"SPDX-2.2","name":"capsem"}')
@@ -1516,7 +1518,7 @@ def test_binary_release_index_rejects_bad_spdx_sbom(tmp_path: Path) -> None:
         "--manifest-path",
         str(manifest_path),
         "--version",
-        "1.4.2234567890",
+        "1.4.2",
         "--date",
         "2030-02-03",
         "--artifact",
@@ -1545,7 +1547,7 @@ def test_binary_release_index_rejects_sbom_without_host_package(tmp_path: Path) 
         "--manifest-path",
         str(manifest_path),
         "--version",
-        "1.4.2234567890",
+        "1.4.2",
         "--date",
         "2030-02-03",
         "--artifact",
@@ -1574,7 +1576,7 @@ def test_binary_release_index_rejects_non_package_host_artifact(tmp_path: Path) 
         "--manifest-path",
         str(manifest_path),
         "--version",
-        "1.4.2234567890",
+        "1.4.2",
         "--date",
         "2030-02-03",
         "--artifact",
@@ -1593,7 +1595,7 @@ def test_binary_release_index_rejects_empty_artifact(tmp_path: Path) -> None:
     manifest_path = _write_release_manifest(tmp_path)
     artifacts = tmp_path / "release-artifacts"
     artifacts.mkdir()
-    pkg = artifacts / "Capsem-1.4.2234567890.pkg"
+    pkg = artifacts / "Capsem-1.4.2.pkg"
     sbom = artifacts / "capsem-sbom.spdx.json"
     pkg.write_bytes(b"")
     sbom.write_bytes(b'{"spdxVersion":"SPDX-2.3","name":"capsem"}')
@@ -1605,7 +1607,7 @@ def test_binary_release_index_rejects_empty_artifact(tmp_path: Path) -> None:
         "--manifest-path",
         str(manifest_path),
         "--version",
-        "1.4.2234567890",
+        "1.4.2",
         "--date",
         "2030-02-03",
         "--artifact",
@@ -1636,7 +1638,7 @@ def test_binary_release_index_rejects_package_version_mismatch(tmp_path: Path) -
         "--manifest-path",
         str(manifest_path),
         "--version",
-        "1.4.2234567890",
+        "1.4.2",
         "--date",
         "2030-02-03",
         "--artifact",
@@ -1655,7 +1657,7 @@ def test_binary_release_index_rejects_noncanonical_sbom_artifact(tmp_path: Path)
     manifest_path = _write_release_manifest(tmp_path)
     artifacts = tmp_path / "release-artifacts"
     artifacts.mkdir()
-    pkg = artifacts / "Capsem-1.4.2234567890.pkg"
+    pkg = artifacts / "Capsem-1.4.2.pkg"
     sbom = artifacts / "host-sbom.spdx.json"
     _write_minimal_pkg(pkg)
     sbom.write_bytes(b'{"spdxVersion":"SPDX-2.3","name":"capsem"}')
@@ -1667,7 +1669,7 @@ def test_binary_release_index_rejects_noncanonical_sbom_artifact(tmp_path: Path)
         "--manifest-path",
         str(manifest_path),
         "--version",
-        "1.4.2234567890",
+        "1.4.2",
         "--date",
         "2030-02-03",
         "--artifact",
@@ -1715,7 +1717,7 @@ def test_binary_release_profile_catalog_index_builds_release_site_without_rebuil
 
     health = json.loads((dist / "health.json").read_text(encoding="utf-8"))
     assert health["current"] == {
-        "binary": "1.4.1234567890",
+        "binary": "1.4.1",
         "assets": "2030.0101.1",
     }
     assert health["urls"]["asset_base"] == asset_base

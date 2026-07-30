@@ -176,7 +176,7 @@ def _manifest(channel: str, version: str) -> dict:
         "profiles": {
             "co-work": {
                 "id": "co-work",
-                "revision": f"2026.07.02.1-{channel}",
+                "revision": f"1.1.0-{channel}",
                 "images": [
                     {
                         "architecture": "arm64",

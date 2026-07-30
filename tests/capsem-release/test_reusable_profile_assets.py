@@ -22,7 +22,7 @@ def _selection(
     *,
     channel: str = "nightly",
     profile: str = "code",
-    revision: str = "2026.06.08.7",
+    revision: str = "1.0.0",
 ) -> dict[str, object]:
     return {
         "schema": "capsem.admin.release_validate.v1",
@@ -171,7 +171,7 @@ def test_source_commit_rejects_noncanonical_git_sha(source_commit: str) -> None:
         {"channel": "../nightly"},
         {"profile": ""},
         {"profile_revision": ""},
-        {"publication_identity": "profile-stable-code-2026.06.08.7"},
+        {"publication_identity": "profile-stable-code-1.0.0"},
     ],
 )
 def test_selection_identity_rejects_malformed_or_inconsistent_reports(

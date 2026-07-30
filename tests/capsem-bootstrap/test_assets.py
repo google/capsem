@@ -20,7 +20,7 @@ pytestmark = pytest.mark.bootstrap
 
 def test_manifest_schema_accepts_release_graph() -> None:
     manifest = {
-        "version": "1.6.1785192352",
+        "version": "1.6.1",
         "channel": "nightly",
         "status": "current",
         "packages": [{"status": "current"}],

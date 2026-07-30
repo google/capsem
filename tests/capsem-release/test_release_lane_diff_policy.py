@@ -63,9 +63,9 @@ def test_cross_channel_change_rejected_without_allowance(tmp_path: Path) -> None
     old = _graph()
     new = deepcopy(old)
     new["channels"]["stable"]["manifests"][0]["digest"]["sha256"] = "c" * 64
-    new["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]["revision"] = "2026.07.02.2"
+    new["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]["revision"] = "1.1.1"
     new["manifests"]["nightly"]["1.0.2"]["profiles"]["co-work"]["revision"] = (
-        "2026.07.02.2"
+        "1.1.1"
     )
 
     result = _run_policy(
@@ -89,7 +89,7 @@ def test_cross_channel_change_rejected_without_allowance(tmp_path: Path) -> None
 def test_binary_lane_rejects_profile_changes(tmp_path: Path) -> None:
     old = _graph()
     new = deepcopy(old)
-    new["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]["revision"] = "2026.07.02.2"
+    new["manifests"]["stable"]["1.0.2"]["profiles"]["co-work"]["revision"] = "1.1.1"
 
     result = _run_policy(tmp_path, old, new, "--lane", "binary", "--channel", "stable")
 
@@ -210,7 +210,7 @@ def _manifest(channel: str, version: str) -> dict:
 def _profile(channel: str) -> dict:
     return {
         "id": "co-work",
-        "revision": f"2026.07.02.1-{channel}",
+        "revision": f"1.1.0-{channel}",
         "min_capsem_version": "1.4.0",
         "architectures": [
             {

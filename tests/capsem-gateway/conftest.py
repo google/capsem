@@ -189,8 +189,8 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                     "validation_status": "valid",
                     "stale": False,
                     "binary": {
-                        "current": "1.3.1782582155",
-                        "latest": "1.3.1782600000",
+                        "current": "1.3.1",
+                        "latest": "1.3.2",
                         "update_available": True,
                         "state": "update_available",
                         "compatibility": "compatible",

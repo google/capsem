@@ -99,7 +99,7 @@ def test_co_work_nightly_update_does_not_touch_stable_or_binaries(tmp_path: Path
     profile = nightly["profiles"]["co-work"]
 
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "f" * 64
-    profile["revision"] = "2026.07.02.2-nightly"
+    profile["revision"] = "1.1.1-nightly"
     profile["architectures"][0]["config"][0]["digest"]["sha256"] = "f" * 64
     profile["architectures"][0]["images"][0]["digest"]["sha256"] = "e" * 64
     profile["architectures"][0]["evidence"][0]["digest"]["blake3"] = "d" * 64
@@ -157,7 +157,7 @@ def test_profile_lane_rejects_other_profile_change(tmp_path: Path) -> None:
     new = deepcopy(old)
     new["manifests"]["nightly"]["1.0.2"]["profiles"]["code"][
         "revision"
-    ] = "2026.07.02.2-nightly"
+    ] = "1.1.1-nightly"
 
     summary = tmp_path / "profile-lane-summary.json"
     result = _run_policy(

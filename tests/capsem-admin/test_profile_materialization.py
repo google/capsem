@@ -72,9 +72,9 @@ def _write_publishable_manifest(root: Path) -> Path:
             },
         },
         "binaries": {
-            "current": "1.4.1234567890",
+            "current": "1.4.1",
             "releases": {
-                "1.4.1234567890": {
+                "1.4.1": {
                     "date": "2030-01-01",
                     "deprecated": False,
                     "min_assets": "2030.0101.1",

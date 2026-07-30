@@ -154,8 +154,8 @@ def test_materializer_accepts_legacy_asset_manifest(tmp_path: Path) -> None:
         tmp_path,
         {
             "assets": {
-                "current": "2030.01.01.1",
-                "releases": {"2030.01.01.1": {"arches": {"arm64": {}}}},
+                "current": "2.0.0",
+                "releases": {"2.0.0": {"arches": {"arm64": {}}}},
             }
         },
     )

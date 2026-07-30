@@ -600,7 +600,7 @@ def minimal_release_graph(
                 "id": "co-work",
                 "name": "Co-work",
                 "description": "Collaborative agent profile.",
-                "revision": "2026.07.03.1",
+                "revision": "1.2.0",
                 "min_capsem_version": "1.4.0",
                 "architectures": [
                     {
