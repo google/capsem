@@ -4,10 +4,10 @@ version = 1
 # The existing 100 GiB Colima disk is a supported minimum. New runtimes get
 # 128 GiB for working headroom. Capacity guidance must be revised from the
 # byte-accounted release ledger, never from host target/ anecdotes.
-minimum_disk_gib = 96
-recommended_disk_gib = 128
-minimum_free_gib = 24
-buildkit_keep_gib = 24
+minimum_disk_gib = 160
+recommended_disk_gib = 200
+minimum_free_gib = 40
+buildkit_keep_gib = 80
 linked_keep_gib = 4
 container_max_age_hours = 24
 cache_max_age_hours = 72
@@ -19,28 +19,28 @@ owned_vm_prefix = "capsem-glowup-"
 report_path = "target/storage/tart-storage.jsonl"
 
 [rails.default]
-minimum_free_gib = 24
-buildkit_keep_gib = 24
+minimum_free_gib = 40
+buildkit_keep_gib = 80
 linked_keep_gib = 4
 
 [rails.assets]
-minimum_free_gib = 24
-buildkit_keep_gib = 24
+minimum_free_gib = 40
+buildkit_keep_gib = 80
 linked_keep_gib = 4
 
 [rails.package]
-minimum_free_gib = 24
-buildkit_keep_gib = 24
+minimum_free_gib = 40
+buildkit_keep_gib = 80
 linked_keep_gib = 4
 
 [rails.install-preflight]
-minimum_free_gib = 24
-buildkit_keep_gib = 24
+minimum_free_gib = 40
+buildkit_keep_gib = 80
 linked_keep_gib = 4
 
 [rails.install]
-minimum_free_gib = 24
-buildkit_keep_gib = 24
+minimum_free_gib = 40
+buildkit_keep_gib = 80
 linked_keep_gib = 4
 
 [resources.capsem-linux-rust-target]

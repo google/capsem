@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Raised the Docker storage budget so BuildKit stops discarding a hot cache.
+  `buildkit_keep_gib` was 24 while the cache ran at ~65 GB with ~35 GB hot, so
+  every pressure prune threw away layers that were about to be reused and the
+  host-builder image recompiled cold. The budget is now 80 GiB kept, a 40 GiB
+  free floor, and a 200 GiB recommended disk. `minimum_disk_gib` rose from 96
+  to 160 to keep the policy satisfiable: keep + free floor + fixed cache usage
+  must fit inside the minimum disk, or the floor can never be met by the one
+  action taken to meet it -- which is how a full daemon timed out the capacity
+  probe and failed a release gate.
+
 ### Added
 
 - Added `tests/test_rust_test_name_assertions.py`, which fails when a Python

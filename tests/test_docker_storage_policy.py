@@ -34,10 +34,10 @@ def test_policy_has_one_warm_cache_and_capacity_model() -> None:
     policy = load_policy()
 
     assert policy["version"] == 1
-    assert policy["docker"]["minimum_disk_gib"] == 96
-    assert policy["docker"]["recommended_disk_gib"] == 128
-    assert policy["docker"]["buildkit_keep_gib"] == 24
-    assert policy["docker"]["minimum_free_gib"] == 24
+    assert policy["docker"]["minimum_disk_gib"] == 160
+    assert policy["docker"]["recommended_disk_gib"] == 200
+    assert policy["docker"]["buildkit_keep_gib"] == 80
+    assert policy["docker"]["minimum_free_gib"] == 40
     assert set(policy["rails"]) == {
         "default",
         "assets",
@@ -46,8 +46,8 @@ def test_policy_has_one_warm_cache_and_capacity_model() -> None:
         "install",
     }
     for rail in policy["rails"].values():
-        assert rail["minimum_free_gib"] >= 24
-        assert rail["buildkit_keep_gib"] >= 24
+        assert rail["minimum_free_gib"] >= 40
+        assert rail["buildkit_keep_gib"] >= 80
         assert rail["linked_keep_gib"] >= 4
 
 
@@ -90,10 +90,10 @@ def test_policy_cli_reports_resolved_rail_without_docker() -> None:
     report = json.loads(result.stdout)
 
     assert report["rail"] == "assets"
-    assert report["limits"]["buildkit_keep_gib"] == 24
-    assert report["limits"]["minimum_free_gib"] == 24
-    assert report["docker"]["minimum_disk_gib"] == 96
-    assert report["docker"]["recommended_disk_gib"] == 128
+    assert report["limits"]["buildkit_keep_gib"] == 80
+    assert report["limits"]["minimum_free_gib"] == 40
+    assert report["docker"]["minimum_disk_gib"] == 160
+    assert report["docker"]["recommended_disk_gib"] == 200
     assert report["resources"]["capsem-host-builder"]["last_consumer"] == "package-x86_64"
 
 
