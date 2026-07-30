@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed `docker-storage-policy.py enforce` crashing with a bare
+  `KeyError: 'free_bytes'` when Docker stopped reporting capacity between its
+  opening snapshot and the re-measure after pruning -- which pruning itself can
+  provoke. The opening snapshot was guarded for availability and the re-measure
+  was not. It now fails with a message naming Docker and the free-space floor it
+  could not check, instead of a traceback that named neither.
+
 - Fixed the guest kernel diagnostic failing every freshly built image. Moving
   `kernel_branch` from 7.0 to 6.18 left the in-VM check asserting
   `major >= 7`, so each newly built kernel failed its own diagnostics at the

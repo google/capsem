@@ -911,7 +911,23 @@ def command_enforce(args: argparse.Namespace, policy: dict[str, Any]) -> int:
         policy, args.rail, label=f"{args.label}-measured", event="snapshot", offline=False
     )
     minimum_bytes = resolve_rail(policy, args.rail)["minimum_free_gib"] * 1024**3
-    free_bytes = current["runtime"]["filesystem"]["free_bytes"]
+    # The re-measure after pruning gets the same availability guard as the
+    # opening snapshot. A daemon that stops answering between the two -- which
+    # pruning itself can provoke -- yields {"available": False} with no
+    # free_bytes, and dereferencing it raised a bare KeyError that named
+    # neither Docker nor the gate it stopped.
+    filesystem = current["runtime"]["filesystem"]
+    if not filesystem.get("available"):
+        print_snapshot(current)
+        print(
+            "ERROR: Docker did not report filesystem capacity after pruning, so "
+            "free space cannot be checked against the "
+            f"{human_bytes(minimum_bytes)} floor: "
+            f"{filesystem.get('error', 'no error reported')}",
+            file=sys.stderr,
+        )
+        return 1
+    free_bytes = filesystem["free_bytes"]
     if free_bytes < minimum_bytes:
         keep_gib = resolve_rail(policy, args.rail)["buildkit_keep_gib"]
         prune = run_command(
