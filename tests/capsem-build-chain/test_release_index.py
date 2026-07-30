@@ -348,7 +348,14 @@ def _hydrate_asset_sha256_in_manifest(manifest_path: Path) -> None:
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
 
 
-def _write_profile_catalog(root: Path, revision: str = "profiles-2030.0101.1") -> Path:
+# A profile carries its own semver revision. The old fixture used the
+# collapsed `profiles-<hash>` identifier here, which names a *set* of
+# profiles at differing versions -- not a version any single profile can
+# hold. capsem-admin rejects it now, correctly.
+PROFILE_REVISION = "0.6.0"
+
+
+def _write_profile_catalog(root: Path, revision: str = PROFILE_REVISION) -> Path:
     profiles_dir = root / "config" / "profiles"
     profile_dir = profiles_dir / "code"
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -505,13 +512,13 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "Manifest URL" in channel_html
     assert "Capsem Packages" in channel_html
     assert "Profile Catalog" not in channel_html
-    assert "profiles-2030.0101.1" in channel_html
+    assert PROFILE_REVISION in channel_html
     assert "SBOM" in channel_html
     assert "Realm Discipline" not in index_html
     assert 'href="/channels.json"' in index_html
     assert 'href="/assets/stable/manifest.json"' in channel_html
     assert "/assets/stable/manifest.json" in channel_html
-    assert "/profiles/releases/profiles-2030.0101.1/catalog.json" not in channel_html
+    assert f"/profiles/releases/{PROFILE_REVISION}/catalog.json" not in channel_html
     assert "Capsem-1.4.1234567890.pkg" in channel_html
     assert "capsem-1-4-1234567890-pkg-sbom.spdx.json" in channel_html
     assert "The fastest way to ship with AI securely." not in index_html
@@ -523,15 +530,15 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "Profile Evidence" in profile_html
     assert "ABOM" in profile_html
     assert (
-        "/profiles/releases/stable/code/profiles-2030.0101.1/"
+        f"/profiles/releases/stable/code/{PROFILE_REVISION}/"
         "arm64/rootfs.erofs"
     ) in profile_html
     assert (
-        "/profiles/releases/stable/code/profiles-2030.0101.1/"
+        f"/profiles/releases/stable/code/{PROFILE_REVISION}/"
         "arm64/obom.cdx.json"
     ) in profile_html
     assert (
-        "/profiles/releases/stable/code/profiles-2030.0101.1/"
+        f"/profiles/releases/stable/code/{PROFILE_REVISION}/"
         "x86_64/rootfs.erofs"
     ) in profile_html
     assert "apt_packages" in profile_html
@@ -562,7 +569,7 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     }
     assert health["updates"]["binary"]["latest"] == "1.4.1234567890"
     assert health["updates"]["assets"]["manifest"] == "/assets/stable/manifest.json"
-    assert health["profiles"]["revision"] == "profiles-2030.0101.1"
+    assert health["profiles"]["revision"] == PROFILE_REVISION
     assert health["profiles"]["source"] == "manifest.profiles"
     assert "profile_catalog" not in health["urls"]
     assert "hash" not in health["profiles"]
@@ -570,8 +577,8 @@ def test_release_index_generator_builds_human_and_machine_outputs(tmp_path: Path
     assert "requires_newer" not in health["profiles"]
     assert health["profiles"]["min_binary"] == "1.4.0"
     assert health["profiles"]["requires_newer_binary"] is False
-    assert health["updates"]["profiles"]["latest"] == "profiles-2030.0101.1"
-    assert health["updates"]["profiles"]["current"] == "profiles-2030.0101.1"
+    assert health["updates"]["profiles"]["latest"] == PROFILE_REVISION
+    assert health["updates"]["profiles"]["current"] == PROFILE_REVISION
     assert health["updates"]["profiles"]["state"] == "current"
     assert health["updates"]["profiles"]["source"] == "manifest.profiles"
     assert "hash" not in health["updates"]["profiles"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -124,7 +125,12 @@ def test_active_docs_do_not_teach_retired_guest_config_authority() -> None:
     for path in ACTIVE_DOCS_AND_SKILLS:
         text = path.read_text()
         for needle in STALE_GUIDANCE:
-            if needle in text:
+            # Word-bounded so a retired term cannot be matched inside a current
+            # one. Substring matching flagged the correct term "profile pins"
+            # for containing the retired "file pins", which would have pushed
+            # docs away from the right vocabulary to satisfy the check.
+            pattern = rf"(?<!\w){re.escape(needle)}(?!\w)"
+            if re.search(pattern, text):
                 failures.append(f"{path.relative_to(PROJECT_ROOT)} contains {needle!r}")
 
     assert not failures, "stale active docs/skills:\n" + "\n".join(sorted(failures))
