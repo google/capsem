@@ -1417,14 +1417,14 @@ def _select_rootfs_asset(asset_dir: Path) -> str | None:
 def asset_min_binary(binary_version: str) -> str:
     """Lowest binary these assets support: the base of the binary's release line.
 
-    Derived, never hardcoded. A literal `1.0.0` sat here through the move from
-    the 1.x line to 0.6, which put every binary *below* the floor its own assets
-    declared -- installation failed with "no compatible asset release for binary
-    0.6.0 (min_assets: ...)" because the only asset release demanded >= 1.0.0.
+    Derived, never hardcoded. A literal floor sat here across a change of
+    release line and put every binary *below* the minimum its own assets
+    declared, so installation failed with "no compatible asset release" even
+    though the asset release was present and otherwise valid.
 
-    The line base rather than the exact version, so a compatibility window still
-    exists: any 0.6.x binary runs these assets, and a patch release does not
-    force everyone to re-hydrate.
+    The line base rather than the exact version, so a compatibility window
+    survives: any binary sharing this MAJOR.MINOR runs these assets, and a
+    patch release does not force everyone to re-hydrate.
     """
     major, minor, *_ = binary_version.split(".")
     return f"{major}.{minor}.0"
