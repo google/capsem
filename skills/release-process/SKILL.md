@@ -325,6 +325,47 @@ Read `references/apple-signing.md` when touching signing, notarization,
 certificates, Tauri keys, or Apple agreements. Read
 `references/post-release-verification.md` after any public deployment.
 
+## Published artifacts are load-bearing
+
+A published manifest points at real storage, and some of it lives on GitHub
+releases. Before deleting or retiring **any** published release, resolve what
+the live manifests actually reference:
+
+```bash
+curl -s https://release.capsem.org/assets/<channel>/manifest.json \
+  | grep -o 'releases/download/[^/]*' | sort -u
+```
+
+Check every manifest the catalog lists, not just `current` — a `supported` or
+`deprecated` manifest keeps its own users alive. Both the VM assets **and** the
+binary package can be hosted this way; assuming only one is a good way to break
+the install path while believing you preserved it.
+
+## Verify content, not status codes
+
+**HTTP 200 is not proof that a resource exists.** The release site answers a
+missing manifest with its SPA fallback: `200 OK` and an HTML body. Any check
+that tests the status code passes while the manifest is absent.
+
+Validate the bytes: parse the JSON, confirm the expected channel and version,
+and verify the digest the catalog claims matches what was served.
+`scripts/check-release-site-contract.py` does this and fetches every artifact a
+manifest references, verifying size and sha256.
+
+It runs at deploy time and, via `live-channel-watch.yaml`, daily and on demand.
+The watch exists because the deploy gate can only notice a broken channel while
+publishing a new one — anything that breaks an already-published channel from
+outside a deploy (deleted release, artifact aged out by retention, CDN
+misbehaviour) is otherwise invisible until the next release, and users meet it
+first.
+
+Run it by hand whenever you need to answer "is the channel healthy right now?":
+
+```bash
+uv run python scripts/check-release-site-contract.py \
+  --base-url https://release.capsem.org --channel stable --attempts 1
+```
+
 ## Failure and retry discipline
 
 - A red gate stops publication.

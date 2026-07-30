@@ -110,6 +110,35 @@ gh run download <run-id> -n test-artifacts-macOS-1
 - **Infra flake** (runner died, network timeout, artifact upload hiccup):
   one rerun, after writing the diagnosis. Second failure = not a flake.
 
+## Docker storage budget
+
+`config/storage-policy.toml` governs the gate's Docker footprint. The numbers
+are coupled and must stay satisfiable:
+
+```
+buildkit_keep_gib + minimum_free_gib + fixed usage  <=  minimum_disk_gib
+```
+
+Violate it and the floor can never be met by the one action taken to meet it —
+`docker builder prune --keep-storage <keep>` cannot free space down to a floor
+that sits above what it retains. The observable symptom is not "disk full": the
+capacity probe *starts a container* to run `df`, so a thrashing daemon makes it
+**time out**, and the gate dies reporting that it could not measure free space.
+
+Fixed usage is the declared cache volumes plus base images (~18 GiB here).
+
+**A too-small `buildkit_keep_gib` is a speed bug, not a safety margin.** At 24 GiB
+against a ~35 GB hot graph, every pressure prune discarded layers about to be
+reused and the host-builder image recompiled cold each run.
+
+Age-based reclaim (`dangling-image-prune`, `buildkit-age-prune`, both 72h)
+structurally cannot help during a burst of same-day runs — everything is younger
+than the threshold. Expect `gc` to return near-zero after a heavy session; that
+is the policy working, not failing. Provision headroom instead of pruning harder.
+
+Thresholds are asserted in `tests/test_docker_storage_policy.py`, so config and
+contract move together.
+
 ## Release CI is orthogonal
 
 Release rules live in `AGENTS.md`, `tmp/release-spec.md`, and

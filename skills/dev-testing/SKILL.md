@@ -366,6 +366,41 @@ fn roundtrip() { ... }
 
 **When to push back.** If you see a new PR or agent output adding an inline `mod tests { ... }` block, request it be moved to `tests.rs` before merge. Exceptions are narrow: tiny helper modules under ~50 lines total where inline tests plus prod code fit on one screen, or a module that's already a test-only helper.
 
+### Source contracts must read the sibling, not the production file
+
+A Python contract asserting that some Rust test *exists* must read the sibling
+`tests.rs`, never the production `.rs` the test moved out of. Use
+`tests/rust_sources.py`:
+
+```python
+from rust_sources import production, sibling_tests
+
+assert "pub enum Status" in production(RELEASE_GRAPH)          # prod symbol
+assert "release_graph_enums_reject_unknown" in sibling_tests(RELEASE_GRAPH)
+```
+
+Keep the two sources **separate**. Several contracts assert a symbol is
+*absent* from production (`"Removed" not in source`), and a test module
+legitimately names the thing it proves is rejected -- concatenating them lets a
+fixture falsify a claim about shipped code.
+
+`sibling_tests()` resolves `mod tests;` the way Rust does (`foo.rs` →
+`foo/tests.rs`; `main.rs`/`lib.rs`/`mod.rs` → `tests.rs` beside it) and raises
+when the module is missing rather than passing on an empty string. The helper is
+not named `tests_of` on purpose: pytest collects `test*`, so the obvious name
+becomes a phantom failing test in every importer.
+
+`tests/test_rust_test_name_assertions.py` enforces this repo-wide and fails in
+seconds. It resolves each assertion's target through the AST, per function
+scope, so a contract that legitimately names a relocated test while asserting it
+against a test module or spec document is not flagged.
+
+**Why it matters.** This layout change broke sixteen contracts under
+`tests/capsem-release/`, then five more under `tests/capsem-install/` that run
+only inside the Docker install gate -- invisible until forty minutes into a
+release run. Nothing about the failure pointed at a moved function; it read as a
+broken release.
+
 ## Integration test suites
 
 All Python integration tests live under `tests/capsem-*/` and use pytest markers. Each suite has a dedicated `just` recipe.
@@ -450,6 +485,29 @@ Never dismiss a test failure as "pre-existing" or "unrelated." Every failure mus
 1. **Do not change the test to make it pass.** The test is evidence. Changing the assertion to match broken behavior destroys that evidence.
 2. **Reproduce and diagnose first.** Understand *why* it fails before writing any fix. See the dev-debugging skill for the full methodology: reproduce with a test, diagnose root cause, then fix comprehensively.
 3. **Fix the code, not the test.** If the test is genuinely wrong (not the code), explain in detail why the test's expectation is incorrect before changing it.
+
+### Measuring a gate's result
+
+**`$?` after a pipe is the pipe's exit status, not the command's.** `just test | tail` reports `tail`'s success no matter what the gate did. Redirect and read the code separately:
+
+```bash
+just test > /tmp/gate.log 2>&1; echo "EXIT=$?"
+```
+
+Read the *first* real error, not the recipe cascade under it — `grep -aE "^FAILED|^E "` lands on the cause, while the trailing `error: Recipe ... failed` lines are only the unwind.
+
+### Thresholds belong in one place
+
+A number copied next to a rule drifts from it silently. Three separate gate failures in one session traced to this: a coverage floor asserted as `65` after it moved to `63`, a guest kernel check demanding `major >= 7` after the pin moved to `6.18`, and a Docker fixture simulating `30 GiB free` as "plenty" after the floor rose to `40`.
+
+Each read as a broken product, and each surfaced minutes-to-an-hour into a gate rather than at the edit. Derive the value from its source, or name it once and pin config and contract together:
+
+```python
+floor = tomllib.loads(BUILD_CONFIG.read_text())["rails"]["assets"]["minimum_free_gib"]
+ample_kib = (floor + 10) * 1024 * 1024   # follows the floor; never restates it
+```
+
+Prove it derives rather than hardcodes: change the source value and confirm the test *follows* instead of breaking.
 
 ## Platform gating tests
 

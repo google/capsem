@@ -286,4 +286,23 @@ selection rather than rewriting running VMs.
 
 **Hash mismatch at boot**: Assets on disk don't match the hashes baked into the binary. Fix: `just shell` (repacks initrd, regenerates manifest, touches build.rs to force recompile).
 
+**Hash mismatch where expected and actual look identical**: the two values differ
+only by an algorithm tag. Digests reach boot in two spellings — asset manifests
+carry bare hex, release-graph digests and the profile pins derived from them
+carry `blake3:<hex>`.
+
+`VmConfigBuilder::verify_hash` resolves both, in the one place that decides what
+an expected hash means, and refuses a non-blake3 algorithm outright rather than
+letting a `sha256:` pin masquerade as corruption it can never match. Do not add
+a second reconciliation at a call site.
+
+**Log pins in full, never truncated.** A 16-character slice renders both
+spellings as plausible prefixes (`blake3:de1d58193` looks like a hash), so a
+truncated audit line hides exactly the mismatch it exists to catch.
+
+**Boot verifies the *booting profile's* pins.** A channel carries one image set
+per profile, so no channel-wide pointer can answer which hashes apply — the
+caller passes `expected_asset_hashes` for the profile it is starting. Absent is
+a hard error, not permission to boot unverified.
+
 **Hashes silently skipped**: If `build.rs` can't extract hashes (manifest missing, wrong format), `option_env!()` returns `None` and verification is skipped.
