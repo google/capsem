@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Capsem is 0.6.0.** The version line moves from 1.6 to 0.6 and the patch
+  becomes a real semver patch instead of a Unix timestamp. `1.6.1785421421`
+  parsed as semver but its patch was a clock, so a compatibility window could
+  only ever express "built before/after this instant" -- two releases a second
+  apart looked as far apart as two a year apart, and the number told an
+  operator writing `min_capsem_version` nothing.
+- **Profile revisions are semver, independently per profile.** `code` and
+  `co-work` start at 0.6.0 and move independently from there; profiles are
+  orthogonal, so one advancing says nothing about the other. The previous
+  scheme was a date plus a counter (`2026.06.08.9`) that could not order
+  releases: the date recorded when someone last edited the field rather than
+  when the assets were built -- a July build shipped wearing a June date -- and
+  the counter counted hand-edits, so `.8` and `.9` existed having never been
+  published. `parse_profile_revision` and `ensure_revision_advances` in
+  capsem-admin make the rule executable for first-party and corp-authored
+  profiles alike, and reject a revision that fails to advance past what is
+  already published.
+- Internal crate dependencies are path-only. `capsem-guard` was pinned at
+  `1.0.1776688771` in two crates, satisfied unnoticed by caret matching against
+  every 1.x, and broke the whole workspace build the moment the line moved to
+  0.6. The workspace version now lives in exactly one place.
+
 ## [1.6.1785421421] - 2026-07-30
 
 ### Fixed
@@ -43,6 +67,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a spec document are not flagged -- a guard needing exemptions is not a guard.
 
 ### Fixed
+
+- Fixed a panicking or early-dying `capsem-service` leaving no record at all.
+  The CLI's direct-spawn path detached the service's stderr to `/dev/null`, on
+  the reasoning that tracing writes `service.log` anyway -- true for everything
+  except the two failures that matter most here, a panic and any failure before
+  `telemetry::init` returns, which reach stderr and nothing else. Stderr now
+  appends to `service.log`, matching how the service already redirects its own
+  companions, and still detaches so a capturing test harness sees EOF.
+  `capsem-service` also installs a panic logger; that hook is now one shared
+  `capsem_core::telemetry::install_panic_logger` rather than a gateway-local
+  copy. `tests/test_logging_contract.py` holds both.
+
+- Fixed `service.log` recording that a VM boot died but never why. Three sites
+  held the captured `process.log` tail and logged only the fact: the provision
+  path's `capsem-process exited before reaching ready`, the child-exit handler
+  that writes `last_error` into the persistent registry, and the defunct
+  reconciler. The reason survived only inside the session's own `process.log`,
+  so the first file an operator opens -- and the one the asset gate copies --
+  was the one file that could not answer the question. Each now carries a
+  `cause` field. `capsem_core::session::boot_failure_summary` distils a tail to
+  its last meaningful line in one place, replacing two inline copies of that
+  idiom in the CLI rather than adding a third.
+
+- Fixed `capsem list` and `capsem info` staying silent about a session the
+  service will not run. Both read the failure field that matched a particular
+  status -- `last_error` for `Defunct`, `resume_blocked_reason` for
+  `Incompatible` -- so a `Stopped` or `Suspended` VM whose assets fail
+  validation printed as an ordinary row despite carrying its reason, and
+  `capsem info` rendered no reason for any state at all. One rule now answers
+  "why can this not run" for every row, and `capsem info` prints a `Problem:`
+  line beside the status instead of sending the user to `capsem logs` for
+  something the service had already returned.
+
+- Fixed the gateway dropping a crashed VM's boot error on the way to every
+  client. The service splits the two deliberately -- a defunct session carries
+  its `process.log` tail in `last_error` and leaves `resume_blocked_reason`
+  empty -- and `capsem-gateway`'s `VmSummary` carried only the latter, so the
+  reason stopped at the gateway. It now forwards `last_error`.
 
 - Fixed the installed-shell proof reporting a 300-second timeout instead of the
   boot error the service had already handed it. `capsem create` returns once the

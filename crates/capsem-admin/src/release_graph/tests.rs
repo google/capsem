@@ -1191,3 +1191,84 @@ fn release_ledger_is_derived_from_channels_and_manifests() {
         entry.channel == "nightly" && entry.kind == ReleaseLedgerKind::Manifest
     }));
 }
+
+// -- Profile revision semver discipline -------------------------------------
+//
+// A profile's revision is its tag: the thing a corp operator reads, a
+// compatibility window is written against, and asset reuse is keyed on. Date
+// strings like "2026.06.08.9" cannot carry ordering a resolver can use -- the
+// date said June while the build was July, and the trailing counter counted
+// hand-edits rather than publications. These tests specify strict semver,
+// independently versioned per profile, enforced for first-party and
+// corp-authored profiles alike.
+
+#[test]
+fn profile_revision_must_be_semver() {
+    assert!(parse_profile_revision("0.6.0").is_ok());
+    assert!(parse_profile_revision("1.2.3").is_ok());
+}
+
+#[test]
+fn dated_profile_revisions_are_rejected() {
+    // The scheme this replaces. Four components is not semver, and the
+    // leading date lied about when the assets were built.
+    let error = parse_profile_revision("2026.06.08.9").unwrap_err().to_string();
+    assert!(
+        error.contains("2026.06.08.9"),
+        "rejection must name the offending revision: {error}"
+    );
+}
+
+#[test]
+fn a_two_component_revision_is_rejected() {
+    assert!(parse_profile_revision("0.6").is_err());
+}
+
+#[test]
+fn an_empty_revision_is_rejected() {
+    assert!(parse_profile_revision("").is_err());
+}
+
+#[test]
+fn profile_revisions_order_numerically_not_lexically() {
+    // The bug a string compare hides: "0.10.0" sorts before "0.9.0" as text.
+    let ten = parse_profile_revision("0.10.0").unwrap();
+    let nine = parse_profile_revision("0.9.0").unwrap();
+    assert!(ten > nine, "0.10.0 must outrank 0.9.0");
+}
+
+#[test]
+fn republishing_the_same_revision_is_rejected() {
+    let error = ensure_revision_advances("0.6.0", "0.6.0").unwrap_err().to_string();
+    assert!(
+        error.contains("0.6.0"),
+        "rejection must name the revision that failed to advance: {error}"
+    );
+}
+
+#[test]
+fn a_revision_that_goes_backwards_is_rejected() {
+    assert!(ensure_revision_advances("0.6.1", "0.6.0").is_err());
+}
+
+#[test]
+fn an_advancing_revision_is_accepted() {
+    assert!(ensure_revision_advances("0.6.0", "0.6.1").is_ok());
+    assert!(ensure_revision_advances("0.6.9", "0.10.0").is_ok());
+}
+
+#[test]
+fn profiles_version_independently_of_each_other() {
+    // Profiles are orthogonal: co-work moving does not constrain code.
+    assert!(ensure_revision_advances("0.3.2", "0.3.3").is_ok());
+    assert!(ensure_revision_advances("1.4.0", "1.4.1").is_ok());
+}
+
+#[test]
+fn a_profile_revision_is_not_a_capsem_version() {
+    // The profile's own version and the binary window it declares are
+    // separate axes. A profile at 0.3.2 may require capsem >= 0.6.0.
+    let revision = parse_profile_revision("0.3.2").unwrap();
+    let minimum = semver::Version::parse("0.6.0").unwrap();
+    assert!(revision < minimum, "these are different axes, not comparable state");
+}

@@ -1116,6 +1116,39 @@ fn validate_url_like(value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Parse a profile revision as strict semver.
+///
+/// A revision is a profile's tag: what a corp operator reads, what asset reuse
+/// is keyed on, and what publication immutability is enforced against. It is
+/// versioned independently per profile -- profiles are orthogonal, so `code`
+/// moving says nothing about `co-work` -- and it is a separate axis from the
+/// `min_capsem_version`/`max_capsem_version` window the profile declares
+/// against the binary.
+///
+/// Strict semver is not decoration. The scheme this replaces was a date plus a
+/// counter (`2026.06.08.9`), which could not order releases: the date recorded
+/// when a human last edited the field rather than when the assets were built,
+/// and text comparison ranks `0.10.0` below `0.9.0`.
+pub fn parse_profile_revision(revision: &str) -> Result<Version> {
+    Version::parse(revision).with_context(|| {
+        format!("profile revision must be semver MAJOR.MINOR.PATCH, got {revision:?}")
+    })
+}
+
+/// Reject a publication whose revision does not advance past what is published.
+///
+/// Immutable publication already refuses to overwrite differing bytes under an
+/// existing revision, but it cannot tell the operator what to do about it. This
+/// fails earlier and says the actionable thing: the revision has to move.
+pub fn ensure_revision_advances(previous: &str, next: &str) -> Result<()> {
+    let previous_version = parse_profile_revision(previous)?;
+    let next_version = parse_profile_revision(next)?;
+    if next_version <= previous_version {
+        bail!("profile revision {next:?} does not advance past published {previous:?}");
+    }
+    Ok(())
+}
+
 fn default_status_current() -> Status {
     Status::Current
 }

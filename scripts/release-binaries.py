@@ -193,6 +193,13 @@ def _lock_package_versions(
     return versions
 
 
+# The MAJOR.MINOR line this repository releases. Pinned deliberately rather
+# than derived from the version: deriving it would make the cohort check
+# tautological, and the point is to catch a version that moved off the line
+# nobody intended to leave.
+RELEASE_LINE = "0.6"
+
+
 def _validate_version_cohort(version: str) -> None:
     tauri = json.loads(
         (ROOT / "crates/capsem-app/tauri.conf.json").read_text(encoding="utf-8")
@@ -213,7 +220,7 @@ def _validate_version_cohort(version: str) -> None:
         ),
     }
     expected = {
-        label: ({"1.6"} if label == "release line" else {version})
+        label: ({RELEASE_LINE} if label == "release line" else {version})
         for label in cohort
     }
     mismatches = {
