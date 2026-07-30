@@ -4,11 +4,15 @@ import importlib.util
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+from rust_sources import production
 
 
 PROJECT_ROOT = Path(__file__).parent.parent
 PROOF_SCRIPT = PROJECT_ROOT / "scripts" / "prove-installed-shell.py"
+CLI_CLIENT = PROJECT_ROOT / "crates" / "capsem" / "src" / "client.rs"
 
 
 def _proof_module():
@@ -27,6 +31,123 @@ def test_guest_command_hides_marker_and_writes_shared_home_proof() -> None:
 
     assert marker.encode() not in command
     assert b'tee "$HOME/.proof-file"' in command
+
+
+def test_session_boot_failure_reads_the_reason_the_service_already_recorded() -> None:
+    module = _proof_module()
+
+    # A booting VM and a resumable stopped one still owe us a prompt.
+    assert module.session_boot_failure({"status": "Running", "can_resume": False}) is None
+    assert module.session_boot_failure({"status": "Stopped", "can_resume": True}) is None
+    assert module.session_boot_failure({"profile_id": "code"}) is None
+
+    assert module.session_boot_failure(
+        {
+            "status": "Defunct",
+            "can_resume": False,
+            "last_error": "failed to build VmConfig: rootfs hash mismatch\n",
+        }
+    ) == "session is Defunct: failed to build VmConfig: rootfs hash mismatch"
+
+    assert module.session_boot_failure(
+        {
+            "status": "Stopped",
+            "can_resume": False,
+            "resume_blocked_reason": "kernel pin blake3:abc does not match abc",
+        }
+    ) == "session is Stopped: kernel pin blake3:abc does not match abc"
+
+    silent = module.session_boot_failure({"status": "Incompatible", "can_resume": False})
+    assert silent is not None and "Incompatible" in silent
+
+
+def test_fail_fast_reads_the_fields_capsem_info_actually_serializes() -> None:
+    """Guard the one contract that makes the fast-fail work.
+
+    `capsem info --json` prints `SessionInfo` verbatim, so the proof's
+    detection is only as good as those field names and lifecycle spellings.
+    Renaming one in Rust would leave the proof silently waiting out its whole
+    timeout again -- the exact failure this detection exists to end.
+    """
+    client = production(CLI_CLIENT)
+
+    for field in ("pub status:", "pub can_resume:", "pub last_error:", "pub resume_blocked_reason:"):
+        assert field in client, f"SessionInfo no longer serializes {field}"
+    assert "pub enum VmLifecycleState {" in client
+    for variant in ("Running", "Defunct", "Incompatible"):
+        assert f"    {variant},\n" in client, f"VmLifecycleState no longer spells {variant}"
+
+    module = _proof_module()
+    assert module.FATAL_SESSION_STATUSES <= {"Running", "Stopped", "Suspended", "Defunct", "Incompatible"}
+
+
+def _fake_capsem_with_dead_session(tmp_path: Path) -> tuple[Path, Path]:
+    """A capsem whose session dies after `create` returns, as a boot crash does."""
+    log = tmp_path / "calls.log"
+    binary = tmp_path / "capsem"
+    info_json = (
+        '{"profile_id":"code","status":"Defunct","can_resume":false,'
+        '"last_error":"failed to build VmConfig: rootfs hash mismatch"}'
+    )
+    binary.write_text(
+        "#!/bin/sh\n"
+        'printf \'%s\\n\' "$*" >> "$CAPSEM_FAKE_LOG"\n'
+        'case "$1" in\n'
+        "  create) exit 0 ;;\n"
+        "  delete) exit 0 ;;\n"
+        f"  info) printf '%s\\n' '{info_json}'; exit 0 ;;\n"
+        # The TUI parks on its non-resumable screen: no prompt, ever.
+        "  shell) sleep 120 ;;\n"
+        "  *) exit 2 ;;\n"
+        "esac\n",
+        encoding="utf-8",
+    )
+    binary.chmod(0o755)
+    return binary, log
+
+
+def test_shell_proof_fails_fast_with_the_boot_error_of_an_unreachable_session(
+    tmp_path: Path,
+) -> None:
+    binary, log = _fake_capsem_with_dead_session(tmp_path)
+    env = os.environ.copy()
+    env["CAPSEM_FAKE_LOG"] = str(log)
+    env["HOME"] = str(tmp_path)
+
+    started = time.monotonic()
+    result = subprocess.run(
+        [
+            "python3",
+            str(PROOF_SCRIPT),
+            "--capsem",
+            str(binary),
+            "--marker",
+            "CAPSEM_NEVER_REACHED",
+            "--session-name",
+            "dead-proof",
+            "--profile",
+            "code",
+            "--startup-delay",
+            "0",
+            "--timeout",
+            "120",
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    elapsed = time.monotonic() - started
+
+    assert result.returncode != 0
+    assert "failed to build VmConfig: rootfs hash mismatch" in result.stderr
+    assert "session is Defunct" in result.stderr
+    # The whole point: no 120s wait for a prompt that can never arrive.
+    assert elapsed < 30, f"proof took {elapsed:.1f}s to report a dead session"
+    # The session dir is the only copy of process.log; the caller's failure
+    # evidence copy runs after this process exits.
+    assert "delete dead-proof" not in log.read_text(encoding="utf-8").splitlines()
 
 
 def _fake_capsem(tmp_path: Path, *, execute_input: bool) -> tuple[Path, Path]:
@@ -159,7 +280,10 @@ def test_shell_proof_rejects_typed_but_unexecuted_command(tmp_path: Path) -> Non
 
     assert result.returncode != 0
     assert "guest shell marker was not observed" in result.stderr
-    assert log.read_text(encoding="utf-8").splitlines()[-1] == "delete proof-session"
+    # A failed proof keeps its session: deleting it would remove the
+    # process.log and serial.log that say why the guest never came up.
+    assert "preserving session proof-session" in result.stderr
+    assert "delete proof-session" not in log.read_text(encoding="utf-8").splitlines()
 
 
 def test_shell_proof_waits_for_guest_prompt_and_sends_one_command(

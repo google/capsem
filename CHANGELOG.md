@@ -21,6 +21,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed the installed-shell proof reporting a 300-second timeout instead of the
+  boot error the service had already handed it. `capsem create` returns once the
+  VM process is launched, so a boot that dies afterwards leaves the TUI parked on
+  its non-resumable screen and no prompt ever arrives; the proof watched only the
+  terminal, so it waited out its whole budget and then blamed the missing prompt.
+  It now polls `capsem info --json` while it waits and fails immediately with the
+  session's own `last_error` or `resume_blocked_reason` -- the `process.log` tail
+  naming the real cause. This is what turned the 1.6 asset-pin mismatch into a
+  five-minute wait pointing at the wrong thing.
+
+- Fixed `just _gate-assets` preserving no evidence for a failed boot proof. The
+  proof deleted its session in an unconditional cleanup, so `process.log` and
+  `serial.log` were gone before the gate's `run-failure` copy ran and the copy
+  captured empty directories. A failing proof now keeps its session -- stopping
+  the gate service still reaps every VM process and leaves persistent session
+  dirs intact -- and the copy walks the run dir for host-side diagnostics,
+  including the `vm/active_profile.toml` whose recorded pins are what a hash
+  mismatch is argued from. It prunes `guest/` and `auto_snapshots/` so the guest
+  workspace, duplicated once per snapshot generation, stays out of `target/`.
+
 - Fixed `docker-storage-policy.py enforce` crashing with a bare
   `KeyError: 'free_bytes'` when Docker stopped reporting capacity between its
   opening snapshot and the re-measure after pruning -- which pruning itself can

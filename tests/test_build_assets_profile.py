@@ -66,7 +66,14 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
     assert 'cp target/config/settings/settings.toml "$profile_home/settings.toml"' not in asset_gate
     assert "mktemp -d /tmp/capsem-a.XXXXXX" in asset_gate
     assert 'profile_run="$profile_root/run"' not in asset_gate
-    assert 'cp -R "$profile_run"/. "$profile_root/run-failure"/' in asset_gate
+    # A failed proof leaves its session behind, so the evidence copy must walk
+    # the run dir for the host-side logs that name the boot failure -- and only
+    # those. A blanket `cp -R` also takes the guest's workspace, duplicated
+    # once per auto-snapshot generation, into target/.
+    assert 'cp -R "$profile_run"/. "$profile_root/run-failure"/' not in asset_gate
+    assert "-name '*.log'" in asset_gate
+    assert r"\( -name guest -o -name auto_snapshots \) -prune" in asset_gate
+    assert 'cp "$evidence" "$profile_root/run-failure/$evidence"' in asset_gate
     assert 'python3 scripts/create_hash_assets.py "$profile_assets"' in asset_gate
     assert asset_gate.index("scripts/create_hash_assets.py") < asset_gate.index(
         "cargo run -p capsem-admin -- manifest check"

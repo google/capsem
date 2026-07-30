@@ -22,6 +22,16 @@ from pathlib import Path
 
 SAFE_VALUE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
+# Lifecycle states the service never resumes from. `Stopped`/`Suspended` are
+# absent on purpose: those are terminal only when the service also refuses to
+# resume them, which `can_resume` reports separately.
+FATAL_SESSION_STATUSES = frozenset({"Defunct", "Incompatible"})
+
+# How often to ask the service whether the session is still on its way to a
+# prompt. Cheap next to the boot it is watching, and rare enough that a
+# healthy proof spends its time reading the terminal.
+SESSION_STATE_POLL_INTERVAL = 3.0
+
 
 def guest_marker_command(marker: str, proof_name: str) -> bytes:
     """Build a command whose input bytes do not contain the success marker."""
@@ -43,6 +53,55 @@ def guest_proof_paths(proof_name: str) -> list[Path]:
 def guest_shell_ready(output: bytes, session_name: str) -> bool:
     """Return whether the focused TUI has rendered this guest's shell prompt."""
     return f"root@{session_name}:".encode("ascii") in output
+
+
+def session_boot_failure(info: dict[str, object]) -> str | None:
+    """Return why a session can no longer reach a guest shell, or None while it can.
+
+    `capsem create` returns as soon as the VM process is launched, so a boot
+    that dies afterwards -- a bad asset pin, an unbuildable VmConfig -- leaves
+    the TUI parked on its non-resumable screen and no prompt ever arrives.
+    Waiting for the marker in that state burns the whole timeout and reports
+    nothing. The service already knows the reason: `last_error` carries the
+    `process.log` tail of a defunct session, and `resume_blocked_reason`
+    carries the validation failure of one it refuses to resume.
+    """
+    status = info.get("status")
+    if not isinstance(status, str) or status == "Running":
+        return None
+    if status not in FATAL_SESSION_STATUSES and info.get("can_resume") is not False:
+        return None
+    for key in ("last_error", "resume_blocked_reason"):
+        reason = info.get(key)
+        if isinstance(reason, str) and reason.strip():
+            return f"session is {status}: {reason.strip()}"
+    return f"session is {status} and the service recorded no reason"
+
+
+def session_state_failure(capsem: Path, session_name: str, timeout: float) -> str | None:
+    """Ask the service whether the proof session has already lost its shell.
+
+    Every failure to reach the service is reported as "still waiting": the
+    marker stays the only proof of success, so a transient query error must
+    never fail a proof that is otherwise on track.
+    """
+    try:
+        info = subprocess.run(
+            [str(capsem), "info", session_name, "--json"],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=min(timeout, 30),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if info.returncode != 0:
+        return None
+    try:
+        parsed = json.loads(info.stdout)
+    except json.JSONDecodeError:
+        return None
+    return session_boot_failure(parsed) if isinstance(parsed, dict) else None
 
 
 def stop_process(process: subprocess.Popen[bytes]) -> None:
@@ -128,8 +187,10 @@ def prove_shell(
     output = bytearray()
     deadline = time.monotonic() + timeout
     send_after = time.monotonic() + startup_delay
+    poll_state_after = time.monotonic() + SESSION_STATE_POLL_INTERVAL
     command_sent = False
     observed = False
+    boot_failure: str | None = None
 
     try:
         while time.monotonic() < deadline:
@@ -161,8 +222,20 @@ def prove_shell(
                 break
             if process.poll() is not None:
                 break
+            if time.monotonic() >= poll_state_after:
+                poll_state_after = time.monotonic() + SESSION_STATE_POLL_INTERVAL
+                boot_failure = session_state_failure(capsem, session_name, timeout)
+                if boot_failure is not None:
+                    break
 
         if not observed:
+            # One last look: the loop also ends when the TUI exits or the
+            # deadline passes, and either can be the tail end of a boot the
+            # service has already given up on.
+            if boot_failure is None:
+                boot_failure = session_state_failure(capsem, session_name, timeout)
+            if boot_failure is not None:
+                raise RuntimeError(f"guest shell is unreachable; {boot_failure}")
             tail = bytes(output[-4000:]).decode("utf-8", errors="replace")
             failure = (
                 "guest shell marker was not observed before timeout"
@@ -224,18 +297,28 @@ def main() -> int:
         )
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as error:
         print(f"installed shell proof failed: {error}", file=sys.stderr)
+        # Only a passing proof deletes its session. The session dir is the
+        # sole copy of process.log and serial.log, and `capsem delete` removes
+        # exactly the files that explain the failure -- callers copy them out
+        # after this process exits. Nothing leaks: stopping the service kills
+        # every VM process and keeps persistent session dirs intact.
+        print(
+            f"preserving session {args.session_name} for post-mortem "
+            "(process.log and serial.log stay in its session dir)",
+            file=sys.stderr,
+        )
         return 1
-    finally:
-        try:
-            subprocess.run(
-                [str(args.capsem), "delete", args.session_name],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=min(args.timeout, 30),
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+
+    try:
+        subprocess.run(
+            [str(args.capsem), "delete", args.session_name],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=min(args.timeout, 30),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
     print(f"installed shell proof passed: {args.marker}")
     return 0

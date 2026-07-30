@@ -568,13 +568,35 @@ _gate-assets: _bootstrap _install-tools _generate-settings _sign
         # failure evidence is copied under target/ironbank-assets on exit.
         profile_run=$(mktemp -d /tmp/capsem-a.XXXXXX)
         marker="CAPSEM_ASSET_${profile//-/_}_${HOST_ARCH}_SHELL_OK"
+        # A failed proof leaves its session in place, so process.log and
+        # serial.log are still here to say why the VM died. Stop the service
+        # first: it SIGTERMs every VM process -- flushing those logs -- and
+        # preserves persistent session dirs.
+        #
+        # Then copy the host-side diagnostics only. That is process.log,
+        # serial.log, the service/gateway logs and vm/active_profile.toml,
+        # whose recorded asset pins are what a boot-time hash mismatch is
+        # argued from. Pruning guest/ and auto_snapshots/ keeps the guest's
+        # own workspace -- which the snapshots duplicate once per generation
+        # -- out of target/; the VM disk image and session.db are excluded by
+        # the same name filter.
         cleanup_asset_profile() {
             status=$?
             stop_gate_service "$profile_run"
             if [[ $status -ne 0 ]]; then
                 rm -rf "$profile_root/run-failure"
                 mkdir -p "$profile_root/run-failure"
-                cp -R "$profile_run"/. "$profile_root/run-failure"/ 2>/dev/null || true
+                (
+                    cd "$profile_run" || exit 0
+                    find . \( -name guest -o -name auto_snapshots \) -prune -o \
+                        -type f \( -name '*.log' -o -name '*.json' -o -name '*.toml' \) \
+                        -print0 |
+                        while IFS= read -r -d '' evidence; do
+                            mkdir -p "$profile_root/run-failure/$(dirname "$evidence")"
+                            cp "$evidence" "$profile_root/run-failure/$evidence"
+                        done
+                ) || true
+                echo "Preserved asset-gate failure evidence in $profile_root/run-failure" >&2
             fi
             rm -rf "$profile_run"
             return "$status"
