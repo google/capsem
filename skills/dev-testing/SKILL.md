@@ -488,13 +488,34 @@ Never dismiss a test failure as "pre-existing" or "unrelated." Every failure mus
 
 ### Measuring a gate's result
 
-**`$?` after a pipe is the pipe's exit status, not the command's.** `just test | tail` reports `tail`'s success no matter what the gate did. Redirect and read the code separately:
+**Never take the last line of a multi-part result as the result.** Two shapes of
+one mistake, both of which report success while the thing measured failed:
+
+**`$?` after a pipe is the pipe's status.** `just test | tail` reports what
+`tail` did. Redirect, then read the code separately:
 
 ```bash
 just test > /tmp/gate.log 2>&1; echo "EXIT=$?"
 ```
 
+**`tail -n1` across a multi-part result returns the last part, not the whole.**
+`cargo test -p capsem-service` runs three test binaries; the last prints
+`0 passed`, so `| tail -1` reads as though the crate had no tests while 91 and
+264 passed above it. Aggregate instead of sampling:
+
+```bash
+cargo test -p capsem-service 2>&1 | grep -E "^test result:"   # every binary
+```
+
+Both errors are silent and both flatter you: one turns a failed gate into a
+pass, the other turns a passing crate into a phantom regression. If a command
+can emit more than one verdict, read them all.
+
 Read the *first* real error, not the recipe cascade under it — `grep -aE "^FAILED|^E "` lands on the cause, while the trailing `error: Recipe ... failed` lines are only the unwind.
+
+`tests/test_exit_status_integrity.py` keeps this out of committed recipes,
+scripts, and workflows, and requires `set -o pipefail` in any bash recipe that
+pipes. It cannot see an agent's ad-hoc shell — that part is on you.
 
 ### Thresholds belong in one place
 

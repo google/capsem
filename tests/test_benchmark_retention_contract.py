@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import sys
+import tomllib
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -99,6 +100,11 @@ def test_distinct_series_in_one_directory_do_not_supersede_each_other(
 def test_the_policy_tracks_the_workspace_version() -> None:
     """Retention follows Cargo.toml so the release being measured is always the
     one kept in full, without a second place to update."""
-    major, minor = PRUNE.current_version(PROJECT_ROOT)
+    # Asserted against Cargo.toml rather than a hardcoded floor. A literal here
+    # is the second place the docstring warns about: `>= (1, 6)` outlived the
+    # 1.6 line and failed the moment the workspace moved to 0.6.
+    workspace = tomllib.loads((PROJECT_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    declared = workspace["workspace"]["package"]["version"]
+    expected = tuple(int(part) for part in declared.split(".")[:2])
 
-    assert (major, minor) >= (1, 6)
+    assert PRUNE.current_version(PROJECT_ROOT) == expected

@@ -5954,3 +5954,23 @@ def test_parallel_asset_primitive_does_not_run_docker_gc() -> None:
     ):
         body = justfile.split(recipe, maxsplit=1)[1].split("\n#", maxsplit=1)[0]
         assert "just _docker-gc" in body
+
+
+def test_release_recipes_reject_a_dirty_tree_before_running_the_gate() -> None:
+    """The clean-tree precondition must be checked when it is still actionable.
+
+    `publish-tested-main.py` refuses a dirty tree, correctly, but it runs after
+    `just test`. A tree with uncommitted work therefore costs a full ~40 minute
+    gate before the release says the one thing the operator could have fixed in
+    seconds. Same rule, checked at the front.
+    """
+    for recipe in ("release-binaries", "release-profile"):
+        block = _recipe_block(recipe)
+
+        assert "publish-tested-main.py --precheck" in block, (
+            f"{recipe} must verify a clean tree before `just test`, not only after"
+        )
+        assert block.index("--precheck") < block.index("just test"), (
+            f"{recipe} runs the gate before checking the tree, which is the "
+            "forty-minute failure this exists to prevent"
+        )

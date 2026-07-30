@@ -63,6 +63,9 @@ _stamp-version:
 release-binaries channel:
     #!/bin/bash
     set -euo pipefail
+    # Fail in seconds on a dirty tree or the wrong branch. The authoritative
+    # check still runs after the gate, since the state can drift during it.
+    python3 scripts/publish-tested-main.py --precheck
     python3 scripts/extract-release-notes.py --check
     mkdir -p target/release-preflight
     RELEASE_GITHUB_TOKEN="${GITHUB_TOKEN:-$(gh auth token)}"
@@ -82,6 +85,9 @@ release-binaries channel:
 release-profile channel profile:
     #!/bin/bash
     set -euo pipefail
+    # Fail in seconds on a dirty tree or the wrong branch. The authoritative
+    # check still runs after the gate, since the state can drift during it.
+    python3 scripts/publish-tested-main.py --precheck
     TESTED_HEAD=$(git rev-parse HEAD)
     just test
     python3 scripts/publish-tested-main.py --expected-head "$TESTED_HEAD"
@@ -754,9 +760,12 @@ _test-candidate-run:
         tests/test_complete_release_channel.py
         tests/test_docker_storage_policy.py
         tests/test_exec_lock.py
+        tests/test_exit_status_integrity.py
         tests/test_fast_gate_ci_contract.py
         tests/test_integration_script_profiles.py
+        tests/test_live_channel_watch.py
         tests/test_macos_tart_glowup.py
+        tests/test_profile_revision_semver.py
         tests/test_pnpm_bulk_audit.py
         tests/test_prove_installed_shell.py
         tests/test_release_gate_integrity.py
@@ -764,6 +773,7 @@ _test-candidate-run:
         tests/test_release_site_generated_from_json.py
         tests/test_release_site_review_regressions.py
         tests/test_rust_test_layout.py
+        tests/test_rust_test_name_assertions.py
         tests/test_skills.py
         tests/test_source_syntax_gate.py
         tests/test_sync_container_clock.py

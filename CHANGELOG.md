@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `tests/test_exit_status_integrity.py` keeps a gate's result from being read out
+  of the last line of a multi-part output. Two shapes of one mistake: `$?` after
+  a pipe reports the pipe's status, and `tail -n1` across a multi-part result
+  returns the last part -- `cargo test -p capsem-service` runs three test
+  binaries and the last prints `0 passed`, so a piped tail reads as though the
+  crate had no tests while 91 and 264 passed above it. The guard covers recipes,
+  scripts, and workflows, and requires `set -o pipefail` in any bash recipe that
+  pipes.
+
+### Changed
+
+- Release recipes verify a clean tree and the right branch *before* running the
+  gate. `publish-tested-main.py` already refused a dirty tree, but only after
+  `just test`, so uncommitted work cost a full forty-minute gate to discover
+  something fixable in seconds. The rule stays in one place -- `--precheck` runs
+  the same preconditions -- and the authoritative check still runs at
+  publication, since state can drift during the gate.
+- Source-only contracts added this cycle now run in the fast gate rather than
+  only in the functional stage thirty minutes in.
+
+### Fixed
+
+- The benchmark retention contract asserted `>= (1, 6)` while its own docstring
+  promised retention follows Cargo.toml "without a second place to update". The
+  literal was that second place, and it failed the moment the workspace moved to
+  0.6. It now compares against the declared workspace version.
+
 ### Changed
 
 - Daemon logs rotate daily and retain a bounded history. `LogSink::File` now
