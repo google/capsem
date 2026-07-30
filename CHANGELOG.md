@@ -151,6 +151,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no test coverage at all -- what it matches, what it does not, and that it reads
   only the field it names -- so its behavior is now pinned.
 
+- Host-initiated process exec now enforces its security rules instead of only
+  recording them. `capsem exec` evaluated the rule set, computed a decision,
+  threw it away, and dispatched the command regardless -- so a profile rule with
+  `action = "block"` on `process.command` wrote a `security_rule_events` row
+  saying "block" while the command ran. Every other enforcing boundary (HTTP,
+  DNS, model, MCP, file import/export) already refused. Exec is decided before
+  the command reaches the guest, so it can refuse on the same terms: the job
+  fails with the rule's reason and a non-zero exit, and the attempt plus the
+  rule that refused it stay on the ledger. The file and process rails now share
+  one `emit_security_boundary_with_plugins` path, and the emission carries the
+  enforcement decision rather than a row count, so a caller cannot use the
+  boundary and accidentally not enforce. Guest `execve` audit records stay
+  detection-only by nature -- they describe a process that already started.
+
 - The benchmark retention contract asserted `>= (1, 6)` while its own docstring
   promised retention follows Cargo.toml "without a second place to update". The
   literal was that second place, and it failed the moment the workspace moved to

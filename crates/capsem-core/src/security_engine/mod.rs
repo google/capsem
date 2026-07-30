@@ -466,24 +466,24 @@ pub async fn emit_explicit_file_security_write_and_rules(
     Some(event_id)
 }
 
-pub async fn emit_explicit_file_security_write_and_rules_with_plugins(
+/// Write a boundary's primary ledger row, run the plugin stages over its
+/// security event, evaluate the rule set, and hand back the decision the caller
+/// must honor before letting the operation proceed.
+///
+/// Every enforcing boundary goes through here so the file rail and the process
+/// rail cannot drift into different notions of what `block` means. Returning
+/// `SecurityRuleEmission` rather than a row count is deliberate: a caller cannot
+/// use this and accidentally not enforce.
+async fn emit_security_boundary_with_plugins(
     db: &DbWriter,
     rules: &SecurityRuleSet,
     plugin_policy: BTreeMap<String, SecurityPluginConfig>,
-    event: ExplicitFileSecurityEvent,
+    primary: WriteOp,
+    event_type: RuntimeSecurityEventType,
+    security_event: SecurityEvent,
+    boundary: &str,
 ) -> Result<Option<SecurityRuleEmission>, String> {
-    let primary = FileEvent {
-        event_id: None,
-        timestamp: std::time::SystemTime::now(),
-        action: event.action,
-        path: event.path.clone(),
-        size: event.size,
-        trace_id: event.trace_id.clone(),
-        credential_ref: event.credential_ref.clone(),
-    };
-    let security_event = security_event_from_explicit_file_event(&event);
-    let event_type = runtime_file_event_type(event.action);
-    let Some(event_id) = emit_security_write(db, WriteOp::FileEvent(primary)).await else {
+    let Some(event_id) = emit_security_write(db, primary).await else {
         return Ok(None);
     };
     let security_event = prepare_event_for_security_rule_ledger(plugin_policy, security_event)?;
@@ -503,15 +503,72 @@ pub async fn emit_explicit_file_security_write_and_rules_with_plugins(
             if emission.enforcement.is_allowed() {
                 emission.enforcement.action = SecurityEnforcementAction::Ask;
                 emission.enforcement.reason =
-                    Some("file boundary requires plugin approval".to_string());
+                    Some(format!("{boundary} requires plugin approval"));
             }
         }
         SecurityDecisionKind::Block => {
             emission.enforcement.action = SecurityEnforcementAction::Block;
-            emission.enforcement.reason = Some("file boundary blocked by plugin".to_string());
+            emission.enforcement.reason = Some(format!("{boundary} blocked by plugin"));
         }
     }
     Ok(Some(emission))
+}
+
+pub async fn emit_explicit_file_security_write_and_rules_with_plugins(
+    db: &DbWriter,
+    rules: &SecurityRuleSet,
+    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    event: ExplicitFileSecurityEvent,
+) -> Result<Option<SecurityRuleEmission>, String> {
+    let primary = FileEvent {
+        event_id: None,
+        timestamp: std::time::SystemTime::now(),
+        action: event.action,
+        path: event.path.clone(),
+        size: event.size,
+        trace_id: event.trace_id.clone(),
+        credential_ref: event.credential_ref.clone(),
+    };
+    let security_event = security_event_from_explicit_file_event(&event);
+    let event_type = runtime_file_event_type(event.action);
+    emit_security_boundary_with_plugins(
+        db,
+        rules,
+        plugin_policy,
+        WriteOp::FileEvent(primary),
+        event_type,
+        security_event,
+        "file boundary",
+    )
+    .await
+}
+
+/// The process-exec counterpart of the file boundary.
+///
+/// Host-initiated exec is decided *before* the command reaches the guest, so it
+/// enforces on the same terms as the network and file rails: the caller must
+/// honor `emission.enforcement` and refuse to dispatch on anything but `Allow`.
+///
+/// Its sibling `emit_process_audit_security_write_and_rules_blocking` stays
+/// detection-only by nature -- an audit record describes an `execve` the guest
+/// already performed, so there is nothing left to withhold.
+pub async fn emit_process_exec_security_boundary(
+    db: &DbWriter,
+    rules: &SecurityRuleSet,
+    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    event: ExecEvent,
+) -> Result<Option<SecurityRuleEmission>, String> {
+    let security_event = security_event_from_exec_event(&event);
+    emit_security_boundary_with_plugins(
+        db,
+        rules,
+        plugin_policy,
+        WriteOp::ExecEvent(event),
+        RuntimeSecurityEventType::ProcessExec,
+        security_event,
+        "process exec",
+    )
+    .await
 }
 
 pub fn emit_file_security_write_and_rules_blocking(
@@ -656,28 +713,6 @@ pub fn security_event_from_explicit_file_event(event: &ExplicitFileSecurityEvent
         security_event = security_event.with_credential_ref(credential_ref);
     }
     security_event
-}
-
-pub async fn emit_process_exec_security_write_and_rules(
-    db: &DbWriter,
-    rules: &SecurityRuleSet,
-    event: ExecEvent,
-) -> Option<SecurityEventId> {
-    let security_event = security_event_from_exec_event(&event);
-    let event_id = emit_security_write(db, WriteOp::ExecEvent(event)).await?;
-    if let Err(error) = emit_matching_security_rules(
-        db,
-        event_id.clone(),
-        RuntimeSecurityEventType::ProcessExec,
-        rules,
-        &security_event,
-        current_unix_ms(),
-    )
-    .await
-    {
-        tracing::warn!(error = %error, "failed to emit process exec security rule ledger rows");
-    }
-    Some(event_id)
 }
 
 pub async fn emit_process_complete_security_write_and_rules(
@@ -984,6 +1019,9 @@ fn prepare_evaluated_event_for_security_rule_ledger(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityRuleEmission {
+    /// The primary ledger row this emission hangs off. Callers correlate their
+    /// own follow-up rows (an exec completion, say) against it.
+    pub event_id: SecurityEventId,
     pub emitted: usize,
     pub enforcement: SecurityEnforcementDecision,
     pub event: SecurityEvent,
@@ -1122,6 +1160,7 @@ pub async fn emit_matching_security_rules_with_decision(
         enforcement.ask_id = Some(ask_id);
     }
     Ok(SecurityRuleEmission {
+        event_id,
         emitted,
         enforcement,
         event: enriched_event,
@@ -1202,6 +1241,7 @@ pub fn emit_matching_security_rules_with_decision_blocking(
         enforcement.ask_id = Some(ask_id);
     }
     Ok(SecurityRuleEmission {
+        event_id,
         emitted,
         enforcement,
         event: enriched_event,

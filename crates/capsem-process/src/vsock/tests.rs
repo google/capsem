@@ -811,3 +811,81 @@ fn a_read_error_ends_capture_without_losing_what_was_already_read() {
     assert_eq!(captured, b"hello");
     assert_eq!(total, 5);
 }
+
+fn emission_with(
+    action: capsem_core::security_engine::SecurityEnforcementAction,
+    rule_id: Option<&str>,
+    reason: Option<&str>,
+) -> capsem_core::security_engine::SecurityRuleEmission {
+    capsem_core::security_engine::SecurityRuleEmission {
+        event_id: capsem_core::security_engine::SecurityEventId::parse("0123456789ab").unwrap(),
+        emitted: 1,
+        enforcement: capsem_core::security_engine::SecurityEnforcementDecision {
+            action,
+            rule_id: rule_id.map(str::to_string),
+            rule_name: rule_id.map(str::to_string),
+            reason: reason.map(str::to_string),
+            ask_id: None,
+        },
+        event: capsem_core::security_engine::SecurityEvent::new(
+            capsem_core::security_engine::RuntimeSecurityEventType::ProcessExec,
+        ),
+        rule_events: Vec::new(),
+    }
+}
+
+#[test]
+fn exec_boundary_allows_only_an_allow_decision() {
+    use capsem_core::security_engine::SecurityEnforcementAction as Action;
+
+    assert_eq!(
+        exec_boundary_refusal(1, &Ok(Some(emission_with(Action::Allow, None, None)))),
+        None,
+        "an allowing boundary must dispatch the command"
+    );
+
+    let blocked = exec_boundary_refusal(
+        2,
+        &Ok(Some(emission_with(
+            Action::Block,
+            Some("profiles.rules.guard_curl"),
+            Some("curl is not allowed"),
+        ))),
+    );
+    assert_eq!(
+        blocked.as_deref(),
+        Some("curl is not allowed"),
+        "the rule's own reason is what the caller sees"
+    );
+
+    let asked = exec_boundary_refusal(
+        3,
+        &Ok(Some(emission_with(
+            Action::Ask,
+            Some("profiles.rules.guard_curl"),
+            None,
+        ))),
+    );
+    assert_eq!(
+        asked.as_deref(),
+        Some("capsem: command requires approval by security rule: profiles.rules.guard_curl"),
+        "an ask with no resolution path still withholds the command"
+    );
+}
+
+#[test]
+fn exec_boundary_refuses_when_it_cannot_decide() {
+    let unwritten = exec_boundary_refusal(4, &Ok(None));
+    assert_eq!(
+        unwritten.as_deref(),
+        Some("capsem: command refused, security ledger unavailable"),
+        "a boundary that could not be recorded must not dispatch"
+    );
+
+    let failed = exec_boundary_refusal(5, &Err("rule set is broken".to_string()));
+    assert_eq!(
+        failed.as_deref(),
+        Some("capsem: command refused, security evaluation failed: rule set is broken"),
+        "an unevaluated boundary must not dispatch"
+    );
+}

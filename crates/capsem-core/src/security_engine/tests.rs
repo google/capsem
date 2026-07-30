@@ -2448,9 +2448,10 @@ match = 'process.exec.id == "42" && process.exec.exit_code == "0" && process.exe
     )
     .unwrap();
 
-    let event_id = emit_process_exec_security_write_and_rules(
+    let event_id = emit_process_exec_security_boundary(
         &writer,
         &rules,
+        BTreeMap::new(),
         ExecEvent {
             event_id: None,
             timestamp: SystemTime::now(),
@@ -2463,7 +2464,9 @@ match = 'process.exec.id == "42" && process.exec.exit_code == "0" && process.exe
         },
     )
     .await
-    .expect("exec event must receive id");
+    .expect("exec boundary evaluates")
+    .expect("exec event must receive id")
+    .event_id;
     emit_process_complete_security_write_and_rules(
         &writer,
         &rules,
@@ -3395,4 +3398,192 @@ match = "has(file.export.path)"
         .expect("the asking plugin records a detection");
     assert_eq!(detection.plugin_mode, Some(SecurityPluginMode::Ask));
     assert_eq!(detection.source, SecurityDetectionSource::Plugin);
+}
+
+fn exec_boundary_rules(action: &str) -> SecurityRuleSet {
+    let profile = SecurityRuleProfile::parse_toml(&format!(
+        r#"
+[profiles.rules.guard_curl]
+name = "guard_curl"
+action = "{action}"
+priority = 10
+detection_level = "high"
+reason = "curl is not allowed in this profile"
+match = 'process.command.contains("curl")'
+
+[default.process]
+name = "process"
+action = "allow"
+priority = "default"
+match = "has(process.exec.path) || has(process.command) || has(process.exec.id)"
+"#
+    ))
+    .expect("profile parses");
+    SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("rules compile")
+}
+
+fn exec_event(exec_id: u64, command: &str) -> ExecEvent {
+    ExecEvent {
+        event_id: None,
+        timestamp: SystemTime::now(),
+        exec_id,
+        command: command.to_string(),
+        source: "api".to_string(),
+        trace_id: Some("trace_exec".to_string()),
+        process_name: None,
+        credential_ref: None,
+    }
+}
+
+#[tokio::test]
+async fn process_exec_boundary_blocks_before_the_command_is_dispatched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 32).unwrap();
+    let rules = exec_boundary_rules("block");
+
+    let emission = emit_process_exec_security_boundary(
+        &writer,
+        &rules,
+        BTreeMap::new(),
+        exec_event(7, "curl https://evil.test"),
+    )
+    .await
+    .expect("boundary evaluates")
+    .expect("boundary writes a primary row");
+
+    assert_eq!(
+        emission.enforcement.action,
+        SecurityEnforcementAction::Block,
+        "a blocking process rule must produce a blocking decision, not just a ledger row"
+    );
+    assert_eq!(
+        emission.enforcement.rule_id.as_deref(),
+        Some("profiles.rules.guard_curl")
+    );
+    assert_eq!(
+        emission.enforcement.reason.as_deref(),
+        Some("curl is not allowed in this profile"),
+        "the caller needs the rule's reason to tell the user why"
+    );
+
+    writer.flush().await;
+    writer.shutdown_blocking();
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let exec_rows: i64 = conn
+        .query_row("SELECT count(*) FROM exec_events", [], |row| row.get(0))
+        .unwrap();
+    let blocked: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM security_rule_events WHERE rule_action = 'block'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(exec_rows, 1, "the attempt is still on the record");
+    assert_eq!(blocked, 1, "and so is the rule that refused it");
+}
+
+#[tokio::test]
+async fn process_exec_boundary_allows_an_unmatched_command_and_carries_its_event_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 32).unwrap();
+    let rules = exec_boundary_rules("block");
+
+    let emission = emit_process_exec_security_boundary(
+        &writer,
+        &rules,
+        BTreeMap::new(),
+        exec_event(8, "echo hello"),
+    )
+    .await
+    .expect("boundary evaluates")
+    .expect("boundary writes a primary row");
+
+    assert_eq!(emission.enforcement.action, SecurityEnforcementAction::Allow);
+
+    writer.flush().await;
+    writer.shutdown_blocking();
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let logged_id: String = conn
+        .query_row("SELECT event_id FROM exec_events", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        logged_id,
+        emission.event_id.as_str(),
+        "the emission must name the exec row so the completion can correlate to it"
+    );
+}
+
+#[tokio::test]
+async fn process_exec_boundary_asks_when_the_rule_asks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 32).unwrap();
+    let rules = exec_boundary_rules("ask");
+
+    let emission = emit_process_exec_security_boundary(
+        &writer,
+        &rules,
+        BTreeMap::new(),
+        exec_event(9, "curl https://evil.test"),
+    )
+    .await
+    .expect("boundary evaluates")
+    .expect("boundary writes a primary row");
+
+    assert_eq!(emission.enforcement.action, SecurityEnforcementAction::Ask);
+    assert!(
+        emission.enforcement.ask_id.is_some(),
+        "an asking exec boundary must leave a pending ask on the ledger"
+    );
+
+    writer.flush().await;
+    writer.shutdown_blocking();
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    let pending: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM security_ask_events WHERE status = 'pending'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(pending, 1);
+}
+
+#[tokio::test]
+async fn process_exec_boundary_honors_a_blocking_plugin() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db_path = tmp.path().join("session.db");
+    let writer = capsem_logger::DbWriter::open(&db_path, 32).unwrap();
+    let rules = exec_boundary_rules("allow");
+    let mut plugin_policy = BTreeMap::new();
+    plugin_policy.insert(
+        "dummy_post_allow".to_string(),
+        SecurityPluginConfig {
+            mode: SecurityPluginMode::Block,
+            detection_level: crate::net::policy_config::DetectionLevel::Critical,
+        },
+    );
+
+    let emission = emit_process_exec_security_boundary(
+        &writer,
+        &rules,
+        plugin_policy,
+        exec_event(10, "echo hello"),
+    )
+    .await
+    .expect("boundary evaluates")
+    .expect("boundary writes a primary row");
+
+    assert_eq!(emission.enforcement.action, SecurityEnforcementAction::Block);
+    assert_eq!(
+        emission.enforcement.reason.as_deref(),
+        Some("process exec blocked by plugin"),
+        "the process rail must name itself the way the file rail does"
+    );
+
+    writer.flush().await;
+    writer.shutdown_blocking();
 }

@@ -460,10 +460,12 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             .find_map(|(key, value)| (key == "CAPSEM_TRACE_ID").then_some(value))
                         });
                     let rules = security_rules_for_cmd.read().unwrap().clone();
-                    let event_id =
-                        capsem_core::security_engine::emit_process_exec_security_write_and_rules(
+                    let plugins = plugin_policy.read().unwrap().clone();
+                    let boundary =
+                        capsem_core::security_engine::emit_process_exec_security_boundary(
                             &db_for_cmd,
                             &rules,
+                            plugins,
                             capsem_logger::ExecEvent {
                                 event_id: None,
                                 timestamp: std::time::SystemTime::now(),
@@ -476,7 +478,25 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             },
                         )
                         .await;
-                    if let Some(event_id) = event_id {
+                    // The command has not reached the guest yet, so a non-allow
+                    // decision is enforceable here on the same terms as the
+                    // network and file boundaries: withhold the dispatch and
+                    // fail the caller's job.
+                    if let Some(refusal) = exec_boundary_refusal(id, &boundary) {
+                        js_for_cmd
+                            .active_exec
+                            .lock()
+                            .unwrap()
+                            .take_if(|active| active.id == id);
+                        if let Some(tx) = js_for_cmd.jobs.lock().unwrap().remove(&id) {
+                            capsem_core::try_send!(
+                                "job_result_exec_blocked",
+                                tx.send(JobResult::Error { message: refusal })
+                            );
+                        }
+                        continue;
+                    }
+                    if let Ok(Some(emission)) = &boundary {
                         if let Some(active) = js_for_cmd
                             .active_exec
                             .lock()
@@ -484,7 +504,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             .as_mut()
                             .filter(|active| active.id == id)
                         {
-                            active.event_id = Some(event_id);
+                            active.event_id = Some(emission.event_id.clone());
                         }
                     }
                     capsem_core::try_send!(
@@ -1319,6 +1339,52 @@ struct FileSecurityBoundary {
 
 fn file_content_preview(data: &[u8]) -> String {
     String::from_utf8_lossy(&data[..data.len().min(FILE_SECURITY_CONTENT_PREVIEW_MAX)]).into_owned()
+}
+
+/// The message to fail an exec job with, or `None` when the command may run.
+///
+/// A boundary that could not be evaluated refuses too: the exec rail is decided
+/// before dispatch, so "we do not know" has to mean "not yet" rather than a
+/// command that slipped through while the ledger was broken.
+fn exec_boundary_refusal(
+    id: u64,
+    boundary: &Result<Option<capsem_core::security_engine::SecurityRuleEmission>, String>,
+) -> Option<String> {
+    match boundary {
+        Ok(Some(emission)) if emission.enforcement.is_allowed() => None,
+        Ok(Some(emission)) => {
+            let rule = emission
+                .enforcement
+                .rule_id
+                .as_deref()
+                .unwrap_or("unknown")
+                .to_string();
+            warn!(
+                id,
+                rule = rule.as_str(),
+                decision = ?emission.enforcement.action,
+                "exec refused by security policy"
+            );
+            Some(emission.enforcement.reason.clone().unwrap_or_else(|| {
+                format!(
+                    "capsem: command {} by security rule: {rule}",
+                    match emission.enforcement.action {
+                        capsem_core::security_engine::SecurityEnforcementAction::Ask =>
+                            "requires approval",
+                        _ => "blocked",
+                    }
+                )
+            }))
+        }
+        Ok(None) => {
+            warn!(id, "failed to write exec boundary security event");
+            Some("capsem: command refused, security ledger unavailable".to_string())
+        }
+        Err(error) => {
+            warn!(id, error, "failed to evaluate exec boundary");
+            Some(format!("capsem: command refused, security evaluation failed: {error}"))
+        }
+    }
 }
 
 async fn emit_explicit_file_security_event(
