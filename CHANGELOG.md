@@ -79,6 +79,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The security-rule CEL engine now pins what an absent field means. Every atom
+  kind -- `has`, `==`, `!=`, `contains`, `startsWith`, `endsWith`, `matches`,
+  `contains_pii` -- is false when the field it reads is missing. That rule is
+  load-bearing: it is the only thing scoping a rule to one event family, so a
+  `file.*` rule cannot fire on an HTTP event. Its cost is that a negation is a
+  filter over data that is present, not a deny-by-default -- `http.host !=
+  "allowed.test"` goes quiet on an event with no host. The tests state both
+  halves and show the pattern that does deny by default: a low-precedence
+  `block` catch-all with higher-precedence `allow` exceptions, which holds even
+  when the field the exception reads is absent.
+
 - `tests/test_exit_status_integrity.py` keeps a gate's result from being read out
   of the last line of a multi-part output. Two shapes of one mistake: `$?` after
   a pipe reports the pipe's status, and `tail -n1` across a multi-part result
