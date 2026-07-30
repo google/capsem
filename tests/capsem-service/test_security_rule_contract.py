@@ -169,3 +169,29 @@ def test_evaluate_route_rejects_fields_that_cannot_match() -> None:
             assert expected in rejected["error"], f"{label}: {rejected['error']}"
     finally:
         service.stop()
+
+
+def test_evaluate_route_survives_a_non_ascii_condition() -> None:
+    """A non-ASCII field name used to panic the condition splitter mid-request."""
+    service = ServiceInstance()
+    try:
+        service.start()
+        client = service.client()
+
+        rejected = _evaluate(
+            client,
+            """
+            [profiles.rules.bad_non_ascii]
+            name = "bad_non_ascii"
+            action = "block"
+            match = 'héllo == "x"'
+            """,
+            {"event_type": "http.request", "http_host": "example.com"},
+        )
+        assert "error" in rejected, rejected
+        assert "not a first-party security-event root" in rejected["error"]
+
+        # The route answered instead of panicking, and the service is still up.
+        assert client.get("/version", timeout=30)
+    finally:
+        service.stop()

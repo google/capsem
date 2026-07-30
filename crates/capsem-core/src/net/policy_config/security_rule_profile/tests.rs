@@ -1532,3 +1532,51 @@ fn every_shipped_rule_field_survives_the_field_contract() {
             .unwrap_or_else(|error| panic!("{label} enforcement rules must compile: {error}"));
     }
 }
+
+#[test]
+fn non_ascii_condition_is_an_error_not_a_panic() {
+    let error = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.bad]
+name = "bad"
+action = "block"
+priority = 10
+match = 'héllo == "x"'
+"#,
+    )
+    .expect_err("a non-ascii field name is invalid");
+
+    assert!(
+        error.contains("is not a first-party security-event root"),
+        "{error}"
+    );
+}
+
+#[test]
+fn non_ascii_string_literal_still_compiles_and_matches() {
+    let profile = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.cafe]
+name = "cafe"
+action = "block"
+priority = 10
+match = 'http.host == "café.example" && has(http.valid)'
+"#,
+    )
+    .expect("a non-ascii literal is legitimate rule authoring");
+    let rules =
+        SecurityRuleSet::compile_profile(&profile, SecurityRuleSource::User).expect("compiles");
+    let event =
+        SecurityEvent::new(RuntimeSecurityEventType::HttpRequest).with_http(HttpSecurityEvent {
+            host: Some("café.example".to_string()),
+            ..Default::default()
+        });
+
+    let evaluation = rules.evaluate(&event).expect("evaluates");
+
+    assert_eq!(evaluation.matched_rules().len(), 1);
+    assert_eq!(
+        evaluation.enforcement_rules()[0].action,
+        SecurityRuleAction::Block
+    );
+}

@@ -112,6 +112,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile carrying a misspelled rule now fails validation instead of shipping a
   dead rule.
 
+- A non-ASCII character outside a string literal panicked rule compilation
+  instead of failing validation. The condition splitter sliced the condition by
+  byte offset, so `héllo == "x"` hit a char-boundary panic -- reachable from any
+  profile or corp rule file, and from the caller-supplied `rules_toml` on the
+  service's enforcement evaluate route. Splitting now compares bytes, which is
+  correct because every character the splitter reacts to is ASCII and a UTF-8
+  continuation byte never collides with one. Non-ASCII string literals such as
+  `http.host == "café.example"` still compile and still match.
+
 - The benchmark retention contract asserted `>= (1, 6)` while its own docstring
   promised retention follows Cargo.toml "without a second place to update". The
   literal was that second place, and it failed the moment the workspace moved to
