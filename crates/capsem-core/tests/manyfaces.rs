@@ -358,27 +358,74 @@ fn refresh_collects_a_kernel_no_profile_references() {
     );
 }
 
+/// Overwrite a profile's kernel digest so two profiles can be made to share one.
+fn pin_kernel(graph: &mut serde_json::Value, id: &str, hash: &str) {
+    for field in ["blake3", "sha256"] {
+        graph["profiles"][id]["architectures"][0]["images"][0]["digest"][field] =
+            serde_json::json!(hash);
+    }
+}
+
 #[test]
 fn removing_a_profile_keeps_a_kernel_another_profile_shares() {
+    // profile1 and profile2 both pin the same kernel, as two Docker images share
+    // a layer. Remove profile2: the blob is still referenced, so it must stay.
     let shared = digest("shared", "kernel", "r1");
-    let remaining = channel(&[("profile1", "2030.0101.1", "2030.0101.10")]);
-    let mut manifest_value = remaining.clone();
-    manifest_value["profiles"]["profile1"]["architectures"][0]["images"][0]["digest"]["blake3"] =
-        serde_json::json!(shared.clone());
-    manifest_value["profiles"]["profile1"]["architectures"][0]["images"][0]["digest"]["sha256"] =
-        serde_json::json!(shared.clone());
+    let mut before = channel(&[
+        ("profile1", "2030.0101.1", "2030.0101.10"),
+        ("profile2", "2030.0202.2", "2030.0202.20"),
+    ]);
+    pin_kernel(&mut before, "profile1", &shared);
+    pin_kernel(&mut before, "profile2", &shared);
 
-    let manifest =
-        ManifestV2::from_json(&manifest_value.to_string()).expect("channel graph is accepted");
     let temp = tempfile::tempdir().expect("tempdir");
     let arch_dir = temp.path().join(host_manifest_arch());
     let path = write_blob(&arch_dir, "vmlinuz", &shared);
 
-    cleanup_unused_assets(&arch_dir, &manifest).expect("cleanup runs");
+    // Both present: the blob is shared, one file for two profiles.
+    let installed =
+        ManifestV2::from_json(&before.to_string()).expect("channel graph is accepted");
+    cleanup_unused_assets(&arch_dir, &installed).expect("cleanup runs");
+    assert!(path.exists(), "a shared blob must survive while both pin it");
+
+    // profile2 removed from the channel; profile1 still pins the same kernel.
+    let mut after = channel(&[("profile1", "2030.0101.1", "2030.0101.10")]);
+    pin_kernel(&mut after, "profile1", &shared);
+    let remaining = ManifestV2::from_json(&after.to_string()).expect("channel graph is accepted");
+
+    cleanup_unused_assets(&arch_dir, &remaining).expect("cleanup runs");
 
     assert!(
         path.exists(),
-        "a blob still pinned by a surviving profile must not be collected"
+        "removing one sharer must not collect a blob another profile still pins"
+    );
+}
+
+#[test]
+fn removing_the_last_profile_that_pinned_a_kernel_collects_it() {
+    // The other half of reference counting: once nothing pins it, it goes.
+    // Without this, the test above would pass on a cleanup that never deletes.
+    let lonely = digest("profile2", "kernel", "only");
+    let mut before = channel(&[
+        ("profile1", "2030.0101.1", "2030.0101.10"),
+        ("profile2", "2030.0202.2", "2030.0202.20"),
+    ]);
+    pin_kernel(&mut before, "profile2", &lonely);
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let arch_dir = temp.path().join(host_manifest_arch());
+    let path = write_blob(&arch_dir, "vmlinuz", &lonely);
+    // profile1's own kernel, so the directory is not left empty.
+    write_blob(&arch_dir, "vmlinuz", &kernel_digest_of(&before, "profile1"));
+
+    let after = channel(&[("profile1", "2030.0101.1", "2030.0101.10")]);
+    let remaining = ManifestV2::from_json(&after.to_string()).expect("channel graph is accepted");
+
+    cleanup_unused_assets(&arch_dir, &remaining).expect("cleanup runs");
+
+    assert!(
+        !path.exists(),
+        "a blob no surviving profile pins must be collected, or nothing ever is"
     );
 }
 
