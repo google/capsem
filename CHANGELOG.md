@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed the asset gate's Docker capacity test hardcoding free-space fixtures
+  against the old 24 GiB floor. "30 GiB is plenty" silently became "30 GiB is
+  not enough" when the floor moved to 40, and it surfaced as a release gate
+  refusing to build assets rather than as a stale fixture. The fixtures now
+  derive from `config/storage-policy.toml`, so the floor and the test that
+  exercises it cannot disagree.
+
 ### Changed
 
 - Raised the Docker storage budget so BuildKit stops discarding a hot cache.

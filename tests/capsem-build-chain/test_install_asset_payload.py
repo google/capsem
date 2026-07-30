@@ -196,6 +196,23 @@ fi
     )
 
 
+def _storage_rail(rail: str) -> dict:
+    """The storage policy's limits for `rail`.
+
+    Read rather than restated. These fixtures simulate a daemon sitting above
+    or below the free-space floor, so every literal here is only meaningful
+    relative to that floor: hardcoding "30 GiB is plenty" silently became
+    "30 GiB is not enough" the moment the floor moved to 40, and the failure
+    surfaced as a release gate refusing to build assets.
+    """
+    import tomllib
+
+    policy = tomllib.loads(
+        (PROJECT_ROOT / "config" / "storage-policy.toml").read_text(encoding="utf-8")
+    )
+    return policy["rails"][rail]
+
+
 def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     recipe = _just_recipe_block("_gate-assets:")
 
@@ -203,40 +220,55 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     assert preflight in recipe
     assert recipe.index(preflight) < recipe.index("build_arch_lane arm64")
 
-    enough = _run_docker_space_gate(tmp_path / "enough", before_kib=30 * 1024 * 1024, after_kib=0)
+    assets = _storage_rail("assets")
+    floor_gib = assets["minimum_free_gib"]
+    keep_gib = assets["buildkit_keep_gib"]
+    # Comfortably clear of the floor, and clearly under it, whatever it is.
+    ample_gib = floor_gib + 10
+    starved_gib = max(floor_gib // 4, 1)
+    ample_kib = ample_gib * 1024 * 1024
+    starved_kib = starved_gib * 1024 * 1024
+
+    enough = _run_docker_space_gate(
+        tmp_path / "enough", before_kib=ample_kib, after_kib=0
+    )
     assert enough.returncode == 0, enough.stderr
     assert "Docker storage control [enforce/preflight]" in enough.stdout
 
     reclaimed = _run_docker_space_gate(
         tmp_path / "reclaimed",
-        before_kib=8 * 1024 * 1024,
-        after_kib=30 * 1024 * 1024,
+        before_kib=starved_kib,
+        after_kib=ample_kib,
     )
     assert reclaimed.returncode == 0, reclaimed.stderr
     assert "buildkit-pressure-prune" in reclaimed.stdout
-    assert "8.0 GiB -> 30.0 GiB" in reclaimed.stdout
+    assert f"{starved_gib}.0 GiB -> {ample_gib}.0 GiB" in reclaimed.stdout
     reclaimed_commands = (tmp_path / "reclaimed" / "docker-commands").read_text()
-    assert "builder prune --force --keep-storage 24GB" in reclaimed_commands
+    assert f"builder prune --force --keep-storage {keep_gib}GB" in reclaimed_commands
     assert "builder prune -af" not in reclaimed_commands
 
+    package = _storage_rail("package")
     package_reclaimed = _run_docker_space_gate(
         tmp_path / "package-reclaimed",
-        before_kib=10 * 1024 * 1024,
-        after_kib=30 * 1024 * 1024,
+        before_kib=starved_kib,
+        after_kib=ample_kib,
         rail="package",
     )
     assert package_reclaimed.returncode == 0, package_reclaimed.stderr
-    assert "retain 24 GiB" in package_reclaimed.stdout
+    assert f"retain {package['buildkit_keep_gib']} GiB" in package_reclaimed.stdout
     package_commands = (tmp_path / "package-reclaimed" / "docker-commands").read_text()
-    assert "builder prune --force --keep-storage 24GB" in package_commands
+    assert (
+        f"builder prune --force --keep-storage {package['buildkit_keep_gib']}GB"
+        in package_commands
+    )
 
     exhausted = _run_docker_space_gate(
         tmp_path / "exhausted",
-        before_kib=8 * 1024 * 1024,
-        after_kib=10 * 1024 * 1024,
+        before_kib=starved_kib,
+        after_kib=starved_kib,
     )
     assert exhausted.returncode != 0
-    assert "requires 24.0 GiB free" in exhausted.stderr
+    assert f"requires {floor_gib}.0 GiB free" in exhausted.stderr
 
     storage_script = (PROJECT_ROOT / "scripts" / "ensure-docker-space.sh").read_text()
     controller = (PROJECT_ROOT / "scripts" / "docker-storage-policy.py").read_text()
