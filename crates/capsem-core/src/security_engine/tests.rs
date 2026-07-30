@@ -3026,3 +3026,144 @@ fn http_materializer_resolves_broker_ref_only_for_upstream_copy() {
         Some(reference.as_str())
     );
 }
+
+fn fully_populated_security_event() -> SecurityEvent {
+    let text = || Some("populated".to_string());
+    SecurityEvent::new(RuntimeSecurityEventType::HttpRequest)
+        .with_http(HttpSecurityEvent {
+            host: text(),
+            method: text(),
+            path: text(),
+            query: text(),
+            status: text(),
+            body: text(),
+        })
+        .with_dns(DnsSecurityEvent {
+            qname: text(),
+            qtype: text(),
+        })
+        .with_mcp(McpSecurityEvent {
+            method: text(),
+            server_name: text(),
+            tool_call_name: text(),
+            tool_list: text(),
+            request: Some(McpRequestSecurityEvent {
+                id: text(),
+                method: text(),
+                arguments: Some(serde_json::json!({"populated": true})),
+            }),
+            response: Some(McpResponseSecurityEvent {
+                content: Some(serde_json::json!(["populated"])),
+            }),
+            error: Some(McpErrorSecurityEvent { message: text() }),
+        })
+        .with_model(ModelSecurityEvent {
+            provider: text(),
+            name: text(),
+            request_body: text(),
+            response_body: text(),
+            tool_calls: text(),
+        })
+        .with_file(FileSecurityEvent {
+            import_path: text(),
+            import_name: text(),
+            import_ext: text(),
+            import_mime_type: text(),
+            import_content: text(),
+            export_path: text(),
+            export_name: text(),
+            export_ext: text(),
+            export_mime_type: text(),
+            export_content: text(),
+            read_path: text(),
+            read_name: text(),
+            read_ext: text(),
+            read_mime_type: text(),
+            read_content: text(),
+            create_path: text(),
+            create_name: text(),
+            create_ext: text(),
+            create_mime_type: text(),
+            create_content: text(),
+            write_path: text(),
+            write_name: text(),
+            write_ext: text(),
+            write_mime_type: text(),
+            write_content: text(),
+            delete_path: text(),
+            delete_name: text(),
+            delete_ext: text(),
+            delete_mime_type: text(),
+            delete_content: text(),
+            content: text(),
+        })
+        .with_process(ProcessSecurityEvent {
+            exec_id: text(),
+            exec_path: text(),
+            name: text(),
+            command: text(),
+            exit_code: text(),
+            stdout: text(),
+            stderr: text(),
+        })
+        .with_ip(IpSecurityEvent {
+            value: text(),
+            version: text(),
+        })
+        .with_tcp(TcpSecurityEvent { port: text() })
+        .with_udp(UdpSecurityEvent { port: text() })
+}
+
+#[test]
+fn security_event_cel_fields_all_resolve() {
+    use crate::net::policy_config::PolicySubject;
+
+    let event = fully_populated_security_event();
+    let unresolved = SECURITY_EVENT_CEL_FIELDS
+        .iter()
+        .copied()
+        .filter(|field| event.get_policy_field(field).is_none())
+        .collect::<Vec<_>>();
+
+    assert!(
+        unresolved.is_empty(),
+        "every advertised CEL field must resolve on a fully populated event; \
+         these do not: {unresolved:?}"
+    );
+}
+
+#[test]
+fn security_event_cel_fields_are_sorted_deduped_and_rooted() {
+    let mut sorted = SECURITY_EVENT_CEL_FIELDS.to_vec();
+    sorted.sort_unstable();
+    sorted.dedup();
+    assert_eq!(
+        sorted, SECURITY_EVENT_CEL_FIELDS,
+        "the CEL field contract must stay sorted and deduped so drift is reviewable"
+    );
+
+    for field in SECURITY_EVENT_CEL_FIELDS {
+        let root = field.split('.').next().expect("field has a root");
+        assert!(
+            crate::net::policy_config::SECURITY_EVENT_CEL_ROOTS.contains(&root),
+            "field '{field}' hangs off a root that is not a declared CEL root"
+        );
+        assert!(
+            field.len() > root.len() + 1,
+            "field '{field}' must name a leaf, not a bare family root"
+        );
+    }
+}
+
+#[test]
+fn every_cel_root_exposes_at_least_one_field() {
+    for root in crate::net::policy_config::SECURITY_EVENT_CEL_ROOTS {
+        let prefix = format!("{root}.");
+        assert!(
+            SECURITY_EVENT_CEL_FIELDS
+                .iter()
+                .any(|field| field.starts_with(&prefix)),
+            "root '{root}' is advertised but exposes no CEL field"
+        );
+    }
+}

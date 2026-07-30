@@ -1452,3 +1452,83 @@ mode = "block"
 
     assert!(error.contains("plugin id"), "{error}");
 }
+
+#[test]
+fn misspelled_leaf_field_fails_rule_compilation() {
+    let error = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.block_passwd]
+name = "block_passwd"
+action = "block"
+priority = 10
+match = 'file.wrte.path == "/etc/passwd"'
+"#,
+    )
+    .expect_err("a misspelled leaf must not compile into a rule that never matches");
+
+    assert!(
+        error.contains("field 'file.wrte.path' is not a security-event field on root 'file'"),
+        "{error}"
+    );
+    assert!(
+        error.contains("file.write.path"),
+        "the error must list the fields the author meant: {error}"
+    );
+}
+
+#[test]
+fn bare_family_root_fails_rule_compilation() {
+    let error = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.any_http]
+name = "any_http"
+action = "block"
+priority = 10
+match = 'has(http)'
+"#,
+    )
+    .expect_err("has(<root>) resolves to nothing, so it must not compile");
+
+    assert!(
+        error.contains("field 'http' is not a security-event field on root 'http'"),
+        "{error}"
+    );
+    assert!(error.contains("http.host"), "{error}");
+}
+
+#[test]
+fn unknown_root_keeps_its_own_diagnosis() {
+    let error = SecurityRuleProfile::parse_toml(
+        r#"
+[profiles.rules.stale]
+name = "stale"
+action = "block"
+priority = 10
+match = 'request.host == "example.com"'
+"#,
+    )
+    .expect_err("unknown roots stay rejected");
+
+    assert!(
+        error.contains("field 'request.host' is not a first-party security-event root"),
+        "{error}"
+    );
+}
+
+#[test]
+fn every_shipped_rule_field_survives_the_field_contract() {
+    for (label, toml_text) in [
+        (
+            "code",
+            include_str!("../../../../../../config/profiles/code/enforcement.toml"),
+        ),
+        (
+            "co-work",
+            include_str!("../../../../../../config/profiles/co-work/enforcement.toml"),
+        ),
+        ("provider defaults", DEFAULT_PROVIDER_RULES),
+    ] {
+        SecurityRuleProfile::parse_toml(toml_text)
+            .unwrap_or_else(|error| panic!("{label} enforcement rules must compile: {error}"));
+    }
+}

@@ -101,6 +101,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A security rule naming a field that does not exist no longer compiles. Field
+  validation checked only the CEL root, so `file.wrte.path == "/etc/passwd"`
+  passed `capsem-admin` validation and the service evaluate route, then matched
+  nothing forever -- a `block` rule that silently never fires. The same hole
+  accepted a bare family root: `has(http)` resolves to no field, so it was always
+  false. `SECURITY_EVENT_CEL_FIELDS` in `capsem-core` is now the authoring
+  contract, the rejection names the fields the author meant, and a guard test
+  proves every advertised field resolves against a fully populated event. A
+  profile carrying a misspelled rule now fails validation instead of shipping a
+  dead rule.
+
 - The benchmark retention contract asserted `>= (1, 6)` while its own docstring
   promised retention follows Cargo.toml "without a second place to update". The
   literal was that second place, and it failed the moment the workspace moved to
