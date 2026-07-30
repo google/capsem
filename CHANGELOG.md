@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Added `tests/test_rust_test_name_assertions.py`, which fails when a Python
+  source contract asserts a Rust test name against production source instead of
+  the sibling `tests.rs` the test lives in. This class cost two release
+  attempts: sixteen contracts under `tests/capsem-release/`, then five more
+  under `tests/capsem-install/` that run only inside the Docker install gate and
+  so stayed invisible until forty minutes into a release run. The guard resolves
+  each assertion's target through the AST, per function scope, so contracts that
+  legitimately name a relocated test while asserting it against a test module or
+  a spec document are not flagged -- a guard needing exemptions is not a guard.
+
 ### Fixed
 
 - Fixed `docker-storage-policy.py enforce` crashing with a bare

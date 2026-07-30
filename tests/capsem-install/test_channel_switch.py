@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from rust_sources import sibling_tests
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 UPDATE_RS = PROJECT_ROOT / "crates" / "capsem" / "src" / "update.rs"
@@ -38,7 +40,7 @@ def test_resolver_never_selects_revoked_manifest() -> None:
     assert "enum ReleaseManifestStatus" in source
     assert "ReleaseManifestStatus::Revoked" in source
     assert ".filter(|manifest| manifest.status != ReleaseManifestStatus::Revoked)" in source
-    assert "channel_manifest_resolution_never_selects_revoked_manifest" in source
+    assert "channel_manifest_resolution_never_selects_revoked_manifest" in sibling_tests(UPDATE_RS)
 
 
 def test_old_capsem_selects_compatible_supported_manifest() -> None:
@@ -49,7 +51,7 @@ def test_old_capsem_selects_compatible_supported_manifest() -> None:
     assert "ReleaseManifestStatus::Supported => 1" in source
     assert (
         "channel_manifest_resolution_old_capsem_selects_compatible_supported_manifest"
-        in source
+        in sibling_tests(UPDATE_RS)
     )
 
 
@@ -62,8 +64,10 @@ def test_channel_checks_share_one_manifest_metadata_document() -> None:
     assert "fn cache_path_for_source" not in source
     assert "fn cache_key_for_source" not in source
     assert "update-checks" not in source
-    assert "single_manifest_metadata_records_only_the_latest_channel_check" in source
-    assert "https://release.capsem.org/assets/nightly/manifest.json" in source
+    assert "single_manifest_metadata_records_only_the_latest_channel_check" in sibling_tests(UPDATE_RS)
+    assert "https://release.capsem.org/assets/nightly/manifest.json" in sibling_tests(
+        UPDATE_RS
+    )
     assert source.count("update_check_from_release_payload(") >= 3
 
 
@@ -98,7 +102,7 @@ def test_switch_stable_to_nightly_and_back() -> None:
     assert nightly["packages"][0]["name"] == "Capsem-1.5.0-nightly.20260702.pkg"
     assert stable_before["packages"][0]["binaries"][0]["version"] == "1.4.0"
     assert nightly["packages"][0]["binaries"][0]["version"] == "1.5.0-nightly.20260702"
-    assert "stable_to_nightly_manifest_switch_resolves_nightly_updates" in source
+    assert "stable_to_nightly_manifest_switch_resolves_nightly_updates" in sibling_tests(UPDATE_RS)
     assert "resolve_release_channel_manifest" in source
     assert "verify_selected_channel_manifest" in source
 
@@ -116,4 +120,4 @@ def test_switch_never_selects_revoked_records() -> None:
         assert current[0]["url"] not in {record["url"] for record in revoked}
 
     assert ".filter(|manifest| manifest.status != ReleaseManifestStatus::Revoked)" in source
-    assert "channel_manifest_resolution_never_selects_revoked_manifest" in source
+    assert "channel_manifest_resolution_never_selects_revoked_manifest" in sibling_tests(UPDATE_RS)
