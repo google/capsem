@@ -184,6 +184,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the stricter rule the stronger priority rather than trusting the alphabet --
   and the deny-by-default pattern that a negation cannot express.
 
+- One row the schema rejected discarded every row batched alongside it. The
+  writer executes a batch as a single transaction for throughput, so a `CHECK`
+  violation on one op -- a malformed `credential_ref`, say -- rolled the whole
+  transaction back and the writer logged a `warn` and moved on. On a security
+  ledger that turned one bad row from one producer into a silent hole covering
+  an arbitrary window of unrelated events, up to a full batch wide. A failed
+  batch is now re-run one op at a time: the valid ops land, each rejected op is
+  dropped alone with an `error` log naming its kind and event id, and
+  `db.write_op_rejected_total` counts it. The committing path is untouched, so
+  the fast path keeps its batching. The retry reloads the model-item dedup set
+  first, since the rollback left it describing rows that no longer exist.
+
 - The benchmark retention contract asserted `>= (1, 6)` while its own docstring
   promised retention follows Cargo.toml "without a second place to update". The
   literal was that second place, and it failed the moment the workspace moved to
