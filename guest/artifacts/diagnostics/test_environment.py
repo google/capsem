@@ -51,13 +51,27 @@ def test_shell_is_bash():
 # -- Kernel and architecture --
 
 
+
+# The kernel branch Capsem builds its guest kernel from. Held equal to
+# `kernel_branch` in config/docker/image/build.toml by
+# tests/test_guest_kernel_branch_contract.py.
+#
+# This is a branch, not a floor. A `major >= N` floor looks conservative but
+# fails in both directions once the pin moves: it rejected every image after
+# the pin went from 7.0 to 6.18, and before that it would have accepted any
+# future kernel the guest was never built or tested against.
+EXPECTED_KERNEL_BRANCH = "6.18"
+
+
 def test_kernel_is_supported_custom_build():
-    """Kernel must be a supported custom Capsem build."""
+    """Kernel must be the custom Capsem build for the configured branch."""
     result = run("uname -r")
     assert result.returncode == 0
     version = result.stdout.strip()
-    major = int(version.split(".", 1)[0])
-    assert major >= 7, f"unexpected kernel version: {version}"
+    branch = ".".join(version.split(".")[:2])
+    assert branch == EXPECTED_KERNEL_BRANCH, (
+        f"expected Capsem kernel branch {EXPECTED_KERNEL_BRANCH}, got {version}"
+    )
 
 
 def test_architecture():

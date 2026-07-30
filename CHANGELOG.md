@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fixed the guest kernel diagnostic failing every freshly built image. Moving
+  `kernel_branch` from 7.0 to 6.18 left the in-VM check asserting
+  `major >= 7`, so each newly built kernel failed its own diagnostics at the
+  end of the release gate, minutes of VM boots away from the one-line cause.
+  The diagnostic now asserts the configured branch, and
+  `tests/test_guest_kernel_branch_contract.py` holds it equal to the build pin
+  so the two cannot drift again. A `major >= N` floor was wrong in both
+  directions: it rejected the pinned branch and would have accepted any future
+  kernel the guest was never built against.
+
 - Fixed VM boot rejecting correct assets because a pin and its digest were
   spelled differently. Profile pins derived from the release graph carry
   `blake3:<hex>`; asset manifests carry bare hex. Boot compared the two
