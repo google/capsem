@@ -237,24 +237,42 @@ fn a_profiles_kernel_is_reachable_by_its_own_name() {
 }
 
 #[test]
-fn expected_hashes_must_be_asked_for_by_profile() {
+fn every_profiles_boot_hashes_are_retrievable_without_a_global_pointer() {
     let graph = wheel_breaker();
     let manifest = ManifestV2::from_json(&graph.to_string()).expect("channel graph is accepted");
     let arch = host_manifest_arch();
 
-    // Whatever the global view answers, it can only match one profile. Booting
-    // any other profile against that answer is the release-blocking defect.
+    // Booting profileN must be verifiable against profileN's own kernel. A
+    // single channel-wide answer can only ever match one of the three, which is
+    // what failed the 1.6 release gate: the path came from the booting profile
+    // and the hash came from the global pointer.
+    for id in ["profile1", "profile2", "profile3"] {
+        let wanted = kernel_digest_of(&graph, id);
+        let verifiable = manifest.assets.releases.values().any(|release| {
+            release
+                .arches
+                .get(arch)
+                .and_then(|assets| assets.get("vmlinuz"))
+                .is_some_and(|entry| entry.hash == wanted)
+        });
+        assert!(
+            verifiable,
+            "{id} must be bootable against its own kernel hash, not another profile's"
+        );
+    }
+
+    // And the global pointer must not be the thing anyone verifies against: it
+    // answers for exactly one profile out of three.
     let global = manifest
         .expected_hashes_current(arch)
-        .expect("a flat manifest answers for some profile");
-    let matches = ["profile1", "profile2", "profile3"]
+        .expect("a flat manifest still answers for its default");
+    let profiles_it_covers = ["profile1", "profile2", "profile3"]
         .into_iter()
         .filter(|id| kernel_digest_of(&graph, id) == global.kernel)
         .count();
-
     assert_eq!(
-        matches, 3,
-        "one global answer cannot verify three profiles; hashes must be per profile"
+        profiles_it_covers, 1,
+        "the global answer covers one profile, so boot must not use it"
     );
 }
 

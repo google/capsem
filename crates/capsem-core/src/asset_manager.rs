@@ -492,13 +492,103 @@ fn manifest_v2_from_release_graph(value: &serde_json::Value) -> Result<ManifestV
         bail!("release graph contains no profiles");
     }
 
-    let (_, profile) = profiles
+    // Every profile owns its own images, so a channel-wide pointer can name at
+    // most one of them. Emit a release for each and let `current` name only the
+    // default, so no profile's assets are discarded on the way through.
+    let usable: Vec<(&String, &serde_json::Value)> = profiles
         .iter()
         .filter(|(_, profile)| {
             profile.get("status").and_then(serde_json::Value::as_str) != Some("revoked")
         })
-        .min_by_key(|(id, _)| if id.as_str() == "default" { 0 } else { 1 })
-        .context("release graph contains no usable profile")?;
+        .collect();
+    if usable.is_empty() {
+        bail!("release graph contains no usable profile");
+    }
+    let default_first = {
+        let mut ordered = usable.clone();
+        ordered.sort_by_key(|(id, _)| (id.as_str() != "default", (*id).clone()));
+        ordered
+    };
+
+    let mut releases: HashMap<String, AssetRelease> = HashMap::new();
+    let mut current_version: Option<String> = None;
+    for (profile_id, profile) in default_first {
+        let (asset_version, min_binary, arches) = profile_asset_release(profile)?;
+        // Two profiles may share an image revision while pinning different
+        // images, so the revision alone cannot key them.
+        let key = if releases.contains_key(&asset_version) {
+            format!("{asset_version}+{profile_id}")
+        } else {
+            asset_version
+        };
+        if current_version.is_none() {
+            current_version = Some(key.clone());
+        }
+        releases.insert(
+            key,
+            AssetRelease {
+                date: String::new(),
+                deprecated: false,
+                deprecated_date: None,
+                min_binary,
+                arches,
+            },
+        );
+    }
+    let asset_version = current_version.context("release graph contains no usable profile")?;
+
+    let packages = value
+        .get("packages")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let binary_version = packages
+        .iter()
+        .filter(|package| {
+            package.get("status").and_then(serde_json::Value::as_str) != Some("revoked")
+        })
+        .find_map(|package| package.get("version").and_then(serde_json::Value::as_str))
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_string();
+
+    Ok(ManifestV2 {
+        format: 2,
+        refresh_policy: value
+            .get("refresh_policy")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("24h")
+            .to_string(),
+        asset_base: None,
+        assets: AssetsSection {
+            current: asset_version.clone(),
+            releases,
+        },
+        binaries: BinariesSection {
+            current: binary_version.clone(),
+            releases: HashMap::from([(
+                binary_version.clone(),
+                BinaryRelease {
+                    date: String::new(),
+                    deprecated: false,
+                    deprecated_date: None,
+                    min_assets: asset_version,
+                    version: binary_version,
+                    files: Vec::new(),
+                },
+            )]),
+        },
+    })
+}
+
+/// One profile's assets: architecture -> logical asset name -> entry.
+type ProfileArchAssets = HashMap<String, HashMap<String, AssetEntry>>;
+
+/// One profile's image set: its asset version, minimum binary, and per-arch
+/// assets. Each profile carries its own, which is why no channel-wide pointer
+/// can stand in for them.
+fn profile_asset_release(
+    profile: &serde_json::Value,
+) -> Result<(String, String, ProfileArchAssets)> {
     let min_binary = profile
         .get("min_capsem_version")
         .and_then(serde_json::Value::as_str)
@@ -580,56 +670,7 @@ fn manifest_v2_from_release_graph(value: &serde_json::Value) -> Result<ManifestV
     let asset_version =
         asset_version.context("release graph profile contains no image revision")?;
 
-    let packages = value
-        .get("packages")
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let binary_version = packages
-        .iter()
-        .filter(|package| {
-            package.get("status").and_then(serde_json::Value::as_str) != Some("revoked")
-        })
-        .find_map(|package| package.get("version").and_then(serde_json::Value::as_str))
-        .unwrap_or(env!("CARGO_PKG_VERSION"))
-        .to_string();
-
-    Ok(ManifestV2 {
-        format: 2,
-        refresh_policy: value
-            .get("refresh_policy")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("24h")
-            .to_string(),
-        asset_base: None,
-        assets: AssetsSection {
-            current: asset_version.clone(),
-            releases: HashMap::from([(
-                asset_version.clone(),
-                AssetRelease {
-                    date: String::new(),
-                    deprecated: false,
-                    deprecated_date: None,
-                    min_binary,
-                    arches,
-                },
-            )]),
-        },
-        binaries: BinariesSection {
-            current: binary_version.clone(),
-            releases: HashMap::from([(
-                binary_version.clone(),
-                BinaryRelease {
-                    date: String::new(),
-                    deprecated: false,
-                    deprecated_date: None,
-                    min_assets: asset_version,
-                    version: binary_version,
-                    files: Vec::new(),
-                },
-            )]),
-        },
-    })
+    Ok((asset_version, min_binary, arches))
 }
 
 /// Parse and fingerprint every profile-owned identity in a public graph.
