@@ -8,9 +8,9 @@ version built from `$(date +%s)`, a log stream read by a name that rotation had
 already moved. Each was a decision no test could reach.
 
 The rule now is that the justfile dispatches and this package decides.
-`tests/test_justfile_is_a_dispatcher.py` holds the justfile to that, and
-`tests/test_gate_module_size.py` holds this package to modules small enough to
-keep reading.
+`tests/test_gate_boundary.py` holds both halves: the justfile to a body it
+cannot grow logic into, and this package to modules small enough to keep
+reading.
 """
 
 from __future__ import annotations

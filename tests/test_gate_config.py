@@ -211,3 +211,119 @@ def test_every_phase_declares_a_distinct_boundary_and_rail_pair(
     assert len(set(pairs)) == len(pairs), (
         "two names for one boundary/rail pair means one of them is dead"
     )
+
+
+# ---------------------------------------------------------------------------
+# Contention
+# ---------------------------------------------------------------------------
+
+
+def test_every_exclusive_says_why_it_exists(config: gate_config.GateConfig) -> None:
+    """An exclusive without a reason is a serialization nobody can justify
+    later, and therefore one nobody can safely remove."""
+    for name, exclusive in config.execution.exclusives.items():
+        assert exclusive.name == name
+        assert len(exclusive.reason.split()) >= 5, (
+            f"{name} needs a reason a reader can act on, not a restatement"
+        )
+
+
+def test_an_unknown_exclusive_names_itself_and_the_alternatives(
+    config: gate_config.GateConfig,
+) -> None:
+    """A step that invents its own exclusive contends with nothing, and runs
+    beside the step it was written to avoid."""
+    with pytest.raises(GateError) as failure:
+        config.exclusive("gpu")
+
+    message = str(failure.value)
+    assert "gpu" in message
+    assert "apple_vz" in message
+
+
+# ---------------------------------------------------------------------------
+# The machine lock
+# ---------------------------------------------------------------------------
+
+
+def test_the_lockfile_lives_outside_every_tree_the_gate_wipes(
+    config: gate_config.GateConfig,
+) -> None:
+    """The run takes the lock and *then* removes CAPSEM_HOME.
+
+    A lockfile inside that tree would be deleted while held, and the next run
+    would take a lock on a fresh inode -- two gates, both convinced they were
+    alone, one of them deleting the other's home.
+    """
+    lock = Path(config.locks.gate.path)
+    holder = Path(config.locks.gate.holder_record)
+
+    wiped = [Path(entry) for entry in config.disk.reclaimable]
+    for tree in wiped:
+        assert tree not in lock.parents, f"{lock} sits inside reclaimable {tree}"
+        assert tree not in holder.parents, f"{holder} sits inside reclaimable {tree}"
+
+
+def test_the_lock_waits_long_enough_to_outlast_a_gate_run(
+    config: gate_config.GateConfig,
+) -> None:
+    """A timeout shorter than a run turns queueing into a spurious failure."""
+    settings = config.locks.gate
+
+    assert settings.wait_timeout_seconds >= 3600
+    assert 0 < settings.report_after_seconds < settings.wait_timeout_seconds
+
+
+# ---------------------------------------------------------------------------
+# The run log and the disk it occupies
+# ---------------------------------------------------------------------------
+
+
+def test_the_run_log_keeps_enough_history_to_compare_against(
+    config: gate_config.GateConfig,
+) -> None:
+    settings = config.runlog
+
+    assert settings.keep_runs >= 2, "one kept run cannot be compared with anything"
+    assert settings.keep_bytes > 0
+    assert settings.slow_action_seconds > 0
+
+
+def test_the_run_log_is_itself_reclaimable(config: gate_config.GateConfig) -> None:
+    """Rotation bounds it during a run; `gc` has to be able to reclaim the rest."""
+    assert config.runlog.root in config.disk.reclaimable
+
+
+def test_nothing_reclaimable_can_be_aimed_outside_the_checkout(
+    config: gate_config.GateConfig,
+) -> None:
+    """These are whole-tree removals. The difference between a relative path
+    and one that escapes upwards is a single editing mistake."""
+    for entry in config.disk.reclaimable:
+        assert not Path(entry).is_absolute()
+        assert ".." not in Path(entry).parts
+
+
+@pytest.mark.parametrize("escape", ["/etc", "../../elsewhere", "target/../.."])
+def test_a_reclaimable_path_that_escapes_is_refused_at_load(
+    tmp_path: Path, escape: str
+) -> None:
+    """Red-first, permanently: the loader must reject the shape it forbids."""
+    source = tmp_path / "config"
+    source.mkdir()
+    original = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    (source / "gate.toml").write_text(
+        original.replace('    "target/gate-runs",', f'    "{escape}",')
+    )
+
+    with pytest.raises(GateError) as failure:
+        gate_config.load(tmp_path)
+
+    assert "escape" in str(failure.value)
+
+
+def test_the_free_space_floor_exceeds_what_one_run_is_warned_about(
+    config: gate_config.GateConfig,
+) -> None:
+    """Otherwise the gate refuses to start on a footprint it considers normal."""
+    assert config.disk.required_free_gb > config.disk.run_footprint_warn_gb

@@ -23,11 +23,9 @@ from . import host
 from .configschema import (
     Arch,
     AssetsConfig,
-    BoundaryConfig,
     CandidateConfig,
     DoctorConfig,
     InstallConfig,
-    LintConfig,
     PackageConfig,
     PidfileConfig,
     StorageConfig,
@@ -35,6 +33,15 @@ from .configschema import (
     VersionsConfig,
 )
 from .errors import GateError
+from .harnessschema import (
+    BoundaryConfig,
+    DiskConfig,
+    Exclusive,
+    ExecutionConfig,
+    LintConfig,
+    LocksConfig,
+    RunLogConfig,
+)
 
 CONFIG_RELATIVE = Path("config") / "gate.toml"
 
@@ -52,6 +59,10 @@ class GateConfig(Strict):
     doctor: DoctorConfig
     lint: LintConfig
     boundary: BoundaryConfig
+    execution: ExecutionConfig
+    locks: LocksConfig
+    runlog: RunLogConfig
+    disk: DiskConfig
 
     root: Path = Field(exclude=True)
     """The checkout this configuration was loaded from."""
@@ -95,6 +106,24 @@ class GateConfig(Strict):
     def host_arch(self) -> Arch:
         """The architecture of the machine running the gate."""
         return self.arch(host.machine())
+
+    # -- contention --------------------------------------------------------
+
+    def exclusive(self, name: str) -> Exclusive:
+        """The named thing only one step may hold at a time.
+
+        Looked up rather than constructed, for the same reason architectures
+        are: a step that invents its own exclusive contends with nothing, and
+        would run beside the step it was written to avoid.
+        """
+        try:
+            return self.execution.exclusives[name]
+        except KeyError:
+            raise GateError(
+                f"unknown exclusive {name!r}; declare it in "
+                f"[execution.exclusives] with a reason, or use one of "
+                f"{', '.join(sorted(self.execution.exclusives))}"
+            ) from None
 
 
 def load(root: Path) -> GateConfig:

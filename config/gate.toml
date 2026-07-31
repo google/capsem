@@ -437,3 +437,99 @@ remaining_shell_recipes = [
 # continuations runs untested.
 shell_control_flow = ["if ", "for ", "while ", "case ", "until ", "trap "]
 recipes_with_inline_control_flow = ["_pnpm-install"]
+
+# ---------------------------------------------------------------------------
+# What may not run beside what
+# ---------------------------------------------------------------------------
+
+# Each entry names one thing only one step may hold at a time, and why. The
+# reason is the point. Written as `&` and `wait`, this knowledge lived in shell
+# comments -- seven backgrounded jobs in `_test-candidate-run` and three more in
+# `smoke`, with nothing to stop an eighth from violating a constraint recorded
+# three hundred lines away.
+#
+# A step names what it contends for; the plan gives each name a lock. Two
+# claimants of one entry can never overlap, and claimants of different entries
+# still do.
+
+[execution.exclusives.apple_vz]
+reason = "two benchmark files launching VMs at once measure each other, not Capsem"
+
+[execution.exclusives.host_service]
+reason = "production has one service and one service-scoped snapshot lock; an xdist worker per service does not reproduce that"
+
+[execution.exclusives.workspace_binaries]
+reason = "cargo build --workspace atomically replaces the binaries a running VM test is using"
+
+[execution.exclusives.docker_daemon]
+reason = "the storage rails reserve and release a single daemon's disk budget"
+
+# ---------------------------------------------------------------------------
+# One gate per machine
+# ---------------------------------------------------------------------------
+
+[locks.gate]
+# Deliberately outside every tree the gate wipes. The run takes this lock and
+# *then* removes CAPSEM_HOME, so a lockfile living inside it would be deleted
+# while held -- and the next run would take a lock on a fresh inode and start
+# beside the first.
+path = "target/capsem-test-execution.lock"
+# flock, not a pidfile: the kernel releases it when the holder dies, so there is
+# no stale-lock heuristic to get wrong. The holder writes who it is here so
+# contention can name it.
+holder_record = "target/capsem-test-execution.holder"
+# Report the holder rather than blocking mutely. Someone who left `just test`
+# running in another terminal deserves to be told that, not to watch a cursor.
+report_after_seconds = 2
+wait_timeout_seconds = 7200
+
+# ---------------------------------------------------------------------------
+# The execution log
+# ---------------------------------------------------------------------------
+
+[runlog]
+# One directory per run, so a failed gate is a directory you attach to a bug
+# rather than a scrollback you had to be present for.
+root = "target/gate-runs"
+events = "run.jsonl"
+# Spelled `event_schema` here and emitted as `schema` in each event: a Pydantic
+# field named `schema` shadows a BaseModel attribute.
+event_schema = "capsem.gate.runlog.v1"
+step_log_dir = "steps"
+summary = "summary.txt"
+latest_link = "latest"
+# Rotation by count and by bytes. A forty-minute gate writes a lot, and the
+# machine running it is also the machine building VM images.
+keep_runs = 20
+keep_bytes = 2_000_000_000
+# blake3 because the asset pipeline already speaks it.
+artifact_digest = "blake3"
+# Actions slower than this are named in the timing summary.
+slow_action_seconds = 30
+
+# ---------------------------------------------------------------------------
+# Disk the gate is allowed to occupy
+# ---------------------------------------------------------------------------
+
+[disk]
+# Everything the gate can create, so reclaiming is a policy rather than whoever
+# remembers a path. Nothing outside this list may be removed: a guard proves the
+# reclaimer cannot reach past it, and the loader rejects an absolute path or a
+# `..` so the list cannot be aimed at the wrong tree.
+reclaimable = [
+    "target/gate-runs",
+    "target/test-home",
+    "target/image-workspace",
+    "target/test-benchmarks",
+    "target/linux-rust-coverage",
+    "target/install-test-assets",
+    "target/release-channel",
+    "target/release-module-glowup",
+    "target/release-module-channel-switch",
+]
+# Refuse to start an expensive phase below this, after reclaiming what we can.
+# The gate builds two architectures of VM images; running out at minute thirty
+# wastes the thirty.
+required_free_gb = 60
+# Warn when a single run's own footprint passes this.
+run_footprint_warn_gb = 40

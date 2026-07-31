@@ -3,7 +3,8 @@
 Every command is contributed by the module that implements it, through a
 `register(subparsers)` function, so this file never grows a branch about what a
 command means. If a rule appears in this file, it is in the wrong file --
-`tests/test_gate_cli_is_thin.py` says so.
+`test_the_cli_only_parses_and_dispatches` in `tests/test_gate_boundary.py`
+says so.
 """
 
 from __future__ import annotations

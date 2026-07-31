@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The gate's policy for running *itself* is now declared in `config/gate.toml`
+  rather than implied by shell: which work may not run beside which and why
+  (`[execution.exclusives]`), who holds the machine (`[locks.gate]`), where a
+  run is recorded (`[runlog]`), and how much disk it may occupy (`[disk]`).
+  Each exclusive carries the reason it exists -- the Apple VZ launch budget,
+  the single service-scoped snapshot lock, the binaries `cargo build` replaces
+  underneath a running VM test. That knowledge previously lived in comments
+  beside seven backgrounded jobs in `_test-candidate-run` and three more in
+  `smoke`, where an eighth lane could violate a constraint recorded three
+  hundred lines away.
+- Reclaimable paths are validated at load: an entry that is absolute or
+  escapes upwards fails with the offending value named. These are whole-tree
+  removals, and the difference between a relative path and one aimed at the
+  wrong tree is a single editing mistake.
+- The gate's config schemas split by what they describe --
+  `configschema` for the product being built, `harnessschema` for the gate
+  running itself -- keeping both under the module ceiling the package enforces
+  on its own source.
+
+### Fixed
+
+- Three `# noqa: BLE001` directives in `capsem.gate` suppressed a rule that is
+  not enabled, so ruff reported each as an unused directive. The comments
+  explaining why each `except` is deliberately broad are kept; the dead
+  directives are gone.
+
 - Build and release logic is moving out of the justfile and into
   `capsem.gate`, a unit-tested Python package the justfile dispatches to. The
   justfile held roughly 2070 lines of `bash` inside recipe bodies, none of it

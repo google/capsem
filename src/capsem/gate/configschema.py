@@ -1,8 +1,9 @@
-"""What `config/gate.toml` contains, section by section.
+"""What `config/gate.toml` says about the product the gate builds.
 
-Separated from `config`, which is how it loads. These are plain schemas: the
-only logic they carry derives one value from another that is already declared,
-so nothing here can disagree with the file.
+Separated from `config`, which is how it loads, and from `harnessschema`, which
+describes the gate running itself. These are plain schemas: the only logic they
+carry derives one value from another that is already declared, so nothing here
+can disagree with the file.
 """
 
 from __future__ import annotations
@@ -245,22 +246,3 @@ class VersionsConfig(Strict):
 
 class DoctorConfig(Strict):
     storage_policy: str
-
-
-class LintConfig(Strict):
-    python_roots: tuple[str, ...]
-    strict_roots: tuple[str, ...]
-    ty_flags: tuple[str, ...]
-    ty_ratchet: tuple[str, ...]
-
-    @property
-    def relaxed_roots(self) -> tuple[str, ...]:
-        return tuple(name for name in self.python_roots if name not in self.strict_roots)
-
-
-class BoundaryConfig(Strict):
-    max_recipe_lines: int
-    max_module_lines: int
-    remaining_shell_recipes: tuple[str, ...]
-    shell_control_flow: tuple[str, ...]
-    recipes_with_inline_control_flow: tuple[str, ...]
