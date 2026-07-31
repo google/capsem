@@ -149,19 +149,27 @@ class CandidateCommand(
 ):
     exclusive = True
 
+    def reexec(self) -> tuple[str, ...] | None:
+        """Become the same command under a keep-awake wrapper, once.
+
+        Before the machine lock, not inside it. As a step this deadlocked --
+        the re-exec'd child asked for the lock its own parent was holding and
+        waited out the two-hour timeout. `keep_awake` returns None on the
+        second pass, so this happens exactly once.
+        """
+        prefix = keep_awake(self._runner)
+        if prefix is None:
+            return None
+        self._runner.step("Holding macOS awake for the complete candidate gate")
+        return (*prefix, "just", "test")
+
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        plan.add(step("qualify", Call("the complete local gate", _qualify)))
+        plan.add(
+            step("qualify", Call("the complete local gate", _qualify))
+        )
         return plan
 
 
 def _qualify(context) -> None:
-    prefix = keep_awake(context.runner)
-    if prefix is not None:
-        # Re-exec under the keep-awake wrapper rather than holding an assertion
-        # open across the whole run.
-        context.runner.step("Holding macOS awake for the complete candidate gate")
-        context.runner.run([*prefix, "just", "test"], check=False)
-        return
-
     CandidateGate(context.runner).run()

@@ -39,10 +39,26 @@ def source_syntax(config: GateConfig) -> Step:
 
 
 def web_surfaces(config: GateConfig) -> list[Step]:
-    """One step per surface, so a failure says which one."""
+    """One step per surface, so a failure says which one.
+
+    Each claims `astro_build`, so they run one at a time. Astro stages
+    prerendering in a path derived from the project root rather than from the
+    invocation -- `<outDir>/.prerender/` when the output is inside the root,
+    `<root>/.astro/` when it is not -- so neither `--outDir` nor `--cacheDir`
+    isolates two concurrent builds; they delete each other's staging.
+
+    The four surfaces do have distinct roots today, so serializing them is
+    insurance rather than a fix. It is insurance worth buying: a build is well
+    under a second, and the alternative is a rule that holds only as long as
+    nobody adds a second consumer of one root.
+    """
     surfaces = config.websurfaces
     return [
-        step(f"web.{target}", Run(["bash", surfaces.script, target]))
+        step(
+            f"web.{target}",
+            Run(["bash", surfaces.script, target]),
+            contends=(config.exclusive("astro_build"),),
+        )
         for target in surfaces.targets
     ]
 

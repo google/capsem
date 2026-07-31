@@ -257,3 +257,61 @@ def test_a_gate_failure_is_exit_one_with_one_line(
 def test_an_unknown_command_is_refused_by_the_parser() -> None:
     with pytest.raises(SystemExit):
         cli.main(["no-such-command"])
+
+
+# ---------------------------------------------------------------------------
+# Re-exec
+# ---------------------------------------------------------------------------
+
+
+def test_a_reexec_happens_before_anything_is_acquired(tmp_path: Path) -> None:
+    """The deadlock this hook exists to prevent.
+
+    `candidate` re-execs itself under a keep-awake wrapper. As a step that ran
+    inside the held resources, so the child asked for the machine lock its own
+    parent was holding and waited out the two-hour timeout. Nothing may be
+    acquired before the process has decided whether it is going to be replaced.
+    """
+    order: list[str] = []
+
+    class Replacing(GateCommand, name="replacing-example", help="x"):
+        def reexec(self):
+            order.append("reexec")
+            return ("true",)
+
+        def resources(self):
+            return (Tracker(order, "a"),)
+
+        def plan(self) -> Plan:
+            order.append("plan")
+            plan = Plan(self.name)
+            plan.add(step("work", Run(["cargo", "build"])))
+            return plan
+
+    with pytest.raises(SystemExit):
+        _command(Replacing, tmp_path).execute()
+
+    assert order == ["reexec"], "no plan, and above all no resource"
+
+
+def test_the_candidate_gate_only_reexecs_once() -> None:
+    """`keep_awake` returns None on the second pass, or the wrapper would
+    re-exec itself forever."""
+    from capsem.gate.candidate import CandidateCommand
+
+    assert "reexec" in vars(CandidateCommand), (
+        "the keep-awake wrapper belongs in `reexec`, not in a step"
+    )
+
+
+def test_only_the_commands_that_must_replace_themselves_do() -> None:
+    """A re-exec discards the run log and the lock, so it is not a thing to
+    reach for casually."""
+    replacing = sorted(
+        name
+        for name, cls in GateCommand.registry.items()
+        # Only the real ones: this file registers commands of its own.
+        if "reexec" in vars(cls) and cls.__module__.startswith("capsem.gate.")
+    )
+
+    assert replacing == ["candidate"]

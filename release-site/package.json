@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "scripts": {
     "build": "astro build",
-    "build:channel": "astro build && node scripts/overlay-dist.mjs",
+    "build:channel": "astro build && node scripts/overlay-dist.mjs dist",
     "check": "tsc --noEmit",
     "dev": "astro dev",
     "preview": "astro preview",

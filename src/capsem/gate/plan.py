@@ -32,10 +32,13 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from graphlib import CycleError, TopologicalSorter
 from operator import attrgetter
+from pathlib import Path
 
+from . import planreport
 from .context import Context
 from .errors import GateError
 from .execution import Step
+from .timing import longest_chain
 
 #: What a step's outcome was. `skipped` is deliberately distinct from `failed`:
 #: a step that never ran because its dependency broke did not fail, and a
@@ -110,6 +113,40 @@ class Plan:
                 sorter.done(label)
         return waves
 
+    def _require_one_owner_per_artifact(self) -> None:
+        """Two steps writing one path must contend for the same thing.
+
+        A lock around the mutation is not a lock around the artifact. A step
+        can hold an exclusive while it builds, release it, and hand back "look
+        at this path" -- and the next claimant overwrites that path before the
+        consumer reads it. The edge orders the consumer after *its* producer,
+        and says nothing about a second producer running beside it.
+
+        This is how four helpers came to lock `astro build`, release, and then
+        read a `dist/` the next build had already replaced. Caught when the
+        plan is built, because by the time it happens the evidence is gone.
+        """
+        owners: dict[Path, list[Step]] = {}
+        for step in self._steps:
+            for artifact in step.produces:
+                owners.setdefault(artifact, []).append(step)
+
+        for artifact, producers in sorted(owners.items()):
+            if len(producers) < 2:
+                continue
+            shared = set.intersection(
+                *({resource.name for resource in step.contends} for step in producers)
+            )
+            if shared:
+                continue
+            raise GateError(
+                f"{len(producers)} steps in the {self.name} plan write "
+                f"{artifact} and share no exclusive: "
+                f"{', '.join(sorted(step.label for step in producers))}. "
+                "Give them one, or have each produce its own path -- an edge "
+                "orders a consumer after its producer, not after every other."
+            )
+
     def _sorter(self) -> TopologicalSorter[str]:
         sorter: TopologicalSorter[str] = TopologicalSorter(self._after)
         try:
@@ -124,58 +161,25 @@ class Plan:
 
     def describe(self) -> str:
         """The dry run: what would run, in what order, and what it invokes."""
-        waves = self.order()
-        actions = sum(len(step.actions) for step in self._steps)
-        lines = [
-            f"plan: {self.name} -- {len(self._steps)} steps, "
-            f"{actions} actions, {len(waves)} waves",
-            "",
-        ]
-        for position, wave in enumerate(waves, start=1):
-            for offset, step in enumerate(sorted(wave, key=attrgetter("label"))):
-                held = (
-                    "  [" + ", ".join(sorted(e.name for e in step.contends)) + "]"
-                    if step.contends
-                    else ""
-                )
-                # The wave number once, on its first step: everything under it
-                # runs at the same time, and repeating the number says the
-                # opposite to anyone skimming.
-                marker = f"{position:>3}" if offset == 0 else "   "
-                lines.append(f"  {marker}  {step.label}{held}")
-                lines += [f"          {rendering}" for rendering in step.render()]
-        lines += ["", "nothing was executed (--dry-run)"]
-        return "\n".join(lines)
+        return planreport.describe(self)
 
     def mermaid(self) -> str:
         """The graph, for a bug report or the documentation site."""
-        lines = ["graph TD"]
-        for step in self._steps:
-            lines.append(f"  {_node(step.label)}[{step.label}]")
-        lines += [f"  {_node(before)} --> {_node(after)}" for before, after in self.edges]
-        return "\n".join(lines)
+        return planreport.mermaid(self)
 
     def critical_path(self) -> list[Step]:
         """The longest chain by measured duration.
 
         Not the slowest step: shortening that does nothing if it runs beside
-        something longer. The critical path is what the run's duration is
-        actually made of, and therefore the only thing worth shortening.
+        something longer. The walk itself lives in `timing`, which does it
+        over recorded events -- a second copy here would be one more place for
+        the two answers to disagree.
         """
         if not self._outcomes:
             raise GateError(f"the {self.name} plan has not run, so it has no timings")
 
-        best: dict[str, tuple[float, list[str]]] = {}
-        for wave in self.order():
-            for step in wave:
-                spent = self._outcomes[step.label].duration
-                prior = max(
-                    (best[earlier] for earlier in self._after[step.label]),
-                    default=(0.0, []),
-                )
-                best[step.label] = (prior[0] + spent, [*prior[1], step.label])
-
-        _total, path = max(best.values(), key=lambda entry: entry[0])
+        spent = {label: outcome.duration for label, outcome in self._outcomes.items()}
+        path = longest_chain(list(self.labels), dict(self._after), spent)
         return [self._by_label[label] for label in path]
 
     @property
@@ -200,6 +204,7 @@ class Plan:
 
     def run(self, context: Context) -> None:
         """Execute, honouring the graph and what each step contends for."""
+        self._require_one_owner_per_artifact()
         sorter = self._sorter()
         context.journal.shape(self.labels, self.edges)
         self._outcomes = {}
@@ -280,8 +285,3 @@ def _completed(running: dict[Future[float], Step]) -> list[Future[float]]:
     """
     done, _pending = wait(running, return_when=FIRST_COMPLETED)
     return list(done)
-
-
-def _node(label: str) -> str:
-    """A mermaid-safe identifier for a step label."""
-    return "".join(character if character.isalnum() else "_" for character in label)

@@ -66,11 +66,11 @@ def measure(events: list[dict]) -> Timing:
         elif kind == "run.end":
             timing.total_ms = event["duration_ms"]
 
-    timing.critical_path = _longest_chain(order, edges, timing.steps)
+    timing.critical_path = longest_chain(order, edges, timing.steps)
     return timing
 
 
-def _longest_chain(
+def longest_chain(
     order: list[str], edges: dict[str, set[str]], spent: dict[str, float]
 ) -> list[str]:
     """The slowest path through the graph, by measured duration.

@@ -490,6 +490,12 @@ reason = "cargo build --workspace atomically replaces the binaries a running VM 
 [execution.exclusives.docker_daemon]
 reason = "the storage rails reserve and release a single daemon's disk budget"
 
+[execution.exclusives.astro_build]
+reason = "Astro stages prerendering in a path derived from the project root, not from the invocation, so two overlapping builds delete each other's staging -- and neither --outDir nor --cacheDir moves it"
+
+[execution.exclusives.node_modules]
+reason = "pnpm install rewrites a workspace's node_modules in place, and every web build reads it"
+
 # ---------------------------------------------------------------------------
 # One gate per machine
 # ---------------------------------------------------------------------------

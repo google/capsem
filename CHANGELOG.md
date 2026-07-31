@@ -27,6 +27,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `code` inside a script -- a product decision that had been spelled as a
   lambda. `scripts/release-test-profiles.py` stays as the command-line surface
   CI already calls.
+### Fixed
+
+- A step that produces a fixed path must not share it with another producer
+  that claims no common exclusive, and the plan now refuses to run when two
+  do. A lock around the mutation is not a lock around the artifact: a step can
+  hold an exclusive while it builds, release it, and hand back "look at this
+  path" -- and the next claimant overwrites that path before the consumer
+  reads it. An edge orders a consumer after *its* producer and says nothing
+  about a second producer beside it.
+- Web-surface builds now serialize on a declared `astro_build` exclusive.
+  Astro stages prerendering in a path derived from the project root rather
+  than the invocation, so neither `--outDir` nor `--cacheDir` isolates two
+  concurrent builds and they delete each other's staging. The four surfaces do
+  have distinct roots today, so this is insurance -- worth buying, because a
+  build is under a second and the alternative is a rule that holds only until
+  someone adds a second consumer of one root.
+- `pnpm install` claims a `node_modules` exclusive: it rewrites a workspace
+  in place and every web build reads it.
+- `release-site/scripts/overlay-dist.mjs` takes its source directory as an
+  argument instead of hardcoding Astro's default `outDir`, where a change to
+  that setting would have broken the overlay silently.
+
+### Changed
+
 - New `/dev-gate` skill covering the gate's five layers, how to add a command,
   and every guard that will fail you. `/dev-just` now states the recipe rule as
   enforced rather than advised, and the docs point at `--dry-run` as the way to

@@ -80,6 +80,17 @@ class GateCommand(ABC):
         """
         return ()
 
+    def reexec(self) -> tuple[str, ...] | None:
+        """A command line to become, instead of running this one.
+
+        Consulted before anything is acquired. A re-exec that happens inside
+        the held resources deadlocks: the child asks for the machine lock its
+        own parent is holding, and waits out the full timeout for it.
+
+        Return `None` -- the default -- to run normally.
+        """
+        return None
+
     @abstractmethod
     def plan(self) -> Plan:
         """The work, and what must finish before what."""
@@ -93,6 +104,11 @@ class GateCommand(ABC):
         defines it, because a command that bypasses this bypasses teardown,
         the machine lock, and the run log at once.
         """
+        # Before the plan, and long before any resource: see `reexec`.
+        replacement = self.reexec()
+        if replacement is not None:
+            raise SystemExit(self._runner.run(replacement, check=False))
+
         plan = self.plan()
 
         if self._args.graph:

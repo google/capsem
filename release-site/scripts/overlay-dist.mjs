@@ -14,7 +14,10 @@ if (!channelDist) {
   process.exit(0);
 }
 
-const source = resolve('dist');
+// Passed in, not assumed. Hardcoding Astro's default `outDir` couples the
+// overlay to a setting the build is free to change, and the failure would be
+// silent: an overlay of a directory that no longer exists, or of a stale one.
+const source = resolve(process.argv[2] ?? process.env.CAPSEM_RELEASE_ASTRO_DIST ?? 'dist');
 const target = resolveReleaseDist(channelDist);
 
 if (!existsSync(source)) {

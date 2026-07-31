@@ -41,6 +41,10 @@ def node(config: GateConfig) -> Step:
             )
             for workspace in settings.node_workspaces
         ],
+        # `pnpm install` rewrites a workspace's node_modules in place, and
+        # every web build reads it. Two installs overlapping, or an install
+        # overlapping a build, is a torn tree either way.
+        contends=(config.exclusive("node_modules"),),
     )
 
 

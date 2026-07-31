@@ -519,3 +519,74 @@ def test_the_critical_path_needs_a_run_behind_it() -> None:
 
     with pytest.raises(GateError, match="has not run"):
         plan.critical_path()
+
+
+# ---------------------------------------------------------------------------
+# Artifacts, and who owns them
+# ---------------------------------------------------------------------------
+
+
+def _producing(label: str, artifact: Path, **kwargs):
+    return step(label, *_noop(), produces=(artifact,), **kwargs)
+
+
+def test_two_steps_writing_one_path_must_share_an_exclusive(
+    context: Context, tmp_path: Path
+) -> None:
+    """A lock around the mutation is not a lock around the artifact.
+
+    A step can hold an exclusive while it builds, release it, and hand back
+    "look at this path" -- and the next claimant overwrites that path before
+    the consumer reads it. This is how four helpers came to lock `astro
+    build`, release, then read a `dist/` the next build had already replaced.
+    """
+    shared = tmp_path / "dist"
+    plan = Plan("two-owners")
+    plan.add(_producing("build-a", shared))
+    plan.add(_producing("build-b", shared))
+
+    with pytest.raises(GateError, match="share no exclusive"):
+        plan.run(context)
+
+
+def test_sharing_an_exclusive_makes_two_producers_legal(
+    context: Context, tmp_path: Path
+) -> None:
+    """Serialized producers cannot overwrite each other mid-read."""
+    shared = tmp_path / "dist"
+    shared.write_text("built")
+    plan = Plan("one-at-a-time")
+    plan.add(_producing("build-a", shared, contends=(VZ,)))
+    plan.add(_producing("build-b", shared, contends=(VZ,)))
+
+    plan.run(context)
+
+
+def test_one_producer_per_path_needs_no_exclusive(
+    context: Context, tmp_path: Path
+) -> None:
+    """The common case stays free of ceremony."""
+    artifact = tmp_path / "vmlinuz"
+    artifact.write_text("kernel")
+    plan = Plan("single")
+    plan.add(_producing("build", artifact))
+
+    plan.run(context)
+
+
+def test_the_conflict_is_reported_before_anything_runs(
+    context: Context, tmp_path: Path
+) -> None:
+    """By the time the overwrite happens the evidence is gone, so this is a
+    plan-time error rather than something to notice afterwards."""
+    ran: list[str] = []
+    shared = tmp_path / "dist"
+    plan = Plan("two-owners")
+    plan.add(_producing("build-a", shared))
+    plan.add(_producing("build-b", shared))
+    plan.add(_appending("elsewhere", ran))
+
+    with pytest.raises(GateError):
+        plan.run(context)
+
+    assert ran == [], "nothing may run before the plan is known to be sound"
