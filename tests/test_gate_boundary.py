@@ -43,7 +43,6 @@ LIMITS = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf
 REMAINING_SHELL_RECIPES = frozenset(
     {
         "_test-candidate-run",
-        "_gate-install",
         "_gate-assets",
         "_cross-compile",
         "_prove-linux-deb",
@@ -54,7 +53,6 @@ REMAINING_SHELL_RECIPES = frozenset(
         "test",
         "_install-tools",
         "_gate-host-package-sbom",
-        "_test-install-harness-preflight",
         "_build-host-image",
         "_check-assets",
         "_build-assets",

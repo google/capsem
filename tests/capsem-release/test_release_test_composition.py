@@ -372,7 +372,9 @@ def test_functional_coverage_replays_cheap_contracts_after_the_early_gate() -> N
     ]
 
     assert "--cov=src/capsem" in coverage
-    assert "--cov-fail-under=85" in coverage
+    # The floor is `fail_under` in pyproject's [tool.coverage.report], so any
+    # run that reports inherits it. What this module must still do is measure.
+    assert "--cov-report=" in coverage
     assert '"${SOURCE_CONTRACT_IGNORE_ARGS[@]}"' not in coverage
     assert "--ignore-glob=tests/test_*contract.py" not in coverage
 

@@ -9,6 +9,10 @@ nothing tied the two together.
 
 Naming all four spellings on one record makes the mapping a lookup instead of a
 convention, and makes an unsupported host a single error message.
+
+`host_system` lives here for the same reason: the gate branches on Darwin
+versus Linux in five places, and each `uname -s` was its own chance to spell
+the answer differently.
 """
 
 from __future__ import annotations
@@ -80,3 +84,16 @@ def resolve(spelling: str) -> Arch:
 def host() -> Arch:
     """The architecture of the machine running the gate."""
     return resolve(platform.machine())
+
+
+def host_system() -> str:
+    """The operating system the gate is running on: `Darwin` or `Linux`."""
+    return platform.system()
+
+
+def on_macos() -> bool:
+    return host_system() == "Darwin"
+
+
+def on_linux() -> bool:
+    return host_system() == "Linux"

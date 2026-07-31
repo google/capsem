@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The install gate handed the package's postinstall script nothing to read.
+  `capsem-admin` authors the release graph and ships *inside* the package under
+  test, so the gate installed first and authored afterwards -- and the postinst
+  does not fail in that case. It falls back to the URL baked into the package,
+  so the whole-world **local** proof was hydrating from `release.capsem.org`,
+  and reported a product failure when those public artifacts were retired. The
+  graph is now authored from a `dpkg-deb --extract`ed copy of the exact binary
+  being shipped, and handed over before `dpkg -i`. A handoff naming a file that
+  does not exist, or naming the legacy runtime projection instead of the
+  authoritative graph, is refused rather than silently ignored.
 - Version stamping reads `[workspace.package].version` from `Cargo.toml`
   instead of `grep '^version' | head -1`, which matched the first line in the
   file beginning with `version` wherever it lived -- so any table added above

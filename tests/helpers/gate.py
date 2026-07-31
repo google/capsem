@@ -64,6 +64,10 @@ class RecordingRunner(Runner):
     def note(self, message: str) -> None:
         self.notes.append(message)
 
+    def fail_on(self, *markers: str) -> None:
+        """Change what fails partway through, for before/after checks."""
+        self._failures = markers
+
     # -- assertions --------------------------------------------------------
 
     @property
@@ -80,6 +84,21 @@ class RecordingRunner(Runner):
         expression = re.compile(pattern)
         for position, rendered in enumerate(self.rendered):
             if expression.search(rendered):
+                return position
+        raise AssertionError(
+            f"no command matched {pattern!r}; ran:\n  " + "\n  ".join(self.rendered)
+        )
+
+    def last_index_of(self, pattern: str) -> int:
+        """Position of the *last* match.
+
+        Some commands legitimately run twice -- `docker rm -f` both clears a
+        predecessor and tears this run down -- and asserting on the first
+        occurrence would prove the wrong one happened.
+        """
+        expression = re.compile(pattern)
+        for position in reversed(range(len(self.rendered))):
+            if expression.search(self.rendered[position]):
                 return position
         raise AssertionError(
             f"no command matched {pattern!r}; ran:\n  " + "\n  ".join(self.rendered)

@@ -345,27 +345,36 @@ def test_canonical_gate_builds_both_linux_release_architectures() -> None:
 
 
 def test_install_e2e_reuses_exact_package_and_materialized_profile_config() -> None:
-    block = _recipe_block("_gate-install:")
+    """The install gate consumes the package rail's output; it builds nothing.
 
-    stage_pos = block.find("scripts/stage-release-test-inputs.py")
-    local_copy_pos = block.find('cp -R assets/. \\"$INSTALL_ASSETS_DIR/\\"')
-    config_copy_pos = block.find('cp -R target/config/. \\"$INSTALL_CONFIG_DIR/\\"')
-    package_pos = block.find('DEB="$ROOT/dist/Capsem_${SOURCE_VERSION}_${DEB_ARCH}.deb"')
-    install_pos = block.find('dpkg -i \\"$CONTAINER_DEB\\"')
+    This used to read the recipe text and assert `install_pos < stage_pos` --
+    the install running before its assets were staged. That was not a contract
+    but a transcription of the defect, and it would have failed the fix. The
+    order now lives in `capsem.gate.install` and is asserted against the
+    commands the gate actually issues, in
+    `tests/test_gate_install_ordering.py`.
+    """
+    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "install.py").read_text()
+    proof = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installproof.py").read_text()
+    recipe = _recipe_block("_gate-install:")
 
-    assert "scripts/prepare-install-test-assets.sh" not in block
-    assert stage_pos != -1
-    assert local_copy_pos != -1
-    assert config_copy_pos != -1
-    assert package_pos != -1
-    assert install_pos != -1
-    assert package_pos < install_pos < stage_pos
-    assert stage_pos < local_copy_pos < config_copy_pos
-    assert "bash scripts/materialize-config.sh" not in block
-    assert "scripts/repack-deb.sh" not in block
-    assert "just _materialize-config" not in block
-    assert "missing exact release-mode Debian package" in block
-    assert "just _cross-compile $TARGET_ARCH" in block
+    assert "capsem-gate install" in recipe
+
+    # Consumes, never rebuilds.
+    for builder in (
+        "prepare-install-test-assets.sh",
+        "materialize-config.sh",
+        "repack-deb.sh",
+        "_materialize-config",
+    ):
+        assert builder not in source + proof, f"the install gate must not run {builder}"
+
+    # Both staging shapes, and the refusal that names the rail owning the build.
+    assert "stage-release-test-inputs.py" in proof
+    assert 'cp -R assets/. "{self._layout.assets}/"' in proof
+    assert 'cp -R target/config/. "{self._layout.config}/"' in proof
+    assert "missing exact release-mode Debian package" in source
+    assert "just _cross-compile" in source
 
 
 def test_ci_materializes_runtime_profiles_after_generating_settings() -> None:
@@ -1722,16 +1731,29 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
 
 
 def test_install_preflight_releases_base_after_derived_image_is_verified() -> None:
-    preflight = _recipe_block("_test-install-harness-preflight:")
-    recipe = _recipe_block("_gate-install:")
+    """The ~6 GiB base tag is released only once the derived image is proven.
 
-    derived_build = 'docker build -t "$IMAGE" -f docker/Dockerfile.install-test .'
-    release_base = "--boundary after-linux-rust-builder"
-    assert derived_build in preflight
-    assert release_base in preflight
-    assert preflight.index(derived_build) < preflight.index(release_base)
-    assert "Building missing capsem-host-builder base image" not in recipe
-    assert 'docker image inspect "$IMAGE"' not in recipe
+    Releasing it earlier would make the rebuild-on-smoke-failure path cold, and
+    releasing it never would starve the package rails that follow.
+    """
+    from capsem.gate.storage import RELEASE_PHASES
+
+    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installimage.py").read_text()
+
+    build = source.index('"docker", "build", "-t", IMAGE')
+    smoke = source.index("_smoke_passes(runner)")
+    release = source.index('release("linux-rust-builder")')
+    assert build < smoke < release
+
+    assert RELEASE_PHASES["linux-rust-builder"] == (
+        "after-linux-rust-builder",
+        "install-preflight",
+    )
+
+    # An image that merely exists is not an image that works: checking the tag
+    # lets a stale local build hide a new prerequisite.
+    assert "docker image inspect" not in source
+    assert "Building missing capsem-host-builder base image" not in source
 
 
 def test_release_skill_requires_ci_and_local_mac_installer_outcome_proof() -> None:

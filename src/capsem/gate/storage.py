@@ -33,6 +33,8 @@ RELEASE_PHASES: dict[str, tuple[str, str]] = {
     "deferred-install-target": ("before-packages", "package"),
     "candidate-boundary": ("candidate-boundary", "default"),
     "after-install": ("after-install", "install"),
+    "linux-rust-builder": ("after-linux-rust-builder", "install-preflight"),
+    "install-preflight": ("after-install-preflight", "install-preflight"),
 }
 
 

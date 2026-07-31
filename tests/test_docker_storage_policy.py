@@ -103,8 +103,6 @@ def test_justfile_uses_named_rails_and_keeps_builder_until_packages_finish() -> 
     assert "CAPSEM_DOCKER_CACHE_KEEP_GB=" not in justfile
     assert 'scripts/ensure-docker-space.sh" assets' in justfile
     assert 'scripts/ensure-docker-space.sh" package' in justfile
-    assert 'scripts/ensure-docker-space.sh" install-preflight' in justfile
-    assert 'scripts/ensure-docker-space.sh" install' in justfile
 
     arm64 = justfile.index("just _cross-compile arm64")
     x86_64 = justfile.index("just _cross-compile x86_64")
@@ -118,6 +116,18 @@ def test_justfile_uses_named_rails_and_keeps_builder_until_packages_finish() -> 
     assert "docker builder prune" not in justfile
     assert "docker volume rm" not in justfile
     assert "capsem-gate storage gc" in justfile
+
+
+def test_the_install_rails_reserve_headroom_before_and_during_the_proof() -> None:
+    """These two reservations moved into `capsem.gate.install` with the recipe.
+
+    They are the reason ENOSPC surfaces here, with a disk recommendation,
+    rather than hours later inside a fixture on an otherwise-green run.
+    """
+    install = (ROOT / "src" / "capsem" / "gate" / "install.py").read_text()
+
+    assert 'ensure_space("install-preflight")' in install
+    assert 'ensure_space("install")' in install
 
 
 def test_both_package_architectures_release_their_own_install_headroom() -> None:
