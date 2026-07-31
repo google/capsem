@@ -132,7 +132,9 @@ class PytestConfig(Strict):
     benchmark_deselect: str
     require_artifacts: str
     profile_variable: str
-    profiles_script: str
+    base_profile: str
+    materialized_profiles: str
+    test_manifest: str
 
 
 class SuitesConfig(Strict):

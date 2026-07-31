@@ -1,76 +1,39 @@
 #!/usr/bin/env python3
-"""List and validate the exact profile axis for a functional release gate."""
+"""List and validate the exact profile axis for a functional release gate.
+
+The selection itself lives in `capsem.gate.profiles`, where the gate can build
+a plan from it without a subprocess. This stays as the command-line surface
+that CI workflows and the release scripts already call.
+"""
 
 from __future__ import annotations
 
 import argparse
-import json
 import sys
-import tomllib
 from pathlib import Path
-from typing import Any, cast
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-def _manifest_profile_ids(manifest: Path) -> list[str] | None:
-    try:
-        document = json.loads(manifest.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise ValueError(f"invalid release test manifest {manifest}: {error}") from error
-    if not isinstance(document, dict):
-        raise ValueError("release test manifest must be a JSON object")
-    profiles = document.get("profiles")
-    if profiles is None:
-        return None
-    if not isinstance(profiles, dict) or not profiles:
-        raise ValueError("release test manifest profiles must be a non-empty object")
-    selected = []
-    for profile_id, profile in sorted(profiles.items()):
-        if not isinstance(profile_id, str) or not profile_id:
-            raise ValueError("release test manifest has an invalid profile identity")
-        if not isinstance(profile, dict):
-            raise ValueError(f"release test manifest profile {profile_id} is malformed")
-        profile = cast(dict[str, Any], profile)
-        if profile.get("status") != "revoked":
-            selected.append(profile_id)
-    if not selected:
-        raise ValueError("release test manifest has no active profiles")
-    return selected
-
-
-def _materialized_profile_ids(profiles_dir: Path) -> list[str]:
-    if not profiles_dir.is_dir():
-        raise ValueError(f"materialized profile directory is missing: {profiles_dir}")
-    selected = []
-    for profile_path in sorted(profiles_dir.glob("*/profile.toml")):
-        profile_id = profile_path.parent.name
-        try:
-            document: dict[str, Any] = tomllib.loads(
-                profile_path.read_text(encoding="utf-8")
-            )
-        except (OSError, tomllib.TOMLDecodeError) as error:
-            raise ValueError(f"invalid materialized profile {profile_path}: {error}") from error
-        if document.get("id") != profile_id:
-            raise ValueError(
-                f"materialized profile {profile_path} id does not match {profile_id}"
-            )
-        selected.append(profile_id)
-    if not selected:
-        raise ValueError(f"no materialized profiles found under {profiles_dir}")
-    return selected
+from capsem.gate.errors import GateError
+from capsem.gate.profiles import declared, materialized
 
 
 def release_test_profiles(profiles_dir: Path, manifest: Path) -> list[str]:
-    materialized = _materialized_profile_ids(profiles_dir)
-    selected = _manifest_profile_ids(manifest)
-    if selected is None:
-        selected = materialized
-    elif set(materialized) != set(selected):
+    """The profile axis, base profile first.
+
+    Kept as a function because two test suites import it directly.
+    """
+    present = materialized(profiles_dir)
+    wanted = declared(manifest)
+    if wanted is None:
+        wanted = present
+    elif set(present) != set(wanted):
         raise ValueError(
             "materialized profile catalog does not match the selected manifest: "
-            f"manifest={selected}, materialized={materialized}"
+            f"manifest={wanted}, materialized={present}"
         )
-    selected.sort(key=lambda profile_id: (profile_id != "code", profile_id))
-    return selected
+    wanted.sort(key=lambda profile_id: (profile_id != "code", profile_id))
+    return wanted
 
 
 def main() -> int:
@@ -80,7 +43,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         profiles = release_test_profiles(args.profiles_dir, args.manifest)
-    except ValueError as error:
+    except (ValueError, GateError) as error:
         print(f"release profile test selection failed: {error}", file=sys.stderr)
         return 1
     print("\n".join(profiles))

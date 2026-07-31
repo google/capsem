@@ -30,6 +30,21 @@ def _source_contract_tests() -> tuple[str, ...]:
 
 SOURCE_CONTRACT_TESTS = _source_contract_tests()
 
+from capsem.gate import config as _gate_config  # noqa: E402
+
+CONFIG = _gate_config.load(PROJECT_ROOT)
+CONFIG_SOURCE_CONTRACT_TESTS = list(CONFIG.suites.source_contract)
+
+
+def test_the_source_contract_inventory_has_one_authority() -> None:
+    """`config/gate.toml` owns it; the justfile array is a copy that exists
+    only until `_test-candidate-run` is ported out of shell.
+
+    Two inventories is how eleven gate test files ended up in neither the fast
+    module nor the exclusion that keeps them out of the VM matrix.
+    """
+    assert sorted(SOURCE_CONTRACT_TESTS) == sorted(CONFIG_SOURCE_CONTRACT_TESTS)
+
 
 def _recipe(name: str) -> str:
     lines = JUSTFILE.splitlines()
@@ -211,6 +226,12 @@ def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() ->
 
 
 def test_private_release_modules_select_one_shared_runner() -> None:
+    """Each module recipe reaches exactly one runner and contains no logic.
+
+    Two runners are legal while the port is in progress: the shell one for
+    modules still inside `_test-candidate-run`, and `capsem-gate` for those
+    already extracted. Neither may be a recipe that does the work itself.
+    """
     expected = {
         "_test-fast": "fast",
         "_test-static": "static",
@@ -221,12 +242,19 @@ def test_private_release_modules_select_one_shared_runner() -> None:
     }
 
     for recipe, module in expected.items():
-        assert f"CAPSEM_TEST_MODULE={module} just _test-candidate-run" in _recipe(recipe)
+        body = _recipe(recipe)
+        shell = f"CAPSEM_TEST_MODULE={module} just _test-candidate-run" in body
+        ported = f"capsem-gate test-{module}" in body
+        assert shell != ported, (
+            f"{recipe} must reach exactly one runner; it has "
+            f"shell={shell} ported={ported}"
+        )
 
     runner = _recipe("_test-candidate-run")
-    assert "fast|static|artifacts|functional|glowup|release-contracts" in runner
     assert '"all"' not in runner
-    for module in expected.values():
+    for recipe, module in expected.items():
+        if f"capsem-gate test-{module}" in _recipe(recipe):
+            continue
         assert f"module_enabled {module}" in runner
 
 
@@ -235,21 +263,36 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
     fast = _recipe("_test-fast")
     runner = _recipe("_test-candidate-run")
 
+    # The fast module is a plan now, so this asks the plan what it would run
+    # rather than grepping a recipe body -- a stronger question, and one that
+    # keeps working as the remaining modules are ported.
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate.testmodules import FastModule
+
+    planned = FastModule(
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+    ).plan().describe()
+
     for required in (
         "scripts/check-source-syntax.py",
-        "just _test-release-contracts",
         "scripts/check-cargo-audit.py",
         "scripts/audit-pnpm-bulk.py",
         "scripts/audit-python-lock.sh",
         # ruff over the whole tree, and ty over src/scripts/tests/guest. ty
         # used to run on src/capsem alone, leaving the release scripts with no
         # type gate at all.
-        "uv run capsem-gate lint",
+        "capsem-gate lint",
         "cargo clippy --workspace --all-targets -- -D warnings",
-        "bash scripts/check-web-surface.sh frontend",
-        "bash scripts/check-web-surface.sh release-site",
+        "check-web-surface.sh frontend",
+        "check-web-surface.sh release-site",
     ):
-        assert required in fast or required in runner
+        assert required in planned, f"the fast plan does not run {required}"
+
+    assert "just _test-release-contracts" in fast
 
     # The order lives in capsem.gate.candidate now; see
     # test_local_test_composes_all_checked_in_modules_after_rebuilding_assets.
@@ -348,7 +391,7 @@ def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
 
 
 def test_every_root_workflow_or_just_source_test_is_owned_by_the_fast_gate() -> None:
-    inventory = set(SOURCE_CONTRACT_TESTS)
+    inventory = set(CONFIG_SOURCE_CONTRACT_TESTS)
     inspected_source_contracts = set()
 
     for path in (PROJECT_ROOT / "tests").glob("test_*.py"):

@@ -438,37 +438,50 @@ _test-candidate-run:
         tests/test_exec_lock.py
         tests/test_exit_status_integrity.py
         tests/test_fast_gate_ci_contract.py
-        tests/test_gate_assets.py
+        tests/test_gate_actions.py
         tests/test_gate_assetlanes.py
+        tests/test_gate_assets.py
         tests/test_gate_boundary.py
         tests/test_gate_candidate.py
         tests/test_gate_cli.py
+        tests/test_gate_command.py
         tests/test_gate_config.py
         tests/test_gate_crosscompile.py
         tests/test_gate_debproof.py
+        tests/test_gate_disk.py
         tests/test_gate_docker.py
-        tests/test_gate_has_no_literal_data.py
         tests/test_gate_doctor.py
+        tests/test_gate_fileactions.py
+        tests/test_gate_has_no_literal_data.py
         tests/test_gate_install_container.py
         tests/test_gate_install_ordering.py
+        tests/test_gate_lifecycle.py
+        tests/test_gate_locks.py
         tests/test_gate_pidfiles.py
+        tests/test_gate_plan.py
+        tests/test_gate_primitives_are_the_only_way.py
+        tests/test_gate_pytestsuite.py
         tests/test_gate_proc.py
+        tests/test_gate_runlog.py
         tests/test_gate_storage.py
+        tests/test_gate_testmodules.py
+        tests/test_gate_timing.py
         tests/test_gate_versions.py
+        tests/test_gate_workspace.py
         tests/test_integration_script_profiles.py
         tests/test_live_channel_watch.py
         tests/test_macos_tart_glowup.py
         tests/test_orphan_process_gate.py
-        tests/test_profile_revision_semver.py
         tests/test_path_and_log_wrappers_are_mandatory.py
         tests/test_pidfile_cleanup_is_wired.py
         tests/test_pnpm_bulk_audit.py
+        tests/test_profile_revision_semver.py
         tests/test_prove_installed_shell.py
-        tests/test_retired_version_formats.py
         tests/test_release_gate_integrity.py
         tests/test_release_manifest_assets.py
         tests/test_release_site_generated_from_json.py
         tests/test_release_site_review_regressions.py
+        tests/test_retired_version_formats.py
         tests/test_rust_test_layout.py
         tests/test_rust_test_name_assertions.py
         tests/test_skills.py

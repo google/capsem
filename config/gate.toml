@@ -731,7 +731,11 @@ benchmark_deselect = "not test_capsem_bench_baseline"
 # whose assets were never built.
 require_artifacts = "CAPSEM_REQUIRE_ARTIFACTS"
 profile_variable = "CAPSEM_TEST_PROFILE"
-profiles_script = "scripts/release-test-profiles.py"
+# The profile every broad proof runs against first. The rest are the
+# compatibility axis, and run the VM-owned suites again behind it.
+base_profile = "code"
+materialized_profiles = "target/config/profiles"
+test_manifest = "assets/manifest.json"
 
 # ---------------------------------------------------------------------------
 # The isolated home a gate run works in

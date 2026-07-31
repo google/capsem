@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokens. Rotation is bounded by both count and bytes, and gives up completed
   runs before crashed ones -- a crashed run is precisely the case where the
   terminal output was lost with it.
+- Profile selection for a functional proof moved into `capsem.gate.profiles`,
+  where a plan can be built from it without a subprocess. The base profile is
+  named in config rather than by a sort key comparing against the string
+  `code` inside a script -- a product decision that had been spelled as a
+  lambda. `scripts/release-test-profiles.py` stays as the command-line surface
+  CI already calls.
 - pytest is invoked one way now. Sixteen call sites across two recipes each
   assembled their own flags and agreed by hand -- the same `--tb=short`, the
   same four `--ignore` directories, the same `CAPSEM_REQUIRE_ARTIFACTS=1` --
