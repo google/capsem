@@ -263,6 +263,25 @@ evidence_prune_dirs = ["guest", "auto_snapshots"]
 run_dir_template = "/tmp/capsem-a.XXXXXX"
 
 # ---------------------------------------------------------------------------
+# The candidate gate
+# ---------------------------------------------------------------------------
+
+[candidate]
+# macOS sleeps an unattended machine mid-gate, and a forty-minute run that dies
+# at minute thirty proves nothing.
+keep_awake_command = ["caffeinate", "-dimsu"]
+keep_awake_marker = "CAPSEM_TEST_CAFFEINATED"
+
+source_digest_script = "scripts/source-state-digest.py"
+orphan_script = "scripts/check-orphan-processes.py"
+colima_wrapper = "scripts/with-gate-colima.sh"
+
+# Modules, in the order `just test` runs them. The fast one first: its failures
+# come back in minutes rather than after the Docker and VM work.
+fast_module = "_test-fast"
+candidate_module = "_test-candidate"
+
+# ---------------------------------------------------------------------------
 # Version stamping
 # ---------------------------------------------------------------------------
 # Files carrying a copy of the workspace version. Cargo.lock and uv.lock are
@@ -361,7 +380,6 @@ remaining_shell_recipes = [
     "release-profile",
     "shell",
     "smoke",
-    "test",
 ]
 
 # Shell control flow in a body with no shebang is still a program no test can

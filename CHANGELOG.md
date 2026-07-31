@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coverage run in `ci.yaml` enforced no floor at all, because its copy had been
   forgotten.
 
+- `just test` itself moved into `capsem.gate.candidate`, which removes the
+  hazard its EXIT trap had to be written around. Inside a trap `$?` is the
+  *last command's* status -- 0 on Ctrl-C -- so `exit "$status"` discarded the
+  shell's own 130 and reported an interrupted gate as a pass. `try`/`finally`
+  has no such status to misread, and the three guarantees are now asserted as
+  behaviour rather than by grepping the recipe for `return "$status"`.
 - The exact-package proof moved into `capsem.gate.debproof`. It mounts the
   checkout read-only -- a package that only works because it wrote back into
   `/src` is not a package that works -- and now fails when a shipped binary

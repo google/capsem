@@ -35,86 +35,69 @@ sys.modules[SPEC.name] = ORPHANS
 SPEC.loader.exec_module(ORPHANS)
 
 
-def _trap_body(recipe: str) -> str:
-    """The trap's executable lines, without its comments.
+def _candidate_source() -> str:
+    return (ROOT / "src" / "capsem" / "gate" / "candidate.py").read_text(encoding="utf-8")
 
-    These assertions are about what the shell runs. A comment that quotes the
-    wrong-but-plausible form -- and this one deliberately does -- must not read
-    as the code doing it.
+
+def _run_body() -> str:
+    """`CandidateGate.run`, where the order of these calls is decided.
+
+    Scoped deliberately: `_close_out` is *defined* above `run`, so an index
+    comparison over the whole file compares definition order against execution
+    order and gets the wrong answer.
     """
-    body = recipe.split("close_out_candidate() {", maxsplit=1)[1].split(
-        "\n    }", maxsplit=1
-    )[0]
-    return "\n".join(
-        line for line in body.splitlines() if not line.lstrip().startswith("#")
-    )
-
-
-def _test_recipe() -> str:
-    lines = JUSTFILE.read_text(encoding="utf-8").splitlines()
-    start = next(i for i, line in enumerate(lines) if line.startswith("test:"))
-    end = len(lines)
-    for i in range(start + 1, len(lines)):
-        if lines[i] and not lines[i].startswith((" ", "\t", "#")):
-            end = i
-            break
-    return "\n".join(lines[start:end])
+    source = _candidate_source()
+    start = source.index("    def run(self) -> None:")
+    return source[start : source.index("\ndef ", start)]
 
 
 # ---------------------------------------------------------------------------
 # Wiring: the count has to actually run, and has to be able to fail the gate
 # ---------------------------------------------------------------------------
+#
+# These were assertions about the shell that ran the gate: that the EXIT trap
+# was armed, was never disarmed, and used `return "$status"` rather than
+# `exit "$status"` -- because `$?` inside a trap is the last command's, which
+# on Ctrl-C is 0, so exiting with it turned an abort into a pass.
+#
+# `capsem.gate.candidate` uses `try`/`finally`, which has no `$?` to misread,
+# and `tests/test_gate_candidate.py` asserts the resulting behaviour directly:
+# an interrupted run reports the interrupt, a leaked process fails an
+# otherwise-passing run, and a failing run keeps its own error rather than the
+# cleanup's. What stays here is that the gate still does this at all.
 
 
 def test_gate_takes_a_baseline_and_checks_it() -> None:
-    recipe = _test_recipe()
+    body = _run_body()
 
-    assert "check-orphan-processes.py baseline" in recipe, (
+    assert 'self._orphan("baseline")' in body, (
         "without a baseline the check cannot tell this run's processes from a "
         "developer's own dev daemon, so it can only be reckless or useless"
     )
-    assert "check-orphan-processes.py check" in recipe
-    assert recipe.index("check-orphan-processes.py baseline") < recipe.index(
-        "check-orphan-processes.py check"
+    assert "self._close_out(head)" in body
+    assert '_orphan("check"' in _candidate_source()
+
+
+def test_the_baseline_precedes_anything_that_can_spawn_a_process() -> None:
+    body = _run_body()
+
+    assert body.index('self._orphan("baseline")') < body.index(
+        "self._settings.fast_module"
     )
 
 
-def test_orphan_check_runs_even_when_the_gate_aborts() -> None:
-    """The check belongs in the EXIT trap, and the trap must stay armed.
+def test_the_count_runs_even_when_the_gate_aborts() -> None:
+    """An aborted run is the one that skips its cleanup, so it is exactly the
+    run whose processes need counting."""
+    body = _run_body()
 
-    An aborted run is the one that skips its cleanup, so it is exactly the run
-    whose processes need counting. A `trap - EXIT` before the end would disarm
-    the count on the path that needs it most.
-    """
-    recipe = _test_recipe()
-    trap_body = _trap_body(recipe)
-
-    assert "check-orphan-processes.py check" in trap_body
-    assert "trap close_out_candidate EXIT" in recipe
-    assert "trap - EXIT" not in recipe, (
-        "disarming the trap skips the process count on the abort path"
-    )
+    close_out = body.index("self._close_out(head)")
+    assert body.rindex("finally:", 0, close_out) < close_out
 
 
-def test_a_survivor_fails_the_recipe() -> None:
-    """The trap raises the status on a leak, and never lowers it otherwise.
-
-    `exit "$status"` looks equivalent to `return "$status"` and is not: `$?` at
-    trap time is the last command's, so on an interrupted run it is 0, and
-    exiting with it would discard the shell's own non-zero status and report
-    the abort as a pass. Only the leak path may force a code.
-    """
-    recipe = _test_recipe()
-    trap_body = _trap_body(recipe)
-
-    assert "check-orphan-processes.py check || exit 1" in trap_body, (
-        "a leak must fail the recipe; printing it and returning would leave "
-        "the gate green, which is the whole failure being fixed here"
-    )
-    assert 'return "$status"' in trap_body
-    assert 'exit "$status"' not in trap_body, (
-        "exiting with the trap-time status turns an aborted run into a pass"
-    )
+def test_the_check_still_reaches_the_justfile() -> None:
+    """The recipe dispatches; the module decides."""
+    assert "capsem-gate candidate" in JUSTFILE.read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

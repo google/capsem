@@ -258,11 +258,16 @@ def test_offline_snapshot_reports_every_managed_resource_and_decision() -> None:
 
 
 def test_candidate_failure_captures_storage_and_asset_logs_before_next_cleanup() -> None:
-    justfile = (ROOT / "justfile").read_text()
-    test_recipe = justfile[justfile.index("test:\n") : justfile.index("\n_test-candidate:")]
+    """Evidence is taken on the way out of a failure, before anything reclaims
+    the storage that holds it."""
+    candidate = (ROOT / "src" / "capsem" / "gate" / "candidate.py").read_text()
 
-    assert "capture-failure" in test_recipe
-    assert test_recipe.index("trap ") < test_recipe.index("scripts/with-gate-colima.sh")
+    assert "capture_failure" in candidate
+    # In the `except`, so it runs before the `finally` closes the run out.
+    assert candidate.index("except BaseException") < candidate.index(
+        "self._storage.capture_failure"
+    )
+    assert candidate.index("self._storage.capture_failure") < candidate.index("finally:")
 
 
 def test_failure_capture_has_a_side_effect_free_offline_mode(tmp_path: Path) -> None:

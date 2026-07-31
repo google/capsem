@@ -14,6 +14,7 @@ from collections.abc import Sequence
 
 from . import (
     assets,
+    candidate,
     crosscompile,
     debproof,
     doctor,
@@ -30,6 +31,7 @@ from .proc import Runner
 # Each module owns its own subcommand surface.
 COMMAND_MODULES = (
     versions,
+    candidate,
     assets,
     storage,
     installimage,

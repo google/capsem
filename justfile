@@ -354,54 +354,7 @@ _bootstrap:
 # developer may test deliberate uncommitted work; the gate must return every
 # tracked and untracked non-ignored source byte unchanged.
 test:
-    #!/bin/bash
-    set -euo pipefail
-    if [ "$(uname -s)" = "Darwin" ] && [ -z "${CAPSEM_TEST_CAFFEINATED:-}" ]; then
-        command -v caffeinate >/dev/null || {
-            echo "macOS just test requires caffeinate to prevent an unattended release gate from sleeping" >&2
-            exit 1
-        }
-        echo "=== Holding macOS awake for the complete candidate gate ==="
-        exec caffeinate -dimsu env CAPSEM_TEST_CAFFEINATED=1 just test
-    fi
-    TESTED_HEAD=$(git rev-parse HEAD)
-    TESTED_SOURCE=$(uv run python scripts/source-state-digest.py)
-    echo "=== Testing source state $TESTED_SOURCE at $TESTED_HEAD ==="
-    # Record what was already running so the orphan check below blames this run
-    # for its own processes only, never a developer's dev daemon or editor MCP.
-    uv run python scripts/check-orphan-processes.py baseline
-    # Stays armed through the tail checks: an aborted gate is exactly the run
-    # that skips its cleanup, so it is the one that most needs the process
-    # count.
-    close_out_candidate() {
-        status=$?
-        if [ "$status" -ne 0 ]; then
-            uv run python scripts/docker-storage-policy.py capture-failure \
-                --rail default \
-                --label "${TESTED_HEAD:0:12}" || true
-        fi
-        # Raise the status, never lower it. A trap that `return`s cannot fail a
-        # passing run, but `exit "$status"` would report success for an
-        # interrupted one: $? at trap time is the last command's, and on Ctrl-C
-        # that is 0, so exiting with it discards the shell's own 130.
-        uv run python scripts/check-orphan-processes.py check || exit 1
-        return "$status"
-    }
-    trap close_out_candidate EXIT
-    just _test-fast
-    scripts/with-gate-colima.sh just _test-candidate
-    test "$(git rev-parse HEAD)" = "$TESTED_HEAD" || {
-        echo "source HEAD changed while just test was running" >&2
-        exit 1
-    }
-    AFTER_SOURCE=$(uv run python scripts/source-state-digest.py)
-    if [ "$AFTER_SOURCE" != "$TESTED_SOURCE" ]; then
-        echo "just test changed the source working tree" >&2
-        echo "before=$TESTED_SOURCE after=$AFTER_SOURCE" >&2
-        git status --short >&2
-        exit 1
-    fi
-    echo "=== Verified source state $TESTED_SOURCE ==="
+    @uv run capsem-gate candidate
 
 # After the source-only fast gate passes, local composition constructs every
 # artifact family before running the remaining modules used by release CI.
@@ -492,6 +445,7 @@ _test-candidate-run:
         tests/test_gate_assets.py
         tests/test_gate_assetlanes.py
         tests/test_gate_boundary.py
+        tests/test_gate_candidate.py
         tests/test_gate_cli.py
         tests/test_gate_config.py
         tests/test_gate_crosscompile.py

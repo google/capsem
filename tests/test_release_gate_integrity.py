@@ -25,15 +25,18 @@ def _job_block(workflow: str, name: str) -> str:
 
 
 def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> None:
+    """Both HEAD and the working-tree digest are captured before and compared
+    after: a gate that qualified a HEAD nobody has, or a tree edited halfway
+    through, proved nothing about any particular version."""
     justfile = _read("justfile")
-    wrapper = justfile.split("\ntest:", maxsplit=1)[1].split("\n_test-candidate:", maxsplit=1)[0]
+    candidate = _read("src/capsem/gate/candidate.py")
 
-    assert "TESTED_HEAD=$(git rev-parse HEAD)" in wrapper
-    assert "TESTED_SOURCE=$(uv run python scripts/source-state-digest.py)" in wrapper
-    assert 'test "$(git rev-parse HEAD)" = "$TESTED_HEAD"' in wrapper
-    assert "AFTER_SOURCE=$(uv run python scripts/source-state-digest.py)" in wrapper
-    assert 'if [ "$AFTER_SOURCE" != "$TESTED_SOURCE" ]' in wrapper
-    assert "scripts/with-gate-colima.sh just _test-candidate" in wrapper
+    assert "capsem-gate candidate" in justfile
+    assert "rev-parse" in candidate and "HEAD" in candidate
+    assert "source_digest_script" in candidate
+    assert "source HEAD changed while just test was running" in candidate
+    assert "just test changed the source working tree" in candidate
+    assert "colima_wrapper" in candidate
     assert "CAPSEM_BENCHMARK_OUTPUT_ROOT" in justfile
     assert "target/test-benchmarks" in justfile
     assert "benchmarks/**/data_*.json" in _read(".gitignore")
@@ -119,13 +122,15 @@ def test_local_gate_bootstraps_docker_before_storage_preflight() -> None:
 
 
 def test_macos_full_gate_holds_a_system_sleep_assertion() -> None:
-    justfile = _read("justfile")
-    wrapper = justfile.split("\ntest:", maxsplit=1)[1].split(
-        "\n_test-candidate:", maxsplit=1
-    )[0]
+    """A forty-minute run that dies at minute thirty because the machine slept
+    proves nothing, and by then it is usually unattended."""
+    from capsem.gate import config as gate_config
 
-    assert "caffeinate" in wrapper
-    assert "CAPSEM_TEST_CAFFEINATED" in wrapper
+    settings = gate_config.load(PROJECT_ROOT).candidate
+
+    assert settings.keep_awake_command[0] == "caffeinate"
+    assert settings.keep_awake_marker == "CAPSEM_TEST_CAFFEINATED"
+    assert "keep_awake" in _read("src/capsem/gate/candidate.py")
 
 
 def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:

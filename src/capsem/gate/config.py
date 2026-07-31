@@ -24,6 +24,7 @@ from .configschema import (
     Arch,
     AssetsConfig,
     BoundaryConfig,
+    CandidateConfig,
     InstallConfig,
     LintConfig,
     PackageConfig,
@@ -45,6 +46,7 @@ class GateConfig(Strict):
     install: InstallConfig
     package: PackageConfig
     assets: AssetsConfig
+    candidate: CandidateConfig
     versions: VersionsConfig
     lint: LintConfig
     boundary: BoundaryConfig

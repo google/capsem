@@ -187,6 +187,16 @@ class AssetsConfig(Strict):
     evidence_prune_dirs: tuple[str, ...]
 
 
+class CandidateConfig(Strict):
+    keep_awake_command: tuple[str, ...]
+    keep_awake_marker: str
+    source_digest_script: str
+    orphan_script: str
+    colima_wrapper: str
+    fast_module: str
+    candidate_module: str
+
+
 class StampedFile(Strict):
     path: str
     kind: str

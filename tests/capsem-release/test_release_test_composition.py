@@ -179,11 +179,20 @@ def _source_digest_module():
 
 
 def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() -> None:
-    public = _recipe("test")
+    """The fast module first, then the expensive one under the Colima wrapper.
+
+    Read out of the recipe when `test:` was shell. The order is now asserted
+    against the commands the gate issues, in tests/test_gate_candidate.py.
+    """
+    candidate = (
+        PROJECT_ROOT / "src" / "capsem" / "gate" / "candidate.py"
+    ).read_text(encoding="utf-8")
     local = _recipe("_test-candidate")
 
-    assert "just _test-fast" in public
-    assert public.index("just _test-fast") < public.index("scripts/with-gate-colima.sh")
+    assert "capsem-gate candidate" in _recipe("test")
+    assert candidate.index("self._settings.fast_module") < candidate.index(
+        "self._settings.colima_wrapper"
+    )
     expected = (
         "just _test-static",
         "just _test-artifacts",
@@ -194,7 +203,11 @@ def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() ->
     positions = [local.index(command) for command in expected]
     assert positions == sorted(positions)
     assert "CAPSEM_TEST_MODULE=all" not in local
-    assert "scripts/source-state-digest.py" in _recipe("test")
+
+    from capsem.gate import config as gate_config
+
+    settings = gate_config.load(PROJECT_ROOT).candidate
+    assert settings.source_digest_script.endswith("source-state-digest.py")
 
 
 def test_private_release_modules_select_one_shared_runner() -> None:
@@ -238,7 +251,9 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
     ):
         assert required in fast or required in runner
 
-    assert public.index("just _test-fast") < public.index("scripts/with-gate-colima.sh")
+    # The order lives in capsem.gate.candidate now; see
+    # test_local_test_composes_all_checked_in_modules_after_rebuilding_assets.
+    assert "capsem-gate candidate" in public
     assert "_bootstrap" not in fast
     assert "_check-assets" not in fast
     assert "_pack-initrd" not in fast
