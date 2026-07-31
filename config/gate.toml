@@ -452,6 +452,8 @@ recipes_with_inline_control_flow = ["_pnpm-install"]
 #   runlog       the run directory itself, which cannot be written through
 #                actions because actions report into it
 #   runhistory   reclaiming those directories, for the same reason
+#   disk         reclaiming every other tree the gate creates, with the
+#                resolved-path and symlink guards that makes safe
 #
 # The through-line: these are the harness, and the harness is what gate work is
 # expressed *in*. Anything built on top of it -- a capability, a command -- goes
@@ -465,6 +467,7 @@ direct_machine_access = [
     "locks.py",
     "runlog.py",
     "runhistory.py",
+    "disk.py",
 ]
 
 # Only the plan schedules concurrent work. A module that reaches for its own

@@ -136,7 +136,8 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
     has a single answer. `locks` owns the lockfile that makes one gate per
     machine true, and has to place it before any workspace exists. `runlog`
     owns the run directory and cannot write through actions because actions
-    report into it; `runhistory` reclaims those directories.
+    report into it; `runhistory` reclaims those directories, and `disk`
+    reclaims every other tree the gate creates.
 
     The through-line is that these are the harness, and the harness is what
     gate work is expressed *in*. A capability or a command appearing here
@@ -149,6 +150,7 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
         "locks.py",
         "runlog.py",
         "runhistory.py",
+        "disk.py",
     }
 
 

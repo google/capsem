@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokens. Rotation is bounded by both count and bytes, and gives up completed
   runs before crashed ones -- a crashed run is precisely the case where the
   terminal output was lost with it.
+- The gate now bounds and reclaims what it occupies. Every tree it can create
+  is declared in `[disk] reclaimable`, nothing outside that may be removed,
+  and `ensure_space` reclaims before refusing -- running out of disk an hour
+  into a VM asset build wastes the hour and leaves a half-built tree the next
+  run has to clear first. The removal refuses any path that resolves outside
+  the checkout and unlinks symlinks rather than following them, so a link
+  someone left pointing at their home directory costs them the link.
 - A run now reports where its time went, and reports the right thing: the
   critical path, not the slowest step. Shortening a step that runs beside
   something longer changes nothing, so the number worth acting on is the
