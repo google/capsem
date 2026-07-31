@@ -3,18 +3,15 @@
 from __future__ import annotations
 
 import copy
-import fcntl
 import hashlib
 import importlib.util
 import json
-import os
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 from blake3 import blake3
+from helpers.release_site import build_release_site
 from test_release_site_html_contract import (
     FIXTURE_GRAPH,
     PROJECT_ROOT,
@@ -22,29 +19,6 @@ from test_release_site_html_contract import (
     build_release_site_from_fixture,
     fixture_graph,
 )
-
-
-def build_release_site_from_graph(graph_path: Path) -> None:
-    if RELEASE_SITE_DIST.exists():
-        shutil.rmtree(RELEASE_SITE_DIST)
-
-    lock_path = Path(os.environ.get("TMPDIR", "/tmp")) / "capsem-release-site-build.lock"
-    with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        result = subprocess.run(
-            ["pnpm", "--dir", "release-site", "run", "build"],
-            cwd=PROJECT_ROOT,
-            env={
-                **os.environ,
-                "ASTRO_TELEMETRY_DISABLED": "1",
-                "CAPSEM_RELEASE_CHANNEL_DIST": str(graph_path),
-            },
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    build_release_site_from_fixture.cache_clear()
-    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_no_invented_data() -> None:
@@ -152,22 +126,15 @@ def test_astro_renders_json_graph(tmp_path: Path) -> None:
 
     graph_path = tmp_path / "release-graph-mutated.json"
     graph_path.write_text(json.dumps(graph, indent=2, sort_keys=True), encoding="utf-8")
-    build_release_site_from_graph(graph_path)
+    dist = build_release_site(graph_path)
 
-    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
-    stable = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(
-        encoding="utf-8"
-    )
+    index = (dist / "index.html").read_text(encoding="utf-8")
+    stable = (dist / "channels" / "stable" / "index.html").read_text(encoding="utf-8")
     package_page = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "stable"
-        / "packages"
-        / package["id"]
-        / "index.html"
+        dist / "channels" / "stable" / "packages" / package["id"] / "index.html"
     ).read_text(encoding="utf-8")
     profile_page = (
-        RELEASE_SITE_DIST / "channels" / "stable" / "profiles" / "co-work" / "index.html"
+        dist / "channels" / "stable" / "profiles" / "co-work" / "index.html"
     ).read_text(encoding="utf-8")
 
     assert "Stable Graph Mutation" in index
@@ -258,22 +225,17 @@ def test_rendered_values_map_to_owning_json_paths(tmp_path: Path) -> None:
 
     graph_path = tmp_path / "release-graph-json-owned.json"
     graph_path.write_text(json.dumps(mutated), encoding="utf-8")
-    build_release_site_from_graph(graph_path)
+    dist = build_release_site(graph_path)
 
-    index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
-    stable_page = (RELEASE_SITE_DIST / "channels" / "stable" / "index.html").read_text(
+    index = (dist / "index.html").read_text(encoding="utf-8")
+    stable_page = (dist / "channels" / "stable" / "index.html").read_text(
         encoding="utf-8"
     )
     package_page = (
-        RELEASE_SITE_DIST
-        / "channels"
-        / "stable"
-        / "packages"
-        / package["id"]
-        / "index.html"
+        dist / "channels" / "stable" / "packages" / package["id"] / "index.html"
     ).read_text(encoding="utf-8")
     profile_page = (
-        RELEASE_SITE_DIST / "channels" / "stable" / "profiles" / "co-work" / "index.html"
+        dist / "channels" / "stable" / "profiles" / "co-work" / "index.html"
     ).read_text(encoding="utf-8")
 
     _assert_values(

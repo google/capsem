@@ -2,22 +2,23 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
-import os
-import subprocess
 from functools import cache
-from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
+from helpers.release_site import (
+    FIXTURE_GRAPH,
+    PROJECT_ROOT,
+    RELEASE_SITE_DIST,
+    build_release_site_from_fixture,
 )
-RELEASE_SITE_DIST = PROJECT_ROOT / "release-site" / "dist"
+
+__all__ = [
+    "FIXTURE_GRAPH",
+    "PROJECT_ROOT",
+    "RELEASE_SITE_DIST",
+    "build_release_site_from_fixture",
+    "fixture_graph",
+]
 
 
 def test_channel_name_not_repeated() -> None:
@@ -238,27 +239,6 @@ def test_package_detail_navigation() -> None:
         for binary in package["binaries"]:
             assert binary["installed_path"] in detail
             assert binary["installed_path"] not in stable
-
-
-@cache
-def build_release_site_from_fixture() -> None:
-    lock_path = Path(os.environ.get("TMPDIR", "/tmp")) / "capsem-release-site-build.lock"
-    with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        env = {
-            **os.environ,
-            "ASTRO_TELEMETRY_DISABLED": "1",
-            "CAPSEM_RELEASE_CHANNEL_DIST": str(FIXTURE_GRAPH),
-        }
-        result = subprocess.run(
-            ["pnpm", "--dir", "release-site", "run", "build"],
-            cwd=PROJECT_ROOT,
-            env=env,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    assert result.returncode == 0, result.stdout + result.stderr
 
 
 @cache

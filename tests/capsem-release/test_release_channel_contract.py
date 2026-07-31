@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import pytest
+from helpers.release_site import release_site_build_lock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL = "stable"
@@ -352,11 +353,14 @@ def _build_release_channel(
         timeout=180,
         env={},
     )
-    _run(
-        ["pnpm", "--dir", "release-site", "run", "build:channel"],
-        timeout=180,
-        env={"CAPSEM_RELEASE_CHANNEL_DIST": str(dist)},
-    )
+    # build:channel renders through the shared release-site/dist before
+    # overlaying into `dist`, so it has to serialize with every other build.
+    with release_site_build_lock():
+        _run(
+            ["pnpm", "--dir", "release-site", "run", "build:channel"],
+            timeout=180,
+            env={"CAPSEM_RELEASE_CHANNEL_DIST": str(dist)},
+        )
     _run_admin("assets", "channel", "check", "--channel", CHANNEL, "--dist", str(dist))
 
 

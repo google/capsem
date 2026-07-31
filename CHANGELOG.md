@@ -75,6 +75,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Every release-site gate rendered into the one shared `release-site/dist` and
+  then read its pages back after dropping the build lock, so a build started by
+  another `pytest -n` worker swapped the HTML out from under a test's
+  assertions -- the eight top-level release-site files failed eight or nine
+  assertions on *every* run of the gate's own `-n 4 --dist=loadfile` step, on a
+  different set of assertions each time. Astro compounded it: it stages
+  prerendered chunks at a path fixed under the project root, so two overlapping
+  builds delete each other's staging mid-prerender and `--outDir` buys no
+  isolation at all. Thirteen files had grown seven copy-pasted build helpers,
+  four carrying a lock that covered the build but not the reads it was there to
+  protect. One `tests/helpers/release_site.py` now owns the lock, and each build
+  snapshots its output into a private directory while that lock is still held;
+  callers read the snapshot, and nothing outside the helper touches
+  `release-site/dist`. Snapshots are keyed by graph content, so the gates that
+  share the fixture graph still share one build.
 - Three defects the widened source gates found immediately: an ironbank ledger
   assertion called with a required argument missing, so that path raised
   `TypeError` rather than asserting anything; a gateway test whose assertion

@@ -2,21 +2,16 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
-import os
-import subprocess
-from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RELEASE_SITE_SRC = PROJECT_ROOT / "release-site" / "src"
-FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
+from helpers.release_site import (
+    FIXTURE_GRAPH,
+    PROJECT_ROOT,
+    RELEASE_SITE_DIST,
+    build_release_site_from_fixture,
 )
+
+RELEASE_SITE_SRC = PROJECT_ROOT / "release-site" / "src"
 
 
 def test_site_loader_reads_channels_not_health() -> None:
@@ -39,7 +34,7 @@ def test_site_loader_reads_channels_not_health() -> None:
 def test_root_lists_stable_nightly_and_manifest_statuses() -> None:
     build_release_site_from_fixture()
 
-    index = (PROJECT_ROOT / "release-site" / "dist" / "index.html").read_text(
+    index = (RELEASE_SITE_DIST / "index.html").read_text(
         encoding="utf-8"
     )
 
@@ -56,7 +51,7 @@ def test_root_lists_stable_nightly_and_manifest_statuses() -> None:
 def test_root_channel_table_uses_descriptions_not_theater_labels() -> None:
     build_release_site_from_fixture()
 
-    index = (PROJECT_ROOT / "release-site" / "dist" / "index.html").read_text(
+    index = (RELEASE_SITE_DIST / "index.html").read_text(
         encoding="utf-8"
     )
 
@@ -83,11 +78,9 @@ def test_human_pages_truncate_hashes_but_machine_graph_keeps_full_hashes() -> No
         "co-work"
     ]["architectures"][0]["config"][0]["digest"]["sha256"]
     pages = [
-        PROJECT_ROOT / "release-site" / "dist" / "index.html",
-        PROJECT_ROOT / "release-site" / "dist" / "channels" / "stable" / "index.html",
-        PROJECT_ROOT
-        / "release-site"
-        / "dist"
+        RELEASE_SITE_DIST / "index.html",
+        RELEASE_SITE_DIST / "channels" / "stable" / "index.html",
+        RELEASE_SITE_DIST
         / "channels"
         / "stable"
         / "profiles"
@@ -112,10 +105,10 @@ def test_channel_page_lists_packages_and_binaries() -> None:
     build_release_site_from_fixture()
 
     stable = (
-        PROJECT_ROOT / "release-site" / "dist" / "channels" / "stable" / "index.html"
+        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
     ).read_text(encoding="utf-8")
     nightly = (
-        PROJECT_ROOT / "release-site" / "dist" / "channels" / "nightly" / "index.html"
+        RELEASE_SITE_DIST / "channels" / "nightly" / "index.html"
     ).read_text(encoding="utf-8")
 
     assert "Current Manifest" in stable
@@ -172,7 +165,7 @@ def test_channel_page_has_one_manifest_url() -> None:
 
     for channel in ("stable", "nightly"):
         page = (
-            PROJECT_ROOT / "release-site" / "dist" / "channels" / channel / "index.html"
+            RELEASE_SITE_DIST / "channels" / channel / "index.html"
         ).read_text(encoding="utf-8")
         canonical_url = f"/assets/{channel}/manifest.json"
 
@@ -189,9 +182,7 @@ def test_package_pages_show_package_owned_binaries() -> None:
     graph = _fixture()
     package = graph["manifests"]["stable"]["1.0.2"]["packages"][0]
     package_page_path = (
-        PROJECT_ROOT
-        / "release-site"
-        / "dist"
+        RELEASE_SITE_DIST
         / "channels"
         / "stable"
         / "packages"
@@ -234,9 +225,7 @@ def test_package_sbom_link_not_repeated_on_binaries() -> None:
     graph = _fixture()
     package = graph["manifests"]["stable"]["1.0.2"]["packages"][0]
     page = (
-        PROJECT_ROOT
-        / "release-site"
-        / "dist"
+        RELEASE_SITE_DIST
         / "channels"
         / "stable"
         / "packages"
@@ -263,7 +252,7 @@ def test_channel_page_has_no_detached_profile_image_evidence() -> None:
     build_release_site_from_fixture()
 
     stable = (
-        PROJECT_ROOT / "release-site" / "dist" / "channels" / "stable" / "index.html"
+        RELEASE_SITE_DIST / "channels" / "stable" / "index.html"
     ).read_text(encoding="utf-8")
 
     assert "Current VM Assets" not in stable
@@ -275,9 +264,7 @@ def test_profile_page_renders_profile_owned_images_and_configs() -> None:
     build_release_site_from_fixture()
 
     stable_co_work = (
-        PROJECT_ROOT
-        / "release-site"
-        / "dist"
+        RELEASE_SITE_DIST
         / "channels"
         / "stable"
         / "profiles"
@@ -285,9 +272,7 @@ def test_profile_page_renders_profile_owned_images_and_configs() -> None:
         / "index.html"
     ).read_text(encoding="utf-8")
     stable_code = (
-        PROJECT_ROOT
-        / "release-site"
-        / "dist"
+        RELEASE_SITE_DIST
         / "channels"
         / "stable"
         / "profiles"
@@ -295,9 +280,7 @@ def test_profile_page_renders_profile_owned_images_and_configs() -> None:
         / "index.html"
     ).read_text(encoding="utf-8")
     nightly_co_work = (
-        PROJECT_ROOT
-        / "release-site"
-        / "dist"
+        RELEASE_SITE_DIST
         / "channels"
         / "nightly"
         / "profiles"
@@ -305,9 +288,7 @@ def test_profile_page_renders_profile_owned_images_and_configs() -> None:
         / "index.html"
     ).read_text(encoding="utf-8")
     nightly_code = (
-        PROJECT_ROOT
-        / "release-site"
-        / "dist"
+        RELEASE_SITE_DIST
         / "channels"
         / "nightly"
         / "profiles"
@@ -367,9 +348,7 @@ def test_profile_evidence_not_repeated_per_row() -> None:
     build_release_site_from_fixture()
     graph = _fixture()
     page = (
-        PROJECT_ROOT
-        / "release-site"
-        / "dist"
+        RELEASE_SITE_DIST
         / "channels"
         / "stable"
         / "profiles"
@@ -404,9 +383,7 @@ def test_profile_page_forbids_current_binary_and_current_assets() -> None:
     build_release_site_from_fixture()
 
     stable = (
-        PROJECT_ROOT
-        / "release-site"
-        / "dist"
+        RELEASE_SITE_DIST
         / "channels"
         / "stable"
         / "profiles"
@@ -421,26 +398,6 @@ def test_profile_page_forbids_current_binary_and_current_assets() -> None:
     assert "VM asset revision" not in stable
     assert "Capsem Binaries" not in stable
     assert "Capsem-1.4.0.pkg" not in stable
-
-
-def build_release_site_from_fixture() -> None:
-    lock_path = Path(os.environ.get("TMPDIR", "/tmp")) / "capsem-release-site-build.lock"
-    with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        env = {
-            **os.environ,
-            "ASTRO_TELEMETRY_DISABLED": "1",
-            "CAPSEM_RELEASE_CHANNEL_DIST": str(FIXTURE_GRAPH),
-        }
-        result = subprocess.run(
-            ["pnpm", "--dir", "release-site", "run", "build"],
-            cwd=PROJECT_ROOT,
-            env=env,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def _fixture() -> dict:
