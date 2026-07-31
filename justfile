@@ -2042,23 +2042,8 @@ _gate-install:
     PACKAGE_VERSION=$(docker exec "$CONTAINER" dpkg-deb -f "$CONTAINER_DEB" Version)
     test "$PACKAGE_VERSION" = "$VERSION"
     echo "Installing exact release package via dpkg: $DEB"
-    # Point hydration at this gate's local manifest before the postinst runs.
-    # The published package correctly carries the public channel URL, and this
-    # installs that exact package -- but without the handoff its postinst
-    # fetched https://release.capsem.org over the real network, so the whole-
-    # world local proof depended on live channel contents no commit controls
-    # and died on artifacts that had been deleted from that channel.
-    #
-    # `assets/manifest.json` is the locally built manifest and its asset files
-    # sit beside it, so it resolves offline. The gate's own staged copy under
-    # target/ is not usable here: it is created after this install, and the
-    # request is rejected when its target does not yet exist.
-    docker exec "$CONTAINER" bash -c \
-        "bash /src/scripts/install-manifest-request.sh write /src/assets/manifest.json"
     docker exec "$CONTAINER" bash -c \
         "dpkg -i \"$CONTAINER_DEB\" 2>&1 || apt-get install -f -y"
-    docker exec "$CONTAINER" bash -c \
-        "bash /src/scripts/install-manifest-request.sh clear" || true
     INSTALLED_VERSION=$(docker exec "$CONTAINER" dpkg-query -W -f='${Version}' capsem)
     test "$INSTALLED_VERSION" = "$VERSION"
     echo "Staging real profile assets for installed VM proofs..."
