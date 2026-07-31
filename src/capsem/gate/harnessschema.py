@@ -142,6 +142,68 @@ class FunctionalConfig(Strict):
     assets_dir_variable: str
 
 
+class NamedVolume(Strict):
+    source: str
+    target: str
+
+
+class HostImageConfig(Strict):
+    tag: str
+    dockerfile: str
+    context: str
+    script: str
+    output_dir: str
+    nextest_dir: str
+    mount: str
+    container_output: str
+    container_home: str
+    probe_user: str
+    alpine: str
+    tmpfs: str
+    nextest_mount: str
+    cached_volumes: tuple[NamedVolume, ...]
+    environment: dict[str, str]
+
+
+class SbomConfig(Strict):
+    script: str
+    output: str
+    dist_glob: str
+    macos_package: str
+    expected_debs: int
+    spdx_version: str
+
+
+class SigningConfig(Strict):
+    entitlements: str
+    binaries: tuple[str, ...]
+    release_binary: str
+
+
+class FrontendConfig(Strict):
+    build_script: str
+    build_target: str
+    app_crate: str
+    profiles: tuple[str, ...]
+
+
+class LogsConfig(Strict):
+    service_log: str
+    failure_root: str
+    cli: str
+
+
+class ImageBuildConfig(Strict):
+    admin: tuple[str, ...]
+    templates: tuple[str, ...]
+    profiles_glob: str
+    profile_manifest: str
+    config_root: str
+    output: str
+    doctor_skips: dict[str, str]
+    required: tuple[str, ...]
+
+
 class AuditsConfig(Strict):
     cargo: str
     pnpm: str

@@ -23,6 +23,9 @@ from . import (
     debproof,
     doctor,
     gc,
+    hostimage,
+    hostpackage,
+    imagebuild,
     install,
     installimage,
     lint,
@@ -54,6 +57,9 @@ COMMAND_MODULES = (
     gc,
     testmodules,
     vmmodules,
+    imagebuild,
+    hostimage,
+    hostpackage,
 )
 
 

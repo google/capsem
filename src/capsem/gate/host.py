@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import platform
+from pathlib import Path
 
 
 def machine() -> str:
@@ -38,3 +39,9 @@ def device_available(path: str) -> bool:
 def user() -> tuple[int, int]:
     """The uid and gid that must own anything a container writes to the mount."""
     return os.getuid(), os.getgid()
+
+
+def home() -> Path:
+    """The user's home directory, read once through here like every other
+    runtime fact so a test can move it."""
+    return Path.home()

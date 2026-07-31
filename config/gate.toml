@@ -402,28 +402,14 @@ max_module_lines = 300
 # has been extracted must be struck from it so the list cannot describe a past
 # that is no longer true.
 remaining_shell_recipes = [
-    "_build-assets",
-    "_build-host-image",
-    "_build-image-template",
-    "_build-kernel",
-    "_build-rootfs",
-    "_build-ui",
-    "_check-assets",
     "_check-generated-settings",
     "_dev-ui",
     "_ensure-dev-ready",
     "_ensure-service",
-    "_gate-host-package-sbom",
-    "_gate-linux-rust",
     "_generate-settings",
-    "_install-tools",
     "_materialize-config",
     "_pack-initrd",
-    "_sign",
-    "_sign-release",
-    "dev",
     "exec",
-    "logs",
     "release-binaries",
     "release-profile",
     "shell",
@@ -581,6 +567,86 @@ install = ["cargo", "install", "cargo-sbom", "--locked"]
 [[toolchain.crates]]
 name = "cargo-tauri"
 install = ["cargo", "install", "tauri-cli"]
+
+[hostimage]
+# The Linux builder image, and the Linux-Rust parity lane that runs inside it.
+tag = "capsem-host-builder:latest"
+dockerfile = "docker/Dockerfile.host-builder"
+context = "docker/"
+script = "scripts/test-linux-rust.sh"
+output_dir = "target/linux-rust-coverage"
+nextest_dir = "nextest"
+mount = "/src"
+container_output = "/linux-rust-output"
+container_home = "/tmp/capsem-home"
+# A foreign UID reproduces the case Linux CI actually hits: the checkout's
+# owner is not the image's user, git rejects /src as "dubious ownership", and
+# build.rs answers by embedding "unknown" rather than failing -- which is how a
+# binary with no source identity reaches the provenance check. Checked on macOS
+# too, because git compares st_uid to euid in userspace.
+probe_user = "4242:4242"
+alpine = "alpine"
+# A writable, executable /tmp: the suite compiles and runs test binaries there,
+# and the default read-only overlay makes every one of them fail to exec.
+tmpfs = "/tmp:rw,exec,mode=1777"
+# nextest writes its own state under the target dir; bound out so the results
+# survive the container.
+nextest_mount = "target/nextest"
+cached_volumes = [
+    { source = "capsem-linux-rust-cargo-registry", target = "/usr/local/cargo/registry" },
+    { source = "capsem-linux-rust-cargo-git", target = "/usr/local/cargo/git" },
+    { source = "capsem-linux-rust-rustup", target = "/usr/local/rustup" },
+    { source = "capsem-linux-rust-target", target = "/cargo-target" },
+]
+environment = { HOME = "/tmp/capsem-home", CAPSEM_SKIP_KVM_TESTS = "1", CAPSEM_LINUX_RUST_OUTPUT_DIR = "/linux-rust-output" }
+
+[sbom]
+script = "scripts/generate-host-binary-sbom.py"
+output = "target/ironbank-host-sbom.spdx.json"
+dist_glob = "dist/*{version}*.deb"
+macos_package = "packages/Capsem-{version}.pkg"
+# Two, one per architecture. Fewer means a build did not happen; more means an
+# older version's packages are still in dist/ and the SBOM would describe a
+# cohort nobody is shipping.
+expected_debs = 2
+spdx_version = "SPDX-2.3"
+
+[signing]
+entitlements = "entitlements.plist"
+binaries = [
+    "target/debug/capsem", "target/debug/capsem-service", "target/debug/capsem-process",
+    "target/debug/capsem-gateway", "target/debug/capsem-mcp", "target/debug/capsem-admin",
+]
+release_binary = "target/debug/capsem"
+
+[frontend]
+build_script = "scripts/check-web-surface.sh"
+build_target = "frontend-build"
+# capsem-app embeds frontend/dist at compile time, so the bundle has to exist
+# before cargo reads it.
+app_crate = "capsem-app"
+profiles = ["debug", "release"]
+
+[logs]
+service_log = ".capsem/run/service.log"
+failure_root = "target/test-artifacts"
+cli = "target/debug/capsem"
+
+[imagebuild]
+# One `capsem-admin image build` invocation, with the template as the only
+# thing that varies. Four recipes spelled it out, and the shape of the argv was
+# the same in all four.
+admin = ["cargo", "run", "-p", "capsem-admin", "--", "image", "build"]
+templates = ["kernel", "rootfs", "all"]
+profiles_glob = "config/profiles/*/profile.toml"
+profile_manifest = "config/profiles/{profile}/profile.toml"
+config_root = "config"
+output = "assets"
+# Doctor is run first, with the checks that would fail on the very thing this
+# is about to build turned off.
+doctor_skips = { CAPSEM_SKIP_ASSET_CHECK = "1", CAPSEM_SKIP_KVM_CHECK = "1" }
+# What a per-architecture asset tree must contain to count as built.
+required = ["vmlinuz", "initrd.img", "rootfs.erofs"]
 
 # ---------------------------------------------------------------------------
 # The cheap checks, and what they may overlap with

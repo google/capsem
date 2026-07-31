@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `code` inside a script -- a product decision that had been spelled as a
   lambda. `scripts/release-test-profiles.py` stays as the command-line surface
   CI already calls.
+- Fourteen more recipes are dispatches: the image-build family (four recipes
+  spelling out one `capsem-admin image build` invocation where only the
+  template varied), the asset presence check (which hand-rolled a
+  `uname -m | sed` architecture mapping that `config.arch` already owned), the
+  toolchain installs, the Linux-Rust parity lane and its builder image, the
+  host SBOM, signing, the desktop bundle build, log reading, and the dev
+  surface selector. The justfile is 995 body lines to 336.
 - `_test-candidate-run` is gone. All six modules `just test` is made of are
   commands now, each declaring the workspace it needs and the graph of steps it
   contains -- both answerable without running anything. A module used to be the

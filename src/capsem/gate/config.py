@@ -39,11 +39,17 @@ from .harnessschema import (
     DiskConfig,
     Exclusive,
     ExecutionConfig,
+    FrontendConfig,
     FunctionalConfig,
+    HostImageConfig,
+    ImageBuildConfig,
     LintConfig,
     LocksConfig,
+    LogsConfig,
     ModulesConfig,
     RunLogConfig,
+    SbomConfig,
+    SigningConfig,
     SuitesConfig,
     ToolchainConfig,
     WebSurfacesConfig,
@@ -77,6 +83,12 @@ class GateConfig(Strict):
     toolchain: ToolchainConfig
     functional: FunctionalConfig
     modules: ModulesConfig
+    imagebuild: ImageBuildConfig
+    hostimage: HostImageConfig
+    sbom: SbomConfig
+    signing: SigningConfig
+    frontend: FrontendConfig
+    logs: LogsConfig
 
     root: Path = Field(exclude=True)
     """The checkout this configuration was loaded from."""

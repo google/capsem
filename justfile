@@ -79,12 +79,8 @@ _dev-tui *ARGS:
 
 # Codesign all host binaries (macOS only, needed for Virtualization.framework)
 _sign: _build-host
-    #!/bin/bash
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-        for bin in {{host_binaries}}; do
-            codesign --sign - --entitlements {{entitlements}} --force "$bin"
-        done
-    fi
+    uv run capsem-gate sign
+
 
 # Ensure capsem-service daemon is running with the current binary.
 # Kills any existing dev-owned instance (via pidfile -- never pkill-by-name)
@@ -183,21 +179,8 @@ _dev-frontend: _pnpm-install _generate-settings
 #   just build          # debug binary at ./target/debug/capsem-app
 #   just build release  # release binary at ./target/release/capsem-app
 _build-ui profile="debug": _pnpm-install _generate-settings
-    #!/bin/bash
-    set -euo pipefail
-    echo "=== Frontend build ==="
-    bash scripts/check-web-surface.sh frontend-build
-    echo ""
-    echo "=== capsem-app ({{profile}}) build ==="
-    if [[ "{{profile}}" == "release" ]]; then
-        cargo build -p capsem-app --release
-        echo ""
-        echo "Built ./target/release/capsem-app"
-    else
-        cargo build -p capsem-app
-        echo ""
-        echo "Built ./target/debug/capsem-app"
-    fi
+    uv run capsem-gate build-ui {{profile}}
+
 
 # Frontend release gate used by Sprinty and docs.
 # Build both public documentation surfaces.
@@ -207,17 +190,8 @@ build-docs: _pnpm-install
 
 # Select one deliberate development surface.
 dev surface="ui" *ARGS:
-    #!/bin/bash
-    set -euo pipefail
-    case "{{surface}}" in
-        ui) just _dev-ui ;;
-        frontend) just _dev-frontend ;;
-        tui) just _dev-tui {{ARGS}} ;;
-        *)
-            echo "ERROR: dev surface must be ui, frontend, or tui" >&2
-            exit 2
-            ;;
-    esac
+    just _dev-{{surface}} {{ARGS}}
+
 
 # Build the desktop application with its embedded frontend.
 build profile="debug":
@@ -254,84 +228,26 @@ exec +CMD: run-service
 
 # Build kernel only for one profile/arch (CI-facing primitive).
 _build-kernel arch profile="" output=assets_dir:
-    #!/bin/bash
-    set -euo pipefail
-    PROFILE_ARG="{{profile}}"
-    OUTPUT_ARG="{{output}}"
-    if [[ -z "$PROFILE_ARG" ]]; then
-        echo "ERROR: internal _build-kernel requires <arch> <profile-id>"
-        exit 2
-    fi
-    just _install-tools
-    CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor
-    just _build-image-template "{{arch}}" "$PROFILE_ARG" "$OUTPUT_ARG" kernel
-    just _docker-gc
+    uv run capsem-gate build-assets {{profile}} {{arch}} --template kernel
+
 
 # Build rootfs only for one profile/arch (CI-facing primitive).
 _build-rootfs arch profile="" output=assets_dir:
-    #!/bin/bash
-    set -euo pipefail
-    PROFILE_ARG="{{profile}}"
-    OUTPUT_ARG="{{output}}"
-    if [[ -z "$PROFILE_ARG" ]]; then
-        echo "ERROR: internal _build-rootfs requires <arch> <profile-id>"
-        exit 2
-    fi
-    just _install-tools
-    CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor
-    just _build-image-template "{{arch}}" "$PROFILE_ARG" "$OUTPUT_ARG" rootfs
-    just _docker-gc
+    uv run capsem-gate build-assets {{profile}} {{arch}} --template rootfs
+
 
 # Already-preflighted image-build primitive shared by public CI recipes and
 # the canonical all-profile matrix. Public recipes own tool/doctor setup;
 # test-assets owns that setup once through its _bootstrap dependencies.
 _build-image-template arch profile output template:
-    #!/bin/bash
-    set -euo pipefail
-    PROFILE_ARG="{{profile}}"
-    OUTPUT_ARG="{{output}}"
-    TEMPLATE_ARG="{{template}}"
-    case "$TEMPLATE_ARG" in
-        kernel|rootfs) ;;
-        *)
-            echo "ERROR: unsupported image template: $TEMPLATE_ARG" >&2
-            exit 2
-            ;;
-    esac
-    cargo run -p capsem-admin -- image build \
-        --profile "config/profiles/${PROFILE_ARG}/profile.toml" \
-        --config-root config \
-        --output "$OUTPUT_ARG" \
-        --arch "{{arch}}" \
-        --template "$TEMPLATE_ARG" \
-        --clean
+    uv run capsem-gate build-assets {{profile}} {{arch}} --template {{template}}
+
 
 # VM asset rebuild (kernel + rootfs). Profile is mandatory. Optional second arg
 # restricts to one arch.
 _build-assets profile="" arch="" output=assets_dir:
-    #!/bin/bash
-    set -euo pipefail
-    PROFILE_ARG="{{profile}}"
-    ARCH_ARG="{{arch}}"
-    OUTPUT_ARG="{{output}}"
-    if [[ -z "$PROFILE_ARG" ]]; then
-        echo "ERROR: internal _build-assets requires <profile-id> [arm64|x86_64]"
-        exit 2
-    fi
-    just _install-tools
-    just _clean-stale
-    CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor
-    ARGS=(
-        --profile "config/profiles/${PROFILE_ARG}/profile.toml"
-        --config-root config
-        --output "$OUTPUT_ARG"
-        --clean
-    )
-    if [[ -n "$ARCH_ARG" ]]; then
-        ARGS+=(--arch "$ARCH_ARG")
-    fi
-    cargo run -p capsem-admin -- image build "${ARGS[@]}"
-    just _docker-gc
+    uv run capsem-gate build-assets {{profile}} {{arch}}
+
 
 # Ironbank VM asset gate. This is the superset owner for the image-build work
 # performed by release-assets.yaml: every checked-in profile, both published
@@ -406,128 +322,20 @@ _test-recipes:
     uv run python -m pytest tests/capsem-recipes/ -v --tb=short -m recipe
 
 # Build the capsem-host-builder Docker image (cached, only rebuilds changed layers).
-# See docker/Dockerfile.host-builder for contents.
-_build-host-image:
-    #!/bin/bash
-    set -euo pipefail
-    echo "=== Building capsem-host-builder image ==="
-    docker build \
-        -t capsem-host-builder:latest \
-        -f docker/Dockerfile.host-builder \
-        docker/
-    # On Linux CI the checkout's owner is not this image's user, so git rejects
-    # /src as "dubious ownership" -- and crates/capsem/build.rs answers that by
-    # embedding "unknown" instead of failing, which is how a binary with no
-    # source identity reaches the provenance check. Forcing a foreign UID
-    # reproduces it here: git compares st_uid to euid in userspace, so the
-    # check works even on macOS bind mounts, which do not enforce write
-    # permission and therefore cannot surface the rest of that family.
-    ROOT="{{justfile_directory()}}"
-    EXPECTED=$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo "")
-    if [ -n "$EXPECTED" ]; then
-        ACTUAL=$(docker run --rm -v "$ROOT:/src" -w /src --user 4242:4242 \
-            capsem-host-builder:latest git rev-parse --short HEAD 2>/dev/null || echo "")
-        if [ "$ACTUAL" != "$EXPECTED" ]; then
-            echo "ERROR: capsem-host-builder cannot read /src as a non-owner user." >&2
-            echo "       Linux package builds will embed an 'unknown' build hash." >&2
-            echo "       Fix: keep 'git config --system --add safe.directory /src'" >&2
-            echo "       in docker/Dockerfile.host-builder." >&2
-            exit 1
-        fi
-        echo "  [pass] host-builder reads /src as a non-owner user ($ACTUAL)"
-    fi
 
 # Execute the portable Linux host-crate suite through one checked-in runner.
 # Linux CI calls this recipe natively. Mac-local `just test` calls it through
 # capsem-host-builder so cfg(target_os = "linux") tests are not CI-only.
 _gate-linux-rust:
-    #!/bin/bash
-    set -euo pipefail
-    ROOT="{{justfile_directory()}}"
-    if [ "$(uname -s)" = "Linux" ]; then
-        CAPSEM_LINUX_RUST_OUTPUT_DIR="$ROOT" bash "$ROOT/scripts/test-linux-rust.sh"
-        exit 0
-    fi
+    uv run capsem-gate linux-rust
 
-    [ "$(uname -s)" = "Darwin" ] || {
-        echo "ERROR: Linux Rust parity supports native Linux or Docker on macOS" >&2
-        exit 1
-    }
-
-    # Native Linux CI runs the shared script directly. Only a Mac host needs
-    # the Linux builder image, so do not make Linux CI build an unused image.
-    just _build-host-image
-    [ -f "$ROOT/Cargo.lock" ] || cargo generate-lockfile
-    OUTPUT_DIR="$ROOT/target/linux-rust-coverage"
-    HOST_UID=$(id -u)
-    HOST_GID=$(id -g)
-    mkdir -p "$OUTPUT_DIR/nextest"
-    # Match the non-root GitHub runner. Running this suite as container root
-    # makes chmod-based permission regressions impossible to observe.
-    docker run --rm \
-        -v capsem-linux-rust-cargo-registry:/usr/local/cargo/registry \
-        -v capsem-linux-rust-cargo-git:/usr/local/cargo/git \
-        -v capsem-linux-rust-rustup:/usr/local/rustup \
-        -v capsem-linux-rust-target:/cargo-target \
-        capsem-host-builder:latest \
-        sh -c "chown -R $HOST_UID:$HOST_GID /usr/local/cargo/registry /usr/local/cargo/git /usr/local/rustup /cargo-target"
-    docker run --rm \
-        --user "$HOST_UID:$HOST_GID" \
-        -e HOME=/tmp/capsem-home \
-        -e CAPSEM_SKIP_KVM_TESTS=1 \
-        -e CAPSEM_LINUX_RUST_OUTPUT_DIR=/linux-rust-output \
-        --tmpfs /tmp:rw,exec,mode=1777 \
-        -v "$ROOT:/src:ro" \
-        -v "$OUTPUT_DIR:/linux-rust-output" \
-        -v "$OUTPUT_DIR/nextest:/src/target/nextest" \
-        -v capsem-linux-rust-cargo-registry:/usr/local/cargo/registry \
-        -v capsem-linux-rust-cargo-git:/usr/local/cargo/git \
-        -v capsem-linux-rust-rustup:/usr/local/rustup \
-        -v capsem-linux-rust-target:/cargo-target \
-        -w /src \
-        capsem-host-builder:latest \
-        bash /src/scripts/test-linux-rust.sh
-    docker run --rm \
-        -v "$OUTPUT_DIR:/linux-rust-output" \
-        alpine chown -R "$HOST_UID:$HOST_GID" /linux-rust-output
 
 # Run the production release SBOM generator over the exact current-version
 # packages built by the canonical gate. Mac runs cover one .pkg plus both .deb
 # architectures; native Linux qualification covers both .deb architectures.
 _gate-host-package-sbom:
-    #!/bin/bash
-    set -euo pipefail
-    ROOT="{{justfile_directory()}}"
-    VERSION=$(grep '^version' "$ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    shopt -s nullglob
-    DEBS=("$ROOT"/dist/*"$VERSION"*.deb)
-    [ "${#DEBS[@]}" -eq 2 ] || {
-        echo "ERROR: expected exactly two current-version Linux packages, found ${#DEBS[@]}" >&2
-        printf '  %s\n' "${DEBS[@]}" >&2
-        exit 1
-    }
-    ARTIFACTS=("${DEBS[@]}")
-    if [ "$(uname -s)" = "Darwin" ]; then
-        PKG="$ROOT/packages/Capsem-$VERSION.pkg"
-        test -s "$PKG"
-        ARTIFACTS+=("$PKG")
-    fi
-    OUTPUT="$ROOT/target/ironbank-host-sbom.spdx.json"
-    python3 "$ROOT/scripts/generate-host-binary-sbom.py" \
-        --output "$OUTPUT" \
-        "${ARTIFACTS[@]}"
-    python3 - "$OUTPUT" "${#ARTIFACTS[@]}" <<'PY'
-    import json
-    import pathlib
-    import sys
+    uv run capsem-gate host-sbom
 
-    document = json.loads(pathlib.Path(sys.argv[1]).read_text())
-    if document.get("spdxVersion") != "SPDX-2.3":
-        raise SystemExit("host SBOM is not SPDX-2.3")
-    if not document.get("files"):
-        raise SystemExit("host SBOM contains no packaged executables")
-    print(f"host SBOM validated: artifacts={sys.argv[2]} files={len(document['files'])}")
-    PY
 
 # Remove cross-compilation image and cached volumes.
 _clean-host-image:
@@ -698,7 +506,10 @@ _prove-linux-deb: _test-install-harness-preflight
 _test-install-harness-preflight:
     @uv run capsem-gate install-image
 
-_gate-install:
+# Depends on _pnpm-install: the install suite builds the release site inside
+# the container, and CI's test-install job enables the pnpm cache -- whose
+# post-job save step fails on a store that was never created.
+_gate-install: _pnpm-install
     @uv run capsem-gate install
 
 # Check dev tools and dependencies. Pass "fix" to auto-fix.
@@ -709,26 +520,8 @@ doctor fix="": _pnpm-install
 # View service logs, a sandbox's logs, or the latest preserved test failure.
 # `just logs`, `just logs <sandbox-id>`, `just logs failure`.
 logs target="":
-    #!/bin/bash
-    set -euo pipefail
-    case "{{target}}" in
-        "")
-            tail -f "$HOME/.capsem/run/service.log"
-            ;;
-        failure)
-            latest=$(find test-artifacts -mindepth 1 -maxdepth 1 -type d \
-                -print 2>/dev/null | sort -r | head -1)
-            if [ -z "$latest" ]; then
-                echo "No preserved test failure." >&2
-                exit 1
-            fi
-            echo "$latest"
-            find "$latest" -maxdepth 3 -type f -print
-            ;;
-        *)
-            {{cli_binary}} logs "{{target}}"
-            ;;
-    esac
+    uv run capsem-gate logs {{target}}
+
 
 # Remove stale rootfs copies, orphan UDS sockets, and trim bloated incremental caches.
 # See scripts/clean_stale.py for implementation (tested: tests/capsem-cleanup-script/).
@@ -764,77 +557,13 @@ _ensure-dev-ready:
 
 # Auto-install Rust targets, components, and cargo tools
 _install-tools:
-    #!/bin/bash
-    set -euo pipefail
-    # Musl targets for cross-compiling guest binaries
-    if ! rustup target list --installed | grep -q aarch64-unknown-linux-musl; then
-        echo "Installing aarch64-unknown-linux-musl target..."
-        rustup target add aarch64-unknown-linux-musl
-    fi
-    if ! rustup target list --installed | grep -q x86_64-unknown-linux-musl; then
-        echo "Installing x86_64-unknown-linux-musl target..."
-        rustup target add x86_64-unknown-linux-musl
-    fi
-    # rust-lld linker (from llvm-tools component)
-    if ! rustup component list --installed | grep -q llvm-tools; then
-        echo "Installing llvm-tools (provides rust-lld)..."
-        rustup component add llvm-tools
-    fi
-    # cargo-llvm-cov for coverage
-    if ! command -v cargo-llvm-cov &>/dev/null; then
-        echo "Installing cargo-llvm-cov..."
-        cargo install cargo-llvm-cov
-    fi
-    # b3sum for BLAKE3 checksums
-    if ! command -v b3sum &>/dev/null; then
-        echo "Installing b3sum..."
-        cargo install b3sum --locked
-    fi
-    # cargo-audit for vulnerability scanning
-    if ! command -v cargo-audit &>/dev/null; then
-        echo "Installing cargo-audit..."
-        cargo install cargo-audit
-    fi
-    # Tauri CLI
-    if ! cargo tauri --version &>/dev/null; then
-        echo "Installing Tauri CLI..."
-        cargo install tauri-cli
-    fi
-    # cargo-sbom for SPDX generation
-    if ! command -v cargo-sbom &>/dev/null; then
-        echo "Installing cargo-sbom..."
-        cargo install cargo-sbom --locked
-    fi
+    uv run capsem-gate install-tools
+
 
 # Verify VM assets exist (vmlinuz, initrd.img, rootfs)
 _check-assets:
-    #!/bin/bash
-    set -euo pipefail
-    dir="{{assets_dir}}"
-    # Map host architecture to asset directory name
-    arch=$(uname -m | sed 's/aarch64/arm64/;s/arm64/arm64/')
-    missing=()
-    if [ -f "$dir/$arch/vmlinuz" ]; then
-        # Per-arch layout: assets/{arch}/vmlinuz
-        for f in vmlinuz initrd.img rootfs.erofs; do
-            [ -f "$dir/$arch/$f" ] || missing+=("$arch/$f")
-        done
-    elif [ -f "$dir/vmlinuz" ]; then
-        # Flat layout (legacy): assets/vmlinuz
-        for f in vmlinuz initrd.img; do
-            [ -f "$dir/$f" ] || missing+=("$f")
-        done
-        [ -f "$dir/rootfs.erofs" ] || missing+=("rootfs.erofs")
-    else
-        missing+=("vmlinuz (checked $dir/$arch/ and $dir/)")
-    fi
-    if [ ${#missing[@]} -gt 0 ]; then
-        echo "Missing VM assets in $dir/: ${missing[*]}"
-        echo "Building checked-in profile assets for $arch (requires docker)..."
-        for profile in config/profiles/*/profile.toml; do
-            just _build-assets "$(basename "$(dirname "$profile")")" "$arch"
-        done
-    fi
+    uv run capsem-gate check-assets
+
 
 _pnpm-install:
     # CI=true suppresses pnpm's interactive "remove and reinstall
@@ -859,18 +588,8 @@ _compile: _frontend _clean-stale
     cargo build -p capsem
 
 _sign-release: _compile
-    #!/bin/bash
-    set -euo pipefail
-    if [[ "$(uname -s)" != "Darwin" ]]; then
-        echo "  [omit] codesign (Linux -- not needed, using KVM)"
-        exit 0
-    fi
-    if [[ ! -r "{{entitlements}}" ]]; then
-        echo "ERROR: {{entitlements}} not found or not readable."
-        echo "       This file should be checked into the repo. Try: git checkout {{entitlements}}"
-        exit 1
-    fi
-    codesign --sign - --entitlements {{entitlements}} --force {{binary}}
+    uv run capsem-gate sign
+
 
 _pack-initrd:
     #!/bin/bash
