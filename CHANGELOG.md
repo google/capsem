@@ -27,6 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `code` inside a script -- a product decision that had been spelled as a
   lambda. `scripts/release-test-profiles.py` stays as the command-line surface
   CI already calls.
+- New `/dev-gate` skill covering the gate's five layers, how to add a command,
+  and every guard that will fail you. `/dev-just` now states the recipe rule as
+  enforced rather than advised, and the docs point at `--dry-run` as the way to
+  read what a recipe does -- since the recipe itself is now one line.
 - The justfile no longer contains a shell body. It went from 2457 lines with
   roughly 2070 of inline `bash` across thirty-five recipes to 73 body lines
   across sixty-four, none over five, none with a shebang -- and the ratchet

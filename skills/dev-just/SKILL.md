@@ -31,6 +31,25 @@ allowlist update in the same change.
 
 `just --summary` must print only those 13 names.
 
+## What a recipe may contain
+
+A recipe is a dispatch or a single command. Nothing else, and this is checked
+rather than advised:
+
+- no shell body (no `#!/bin/bash`) -- `tests/test_gate_boundary.py`
+- at most five executable lines
+- no `if`, `for`, `while`, `case`, `until` or `trap`
+
+The justfile carried roughly 2070 lines of inline `bash` across thirty-five
+recipes, none of it reachable by a test, so every defect in it was found by
+running the forty-minute gate. It is 73 body lines now. Logic lives in
+`src/capsem/gate/`; see `/dev-gate` for how to add or change a command.
+
+The one exception is a single command with no branching -- `cargo build`,
+`cd frontend && pnpm run dev` -- where routing through Python would add a `uv`
+startup and, for an interactive dev server, break TTY and signal handling, in
+exchange for no decision made.
+
 ## What does not belong in Just
 
 - `smoke` is the one public focused developer gate. It is never sufficient for

@@ -183,3 +183,20 @@ release-binaries -> adversarial binary script + locked package workflow
 | `_test-functional` | VM suites, Winterfell, MCP lifecycle, IronBank, injection, integration, benchmarks, and full doctor |
 | `_test-glowup` | Native install and manifest-driven binary/profile/channel update transitions |
 | `_test-release-contracts` | Lane boundaries, shared serialization, deploy containment, and corporate authoring |
+
+## Where the logic lives
+
+The justfile dispatches; it does not decide. Every recipe is a call into
+`capsem-gate` or a single command, and none carries a shell body -- a contract
+test holds that. The build, test and release logic lives in
+`src/capsem/gate/`, where it is unit tested.
+
+That means a recipe is rarely the thing to read. To see what one does:
+
+```bash
+uv run capsem-gate <command> --dry-run
+```
+
+which prints every step in execution order with the exact argv it would invoke,
+and runs none of it. `--graph` prints the same thing as a diagram, and
+`--timing` reports where a finished run's time went.

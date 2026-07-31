@@ -40,6 +40,7 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Initrd repack | `/build-initrd` | Guest binary changes, fast iteration loop |
 | Asset pipeline | `/asset-pipeline` | Asset manifest, hash verification, boot-time resolution |
 | Just recipes | `/dev-just` | Which just command to run for a given task |
+| Build/release gate | `/dev-gate` | Adding or changing a capsem-gate command; boundary, primitive, or contention guard failures |
 | Debugging | `/dev-debugging` | Bug investigation, reproduce-first workflow |
 | CI triage | `/dev-ci` | Red gates, pr-gate failures, rerun decisions, stop-the-line policy |
 | Sprints | `/dev-sprint` | Running a multi-step feature sprint |

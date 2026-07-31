@@ -80,3 +80,31 @@ Telemetry and security ledgers are database-owned.
   ledger shape as empty data.
 
 Every change touching logged data needs tests that guard this boundary.
+
+## The gate contract
+
+The justfile dispatches; `src/capsem/gate/` decides. No recipe carries a shell
+body and none exceeds five lines, both held by contract tests rather than
+convention.
+
+Five rules, each with a guard:
+
+- **Work is composed from primitives.** `actions` and `fileactions` are the only
+  modules that touch the machine, alongside the four that own one piece of
+  machine state as their whole purpose. Anything else going around them is work
+  the dry run cannot show and the run log cannot time.
+- **Ordering is declared, then derived.** A step names what it must follow;
+  `graphlib` decides the sequence. A cycle fails before any step runs. Never
+  sequence by writing one `plan.add` above another.
+- **Contention is declared in `[execution.exclusives]`, with the reason.** Two
+  steps can be independent and still unable to share the machine.
+- **Teardown is `held(...)`** -- acquired in order, released in reverse,
+  evidence preserved before release. A `finally` that removes a directory is a
+  `Resource` that was not written.
+- **Every value lives in `config/gate.toml`.** No path, filename, architecture
+  or channel name in code.
+
+One gate runs per machine, enforced by `flock` rather than a pidfile, and every
+run is recorded under `target/gate-runs/` and bounded by `[disk]`.
+
+Read `/dev-gate` before changing any of it.
