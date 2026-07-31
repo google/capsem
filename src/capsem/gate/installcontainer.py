@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import shutil
 import time
+from pathlib import Path
 
 from . import config as gate_config
 from . import host
@@ -89,6 +90,7 @@ class InstallContainer:
 
     def start(self, *, options: list[str]) -> None:
         self._runner.note("Starting systemd container...")
+        cgroup = self._settings.cgroup_path
         # A stable name plus a preemptive removal is what recovers from a
         # predecessor that died before its own cleanup -- a cargo SIGTERM under
         # a Colima OOM, for instance.
@@ -96,11 +98,10 @@ class InstallContainer:
         self._docker.run_detached(
             name=self.name,
             image=self._settings.image,
-            command=["/usr/lib/systemd/systemd"],
-            options=["--privileged", "--cgroupns=host", *options,
-                     "--tmpfs", "/run", "--tmpfs", "/tmp"],
+            command=[self._settings.systemd_command],
+            options=["--privileged", "--cgroupns=host", *options, *self._tmpfs()],
             mounts=[
-                Mount("/sys/fs/cgroup", "/sys/fs/cgroup", "rw"),
+                Mount(cgroup, cgroup, "rw"),
                 Mount(str(self._config.root), self._settings.mount),
                 *(Mount(v.source, v.target) for v in self._settings.volumes),
             ],
@@ -121,16 +122,20 @@ class InstallContainer:
         )
 
     def _claim_paths(self) -> None:
+        guest = self._settings.guest_user.name
         self._docker.exec(self.name, ["mkdir", "-p", *self._owned])
-        self._docker.exec(self.name, ["chown", "-R", "capsem:capsem", *self._owned])
+        self._docker.exec(self.name, ["chown", "-R", f"{guest}:{guest}", *self._owned])
         # Unlinking these needs write permission on the *parent* directory
         # entry, not on the entries themselves. On Linux /src/target belongs to
         # the host user rather than the container's capsem, so the staging
         # step's `rm -rf` fails with "Permission denied" before it can restage.
         # Grant the one directory entry: a recursive chown here would walk
         # every cargo artifact in the checkout.
+        owner = self._settings.guest_user.name
+        target = Path(self._settings.layout.assets).parts[0]
         self._docker.exec(
-            self.name, ["chown", "capsem:capsem", f"{self._settings.mount}/target"]
+            self.name,
+            ["chown", f"{owner}:{owner}", f"{self._settings.mount}/{target}"],
         )
 
     def return_paths(self) -> None:
@@ -144,6 +149,9 @@ class InstallContainer:
         """Return one host-owned path mid-run, before a host tool reads it."""
         uid, gid = host.user()
         self._docker.shell(self.name, f"mkdir -p {path} && chown -R {uid}:{gid} {path}")
+
+    def _tmpfs(self) -> list[str]:
+        return [flag for path in self._settings.tmpfs_paths for flag in ("--tmpfs", path)]
 
     def stop(self) -> None:
         self._docker.remove(self.name)

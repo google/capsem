@@ -25,6 +25,7 @@ from .configschema import (
     AssetsConfig,
     BoundaryConfig,
     CandidateConfig,
+    DoctorConfig,
     InstallConfig,
     LintConfig,
     PackageConfig,
@@ -48,18 +49,23 @@ class GateConfig(Strict):
     assets: AssetsConfig
     candidate: CandidateConfig
     versions: VersionsConfig
+    doctor: DoctorConfig
     lint: LintConfig
     boundary: BoundaryConfig
 
     root: Path = Field(exclude=True)
     """The checkout this configuration was loaded from."""
 
+    pkg_config_template: str
+
     @model_validator(mode="after")
     def _name_architectures(self) -> GateConfig:
-        """Give each architecture the table key that names it."""
+        """Give each architecture the table key and template that name it."""
         for key, arch in self.architectures.items():
             if not arch.name:
                 object.__setattr__(arch, "name", key)
+            if not arch.pkg_config_template:
+                object.__setattr__(arch, "pkg_config_template", self.pkg_config_template)
         return self
 
     def path(self, relative: str) -> Path:

@@ -37,7 +37,7 @@ def _checkout(tmp_path: Path, *, toolchain: str = "9.99.9") -> Path:
     the one the gate actually runs with.
     """
     tmp_path.mkdir(parents=True, exist_ok=True)
-    (tmp_path / "rust-toolchain.toml").write_text(
+    (tmp_path / CONFIG.package.toolchain_pin).write_text(
         f'[toolchain]\nchannel = "{toolchain}"\n'
     )
     (tmp_path / "scripts").mkdir()
@@ -87,10 +87,11 @@ def test_the_toolchain_comes_from_the_file_that_pins_it(tmp_path: Path) -> None:
 
 
 def test_a_checkout_with_no_pinned_toolchain_says_so(tmp_path: Path) -> None:
-    (tmp_path / "rust-toolchain.toml").write_text("[other]\n")
+    root = _checkout(tmp_path)
+    (root / CONFIG.package.toolchain_pin).write_text("[other]\n")
 
     with pytest.raises(GateError, match=r"no .toolchain. channel"):
-        pinned_toolchain(tmp_path)
+        pinned_toolchain(root)
 
 
 def test_release_keys_are_used_when_the_checkout_has_them(tmp_path: Path) -> None:

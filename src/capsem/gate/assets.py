@@ -67,11 +67,12 @@ class AssetGate:
 
     def _require_cross_execution(self, other: gate_config.Arch) -> None:
         """Prove Docker can run the other architecture before building for it."""
-        platform = f"linux/{other.dpkg}"
+        platform = f"{self._assets.cross_platform_prefix}{other.dpkg}"
         self._runner.step(f"Ironbank {other.name} container execution preflight")
         probe = [
             "docker", "run", "--rm", "--platform", platform,
-            self._assets.cross_platform_probe_image, "/bin/true",
+            self._assets.cross_platform_probe_image,
+            self._assets.cross_platform_probe_command,
         ]
         if self._runner.succeeds(probe):
             return
@@ -89,7 +90,7 @@ class AssetGate:
         return self.test_root / profile.name
 
     def _merge_lanes(self, profile: Profile, lanes: AssetLanes) -> Path:
-        assets = self._profile_root(profile) / "assets"
+        assets = self._profile_root(profile) / self._assets.merged_assets_dir
         assets.mkdir(parents=True, exist_ok=True)
         for arch in self._config.architectures.values():
             built = lanes.lane_assets(profile, arch) / arch.name
@@ -103,7 +104,7 @@ class AssetGate:
         """Generate, alias, and check the merged manifest; return its file URI."""
         self._runner.run(self._admin("manifest", "generate", str(assets)))
 
-        current = assets / "current"
+        current = assets / self._assets.current_link
         with suppress(FileNotFoundError):
             current.unlink()
         current.symlink_to(self.host_arch.name)
@@ -114,19 +115,19 @@ class AssetGate:
             )
 
         self._runner.script(self._assets.hash_assets_script, assets)
-        manifest = assets / "manifest.json"
+        manifest = assets / self._config.install.manifest_name
         self._runner.run(self._admin("manifest", "check", str(manifest)))
         return manifest.resolve().as_uri()
 
     def _materialize(self, profile: Profile, assets: Path, manifest_uri: str) -> Path:
         """Materialize every runtime profile against this profile's assets."""
-        output = self._profile_root(profile) / "config"
+        output = self._profile_root(profile) / self._assets.merged_config_dir
         for runtime in discover_profiles(self._config):
             self._runner.run(
                 self._admin(
                     "profile", "materialize",
                     "--profile", str(runtime.manifest),
-                    "--config-root", "config",
+                    "--config-root", self._assets.merged_config_dir,
                     "--manifest", manifest_uri,
                     "--assets-dir", str(assets),
                     "--output-root", str(output),
@@ -138,7 +139,11 @@ class AssetGate:
     # -- the boot proof ----------------------------------------------------
 
     def _prove(self, profile: Profile, assets: Path, config_root: Path) -> None:
-        home = self._profile_root(profile) / "home" / ".capsem"
+        home = (
+            self._profile_root(profile)
+            / self._assets.profile_home_dir
+            / self._config.install.capsem_home
+        )
         home.mkdir(parents=True, exist_ok=True)
         # AF_UNIX paths must stay under macOS SUN_LEN once the gateway appends
         # its session path, and test_root is already too long.
@@ -161,7 +166,9 @@ class AssetGate:
                     "CAPSEM_HOME": str(home),
                     "CAPSEM_RUN_DIR": str(run_dir),
                     "CAPSEM_ASSETS_DIR": str(assets),
-                    "CAPSEM_PROFILES_DIR": str(config_root / "profiles"),
+                    "CAPSEM_PROFILES_DIR": str(
+                        config_root / self._assets.materialized_profiles_dir
+                    ),
                 },
             )
         except GateError:
@@ -177,7 +184,7 @@ class AssetGate:
 
     def _preserve_evidence(self, profile: Profile, run_dir: Path) -> None:
         """Copy the host-side diagnostics out before the run directory goes."""
-        destination = self._profile_root(profile) / "run-failure"
+        destination = self._profile_root(profile) / self._assets.failure_evidence_dir
         shutil.rmtree(destination, ignore_errors=True)
         destination.mkdir(parents=True, exist_ok=True)
 

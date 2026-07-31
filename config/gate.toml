@@ -22,6 +22,10 @@ version = 1
 # the assets tree says arm64, dpkg says arm64 for ARM but amd64 for Intel, and
 # rustc wants a full triple.
 
+# `/usr/lib/<gnu>/pkgconfig` is where every multiarch cross toolchain puts its
+# `.pc` files; the tuple is the only part that varies.
+pkg_config_template = "/usr/lib/{gnu}/pkgconfig:/usr/share/pkgconfig"
+
 [architectures.arm64]
 rust_target = "aarch64-unknown-linux-gnu"
 dpkg = "arm64"
@@ -61,6 +65,9 @@ install-preflight = { boundary = "after-install-preflight", rail = "install-pref
 # Stopping gate-owned daemons
 # ---------------------------------------------------------------------------
 
+[doctor]
+storage_policy = "config/storage-policy.toml"
+
 [pidfiles]
 # Ordered. The gateway owns the fixed localhost port, so it must stop before
 # the service -- otherwise the next profile attaches to an orphan gateway whose
@@ -69,6 +76,9 @@ names = ["gateway.pid", "service.pid"]
 term_wait_seconds = 2.0
 kill_wait_seconds = 1.0
 poll_interval_seconds = 0.1
+# Linux reports process state here. A zombie answers `kill -0` until someone
+# waits on it, so liveness needs more than the signal.
+proc_stat_template = "/proc/{pid}/stat"
 
 # ---------------------------------------------------------------------------
 # The native install and glow-up proof
@@ -98,6 +108,23 @@ rosetta_binfmt = "/proc/sys/fs/binfmt_misc/rosetta"
 # Where the extracted-but-not-installed package lands. Deliberately not
 # /usr/bin: nothing that authors the release graph may depend on the package
 # under test having been installed first.
+# What a systemd container is, wherever one is started.
+systemd_command = "/usr/lib/systemd/systemd"
+cgroup_path = "/sys/fs/cgroup"
+tmpfs_paths = ["/run", "/tmp"]
+
+# Where an installed package puts things, and what the runtime calls them.
+bin_dir = "/usr/bin"
+installed_capsem = "/usr/bin/capsem"
+capsem_home = ".capsem"
+manifest_name = "manifest.json"
+sbom_name = "capsem-sbom.spdx.json"
+candidate_prefix = "v"
+file_url_scheme = "file://"
+release_site_dir = "release-site"
+storage_ledger = "target/storage"
+test_output_root = "/tmp/capsem-test-output"
+
 preinstall_root = "/tmp/capsem-preinstall"
 admin_relative = "usr/bin/capsem-admin"
 request_script = "scripts/install-manifest-request.sh"
@@ -161,8 +188,16 @@ target = "/src/release-site/dist"
 builder_image = "capsem-host-builder:latest"
 build_script = "scripts/build-linux-package.sh"
 proof_selector = "scripts/select-linux-deb-proof.sh"
+# The sidecar a release lane stages beside its manifest.
+release_inputs_name = "release-inputs.json"
 default_manifest_url = "https://release.capsem.org/assets/stable/manifest.json"
 channels = ["stable", "nightly", "corp"]
+default_channel = "stable"
+toolchain_pin = "rust-toolchain.toml"
+clock_script = "scripts/sync-container-clock.py"
+cargo_target_mount = "/cargo-target"
+package_suffix = ".deb"
+dist_dir = "dist"
 # Per-architecture, so alternating targets does not rebuild the world.
 target_volume = "capsem-host-target-{arch}"
 
@@ -251,6 +286,16 @@ container_cleanup_script = "scripts/cleanup-docker-containers-by-mount.sh"
 # Docker must be able to execute the *other* architecture before any lane
 # starts, or the second lane fails an hour in with an exec format error.
 cross_platform_probe_image = "debian:bookworm-slim"
+cross_platform_prefix = "linux/"
+cross_platform_probe_command = "/bin/true"
+merged_assets_dir = "assets"
+merged_config_dir = "config"
+profile_home_dir = "home"
+failure_evidence_dir = "run-failure"
+# The subdirectory `capsem-admin profile materialize` writes into.
+materialized_profiles_dir = "profiles"
+# The alias the image builders repoint at whichever architecture they built last.
+current_link = "current"
 
 # Copied out of a failed run before its scratch is removed. Host-side
 # diagnostics only: `guest/` and `auto_snapshots/` duplicate the guest's own
@@ -286,6 +331,11 @@ candidate_module = "_test-candidate"
 # ---------------------------------------------------------------------------
 # Files carrying a copy of the workspace version. Cargo.lock and uv.lock are
 # absent on purpose: their copies are refreshed by the tools that own them.
+
+[versions]
+# The one authority: a human decision, recorded here and fanned out.
+cargo_manifest = "Cargo.toml"
+tag_prefix = "refs/tags/v"
 
 [[versions.stamped]]
 path = "crates/capsem-app/tauri.conf.json"

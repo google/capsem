@@ -36,7 +36,7 @@ from . import config as gate_config
 from .errors import GateError
 
 
-def running(pid: int) -> bool:
+def running(pid: int, settings: gate_config.PidfileConfig) -> bool:
     """Whether `pid` is a live process rather than an unreaped zombie.
 
     A zombie answers `kill -0` for as long as nobody waits on it, so treating
@@ -53,11 +53,11 @@ def running(pid: int) -> bool:
         if error.errno == errno.ESRCH:
             return False
         raise
-    return not _is_zombie(pid)
+    return not _is_zombie(pid, settings.proc_stat_template)
 
 
-def _is_zombie(pid: int) -> bool:
-    status = Path(f"/proc/{pid}/stat")
+def _is_zombie(pid: int, stat_template: str) -> bool:
+    status = Path(stat_template.format(pid=pid))
     if status.is_file():  # Linux
         try:
             return status.read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0] == "Z"
@@ -73,13 +73,13 @@ def _is_zombie(pid: int) -> bool:
     return state.startswith("Z")
 
 
-def _await_exit(pid: int, seconds: float, poll: float) -> bool:
+def _await_exit(pid: int, seconds: float, settings: gate_config.PidfileConfig) -> bool:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
-        if not running(pid):
+        if not running(pid, settings):
             return True
-        time.sleep(poll)
-    return not running(pid)
+        time.sleep(settings.poll_interval_seconds)
+    return not running(pid, settings)
 
 
 def stop(pidfile: Path, settings: gate_config.PidfileConfig) -> None:
@@ -91,13 +91,11 @@ def stop(pidfile: Path, settings: gate_config.PidfileConfig) -> None:
     pidfile = Path(pidfile)
     recorded = _recorded_pid(pidfile)
 
-    if recorded is not None and running(recorded):
+    if recorded is not None and running(recorded, settings):
         os.kill(recorded, signal.SIGTERM)
-        if not _await_exit(recorded, settings.term_wait_seconds, settings.poll_interval_seconds):
+        if not _await_exit(recorded, settings.term_wait_seconds, settings):
             os.kill(recorded, signal.SIGKILL)
-            if not _await_exit(
-                recorded, settings.kill_wait_seconds, settings.poll_interval_seconds
-            ):
+            if not _await_exit(recorded, settings.kill_wait_seconds, settings):
                 raise GateError(
                     f"isolated asset gate {pidfile.name} process {recorded} did not exit"
                 )

@@ -37,7 +37,7 @@ def pinned_toolchain(root: Path) -> str:
     It was spelled three times inside one inline shell script, which is three
     chances for a toolchain bump to leave the package rail behind.
     """
-    pin = Path(root) / "rust-toolchain.toml"
+    pin = Path(root) / gate_config.for_root(root).package.toolchain_pin
     try:
         return tomllib.loads(pin.read_text(encoding="utf-8"))["toolchain"]["channel"]
     except (OSError, KeyError, tomllib.TOMLDecodeError) as exc:
@@ -79,7 +79,7 @@ class PackageRail:
         target: Arch,
         *,
         manifest_url: str | None = None,
-        channel: str = "stable",
+        channel: str | None = None,
         require_proof: bool = False,
     ) -> None:
         self._runner = runner
@@ -89,12 +89,18 @@ class PackageRail:
         self.root = runner.root
         self.target = target
         self.manifest_url = manifest_url or self._package.default_manifest_url
-        self.channel = resolve_channel(channel, self._config)
+        self.channel = resolve_channel(
+            channel or self._package.default_channel, self._config
+        )
         self._require_proof = require_proof
 
     @property
+    def _dist(self) -> Path:
+        return self.root / self._package.dist_dir
+
+    @property
     def _record(self) -> Path:
-        return self.root / "dist" / f".cross-compile-{self.target.name}-deb"
+        return self._dist / f".cross-compile-{self.target.name}-deb"
 
     def run(self) -> Path:
         self._prepare_builder()
@@ -104,7 +110,7 @@ class PackageRail:
         self._prove(package)
 
         self._runner.step("Artifacts")
-        self._runner.run(["ls", "-lh", str(self.root / "dist")])
+        self._runner.run(["ls", "-lh", str(self._dist)])
         self._storage.gc()
         return package
 
@@ -128,7 +134,7 @@ class PackageRail:
         if host.on_macos():
             # Colima's VM clock drifts, and apt rejects a repository signed in
             # what it believes is the future.
-            self._runner.run(["python3", "scripts/sync-container-clock.py"])
+            self._runner.run(["python3", self._package.clock_script])
 
     def _sync_assets_for_tauri(self) -> None:
         """`assets/current` is what the bundler embeds; point it at this target."""
@@ -145,7 +151,7 @@ class PackageRail:
             f"Building Linux deb ({self.target.name} via docker, "
             f"target={self.target.rust_target})"
         )
-        (self.root / "dist").mkdir(exist_ok=True)
+        self._dist.mkdir(exist_ok=True)
         self._record.unlink(missing_ok=True)
 
         environment = {
@@ -162,14 +168,16 @@ class PackageRail:
         argv = ["docker", "run", "--rm"]
         for name, value in environment.items():
             argv += ["-e", f"{name}={value}"]
-        argv += ["-v", f"{self.root}:/src"]
+        mount = self._config.install.mount
+        argv += ["-v", f"{self.root}:{mount}"]
         for volume in self._package.volumes:
             argv += ["-v", f"{volume.source}:{volume.target}"]
         argv += [
-            "-v", f"{self._package.target_volume_for(self.target.name)}:/cargo-target",
-            "-w", "/src",
+            "-v", f"{self._package.target_volume_for(self.target.name)}"
+                  f":{self._package.cargo_target_mount}",
+            "-w", mount,
             self._package.builder_image,
-            "bash", f"/src/{self._package.build_script}",
+            "bash", f"{mount}/{self._package.build_script}",
         ]
         self._runner.run(argv)
 
@@ -185,12 +193,14 @@ class PackageRail:
         name = self._record.read_text(encoding="utf-8").strip()
         self._record.unlink()
 
-        if not name.endswith(".deb"):
+        if not name.endswith(self._package.package_suffix):
             raise GateError(f"invalid Debian package record: {name}")
         if name != Path(name).name:
-            raise GateError(f"Debian package record escaped dist/: {name}")
+            raise GateError(
+                f"Debian package record escaped {self._package.dist_dir}/: {name}"
+            )
 
-        package = self.root / "dist" / name
+        package = self._dist / name
         if not package.is_file():
             raise GateError(f"recorded Debian package is missing: {package}")
         return package
@@ -243,7 +253,7 @@ def _command(args: argparse.Namespace, runner: Runner) -> int:
         runner,
         target,
         manifest_url=os.environ.get("CAPSEM_INSTALL_MANIFEST_URL"),
-        channel=os.environ.get("CAPSEM_INSTALL_CHANNEL", "stable"),
+        channel=os.environ.get("CAPSEM_INSTALL_CHANNEL"),
         require_proof=os.environ.get("CAPSEM_REQUIRE_LINUX_DEB_PROOF", "0") == "1",
     ).run()
     return 0

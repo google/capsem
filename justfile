@@ -451,6 +451,7 @@ _test-candidate-run:
         tests/test_gate_crosscompile.py
         tests/test_gate_debproof.py
         tests/test_gate_docker.py
+        tests/test_gate_has_no_literal_data.py
         tests/test_gate_doctor.py
         tests/test_gate_install_container.py
         tests/test_gate_install_ordering.py

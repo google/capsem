@@ -40,6 +40,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coming back through `wait` into a variable -- and a variable that goes unread
   turns a failed build into a passing gate. Both lanes are now always awaited
   before either result is read, and a run with two broken lanes reports two.
+- A contract test forbids the gate's code from spelling a path, an
+  architecture, or a channel. Extracting the justfile had put its data straight
+  back: `CONTAINER = "capsem-install-test"` and `LAYOUT = Layout(assets=...)`
+  grew in whichever module needed them, and `versions.py` carried its own copy
+  of the stamped-file list while `[[versions.stamped]]` declared the same
+  files with nothing connecting the two. Fifty-odd literals moved into config
+  as a result. Table keys stay allowed -- `release("after-install")` names
+  which entry to look up and fails immediately on an unknown one, which is an
+  API rather than a copy.
 - The gate's data lives in `config/gate.toml`, loaded through a Pydantic model
   that validates it. Container names, scratch paths, timeouts, the
   boundary/rail pairs the storage policy accepts, the artifacts an asset build

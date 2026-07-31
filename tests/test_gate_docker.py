@@ -7,8 +7,11 @@ from pathlib import Path
 import pytest
 from helpers.gate import RecordingRunner
 
+from capsem.gate import config as gate_config
 from capsem.gate.docker import Docker, Mount, container_path
 from capsem.gate.errors import GateError
+
+MOUNT = gate_config.load(Path(__file__).resolve().parents[1]).install.mount
 
 # ---------------------------------------------------------------------------
 # Containers
@@ -89,9 +92,11 @@ def test_mounts_render_in_docker_order(tmp_path: Path) -> None:
 
 
 def test_a_checkout_path_maps_onto_the_bind_mount(tmp_path: Path) -> None:
-    assert container_path(tmp_path, tmp_path / "dist" / "Capsem_9.9.9_arm64.deb") == (
-        "/src/dist/Capsem_9.9.9_arm64.deb"
+    mapped = container_path(
+        tmp_path, tmp_path / "dist" / "Capsem_9.9.9_arm64.deb", mount=MOUNT
     )
+
+    assert mapped == f"{MOUNT}/dist/Capsem_9.9.9_arm64.deb"
 
 
 def test_a_path_outside_the_checkout_is_refused(tmp_path: Path) -> None:
@@ -99,7 +104,7 @@ def test_a_path_outside_the_checkout_is_refused(tmp_path: Path) -> None:
     absolute host path in place when the prefix does not match -- so the
     container was handed a path that exists only on the host."""
     with pytest.raises(GateError, match="outside the mounted checkout"):
-        container_path(tmp_path, Path("/elsewhere/Capsem.deb"))
+        container_path(tmp_path, Path("/elsewhere/Capsem.deb"), mount=MOUNT)
 
 
 def test_capture_returns_container_stdout(tmp_path: Path) -> None:

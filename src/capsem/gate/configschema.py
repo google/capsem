@@ -30,10 +30,13 @@ class Arch(Strict):
     gnu: str
     aliases: tuple[str, ...]
 
+    pkg_config_template: str = ""
+    """Filled in at load from the `[architectures]` table it belongs to."""
+
     @property
     def pkg_config_path(self) -> str:
         """Where the cross toolchain's `.pc` files live inside the builder."""
-        return f"/usr/lib/{self.gnu}/pkgconfig:/usr/share/pkgconfig"
+        return self.pkg_config_template.format(gnu=self.gnu)
 
 
 class StoragePhase(Strict):
@@ -52,6 +55,7 @@ class PidfileConfig(Strict):
     term_wait_seconds: float
     kill_wait_seconds: float
     poll_interval_seconds: float
+    proc_stat_template: str
 
 
 class VolumeSpec(Strict):
@@ -122,6 +126,19 @@ class InstallConfig(Strict):
     vm_devices: tuple[str, ...]
     optional_vm_devices: tuple[str, ...]
     rosetta_binfmt: str
+    systemd_command: str
+    cgroup_path: str
+    tmpfs_paths: tuple[str, ...]
+    bin_dir: str
+    installed_capsem: str
+    capsem_home: str
+    manifest_name: str
+    sbom_name: str
+    candidate_prefix: str
+    file_url_scheme: str
+    release_site_dir: str
+    storage_ledger: str
+    test_output_root: str
     preinstall_root: str
     admin_relative: str
     request_script: str
@@ -160,8 +177,15 @@ class PackageConfig(Strict):
     builder_image: str
     build_script: str
     proof_selector: str
+    release_inputs_name: str
     default_manifest_url: str
     channels: tuple[str, ...]
+    default_channel: str
+    toolchain_pin: str
+    clock_script: str
+    cargo_target_mount: str
+    package_suffix: str
+    dist_dir: str
     target_volume: str
     proof: PackageProof
     volumes: tuple[VolumeSpec, ...]
@@ -183,6 +207,14 @@ class AssetsConfig(Strict):
     shell_proof_script: str
     container_cleanup_script: str
     cross_platform_probe_image: str
+    cross_platform_prefix: str
+    cross_platform_probe_command: str
+    merged_assets_dir: str
+    merged_config_dir: str
+    profile_home_dir: str
+    failure_evidence_dir: str
+    materialized_profiles_dir: str
+    current_link: str
     evidence_suffixes: tuple[str, ...]
     evidence_prune_dirs: tuple[str, ...]
 
@@ -198,13 +230,21 @@ class CandidateConfig(Strict):
 
 
 class StampedFile(Strict):
+    """A file carrying a copy of the workspace version, and how it spells it."""
+
     path: str
     kind: str
     key: str
 
 
 class VersionsConfig(Strict):
+    cargo_manifest: str
+    tag_prefix: str
     stamped: tuple[StampedFile, ...]
+
+
+class DoctorConfig(Strict):
+    storage_policy: str
 
 
 class LintConfig(Strict):

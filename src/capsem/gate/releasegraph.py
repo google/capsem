@@ -74,9 +74,9 @@ class ReleaseGraph:
         candidate_base: str,
     ) -> None:
         """Record the candidate package and its SBOM against the staged manifest."""
-        candidate_dir = f"{candidate_base}/v{version}"
+        candidate_dir = f"{candidate_base}/{self._config.candidate_prefix}{version}"
         candidate_deb = f"{candidate_dir}/{package.rsplit('/', 1)[-1]}"
-        sbom = f"{candidate_dir}/capsem-sbom.spdx.json"
+        sbom = f"{candidate_dir}/{self._config.sbom_name}"
 
         self._docker.shell(
             self._container,
@@ -96,7 +96,9 @@ class ReleaseGraph:
                 "--artifact", sbom,
             ],
             user=self._config.guest_user.name,
-            env={"CAPSEM_RELEASE_URL": f"file://{candidate_base}"},
+            env={
+                "CAPSEM_RELEASE_URL": f"{self._config.file_url_scheme}{candidate_base}"
+            },
         )
 
     def build_channel(
@@ -115,7 +117,9 @@ class ReleaseGraph:
             " ".join(
                 [
                     admin, "assets", "channel", "build",
-                    "--manifest", f'"file://{self._mount}/{assets_dir}/manifest.json"',
+                    "--manifest",
+                    f'"{self._config.file_url_scheme}{self._mount}/{assets_dir}'
+                    f'/{self._config.manifest_name}"',
                     "--assets-dir", f'"{assets_dir}"',
                     "--profiles-dir", f'"{profiles_dir}"',
                     "--channel", channel,
@@ -132,7 +136,8 @@ class ReleaseGraph:
         """Render the release site over the generated distribution."""
         self._docker.shell(
             self._container, "pnpm install --frozen-lockfile",
-            user=self._config.guest_user.name, cwd=f"{self._mount}/release-site",
+            user=self._config.guest_user.name,
+            cwd=f"{self._mount}/{self._config.release_site_dir}",
         )
         self._docker.shell(
             self._container,

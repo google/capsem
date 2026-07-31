@@ -66,10 +66,12 @@ class DebProof:
         whose provenance this proof cannot speak for.
         """
         resolved = Path(package).resolve()
-        expected = self.root / "dist"
-        if resolved.parent != expected or resolved.suffix != ".deb":
+        expected = self.root / self._config.package.dist_dir
+        suffix = self._config.package.package_suffix
+        if resolved.parent != expected or resolved.suffix != suffix:
             raise GateError(
-                f"exact Debian package proof only accepts dist/*.deb (got: {resolved})"
+                f"exact Debian package proof only accepts "
+                f"{expected.name}/*{suffix} (got: {resolved})"
             )
         if not resolved.is_file():
             raise GateError(f"exact Debian package is missing: {resolved}")
@@ -120,16 +122,17 @@ class DebProof:
 
     def _start(self, devices: list[str]) -> None:
         self._runner.note("Starting clean systemd container for exact package proof...")
+        cgroup = self._install.cgroup_path
+        tmpfs = [f for path in self._install.tmpfs_paths for f in ("--tmpfs", path)]
         self._docker.remove(self._proof.container)
         self._docker.run_detached(
             name=self._proof.container,
             image=self._install.image,
-            command=["/usr/lib/systemd/systemd"],
+            command=[self._install.systemd_command],
             options=["--privileged", "--cgroupns=host",
-                     "--security-opt", "seccomp=unconfined", *devices,
-                     "--tmpfs", "/run", "--tmpfs", "/tmp"],
+                     "--security-opt", "seccomp=unconfined", *devices, *tmpfs],
             mounts=[
-                Mount("/sys/fs/cgroup", "/sys/fs/cgroup", "rw"),
+                Mount(cgroup, cgroup, "rw"),
                 # Read-only: this proof must not be able to influence the tree
                 # it is proving.
                 Mount(str(self.root), self._install.mount, "ro"),
@@ -172,15 +175,18 @@ class DebProof:
         the package metadata and the ELF inside it are stamped separately, and
         a file-existence check passes either way.
         """
+        bin_dir = self._install.bin_dir
         for name in self._proof.binaries:
-            self._docker.exec(self._proof.container, ["test", "-x", f"/usr/bin/{name}"])
+            self._docker.exec(
+                self._proof.container, ["test", "-x", f"{bin_dir}/{name}"]
+            )
         for name in self._proof.versioned_binaries:
             reported = self._docker.capture(
-                self._proof.container, [f"/usr/bin/{name}", "--version"]
+                self._proof.container, [f"{bin_dir}/{name}", "--version"]
             )
             if expected not in reported:
                 raise GateError(
-                    f"/usr/bin/{name} reports {reported!r}, which does not carry the "
+                    f"{bin_dir}/{name} reports {reported!r}, which does not carry the "
                     f"package version {expected}"
                 )
 
@@ -192,7 +198,7 @@ class DebProof:
         """`capsem status` from the installed package, as the user would run it."""
         guest = self._install.guest_user
         output = self._docker.capture(
-            self._proof.container, ["/usr/bin/capsem", "status"],
+            self._proof.container, [self._install.installed_capsem, "status"],
             user=guest.name, env=self._guest_env(),
         )
         self._runner.note(output)
@@ -219,8 +225,8 @@ class DebProof:
             self._proof.container,
             [
                 "python3", f"{self._install.mount}/{self._proof.verify_script}",
-                "--capsem", "/usr/bin/capsem",
-                "--capsem-home", f"{guest.home}/.capsem",
+                "--capsem", self._install.installed_capsem,
+                "--capsem-home", f"{guest.home}/{self._install.capsem_home}",
                 "--manifest-url", self.manifest_url,
                 "--channel", self.channel,
                 "--package-version", expected,
@@ -235,7 +241,7 @@ class DebProof:
             self._proof.container,
             [
                 "python3", f"{self._install.mount}/{self._proof.shell_proof_script}",
-                "--capsem", "/usr/bin/capsem",
+                "--capsem", self._install.installed_capsem,
                 "--marker", self._proof.shell_marker,
                 "--session-name", self._proof.session_name,
                 "--timeout", str(self._proof.shell_timeout_seconds),

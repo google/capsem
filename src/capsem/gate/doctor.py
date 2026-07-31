@@ -68,7 +68,7 @@ def _storage_rails(config: gate_config.GateConfig) -> list[Finding]:
     A phase pointing at a rail that does not exist releases nothing, and the
     next build fails on ENOSPC somewhere unrelated.
     """
-    policy_path = config.path("config/storage-policy.toml")
+    policy_path = config.path(config.doctor.storage_policy)
     try:
         rails = set(tomllib.loads(policy_path.read_text(encoding="utf-8"))["rails"])
     except (OSError, KeyError) as error:

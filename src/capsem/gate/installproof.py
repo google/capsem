@@ -34,6 +34,7 @@ class InstallProof:
         self._container = self._settings.container
         self._layout = self._settings.layout
         self._mount = self._settings.mount
+        self._inputs_name = config.package.release_inputs_name
         self._sleep = sleep
 
     # -- staging -----------------------------------------------------------
@@ -42,7 +43,8 @@ class InstallProof:
         """Use the profile inputs a release lane resolved from its manifest."""
         self._docker.shell(
             self._container,
-            f'test -f "{inputs}/manifest.json" && test -f "{inputs}/release-inputs.json"',
+            f'test -f "{inputs}/{self._settings.manifest_name}" '
+            f'&& test -f "{inputs}/{self._inputs_name}"',
             user=self._guest.name, cwd=self._mount,
         )
         self._docker.shell(
@@ -123,7 +125,7 @@ class InstallProof:
             env={
                 "XDG_RUNTIME_DIR": self._guest.runtime_dir,
                 "CAPSEM_DEB_INSTALLED": "1",
-                "CAPSEM_BIN_SRC": "/usr/bin",
+                "CAPSEM_BIN_SRC": self._settings.bin_dir,
                 "CAPSEM_TEST_ASSET_MANIFEST": self._guest.asset_manifest,
                 "UV_PROJECT_ENVIRONMENT": self._settings.venv,
                 "TMPDIR": self._guest.tmp,
@@ -148,7 +150,7 @@ class InstallProof:
             )
         glowup = (
             f'uv run python {self._suite.glowup_script} --input-deb "{package}" '
-            f'--bin-dir /usr/bin --assets-dir "{self._layout.assets}" '
+            f'--bin-dir {self._settings.bin_dir} --assets-dir "{self._layout.assets}" '
             f'--config-root "{self._layout.config}" '
             f"--work-dir {self._layout.glowup} --package-ready"
         )

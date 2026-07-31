@@ -157,7 +157,7 @@ class Docker:
         return self.succeeds(container, ["test", "-f", path], user=user)
 
 
-def container_path(root: Path, host_path: Path, *, mount: str = "/src") -> str:
+def container_path(root: Path, host_path: Path, *, mount: str) -> str:
     """Where a checkout path appears inside a container that bind-mounts it."""
     host_path = Path(host_path)
     root = Path(root)

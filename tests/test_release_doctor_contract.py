@@ -222,7 +222,8 @@ def test_macos_doctor_requires_live_rosetta_registration() -> None:
     # the whole matrix. Both platform names are derived from the architecture
     # table rather than spelled here.
     assert '"--platform", platform' in assets
-    assert 'f"linux/{other.dpkg}"' in assets
+    assert "cross_platform_prefix" in assets
+    assert config.assets.cross_platform_prefix == "linux/"
     assert "Docker cannot execute {platform} containers" in assets
     assert "colima restart" in assets, "macOS needs its own remedy in the message"
 

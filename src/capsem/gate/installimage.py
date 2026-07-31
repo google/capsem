@@ -37,7 +37,7 @@ def _smoke_passes(runner: Runner, settings: gate_config.InstallConfig) -> bool:
             "docker", "run", "--rm",
             "-u", "capsem",
             "-e", f"UV_PROJECT_ENVIRONMENT={settings.venv}",
-            "-e", "CAPSEM_TEST_OUTPUT_ROOT=/tmp/capsem-test-output",
+            "-e", f"CAPSEM_TEST_OUTPUT_ROOT={settings.test_output_root}",
             "-v", f"{runner.root}:{settings.mount}:ro",
             settings.image,
             "bash", "-lc", SMOKE,

@@ -43,7 +43,7 @@ def _sleeper(tmp_path: Path, name: str = "sleeper") -> subprocess.Popen:
 def test_a_live_process_is_running(tmp_path: Path) -> None:
     process = _sleeper(tmp_path)
     try:
-        assert pidfiles.running(process.pid)
+        assert pidfiles.running(process.pid, SETTINGS)
     finally:
         process.kill()
         process.wait()
@@ -54,7 +54,7 @@ def test_an_exited_process_is_not_running(tmp_path: Path) -> None:
     process.kill()
     process.wait()
 
-    assert not pidfiles.running(process.pid)
+    assert not pidfiles.running(process.pid, SETTINGS)
 
 
 def test_an_unreaped_zombie_is_not_running(tmp_path: Path) -> None:
@@ -66,11 +66,11 @@ def test_an_unreaped_zombie_is_not_running(tmp_path: Path) -> None:
     process = _sleeper(tmp_path)
     process.kill()
     deadline = time.monotonic() + 5
-    while time.monotonic() < deadline and pidfiles.running(process.pid):
+    while time.monotonic() < deadline and pidfiles.running(process.pid, SETTINGS):
         time.sleep(0.05)
 
     try:
-        assert not pidfiles.running(process.pid)
+        assert not pidfiles.running(process.pid, SETTINGS)
     finally:
         process.wait()
 
@@ -105,7 +105,7 @@ def test_a_live_process_is_stopped_and_its_pidfile_removed(tmp_path: Path) -> No
     try:
         pidfiles.stop(pidfile, SETTINGS)
 
-        assert not pidfiles.running(process.pid)
+        assert not pidfiles.running(process.pid, SETTINGS)
         assert not pidfile.exists()
     finally:
         if process.poll() is None:
@@ -125,7 +125,7 @@ def test_a_process_ignoring_sigterm_is_killed(tmp_path: Path) -> None:
     try:
         pidfiles.stop(pidfile, SETTINGS)
 
-        assert not pidfiles.running(process.pid)
+        assert not pidfiles.running(process.pid, SETTINGS)
     finally:
         if process.poll() is None:
             process.kill()
@@ -138,7 +138,7 @@ def test_a_process_that_will_not_die_fails_rather_than_warns(
     """Returning success here is exactly what made the leak invisible."""
     pidfile = tmp_path / "service.pid"
     pidfile.write_text(str(os.getpid()))
-    monkeypatch.setattr(pidfiles, "running", lambda _pid: True)
+    monkeypatch.setattr(pidfiles, "running", lambda _pid, _settings: True)
     monkeypatch.setattr(pidfiles.os, "kill", lambda _pid, _signal: None)
 
     with pytest.raises(GateError, match="did not exit"):

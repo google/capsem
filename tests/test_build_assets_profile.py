@@ -220,8 +220,10 @@ def test_in_container_commands_write_only_where_the_container_user_owns() -> Non
     # Removing target/install-test-* needs write permission on their parent.
     # Granted as the one directory entry: recursive here would walk every
     # cargo artifact in the checkout.
-    assert '"chown", "capsem:capsem", f"{self._settings.mount}/target"' in container
-    assert '"chown", "-R", "capsem:capsem", f"{self._settings.mount}/target"' not in container
+    assert 'f"{owner}:{owner}", f"{self._settings.mount}/{target}"' in container
+    assert '"-R", f"{owner}:{owner}", f"{self._settings.mount}/{target}"' not in container
+    # The directory entry, taken from the layout rather than spelled again.
+    assert "Path(self._settings.layout.assets).parts[0]" in container
 
     # Every path this user writes has to live off the bind mount.
     for path in (guest.tmp, guest.pytest_cache, guest.asset_manifest, config.install.venv):

@@ -128,7 +128,7 @@ class InstallGate:
             admin,
             package=package,
             version=self.version,
-            assets_manifest=f"{self._layout.assets}/manifest.json",
+            assets_manifest=f"{self._layout.assets}/{self._settings.manifest_name}",
             candidate_base=f"{self._settings.mount}/{self._layout.packages}",
         )
 
@@ -141,7 +141,7 @@ class InstallGate:
         # The Linux CI container chowns the bind-mounted checkout to uid 1000 so
         # its non-root build can write there. Hand the host-owned storage ledger
         # back before invoking the host controller; cleanup restores the rest.
-        self._container.hand_back(f"{self._settings.mount}/target/storage")
+        self._container.hand_back(f"{self._settings.mount}/{self._settings.storage_ledger}")
         # Package and image assembly can consume the reserve measured at start.
         # The runtime-only tail needs far less than compilation, but keeps a
         # cushion so ENOSPC fails here with diagnostics rather than deep inside
@@ -151,7 +151,7 @@ class InstallGate:
         self._proof.run_install_suite()
         if not self._container.boots_a_guest:
             self._proof.validate_macos_glowup(
-                self._macos_report, cargo_toml=self.root / "Cargo.toml"
+                self._macos_report, cargo_toml=self._config.path(self._config.versions.cargo_manifest)
             )
         self._proof.prove_glowup(
             package, boots_a_guest=self._container.boots_a_guest
@@ -175,7 +175,7 @@ class InstallGate:
         manifest = self._graph.build_channel(
             admin,
             assets_dir=self._layout.assets,
-            profiles_dir=f"{self._layout.config}/profiles",
+            profiles_dir=f"{self._layout.config}/{self._config.assets.materialized_profiles_dir}",
             channel=self._settings.channel,
             manifest_version=self._settings.manifest_version,
             out_dir=self._layout.channel,

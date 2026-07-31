@@ -22,6 +22,7 @@ import re
 import tomllib
 from pathlib import Path
 
+from . import config as gate_config
 from .errors import GateError
 from .proc import Runner
 
@@ -32,21 +33,17 @@ from .proc import Runner
 # compatibility floor it was supposed to be compared against.
 SEMVER = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
 
-# Files carrying a copy of the workspace version, each with the pattern that
-# names it. `Cargo.lock` and `uv.lock` are absent on purpose: their copies are
-# refreshed by the tools that own them, not by substitution.
-STAMPED = (
-    (
-        Path("crates/capsem-app/tauri.conf.json"),
-        re.compile(r'"version": "\d+\.\d+\.\d+"'),
-        '"version": "{version}"',
-    ),
-    (
-        Path("pyproject.toml"),
-        re.compile(r'^version = "\d+\.\d+\.\d+"$', re.M),
-        'version = "{version}"',
-    ),
-)
+# How each declared file spells its copy of the version. `[[versions.stamped]]`
+# says which files and which key; this says what that looks like in each
+# format. `Cargo.lock` and `uv.lock` are absent from both on purpose: their
+# copies are refreshed by the tools that own them, not by substitution.
+SEMVER_PATTERN = r"\d+\.\d+\.\d+"
+FORMATS = {
+    "json_key": (lambda key: re.compile(rf'"{key}": "{SEMVER_PATTERN}"'),
+                 lambda key: f'"{key}": "{{version}}"'),
+    "toml_key": (lambda key: re.compile(rf"^{key} = \"{SEMVER_PATTERN}\"$", re.M),
+                 lambda key: f'{key} = "{{version}}"'),
+}
 
 
 def require_semver(version: str, *, source: str) -> str:
@@ -58,14 +55,15 @@ def require_semver(version: str, *, source: str) -> str:
 
 def workspace_version(root: Path) -> str:
     """The version every Capsem artifact in this checkout is stamped with."""
-    cargo = Path(root) / "Cargo.toml"
+    settings = gate_config.for_root(root).versions
+    cargo = Path(root) / settings.cargo_manifest
     try:
         declared = tomllib.loads(cargo.read_text(encoding="utf-8"))["workspace"][
             "package"
         ]["version"]
     except (KeyError, tomllib.TOMLDecodeError) as exc:
         raise GateError(f"{cargo} declares no [workspace.package] version: {exc}") from None
-    return require_semver(declared, source="Cargo.toml")
+    return require_semver(declared, source=settings.cargo_manifest)
 
 
 def _substitute(path: Path, pattern: re.Pattern[str], template: str, version: str) -> None:
@@ -91,17 +89,23 @@ def stamp(root: Path, runner: Runner) -> str:
     release stops until someone chooses the next MAJOR.MINOR.PATCH.
     """
     root = Path(root)
+    settings = gate_config.for_root(root).versions
     version = workspace_version(root)
 
-    if runner.succeeds(["git", "rev-parse", "-q", "--verify", f"refs/tags/v{version}"]):
+    tag = f"{settings.tag_prefix}{version}"
+    if runner.succeeds(["git", "rev-parse", "-q", "--verify", tag]):
         raise GateError(
-            f"v{version} is already tagged. Bump the version in Cargo.toml to "
-            "the next semver MAJOR.MINOR.PATCH for this change, then re-run."
+            f"{tag} is already tagged. Bump the version in "
+            f"{settings.cargo_manifest} to the next semver MAJOR.MINOR.PATCH "
+            "for this change, then re-run."
         )
 
     runner.note(f"Stamping release cohort at {version}")
-    for relative, pattern, template in STAMPED:
-        _substitute(root / relative, pattern, template, version)
+    for stamped in settings.stamped:
+        pattern, template = FORMATS[stamped.kind]
+        _substitute(
+            root / stamped.path, pattern(stamped.key), template(stamped.key), version
+        )
 
     # Cargo refreshes workspace package versions in place while preserving the
     # already locked dependency graph.

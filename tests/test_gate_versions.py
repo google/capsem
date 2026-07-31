@@ -28,7 +28,14 @@ edition = "2021"
 """
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
 def _checkout(tmp_path: Path, *, version: str = "9.9.9", cargo: str | None = None) -> Path:
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config" / "gate.toml").write_text(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )
     (tmp_path / "Cargo.toml").write_text(cargo or WORKSPACE.format(version=version))
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname = "capsem"\nversion = "0.0.1"\n'
@@ -74,10 +81,11 @@ def test_an_earlier_version_key_does_not_win(tmp_path: Path) -> None:
 
 
 def test_a_checkout_without_a_workspace_version_says_so(tmp_path: Path) -> None:
-    (tmp_path / "Cargo.toml").write_text('[package]\nname = "capsem"\n')
+    root = _checkout(tmp_path)
+    (root / "Cargo.toml").write_text('[package]\nname = "capsem"\n')
 
     with pytest.raises(GateError, match=r"no .workspace.package. version"):
-        versions.workspace_version(tmp_path)
+        versions.workspace_version(root)
 
 
 @pytest.mark.parametrize("bad", ["1.6", "v1.6.0", "1.6.0-rc1", ""])
@@ -131,7 +139,7 @@ def test_stamp_refuses_a_version_that_is_already_tagged(tmp_path: Path) -> None:
     # `git rev-parse --verify refs/tags/v4.2.0` succeeding means the tag exists.
     runner = RecordingRunner(root)
 
-    with pytest.raises(GateError, match="already tagged"):
+    with pytest.raises(GateError, match="is already tagged"):
         versions.stamp(root, runner)
 
     assert not runner.ran(r"cargo update"), (
