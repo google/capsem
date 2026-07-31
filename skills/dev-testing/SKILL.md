@@ -314,7 +314,7 @@ See `tests/capsem-service/test_svc_exec_ready.py` for the regression tests that 
 
 ### Exec latency regression gate
 
-`tests/capsem-serial/test_boot_timing.py::test_exec_latency_under_1_5_seconds` asserts that provision-to-first-exec completes in under 1.5s. If this test fails, investigate boot time (process.log boot_timeline spans), not the wait mechanism.
+`tests/capsem-serial/test_boot_timing.py::test_exec_latency_within_gate` asserts that provision-to-first-exec completes within `EXEC_LATENCY_GATE`. If this test fails, investigate boot time (process.log boot_timeline spans), not the wait mechanism.
 
 ## Where tests live
 
