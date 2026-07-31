@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokens. Rotation is bounded by both count and bytes, and gives up completed
   runs before crashed ones -- a crashed run is precisely the case where the
   terminal output was lost with it.
+- The isolated gate home is one `Workspace` resource rather than three
+  hand-written setups. `_test-candidate-run`, `smoke` and the asset gate each
+  built the same thing with the same four exported variables and an EXIT trap,
+  and each got slightly different details right -- while the details are the
+  whole point. Two orderings are now structural instead of positional: the
+  service stops before its run directory is removed, because stopping it is
+  what flushes `serial.log`, and failure evidence is copied out before either,
+  because both destroy it. The benchmark recordings are deliberately not
+  cleared with the home; a module wiping them is why a fortnight of full gates
+  left that directory empty and froze the published arm64 history.
 - Every gate command now shares one lifecycle. A command declares what it
   holds and what work it contains; when to release, in what order steps run,
   whether it needs the machine to itself and how any of it is recorded are the

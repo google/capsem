@@ -137,7 +137,8 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
     machine true, and has to place it before any workspace exists. `runlog`
     owns the run directory and cannot write through actions because actions
     report into it; `runhistory` reclaims those directories, and `disk`
-    reclaims every other tree the gate creates.
+    reclaims every other tree the gate creates, and `workspace` owns the
+    isolated home the actions run against.
 
     The through-line is that these are the harness, and the harness is what
     gate work is expressed *in*. A capability or a command appearing here
@@ -151,6 +152,7 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
         "runlog.py",
         "runhistory.py",
         "disk.py",
+        "workspace.py",
     }
 
 

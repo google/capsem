@@ -86,6 +86,15 @@ class LocksConfig(Strict):
     gate: LockConfig
 
 
+class WorkspaceConfig(Strict):
+    home: str
+    run_dir: str
+    seeded_dirs: tuple[str, ...]
+    benchmark_root: str
+    coverage_file: str
+    evidence_dir: str
+
+
 class RunLogConfig(Strict):
     root: str
     events: str

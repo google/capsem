@@ -41,6 +41,7 @@ from .harnessschema import (
     LintConfig,
     LocksConfig,
     RunLogConfig,
+    WorkspaceConfig,
 )
 
 CONFIG_RELATIVE = Path("config") / "gate.toml"
@@ -63,6 +64,7 @@ class GateConfig(Strict):
     locks: LocksConfig
     runlog: RunLogConfig
     disk: DiskConfig
+    workspace: WorkspaceConfig
 
     root: Path = Field(exclude=True)
     """The checkout this configuration was loaded from."""

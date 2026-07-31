@@ -454,6 +454,8 @@ recipes_with_inline_control_flow = ["_pnpm-install"]
 #   runhistory   reclaiming those directories, for the same reason
 #   disk         reclaiming every other tree the gate creates, with the
 #                resolved-path and symlink guards that makes safe
+#   workspace    the isolated CAPSEM_HOME, wiped on the way in and cleared on
+#                the way out -- it is the tree the actions run against
 #
 # The through-line: these are the harness, and the harness is what gate work is
 # expressed *in*. Anything built on top of it -- a capability, a command -- goes
@@ -468,6 +470,7 @@ direct_machine_access = [
     "runlog.py",
     "runhistory.py",
     "disk.py",
+    "workspace.py",
 ]
 
 # Only the plan schedules concurrent work. A module that reaches for its own
@@ -537,6 +540,30 @@ holder_record = "target/capsem-test-execution.holder"
 report_after_seconds = 2
 wait_timeout_seconds = 7200
 poll_interval_seconds = 0.25
+
+# ---------------------------------------------------------------------------
+# The isolated home a gate run works in
+# ---------------------------------------------------------------------------
+
+[workspace]
+# Everything the gate does happens against this home, never the developer's.
+# Wiped at the start of a run, which is why the machine lock is taken first and
+# why the lockfile lives outside it.
+home = "target/test-home/.capsem"
+run_dir = "target/test-home/.capsem/run"
+# Created up front: the service writes into all three and creating them lazily
+# was how a first run differed from every later one.
+seeded_dirs = ["run", "sessions", "logs"]
+
+# Deliberately NOT cleared per module. `just test` runs several modules in
+# sequence and the VM performance recordings are written by the functional one;
+# a later module wiping them is why a fortnight of full gates left this empty
+# and froze the published arm64 history. The entry point clears it once.
+benchmark_root = "target/test-benchmarks"
+coverage_file = "target/coverage/.coverage"
+
+# What a failing run leaves behind, copied out before the run directory goes.
+evidence_dir = "target/test-artifacts"
 
 # ---------------------------------------------------------------------------
 # The execution log
