@@ -20,7 +20,7 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
-from capsem.gate.actions import Run, Script, Shell
+from capsem.gate.actions import Action, Run, Script, Shell
 from capsem.gate.context import Context, NullJournal
 from capsem.gate.errors import GateError
 
@@ -177,8 +177,6 @@ def test_shell_is_for_fragments_where_the_shell_is_the_point(
 
 def test_an_action_subclass_must_name_itself() -> None:
     """The name is what the run log records the action as."""
-    from capsem.gate.actions import Action
-
     with pytest.raises(TypeError, match="name"):
         # The omission is the subject of the test.
         class Unnamed(Action):  # ty: ignore[missing-argument]
@@ -191,14 +189,18 @@ def test_an_action_subclass_must_name_itself() -> None:
 def test_every_action_renders_and_performs() -> None:
     """Both halves are abstract: an action that cannot describe itself breaks
     the dry run, and one that cannot run breaks the gate."""
-    from capsem.gate.actions import Action
-
     class Halfway(Action, name="halfway"):
         def render(self) -> str:
             return ""
 
     with pytest.raises(TypeError, match="perform"):
         Halfway()  # ty: ignore[invalid-argument-type]
+
+
+def test_the_context_resolves_paths_against_the_checkout(context: Context) -> None:
+    """So an action is handed a resolved path and never joins one itself."""
+    assert context.root == PROJECT_ROOT
+    assert context.path("config") == PROJECT_ROOT / "config"
 
 
 def test_a_null_journal_absorbs_what_an_action_reports() -> None:

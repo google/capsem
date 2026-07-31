@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The initrd repack rule is enforced rather than remembered. The initrd is a
+  hash-named file hardlinked into every asset tree built from the same bytes,
+  so rewriting it in place rewrites all of them and the damage surfaces later
+  as a VM that will not boot from a tree nobody touched. `_pack-initrd` avoided
+  that by writing a scratch file and moving it; that is now an
+  `AtomicReplace` primitive with a test that fails if the target is written
+  directly.
 - Gate work is built from reusable primitives rather than opaque callables. An
   action says what it would do and does it, and the two are independent, so
   `--dry-run` can print the argv a command would actually invoke instead of a
