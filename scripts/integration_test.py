@@ -362,6 +362,14 @@ def _start_service_with_test_config(
                 str(process_bin),
                 "--uds-path",
                 str(SERVICE_SOCKET),
+                # Bound this service to the harness that owns it. The teardown
+                # below runs from a `finally`, which SIGKILL and an aborted
+                # gate never reach; without a parent to watch, the service
+                # survives as an orphan under launchd holding its gateway and
+                # tray. Real users never pass this -- their daemon must outlive
+                # the CLI that spawned it.
+                "--parent-pid",
+                str(os.getpid()),
                 "--foreground",
             ],
             env=env,

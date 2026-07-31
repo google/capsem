@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a process owns the service socket, and removed only while it still records
   that process's own pid, so neither a losing starter nor a shutting-down
   predecessor can strand whoever is actually serving.
+- The integration harness binds its own `capsem-service` to the process that
+  spawned it via `--parent-pid`. Its teardown runs from a `finally`, which an
+  aborted run or a SIGKILL never reaches, and nothing else bounded that
+  service's lifetime. Real users still get an unbounded daemon: theirs must
+  outlive the CLI that spawns it.
 - The release stamper no longer builds a version from the clock. It still
   assembled `1.${RELEASE_MINOR}.$(date +%s)` for the whole semver rewrite, so
   `just release-binaries` would have stamped `1.6.<timestamp>` and then failed
