@@ -1,4 +1,4 @@
-"""The modules `just test` is made of, as graphs over shared components.
+"""The modules `just test` is made of, and the ones provable from source.
 
 `_test-candidate-run` was 366 lines because six modules each re-solved the same
 problems inside one `bash` body, selected by a `CAPSEM_TEST_MODULE` environment
@@ -9,13 +9,21 @@ would do without doing it.
 
 Each is a command now. It declares the workspace it needs and the graph of
 steps it contains, and both are answerable for free.
+
+`vmmodules` holds the three that cannot start against a bare checkout, because
+they need built artifacts or a VM. The seam is what a module needs before it
+can begin.
 """
 
 from __future__ import annotations
 
-from . import audits, toolchain
+from . import audits, host, pytestsuite, toolchain
+from .actions import Run
 from .command import GateCommand
 from .config import GateConfig
+from .errors import GateError
+from .execution import step
+from .fileactions import RequireFile
 from .lifecycle import Resource
 from .plan import Plan
 from .workspace import Workspace
@@ -78,3 +86,133 @@ class FastModule(
             after=(audits.blocking_surface(config, surfaces), rust),
         )
         return plan
+
+
+class StaticModule(
+    InWorkspace,
+    GateCommand,
+    name="test-static",
+    help="the source-build proofs, before anything boots a VM",
+):
+    """What can be proved from source, in the order the proofs depend on.
+
+    The install-harness preflight comes first for a blunt reason: proving the
+    clean container can launch its runner takes a minute, and discovering it
+    cannot after the Rust coverage run wastes twenty.
+    """
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        config = self._config
+        settings = config.modules
+
+        preflight = plan.add(
+            step(
+                "install-preflight",
+                Run(["uv", "run", "capsem-gate", "install-image"]),
+                contends=(config.exclusive("docker_daemon"),),
+            )
+        )
+        plan.add(storagerelease(config, "install-preflight"), after=(preflight,))
+
+        # `_pack-initrd` already built the host architecture; this proves the
+        # other one compiles against musl, so a cross-arch regression surfaces
+        # before the Docker cross-compile rather than an hour later.
+        agents = plan.add(step("guest-agents", Run(settings.guest_agent_build)))
+        binaries = plan.add(_guest_binaries_present(config), after=(agents,))
+        plan.add(
+            pytestsuite.Suite(
+                label="guest-binary-contracts",
+                paths=settings.guest_binary_tests,
+                stop_at_first_failure=False,
+                require_artifacts=False,
+            ).as_step(config),
+            after=(binaries,),
+        )
+
+        if host.on_macos():
+            # Native Linux runs exercise these cfg branches directly. A Mac
+            # host has to run the same checked-in Linux runner in Docker, or
+            # Linux-only regressions stay out of the local gate entirely.
+            linux = plan.add(
+                step(
+                    "linux-rust",
+                    Run(["just", "_gate-linux-rust"]),
+                    contends=(config.exclusive("docker_daemon"),),
+                )
+            )
+            plan.add(storagerelease(config, "linux-rust-builder"), after=(linux,))
+
+        coverage = plan.add(
+            step(
+                "rust-coverage",
+                Run([*settings.rust_coverage, settings.rust_coverage_floor]),
+                contends=(config.exclusive("workspace_binaries"),),
+            ),
+            after=(agents,),
+        )
+        plan.add(
+            step("sign", Run(["just", "_sign"]), contends=(config.exclusive("workspace_binaries"),)),
+            after=(coverage,),
+        )
+        return plan
+
+
+class ReleaseContractsModule(
+    GateCommand,
+    name="test-release-contracts",
+    help="the release and composition contracts, without artifacts",
+):
+    """Cheap, and deliberately excludes what needs a built tree.
+
+    The build-chain suites that require artifacts are the artifacts module's
+    job. Running them here would either fail on a fresh checkout or pass
+    vacuously, and both are worse than not running them.
+    """
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        config = self._config
+        settings = config.modules
+
+        # The glob is expanded here. `bash` expanded it before pytest ever saw
+        # it; pytest does not expand path arguments itself, so passing the
+        # pattern through collects nothing and the module passes vacuously.
+        contracts = sorted(
+            str(path.relative_to(config.root))
+            for path in config.root.glob(settings.contract_glob)
+        )
+        if not contracts:
+            raise GateError(f"no contract tests matched {settings.contract_glob}")
+
+        plan.add(
+            pytestsuite.Suite(
+                label="contracts",
+                paths=(
+                    *settings.release_suites,
+                    *contracts,
+                    *config.suites.source_contract,
+                ),
+                ignores=settings.build_chain_artifact_tests,
+                stop_at_first_failure=False,
+                require_artifacts=False,
+            ).as_step(config)
+        )
+        return plan
+
+
+def _guest_binaries_present(config: GateConfig):
+    """Every guest binary the host architecture should have produced."""
+    root = config.path(config.modules.guest_binary_root) / config.host_arch().name
+    return step(
+        "guest-binaries",
+        *[RequireFile(root / name) for name in config.modules.guest_binaries],
+    )
+
+
+def storagerelease(config: GateConfig, phase: str):
+    """Hand back the storage a finished rail was holding."""
+    return step(
+        f"storage.{phase}",
+        Run(["uv", "run", "capsem-gate", "storage", "release", phase]),
+    )

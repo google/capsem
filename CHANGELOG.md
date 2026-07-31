@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `code` inside a script -- a product decision that had been spelled as a
   lambda. `scripts/release-test-profiles.py` stays as the command-line surface
   CI already calls.
+- `_test-candidate-run` is gone. All six modules `just test` is made of are
+  commands now, each declaring the workspace it needs and the graph of steps it
+  contains -- both answerable without running anything. A module used to be the
+  text between two `if` statements selected by an environment variable, so
+  running one in isolation meant exporting a variable and hoping. The justfile
+  is 995 body lines to 593.
 - pytest is invoked one way now. Sixteen call sites across two recipes each
   assembled their own flags and agreed by hand -- the same `--tb=short`, the
   same four `--ignore` directories, the same `CAPSEM_REQUIRE_ARTIFACTS=1` --

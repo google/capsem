@@ -31,6 +31,7 @@ from . import (
     storage,
     testmodules,
     versions,
+    vmmodules,
 )
 from .command import GateCommand
 from .errors import GateError
@@ -52,6 +53,7 @@ COMMAND_MODULES = (
     runs,
     gc,
     testmodules,
+    vmmodules,
 )
 
 

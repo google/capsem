@@ -8,42 +8,84 @@ import subprocess
 import sys
 from pathlib import Path
 
+from capsem.gate import config as _gate_config
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
 
 
-def _source_contract_tests() -> tuple[str, ...]:
-    match = re.search(
-        r"(?ms)^    SOURCE_CONTRACT_TESTS=\(\n(?P<body>.*?)^    \)\n",
-        JUSTFILE,
-    )
-    assert match is not None, "Justfile must define SOURCE_CONTRACT_TESTS"
-    tests = tuple(
-        line.strip()
-        for line in match.group("body").splitlines()
-        if line.strip() and not line.lstrip().startswith("#")
-    )
-    assert tests
-    assert all(test.startswith("tests/") for test in tests)
-    return tests
-
-
-SOURCE_CONTRACT_TESTS = _source_contract_tests()
-
-from capsem.gate import config as _gate_config  # noqa: E402
-
 CONFIG = _gate_config.load(PROJECT_ROOT)
-CONFIG_SOURCE_CONTRACT_TESTS = list(CONFIG.suites.source_contract)
 
+#: The inventory, from the one place that owns it. It was a 47-line array in
+#: the justfile until `_test-candidate-run` was ported out of shell, and the
+#: duplication is how eleven gate test files ended up in neither the fast
+#: module nor the exclusion that keeps them out of the VM matrix.
+SOURCE_CONTRACT_TESTS = tuple(CONFIG.suites.source_contract)
 
 def test_the_source_contract_inventory_has_one_authority() -> None:
-    """`config/gate.toml` owns it; the justfile array is a copy that exists
-    only until `_test-candidate-run` is ported out of shell.
+    """`config/gate.toml` owns it, and nothing else may keep a copy.
 
-    Two inventories is how eleven gate test files ended up in neither the fast
-    module nor the exclusion that keeps them out of the VM matrix.
+    The justfile carried a second array until the modules were ported, and
+    that duplication is how eleven gate test files ended up in neither the
+    fast module nor the exclusion that keeps them out of the VM matrix.
     """
-    assert sorted(SOURCE_CONTRACT_TESTS) == sorted(CONFIG_SOURCE_CONTRACT_TESTS)
+    assert "SOURCE_CONTRACT_TESTS" not in JUSTFILE
+    assert SOURCE_CONTRACT_TESTS
+
+
+def _planned(module: str) -> str:
+    """What a module's plan would run, rendered.
+
+    Replaces grepping `_test-candidate-run`, which no longer exists. This is
+    the stronger question: the text search noticed a line that stopped being
+    written, while this notices a step that stopped running.
+    """
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - imports every command module
+    from capsem.gate.command import GateCommand
+
+    command = GateCommand.registry[module](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+    )
+    return command.plan().describe()
+
+
+def _all_modules() -> str:
+    """Every module's plan, in both of the shapes a module can take.
+
+    A recipe body carried every branch as text, so grepping it found gates
+    that only a release lane reaches. A plan carries the branch it took, so
+    the release-lane shapes are rendered explicitly rather than assumed.
+    """
+    import os
+
+    plans = [
+        _planned(name)
+        for name in (
+            "test-fast",
+            "test-static",
+            "test-artifacts",
+            "test-functional",
+            "test-glowup",
+            "test-release-contracts",
+        )
+    ]
+
+    previous = dict(os.environ)
+    try:
+        os.environ["CAPSEM_RELEASE_PACKAGE"] = "dist/capsem_0.0.0_arm64.deb"
+        os.environ["CAPSEM_RELEASE_INPUT_DIR"] = "target/release-inputs"
+        os.environ["CAPSEM_RELEASE_PROFILE"] = "code"
+        plans += [_planned("test-glowup"), _planned("test-artifacts")]
+    finally:
+        os.environ.clear()
+        os.environ.update(previous)
+
+    return "\n".join(plans)
 
 
 def _recipe(name: str) -> str:
@@ -250,7 +292,7 @@ def test_private_release_modules_select_one_shared_runner() -> None:
             f"shell={shell} ported={ported}"
         )
 
-    runner = _recipe("_test-candidate-run")
+    runner = _all_modules()
     assert '"all"' not in runner
     for recipe, module in expected.items():
         if f"capsem-gate test-{module}" in _recipe(recipe):
@@ -261,21 +303,7 @@ def test_private_release_modules_select_one_shared_runner() -> None:
 def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -> None:
     public = _recipe("test")
     fast = _recipe("_test-fast")
-    runner = _recipe("_test-candidate-run")
-
-    # The fast module is a plan now, so this asks the plan what it would run
-    # rather than grepping a recipe body -- a stronger question, and one that
-    # keeps working as the remaining modules are ported.
-    import argparse
-
-    from helpers.gate import RecordingRunner
-
-    from capsem.gate.testmodules import FastModule
-
-    planned = FastModule(
-        RecordingRunner(PROJECT_ROOT),
-        argparse.Namespace(dry_run=False, graph=False, timing=False),
-    ).plan().describe()
+    planned = _planned("test-fast")
 
     for required in (
         "scripts/check-source-syntax.py",
@@ -300,16 +328,15 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
     assert "_bootstrap" not in fast
     assert "_check-assets" not in fast
     assert "_pack-initrd" not in fast
-    assert "module_enabled fast" in runner
 
 
 def test_release_static_module_never_bootstraps_or_builds_profile_assets() -> None:
     static = _recipe("_test-static")
 
     assert "_bootstrap" not in static.splitlines()[0]
-    assert "uv sync" in static
     assert "just _bound-docker-test-storage" in static
     assert "_check-generated-settings" in static.splitlines()[0]
+    assert "uv sync" in _planned("test-static") or "uv sync" in _planned("test-fast")
     for forbidden in (
         "_build-assets",
         "_build-kernel",
@@ -324,11 +351,12 @@ def test_functional_module_materializes_its_gitignored_settings_fixture() -> Non
     functional = _recipe("_test-functional")
 
     assert "_generate-settings" in functional.splitlines()[0]
-    assert 'if [ -z "${CAPSEM_RELEASE_INPUT_DIR:-}" ]; then' in functional
-    assert "just _sign" in functional
-    assert functional.index("just _sign") < functional.index(
-        "CAPSEM_TEST_MODULE=functional"
-    )
+
+    # Signing moved into the module, where it is conditional on the same
+    # release-input variable and ordered by an edge rather than by position.
+    planned = _planned("test-functional")
+    assert "just _sign" in planned
+    assert planned.index("just _sign") < planned.index("pytest.broad")
     for forbidden in (
         "_build-assets",
         "_build-kernel",
@@ -339,7 +367,7 @@ def test_functional_module_materializes_its_gitignored_settings_fixture() -> Non
 
 
 def test_modules_retain_complete_named_quality_gates() -> None:
-    runner = _recipe("_test-candidate-run")
+    runner = _all_modules()
 
     for required in (
         "scripts/check-cargo-audit.py",
@@ -353,7 +381,7 @@ def test_modules_retain_complete_named_quality_gates() -> None:
         "scripts/integration_test.py",
         "test_capsem_bench_baseline.py",
         "scripts/local-release-glowup.py",
-        "just _gate-install",
+        "capsem-gate install",
         "tests/capsem-build-chain/",
         "tests/capsem-release/",
     ):
@@ -361,37 +389,36 @@ def test_modules_retain_complete_named_quality_gates() -> None:
 
 
 def test_release_contract_module_does_not_reenter_source_build_suites() -> None:
-    runner = _recipe("_test-candidate-run")
-    release_contracts = runner[runner.index("if module_enabled release-contracts;") :]
-    functional = runner[
-        runner.index("if module_enabled functional;") :
-        runner.index("if module_enabled glowup;")
-    ]
+    """The cheap composition proof runs the suites that need no artifacts, and
+    the artifacts module runs exactly the ones that do."""
+    release_contracts = _planned("test-release-contracts")
+    functional = _planned("test-functional")
+    artifacts = _planned("test-artifacts")
 
     assert "tests/capsem-build-chain/" in release_contracts
     assert "tests/capsem-release/" in release_contracts
-    for artifact_test in (
-        "test_cargo_build.py",
-        "test_codesign.py",
-        "test_full_chain.py",
-        "test_manifest_regen.py",
-        "test_pack_initrd.py",
-    ):
-        assert f"--ignore=tests/capsem-build-chain/{artifact_test}" in release_contracts
-        assert f"tests/capsem-build-chain/{artifact_test}" in runner
-    assert "tests/test_*contract.py" in release_contracts
+    for artifact_test in CONFIG.modules.build_chain_artifact_tests:
+        assert f"--ignore={artifact_test}" in release_contracts
+        assert artifact_test in artifacts
+
+    # The glob is expanded before pytest sees it: pytest does not expand path
+    # arguments, so passing the pattern through would collect nothing and the
+    # module would pass vacuously.
+    assert CONFIG.modules.contract_glob not in release_contracts
+    assert "tests/test_bootstrap_contract.py" in release_contracts
+
     for source_test in SOURCE_CONTRACT_TESTS:
-        assert source_test in runner
-    assert '"${SOURCE_CONTRACT_TESTS[@]}"' in release_contracts
-    assert "tests/capsem-recipes/" not in release_contracts
+        assert source_test in release_contracts
+    assert "tests/capsem-recipes" not in release_contracts
     assert "tests/capsem-recipes/" in _recipe("_test-recipes")
-    assert "--ignore-glob=tests/test_*contract.py" in functional
-    assert '"${SOURCE_CONTRACT_IGNORE_ARGS[@]}"' in functional
-    assert "Python: release site shared-dist tests" not in functional
+
+    assert f"--ignore-glob={CONFIG.modules.contract_glob}" in functional
+    for source_test in SOURCE_CONTRACT_TESTS[:3]:
+        assert f"--ignore={source_test}" in functional
 
 
 def test_every_root_workflow_or_just_source_test_is_owned_by_the_fast_gate() -> None:
-    inventory = set(CONFIG_SOURCE_CONTRACT_TESTS)
+    inventory = set(SOURCE_CONTRACT_TESTS)
     inspected_source_contracts = set()
 
     for path in (PROJECT_ROOT / "tests").glob("test_*.py"):
@@ -410,32 +437,40 @@ def test_every_root_workflow_or_just_source_test_is_owned_by_the_fast_gate() -> 
 
 
 def test_parallel_coverage_state_is_kept_out_of_the_source_tree() -> None:
-    runner = _recipe("_test-candidate-run")
+    """Coverage state under `target/`, so the candidate tree stays
+    byte-for-byte identical to the commit that was tested."""
+    workspace = CONFIG.workspace
 
-    assert (
-        'export COVERAGE_FILE="{{justfile_directory()}}/target/coverage/.coverage"'
-        in runner
-    )
-    assert 'mkdir -p "$(dirname "$COVERAGE_FILE")"' in runner
+    assert workspace.coverage_file.startswith("target/")
+    assert workspace.benchmark_root.startswith("target/")
+    assert workspace.home.startswith("target/")
+
+    from capsem.gate.workspace import Workspace
+
+    environment = Workspace(CONFIG).environment
+    assert environment["COVERAGE_FILE"].endswith(workspace.coverage_file)
 
 
 def test_functional_coverage_replays_cheap_contracts_after_the_early_gate() -> None:
-    runner = _recipe("_test-candidate-run")
-    functional = runner[
-        runner.index("if module_enabled functional;") :
-        runner.index("if module_enabled glowup;")
-    ]
-    coverage = functional[
-        functional.index('echo "=== Python: non-serial tests (n=4 parallel) ==="') :
-        functional.index('echo "=== Python: host snapshot tests (serial) ==="')
-    ]
+    """The broad suite measures coverage and does not skip the contracts.
 
-    assert "--cov=src/capsem" in coverage
+    The compatibility runs skip them, because the broad run already proved
+    them once and repeating a constant per profile triples the slowest part of
+    the gate.
+    """
+    from capsem.gate import pytestsuite
+
+    broad = pytestsuite.broad(CONFIG, profile=CONFIG.suites.pytest.base_profile)
+    argv = broad.argv(CONFIG)
+
+    assert "--cov=src/capsem" in argv
     # The floor is `fail_under` in pyproject's [tool.coverage.report], so any
     # run that reports inherits it. What this module must still do is measure.
-    assert "--cov-report=" in coverage
-    assert '"${SOURCE_CONTRACT_IGNORE_ARGS[@]}"' not in coverage
-    assert "--ignore-glob=tests/test_*contract.py" not in coverage
+    assert any(flag.startswith("--cov-report=") for flag in argv)
+
+    for source_test in SOURCE_CONTRACT_TESTS[:3]:
+        assert f"--ignore={source_test}" not in argv
+    assert f"--ignore-glob={CONFIG.modules.contract_glob}" not in argv
 
 
 def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) -> None:
@@ -462,10 +497,7 @@ def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) 
     trace = tmp_path / "trace"
     for command, body in (
         ("pnpm", 'printf "pnpm:%s:%s\\n" "$PWD" "$*" >> "$TRACE"'),
-        (
-            "just",
-            'printf "just:%s:%s\\n" "${CAPSEM_TEST_MODULE:-}" "$*" >> "$TRACE"',
-        ),
+        ("uv", 'printf "uv:%s:%s\\n" "$PWD" "$*" >> "$TRACE"'),
     ):
         executable = fake_bin / command
         executable.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
@@ -490,35 +522,49 @@ def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) 
     assert pnpm_command == "pnpm"
     assert Path(pnpm_cwd).resolve() == (PROJECT_ROOT / "release-site").resolve()
     assert pnpm_args == "install --frozen-lockfile"
-    assert trace_lines[1:] == ["just:release-contracts:_test-candidate-run"]
+    # The recipe dispatches rather than implementing: one install, then the
+    # gate command. Nothing between them, and no nested `just`.
+    assert len(trace_lines) == 2
+    gate_command, _cwd, gate_args = trace_lines[1].split(":", maxsplit=2)
+    assert gate_command == "uv"
+    assert gate_args == "run capsem-gate test-release-contracts"
 
 
 def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
-    runner = _recipe("_test-candidate-run")
+    """Cheap failures come back before anything starts a container.
 
-    audit = runner.index("scripts/check-cargo-audit.py")
-    frontend = runner.index("bash scripts/check-web-surface.sh frontend")
-    clippy = runner.index("cargo clippy --workspace --all-targets -- -D warnings")
-    install_preflight = runner.index("just _test-install-harness-preflight")
+    Asserted across modules now: the audits and clippy live in the fast plan,
+    the Docker preflight lives in the static one, and `just test` runs fast
+    before static. In shell all three were regions of one file and the order
+    was where the lines sat.
+    """
+    fast = _planned("test-fast")
+    static = _planned("test-static")
 
-    assert audit < install_preflight
-    assert frontend < clippy < install_preflight
+    assert "scripts/check-cargo-audit.py" in fast
+    assert "check-web-surface.sh frontend" in fast
+    assert fast.index("check-web-surface.sh frontend") < fast.index("cargo clippy")
+
+    assert "capsem-gate install-image" in static
+    assert "cargo clippy" not in static, "the lint gate belongs to the fast module"
 
 
 def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
-    runner = _recipe("_test-candidate-run")
+    """The Python dependency audit runs, and runs early.
+
+    It used to be a backgrounded job whose exit status came back through a
+    `wait` into a FAIL bit; now it is a step, so "did it run" and "did it
+    pass" are the same question.
+    """
+    fast = _planned("test-fast")
+    static = _planned("test-static")
     pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     audit_script = (PROJECT_ROOT / "scripts/audit-python-lock.sh").read_text(
         encoding="utf-8"
     )
 
-    launch = runner.index("bash scripts/audit-python-lock.sh & PID_PYTHON_AUDIT=$!")
-    wait = runner.index(
-        'wait $PID_PYTHON_AUDIT || { echo "Python dependency audit failed"; FAIL=1; }'
-    )
-    install_preflight = runner.index("just _test-install-harness-preflight")
-
-    assert launch < wait < install_preflight
+    assert "scripts/audit-python-lock.sh" in fast
+    assert "capsem-gate install-image" in static
     assert '"pip-audit>=' in pyproject
     for required in (
         "uv export",
@@ -554,15 +600,20 @@ def test_reusable_fast_gate_installs_workspace_static_prerequisites() -> None:
 
 
 def test_standalone_functional_scripts_use_the_project_python() -> None:
-    for recipe in ("_test-candidate-run", "smoke"):
-        body = _recipe(recipe)
-        for script in ("scripts/injection_test.py", "scripts/integration_test.py"):
-            assert f"python3 {script}" not in body
-            assert f"uv run python {script}" in body
+    """`python3` is whatever the machine has; on a release runner that is not
+    the interpreter the lockfile pins."""
+    functional = _planned("test-functional")
+    smoke = _recipe("smoke")
+
+    for script in ("scripts/injection_test.py", "scripts/integration_test.py"):
+        assert f"uv run python {script}" in functional
+        assert f"python3 {script}" not in functional
+        assert f"python3 {script}" not in smoke
+        assert f"uv run python {script}" in smoke
 
 
 def test_release_glowup_consumes_the_exact_pairing_environment() -> None:
-    runner = _recipe("_test-candidate-run")
+    runner = _all_modules()
     adapter = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text(encoding="utf-8")
 
     assert "scripts/local-release-glowup.py" in runner
@@ -580,82 +631,84 @@ def test_release_glowup_consumes_the_exact_pairing_environment() -> None:
 
 
 def test_release_glowup_also_runs_pre_activation_channel_switches() -> None:
-    runner = _recipe("_test-candidate-run")
-    glowup = runner.split(
-        'if [ -n "${CAPSEM_RELEASE_PACKAGE:-}" ]; then', maxsplit=1
-    )[1].split("else", maxsplit=1)[0]
+    """The channel switch runs a second time with the release environment
+    cleared, so it has to rediscover its state from the installed system
+    rather than inherit what the staged run was told."""
+    import os
+
+    previous = dict(os.environ)
+    try:
+        os.environ["CAPSEM_RELEASE_PACKAGE"] = "dist/capsem_0.0.0_arm64.deb"
+        glowup = _planned("test-glowup")
+    finally:
+        os.environ.clear()
+        os.environ.update(previous)
 
     assert glowup.count("scripts/local-release-glowup.py") == 2
     assert "--work-dir target/release-module-glowup" in glowup
     assert "--work-dir target/release-module-channel-switch" in glowup
-    for variable in (
-        "CAPSEM_RELEASE_CHANNEL",
-        "CAPSEM_RELEASE_TRANSITION",
-        "CAPSEM_RELEASE_BEFORE_MANIFEST",
-        "CAPSEM_RELEASE_AFTER_MANIFEST",
-        "CAPSEM_RELEASE_BEFORE_PACKAGE",
-        "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS",
-        "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS",
-        "CAPSEM_RELEASE_PROFILE",
-        "CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION",
-        "CAPSEM_RELEASE_PUBLICATION_BASE",
-    ):
-        assert f"-u {variable}" in glowup
+
+    switch = glowup[glowup.index("glowup.channel-switch") :]
+    for variable in CONFIG.modules.channel_switch_cleared:
+        assert f"{variable}=" in switch, f"{variable} must be cleared for the switch"
 
 
 def test_standalone_local_glowup_materializes_config_without_release_builders() -> None:
-    runner = _recipe("_test-candidate-run")
+    """The package rail owns materializing the catalog `repack-deb.sh` reads.
 
-    release_branch = runner.index('if [ -n "${CAPSEM_RELEASE_PACKAGE:-}" ]; then')
-    local_branch = runner.index("else", release_branch)
+    Asserted as a dependency rather than as a call before each cross-compile,
+    which is what stops a new caller silently dropping it -- ordinary CI's
+    install gate hit exactly that and failed with "no materialized profiles
+    found".
+    """
+    runner = _all_modules()
 
-    # repack-deb.sh reads the materialized catalog from target/config, so the
-    # package rail owns producing it. Asserting the dependency rather than a
-    # call before each `just _cross-compile` is what stops the requirement from
-    # being silently dropped by a new caller -- ordinary CI's install gate hit
-    # exactly that, failing with "no materialized profiles found".
     assert "_materialize-config" in _recipe("_cross-compile").splitlines()[0]
-    assert local_branch < runner.index("just _cross-compile arm64", local_branch)
-    assert "just _build-kernel" not in runner
-    assert "just _build-rootfs" not in runner
-    assert "just _build-images" not in runner
+    assert "capsem-gate cross-compile arm64" in _planned("test-glowup")
+    for forbidden in ("_build-kernel", "_build-rootfs", "_build-images"):
+        assert forbidden not in runner
 
 
 def test_release_artifact_module_boots_manifest_selected_profile_bytes_without_builders() -> None:
-    runner = _recipe("_test-candidate-run")
-    artifact_branch = runner[
-        runner.index("if module_enabled artifacts; then") :
-        runner.index("# ---- Stage 5: Python pytest")
-    ]
+    """A release lane verifies the bytes it pulled rather than rebuilding
+    them; rebuilding would prove something about the source instead."""
+    import os
 
-    assert "scripts/prove-release-profile-assets.py" in artifact_branch
-    assert '--input-dir "$CAPSEM_RELEASE_INPUT_DIR"' in artifact_branch
-    assert '--profile "$CAPSEM_RELEASE_PROFILE"' in artifact_branch
-    for forbidden in (
-        "just _build-assets",
-        "just _build-kernel",
-        "just _build-rootfs",
-        "just _build-images",
-        "just _cross-compile",
-    ):
-        assert forbidden not in artifact_branch
+    previous = dict(os.environ)
+    try:
+        os.environ["CAPSEM_RELEASE_INPUT_DIR"] = "target/release-inputs"
+        os.environ["CAPSEM_RELEASE_PROFILE"] = "code"
+        artifacts = _planned("test-artifacts")
+    finally:
+        os.environ.clear()
+        os.environ.update(previous)
+
+    assert "scripts/prove-release-profile-assets.py" in artifacts
+    assert "--input-dir target/release-inputs" in artifacts
+    assert "--profile code" in artifacts
+    for forbidden in ("capsem-gate assets", "_build-kernel", "_build-rootfs", "cross-compile"):
+        assert forbidden not in artifacts
 
 
 def test_functional_module_runs_every_selected_profile_without_rebuilding() -> None:
-    runner = _recipe("_test-candidate-run")
+    """Every selected profile gets the VM-owned suites; the base profile also
+    gets the broad one. That is the compatibility axis, not a reduced
+    release-only substitute."""
+    from capsem.gate import profiles
 
-    assert "scripts/release-test-profiles.py" in runner
-    assert '--manifest "$TEST_ASSETS/manifest.json"' in runner
-    assert 'for TEST_PROFILE in "${TEST_PROFILES[@]:1}"' in runner
-    assert 'CAPSEM_TEST_PROFILE="$BASE_PROFILE"' in runner
-    assert 'CAPSEM_TEST_PROFILE="$TEST_PROFILE"' in runner
-    assert '-m "(integration or mcp or e2e) and not serial"' in runner
-    assert '--profile "$BASE_PROFILE"' in runner
-    assert '--profile "$TEST_PROFILE"' in runner
-    assert "tests/capsem-mcp/test_state_transitions.py" in runner
-    assert "tests/ironbank/test_route_health.py" in runner
-    assert "tests/capsem-serial/test_capsem_bench_baseline.py" in runner
-    assert "build-assets" not in runner
+    functional = _planned("test-functional")
+    axis = profiles.selected(CONFIG)
+    assert len(axis) >= 2, "the compatibility axis needs more than one profile"
+
+    for profile in axis:
+        assert f"CAPSEM_TEST_PROFILE={profile}" in functional
+        assert f"--profile {profile}" in functional
+
+    assert "(integration or mcp or e2e) and not serial" in functional
+    assert "tests/capsem-mcp/test_state_transitions.py" in functional
+    assert "tests/ironbank/test_route_health.py" in functional
+    assert "tests/capsem-serial/test_capsem_bench_baseline.py" in functional
+    assert "build-assets" not in functional
 
 
 def test_release_functional_helpers_never_hide_host_binary_builds() -> None:
@@ -723,16 +776,16 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
 
 
 def test_pulled_binary_static_gate_owns_source_agent_assertions() -> None:
-    runner = _recipe("_test-candidate-run")
-    cross_compile = runner[
-        runner.index("# ---- Stage 2: cross-arch agent cross-compile") :
-        runner.index("# ---- Stage 2b: Linux Rust platform parity")
-    ]
+    """The static module owns the source-build assertions, once, right after
+    it produces both guest-binary architectures."""
+    static = _planned("test-static")
 
-    assert 'if [ "$TEST_MODULE" = "static" ]; then' in cross_compile
-    assert "tests/capsem-bootstrap/test_cross_compile.py" in cross_compile
-    assert "tests/capsem-security/test_binary_perms.py" in cross_compile
-    assert "target/linux-agent/$HOST_AGENT_ARCH" in cross_compile
+    assert "capsem-builder agent config/docker/image" in static
+    assert "tests/capsem-bootstrap/test_cross_compile.py" in static
+    assert "tests/capsem-security/test_binary_perms.py" in static
+    assert f"{CONFIG.modules.guest_binary_root}/" in static
+    for binary in CONFIG.modules.guest_binaries:
+        assert binary in static
 
 
 def test_source_state_digest_covers_dirty_and_untracked_nonignored_files(

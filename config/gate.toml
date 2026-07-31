@@ -421,8 +421,6 @@ remaining_shell_recipes = [
     "_pack-initrd",
     "_sign",
     "_sign-release",
-    "_test-candidate-run",
-    "_test-functional",
     "dev",
     "exec",
     "logs",
@@ -736,6 +734,85 @@ profile_variable = "CAPSEM_TEST_PROFILE"
 base_profile = "code"
 materialized_profiles = "target/config/profiles"
 test_manifest = "assets/manifest.json"
+
+[functional]
+# The two legacy VM drivers. Neither is pytest, both need a real VM, and both
+# take the same three coordinates -- which is why they are here rather than
+# spelled out at each of their four call sites.
+injection_script = "scripts/injection_test.py"
+integration_script = "scripts/integration_test.py"
+binary = "target/debug/capsem"
+assets_dir = "assets"
+config_root = "target/config"
+profiles_subdir = "profiles"
+# Overridable so a release lane can point the same proof at pulled artifacts
+# instead of source-built ones.
+binary_variable = "CAPSEM_TEST_BINARY"
+assets_variable = "CAPSEM_TEST_ASSETS_DIR"
+config_root_variable = "CAPSEM_TEST_CONFIG_ROOT"
+assets_dir_variable = "CAPSEM_ASSETS_DIR"
+
+[modules]
+# The build-chain suites that need built artifacts. The release-contracts
+# module excludes them because it is the cheap composition proof; the artifacts
+# module runs exactly them, once the assets exist.
+build_chain_artifact_tests = [
+    "tests/capsem-build-chain/test_cargo_build.py",
+    "tests/capsem-build-chain/test_codesign.py",
+    "tests/capsem-build-chain/test_full_chain.py",
+    "tests/capsem-build-chain/test_manifest_regen.py",
+    "tests/capsem-build-chain/test_materialized_profile_payload.py",
+    "tests/capsem-build-chain/test_pack_initrd.py",
+]
+release_suites = ["tests/capsem-release/", "tests/capsem-build-chain/"]
+contract_glob = "tests/test_*contract.py"
+
+# The Rust coverage floor is 63, not 100. Some files -- uninstall, completions
+# -- are intentionally at 0% because they are thin shells over OS and CLI
+# primitives, and some defensive paths only execute under live VM traffic and
+# are covered by the integration suites rather than by unit tests. The floor
+# exists to catch "we deleted half the test suite", not to gate an honest
+# defensive branch.
+rust_coverage = ["cargo", "llvm-cov", "--workspace", "--bins", "--lib", "--tests", "--no-cfg-coverage"]
+rust_coverage_floor = "--fail-under-lines=63"
+
+guest_agent_build = ["uv", "run", "capsem-builder", "agent", "config/docker/image"]
+guest_binaries = ["capsem-pty-agent", "capsem-net-proxy", "capsem-mcp-server"]
+guest_binary_root = "target/linux-agent"
+guest_binary_tests = [
+    "tests/capsem-bootstrap/test_cross_compile.py",
+    "tests/capsem-security/test_binary_perms.py::test_agent_binaries_555",
+]
+
+# Release-lane inputs. When these are set the module verifies pulled immutable
+# artifacts instead of building source ones.
+release_input_dir = "CAPSEM_RELEASE_INPUT_DIR"
+release_profile = "CAPSEM_RELEASE_PROFILE"
+release_package = "CAPSEM_RELEASE_PACKAGE"
+verify_inputs_script = "scripts/verify-release-inputs.py"
+prove_profile_assets_script = "scripts/prove-release-profile-assets.py"
+glowup_script = "scripts/local-release-glowup.py"
+macos_glowup_script = "scripts/macos_release_glowup.py"
+macos_glowup_report = "target/macos-tart-glowup/report.json"
+macos_report_variable = "CAPSEM_MACOS_NATIVE_GLOWUP_REPORT"
+glowup_work_dir = "target/release-module-glowup"
+channel_switch_work_dir = "target/release-module-channel-switch"
+release_bin_dir = "CAPSEM_RELEASE_BIN_DIR"
+default_bin_dir = "target/debug"
+# Cleared for the channel-switch run: it has to rediscover the channel from
+# the installed state rather than inherit what the previous run was told.
+channel_switch_cleared = [
+    "CAPSEM_RELEASE_CHANNEL",
+    "CAPSEM_RELEASE_TRANSITION",
+    "CAPSEM_RELEASE_BEFORE_MANIFEST",
+    "CAPSEM_RELEASE_AFTER_MANIFEST",
+    "CAPSEM_RELEASE_BEFORE_PACKAGE",
+    "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS",
+    "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS",
+    "CAPSEM_RELEASE_PROFILE",
+    "CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION",
+    "CAPSEM_RELEASE_PUBLICATION_BASE",
+]
 
 # ---------------------------------------------------------------------------
 # The isolated home a gate run works in

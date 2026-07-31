@@ -24,6 +24,28 @@ def _justfile_graph():
 GRAPH = _justfile_graph()
 
 
+
+def _planned(module: str) -> str:
+    """What a module's plan would run, rendered.
+
+    Replaces grepping `_test-candidate-run`, which no longer exists.
+    """
+    import argparse
+
+    from capsem.gate import cli  # noqa: F401 - imports every command module
+    from capsem.gate.command import GateCommand
+    from capsem.gate.proc import Runner
+
+    return (
+        GateCommand.registry[module](
+            Runner(ROOT),
+            argparse.Namespace(dry_run=False, graph=False, timing=False),
+        )
+        .plan()
+        .describe()
+    )
+
+
 def _recipe(name: str) -> str:
     lines = JUSTFILE.splitlines()
     start = next(
@@ -57,48 +79,47 @@ def test_python_tests_use_the_tracked_lowercase_justfile_name() -> None:
 
 
 def test_smoke_reuses_the_complete_shared_fast_gate() -> None:
+    """`smoke` and `test` share one cheap gate, so they cannot drift.
+
+    The cheap checks must fail before smoke spends time preparing a bootable
+    runtime. `_prepared-runtime` is that preparation, named once so both
+    entrypoints take the same steps.
+    """
     smoke = _recipe("smoke")
     fast = _recipe("_test-fast")
-    runner = _recipe("_test-candidate-run")
+    planned = _planned("test-fast")
 
-    # The cheap shared gate must fail before smoke spends time preparing a
-    # bootable runtime. `_prepared-runtime` is that preparation, named once so
-    # `test` and `smoke` cannot drift apart on which steps it takes.
     assert smoke.index("just _test-fast") < smoke.index("just _prepared-runtime")
     assert "_check-assets" in _recipe("_prepared-runtime").splitlines()[0]
-    assert "scripts/check-source-syntax.py" in fast
     assert "just _test-release-contracts" in fast
+
     for required in (
+        "scripts/check-source-syntax.py",
         "scripts/check-cargo-audit.py",
         "scripts/audit-pnpm-bulk.py",
         "scripts/audit-python-lock.sh",
         "cargo clippy --workspace --all-targets -- -D warnings",
-        "bash scripts/check-web-surface.sh frontend",
-        "bash scripts/check-web-surface.sh release-site",
+        "check-web-surface.sh frontend",
+        "check-web-surface.sh release-site",
     ):
-        assert required in runner
+        assert required in planned, f"the fast plan does not run {required}"
 
 
 def test_fast_release_contracts_do_not_depend_on_ignored_build_outputs() -> None:
-    release_contracts = _recipe("_test-candidate-run")
-    materialized_test = (
-        ROOT / "tests/capsem-build-chain/test_materialized_profile_payload.py"
-    )
+    """The cheap contract module must not need what the artifacts module makes.
+
+    `test_materialized_profile_payload.py` reads a materialized catalog, so it
+    belongs to the artifacts module. Its source-only counterpart must not reach
+    for the same directory, or the cheap gate starts depending on a build.
+    """
+    materialized = "tests/capsem-build-chain/test_materialized_profile_payload.py"
     source_contract = (
         ROOT / "tests/capsem-build-chain/test_profile_payload_contract.py"
     ).read_text(encoding="utf-8")
 
-    assert materialized_test.is_file()
-    assert (
-        "--ignore=tests/capsem-build-chain/test_materialized_profile_payload.py"
-        in release_contracts
-    )
-    assert (
-        release_contracts.count(
-            "tests/capsem-build-chain/test_materialized_profile_payload.py"
-        )
-        == 2
-    )
+    assert (ROOT / materialized).is_file()
+    assert f"--ignore={materialized}" in _planned("test-release-contracts")
+    assert materialized in _planned("test-artifacts")
     assert "MATERIALIZED_PROFILES_DIR" not in source_contract
 
 

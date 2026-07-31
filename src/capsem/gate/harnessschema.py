@@ -103,6 +103,45 @@ class ToolchainConfig(Strict):
     crates: tuple[CrateTool, ...]
 
 
+class ModulesConfig(Strict):
+    build_chain_artifact_tests: tuple[str, ...]
+    release_suites: tuple[str, ...]
+    contract_glob: str
+    rust_coverage: tuple[str, ...]
+    rust_coverage_floor: str
+    guest_agent_build: tuple[str, ...]
+    guest_binaries: tuple[str, ...]
+    guest_binary_root: str
+    guest_binary_tests: tuple[str, ...]
+    release_input_dir: str
+    release_profile: str
+    release_package: str
+    verify_inputs_script: str
+    prove_profile_assets_script: str
+    glowup_script: str
+    macos_glowup_script: str
+    macos_glowup_report: str
+    macos_report_variable: str
+    glowup_work_dir: str
+    channel_switch_work_dir: str
+    release_bin_dir: str
+    default_bin_dir: str
+    channel_switch_cleared: tuple[str, ...]
+
+
+class FunctionalConfig(Strict):
+    injection_script: str
+    integration_script: str
+    binary: str
+    assets_dir: str
+    config_root: str
+    profiles_subdir: str
+    binary_variable: str
+    assets_variable: str
+    config_root_variable: str
+    assets_dir_variable: str
+
+
 class AuditsConfig(Strict):
     cargo: str
     pnpm: str

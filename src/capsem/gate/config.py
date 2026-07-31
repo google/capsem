@@ -39,8 +39,10 @@ from .harnessschema import (
     DiskConfig,
     Exclusive,
     ExecutionConfig,
+    FunctionalConfig,
     LintConfig,
     LocksConfig,
+    ModulesConfig,
     RunLogConfig,
     SuitesConfig,
     ToolchainConfig,
@@ -73,6 +75,8 @@ class GateConfig(Strict):
     websurfaces: WebSurfacesConfig
     suites: SuitesConfig
     toolchain: ToolchainConfig
+    functional: FunctionalConfig
+    modules: ModulesConfig
 
     root: Path = Field(exclude=True)
     """The checkout this configuration was loaded from."""
