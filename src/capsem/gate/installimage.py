@@ -15,16 +15,14 @@ from __future__ import annotations
 
 import argparse
 
+from . import config as gate_config
 from .errors import GateError
 from .proc import Runner
 from .storage import Storage
 
-IMAGE = "capsem-install-test"
-DOCKERFILE = "docker/Dockerfile.install-test"
-VENV = "/home/capsem/.venv-install-test"
-
-# One cheap check over every tool the install gate depends on: passwordless
-# sudo, cdxgen, the musl toolchain, and a pytest that can actually collect.
+# The one behaviour here rather than in config: a check, not a value. It
+# exercises every tool the install gate depends on -- passwordless sudo,
+# cdxgen, the musl toolchain, and a pytest that can actually collect.
 SMOKE = (
     "set -e; sudo -n true; cd /src; cdxgen --version; "
     "source /src/scripts/doctor-linux.sh; linux_musl_toolchain_available; "
@@ -33,15 +31,15 @@ SMOKE = (
 )
 
 
-def _smoke_passes(runner: Runner) -> bool:
+def _smoke_passes(runner: Runner, settings: gate_config.InstallConfig) -> bool:
     return runner.succeeds(
         [
             "docker", "run", "--rm",
             "-u", "capsem",
-            "-e", f"UV_PROJECT_ENVIRONMENT={VENV}",
+            "-e", f"UV_PROJECT_ENVIRONMENT={settings.venv}",
             "-e", "CAPSEM_TEST_OUTPUT_ROOT=/tmp/capsem-test-output",
-            "-v", f"{runner.root}:/src:ro",
-            IMAGE,
+            "-v", f"{runner.root}:{settings.mount}:ro",
+            settings.image,
             "bash", "-lc", SMOKE,
         ]
     )
@@ -49,18 +47,21 @@ def _smoke_passes(runner: Runner) -> bool:
 
 def prepare(runner: Runner) -> None:
     """Build the install-test image and prove it can run the gate's tools."""
-    runner.run(["just", "_build-host-image"])
-    runner.run(["docker", "build", "-t", IMAGE, "-f", DOCKERFILE, "."])
+    settings = gate_config.for_root(runner.root).install
+    build = ["docker", "build", "-t", settings.image, "-f", settings.dockerfile, "."]
 
-    if not _smoke_passes(runner):
+    runner.run(["just", "_build-host-image"])
+    runner.run(build)
+
+    if not _smoke_passes(runner, settings):
         runner.note(
             "Install-test image smoke check failed; rebuilding without Docker cache..."
         )
-        runner.run(["docker", "build", "--no-cache", "-t", IMAGE, "-f", DOCKERFILE, "."])
-        if not _smoke_passes(runner):
+        runner.run([*build[:2], "--no-cache", *build[2:]])
+        if not _smoke_passes(runner, settings):
             raise GateError(
-                f"{DOCKERFILE} produces an image that cannot run the install gate's "
-                "tools even after a cacheless rebuild"
+                f"{settings.dockerfile} produces an image that cannot run the install "
+                "gate's tools even after a cacheless rebuild"
             )
 
     # The cross-compile lanes that follow stage 0 reuse the base image. Every

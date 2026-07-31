@@ -5,49 +5,22 @@
 scratch -- and every test helper went unchecked. A type error in
 `scripts/release-binaries.py` is a release bug; it had no gate at all.
 
-Both halves now run over `src`, `scripts`, `tests`, and `guest`, at two
-strictnesses. `src/` passes every ty rule and is checked with none disabled.
-The rest is checked with the `ty_ratchet` list from pyproject held back --
-roughly four hundred diagnostics dominated by inference over untyped fixture
-data, which would otherwise force the choice between checking those trees
-loosely and not checking them at all. That is the choice that left them
-unchecked. Entries may leave the ratchet; nothing may join it.
+Which trees are checked, which are checked strictly, and which rules are held
+back on the rest are all `[lint]` in `config/gate.toml`. `src/` passes every ty
+rule and is checked with none disabled; the other trees hold back the
+`ty_ratchet` list -- roughly four hundred diagnostics dominated by inference
+over untyped fixture data, which would otherwise force the choice between
+checking those trees loosely and not checking them at all. That is the choice
+that left them unchecked. Entries may leave the ratchet; nothing may join it.
 """
 
 from __future__ import annotations
 
 import argparse
-import tomllib
-from pathlib import Path
 
+from . import config as gate_config
 from .errors import GateError
 from .proc import Runner
-
-# Every directory in the repository holding first-party Python.
-PYTHON_ROOTS = ("src", "scripts", "tests", "guest")
-
-# The subset that already passes every rule, and must keep doing so.
-STRICT_ROOTS = ("src",)
-
-# A ty warning exits zero, so a warning-level rule on the ratchet below could
-# never have been detected as fixed -- and a suppression comment left behind
-# after its diagnostic was fixed would sit
-# there forever, describing a problem that no longer exists.
-TY_FLAGS = ("--error-on-warning",)
-
-
-def ratchet(root: Path) -> list[str]:
-    """Rules held back outside `src/`, read from the one place they are declared."""
-    config = tomllib.loads((Path(root) / "pyproject.toml").read_text(encoding="utf-8"))
-    try:
-        return list(config["tool"]["capsem"]["gate"]["ty_ratchet"])
-    except KeyError:
-        raise GateError("pyproject declares no [tool.capsem.gate] ty_ratchet") from None
-
-
-def _relaxed_roots(root: Path) -> list[str]:
-    present = [name for name in PYTHON_ROOTS if (Path(root) / name).is_dir()]
-    return [name for name in present if name not in STRICT_ROOTS]
 
 
 def check(runner: Runner) -> None:
@@ -56,28 +29,33 @@ def check(runner: Runner) -> None:
     A lint run that stops at the first tool leaves the second one's findings
     for the next push, which is how a gate takes three rounds to go green.
     """
+    settings = gate_config.for_root(runner.root).lint
     failures: list[str] = []
 
     runner.step("ruff")
     if runner.run(["uv", "run", "ruff", "check", "."], check=False) != 0:
         failures.append("ruff")
 
-    runner.step("ty (strict)")
-    strict = [name for name in STRICT_ROOTS if (runner.root / name).is_dir()]
-    if runner.run(["uv", "run", "ty", "check", *TY_FLAGS, *strict], check=False) != 0:
-        failures.append(f"ty ({', '.join(strict)})")
+    present = [
+        name for name in settings.python_roots if (runner.root / name).is_dir()
+    ]
+    strict = [name for name in present if name in settings.strict_roots]
+    relaxed = [name for name in present if name not in settings.strict_roots]
 
-    relaxed = _relaxed_roots(runner.root)
+    if strict:
+        runner.step(f"ty ({', '.join(strict)}, every rule)")
+        if runner.run(
+            ["uv", "run", "ty", "check", *settings.ty_flags, *strict], check=False
+        ) != 0:
+            failures.append(f"ty ({', '.join(strict)})")
+
     if relaxed:
         runner.step(f"ty ({', '.join(relaxed)})")
-        held_back = [flag for rule in ratchet(runner.root) for flag in ("--ignore", rule)]
-        if (
-            runner.run(
-                ["uv", "run", "ty", "check", *TY_FLAGS, *relaxed, *held_back],
-                check=False,
-            )
-            != 0
-        ):
+        held_back = [flag for rule in settings.ty_ratchet for flag in ("--ignore", rule)]
+        if runner.run(
+            ["uv", "run", "ty", "check", *settings.ty_flags, *relaxed, *held_back],
+            check=False,
+        ) != 0:
             failures.append(f"ty ({', '.join(relaxed)})")
 
     if failures:

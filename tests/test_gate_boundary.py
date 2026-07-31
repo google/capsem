@@ -14,7 +14,8 @@ the old shape unavailable, in both directions:
   the justfile        may not grow a shell body back
   `capsem.gate`       may not become one 2000-line file in a new language
 
-`REMAINING_SHELL_RECIPES` is a ratchet, not an exemption list. A recipe may
+`remaining_shell_recipes` in `config/gate.toml` is a ratchet, not an
+exemption list. A recipe may
 leave it; nothing may join it; and a recipe that has already been extracted
 must be struck from it, so the list cannot quietly describe a past that is no
 longer true.
@@ -25,65 +26,17 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-import tomllib
 from pathlib import Path
 
 import pytest
 
+from capsem.gate import config as gate_config
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GATE_PACKAGE = PROJECT_ROOT / "src" / "capsem" / "gate"
 
-LIMITS = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
-    "tool"
-]["capsem"]["gate"]
-
-# Recipes whose bodies are still inline shell, pending extraction. Ordered by
-# the size of the body, because that is the order they are worth doing in.
-REMAINING_SHELL_RECIPES = frozenset(
-    {
-        "_test-candidate-run",
-        "_gate-assets",
-        "_prove-linux-deb",
-        "_pack-initrd",
-        "smoke",
-        "_ensure-service",
-        "_gate-linux-rust",
-        "test",
-        "_install-tools",
-        "_gate-host-package-sbom",
-        "_build-host-image",
-        "_check-assets",
-        "_build-assets",
-        "logs",
-        "_build-image-template",
-        "release-binaries",
-        "_build-ui",
-        "_build-kernel",
-        "_build-rootfs",
-        "_sign-release",
-        "dev",
-        "release-profile",
-        "_ensure-dev-ready",
-        "_sign",
-        "_test-functional",
-        "doctor",
-        "_dev-ui",
-        "exec",
-        "shell",
-        "_check-generated-settings",
-        "_materialize-config",
-        "_generate-settings",
-    }
-)
-
-# A body line that opens a shell construct is inline logic whether or not the
-# recipe declared a shebang: `just` hands each line to a shell, so a `for` loop
-# spread over continuations is a program with no test around it. `_pnpm-install`
-# is exactly that, and its failure inside a job with no pnpm is one of the
-# defects that started this.
-SHELL_CONTROL_FLOW = ("if ", "for ", "while ", "case ", "until ", "trap ")
-
-RECIPES_WITH_INLINE_CONTROL_FLOW = frozenset({"_pnpm-install"})
+CONFIG = gate_config.load(PROJECT_ROOT)
+BOUNDARY = CONFIG.boundary
 
 
 def _recipes() -> dict[str, dict]:
@@ -123,11 +76,12 @@ def test_no_new_recipe_grows_a_shell_body() -> None:
     assert recipes, "no recipes parsed; this guard would pass vacuously"
 
     inline = {name for name, recipe in recipes.items() if recipe["shebang"]}
+    remaining = set(BOUNDARY.remaining_shell_recipes)
 
-    assert not inline - REMAINING_SHELL_RECIPES, (
+    assert not inline - remaining, (
         "these recipes have inline shell bodies that no test can reach; put "
         "the logic in src/capsem/gate/ and call it from a one-line recipe: "
-        f"{sorted(inline - REMAINING_SHELL_RECIPES)}"
+        f"{sorted(inline - remaining)}"
     )
 
 
@@ -136,18 +90,20 @@ def test_the_extraction_ratchet_never_runs_backwards() -> None:
     recipes = _recipes()
     inline = {name for name, recipe in recipes.items() if recipe["shebang"]}
 
-    stale = sorted(REMAINING_SHELL_RECIPES - inline)
+    remaining = set(BOUNDARY.remaining_shell_recipes)
+    stale = sorted(remaining - inline)
     assert not stale, (
         "these recipes no longer carry inline shell -- remove them from "
-        f"REMAINING_SHELL_RECIPES so the remaining work stays honest: {stale}"
+        "config/gate.toml's remaining_shell_recipes so the outstanding work "
+        f"stays honest: {stale}"
     )
 
-    gone = sorted(REMAINING_SHELL_RECIPES - set(recipes))
+    gone = sorted(remaining - set(recipes))
     assert not gone, f"these recipes no longer exist: {gone}"
 
 
 def test_a_dispatching_recipe_stays_short_enough_to_read() -> None:
-    ceiling = LIMITS["max_recipe_lines"]
+    ceiling = BOUNDARY.max_recipe_lines
     oversized = {
         name: len(_executable_lines(recipe))
         for name, recipe in _recipes().items()
@@ -164,12 +120,12 @@ def test_no_recipe_hides_shell_logic_without_a_shebang() -> None:
     """A `for` loop across continuation lines is still an untested program."""
     offenders = {}
     for name, recipe in _recipes().items():
-        if recipe["shebang"] or name in RECIPES_WITH_INLINE_CONTROL_FLOW:
+        if recipe["shebang"] or name in BOUNDARY.recipes_with_inline_control_flow:
             continue
         opening = [
             line
             for line in _executable_lines(recipe)
-            if line.lstrip().startswith(SHELL_CONTROL_FLOW)
+            if line.lstrip().startswith(tuple(BOUNDARY.shell_control_flow))
         ]
         if opening:
             offenders[name] = opening
@@ -186,7 +142,7 @@ def test_no_recipe_hides_shell_logic_without_a_shebang() -> None:
 
 
 def test_no_gate_module_grows_into_the_justfile_it_replaced() -> None:
-    ceiling = LIMITS["max_module_lines"]
+    ceiling = BOUNDARY.max_module_lines
     modules = sorted(GATE_PACKAGE.rglob("*.py"))
     assert len(modules) > 3, "scanned too few modules to trust this guard"
 
@@ -251,13 +207,13 @@ def test_the_strict_python_tree_needs_no_rules_held_back() -> None:
     holding some rules back on the trees that were never checked; holding any
     back on `src/` would give that ground away again.
     """
-    from capsem.gate.lint import PYTHON_ROOTS, STRICT_ROOTS, TY_FLAGS
+    settings = CONFIG.lint
 
-    assert set(STRICT_ROOTS) <= set(PYTHON_ROOTS)
-    assert "src" in STRICT_ROOTS
+    assert set(settings.strict_roots) <= set(settings.python_roots)
+    assert "src" in settings.strict_roots
 
     strict = subprocess.run(
-        ["uv", "run", "ty", "check", *TY_FLAGS, *STRICT_ROOTS],
+        ["uv", "run", "ty", "check", *settings.ty_flags, *settings.strict_roots],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
@@ -271,12 +227,11 @@ def test_the_type_ratchet_only_shrinks() -> None:
     Otherwise the ratchet stops describing outstanding work and starts
     describing policy, which is how a temporary exemption becomes permanent.
     """
-    from capsem.gate.lint import TY_FLAGS, _relaxed_roots, ratchet
-
-    held_back = ratchet(PROJECT_ROOT)
+    settings = CONFIG.lint
+    held_back = list(settings.ty_ratchet)
     assert held_back, "an empty ratchet means the list should be deleted, not kept"
 
-    relaxed = _relaxed_roots(PROJECT_ROOT)
+    relaxed = list(settings.relaxed_roots)
     still_firing = set()
     for rule in held_back:
         others = [
@@ -286,7 +241,7 @@ def test_the_type_ratchet_only_shrinks() -> None:
             for flag in ("--ignore", other)
         ]
         result = subprocess.run(
-            ["uv", "run", "ty", "check", *TY_FLAGS, *relaxed, *others],
+            ["uv", "run", "ty", "check", *settings.ty_flags, *relaxed, *others],
             cwd=PROJECT_ROOT,
             capture_output=True,
             text=True,
@@ -296,5 +251,5 @@ def test_the_type_ratchet_only_shrinks() -> None:
 
     assert set(held_back) == still_firing, (
         "these rules are held back but no longer fire; remove them from "
-        f"pyproject's ty_ratchet: {sorted(set(held_back) - still_firing)}"
+        f"config/gate.toml's ty_ratchet: {sorted(set(held_back) - still_firing)}"
     )

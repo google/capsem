@@ -19,12 +19,19 @@ from pathlib import Path
 import pytest
 from helpers.gate import RecordingRunner
 
-from capsem.gate import arch as architectures
+from capsem.gate import config as gate_config
 from capsem.gate.docker import Docker
 from capsem.gate.errors import GateError
-from capsem.gate.install import LAYOUT, InstallGate
-from capsem.gate.installproof import SERVE_READY_FILE
-from capsem.gate.releasegraph import GRAPH_MANIFEST, PREINSTALL_ADMIN, ReleaseGraph
+from capsem.gate.install import InstallGate
+from capsem.gate.installproof import InstallProof
+from capsem.gate.releasegraph import ReleaseGraph
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONFIG = gate_config.load(PROJECT_ROOT)
+INSTALL = CONFIG.install
+LAYOUT = INSTALL.layout
+SERVE_READY_FILE = INSTALL.serve_ready_file
+PREINSTALL_ADMIN = INSTALL.preinstall_admin
 
 VERSION = "9.9.9"
 WORKSPACE = f"""\
@@ -35,11 +42,21 @@ members = ["crates/capsem"]
 version = "{VERSION}"
 """
 
-AUTHORITATIVE = f"{LAYOUT.channel}/{GRAPH_MANIFEST}"
+AUTHORITATIVE = f"{LAYOUT.channel}/{INSTALL.graph_manifest}"
 
 
 def _checkout(tmp_path: Path, *, dpkg_arch: str) -> Path:
+    """A fake checkout carrying the real gate configuration.
+
+    Copied rather than invented: a second configuration here could drift from
+    the one the gate runs with, and then these tests would prove an ordering
+    nobody executes.
+    """
     (tmp_path / "Cargo.toml").write_text(WORKSPACE)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "gate.toml").write_text(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )
     (tmp_path / "dist").mkdir()
     (tmp_path / "dist" / f"Capsem_{VERSION}_{dpkg_arch}.deb").write_text("package bytes")
     return tmp_path
@@ -60,9 +77,9 @@ def gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[InstallGate, 
 
 def _macos_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A checkout on a macOS host with no colima, the local-proof shape."""
-    monkeypatch.setattr("capsem.gate.arch.host_system", lambda: "Darwin")
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
     monkeypatch.setattr("shutil.which", lambda _name: None)
-    return _checkout(tmp_path, dpkg_arch=architectures.host().dpkg)
+    return _checkout(tmp_path, dpkg_arch=CONFIG.host_arch().dpkg)
 
 
 def _recording(root: Path) -> RecordingRunner:
@@ -197,7 +214,7 @@ def test_the_legacy_runtime_projection_is_refused(tmp_path: Path) -> None:
     asks the manifest a question only the graph can answer.
     """
     runner = RecordingRunner(tmp_path)
-    graph = ReleaseGraph(Docker(runner), "box")
+    graph = ReleaseGraph(Docker(runner), CONFIG)
 
     with pytest.raises(GateError, match="not the legacy runtime projection"):
         graph.hand_off(f"{LAYOUT.assets}/manifest.json")
@@ -212,7 +229,7 @@ def test_a_handoff_target_that_does_not_exist_is_refused(tmp_path: Path) -> None
     postinst finds no request at all and hydrates from the public channel,
     which is exactly the silent fallback being removed."""
     runner = RecordingRunner(tmp_path, failures=["test -f"])
-    graph = ReleaseGraph(Docker(runner), "box")
+    graph = ReleaseGraph(Docker(runner), CONFIG)
 
     with pytest.raises(GateError, match="would find no request"):
         graph.hand_off(AUTHORITATIVE)
@@ -222,7 +239,7 @@ def test_clearing_a_handoff_that_was_never_written_does_nothing(tmp_path: Path) 
     """Cleanup runs on the failure path, where the write may not have happened."""
     runner = RecordingRunner(tmp_path)
 
-    ReleaseGraph(Docker(runner), "box").clear_handoff()
+    ReleaseGraph(Docker(runner), CONFIG).clear_handoff()
 
     assert not runner.ran(r"install-manifest-request")
 
@@ -265,11 +282,20 @@ def test_a_missing_package_names_the_rail_that_builds_it(
 ) -> None:
     """The install gate proves the release-mode package the package rail made.
     Building a debug one here would prove bytes that can never be published."""
-    monkeypatch.setattr("capsem.gate.arch.host_system", lambda: "Darwin")
-    (tmp_path / "Cargo.toml").write_text(WORKSPACE)
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    root = _checkout_without_package(tmp_path)
 
     with pytest.raises(GateError, match="just _cross-compile"):
-        InstallGate(RecordingRunner(tmp_path)).run()
+        InstallGate(RecordingRunner(root)).run()
+
+
+def _checkout_without_package(tmp_path: Path) -> Path:
+    (tmp_path / "Cargo.toml").write_text(WORKSPACE)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "gate.toml").write_text(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )
+    return tmp_path
 
 
 def test_a_package_from_another_version_is_refused(
@@ -322,10 +348,8 @@ def test_a_local_server_that_never_reports_ready_fails(
 ) -> None:
     """Continuing here would author the graph against an unserved root, and the
     handoff would name a URL nothing answers."""
-    from capsem.gate.installproof import InstallProof
-
     runner = RecordingRunner(tmp_path, failures=[f"test -f {SERVE_READY_FILE}"])
-    proof = InstallProof(runner, "box", LAYOUT, sleep=lambda _seconds: None)
+    proof = InstallProof(runner, CONFIG, sleep=lambda _seconds: None)
 
     with pytest.raises(GateError, match="never reported itself ready"):
         proof.stage_local_assets()
@@ -360,19 +384,15 @@ def test_the_container_is_torn_down_even_when_the_proof_fails(
 def test_a_host_that_boots_a_guest_runs_the_complete_glowup(tmp_path: Path) -> None:
     """`--skip-install` is what a host without a guest falls back to. Sending
     it where the guest works would silently drop half the proof."""
-    from capsem.gate.installproof import InstallProof
-
     runner = RecordingRunner(tmp_path)
-    InstallProof(runner, "box", LAYOUT).prove_glowup("/src/x.deb", boots_a_guest=True)
+    InstallProof(runner, CONFIG).prove_glowup("/src/x.deb", boots_a_guest=True)
 
     assert runner.ran(r"local-release-glowup\.py")
     assert not runner.ran(r"--skip-install")
 
 
 def test_a_host_without_a_guest_skips_only_the_install_half(tmp_path: Path) -> None:
-    from capsem.gate.installproof import InstallProof
-
     runner = RecordingRunner(tmp_path)
-    InstallProof(runner, "box", LAYOUT).prove_glowup("/src/x.deb", boots_a_guest=False)
+    InstallProof(runner, CONFIG).prove_glowup("/src/x.deb", boots_a_guest=False)
 
     assert runner.ran(r"local-release-glowup\.py .*--skip-install")

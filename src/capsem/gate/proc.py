@@ -35,6 +35,13 @@ class Command:
     """Additions to the inherited environment, not a replacement for it."""
     capture: bool = False
     check: bool = True
+    log: Path | None = None
+    """Append combined output here instead of streaming it.
+
+    Two build lanes streaming to one terminal interleave into something nobody
+    can read, so each concurrent lane writes its own log and only a failing
+    lane's tail is surfaced.
+    """
 
     def __str__(self) -> str:
         assignments = " ".join(
@@ -67,6 +74,18 @@ class Runner:
     def execute(self, command: Command) -> subprocess.CompletedProcess[str]:
         """The single point every invocation passes through."""
         environment = {**os.environ, **command.env}
+        if command.log is not None:
+            command.log.parent.mkdir(parents=True, exist_ok=True)
+            with command.log.open("a", encoding="utf-8") as sink:
+                return subprocess.run(
+                    list(command.argv),
+                    cwd=str(command.cwd) if command.cwd else str(self.root),
+                    env=environment,
+                    check=False,
+                    text=True,
+                    stdout=sink,
+                    stderr=subprocess.STDOUT,
+                )
         return subprocess.run(
             list(command.argv),
             cwd=str(command.cwd) if command.cwd else str(self.root),
@@ -84,6 +103,7 @@ class Runner:
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
         check: bool = True,
+        log: Path | None = None,
     ) -> int:
         """Run a command, streaming its output. Returns the exit status."""
         command = Command(
@@ -91,6 +111,7 @@ class Runner:
             cwd=cwd,
             env=dict(env or {}),
             check=check,
+            log=log,
         )
         completed = self.execute(command)
         if check and completed.returncode != 0:

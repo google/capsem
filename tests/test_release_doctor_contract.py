@@ -354,6 +354,9 @@ def test_install_e2e_reuses_exact_package_and_materialized_profile_config() -> N
     commands the gate actually issues, in
     `tests/test_gate_install_ordering.py`.
     """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
     source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "install.py").read_text()
     proof = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installproof.py").read_text()
     recipe = _recipe_block("_gate-install:")
@@ -370,7 +373,10 @@ def test_install_e2e_reuses_exact_package_and_materialized_profile_config() -> N
         assert builder not in source + proof, f"the install gate must not run {builder}"
 
     # Both staging shapes, and the refusal that names the rail owning the build.
-    assert "stage-release-test-inputs.py" in proof
+    assert config.install.suite.stage_inputs_script.endswith(
+        "stage-release-test-inputs.py"
+    )
+    assert "stage_inputs_script" in proof
     assert 'cp -R assets/. "{self._layout.assets}/"' in proof
     assert 'cp -R target/config/. "{self._layout.config}/"' in proof
     assert "missing exact release-mode Debian package" in source
@@ -1736,16 +1742,18 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
     Releasing it earlier would make the rebuild-on-smoke-failure path cold, and
     releasing it never would starve the package rails that follow.
     """
-    from capsem.gate.storage import RELEASE_PHASES
+    from capsem.gate import config as gate_config
 
+    config = gate_config.load(PROJECT_ROOT)
     source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installimage.py").read_text()
 
-    build = source.index('"docker", "build", "-t", IMAGE')
-    smoke = source.index("_smoke_passes(runner)")
+    build = source.index('"docker", "build", "-t", settings.image')
+    smoke = source.index("_smoke_passes(runner, settings)")
     release = source.index('release("linux-rust-builder")')
     assert build < smoke < release
 
-    assert RELEASE_PHASES["linux-rust-builder"] == (
+    phase = config.storage.phases["linux-rust-builder"]
+    assert (phase.boundary, phase.rail) == (
         "after-linux-rust-builder",
         "install-preflight",
     )

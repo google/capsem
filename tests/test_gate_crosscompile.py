@@ -13,9 +13,8 @@ from pathlib import Path
 import pytest
 from helpers.gate import RecordingRunner
 
-from capsem.gate import arch as architectures
+from capsem.gate import config as gate_config
 from capsem.gate.crosscompile import (
-    BUILD_SCRIPT,
     PackageRail,
     pinned_toolchain,
     resolve_channel,
@@ -23,16 +22,29 @@ from capsem.gate.crosscompile import (
 )
 from capsem.gate.errors import GateError
 
-TARGET = architectures.ARM64
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONFIG = gate_config.load(PROJECT_ROOT)
+BUILD_SCRIPT = CONFIG.package.build_script
+TARGET = CONFIG.arch("arm64")
 PACKAGE = "Capsem_9.9.9_arm64.deb"
 
 
 def _checkout(tmp_path: Path, *, toolchain: str = "9.99.9") -> Path:
+    """A fake checkout carrying the real gate configuration.
+
+    The rail reads `config/gate.toml` for volume names and scripts, so the
+    fixture links it rather than inventing a second copy that could drift from
+    the one the gate actually runs with.
+    """
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "rust-toolchain.toml").write_text(
         f'[toolchain]\nchannel = "{toolchain}"\n'
     )
     (tmp_path / "scripts").mkdir()
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "gate.toml").write_text(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )
     (tmp_path / "assets" / TARGET.name).mkdir(parents=True)
     return tmp_path
 
@@ -101,14 +113,14 @@ def test_a_checkout_without_keys_injects_none(tmp_path: Path) -> None:
     assert signing_key(tmp_path) == {}
 
 
-@pytest.mark.parametrize("channel", ["stable", "nightly", "corp"])
+@pytest.mark.parametrize("channel", CONFIG.package.channels)
 def test_known_channels_are_accepted(channel: str) -> None:
-    assert resolve_channel(channel) == channel
+    assert resolve_channel(channel, CONFIG) == channel
 
 
 def test_an_unknown_channel_is_refused_before_anything_is_built() -> None:
     with pytest.raises(GateError, match="stable, nightly, corp"):
-        resolve_channel("prod")
+        resolve_channel("prod", CONFIG)
 
 
 # ---------------------------------------------------------------------------
@@ -119,8 +131,8 @@ def test_an_unknown_channel_is_refused_before_anything_is_built() -> None:
 def test_the_builder_receives_every_name_for_the_target(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.arch.host_system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.arch.host", lambda: TARGET)
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path, toolchain="1.2.3"), replies={"select-linux": "skip"})
 
     _rail(runner).run()
@@ -139,8 +151,8 @@ def test_the_cargo_caches_are_shared_and_the_target_dir_is_per_architecture(
 ) -> None:
     """A shared /cargo-target across architectures would rebuild the world on
     every alternation; a per-architecture registry would refetch the index."""
-    monkeypatch.setattr("capsem.gate.arch.host_system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.arch.host", lambda: TARGET)
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
 
     _rail(runner).run()
@@ -154,8 +166,8 @@ def test_the_cargo_caches_are_shared_and_the_target_dir_is_per_architecture(
 def test_the_builder_image_is_rebuilt_before_every_package(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.arch.host_system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.arch.host", lambda: TARGET)
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
 
     _rail(runner).run()
@@ -168,9 +180,9 @@ def test_the_container_clock_is_synced_only_on_macos(
 ) -> None:
     """Colima's VM clock drifts and apt rejects a repository signed in what it
     believes is the future. A Linux runner has no such VM."""
-    monkeypatch.setattr("capsem.gate.arch.host", lambda: TARGET)
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     for system, expected in (("Darwin", True), ("Linux", False)):
-        monkeypatch.setattr("capsem.gate.arch.host_system", lambda system=system: system)
+        monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
         runner = Building(
             _checkout(tmp_path / system), replies={"select-linux": "skip"}
         )
@@ -188,8 +200,8 @@ def test_the_container_clock_is_synced_only_on_macos(
 def test_the_recorded_package_is_the_one_this_run_produced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.arch.host_system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.arch.host", lambda: TARGET)
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
     # A package from an earlier build of a different commit, still in dist/.
     (root / "dist").mkdir()
@@ -202,8 +214,8 @@ def test_the_recorded_package_is_the_one_this_run_produced(
 def test_a_build_that_recorded_nothing_fails(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.arch.host_system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.arch.host", lambda: TARGET)
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), records=None)
 
     with pytest.raises(GateError, match="did not record the exact Debian package"):
@@ -220,8 +232,8 @@ def test_a_build_that_recorded_nothing_fails(
 def test_a_nonsense_package_record_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorded: str, reason: str
 ) -> None:
-    monkeypatch.setattr("capsem.gate.arch.host_system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.arch.host", lambda: TARGET)
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), records=recorded)
 
     with pytest.raises(GateError, match=reason):
@@ -232,8 +244,8 @@ def test_the_record_does_not_survive_the_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Left behind, it would name this run's package to the next one."""
-    monkeypatch.setattr("capsem.gate.arch.host_system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.arch.host", lambda: TARGET)
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     root = _checkout(tmp_path)
     runner = Building(root, replies={"select-linux": "skip"})
 
@@ -250,9 +262,9 @@ def test_the_record_does_not_survive_the_run(
 def test_a_provable_target_runs_the_systemd_kvm_proof(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("capsem.gate.arch.host_system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.arch.host", lambda: TARGET)
-    monkeypatch.setattr("os.access", lambda path, mode: True)
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr("capsem.gate.host.device_available", lambda _path: True)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "prove"})
 
     _rail(runner, channel="nightly", manifest_url="file:///src/m.json").run()
@@ -268,8 +280,8 @@ def test_a_cross_target_skips_the_proof_and_says_why(
 ) -> None:
     """The decision belongs to `select-linux-deb-proof.sh`; this must not
     second-guess it, or the two disagree about what a green run proved."""
-    monkeypatch.setattr("capsem.gate.arch.host_system", lambda: "Darwin")
-    monkeypatch.setattr("capsem.gate.arch.host", lambda: TARGET)
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
 
     _rail(runner).run()

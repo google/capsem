@@ -1,0 +1,314 @@
+# The build and release gate's data, in one place.
+#
+# `src/capsem/gate/` holds the decisions; this holds the values those decisions
+# are made from -- container names, scratch paths, timeouts, the boundary/rail
+# pairs the storage policy accepts, the artifacts an asset build must produce.
+#
+# It exists because the same values were previously spelled inside whichever
+# module happened to need them, which is how the justfile ended up with eleven
+# hand-written copies of one storage command and four disagreeing `case` blocks
+# over architecture names. A value that lives in one file can be read by the
+# code, by the contract tests, and by a person deciding whether to change it.
+#
+# Loaded through `capsem.gate.config`, which validates it with Pydantic: a
+# missing key or a wrong type fails at load with the field named, not deep
+# inside a forty-minute run.
+version = 1
+
+# ---------------------------------------------------------------------------
+# Architectures
+# ---------------------------------------------------------------------------
+# One target under every name some tool insists on. `uname -m` says aarch64,
+# the assets tree says arm64, dpkg says arm64 for ARM but amd64 for Intel, and
+# rustc wants a full triple.
+
+[architectures.arm64]
+rust_target = "aarch64-unknown-linux-gnu"
+dpkg = "arm64"
+gnu = "aarch64-linux-gnu"
+aliases = ["arm64", "aarch64"]
+
+[architectures.x86_64]
+rust_target = "x86_64-unknown-linux-gnu"
+dpkg = "amd64"
+gnu = "x86_64-linux-gnu"
+aliases = ["x86_64", "amd64"]
+
+# ---------------------------------------------------------------------------
+# Docker storage
+# ---------------------------------------------------------------------------
+
+[storage]
+policy_script = "scripts/docker-storage-policy.py"
+ensure_space_script = "scripts/ensure-docker-space.sh"
+
+# Points at which storage held for a finished rail may be released, and the
+# rail whose headroom that release serves. Eleven recipes used to spell these
+# pairs by hand, so the legal set existed only as a habit.
+[storage.phases]
+completed-linux-rust-target = { boundary = "after-linux-rust", rail = "assets" }
+completed-docker-rails = { boundary = "after-assets", rail = "package" }
+completed-buildkit-graph = { boundary = "after-packages", rail = "package" }
+completed-package-arm64 = { boundary = "after-package-arm64", rail = "install" }
+completed-package-x86_64 = { boundary = "after-package-x86_64", rail = "install" }
+deferred-install-target = { boundary = "before-packages", rail = "package" }
+candidate-boundary = { boundary = "candidate-boundary", rail = "default" }
+after-install = { boundary = "after-install", rail = "install" }
+linux-rust-builder = { boundary = "after-linux-rust-builder", rail = "install-preflight" }
+install-preflight = { boundary = "after-install-preflight", rail = "install-preflight" }
+
+# ---------------------------------------------------------------------------
+# Stopping gate-owned daemons
+# ---------------------------------------------------------------------------
+
+[pidfiles]
+# Ordered. The gateway owns the fixed localhost port, so it must stop before
+# the service -- otherwise the next profile attaches to an orphan gateway whose
+# UDS points at a deleted run directory.
+names = ["gateway.pid", "service.pid"]
+term_wait_seconds = 2.0
+kill_wait_seconds = 1.0
+poll_interval_seconds = 0.1
+
+# ---------------------------------------------------------------------------
+# The native install and glow-up proof
+# ---------------------------------------------------------------------------
+
+[install]
+container = "capsem-install-test"
+image = "capsem-install-test"
+dockerfile = "docker/Dockerfile.install-test"
+venv = "/home/capsem/.venv-install-test"
+mount = "/src"
+channel = "local"
+manifest_version = "1.0.0"
+
+systemd_ready_attempts = 30
+systemd_ready_interval_seconds = 0.5
+serve_ready_file = "/tmp/capsem-install-release.json"
+serve_ready_attempts = 100
+serve_ready_interval_seconds = 0.05
+
+# Present and writable means this host can boot a real guest, and the glow-up
+# runs complete rather than packaging-only.
+vm_devices = ["/dev/kvm", "/dev/vhost-vsock"]
+optional_vm_devices = ["/dev/vsock"]
+rosetta_binfmt = "/proc/sys/fs/binfmt_misc/rosetta"
+
+# Where the extracted-but-not-installed package lands. Deliberately not
+# /usr/bin: nothing that authors the release graph may depend on the package
+# under test having been installed first.
+preinstall_root = "/tmp/capsem-preinstall"
+admin_relative = "usr/bin/capsem-admin"
+request_script = "scripts/install-manifest-request.sh"
+
+# The authoritative release graph, and the legacy runtime projection an
+# operator can mistake for it. Handing the installer the second produces an
+# install that looks fine and carries the wrong manifest.
+graph_manifest = "assets/local/manifest.json"
+legacy_projection = "manifest.json"
+
+# The unprivileged user the container runs proofs as. Every one of these paths
+# has to stay off the bind mount: /src belongs to the host uid, so anything
+# written there by `capsem` fails with EACCES on Linux and only on Linux.
+[install.guest_user]
+name = "capsem"
+home = "/home/capsem"
+runtime_dir = "/run/user/1000"
+tmp = "/home/capsem/tmp"
+pytest_cache = "/home/capsem/.pytest_cache"
+asset_manifest = "/home/capsem/.capsem/assets/manifest.json"
+
+# The suite proving the installed package, run from inside the container.
+[install.suite]
+path = "tests/capsem-install/"
+glowup_script = "scripts/local-release-glowup.py"
+macos_report_check = "scripts/check-macos-native-glowup.py"
+stage_inputs_script = "scripts/stage-release-test-inputs.py"
+serve_script = "scripts/serve-release-test-root.py"
+sbom_script = "scripts/generate-host-binary-sbom.py"
+web_surface_script = "scripts/check-web-surface.sh"
+# The Debian package name, as dpkg-query reports it.
+package_name = "capsem"
+
+# Scratch, all under target/ so a failed run leaves evidence without dirtying
+# the checkout.
+[install.layout]
+assets = "target/install-test-assets"
+config = "target/install-test-config"
+channel = "target/install-test-channel"
+packages = "target/install-test-packages"
+glowup = "target/local-release-glowup"
+
+# Written by the container as its own user, and handed back on the way out.
+extra_owned_paths = ["release-site/node_modules", "release-site/dist"]
+
+# Named so the release-site build does not reinstall its dependencies every run
+# or write them into the bind-mounted checkout.
+[[install.volumes]]
+source = "capsem-install-release-site-node-modules"
+target = "/src/release-site/node_modules"
+
+[[install.volumes]]
+source = "capsem-install-release-site-dist"
+target = "/src/release-site/dist"
+
+# ---------------------------------------------------------------------------
+# The Linux package rail
+# ---------------------------------------------------------------------------
+
+[package]
+builder_image = "capsem-host-builder:latest"
+build_script = "scripts/build-linux-package.sh"
+proof_selector = "scripts/select-linux-deb-proof.sh"
+default_manifest_url = "https://release.capsem.org/assets/stable/manifest.json"
+channels = ["stable", "nightly", "corp"]
+# Per-architecture, so alternating targets does not rebuild the world.
+target_volume = "capsem-host-target-{arch}"
+
+# Shared across every package build, so the second architecture reuses the
+# first's downloads instead of refetching the index.
+[[package.volumes]]
+source = "capsem-cargo-registry"
+target = "/usr/local/cargo/registry"
+
+[[package.volumes]]
+source = "capsem-cargo-git"
+target = "/usr/local/cargo/git"
+
+[[package.volumes]]
+source = "capsem-rustup"
+target = "/usr/local/rustup"
+
+# ---------------------------------------------------------------------------
+# The VM asset build and boot gate
+# ---------------------------------------------------------------------------
+
+[assets]
+test_root = "target/ironbank-assets"
+profiles_glob = "config/profiles/*/profile.toml"
+
+# A build that exits zero having produced none of these is the failure worth
+# naming here rather than much later, inside a VM boot.
+required_artifacts = [
+    "vmlinuz",
+    "initrd.img",
+    "rootfs.erofs",
+    "obom.cdx.json",
+    "software-inventory.json",
+]
+failure_tail_lines = 200
+shell_proof_timeout_seconds = 300
+# AF_UNIX paths must stay under macOS SUN_LEN once the gateway appends its
+# session path, and target/ironbank-assets is already too long.
+run_dir_template = "/tmp/capsem-a.XXXXXX"
+
+# ---------------------------------------------------------------------------
+# Version stamping
+# ---------------------------------------------------------------------------
+# Files carrying a copy of the workspace version. Cargo.lock and uv.lock are
+# absent on purpose: their copies are refreshed by the tools that own them.
+
+[[versions.stamped]]
+path = "crates/capsem-app/tauri.conf.json"
+kind = "json_key"
+key = "version"
+
+[[versions.stamped]]
+path = "pyproject.toml"
+kind = "toml_key"
+key = "version"
+
+# ---------------------------------------------------------------------------
+# Python source gates
+# ---------------------------------------------------------------------------
+
+[lint]
+python_roots = ["src", "scripts", "tests", "guest"]
+# Already passes every rule, and must keep doing so.
+strict_roots = ["src"]
+# A ty warning exits zero, so without this a warning-level rule on the ratchet
+# could never be detected as fixed.
+ty_flags = ["--error-on-warning"]
+
+# Rules held back outside strict_roots. Roughly four hundred diagnostics,
+# dominated by inference over untyped fixture data: `json.load` returning
+# `object` and then being subscripted, `helpers.*` imports that resolve only
+# through conftest's sys.path wiring. Every rule NOT listed here is enforced on
+# those trees today, which is four hundred more than when ty ran on
+# src/capsem alone.
+#
+# A ratchet: entries may leave, nothing may join. tests/test_gate_boundary.py
+# fails when a rule listed here no longer fires.
+ty_ratchet = [
+    "call-top-callable",
+    "invalid-argument-type",
+    "invalid-assignment",
+    "invalid-attribute-override",
+    "invalid-method-override",
+    "invalid-return-type",
+    "no-matching-overload",
+    "not-iterable",
+    "not-subscriptable",
+    "possibly-missing-submodule",
+    "unknown-argument",
+    "unresolved-attribute",
+    "unresolved-import",
+    "unsupported-operator",
+    "unused-ignore-comment",
+    "unused-type-ignore-comment",
+]
+
+# ---------------------------------------------------------------------------
+# The justfile/package boundary
+# ---------------------------------------------------------------------------
+
+[boundary]
+# A recipe body over this many executable lines is inline logic, and a gate
+# module over its ceiling is the 2000-line justfile growing back in Python.
+max_recipe_lines = 12
+max_module_lines = 300
+
+# Recipe bodies that are still inline shell, pending extraction. A ratchet, not
+# an exemption list: a recipe may leave it, nothing may join it, and one that
+# has been extracted must be struck from it so the list cannot describe a past
+# that is no longer true.
+remaining_shell_recipes = [
+    "_build-assets",
+    "_build-host-image",
+    "_build-image-template",
+    "_build-kernel",
+    "_build-rootfs",
+    "_build-ui",
+    "_check-assets",
+    "_check-generated-settings",
+    "_dev-ui",
+    "_ensure-dev-ready",
+    "_ensure-service",
+    "_gate-assets",
+    "_gate-host-package-sbom",
+    "_gate-linux-rust",
+    "_generate-settings",
+    "_install-tools",
+    "_materialize-config",
+    "_pack-initrd",
+    "_prove-linux-deb",
+    "_sign",
+    "_sign-release",
+    "_test-candidate-run",
+    "_test-functional",
+    "dev",
+    "exec",
+    "logs",
+    "release-binaries",
+    "release-profile",
+    "shell",
+    "smoke",
+    "test",
+]
+
+# Shell control flow in a body with no shebang is still a program no test can
+# reach: `just` hands each line to a shell, so a `for` loop spread across
+# continuations runs untested.
+shell_control_flow = ["if ", "for ", "while ", "case ", "until ", "trap "]
+recipes_with_inline_control_flow = ["_pnpm-install"]

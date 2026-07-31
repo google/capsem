@@ -139,13 +139,17 @@ def test_both_package_architectures_release_their_own_install_headroom() -> None
 
     The justfile used to spell the `--boundary`/`--rail` pair at each of eleven
     call sites, so this read them out of the recipe text. They are now a table
-    in the module the recipes dispatch to, which is where a typo can be caught
-    before any storage is touched.
+    in `config/gate.toml`, validated at load, which is where a typo can be
+    caught before any storage is touched.
     """
-    from capsem.gate.storage import RELEASE_PHASES
+    from capsem.gate import config as gate_config
 
-    assert RELEASE_PHASES["completed-package-arm64"] == ("after-package-arm64", "install")
-    assert RELEASE_PHASES["completed-package-x86_64"] == ("after-package-x86_64", "install")
+    phases = gate_config.load(ROOT).storage.phases
+
+    assert (phases["completed-package-arm64"].boundary,
+            phases["completed-package-arm64"].rail) == ("after-package-arm64", "install")
+    assert (phases["completed-package-x86_64"].boundary,
+            phases["completed-package-x86_64"].rail) == ("after-package-x86_64", "install")
 
     justfile = (ROOT / "justfile").read_text()
     for phase in ("completed-package-arm64", "completed-package-x86_64"):

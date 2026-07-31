@@ -7,12 +7,16 @@ from pathlib import Path
 import pytest
 from helpers.gate import RecordingRunner
 
+from capsem.gate import config as gate_config
 from capsem.gate.errors import GateError
-from capsem.gate.storage import RELEASE_PHASES, Storage
+from capsem.gate.storage import Storage
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PHASES = gate_config.load(PROJECT_ROOT).storage.phases
 
 
-def test_a_release_phase_names_its_boundary_and_rail(tmp_path: Path) -> None:
-    runner = RecordingRunner(tmp_path)
+def test_a_release_phase_names_its_boundary_and_rail() -> None:
+    runner = RecordingRunner(PROJECT_ROOT)
 
     Storage(runner).release("completed-docker-rails")
 
@@ -21,9 +25,9 @@ def test_a_release_phase_names_its_boundary_and_rail(tmp_path: Path) -> None:
     )
 
 
-def test_an_unknown_phase_fails_by_name(tmp_path: Path) -> None:
+def test_an_unknown_phase_fails_by_name() -> None:
     """Eleven recipes spelled these pairs by hand, so the legal set was a habit."""
-    runner = RecordingRunner(tmp_path)
+    runner = RecordingRunner(PROJECT_ROOT)
 
     with pytest.raises(GateError) as failure:
         Storage(runner).release("after-everything")
@@ -32,25 +36,17 @@ def test_an_unknown_phase_fails_by_name(tmp_path: Path) -> None:
     assert "completed-docker-rails" in str(failure.value)
 
 
-def test_every_phase_declares_a_distinct_boundary_and_rail_pair() -> None:
-    pairs = list(RELEASE_PHASES.values())
-
-    assert len(set(pairs)) == len(pairs), (
-        "two names for one boundary/rail pair means one of them is dead"
-    )
-
-
-def test_capture_failure_never_fails_the_run_further(tmp_path: Path) -> None:
+def test_capture_failure_never_fails_the_run_further() -> None:
     """It runs on the failure path; a second failure would replace the first."""
-    runner = RecordingRunner(tmp_path, failures=["capture-failure"])
+    runner = RecordingRunner(PROJECT_ROOT, failures=["capture-failure"])
 
     Storage(runner).capture_failure(rail="default", label="abcdef123456")
 
     assert runner.matching(r"capture-failure --rail default --label abcdef123456")
 
 
-def test_ensure_space_passes_the_optional_boundary_through(tmp_path: Path) -> None:
-    runner = RecordingRunner(tmp_path)
+def test_ensure_space_passes_the_optional_boundary_through() -> None:
+    runner = RecordingRunner(PROJECT_ROOT)
 
     Storage(runner).ensure_space("default", "candidate-boundary")
 
@@ -67,7 +63,7 @@ def _policy_parser():
     import importlib.util
     import sys
 
-    script = Path(__file__).resolve().parents[1] / "scripts" / "docker-storage-policy.py"
+    script = PROJECT_ROOT / "scripts" / "docker-storage-policy.py"
     spec = importlib.util.spec_from_file_location("docker_storage_policy_args", script)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -76,10 +72,8 @@ def _policy_parser():
     return module.build_parser()
 
 
-@pytest.mark.parametrize("phase", sorted(RELEASE_PHASES))
-def test_every_release_phase_parses_against_the_real_policy_script(
-    phase: str, tmp_path: Path
-) -> None:
+@pytest.mark.parametrize("phase", sorted(PHASES))
+def test_every_release_phase_parses_against_the_real_policy_script(phase: str) -> None:
     """A wrapper that agrees only with a test is a wrapper that drifts.
 
     The eleven hand-written call sites at least failed loudly on a renamed
@@ -91,20 +85,18 @@ def test_every_release_phase_parses_against_the_real_policy_script(
     parses as `--boundary` here exactly as it would in the shell. It catches a
     flag that was renamed, not one that was shortened.
     """
-    runner = RecordingRunner(tmp_path)
+    runner = RecordingRunner(PROJECT_ROOT)
     Storage(runner).release(phase)
 
     argv = list(runner.commands[0].argv)
     tail = argv[argv.index("release") :]
 
     parsed = _policy_parser().parse_args(tail)
-    assert (parsed.boundary, parsed.rail) == RELEASE_PHASES[phase]
+    assert (parsed.boundary, parsed.rail) == (PHASES[phase].boundary, PHASES[phase].rail)
 
 
-def test_gc_clean_and_capture_failure_parse_against_the_real_script(
-    tmp_path: Path,
-) -> None:
-    runner = RecordingRunner(tmp_path)
+def test_gc_clean_and_capture_failure_parse_against_the_real_script() -> None:
+    runner = RecordingRunner(PROJECT_ROOT)
     storage = Storage(runner)
 
     storage.gc(rail="install")

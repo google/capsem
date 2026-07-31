@@ -14,6 +14,7 @@ from collections.abc import Sequence
 
 from . import (
     crosscompile,
+    doctor,
     install,
     installimage,
     lint,
@@ -25,7 +26,15 @@ from .errors import GateError
 from .proc import Runner
 
 # Each module owns its own subcommand surface.
-COMMAND_MODULES = (versions, storage, installimage, install, crosscompile, lint)
+COMMAND_MODULES = (
+    versions,
+    storage,
+    installimage,
+    install,
+    crosscompile,
+    lint,
+    doctor,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:

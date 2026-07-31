@@ -176,6 +176,10 @@ def test_in_container_commands_write_only_where_the_container_user_owns() -> Non
     CI ever sees it. Four separate release-gate failures came from this one
     shape: the builder's git, the staging rm, pytest's cache, and the
     unmaterialized profile catalog."""
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    guest = config.install.guest_user
     container = (
         PROJECT_ROOT / "src" / "capsem" / "gate" / "installcontainer.py"
     ).read_text()
@@ -184,15 +188,19 @@ def test_in_container_commands_write_only_where_the_container_user_owns() -> Non
     # Removing target/install-test-* needs write permission on their parent.
     # Granted as the one directory entry: recursive here would walk every
     # cargo artifact in the checkout.
-    assert '"chown", "capsem:capsem", "/src/target"' in container
+    assert '"chown", "capsem:capsem", f"{self._settings.mount}/target"' in container
+    assert '"chown", "-R", "capsem:capsem", f"{self._settings.mount}/target"' not in container
 
-    assert "TMPDIR" in proof and '"/home/capsem/tmp"' in proof, (
-        "in-container pytest must keep temp files off /src"
-    )
-    assert "cache_dir=/home/capsem" in proof, (
-        "in-container pytest must keep its cache off /src; the default rootdir "
-        "cache write fails with EACCES on Linux"
-    )
+    # Every path this user writes has to live off the bind mount.
+    for path in (guest.tmp, guest.pytest_cache, guest.asset_manifest, config.install.venv):
+        assert path.startswith(guest.home), (
+            f"{path} is not under the container user's home, so it may land on "
+            "the bind mount and fail with EACCES on Linux"
+        )
+        assert not path.startswith(config.install.mount)
+
+    assert "TMPDIR" in proof and "guest.tmp" in proof
+    assert "cache_dir=" in proof and "pytest_cache" in proof
 
 
 def test_runtime_recipes_materialize_generated_config_before_service() -> None:

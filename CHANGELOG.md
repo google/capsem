@@ -22,6 +22,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coverage run in `ci.yaml` enforced no floor at all, because its copy had been
   forgotten.
 
+- The gate's data lives in `config/gate.toml`, loaded through a Pydantic model
+  that validates it. Container names, scratch paths, timeouts, the
+  boundary/rail pairs the storage policy accepts, the artifacts an asset build
+  must produce, and the architecture table were previously spelled inside
+  whichever module needed them -- the same scattering that gave the justfile
+  eleven hand-written copies of one storage command. There is now one record
+  per architecture rather than a config model and a dataclass mirroring it, so
+  `arm64` cannot mean one thing in one file and another elsewhere. A missing
+  key or a mistyped timeout fails at load with the field named, rather than
+  forty minutes in as a `KeyError` inside a Docker call.
+- `capsem-gate doctor` checks that this checkout's gate is installed and
+  coherent: every declared console script runs, every storage phase names a
+  rail the policy declares, and every `capsem-gate` subcommand the justfile
+  dispatches to exists. Wired into `just doctor`, so an operator meets these at
+  setup rather than mid-release.
 - `ruff` and `ty` now cover every first-party Python tree through one
   `capsem-gate lint` step. `ty` had run on `src/capsem` alone, so `scripts/` --
   release machinery, not scratch -- and every test helper went unchecked; a

@@ -748,13 +748,16 @@ _test-candidate-run:
         tests/test_exec_lock.py
         tests/test_exit_status_integrity.py
         tests/test_fast_gate_ci_contract.py
-        tests/test_gate_arch.py
+        tests/test_gate_assetlanes.py
         tests/test_gate_boundary.py
         tests/test_gate_cli.py
+        tests/test_gate_config.py
         tests/test_gate_crosscompile.py
         tests/test_gate_docker.py
+        tests/test_gate_doctor.py
         tests/test_gate_install_container.py
         tests/test_gate_install_ordering.py
+        tests/test_gate_pidfiles.py
         tests/test_gate_proc.py
         tests/test_gate_storage.py
         tests/test_gate_versions.py
@@ -1651,12 +1654,8 @@ _gate-install:
 
 # Check dev tools and dependencies. Pass "fix" to auto-fix.
 doctor fix="": _pnpm-install
-    #!/bin/bash
-    if [ "{{fix}}" = "fix" ]; then
-        scripts/doctor-common.sh --fix
-    else
-        scripts/doctor-common.sh
-    fi
+    @uv run capsem-gate doctor
+    @scripts/doctor-common.sh {{ if fix == "fix" { "--fix" } else { "" } }}
 
 # View service logs, a sandbox's logs, or the latest preserved test failure.
 # `just logs`, `just logs <sandbox-id>`, `just logs failure`.

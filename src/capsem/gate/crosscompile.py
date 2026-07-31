@@ -23,25 +23,12 @@ import os
 import tomllib
 from pathlib import Path
 
-from . import arch as architectures
-from .arch import Arch
+from . import config as gate_config
+from . import host
+from .config import Arch
 from .errors import GateError
 from .proc import Runner
 from .storage import Storage
-
-BUILDER_IMAGE = "capsem-host-builder:latest"
-BUILD_SCRIPT = "scripts/build-linux-package.sh"
-
-DEFAULT_MANIFEST_URL = "https://release.capsem.org/assets/stable/manifest.json"
-CHANNELS = ("stable", "nightly", "corp")
-
-# Named volumes shared by every package build, so a second architecture reuses
-# the first one's downloads instead of refetching the index.
-SHARED_VOLUMES = (
-    ("capsem-cargo-registry", "/usr/local/cargo/registry"),
-    ("capsem-cargo-git", "/usr/local/cargo/git"),
-    ("capsem-rustup", "/usr/local/rustup"),
-)
 
 
 def pinned_toolchain(root: Path) -> str:
@@ -74,10 +61,11 @@ def signing_key(root: Path) -> dict[str, str]:
     }
 
 
-def resolve_channel(channel: str) -> str:
-    if channel not in CHANNELS:
+def resolve_channel(channel: str, config: gate_config.GateConfig) -> str:
+    allowed = config.package.channels
+    if channel not in allowed:
         raise GateError(
-            f"CAPSEM_INSTALL_CHANNEL must be one of {', '.join(CHANNELS)} (got: {channel})"
+            f"CAPSEM_INSTALL_CHANNEL must be one of {', '.join(allowed)} (got: {channel})"
         )
     return channel
 
@@ -90,16 +78,18 @@ class PackageRail:
         runner: Runner,
         target: Arch,
         *,
-        manifest_url: str = DEFAULT_MANIFEST_URL,
+        manifest_url: str | None = None,
         channel: str = "stable",
         require_proof: bool = False,
     ) -> None:
         self._runner = runner
+        self._config = gate_config.for_root(runner.root)
+        self._package = self._config.package
         self._storage = Storage(runner)
         self.root = runner.root
         self.target = target
-        self.manifest_url = manifest_url
-        self.channel = resolve_channel(channel)
+        self.manifest_url = manifest_url or self._package.default_manifest_url
+        self.channel = resolve_channel(channel, self._config)
         self._require_proof = require_proof
 
     @property
@@ -135,7 +125,7 @@ class PackageRail:
         # its helpers cannot hide behind a stale local image.
         self._runner.run(["just", "_build-host-image"])
         self._storage.ensure_space("package")
-        if architectures.on_macos():
+        if host.on_macos():
             # Colima's VM clock drifts, and apt rejects a repository signed in
             # what it believes is the future.
             self._runner.run(["python3", "scripts/sync-container-clock.py"])
@@ -165,21 +155,21 @@ class PackageRail:
             "RUST_TOOLCHAIN": pinned_toolchain(self.root),
             "PKG_CONFIG_PATH": self.target.pkg_config_path,
             "CAPSEM_INSTALL_MANIFEST_URL": self.manifest_url,
-            "HOST_UID": str(os.getuid()),
-            "HOST_GID": str(os.getgid()),
+            "HOST_UID": str(host.user()[0]),
+            "HOST_GID": str(host.user()[1]),
             **signing_key(self.root),
         }
         argv = ["docker", "run", "--rm"]
         for name, value in environment.items():
             argv += ["-e", f"{name}={value}"]
         argv += ["-v", f"{self.root}:/src"]
-        for volume, mount in SHARED_VOLUMES:
-            argv += ["-v", f"{volume}:{mount}"]
+        for volume in self._package.volumes:
+            argv += ["-v", f"{volume.source}:{volume.target}"]
         argv += [
-            "-v", f"capsem-host-target-{self.target.name}:/cargo-target",
+            "-v", f"{self._package.target_volume_for(self.target.name)}:/cargo-target",
             "-w", "/src",
-            BUILDER_IMAGE,
-            "bash", f"/src/{BUILD_SCRIPT}",
+            self._package.builder_image,
+            "bash", f"/src/{self._package.build_script}",
         ]
         self._runner.run(argv)
 
@@ -208,12 +198,14 @@ class PackageRail:
     # -- after the build ---------------------------------------------------
 
     def _prove(self, package: Path) -> None:
-        host = architectures.host()
-        kvm_ready = _kvm_ready()
+        native = self._config.host_arch()
+        kvm_ready = all(
+            host.device_available(device) for device in self._config.install.vm_devices
+        )
         decision = self._runner.capture(
             [
-                "bash", str(self.root / "scripts" / "select-linux-deb-proof.sh"),
-                architectures.host_system(), host.name, self.target.name,
+                "bash", str(self.root / self._package.proof_selector),
+                host.system(), native.name, self.target.name,
                 "1" if kvm_ready else "0",
                 "1" if self._require_proof else "0",
             ]
@@ -221,7 +213,7 @@ class PackageRail:
         if decision != "prove":
             self._runner.note(
                 "Skipping exact Debian package proof for non-host or optional "
-                f"target ({architectures.host_system()}/{host.name} -> {self.target.name})."
+                f"target ({host.system()}/{native.name} -> {self.target.name})."
             )
             return
 
@@ -236,13 +228,6 @@ class PackageRail:
         )
 
 
-def _kvm_ready() -> bool:
-    return all(
-        os.access(device, os.R_OK | os.W_OK)
-        for device in ("/dev/kvm", "/dev/vhost-vsock")
-    )
-
-
 def register(subparsers: argparse._SubParsersAction) -> None:
     parser = subparsers.add_parser(
         "cross-compile", help="build the Linux release package for one architecture"
@@ -252,11 +237,12 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
 
 def _command(args: argparse.Namespace, runner: Runner) -> int:
-    target = architectures.resolve(args.arch) if args.arch else architectures.host()
+    config = gate_config.for_root(runner.root)
+    target = config.arch(args.arch) if args.arch else config.host_arch()
     PackageRail(
         runner,
         target,
-        manifest_url=os.environ.get("CAPSEM_INSTALL_MANIFEST_URL", DEFAULT_MANIFEST_URL),
+        manifest_url=os.environ.get("CAPSEM_INSTALL_MANIFEST_URL"),
         channel=os.environ.get("CAPSEM_INSTALL_CHANNEL", "stable"),
         require_proof=os.environ.get("CAPSEM_REQUIRE_LINUX_DEB_PROOF", "0") == "1",
     ).run()

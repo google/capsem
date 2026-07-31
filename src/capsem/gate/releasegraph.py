@@ -28,29 +28,19 @@ looks like a working install.
 
 from __future__ import annotations
 
+from . import config as gate_config
 from .docker import Docker
 from .errors import GateError
-
-# Where the extracted-but-not-installed package tree lands, and the admin
-# binary inside it. Deliberately not /usr/bin: nothing here may depend on the
-# package having been installed.
-PREINSTALL_ROOT = "/tmp/capsem-preinstall"
-PREINSTALL_ADMIN = f"{PREINSTALL_ROOT}/usr/bin/capsem-admin"
-
-REQUEST_SCRIPT = "/src/scripts/install-manifest-request.sh"
-
-# The two manifests an operator can confuse. Only the first is authoritative.
-GRAPH_MANIFEST = "assets/local/manifest.json"
-LEGACY_PROJECTION = "manifest.json"
 
 
 class ReleaseGraph:
     """Authors and publishes a local channel from inside the gate container."""
 
-    def __init__(self, docker: Docker, container: str, *, mount: str = "/src") -> None:
+    def __init__(self, docker: Docker, config: gate_config.GateConfig) -> None:
         self._docker = docker
-        self._container = container
-        self._mount = mount
+        self._config = config.install
+        self._container = self._config.container
+        self._mount = self._config.mount
         self._handoff_written = False
 
     # -- breaking the circular dependency ----------------------------------
@@ -62,13 +52,15 @@ class ReleaseGraph:
         the proof covers the code under test rather than whatever `capsem-admin`
         happened to be on the image.
         """
+        root = self._config.preinstall_root
+        admin = self._config.preinstall_admin
         self._docker.shell(
             self._container,
-            f"rm -rf {PREINSTALL_ROOT} && mkdir -p {PREINSTALL_ROOT} "
-            f'&& dpkg-deb --extract "{package}" {PREINSTALL_ROOT} '
-            f"&& test -x {PREINSTALL_ADMIN}",
+            f"rm -rf {root} && mkdir -p {root} "
+            f'&& dpkg-deb --extract "{package}" {root} '
+            f"&& test -x {admin}",
         )
-        return PREINSTALL_ADMIN
+        return admin
 
     # -- authoring ---------------------------------------------------------
 
@@ -90,8 +82,8 @@ class ReleaseGraph:
             self._container,
             f'rm -rf "{candidate_base}" && mkdir -p "{candidate_dir}" '
             f'&& cp "{package}" "{candidate_deb}" '
-            f'&& python3 scripts/generate-host-binary-sbom.py --output "{sbom}" "{candidate_deb}"',
-            user="capsem",
+            f'&& python3 {self._config.suite.sbom_script} --output "{sbom}" "{candidate_deb}"',
+            user=self._config.guest_user.name,
             cwd=self._mount,
         )
         self._docker.exec(
@@ -103,7 +95,7 @@ class ReleaseGraph:
                 "--artifact", candidate_deb,
                 "--artifact", sbom,
             ],
-            user="capsem",
+            user=self._config.guest_user.name,
             env={"CAPSEM_RELEASE_URL": f"file://{candidate_base}"},
         )
 
@@ -131,20 +123,20 @@ class ReleaseGraph:
                     "--out-dir", f'"{out_dir}"',
                 ]
             ),
-            user="capsem",
+            user=self._config.guest_user.name,
             cwd=self._mount,
         )
-        return f"{out_dir}/{GRAPH_MANIFEST}"
+        return f"{out_dir}/{self._config.graph_manifest}"
 
     def build_site(self, *, dist: str) -> None:
         """Render the release site over the generated distribution."""
         self._docker.shell(
             self._container, "pnpm install --frozen-lockfile",
-            user="capsem", cwd=f"{self._mount}/release-site",
+            user=self._config.guest_user.name, cwd=f"{self._mount}/release-site",
         )
         self._docker.shell(
             self._container,
-            "bash scripts/check-web-surface.sh release-site-build",
+            f"bash {self._config.suite.web_surface_script} release-site-build",
             cwd=self._mount,
             env={"CAPSEM_RELEASE_CHANNEL_DIST": f"{self._mount}/{dist}"},
         )
@@ -154,7 +146,7 @@ class ReleaseGraph:
             self._container,
             f'test -f "{manifest}" '
             f'&& {admin} assets channel check --channel {channel} --dist "{dist}"',
-            user="capsem",
+            user=self._config.guest_user.name,
             cwd=self._mount,
         )
 
@@ -170,8 +162,8 @@ class ReleaseGraph:
         an install that looks fine and carries the wrong manifest.
         """
         absolute = manifest if manifest.startswith("/") else f"{self._mount}/{manifest}"
-        if absolute.endswith(f"/{LEGACY_PROJECTION}") and not absolute.endswith(
-            f"/{GRAPH_MANIFEST}"
+        if absolute.endswith(f"/{self._config.legacy_projection}") and not absolute.endswith(
+            f"/{self._config.graph_manifest}"
         ):
             raise GateError(
                 f"the install handoff must select the authoritative release graph, "
@@ -183,7 +175,8 @@ class ReleaseGraph:
                 "would find no request and hydrate from the public channel instead"
             )
         self._docker.shell(
-            self._container, f"bash {REQUEST_SCRIPT} write {absolute}"
+            self._container,
+            f"bash {self._mount}/{self._config.request_script} write {absolute}",
         )
         self._handoff_written = True
 
@@ -192,6 +185,8 @@ class ReleaseGraph:
         if not self._handoff_written:
             return
         self._docker.shell(
-            self._container, f"bash {REQUEST_SCRIPT} clear", check=False
+            self._container,
+            f"bash {self._mount}/{self._config.request_script} clear",
+            check=False,
         )
         self._handoff_written = False

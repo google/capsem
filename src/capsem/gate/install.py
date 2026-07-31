@@ -20,36 +20,16 @@ import os
 import shutil
 from pathlib import Path
 
-from . import arch as architectures
+from . import config as gate_config
 from . import installimage
-from .docker import Docker, Mount, container_path
+from .docker import Docker, container_path
 from .errors import GateError
 from .installcontainer import InstallContainer
-from .installproof import InstallProof, Layout
+from .installproof import InstallProof
 from .proc import Runner
 from .releasegraph import ReleaseGraph
 from .storage import Storage
 from .versions import workspace_version
-
-CONTAINER = "capsem-install-test"
-
-LAYOUT = Layout(
-    assets="target/install-test-assets",
-    config="target/install-test-config",
-    channel="target/install-test-channel",
-    packages="target/install-test-packages",
-    glowup="target/local-release-glowup",
-)
-
-# Named volumes so the release-site build does not reinstall its dependencies
-# on every run, and does not write them into the bind-mounted checkout.
-SITE_VOLUMES = [
-    Mount("capsem-install-release-site-node-modules", "/src/release-site/node_modules"),
-    Mount("capsem-install-release-site-dist", "/src/release-site/dist"),
-]
-
-LOCAL_CHANNEL = "local"
-LOCAL_MANIFEST_VERSION = "1.0.0"
 
 
 class InstallGate:
@@ -63,20 +43,18 @@ class InstallGate:
         macos_glowup_report: str | None = None,
     ) -> None:
         self._runner = runner
+        self._config = gate_config.for_root(runner.root)
+        self._settings = self._config.install
+        self._layout = self._settings.layout
         self._storage = Storage(runner)
-        self._container = InstallContainer(
-            runner,
-            name=CONTAINER,
-            image=installimage.IMAGE,
-            owned_paths=LAYOUT.owned_paths,
-        )
-        self._proof = InstallProof(runner, CONTAINER, LAYOUT)
-        self._graph = ReleaseGraph(Docker(runner), CONTAINER)
+        self._container = InstallContainer(runner)
+        self._proof = InstallProof(runner, self._config)
+        self._graph = ReleaseGraph(Docker(runner), self._config)
         self._profile_inputs = profile_inputs or None
         self._macos_report = macos_glowup_report or None
         self.root = runner.root
         self.version = workspace_version(runner.root)
-        self.arch = architectures.host()
+        self.arch = self._config.host_arch()
 
     @property
     def package(self) -> Path:
@@ -88,7 +66,7 @@ class InstallGate:
                 f"missing exact release-mode Debian package: {self.package}\n"
                 f"Run the package rail first: just _cross-compile {self.arch.name}"
             )
-        return container_path(self.root, self.package)
+        return container_path(self.root, self.package, mount=self._settings.mount)
 
     # -- the run -----------------------------------------------------------
 
@@ -109,14 +87,14 @@ class InstallGate:
         # A failed site overlay can leave write-only partial HTML on a macOS
         # bind mount. The host owns this generated tree, so clear it before the
         # container exists; profile artifacts are regenerated from the manifest.
-        shutil.rmtree(self.root / LAYOUT.channel, ignore_errors=True)
+        shutil.rmtree(self._config.path(self._layout.channel), ignore_errors=True)
 
         try:
             self._container.require_rosetta()
             self._storage.release("completed-package-arm64")
             self._storage.release("completed-package-x86_64")
             self._storage.ensure_space("install")
-            self._container.start(root=self.root, options=options, mounts=SITE_VOLUMES)
+            self._container.start(options=options)
             self._prove(package)
         finally:
             # Ordered: clear the handoff before the container goes, or the next
@@ -150,8 +128,8 @@ class InstallGate:
             admin,
             package=package,
             version=self.version,
-            assets_manifest=f"{LAYOUT.assets}/manifest.json",
-            candidate_base=f"/src/{LAYOUT.packages}",
+            assets_manifest=f"{self._layout.assets}/manifest.json",
+            candidate_base=f"{self._settings.mount}/{self._layout.packages}",
         )
 
         if authoritative_graph:
@@ -163,7 +141,7 @@ class InstallGate:
         # The Linux CI container chowns the bind-mounted checkout to uid 1000 so
         # its non-root build can write there. Hand the host-owned storage ledger
         # back before invoking the host controller; cleanup restores the rest.
-        self._container.hand_back("/src/target/storage")
+        self._container.hand_back(f"{self._settings.mount}/target/storage")
         # Package and image assembly can consume the reserve measured at start.
         # The runtime-only tail needs far less than compilation, but keeps a
         # cushion so ENOSPC fails here with diagnostics rather than deep inside
@@ -196,15 +174,16 @@ class InstallGate:
         self._runner.note("Generating authoritative local release graph...")
         manifest = self._graph.build_channel(
             admin,
-            assets_dir=LAYOUT.assets,
-            profiles_dir=f"{LAYOUT.config}/profiles",
-            channel=LOCAL_CHANNEL,
-            manifest_version=LOCAL_MANIFEST_VERSION,
-            out_dir=LAYOUT.channel,
+            assets_dir=self._layout.assets,
+            profiles_dir=f"{self._layout.config}/profiles",
+            channel=self._settings.channel,
+            manifest_version=self._settings.manifest_version,
+            out_dir=self._layout.channel,
         )
-        self._graph.build_site(dist=LAYOUT.channel)
+        self._graph.build_site(dist=self._layout.channel)
         self._graph.check_channel(
-            admin, channel=LOCAL_CHANNEL, dist=LAYOUT.channel, manifest=manifest
+            admin, channel=self._settings.channel, dist=self._layout.channel,
+            manifest=manifest,
         )
         # Last thing before dpkg, and only once the graph it names has been
         # built and checked.

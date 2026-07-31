@@ -113,46 +113,6 @@ precision = 2
 # copy had been forgotten. Coverage applies this to every run that reports.
 fail_under = 85
 
-[tool.capsem.gate]
-# The justfile dispatches; `src/capsem/gate` decides. Both halves of that
-# boundary are held by contract tests that read these numbers, so the shape of
-# the build system is configuration rather than a habit.
-#
-# A recipe body over this many lines is inline logic, and a gate module over
-# its ceiling is the 2000-line justfile growing back in a different language.
-max_recipe_lines = 12
-max_module_lines = 300
-
-# Type checking is enforced everywhere, but not yet at one strictness. `src/`
-# passes every ty rule, so it is checked with none disabled. `scripts/`,
-# `tests/`, and `guest/` carry roughly four hundred diagnostics dominated by
-# inference over untyped fixture data -- `json.load` returning `object` and
-# then being subscripted, `helpers.*` imports that resolve only through
-# conftest's sys.path wiring. Every rule *not* listed here is enforced on them
-# today, which is four hundred more rules than when ty ran on `src/capsem`
-# alone.
-#
-# The list is a ratchet: entries may leave it, nothing may join it. See
-# tests/test_gate_boundary.py.
-ty_ratchet = [
-    "call-top-callable",
-    "invalid-argument-type",
-    "invalid-assignment",
-    "invalid-attribute-override",
-    "invalid-method-override",
-    "invalid-return-type",
-    "no-matching-overload",
-    "not-iterable",
-    "not-subscriptable",
-    "possibly-missing-submodule",
-    "unknown-argument",
-    "unresolved-attribute",
-    "unresolved-import",
-    "unsupported-operator",
-    "unused-ignore-comment",
-    "unused-type-ignore-comment",
-]
-
 [dependency-groups]
 dev = [
     "pip-audit>=2.9.0",

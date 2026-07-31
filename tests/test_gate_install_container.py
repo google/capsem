@@ -15,31 +15,24 @@ from pathlib import Path
 import pytest
 from helpers.gate import RecordingRunner
 
-from capsem.gate.docker import Mount
+from capsem.gate import config as gate_config
 from capsem.gate.errors import GateError
-from capsem.gate.installcontainer import ROSETTA_BINFMT, InstallContainer
+from capsem.gate.installcontainer import InstallContainer
 
-OWNED = ("/src/target/install-test-assets", "/src/release-site/dist")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONFIG = gate_config.load(PROJECT_ROOT)
+ROSETTA_BINFMT = CONFIG.install.rosetta_binfmt
 
 
-def _container(root: Path, **kwargs) -> tuple[InstallContainer, RecordingRunner]:
+def _container(**kwargs) -> tuple[InstallContainer, RecordingRunner]:
     runner = RecordingRunner(
-        root, replies={"systemctl is-system-running": "running"}, **kwargs
+        PROJECT_ROOT, replies={"systemctl is-system-running": "running"}, **kwargs
     )
-    return (
-        InstallContainer(
-            runner,
-            name="capsem-install-test",
-            image="capsem-install-test",
-            owned_paths=OWNED,
-            sleep=lambda _seconds: None,
-        ),
-        runner,
-    )
+    return InstallContainer(runner, sleep=lambda _seconds: None), runner
 
 
 def _on(monkeypatch: pytest.MonkeyPatch, system: str) -> None:
-    monkeypatch.setattr("capsem.gate.arch.host_system", lambda: system)
+    monkeypatch.setattr("capsem.gate.host.system", lambda: system)
 
 
 # ---------------------------------------------------------------------------
@@ -51,8 +44,10 @@ def test_a_linux_host_with_virtualisation_devices_boots_a_guest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr("os.access", lambda path, mode: path != "/dev/vsock")
-    container, _ = _container(tmp_path)
+    monkeypatch.setattr(
+        "capsem.gate.host.device_available", lambda path: path != "/dev/vsock"
+    )
+    container, _ = _container()
 
     options = container.runtime_options()
 
@@ -66,8 +61,8 @@ def test_an_available_vsock_device_is_passed_through(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr("os.access", lambda path, mode: True)
-    container, _ = _container(tmp_path)
+    monkeypatch.setattr("capsem.gate.host.device_available", lambda _path: True)
+    container, _ = _container()
 
     assert "/dev/vsock" in container.runtime_options()
 
@@ -79,8 +74,10 @@ def test_a_linux_host_without_kvm_refuses_rather_than_proving_less(
     failing, because the gate would then report a pass for a proof it did not
     run."""
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr("os.access", lambda path, mode: path != "/dev/kvm")
-    container, _ = _container(tmp_path)
+    monkeypatch.setattr(
+        "capsem.gate.host.device_available", lambda path: path != "/dev/kvm"
+    )
+    container, _ = _container()
 
     with pytest.raises(GateError, match="/dev/kvm"):
         container.runtime_options()
@@ -90,7 +87,7 @@ def test_a_macos_host_proves_packaging_without_a_guest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _on(monkeypatch, "Darwin")
-    container, _ = _container(tmp_path)
+    container, _ = _container()
 
     options = container.runtime_options()
 
@@ -108,7 +105,7 @@ def test_rosetta_is_not_consulted_without_colima(
 ) -> None:
     _on(monkeypatch, "Darwin")
     monkeypatch.setattr("shutil.which", lambda _name: None)
-    container, runner = _container(tmp_path)
+    container, runner = _container()
 
     container.require_rosetta()
     container.verify_rosetta_survived()
@@ -121,7 +118,7 @@ def test_a_missing_registration_stops_the_run_before_the_container(
 ) -> None:
     _on(monkeypatch, "Darwin")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/local/bin/colima")
-    container, _ = _container(tmp_path, failures=[ROSETTA_BINFMT])
+    container, _ = _container(failures=[ROSETTA_BINFMT])
 
     with pytest.raises(GateError, match="missing before test-install"):
         container.require_rosetta()
@@ -133,7 +130,7 @@ def test_a_registration_removed_by_the_container_is_attributed_to_it(
     """The damage outlives the run, so the run has to be the one to report it."""
     _on(monkeypatch, "Darwin")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/local/bin/colima")
-    container, runner = _container(tmp_path)
+    container, runner = _container()
 
     container.require_rosetta()
     runner.fail_on(ROSETTA_BINFMT)
@@ -147,7 +144,7 @@ def test_a_stopped_colima_is_not_a_failure(
 ) -> None:
     _on(monkeypatch, "Darwin")
     monkeypatch.setattr("shutil.which", lambda _name: "/usr/local/bin/colima")
-    container, _ = _container(tmp_path, failures=["colima status"])
+    container, _ = _container(failures=["colima status"])
 
     container.require_rosetta()
     container.verify_rosetta_survived()
@@ -162,9 +159,9 @@ def test_a_predecessor_is_removed_before_the_container_starts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _on(monkeypatch, "Darwin")
-    container, runner = _container(tmp_path)
+    container, runner = _container()
 
-    container.start(root=tmp_path, options=[], mounts=[Mount("vol", "/src/x")])
+    container.start(options=[])
 
     runner.assert_order(r"docker rm -f", r"docker run -d")
 
@@ -173,13 +170,13 @@ def test_the_checkout_and_cgroups_are_mounted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _on(monkeypatch, "Darwin")
-    container, runner = _container(tmp_path)
+    container, runner = _container()
 
-    container.start(root=tmp_path, options=[], mounts=[])
+    container.start(options=[])
 
     started = runner.matching(r"docker run -d")[0]
     assert "-v /sys/fs/cgroup:/sys/fs/cgroup:rw" in started
-    assert f"-v {tmp_path}:/src" in started
+    assert f"-v {PROJECT_ROOT}:/src" in started
     assert "--privileged --cgroupns=host" in started
 
 
@@ -187,17 +184,11 @@ def test_systemd_that_never_comes_up_fails_with_the_wait_it_gave(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _on(monkeypatch, "Darwin")
-    runner = RecordingRunner(tmp_path, replies={"systemctl": "activating"})
-    container = InstallContainer(
-        runner,
-        name="box",
-        image="image",
-        owned_paths=OWNED,
-        sleep=lambda _seconds: None,
-    )
+    runner = RecordingRunner(PROJECT_ROOT, replies={"systemctl": "activating"})
+    container = InstallContainer(runner, sleep=lambda _seconds: None)
 
     with pytest.raises(GateError, match="never reached running or degraded"):
-        container.start(root=tmp_path, options=[], mounts=[])
+        container.start(options=[])
 
 
 def test_a_degraded_system_is_accepted(
@@ -206,12 +197,10 @@ def test_a_degraded_system_is_accepted(
     """A container with one failed unit still installs packages; refusing it
     would fail the gate on something it does not test."""
     _on(monkeypatch, "Darwin")
-    runner = RecordingRunner(tmp_path, replies={"systemctl": "degraded"})
-    container = InstallContainer(
-        runner, name="box", image="image", owned_paths=OWNED, sleep=lambda _s: None
-    )
+    runner = RecordingRunner(PROJECT_ROOT, replies={"systemctl": "degraded"})
+    container = InstallContainer(runner, sleep=lambda _s: None)
 
-    container.start(root=tmp_path, options=[], mounts=[])
+    container.start(options=[])
 
     assert runner.ran(r"chown -R capsem:capsem")
 
@@ -223,9 +212,9 @@ def test_only_the_target_directory_entry_is_granted_not_its_contents(
     entry, not on the entries themselves. A recursive chown here would walk
     every cargo artifact in the checkout."""
     _on(monkeypatch, "Darwin")
-    container, runner = _container(tmp_path)
+    container, runner = _container()
 
-    container.start(root=tmp_path, options=[], mounts=[])
+    container.start(options=[])
 
     assert runner.ran(r"chown capsem:capsem /src/target$")
     assert not runner.ran(r"chown -R capsem:capsem /src/target$")
@@ -235,11 +224,13 @@ def test_writes_are_handed_back_to_the_host_user(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _on(monkeypatch, "Darwin")
-    container, runner = _container(tmp_path)
+    container, runner = _container()
 
     container.return_paths()
 
-    assert runner.ran(rf"chown -R {os.getuid()}:{os.getgid()} " + OWNED[0])
+    uid, gid = os.getuid(), os.getgid()
+    owned = CONFIG.install.layout.owned_paths(CONFIG.install.mount)
+    assert runner.ran(rf"chown -R {uid}:{gid} " + owned[0])
 
 
 def test_handing_paths_back_survives_a_container_that_already_died(
@@ -248,7 +239,7 @@ def test_handing_paths_back_survives_a_container_that_already_died(
     """It runs from cleanup, where the container may be gone; a failure here
     would replace the error the operator actually needs to read."""
     _on(monkeypatch, "Darwin")
-    container, _ = _container(tmp_path, failures=["chown"])
+    container, _ = _container(failures=["chown"])
 
     container.return_paths()
 
@@ -263,7 +254,7 @@ def test_the_image_is_always_rebuilt_then_smoked(tmp_path: Path) -> None:
     prerequisite, and then the gate proves an environment nobody else has."""
     from capsem.gate import installimage
 
-    runner = RecordingRunner(tmp_path)
+    runner = RecordingRunner(PROJECT_ROOT)
 
     installimage.prepare(runner)
 
@@ -291,7 +282,7 @@ def test_a_failing_smoke_check_earns_exactly_one_cacheless_rebuild(
                 self.fail_on()
             return completed
 
-    runner = RepairedByRebuild(tmp_path, failures=["docker run --rm"])
+    runner = RepairedByRebuild(PROJECT_ROOT, failures=["docker run --rm"])
 
     installimage.prepare(runner)
 
@@ -304,7 +295,7 @@ def test_a_failing_smoke_check_earns_exactly_one_cacheless_rebuild(
 def test_a_smoke_check_that_fails_twice_is_a_dockerfile_defect(tmp_path: Path) -> None:
     from capsem.gate import installimage
 
-    runner = RecordingRunner(tmp_path, failures=["docker run --rm"])
+    runner = RecordingRunner(PROJECT_ROOT, failures=["docker run --rm"])
 
     with pytest.raises(GateError, match="cannot run the install gate's tools"):
         installimage.prepare(runner)
@@ -318,10 +309,10 @@ def test_the_virtualisation_devices_are_reachable_from_inside(
     """Passing `--device` is not proof the container can use it; a container
     that starts without working KVM fails much later, inside a VM boot."""
     _on(monkeypatch, "Linux")
-    monkeypatch.setattr("os.access", lambda path, mode: True)
-    container, runner = _container(tmp_path)
+    monkeypatch.setattr("capsem.gate.host.device_available", lambda _path: True)
+    container, runner = _container()
 
-    container.start(root=tmp_path, options=container.runtime_options(), mounts=[])
+    container.start(options=container.runtime_options())
 
     assert runner.ran(r"test -r /dev/kvm -a -w /dev/kvm")
     assert runner.ran(r"test -r /dev/vhost-vsock -a -w /dev/vhost-vsock")
