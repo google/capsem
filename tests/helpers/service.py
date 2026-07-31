@@ -8,12 +8,11 @@ import tempfile
 import time
 import tomllib
 import uuid
-
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
 from log_streams import read_log_stream
-from typing import Mapping
 
 from .constants import EXEC_READY_TIMEOUT
 from .sign import sign_binary
@@ -261,7 +260,7 @@ def preserve_tmp_dir_on_failure(tmp_dir, *, force: bool = False):
     most recent `ARTIFACT_MAX_KEPT_DIRS` failure dirs.
     """
     try:
-        from tests.conftest import FAILED_NODEIDS, ARTIFACTS_ROOT
+        from tests.conftest import ARTIFACTS_ROOT, FAILED_NODEIDS
     except ImportError:
         return
     tmp_dir = Path(tmp_dir)
@@ -306,7 +305,7 @@ def preserve_tmp_dir_on_failure(tmp_dir, *, force: bool = False):
         def _on_walk_error(err):
             errors.append(f"walk {err.filename}: {err}")
 
-        for src_dir, dirnames, filenames in os.walk(tmp_dir, topdown=True, onerror=_on_walk_error):
+        for src_dir, _dirnames, filenames in os.walk(tmp_dir, topdown=True, onerror=_on_walk_error):
             src_path = Path(src_dir)
             rel = src_path.relative_to(tmp_dir)
             dst_dir = dest / rel
@@ -461,7 +460,7 @@ class ServiceInstance:
 
         log_path = self.tmp_dir / "service.log"
         print(f"SERVICE LOG: {log_path}")
-        self._log_file = open(log_path, "w")
+        self._log_file = open(log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
 
         # Omitting --tray-binary does NOT suppress the tray: the service falls
         # back to `find_sibling_binary("capsem-tray")`, which the CLI's own

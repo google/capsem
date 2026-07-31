@@ -1,7 +1,6 @@
 """capsem_run: one-shot command execution in a fresh ephemeral VM."""
 
 import pytest
-
 from helpers.mcp import parse_content
 
 pytestmark = pytest.mark.mcp

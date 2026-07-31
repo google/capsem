@@ -12,7 +12,6 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "config" / "public-surface.toml"
 CLI_SOURCE = ROOT / "crates" / "capsem" / "src" / "main.rs"

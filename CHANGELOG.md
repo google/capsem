@@ -22,8 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coverage run in `ci.yaml` enforced no floor at all, because its copy had been
   forgotten.
 
+- `ruff` and `ty` now cover every first-party Python tree through one
+  `capsem-gate lint` step. `ty` had run on `src/capsem` alone, so `scripts/` --
+  release machinery, not scratch -- and every test helper went unchecked; a
+  type error in a release script had no gate at all. `ruff`'s rule set widens
+  from four families to twelve, adding the ones that find defects rather than
+  style: likely bugs, comprehension misuse, exception chaining, and syntax
+  superseded by the minimum supported Python. ty warnings now fail the gate
+  rather than exiting zero.
+
 ### Fixed
 
+- Three defects the widened source gates found immediately: an ironbank ledger
+  assertion called with a required argument missing, so that path raised
+  `TypeError` rather than asserting anything; a gateway test whose assertion
+  was `assert resp is not None or True`, which is true for every value; and
+  `guest_path.lstrip("/root/")` used as if it stripped a prefix, when it
+  strips a character *set* -- `/root/root_notes.txt` came back as
+  `_notes.txt`. Nine `raise` statements inside `except` blocks now name their
+  cause, and two blind `pytest.raises(Exception)` assertions were narrowed to
+  the exception they mean, so neither passes when the service is simply down.
 - The install gate handed the package's postinstall script nothing to read.
   `capsem-admin` authors the release graph and ships *inside* the package under
   test, so the gate installed first and authored afterwards -- and the postinst

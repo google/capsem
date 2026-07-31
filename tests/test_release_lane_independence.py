@@ -10,7 +10,6 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_GRAPH = (
     PROJECT_ROOT
@@ -317,14 +316,14 @@ def _run_policy(
         [sys.executable, str(DIFF_POLICY), "--old", str(old_path), "--new", str(new_path), *args],
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
 
 def _digest(seed: str) -> dict[str, str]:
-    import blake3
     import hashlib
+
+    import blake3
 
     payload = seed.encode("utf-8")
     return {

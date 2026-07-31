@@ -8,7 +8,6 @@ import re
 import time
 from pathlib import Path
 
-
 DEFAULT_CRITERION_DIR = Path("target/criterion/db_writer_pressure")
 
 
@@ -57,7 +56,7 @@ def sample_percentiles(path: Path) -> dict:
     sample = load_json(sample_path)
     latencies_ms = [
         (float(total_ns) / float(iters)) / 1_000_000.0
-        for total_ns, iters in zip(sample.get("times", []), sample.get("iters", []))
+        for total_ns, iters in zip(sample.get("times", []), sample.get("iters", []), strict=False)
         if float(iters) > 0
     ]
     return {

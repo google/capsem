@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from blake3 import blake3
-
 from test_release_site_html_contract import (
     FIXTURE_GRAPH,
     PROJECT_ROOT,
@@ -41,8 +40,7 @@ def build_release_site_from_graph(graph_path: Path) -> None:
                 "CAPSEM_RELEASE_CHANNEL_DIST": str(graph_path),
             },
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=False,
         )
     build_release_site_from_fixture.cache_clear()

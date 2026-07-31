@@ -31,7 +31,6 @@ from __future__ import annotations
 from .docker import Docker
 from .errors import GateError
 
-
 # Where the extracted-but-not-installed package tree lands, and the admin
 # binary inside it. Deliberately not /usr/bin: nothing here may depend on the
 # package having been installed.

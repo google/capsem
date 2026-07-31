@@ -7,9 +7,9 @@ import argparse
 import http.server
 import json
 import os
-from pathlib import Path
 import signal
 import threading
+from pathlib import Path
 
 
 class _LoopbackReleaseHandler(http.server.SimpleHTTPRequestHandler):

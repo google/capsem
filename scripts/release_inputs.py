@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable, cast
+from typing import Any, cast
 from urllib.parse import unquote, urljoin, urlparse
 
 import blake3

@@ -18,7 +18,6 @@ import argparse
 from .errors import GateError
 from .proc import Runner
 
-
 POLICY_SCRIPT = "scripts/docker-storage-policy.py"
 ENSURE_SPACE_SCRIPT = "scripts/ensure-docker-space.sh"
 

@@ -7,9 +7,7 @@ coverage lives in tests/ironbank/test_stats_detail_contract.py.
 from __future__ import annotations
 
 import pytest
-
 from helpers.service import ServiceInstance
-
 
 pytestmark = pytest.mark.integration
 

@@ -12,19 +12,20 @@ import os
 import shutil
 import subprocess
 import sys
-
-from log_streams import read_log_stream
 import time
 import uuid
+from pathlib import Path
 
 import pytest
-
-from pathlib import Path
+from log_streams import read_log_stream
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import contextlib
+
 from helpers.constants import EXEC_READY_TIMEOUT
-from helpers.mcp import kill_mcp_proc, wait_exec_ready as mcp_wait_exec_ready
+from helpers.mcp import kill_mcp_proc
+from helpers.mcp import wait_exec_ready as mcp_wait_exec_ready
 from helpers.service import (
     make_service_home_run_dirs,
     materialize_test_profiles,
@@ -161,7 +162,7 @@ def _start_capsem_service():
 
     log_path = run_dir / "service.log"
     stderr_path = run_dir / "service.stderr.log"
-    stderr_file = open(stderr_path, "w")
+    stderr_file = open(stderr_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
 
     # Skip --tray-binary: macOS menu bar icon; flashes on every test.
     proc = subprocess.Popen(
@@ -281,10 +282,8 @@ def shared_vm(capsem_service):
 
     yield vm_name, session
 
-    try:
+    with contextlib.suppress(Exception):
         session.call_tool("capsem_delete", {"id": vm_name})
-    except Exception:
-        pass
     _kill_proc(proc)
 
 
@@ -309,7 +308,5 @@ def fresh_vm(request, mcp_session):
         return
 
     for vm_id in created:
-        try:
+        with contextlib.suppress(Exception):
             mcp_session.call_tool("capsem_delete", {"id": vm_id})
-        except Exception:
-            pass

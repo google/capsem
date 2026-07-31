@@ -3,13 +3,12 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = PROJECT_ROOT / "scripts" / "release_glowup.py"
@@ -201,7 +200,7 @@ def test_package_filename_platform_and_architecture_must_agree(
     package = tmp_path / name
     package.write_bytes(b"candidate package")
 
-    with pytest.raises(module.GlowupContractError, match="package|architecture"):
+    with pytest.raises(module.GlowupContractError, match=r"package|architecture"):
         module.ArtifactIdentity.from_path(
             package,
             version="1.5.100",

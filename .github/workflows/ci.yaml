@@ -199,8 +199,7 @@ jobs:
       # Python schema tests with coverage
       - name: Python lint and type check
         run: |
-          uv run ruff check .
-          uv run ty check src/capsem
+          uv run capsem-gate lint
           uv run capsem-builder validate-skills skills
 
       - name: Python schema tests with coverage

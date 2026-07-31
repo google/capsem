@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
-
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = PROJECT_ROOT / "scripts/list-release-manifest-assets.py"

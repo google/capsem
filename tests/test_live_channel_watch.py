@@ -22,7 +22,6 @@ from pathlib import Path
 
 import yaml
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOWS = PROJECT_ROOT / ".github" / "workflows"
 VALIDATOR = "check-release-site-contract.py"

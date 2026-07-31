@@ -9,12 +9,12 @@ import os
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, url2pathname, urlopen
-
 
 USER_AGENT = "capsem-release-source/1"
 ROOT = Path(__file__).resolve().parents[1]

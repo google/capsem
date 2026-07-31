@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "select-runtime-preflight-manifest.py"
 SPEC = importlib.util.spec_from_file_location("runtime_preflight_manifest", SCRIPT)

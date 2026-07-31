@@ -63,7 +63,7 @@ def validate_skills(skills_dir: str, json_output: bool) -> None:
         report = validate_skill_library(path)
     except Exception as e:
         click.echo(f"error: {e}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
     if json_output:
         click.echo(report.model_dump_json(indent=2))
@@ -113,7 +113,7 @@ def agent(
         cross_compile_agent(rust_target, repo_root, out)
     except Exception as e:
         click.echo(f"error: {e}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
     click.echo(f"Done! Agent binaries for {arch_name} are in {out}/")
 
@@ -133,10 +133,7 @@ def audit(scanner: str, input_file: str | None, json_output: bool) -> None:
     """Parse vulnerability scan results."""
     from capsem.builder.audit import parse_audit_output, summarize_vulns
 
-    if input_file:
-        text = Path(input_file).read_text()
-    else:
-        text = click.get_text_stream("stdin").read()
+    text = Path(input_file).read_text() if input_file else click.get_text_stream("stdin").read()
 
     if not text.strip():
         click.echo("error: no input (provide --input or pipe via stdin)", err=True)
@@ -146,7 +143,7 @@ def audit(scanner: str, input_file: str | None, json_output: bool) -> None:
         vulns = parse_audit_output(text, scanner)
     except ValueError as e:
         click.echo(f"error: {e}", err=True)
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
     if json_output:
         click.echo(json.dumps([v.model_dump() for v in vulns], indent=2))

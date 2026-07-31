@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
-import hashlib
 from pathlib import Path
 from typing import Any
 
 import blake3
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_GRAPH = (
@@ -37,8 +36,7 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
             "CAPSEM_RELEASE_CHANNEL_DIST": str(dist),
         },
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr

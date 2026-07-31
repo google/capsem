@@ -7,6 +7,7 @@ session ledger. They intentionally do not inspect Rust internals.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sqlite3
@@ -15,9 +16,8 @@ import time
 import uuid
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
 
 pytestmark = pytest.mark.integration
 
@@ -347,8 +347,6 @@ def test_profile_agent_bootstrap_pays_ledger_debt_blackbox():
             conn.close()
     finally:
         if client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
-            except Exception:
-                pass
         service.stop()

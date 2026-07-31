@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPO_ROOT / "crates" / "capsem" / "build.rs"
 PROVENANCE_CHECK = REPO_ROOT / "scripts" / "check-build-provenance.sh"

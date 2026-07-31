@@ -14,8 +14,8 @@ from pathlib import Path
 import pytest
 
 from .conftest import (
-    INSTALL_DIR,
     BINARIES,
+    INSTALL_DIR,
     get_build_hash,
 )
 

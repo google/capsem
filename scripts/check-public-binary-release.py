@@ -13,8 +13,8 @@ import http.server
 import json
 import os
 import platform
-import shutil
 import shlex
+import shutil
 import socket
 import socketserver
 import subprocess
@@ -32,7 +32,6 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SBOM_GENERATOR = PROJECT_ROOT / "scripts" / "generate-host-binary-sbom.py"
 
@@ -49,7 +48,7 @@ class RequiredPackage:
     kind: str
 
     @classmethod
-    def parse(cls, value: str) -> "RequiredPackage":
+    def parse(cls, value: str) -> RequiredPackage:
         parts = value.split(":")
         if len(parts) != 3 or not all(parts):
             raise argparse.ArgumentTypeError(
@@ -163,7 +162,7 @@ def main() -> int:
         with managed_work_dir(args.work_dir) as work_dir:
             validated_packages = 0
             validated_binaries = 0
-            for requirement, package in packages.items():
+            for _requirement, package in packages.items():
                 package_path = materialize_package(package, args.package_dir, work_dir, failures)
                 if package_path is None:
                     continue
@@ -428,7 +427,7 @@ def check_package_manifest_metadata(
     try:
         origin = json.loads(raw_origin.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        return failures + [f"{package_path.name} has invalid manifest-metadata.json: {error}"]
+        return [*failures, f"{package_path.name} has invalid manifest-metadata.json: {error}"]
     if origin.get("schema") != "capsem.manifest_metadata.v1":
         failures.append(f"{package_path.name} manifest-metadata schema invalid")
     if origin.get("origin") != "package":

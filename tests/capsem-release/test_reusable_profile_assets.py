@@ -7,7 +7,6 @@ from urllib.request import Request
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "resolve-reusable-profile-assets.py"
 SPEC = importlib.util.spec_from_file_location("resolve_reusable_profile_assets", SCRIPT)

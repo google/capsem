@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
-
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_config import HERMETIC_AGY_MODEL, HERMETIC_AGY_MODEL_DISPLAY
 from ironbank.model_client_scripts import agy_cli_script
+
 from tests.ironbank.test_model_client_ledger_contract import ModelClientEnv
 
 pytestmark = pytest.mark.integration

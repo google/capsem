@@ -1,11 +1,11 @@
 """POST /vms/{id}/fork: clone a persistent VM's state into a new persistent VM."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import wait_exec_ready, vm_name
+from helpers.service import vm_name, wait_exec_ready
 
 pytestmark = pytest.mark.integration
 
@@ -66,11 +66,9 @@ class TestFork:
                 f"marker did not survive fork: {read}"
             )
         finally:
-            for vm in children + [source_id]:
-                try:
+            for vm in [*children, source_id]:
+                with contextlib.suppress(Exception):
                     client.delete(f"/vms/{vm}/delete")
-                except Exception:
-                    pass
 
     def test_fork_duplicate_name_rejected(self, client):
         """Fork into a name that is already a registered persistent VM fails."""
@@ -84,10 +82,8 @@ class TestFork:
             )
         finally:
             for vm in (source_id, taken_id):
-                try:
+                with contextlib.suppress(Exception):
                     client.delete(f"/vms/{vm}/delete")
-                except Exception:
-                    pass
 
     def test_fork_nonexistent_source(self, client):
         """Fork from an unknown source id fails with 404."""

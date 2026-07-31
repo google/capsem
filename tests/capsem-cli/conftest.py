@@ -1,11 +1,9 @@
 """Shared fixtures for capsem CLI integration tests."""
 
 import subprocess
-
-import pytest
-
 from pathlib import Path
 
+import pytest
 from helpers.service import ServiceInstance
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent

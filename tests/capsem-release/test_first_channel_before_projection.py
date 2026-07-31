@@ -7,7 +7,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "project-first-channel-before.py"
 SPEC = importlib.util.spec_from_file_location("first_channel_before", SCRIPT)

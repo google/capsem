@@ -10,10 +10,9 @@ test host does not duplicate or drift from package metadata.
 from __future__ import annotations
 
 import argparse
+import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
-import subprocess
-
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 

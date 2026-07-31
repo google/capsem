@@ -18,13 +18,12 @@ every run.
 Hardlinks share the inode so zero extra disk space is used.
 """
 
-import json
 import errno
+import json
 import os
 import re
 import shutil
 import sys
-
 
 HASH_TAG_RE = re.compile(r"^(?P<stem>[A-Za-z0-9_]+)-(?P<hex>[0-9a-f]{16})(?P<ext>\.[A-Za-z0-9_.]+)?$")
 
@@ -83,10 +82,7 @@ def _restore_missing_canonical_assets(arch_dir: str, assets: dict) -> tuple[int,
 
         h = entry["hash"][:16]
         dot = name.find(".")
-        if dot >= 0:
-            hashed = f"{name[:dot]}-{h}{name[dot:]}"
-        else:
-            hashed = f"{name}-{h}"
+        hashed = f"{name[:dot]}-{h}{name[dot:]}" if dot >= 0 else f"{name}-{h}"
         alias = os.path.join(arch_dir, hashed)
         if not os.path.exists(alias):
             continue
@@ -135,10 +131,7 @@ def main():
             for name, entry in assets.items():
                 h = entry["hash"][:16]
                 dot = name.find(".")
-                if dot >= 0:
-                    hashed = f"{name[:dot]}-{h}{name[dot:]}"
-                else:
-                    hashed = f"{name}-{h}"
+                hashed = f"{name[:dot]}-{h}{name[dot:]}" if dot >= 0 else f"{name}-{h}"
                 src = os.path.join(arch_dir, name)
                 dst = os.path.join(arch_dir, hashed)
                 if os.path.exists(src):

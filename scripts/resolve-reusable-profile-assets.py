@@ -4,17 +4,16 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Callable
-from io import BytesIO
 import json
 import os
-from pathlib import Path
 import sys
+from collections.abc import Callable
+from io import BytesIO
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from zipfile import BadZipFile, ZipFile
-
 
 API_ROOT = "https://api.github.com"
 USER_AGENT = "capsem-profile-asset-reuse/1"

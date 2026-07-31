@@ -14,7 +14,6 @@ from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.route_matrix import RouteSpec, assert_profile_route_matrix
 from helpers.service import ServiceInstance
 
-
 PROFILES = ("code", "co-work")
 
 

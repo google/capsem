@@ -72,7 +72,35 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F"]
+# Aggressive on purpose. The narrow default (pyflakes plus three pycodestyle
+# groups) caught syntax and unused names and nothing else, while the families
+# that find real defects -- mutable default arguments, loops that shadow their
+# own bindings, `except` clauses that swallow more than intended -- were off.
+#
+#   B    flake8-bugbear: likely bugs, not style
+#   C4   comprehensions that allocate an intermediate list for nothing
+#   I    import order, so a diff shows the change and not the shuffle
+#   PIE  redundant constructs with a shorter, clearer form
+#   RET  returns that obscure the control flow around them
+#   RUF  ruff's own checks, including implicit-Optional and unused noqa
+#   SIM  branches and context managers that collapse without losing meaning
+#   UP   syntax superseded by the minimum Python this project supports
+select = ["E4", "E7", "E9", "F", "B", "C4", "I", "PIE", "RET", "RUF", "SIM", "UP"]
+ignore = [
+    # `class X(str, Enum)` -> `StrEnum` is not a pure modernisation: it changes
+    # what `str(X.MEMBER)` and f-string interpolation produce, from
+    # `X.MEMBER` to the member's value. Every enum this flags feeds the
+    # settings schema or a manifest, so the change needs a pass that reads
+    # each interpolation site and a full gate run to confirm no serialized
+    # output moved. Ignored deliberately, not silently.
+    "UP042",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# `sys.path` has to be adjusted before these imports resolve.
+"scripts/fetch-release-artifacts.py" = ["E402"]
+"scripts/integration_test.py" = ["E402"]
+
 
 [tool.coverage.report]
 # Keep two decimal places so the blocking release floor is exact rather than
@@ -94,6 +122,36 @@ fail_under = 85
 # its ceiling is the 2000-line justfile growing back in a different language.
 max_recipe_lines = 12
 max_module_lines = 300
+
+# Type checking is enforced everywhere, but not yet at one strictness. `src/`
+# passes every ty rule, so it is checked with none disabled. `scripts/`,
+# `tests/`, and `guest/` carry roughly four hundred diagnostics dominated by
+# inference over untyped fixture data -- `json.load` returning `object` and
+# then being subscripted, `helpers.*` imports that resolve only through
+# conftest's sys.path wiring. Every rule *not* listed here is enforced on them
+# today, which is four hundred more rules than when ty ran on `src/capsem`
+# alone.
+#
+# The list is a ratchet: entries may leave it, nothing may join it. See
+# tests/test_gate_boundary.py.
+ty_ratchet = [
+    "call-top-callable",
+    "invalid-argument-type",
+    "invalid-assignment",
+    "invalid-attribute-override",
+    "invalid-method-override",
+    "invalid-return-type",
+    "no-matching-overload",
+    "not-iterable",
+    "not-subscriptable",
+    "possibly-missing-submodule",
+    "unknown-argument",
+    "unresolved-attribute",
+    "unresolved-import",
+    "unsupported-operator",
+    "unused-ignore-comment",
+    "unused-type-ignore-comment",
+]
 
 [dependency-groups]
 dev = [

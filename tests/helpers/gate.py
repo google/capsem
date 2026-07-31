@@ -116,7 +116,7 @@ class RecordingRunner(Runner):
         positions = [self.index_of(pattern) for pattern in patterns]
         assert positions == sorted(positions), (
             "commands ran out of order: "
-            + ", ".join(f"{p}@{i}" for p, i in zip(patterns, positions))
+            + ", ".join(f"{p}@{i}" for p, i in zip(patterns, positions, strict=False))
             + "\nran:\n  "
             + "\n  ".join(self.rendered)
         )

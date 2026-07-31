@@ -9,20 +9,19 @@ ledger.
 
 import base64
 import json
-import shutil
 import shlex
+import shutil
 import sqlite3
 import subprocess
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import blake3
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import PROFILES_DIR, ServiceInstance, vm_session_db_path, wait_exec_ready
@@ -190,10 +189,8 @@ def _create_vm(svc: ServiceInstance, prefix: str, *, persistent: bool = False) -
 
 
 def _delete_vm(svc: ServiceInstance, vm: str) -> None:
-    try:
+    with suppress(Exception):
         svc.client().delete(f"/vms/{vm}/delete", timeout=60)
-    except Exception:
-        pass
 
 
 def _exec_cli(svc: ServiceInstance, vm: str, command: str, *, timeout: int = 120):

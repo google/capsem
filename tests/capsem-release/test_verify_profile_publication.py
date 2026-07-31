@@ -8,7 +8,6 @@ from pathlib import Path
 import blake3
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location(
     "verify_profile_publication",
@@ -137,7 +136,7 @@ def test_profile_publication_rejects_tamper_and_extra_files(tmp_path: Path) -> N
     source, release_dir, base = _publication(tmp_path)
     (release_dir / "x86_64-vmlinuz").write_bytes(b"tampered")
 
-    with pytest.raises(ValueError, match="metadata mismatch|SHA-256 mismatch"):
+    with pytest.raises(ValueError, match=r"metadata mismatch|SHA-256 mismatch"):
         VERIFY.verify_profile_publication(source, "code", base, release_dir)
 
     (release_dir / "x86_64-vmlinuz").write_bytes(b"kernel")

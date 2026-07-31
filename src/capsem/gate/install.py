@@ -31,7 +31,6 @@ from .releasegraph import ReleaseGraph
 from .storage import Storage
 from .versions import workspace_version
 
-
 CONTAINER = "capsem-install-test"
 
 LAYOUT = Layout(

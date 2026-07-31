@@ -18,7 +18,6 @@ from typing import Any
 import blake3
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL = "stable"
 FIXTURE_GRAPH = (
@@ -104,14 +103,14 @@ def test_manifest_uses_package_owned_binary_graph(
     packages = manifest["packages"]
     assert isinstance(packages, list)
     assert packages
-    assert REQUIRED_PACKAGE_KINDS <= {package.get("kind") for package in packages}
+    assert {package.get("kind") for package in packages} >= REQUIRED_PACKAGE_KINDS
 
     binary_names = {
         binary.get("name")
         for package in packages
         for binary in package.get("binaries", [])
     }
-    assert REQUIRED_BINARY_NAMES <= binary_names
+    assert binary_names >= REQUIRED_BINARY_NAMES
 
     for index, package in enumerate(packages):
         context = f"packages[{index}]"
@@ -545,13 +544,13 @@ def _check_package_digests_real(dist: Path) -> None:
 
 def _check_packages_own_binaries(dist: Path) -> None:
     packages = _selected_manifest(dist)["packages"]
-    assert REQUIRED_PACKAGE_KINDS <= {package.get("kind") for package in packages}
+    assert {package.get("kind") for package in packages} >= REQUIRED_PACKAGE_KINDS
     binary_names = {
         binary.get("name")
         for package in packages
         for binary in package.get("binaries", [])
     }
-    assert REQUIRED_BINARY_NAMES <= binary_names
+    assert binary_names >= REQUIRED_BINARY_NAMES
     for package in packages:
         binaries = package.get("binaries")
         assert isinstance(binaries, list), package
@@ -611,7 +610,7 @@ def _check_profile_images_complete(dist: Path) -> None:
     for profile_id, profile in _selected_manifest(dist)["profiles"].items():
         for arch, image in _profile_images(profile).items():
             kinds = {artifact["kind"] for artifact in image["artifacts"]}
-            assert REQUIRED_IMAGE_ARTIFACT_KINDS <= kinds, (
+            assert kinds >= REQUIRED_IMAGE_ARTIFACT_KINDS, (
                 f"{profile_id}/{arch} missing "
                 f"{sorted(REQUIRED_IMAGE_ARTIFACT_KINDS - kinds)}"
             )

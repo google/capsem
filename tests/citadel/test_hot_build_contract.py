@@ -10,7 +10,6 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 HOT_DEV_OPTIMIZED_PACKAGES = {

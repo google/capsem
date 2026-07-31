@@ -2,7 +2,6 @@ import importlib.util
 import json
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).parent.parent
 SCRIPT = PROJECT_ROOT / "scripts" / "archive_db_writer_benchmark.py"
 

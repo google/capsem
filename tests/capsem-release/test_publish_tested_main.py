@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "publish-tested-main.py"

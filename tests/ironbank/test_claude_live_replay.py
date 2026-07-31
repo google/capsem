@@ -8,7 +8,6 @@ asserted everywhere.
 from __future__ import annotations
 
 import pytest
-
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_config import HERMETIC_ANTHROPIC_MODEL, LIVE_CLAUDE_MODEL
 from ironbank.model_client_scripts import (
@@ -17,6 +16,7 @@ from ironbank.model_client_scripts import (
     claude_sdk_script,
     claude_streaming_api_script,
 )
+
 from tests.ironbank.test_model_client_ledger_contract import ModelClientEnv
 
 pytestmark = pytest.mark.integration

@@ -19,7 +19,6 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, Tag
 
-
 # ---------------------------------------------------------------------------
 # Enums
 # ---------------------------------------------------------------------------

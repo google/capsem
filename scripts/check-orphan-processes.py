@@ -27,6 +27,7 @@ service belongs to the user, not to the gate, and is never touched.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import signal
@@ -161,16 +162,12 @@ def _reap(leaked: dict[int, dict], root: Path, baseline: dict[int, float]) -> di
     concurrent build.
     """
     for pid in leaked:
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.kill(pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            pass
     survivors = _settle(root, baseline, REAP_GRACE_S)
     for pid in survivors:
-        try:
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.kill(pid, signal.SIGKILL)
-        except (ProcessLookupError, PermissionError):
-            pass
     return _settle(root, baseline, REAP_GRACE_S)
 
 

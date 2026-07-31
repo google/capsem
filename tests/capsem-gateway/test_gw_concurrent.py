@@ -7,7 +7,6 @@ real binary process (not just Rust unit tests).
 import threading
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 
 pytestmark = pytest.mark.gateway
@@ -106,5 +105,5 @@ class TestConcurrentRequests:
         assert len(errors) == 0, f"concurrent status requests failed: {errors}"
         assert len(results) == 20
         # All should have the same vm_count (served from cache)
-        counts = set(r["vm_count"] for r in results if r)
+        counts = {r["vm_count"] for r in results if r}
         assert len(counts) == 1, f"cache inconsistency: got different vm_counts: {counts}"

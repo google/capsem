@@ -5,12 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import re
 import subprocess
 import sys
-from typing import NoReturn
 import urllib.request
+from pathlib import Path
+from typing import NoReturn
 
 try:
     from release_glowup import (
@@ -214,4 +214,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (GlowupContractError, OSError, subprocess.SubprocessError) as error:
         print(f"installed release verification failed: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from error

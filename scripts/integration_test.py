@@ -26,9 +26,9 @@ import argparse
 import json
 import os
 import re
-import signal
-import shutil
 import shlex
+import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -40,7 +40,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from mock_server import local_fixture_env, start_mock_server, stop_process  # noqa: E402
+import contextlib
+
+from mock_server import local_fixture_env, start_mock_server, stop_process
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -262,14 +264,10 @@ def _kill_dev_service() -> None:
             # Force-kill if still alive.
             subprocess.run(["kill", "-9", str(pid)], check=False,
                            capture_output=True)
-    try:
+    with contextlib.suppress(FileNotFoundError):
         SERVICE_PIDFILE.unlink()
-    except FileNotFoundError:
-        pass
-    try:
+    with contextlib.suppress(FileNotFoundError):
         SERVICE_SOCKET.unlink()
-    except FileNotFoundError:
-        pass
 
 
 def _wait_for_service_ready(
@@ -356,7 +354,7 @@ def _start_service_with_test_config(
 
     log_path = project_root / "target/integration-test-service.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_file = open(log_path, "w")
+    log_file = open(log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
 
     try:
         proc = subprocess.Popen(
@@ -423,7 +421,7 @@ def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[str, int]:
     )
 
     # Snapshot session dirs before so we can find the new one after.
-    existing = set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
+    existing = {p.name for p in SESSIONS_DIR.iterdir()} if SESSIONS_DIR.exists() else set()
 
     try:
         mock_proc, ready = start_mock_server()
@@ -456,10 +454,8 @@ def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[str, int]:
             service_proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             service_proc.kill()
-        try:
+        with contextlib.suppress(FileNotFoundError):
             SERVICE_PIDFILE.unlink()
-        except FileNotFoundError:
-            pass
     exit_code = proc.returncode
     if proc.stdout.strip():
         print(proc.stdout.strip())
@@ -1106,10 +1102,8 @@ def check_persistence(binary: str, assets_dir: str, profile: str) -> bool:
             service_proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             service_proc.kill()
-        try:
+        with contextlib.suppress(FileNotFoundError):
             SERVICE_PIDFILE.unlink()
-        except FileNotFoundError:
-            pass
 
 
 def main():

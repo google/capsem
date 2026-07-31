@@ -145,7 +145,7 @@ def check_container_clock() -> CheckResult | None:
     if not shutil.which("docker"):
         return None
 
-    host_now = datetime.datetime.now(datetime.timezone.utc)
+    host_now = datetime.datetime.now(datetime.UTC)
 
     try:
         result = subprocess.run(

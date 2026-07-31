@@ -15,8 +15,8 @@ against `CAPSEM_HOME` + `CAPSEM_ASSET_BASE_URL` pointed at the server.
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import platform
 import subprocess

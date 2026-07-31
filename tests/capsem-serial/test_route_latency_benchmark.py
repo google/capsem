@@ -14,14 +14,13 @@ import time
 from pathlib import Path
 
 import pytest
-
 from helpers.benchmark_output import benchmark_output_dir
+
 from tests.ironbank.test_route_health import (
     CPU_ACCOUNTING_SLACK_S,
     route_timing_summary,
     run_concurrent_route_read_write_benchmark,
 )
-
 
 pytestmark = [pytest.mark.serial, pytest.mark.benchmark]
 

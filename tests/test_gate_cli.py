@@ -12,7 +12,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from helpers.gate import RecordingRunner
 
 from capsem.gate import cli, project_root

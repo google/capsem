@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parent.parent
 RESOLVER = ROOT / "scripts" / "pkg-scripts" / "install-user"
 

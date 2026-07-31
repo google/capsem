@@ -80,7 +80,7 @@ class Docker:
             prefix += ["-u", user]
         for name, value in (env or {}).items():
             prefix += ["-e", f"{name}={value}"]
-        return prefix + [container, *argv]
+        return [*prefix, container, *argv]
 
     def exec(
         self,

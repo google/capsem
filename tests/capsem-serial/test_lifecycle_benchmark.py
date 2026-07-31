@@ -7,6 +7,7 @@ Fork gates: fork < 500ms, image size <= 18MB after the package-survival probe,
 boot-from-image verifies data.
 """
 
+import contextlib
 import json
 import math
 import re
@@ -15,9 +16,8 @@ import uuid
 from pathlib import Path
 
 import pytest
-
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.benchmark_output import benchmark_output_dir
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.package_probe import (
     FORK_PROBE_COMMAND,
     FORK_PROBE_OUTPUT,
@@ -182,10 +182,8 @@ def _run_fork_benchmark(client):
         }
     finally:
         for v in [dst, src, img]:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{v}/delete")
-            except Exception:
-                pass
 
 
 def test_lifecycle_benchmark():

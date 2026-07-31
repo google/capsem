@@ -3,9 +3,7 @@
 import os
 
 import pytest
-
 from conftest import run
-
 
 # -- Lifecycle binary symlinks --
 

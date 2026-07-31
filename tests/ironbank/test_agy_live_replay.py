@@ -8,12 +8,12 @@ network/model/credential ledger path.
 from __future__ import annotations
 
 import pytest
-
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_config import HERMETIC_AGY_MODEL, HERMETIC_AGY_MODEL_DISPLAY
 from ironbank.model_client_scripts import agy_cli_script
-from tests.live_provider.test_live_provider_canaries import TRACKED_MANUAL_LIVE_CANARIES
+
 from tests.ironbank.test_model_client_ledger_contract import ModelClientEnv
+from tests.live_provider.test_live_provider_canaries import TRACKED_MANUAL_LIVE_CANARIES
 
 pytestmark = pytest.mark.integration
 

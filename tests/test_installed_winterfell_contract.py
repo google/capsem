@@ -9,7 +9,6 @@ import pytest
 
 from tests.helpers import service
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 RUNNER_PATH = PROJECT_ROOT / "scripts" / "run-installed-winterfell.py"
 REQUIRED_BINARIES = (

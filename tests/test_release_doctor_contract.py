@@ -13,9 +13,9 @@ import sys
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
-
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -3050,7 +3050,7 @@ def test_remote_release_readiness_fetches_with_validator_user_agent(monkeypatch)
     requests = []
 
     class FakeResponse:
-        headers = {"Cache-Control": "no-cache, must-revalidate"}
+        headers: ClassVar[dict[str, str]] = {"Cache-Control": "no-cache, must-revalidate"}
 
         def __enter__(self):
             return self
@@ -3091,7 +3091,7 @@ def test_remote_release_readiness_fetch_retries_ipv4_on_network_unreachable(monk
     }
 
     class FakeResponse:
-        headers = {"Cache-Control": "no-cache, must-revalidate"}
+        headers: ClassVar[dict[str, str]] = {"Cache-Control": "no-cache, must-revalidate"}
 
         def __enter__(self):
             return self
@@ -5889,7 +5889,7 @@ def test_guest_runtime_doctor_remote_apt_update_fails_after_bounded_attempts() -
             stderr="",
         )
 
-    with pytest.raises(pytest.fail.Exception, match="stalled attempt 1.*stalled attempt 2"):
+    with pytest.raises(pytest.fail.Exception, match=r"stalled attempt 1.*stalled attempt 2"):
         runtimes._remote_apt_update(run_command=fake_run)
 
     assert len(calls) == 2

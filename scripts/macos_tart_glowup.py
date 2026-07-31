@@ -7,7 +7,6 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import platform
 import re
 import shlex
@@ -15,7 +14,9 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import Callable, Sequence, TextIO, cast
+from collections.abc import Callable, Sequence
+from pathlib import Path
+from typing import TextIO, cast
 
 try:
     from release_glowup import (
@@ -618,4 +619,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (GlowupContractError, OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Tart macOS installed-package proof failed: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from error

@@ -11,10 +11,9 @@ in the fast gate that `just test`, `just smoke`, ordinary CI, and both release
 lanes all share.
 """
 
-from pathlib import Path
 import re
 import subprocess
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CRATES = ROOT / "crates"

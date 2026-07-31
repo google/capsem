@@ -20,6 +20,7 @@ leak trays/gateways that interfere with subsequent runs.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import signal
@@ -32,10 +33,8 @@ from pathlib import Path
 
 import psutil
 import pytest
-
-from helpers.sign import sign_binary
 from helpers.service import ServiceInstance
-
+from helpers.sign import sign_binary
 
 pytestmark = pytest.mark.integration
 
@@ -289,10 +288,8 @@ class TestCompanionSingleton:
                 for p in parents:
                     p.kill()
                 for p in parents:
-                    try:
+                    with contextlib.suppress(subprocess.TimeoutExpired):
                         p.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        pass
 
     def test_gateway_second_spawn_exits(self):
         _sign()
@@ -368,14 +365,10 @@ class TestCompanionDiesWithParent:
                     "SIGKILL -- orphan regression"
                 )
             finally:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     parent.kill()
-                except ProcessLookupError:
-                    pass
-                try:
+                with contextlib.suppress(subprocess.TimeoutExpired):
                     parent.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    pass
 
     def test_gateway_exits_when_parent_sigkilled(self):
         _sign()
@@ -403,14 +396,10 @@ class TestCompanionDiesWithParent:
                     f"gateway {child_pid} must exit after parent SIGKILL"
                 )
             finally:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     parent.kill()
-                except ProcessLookupError:
-                    pass
-                try:
+                with contextlib.suppress(subprocess.TimeoutExpired):
                     parent.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    pass
 
 
 class TestServiceSigkillReapsAllCompanions:
@@ -805,11 +794,11 @@ def _spawn_service_on_fixed_port(
     filterwarnings=error promotes the leaked fd to a hard failure.
     """
     from helpers.service import (
-        SERVICE_BINARY,
-        PROCESS_BINARY,
-        GATEWAY_BINARY,
-        TRAY_BINARY,
         ASSETS_DIR,
+        GATEWAY_BINARY,
+        PROCESS_BINARY,
+        SERVICE_BINARY,
+        TRAY_BINARY,
         materialize_test_profiles,
     )
 
@@ -824,7 +813,7 @@ def _spawn_service_on_fixed_port(
     env["CAPSEM_PROFILES_DIR"] = str(materialize_test_profiles(tmp_dir))
     env["HOME"] = str(tmp_dir)
     env["CAPSEM_TRAY_HEADLESS"] = "1"
-    log_file = open(log_path, "w")
+    log_file = open(log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
     proc = subprocess.Popen(
         [
             str(SERVICE_BINARY),
@@ -907,7 +896,7 @@ def _port_is_listening(port: int) -> bool:
         try:
             s.connect(("127.0.0.1", port))
             return True
-        except (ConnectionRefusedError, socket.timeout):
+        except (TimeoutError, ConnectionRefusedError):
             return False
 
 

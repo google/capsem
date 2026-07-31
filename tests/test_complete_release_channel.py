@@ -9,7 +9,6 @@ from urllib.error import URLError
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 

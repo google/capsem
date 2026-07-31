@@ -23,7 +23,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # A command whose exit status is the thing being measured, piped into a reader

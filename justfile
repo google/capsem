@@ -840,8 +840,7 @@ _test-candidate-run:
     python3 scripts/check-cargo-audit.py & PID_CARGO_AUDIT=$!
     python3 scripts/audit-pnpm-bulk.py & PID_PNPM_AUDIT=$!
     bash scripts/audit-python-lock.sh & PID_PYTHON_AUDIT=$!
-    uv run ruff check . & PID_RUFF=$!
-    uv run ty check src/capsem & PID_TY=$!
+    uv run capsem-gate lint & PID_LINT=$!
     uv run capsem-builder validate-skills skills & PID_SKILLS=$!
     uv run python scripts/check_public_surface.py & PID_PUBLIC_SURFACE=$!
     FAIL=0
@@ -870,8 +869,7 @@ _test-candidate-run:
     if [ -n "$PID_CLIPPY" ]; then
         wait $PID_CLIPPY || { echo "cargo clippy failed (warnings = error)"; FAIL=1; }
     fi
-    wait $PID_RUFF        || { echo "ruff check failed"; FAIL=1; }
-    wait $PID_TY          || { echo "ty check failed"; FAIL=1; }
+    wait $PID_LINT        || { echo "Python lint/type check failed"; FAIL=1; }
     wait $PID_SKILLS      || { echo "skill validation failed"; FAIL=1; }
     wait $PID_PUBLIC_SURFACE || { echo "public surface approval failed"; FAIL=1; }
     [ $FAIL -eq 0 ] || exit 1

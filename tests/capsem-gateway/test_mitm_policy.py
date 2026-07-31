@@ -1,5 +1,6 @@
 """Verify MITM proxy policy enforcement and telemetry logging."""
 
+import contextlib
 import os
 import sqlite3
 import time
@@ -7,9 +8,13 @@ import uuid
 from pathlib import Path
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.mock_server import MOCK_SERVER_BINARY, MOCK_SERVER_ADDR, start_mock_server, stop_process
+from helpers.mock_server import (
+    MOCK_SERVER_ADDR,
+    MOCK_SERVER_BINARY,
+    start_mock_server,
+    stop_process,
+)
 from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready
 
 pytestmark = pytest.mark.gateway
@@ -116,7 +121,5 @@ def test_mitm_policy_telemetry(service_env, client):
             conn.close()
             
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{vm_name}/delete")
-        except Exception:
-            pass

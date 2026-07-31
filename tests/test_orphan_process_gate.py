@@ -22,9 +22,7 @@ import time
 from pathlib import Path
 
 import pytest
-
 from helpers.sign import sign_binary
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check-orphan-processes.py"

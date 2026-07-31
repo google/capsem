@@ -2,10 +2,8 @@
 
 import os
 
-
 from boot_timing import MAX_BOOT_STAGE_MS, assess_boot_timing
 from conftest import run
-
 
 # -- Environment variables --
 
@@ -204,7 +202,7 @@ def test_boot_timing_rejects_xss():
         tmp = f.name
     # Parse the same way the agent does: only alphanumeric + underscore.
     valid = []
-    for line in open(tmp).read().strip().splitlines():
+    for line in open(tmp).read().strip().splitlines():  # noqa: SIM115 -- handed to Popen; must outlive this statement
         try:
             entry = json.loads(line)
         except json.JSONDecodeError:

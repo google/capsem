@@ -12,7 +12,6 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-
 INSTALL_SH = Path(__file__).parent.parent / "site" / "public" / "install.sh"
 DOCS_INSTALL_SH = Path(__file__).parent.parent / "docs" / "public" / "install.sh"
 

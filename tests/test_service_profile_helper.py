@@ -19,7 +19,7 @@ def test_materialize_test_profiles_rejects_empty_generated_catalog(
     generated.mkdir(parents=True)
     monkeypatch.setattr(service_helper, "PROFILES_DIR", generated)
 
-    with pytest.raises(RuntimeError, match="contains no profile.toml"):
+    with pytest.raises(RuntimeError, match=r"contains no profile.toml"):
         service_helper.materialize_test_profiles(tmp_path / "run")
 
 

@@ -14,7 +14,6 @@ import tempfile
 import zlib
 from pathlib import Path
 
-
 EXECUTABLE_PREFIXES = (
     "usr/bin/",
     "usr/local/bin/",

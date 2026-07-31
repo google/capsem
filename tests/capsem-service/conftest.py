@@ -1,10 +1,11 @@
 """Shared fixtures for capsem-service HTTP API integration tests."""
 
 
-import pytest
+import contextlib
 
+import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_name, wait_exec_ready
 
 pytestmark = pytest.mark.integration
 
@@ -41,10 +42,8 @@ def fresh_vm(client):
     yield _create
 
     for vm_id in created:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{vm_id}/delete")
-        except Exception:
-            pass
 
 
 @pytest.fixture(scope="module")
@@ -58,7 +57,5 @@ def ready_vm(service_env):
     )
     assert wait_exec_ready(client, name, timeout=EXEC_READY_TIMEOUT), f"VM {name} never exec-ready"
     yield client, name
-    try:
+    with contextlib.suppress(Exception):
         client.delete(f"/vms/{name}/delete")
-    except Exception:
-        pass

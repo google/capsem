@@ -7,11 +7,10 @@ manifest, even when checkout mtimes are newer than immutable package mtimes.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
 import os
-from pathlib import Path
 import subprocess
-
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from pathlib import Path
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
 

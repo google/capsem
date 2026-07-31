@@ -7,7 +7,6 @@ import subprocess
 from copy import deepcopy
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROFILE_BASE = "https://releases.acme.test/acme/"
 FIXTURE_GRAPH = (
@@ -24,8 +23,7 @@ def _run_admin(*args: str) -> subprocess.CompletedProcess[str]:
         ["cargo", "run", "-p", "capsem-admin", "--quiet", "--", *args],
         cwd=PROJECT_ROOT,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
 

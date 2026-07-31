@@ -11,7 +11,6 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-
 CLOUDFLARE_API_ROOT = "https://api.cloudflare.com/client/v4"
 
 

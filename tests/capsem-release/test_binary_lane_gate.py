@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
 
 import blake3
-
 from rust_sources import sibling_tests
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -120,8 +119,7 @@ def _run_policy(
         [sys.executable, str(DIFF_POLICY), "--old", str(old_path), "--new", str(new_path), *args],
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
 

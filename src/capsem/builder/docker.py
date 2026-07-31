@@ -6,6 +6,7 @@ to produce VM boot assets. Supports multi-architecture output (arm64, x86_64).
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import hashlib
 import json
@@ -371,10 +372,8 @@ def get_project_version(repo_root: Path) -> str:
 
 def remove_image(runtime: str, tag: str) -> None:
     """Remove a container image by tag. Silently ignores missing images."""
-    try:
+    with contextlib.suppress(RuntimeError):
         run_cmd([runtime, "rmi", "-f", tag], capture=True)
-    except RuntimeError:
-        pass
 
 
 def docker_build(
@@ -1225,7 +1224,7 @@ def _asset_digest_hex(path: Path) -> tuple[str, str]:
 
 
 def _utc_now_iso() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+    return datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
 
 
 def _file_ledger_entry(path: Path, *, base: Path | None = None) -> dict[str, Any]:

@@ -2,9 +2,9 @@
 """Promote Unreleased notes and render LATEST_RELEASE.md for a binary release."""
 
 import argparse
-from datetime import date
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 

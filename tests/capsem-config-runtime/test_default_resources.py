@@ -1,9 +1,9 @@
 """Verify default CPU and RAM values are applied in guest."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import wait_exec_ready
 
@@ -23,10 +23,8 @@ def test_default_cpu_count(config_svc):
         nproc = int(resp.get("stdout", "0").strip()) if resp else 0
         assert nproc == 4, f"Expected 4 CPUs, got {nproc}"
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
 
 
 def test_default_ram(config_svc):
@@ -43,7 +41,5 @@ def test_default_ram(config_svc):
         # Allow 10% tolerance for kernel overhead
         assert total_mb > 3600, f"Expected ~4096MB, got {total_mb}MB"
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass

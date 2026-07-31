@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import re
-from pathlib import Path
 import tomllib
+from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check_public_surface.py"
@@ -72,7 +71,7 @@ def test_rejects_unapproved_allowlist_entry(tmp_path: Path) -> None:
         ).replace("[just]\ncount = 13", "[just]\ncount = 14")
     )
 
-    with pytest.raises(checker.SurfaceError, match="missing=.*unapproved-command"):
+    with pytest.raises(checker.SurfaceError, match=r"missing=.*unapproved-command"):
         checker.check_policy(broken)
 
 

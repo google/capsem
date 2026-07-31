@@ -8,12 +8,11 @@ tests remain the release gate.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import dataclass
 
 import pytest
-
 from ironbank.model_client_assertions import assert_live_model_client
 from ironbank.model_client_scripts import (
     live_claude_messages_script,
@@ -21,6 +20,7 @@ from ironbank.model_client_scripts import (
     live_openai_chat_completions_script,
     live_openai_responses_api_script,
 )
+
 from tests.ironbank.test_model_client_ledger_contract import (
     ModelClientEnv,
     _credential_ref_for_secret,

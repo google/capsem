@@ -6,7 +6,6 @@ Skips on Linux (KVM doesn't need entitlements).
 
 import os
 import subprocess
-
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent

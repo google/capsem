@@ -7,7 +7,6 @@ shared black-box service/VM/mock-server harness.
 from __future__ import annotations
 
 import pytest
-
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_config import (
     HERMETIC_GEMINI_MODEL,
@@ -15,6 +14,7 @@ from ironbank.model_client_config import (
     LIVE_GEMINI_TEXT_MODEL,
 )
 from ironbank.model_client_scripts import gemini_api_script
+
 from tests.ironbank.test_model_client_ledger_contract import ModelClientEnv
 
 pytestmark = pytest.mark.integration

@@ -5,8 +5,8 @@ import subprocess
 from pathlib import Path
 
 from helpers.mock_server import start_mock_server, stop_process
-from scripts.release_test_binary import ensure_host_test_binary
 
+from scripts.release_test_binary import ensure_host_test_binary
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BENCH_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-bench-rs"

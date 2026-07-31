@@ -28,7 +28,6 @@ from urllib.parse import urlparse
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL = "stable"
 BUILD_COMPLETE_SPEC = importlib.util.spec_from_file_location(

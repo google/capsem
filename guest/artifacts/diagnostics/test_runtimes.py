@@ -5,7 +5,6 @@ import textwrap
 import zipfile
 
 import pytest
-
 from conftest import run
 
 

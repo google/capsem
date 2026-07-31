@@ -13,10 +13,10 @@ Usage:
 
 import argparse
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 from typing import TypedDict
 
 BOLD = "\033[1m"
@@ -160,7 +160,7 @@ def run_scenario(
     corp_path = None
     corp_toml = scenario["corp_toml"]
     if corp_toml:
-        corp_file = tempfile.NamedTemporaryFile(
+        corp_file = tempfile.NamedTemporaryFile(  # noqa: SIM115 -- handed to Popen; must outlive this statement
             mode="w", suffix=".toml", prefix=f"capsem-injection-{name}-corp-", delete=False,
         )
         corp_file.write(corp_toml)

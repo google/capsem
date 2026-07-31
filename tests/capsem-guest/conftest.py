@@ -3,10 +3,10 @@
 Boots a single VM and validates guest state via exec commands.
 """
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -29,8 +29,6 @@ def guest_env():
 
     yield client, vm_name
 
-    try:
+    with contextlib.suppress(Exception):
         client.delete(f"/vms/{vm_name}/delete")
-    except Exception:
-        pass
     svc.stop()

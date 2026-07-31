@@ -1,10 +1,10 @@
 """Auto snapshot ring buffer behavior."""
 
+import contextlib
 import json
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, vm_session_dir, wait_exec_ready
 
@@ -24,10 +24,8 @@ def snapshot_vm():
 
     yield client, name, svc.tmp_dir
 
-    try:
+    with contextlib.suppress(Exception):
         client.delete(f"/vms/{name}/delete")
-    except Exception:
-        pass
     svc.stop()
 
 

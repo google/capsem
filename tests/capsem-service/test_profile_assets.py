@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 from helpers.service import PROJECT_ROOT, ServiceInstance
+
 from scripts.release_test_binary import ensure_host_test_binary
 
 

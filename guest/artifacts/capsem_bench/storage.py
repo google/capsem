@@ -1,5 +1,6 @@
 """Storage-path diagnostics for rootfs, workspace, overlay, and tmpfs."""
 
+import contextlib
 import os
 import random
 import stat
@@ -80,10 +81,10 @@ def find_mount_for_path(path, mounts):
     best_len = -1
     for mount in mounts:
         mount_point = mount.get("mount_point", "")
-        if real == mount_point or real.startswith(mount_point.rstrip("/") + "/"):
-            if len(mount_point) > best_len:
-                best = mount
-                best_len = len(mount_point)
+        covers = real == mount_point or real.startswith(mount_point.rstrip("/") + "/")
+        if covers and len(mount_point) > best_len:
+            best = mount
+            best_len = len(mount_point)
     return best or {}
 
 
@@ -149,10 +150,8 @@ def writable_path_bench(path, size_mb=None):
     except OSError as exc:
         result["error"] = str(exc)
     finally:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(testfile)
-        except OSError:
-            pass
     return result
 
 
@@ -199,10 +198,8 @@ def io_profile_bench(
             testfile, size_bytes, BLOCK_4K, rand_op_count, sync_each=True
         )
     finally:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(testfile)
-        except OSError:
-            pass
 
     return result
 

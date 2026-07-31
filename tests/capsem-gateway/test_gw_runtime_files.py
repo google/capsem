@@ -6,7 +6,6 @@ Verifies token, port, and PID files are written correctly and cleaned up.
 import os
 
 import pytest
-
 from helpers.gateway import GatewayInstance
 
 pytestmark = pytest.mark.gateway

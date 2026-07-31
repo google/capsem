@@ -1,7 +1,7 @@
 """Core no-state service endpoints: /version, /stats, /service-logs, profile reload."""
 
-from pathlib import Path
 import tomllib
+from pathlib import Path
 
 import pytest
 

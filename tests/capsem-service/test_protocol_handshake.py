@@ -11,9 +11,8 @@ import socket
 import time
 from pathlib import Path
 
-from log_streams import read_log_stream
-
 import pytest
+from log_streams import read_log_stream
 
 pytestmark = pytest.mark.integration
 

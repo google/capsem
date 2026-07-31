@@ -5,9 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import tomllib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-import tomllib
 from typing import cast
 
 try:

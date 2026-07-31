@@ -10,10 +10,10 @@ import subprocess
 import sys
 import tempfile
 import time
-
 from pathlib import Path
 
 from log_streams import read_log_stream
+
 from scripts.release_test_binary import ensure_host_test_binary
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -75,7 +75,7 @@ class GatewayInstance:
 
         log_path = self._log_path
         print(f"GATEWAY LOG: {log_path}")
-        self._log_file = open(self._stdio_log_path, "w")
+        self._log_file = open(self._stdio_log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
 
         # capsem-gateway refuses to run without a live parent service (see
         # capsem-guard). Standalone test invocations pass the pytest worker PID

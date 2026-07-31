@@ -9,7 +9,7 @@ import sys
 
 
 def sync_container_clock(*, timeout_seconds: float = 10) -> None:
-    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime(
+    timestamp = datetime.datetime.now(datetime.UTC).strftime(
         "%Y-%m-%d %H:%M:%S"
     )
     command = ["colima", "ssh", "--", "sudo", "date", "-u", "-s", timestamp]

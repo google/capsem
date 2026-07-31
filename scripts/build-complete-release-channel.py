@@ -15,7 +15,6 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, url2pathname, urlopen
 
-
 REQUIRED_CHANNELS = ("stable", "nightly")
 RELEASE_HTTP_USER_AGENT = "capsem-release-client/1"
 

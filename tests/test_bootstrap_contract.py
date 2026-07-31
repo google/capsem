@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -81,8 +80,7 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     assert "just _bootstrap" in justfile
     assert "just _bound-docker-test-storage" in justfile
     for command in [
-        "uv run ruff check .",
-        "uv run ty check src/capsem",
+        "uv run capsem-gate lint",
         "uv run capsem-builder validate-skills skills",
         "cargo clippy --workspace --all-targets -- -D warnings",
         "bash scripts/check-web-surface.sh frontend",

@@ -3,13 +3,12 @@ from __future__ import annotations
 import importlib.util
 import json
 import re
-from pathlib import Path
 import subprocess
 import sys
-from typing import Sequence
+from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "release-binaries.py"
@@ -381,7 +380,7 @@ def test_binary_release_requires_the_release_notes_to_be_written(
     monkeypatch.setattr(RELEASE, "ROOT", tmp_path)
     runner = FakeRunner(tmp_path, omit_release_notes_change=True)
 
-    with pytest.raises(RuntimeError, match="CHANGELOG.md"):
+    with pytest.raises(RuntimeError, match=r"CHANGELOG.md"):
         RELEASE.release_binaries("nightly", runner)
 
     assert not any(call[:2] == ("git", "commit") for call in runner.calls)

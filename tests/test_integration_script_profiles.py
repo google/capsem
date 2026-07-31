@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -82,9 +81,9 @@ def test_integration_script_pins_every_cli_run_to_the_selected_profile():
 def test_integration_script_service_paths_use_process_scoped_isolated_home():
     module = load_integration_script()
 
-    assert module.INTEGRATION_HOME == (
+    assert (
         module.PROJECT_ROOT / "target" / f"integration-capsem-home-{os.getpid()}"
-    )
+    ) == module.INTEGRATION_HOME
     assert module.CAPSEM_HOME == module.INTEGRATION_HOME
     assert module.INTEGRATION_RUNTIME_ROOT.name == f"capsem-integration-{os.getuid()}-{os.getpid()}"
     assert module.INTEGRATION_RUN_DIR == module.INTEGRATION_RUNTIME_ROOT / "run"
@@ -100,8 +99,8 @@ def test_integration_script_honors_explicit_home_override(tmp_path, monkeypatch)
 
     module = load_integration_script()
 
-    assert module.INTEGRATION_HOME == tmp_path / "integration-home"
-    assert module.INTEGRATION_RUNTIME_ROOT == tmp_path / "runtime-root"
+    assert tmp_path / "integration-home" == module.INTEGRATION_HOME
+    assert tmp_path / "runtime-root" == module.INTEGRATION_RUNTIME_ROOT
     assert module.SERVICE_SOCKET == module.INTEGRATION_RUN_DIR / "service.sock"
 
 

@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from typing import Any
 
-
 MAX_BOOT_STAGE_MS = 500
 
 

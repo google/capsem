@@ -20,7 +20,6 @@ from .errors import GateError
 from .installimage import VENV
 from .proc import Runner
 
-
 SERVE_READY_FILE = "/tmp/capsem-install-release.json"
 SERVE_READY_ATTEMPTS = 100
 SERVE_READY_INTERVAL = 0.05

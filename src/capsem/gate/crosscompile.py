@@ -29,7 +29,6 @@ from .errors import GateError
 from .proc import Runner
 from .storage import Storage
 
-
 BUILDER_IMAGE = "capsem-host-builder:latest"
 BUILD_SCRIPT = "scripts/build-linux-package.sh"
 

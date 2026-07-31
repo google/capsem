@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
+import json
 import os
 import subprocess
-import json
-import fcntl
 from pathlib import Path
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_SITE_SRC = PROJECT_ROOT / "release-site" / "src"
@@ -438,8 +437,7 @@ def build_release_site_from_fixture() -> None:
             cwd=PROJECT_ROOT,
             env=env,
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=False,
         )
     assert result.returncode == 0, result.stdout + result.stderr

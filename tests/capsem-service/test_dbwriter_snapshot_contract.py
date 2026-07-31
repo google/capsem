@@ -9,13 +9,11 @@ from __future__ import annotations
 import json
 import platform
 import sqlite3
+import tomllib
 from pathlib import Path
 from typing import Any
 
-import tomllib
-
 from helpers.service import ServiceInstance, materialize_test_profiles
-
 
 ROOT = Path(__file__).resolve().parents[2]
 

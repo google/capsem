@@ -6,7 +6,6 @@ import io
 from pathlib import Path
 
 import pytest
-
 from helpers.gate import RecordingRunner
 
 from capsem.gate.errors import GateError

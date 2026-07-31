@@ -1,9 +1,9 @@
 """VM count limit enforcement."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.config
@@ -39,10 +39,8 @@ def test_provision_at_limit_rejected():
 
     finally:
         for vm_id in created:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{vm_id}/delete")
-            except Exception:
-                pass
         svc.stop()
 
 
@@ -75,8 +73,6 @@ def test_delete_frees_slot():
 
     finally:
         for vm_id in created:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{vm_id}/delete")
-            except Exception:
-                pass
         svc.stop()

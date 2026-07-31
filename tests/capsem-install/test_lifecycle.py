@@ -7,7 +7,6 @@ state-file conflicts, and service-restart races.
 
 from __future__ import annotations
 
-
 import pytest
 
 from .conftest import (

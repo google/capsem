@@ -24,9 +24,14 @@ import re
 import uuid
 
 import pytest
-
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT, EXEC_TIMEOUT_SECS
-from helpers.service import wait_exec_ready, vm_name
+from helpers.constants import (
+    CODE_PROFILE_ID,
+    DEFAULT_CPUS,
+    DEFAULT_RAM_MB,
+    EXEC_READY_TIMEOUT,
+    EXEC_TIMEOUT_SECS,
+)
+from helpers.service import vm_name, wait_exec_ready
 
 pytestmark = pytest.mark.integration
 

@@ -13,13 +13,11 @@ import os
 from pathlib import Path
 
 import pytest
-
 from helpers.gate import RecordingRunner
 
 from capsem.gate.docker import Mount
 from capsem.gate.errors import GateError
 from capsem.gate.installcontainer import ROSETTA_BINFMT, InstallContainer
-
 
 OWNED = ("/src/target/install-test-assets", "/src/release-site/dist")
 

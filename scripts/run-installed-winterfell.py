@@ -8,10 +8,8 @@ import json
 import os
 import subprocess
 import sys
-
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -21,7 +19,6 @@ from tests.helpers.service import (  # noqa: E402
     WINTERFELL_ROOT_ENV,
     resolve_winterfell_artifact_roots,
 )
-
 
 REPORT_SCHEMA = "capsem.installed_winterfell.v1"
 WINTERFELL_TESTS = (

@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROCESS_SRC = PROJECT_ROOT / "crates/capsem-process/src"
 

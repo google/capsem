@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import subprocess
 import sys
 from copy import deepcopy
@@ -150,8 +150,7 @@ def _run_policy(
         [sys.executable, str(SCRIPT), "--old", str(old_path), "--new", str(new_path), *args],
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
 

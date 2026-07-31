@@ -9,7 +9,6 @@ from pathlib import Path
 
 from rust_sources import production
 
-
 PROJECT_ROOT = Path(__file__).parent.parent
 PROOF_SCRIPT = PROJECT_ROOT / "scripts" / "prove-installed-shell.py"
 CLI_CLIENT = PROJECT_ROOT / "crates" / "capsem" / "src" / "client.rs"
@@ -78,7 +77,7 @@ def test_fail_fast_reads_the_fields_capsem_info_actually_serializes() -> None:
         assert f"    {variant},\n" in client, f"VmLifecycleState no longer spells {variant}"
 
     module = _proof_module()
-    assert module.FATAL_SESSION_STATUSES <= {"Running", "Stopped", "Suspended", "Defunct", "Incompatible"}
+    assert {"Running", "Stopped", "Suspended", "Defunct", "Incompatible"} >= module.FATAL_SESSION_STATUSES
 
 
 def _fake_capsem_with_dead_session(tmp_path: Path) -> tuple[Path, Path]:

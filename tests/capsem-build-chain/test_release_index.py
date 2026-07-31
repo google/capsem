@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import hashlib
 import gzip
+import hashlib
 import io
 import json
 import os
@@ -13,7 +13,6 @@ import tarfile
 from pathlib import Path
 
 from blake3 import blake3
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -47,8 +46,7 @@ def _run_admin(*args: str, check: bool = True) -> subprocess.CompletedProcess[st
         ["cargo", "run", "-p", "capsem-admin", "--quiet", "--", *args],
         cwd=PROJECT_ROOT,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     if check and result.returncode != 0:
@@ -73,8 +71,7 @@ def _build_release_site(dist: Path) -> None:
         ["pnpm", "install", "--frozen-lockfile"],
         cwd=PROJECT_ROOT / "release-site",
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     assert install.returncode == 0, (
@@ -87,8 +84,7 @@ def _build_release_site(dist: Path) -> None:
         cwd=PROJECT_ROOT / "release-site",
         env={**os.environ, "CAPSEM_RELEASE_CHANNEL_DIST": str(dist)},
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     assert build.returncode == 0, (
@@ -114,16 +110,20 @@ def _write_minimal_deb(path: Path, executable_name: str = "capsem-app") -> bytes
         b"Description: Capsem contract-test package\n"
     )
     data_tar = io.BytesIO()
-    with gzip.GzipFile(fileobj=data_tar, mode="wb", mtime=0) as gz:
-        with tarfile.open(fileobj=gz, mode="w") as tar:
+    with (
+        gzip.GzipFile(fileobj=data_tar, mode="wb", mtime=0) as gz,
+        tarfile.open(fileobj=gz, mode="w") as tar,
+    ):
             info = tarfile.TarInfo(f"usr/bin/{executable_name}")
             info.mode = 0o755
             info.size = len(executable)
             info.mtime = 0
             tar.addfile(info, io.BytesIO(executable))
     control_tar = io.BytesIO()
-    with gzip.GzipFile(fileobj=control_tar, mode="wb", mtime=0) as gz:
-        with tarfile.open(fileobj=gz, mode="w") as tar:
+    with (
+        gzip.GzipFile(fileobj=control_tar, mode="wb", mtime=0) as gz,
+        tarfile.open(fileobj=gz, mode="w") as tar,
+    ):
             info = tarfile.TarInfo("./control")
             info.mode = 0o644
             info.size = len(control)
@@ -160,8 +160,7 @@ def _write_minimal_pkg(path: Path) -> bytes:
                 str(path),
             ],
             check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
     else:

@@ -7,7 +7,6 @@ import platform
 import subprocess
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "sync-dev-assets.sh"
 
@@ -74,8 +73,7 @@ def test_sync_dev_assets_replaces_stale_assets_symlink(tmp_path: Path) -> None:
         ["bash", str(SCRIPT), str(src), str(dst)],
         cwd=PROJECT_ROOT,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=True,
     )
 
@@ -97,8 +95,7 @@ def test_sync_dev_assets_replaces_symlink_back_to_source(tmp_path: Path) -> None
         ["bash", str(SCRIPT), str(src), str(dst)],
         cwd=PROJECT_ROOT,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=True,
     )
 
@@ -121,8 +118,7 @@ def test_sync_dev_assets_materializes_hash_names_from_literal_build_output(
         ["bash", str(SCRIPT), str(src), str(dst)],
         cwd=PROJECT_ROOT,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=True,
     )
 
@@ -144,8 +140,7 @@ def test_sync_dev_assets_writes_local_manifest_metadata(tmp_path: Path) -> None:
         ["bash", str(SCRIPT), str(src), str(dst)],
         cwd=PROJECT_ROOT,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=True,
     )
 
@@ -171,8 +166,7 @@ def test_sync_dev_assets_removes_stale_hash_names(tmp_path: Path) -> None:
         ["bash", str(SCRIPT), str(src), str(dst)],
         cwd=PROJECT_ROOT,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=True,
     )
 

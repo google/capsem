@@ -1,3 +1,4 @@
+import contextlib
 import os
 import pathlib
 import signal
@@ -10,9 +11,7 @@ TESTS_OUTPUT_DIR = pathlib.Path("/root/tests")
 
 def pytest_ignore_collect(collection_path, config):
     """Cleanly ignore this directory if not running inside the capsem VM."""
-    if os.geteuid() != 0 or not os.access("/root", os.W_OK):
-        return True
-    return False
+    return bool(os.geteuid() != 0 or not os.access("/root", os.W_OK))
 
 
 @pytest.fixture(autouse=True)
@@ -66,10 +65,8 @@ def run(cmd, timeout=10):
             os.killpg(process.pid, signal.SIGTERM)
             stdout, stderr = process.communicate(timeout=2)
         except (ProcessLookupError, subprocess.TimeoutExpired):
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
             stdout, stderr = process.communicate()
         pytest.fail(
             f"command timed out after {timeout}s: {cmd}\n"

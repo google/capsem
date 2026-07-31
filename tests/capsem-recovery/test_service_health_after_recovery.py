@@ -1,9 +1,9 @@
 """Verify service is fully functional after recovering from bad state."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -36,10 +36,8 @@ def test_service_healthy_after_orphan_cleanup():
             client2 = svc2.client()
 
             # Clean up orphan
-            try:
+            with contextlib.suppress(Exception):
                 client2.delete(f"/vms/{name1}/delete")
-            except Exception:
-                pass
 
             # Create a NEW VM -- service should be fully functional
             name2 = f"fresh-{uuid.uuid4().hex[:8]}"
@@ -58,7 +56,5 @@ def test_service_healthy_after_orphan_cleanup():
             svc2.stop()
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             svc.stop()
-        except Exception:
-            pass

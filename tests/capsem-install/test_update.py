@@ -6,8 +6,6 @@ installed layout detection, and update cache management.
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from contextlib import contextmanager
 import hashlib
 import http.server
 import json
@@ -19,16 +17,19 @@ import socketserver
 import subprocess
 import threading
 import tomllib
-from urllib.parse import urljoin
+from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
+from typing import ClassVar
+from urllib.parse import urljoin
 
 import pytest
 from blake3 import blake3
 
 from .conftest import (
     CAPSEM_DIR,
-    run_capsem,
     get_build_hash,
+    run_capsem,
 )
 
 UPDATE_CACHE = CAPSEM_DIR / "assets" / "manifest-metadata.json"
@@ -135,8 +136,11 @@ def _load_test_asset_manifest() -> dict:
 
 class _HealthHandler(http.server.BaseHTTPRequestHandler):
     body: bytes = b""
-    files: dict[str, bytes] = {}
-    requests: list[str] = []
+    # Class-level on purpose: http.server builds a fresh handler per
+    # request, so per-instance state would be unreachable. Each test makes
+    # its own subclass through `type(...)` rather than mutating these.
+    files: ClassVar[dict[str, bytes]] = {}
+    requests: ClassVar[list[str]] = []
 
     def do_GET(self) -> None:
         self.requests.append(self.path)

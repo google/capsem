@@ -6,12 +6,11 @@ import http.server
 import importlib.util
 import json
 import os
-from pathlib import Path
 import subprocess
 import threading
+from pathlib import Path
 
 import pytest
-
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 MATERIALIZER = PROJECT_ROOT / "scripts" / "materialize-config.sh"
@@ -89,7 +88,7 @@ def test_materializer_http_request_identifies_capsem(tmp_path: Path) -> None:
     }
 
     class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
+        def do_GET(self) -> None:
             user_agent = self.headers.get("User-Agent", "")
             observed_user_agents.append(user_agent)
             if user_agent != EXPECTED_USER_AGENT:
@@ -327,7 +326,7 @@ def test_public_release_readers_identify_capsem_to_http_edge(
     manifest = {"channel": "stable", "profiles": {}, "packages": []}
 
     class Handler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 - stdlib handler API
+        def do_GET(self) -> None:
             user_agent = self.headers.get("User-Agent", "")
             observed_user_agents.append(user_agent)
             if user_agent != EXPECTED_RELEASE_USER_AGENT:

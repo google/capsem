@@ -7,11 +7,11 @@ import argparse
 import ast
 import json
 import subprocess
-from dataclasses import dataclass, asdict
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
-
+from typing import Any
 
 MANUAL_GATES_PENDING = [
     "macOS package install via `just install` with user-present sudo/package context",

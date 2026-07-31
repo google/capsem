@@ -5,7 +5,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).parent.parent
 DIAGNOSTICS = PROJECT_ROOT / "scripts" / "pkg-scripts" / "install-diagnostics"
 

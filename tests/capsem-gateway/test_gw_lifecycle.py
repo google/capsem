@@ -10,7 +10,6 @@ import subprocess
 import time
 
 import pytest
-
 from helpers.gateway import GatewayInstance, TcpHttpClient
 
 pytestmark = pytest.mark.gateway

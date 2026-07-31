@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sqlite3
@@ -11,10 +12,14 @@ import uuid
 from pathlib import Path
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, vm_session_db_path, vm_session_dir, wait_exec_ready, vm_name
-
+from helpers.service import (
+    ServiceInstance,
+    vm_name,
+    vm_session_db_path,
+    vm_session_dir,
+    wait_exec_ready,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
@@ -445,8 +450,6 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
         assert "snapshot_events" not in process_log
     finally:
         if client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
-            except Exception:
-                pass
         service.stop()

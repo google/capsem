@@ -1,7 +1,6 @@
 """Command execution inside guest VMs."""
 
 import pytest
-
 from helpers.mcp import content_text
 
 pytestmark = pytest.mark.mcp

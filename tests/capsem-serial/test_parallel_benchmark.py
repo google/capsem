@@ -4,14 +4,14 @@ Spawns 4 VMs and runs capsem-bench in parallel in all of them to measure
 performance degradation under heavy concurrent load.
 """
 
+import contextlib
 import json
 import time
 import uuid
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 import pytest
-
 from helpers.benchmark_output import benchmark_output_dir
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
@@ -95,8 +95,6 @@ def test_parallel_benchmark():
     finally:
         print("Cleaning up VMs...")
         for vm_name in vms:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{vm_name}/delete")
-            except Exception:
-                pass
         svc.stop()

@@ -7,7 +7,6 @@ from pathlib import Path
 
 from rust_sources import sibling_tests
 
-
 ROOT = Path(__file__).resolve().parents[2]
 ADMIN = ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
 RELEASE_GRAPH = ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"

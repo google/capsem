@@ -1,7 +1,6 @@
 """Verify service creates instances/ dir if it's missing."""
 
 import pytest
-
 from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.recovery

@@ -13,7 +13,6 @@ from typing import Any
 
 from helpers.route_matrix import RouteSpec, assert_profile_route_matrix
 
-
 PROFILES = ("code", "co-work")
 
 

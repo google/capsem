@@ -5,12 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from helpers.gate import RecordingRunner
 
 from capsem.gate.docker import Docker, Mount, container_path
 from capsem.gate.errors import GateError
-
 
 # ---------------------------------------------------------------------------
 # Containers

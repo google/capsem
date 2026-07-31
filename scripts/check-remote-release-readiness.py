@@ -63,7 +63,7 @@ ALLOWED_PROFILE_CONFIG_KINDS = {
 ALLOWED_RELEASE_STATUSES = {"current", "supported", "deprecated", "revoked"}
 REQUIRED_PROFILE_IMAGE_KINDS = {"kernel", "initrd", "rootfs"}
 RELEASE_VALIDATOR_USER_AGENT = "CapsemReleaseValidator/1.0"
-_FETCH_BYTES_CACHE: dict[str, "FetchBytes"] = {}
+_FETCH_BYTES_CACHE: dict[str, FetchBytes] = {}
 
 
 @dataclass
@@ -724,11 +724,14 @@ def check_release_graph_runtime_asset_pointer(
                 if not isinstance(item, dict):
                     continue
                 url = item.get("url")
-                if isinstance(url, str) and url.startswith("/assets/releases/"):
-                    if len(url.split("/")) < 5:
-                        failures.append(
-                            f"profile {profile_id} asset artifact URL is not versioned: {url}"
-                        )
+                if (
+                    isinstance(url, str)
+                    and url.startswith("/assets/releases/")
+                    and len(url.split("/")) < 5
+                ):
+                    failures.append(
+                        f"profile {profile_id} asset artifact URL is not versioned: {url}"
+                    )
     return failures
 
 
@@ -1016,7 +1019,7 @@ def check_release_graph_artifact(
         )
     digest = item.get("digest")
     if not isinstance(digest, dict):
-        return failures + [f"{label} {url} digest missing"]
+        return [*failures, f"{label} {url} digest missing"]
     failures.extend(check_release_graph_digest(digest, f"{label} {url}"))
     for key in ("sha256", "blake3"):
         value = digest.get(key)
@@ -1029,10 +1032,10 @@ def check_release_graph_artifact(
     try:
         resolved_url = resolve_release_url(site, url)
     except ValueError as error:
-        return failures + [f"{label} {url}: {error}"]
+        return [*failures, f"{label} {url}: {error}"]
     artifact = fetch_bytes(resolved_url)
     if artifact.error:
-        return failures + [artifact.error]
+        return [*failures, artifact.error]
     if isinstance(expected_bytes, int) and len(artifact.data) != expected_bytes:
         failures.append(f"{label} {url} size mismatch")
     expected_sha256 = digest.get("sha256")
@@ -1104,7 +1107,7 @@ def add_release_artifact_cache_check(
         return
     url = item.get("url")
     if isinstance(url, str) and (
-        url.startswith("/profiles/releases/") or url.startswith("/assets/releases/")
+        url.startswith(("/profiles/releases/", "/assets/releases/"))
     ):
         checks.append(
             (

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import json
 import os
@@ -18,7 +19,6 @@ import termios
 import time
 import uuid
 from pathlib import Path
-
 
 SAFE_VALUE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -110,20 +110,16 @@ def stop_process(process: subprocess.Popen[bytes]) -> None:
     try:
         os.killpg(process.pid, signal.SIGTERM)
     except OSError:
-        try:
+        with contextlib.suppress(OSError):
             process.terminate()
-        except OSError:
-            pass
     try:
         process.wait(timeout=1)
     except subprocess.TimeoutExpired:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except OSError:
-            try:
+            with contextlib.suppress(OSError):
                 process.kill()
-            except OSError:
-                pass
 
 
 def prove_shell(
@@ -247,16 +243,12 @@ def prove_shell(
             )
 
         # Exit the guest shell, then use the TUI's global Alt-Q shortcut.
-        try:
+        with contextlib.suppress(OSError):
             os.write(master, b"exit\r")
-        except OSError:
-            pass
         time.sleep(0.5)
         if process.poll() is None:
-            try:
+            with contextlib.suppress(OSError):
                 os.write(master, b"\x1bq")
-            except OSError:
-                pass
     finally:
         os.close(master)
         stop_process(process)
@@ -309,7 +301,7 @@ def main() -> int:
         )
         return 1
 
-    try:
+    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
         subprocess.run(
             [str(args.capsem), "delete", args.session_name],
             check=False,
@@ -317,8 +309,6 @@ def main() -> int:
             stderr=subprocess.DEVNULL,
             timeout=min(args.timeout, 30),
         )
-    except (OSError, subprocess.TimeoutExpired):
-        pass
 
     print(f"installed shell proof passed: {args.marker}")
     return 0

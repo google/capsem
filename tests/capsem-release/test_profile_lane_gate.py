@@ -10,7 +10,6 @@ from pathlib import Path
 
 from rust_sources import sibling_tests
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
 DIFF_SCRIPT = PROJECT_ROOT / "scripts" / "check-release-graph-diff.py"
@@ -198,6 +197,5 @@ def _run_policy(
         [sys.executable, str(DIFF_SCRIPT), "--old", str(old_path), "--new", str(new_path), *args],
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )

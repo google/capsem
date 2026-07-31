@@ -5,15 +5,14 @@ from __future__ import annotations
 
 import ast
 import json
-from pathlib import Path
 import re
 import subprocess
 import sys
 import tomllib
-from typing import Any
+from pathlib import Path
+from typing import Any, ClassVar
 
 import yaml
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SUPPORTED_SUFFIXES = {".json", ".py", ".sh", ".toml", ".yaml", ".yml"}
@@ -22,7 +21,7 @@ SUPPORTED_SUFFIXES = {".json", ".py", ".sh", ".toml", ".yaml", ".yml"}
 class StrictYamlLoader(yaml.SafeLoader):
     """YAML 1.2-ish safe loader that rejects duplicate mapping keys."""
 
-    yaml_implicit_resolvers = {
+    yaml_implicit_resolvers: ClassVar[dict] = {
         key: list(resolvers)
         for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
     }
@@ -133,7 +132,7 @@ def _check(path: Path) -> str:
 
 def main(argv: list[str]) -> int:
     paths = [Path(argument).resolve() for argument in argv] if argv else _tracked_sources()
-    counts = {name: 0 for name in ("YAML", "Python", "shell", "JSON", "TOML")}
+    counts = dict.fromkeys(("YAML", "Python", "shell", "JSON", "TOML"), 0)
     failed = False
     for path in paths:
         if path.suffix not in SUPPORTED_SUFFIXES:

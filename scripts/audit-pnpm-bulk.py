@@ -4,14 +4,13 @@
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
 import json
-from pathlib import Path
 import subprocess
 import sys
-from typing import Any
 import urllib.request
-
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
 
 DEFAULT_ENDPOINT = "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk"
 DEFAULT_PROJECT_DIRS = (
@@ -123,4 +122,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as error:
         print(f"npm bulk audit failed: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from error

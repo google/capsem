@@ -10,6 +10,7 @@ import tomllib
 from pathlib import Path
 
 from blake3 import blake3
+
 from scripts.release_test_binary import ensure_host_test_binary
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

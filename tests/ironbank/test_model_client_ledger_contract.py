@@ -7,26 +7,29 @@ session DB, security ledger, files, and logs.
 
 from __future__ import annotations
 
-from contextlib import closing
-from dataclasses import dataclass
 import json
 import os
-from pathlib import Path
 import sqlite3
 import textwrap
 import time
 import uuid
+from contextlib import closing, suppress
+from dataclasses import dataclass
+from pathlib import Path
 
 import blake3
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_session_db_path, vm_session_dir, wait_exec_ready, vm_name
+from helpers.service import (
+    ServiceInstance,
+    vm_name,
+    vm_session_db_path,
+    vm_session_dir,
+    wait_exec_ready,
+)
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_config import HERMETIC_OPENAI_PRICED_MODEL
-from ironbank.model_ledger import _assert_event_id
-from ironbank.model_pricing import assert_model_call_price
 from ironbank.model_client_scripts import (
     agy_cli_script,
     claude_api_script,
@@ -39,6 +42,8 @@ from ironbank.model_client_scripts import (
     openai_responses_api_script,
     openai_two_tool_calls_script,
 )
+from ironbank.model_ledger import _assert_event_id
+from ironbank.model_pricing import assert_model_call_price
 from log_streams import log_stream_files
 
 pytestmark = pytest.mark.integration
@@ -402,10 +407,8 @@ def live_model_client_env():
         )
     finally:
         if client is not None:
-            try:
+            with suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
-            except Exception:
-                pass
         service.stop()
         if old_corp_config is None:
             os.environ.pop("CAPSEM_CORP_CONFIG", None)

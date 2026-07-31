@@ -8,18 +8,16 @@ the public route emits the typed projection.
 
 from __future__ import annotations
 
-from contextlib import closing
 import json
 import platform
 import sqlite3
 import tomllib
+from contextlib import closing
 from pathlib import Path
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, materialize_test_profiles
-
 
 pytestmark = pytest.mark.integration
 

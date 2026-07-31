@@ -4,18 +4,17 @@ from __future__ import annotations
 
 import gzip
 import hashlib
-import io
 import importlib.util
+import io
 import json
 import re
 import subprocess
 import sys
 import tarfile
-from types import ModuleType
 from pathlib import Path
+from types import ModuleType
 
 import pytest
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "check-public-binary-release.py"
@@ -698,8 +697,10 @@ def _write_minimal_deb(
         "usr/share/capsem/assets/manifest-metadata.json": origin,
     }
     data_tar = io.BytesIO()
-    with gzip.GzipFile(fileobj=data_tar, mode="wb", mtime=0) as gz:
-        with tarfile.open(fileobj=gz, mode="w") as tar:
+    with (
+        gzip.GzipFile(fileobj=data_tar, mode="wb", mtime=0) as gz,
+        tarfile.open(fileobj=gz, mode="w") as tar,
+    ):
             for member_path, contents in members.items():
                 info = tarfile.TarInfo(member_path)
                 info.mode = 0o755
@@ -707,8 +708,10 @@ def _write_minimal_deb(
                 info.mtime = 0
                 tar.addfile(info, io.BytesIO(contents))
     control_tar = io.BytesIO()
-    with gzip.GzipFile(fileobj=control_tar, mode="wb", mtime=0) as gz:
-        with tarfile.open(fileobj=gz, mode="w") as tar:
+    with (
+        gzip.GzipFile(fileobj=control_tar, mode="wb", mtime=0) as gz,
+        tarfile.open(fileobj=gz, mode="w") as tar,
+    ):
             control = (
                 f"Package: capsem\nVersion: {package_version}\nArchitecture: amd64\n"
             ).encode()

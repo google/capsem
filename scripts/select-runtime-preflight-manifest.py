@@ -13,7 +13,6 @@ from urllib.error import HTTPError
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
-
 USER_AGENT = "capsem-runtime-preflight/1"
 # The catalog read is the first gating step of both release lanes, so a single
 # reset connection to the CDN kills an otherwise releasable graph. Retry only

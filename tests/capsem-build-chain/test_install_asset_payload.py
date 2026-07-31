@@ -15,7 +15,6 @@ from types import ModuleType, SimpleNamespace
 import pytest
 from blake3 import blake3
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -1767,30 +1766,29 @@ def test_local_release_glowup_generated_release_checker_rejects_missing_asset_bl
         manifest_path = dist / "assets" / "stable" / "manifest.json"
         manifest_path.parent.mkdir(parents=True)
         manifest_path.write_text(
-            """{
+            f"""{{
   "packages": [
-    {
+    {{
       "name": "Capsem_1.5.1_amd64.deb",
-      "url": "%s/releases/download/v1.5.1/Capsem_1.5.1_amd64.deb"
-    }
+      "url": "{base_url}/releases/download/v1.5.1/Capsem_1.5.1_amd64.deb"
+    }}
   ],
-  "profiles": {
-    "co-work": {
+  "profiles": {{
+    "co-work": {{
       "architectures": [
-        {
+        {{
           "images": [
-            {"url": "%s/assets/releases/2026.0709.13/x86_64-rootfs.erofs"}
+            {{"url": "{base_url}/assets/releases/2026.0709.13/x86_64-rootfs.erofs"}}
           ],
           "evidence": [
-            {"url": "%s/assets/releases/2026.0709.13/obom.cdx.json"}
+            {{"url": "{base_url}/assets/releases/2026.0709.13/obom.cdx.json"}}
           ]
-        }
+        }}
       ]
-    }
-  }
-}
-"""
-            % (base_url, base_url, base_url),
+    }}
+  }}
+}}
+""",
             encoding="utf-8",
         )
 
@@ -1866,7 +1864,7 @@ def test_local_release_glowup_generated_release_checker_rejects_tampered_blob(
             encoding="utf-8",
         )
 
-        with pytest.raises(SystemExit, match="SHA-256 mismatch|byte size mismatch"):
+        with pytest.raises(SystemExit, match=r"SHA-256 mismatch|byte size mismatch"):
             glowup.check_generated_release(
                 base_url,
                 f"{base_url}/assets/stable/manifest.json",

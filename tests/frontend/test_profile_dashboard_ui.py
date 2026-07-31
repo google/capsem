@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 DASHBOARD = ROOT / "frontend/src/lib/components/shell/NewTabPage.svelte"
 API = ROOT / "frontend/src/lib/api.ts"

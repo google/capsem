@@ -7,7 +7,6 @@ from pathlib import Path
 
 from rust_sources import sibling_tests
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 UPDATE_RS = PROJECT_ROOT / "crates" / "capsem" / "src" / "update.rs"
 GRAPH_FIXTURE = (

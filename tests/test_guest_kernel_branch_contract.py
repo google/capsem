@@ -17,7 +17,6 @@ import re
 import tomllib
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BUILD_CONFIG = PROJECT_ROOT / "config" / "docker" / "image" / "build.toml"
 GUEST_DIAGNOSTIC = (

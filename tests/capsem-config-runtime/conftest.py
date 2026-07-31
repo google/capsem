@@ -4,7 +4,6 @@ Verifies that config values (CPU, RAM, blocked domains) are applied at runtime.
 """
 
 import pytest
-
 from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.config_runtime

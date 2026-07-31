@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 REQUIRED_LINUX_RELEASE_BINARIES = frozenset(
     {
         "capsem",

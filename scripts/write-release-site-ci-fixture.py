@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-import json
 import argparse
 import hashlib
+import json
 from pathlib import Path
 
 import blake3
@@ -121,10 +121,10 @@ def write_fixture(root: Path, *, include_binary_files: bool = True) -> None:
         "min_assets": ASSET_VERSION,
     }
     if include_binary_files:
-        mac_package_payload = f"dry-run pkg for {BINARY_VERSION}\n".encode("utf-8")
-        deb_package_payload = f"dry-run deb for {BINARY_VERSION}\n".encode("utf-8")
-        binary_payload = f"dry-run capsem-app for {BINARY_VERSION}\n".encode("utf-8")
-        tray_payload = f"dry-run capsem-tray for {BINARY_VERSION}\n".encode("utf-8")
+        mac_package_payload = f"dry-run pkg for {BINARY_VERSION}\n".encode()
+        deb_package_payload = f"dry-run deb for {BINARY_VERSION}\n".encode()
+        binary_payload = f"dry-run capsem-app for {BINARY_VERSION}\n".encode()
+        tray_payload = f"dry-run capsem-tray for {BINARY_VERSION}\n".encode()
         sbom_payload = json.dumps(
             {
                 "spdxVersion": "SPDX-2.3",

@@ -3,14 +3,13 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import shutil
 import subprocess
 import tomllib
+from pathlib import Path
 
 import blake3
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "fetch-release-artifacts.py"
@@ -1571,7 +1570,7 @@ def test_empty_package_tolerance_is_rejected_for_the_profile_family(
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="package-only|only for packages"):
+    with pytest.raises(ValueError, match=r"package-only|only for packages"):
         FETCH.fetch_release_inputs(
             manifest.as_uri(),
             "profiles",

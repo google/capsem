@@ -370,7 +370,7 @@ def _digest_subjects(graph: dict):
                 for evidence in package.get("evidence", []):
                     yield "package_evidence", evidence["url"], evidence["digest"]
 
-            for profile_id, profile in manifest["profiles"].items():
+            for _profile_id, profile in manifest["profiles"].items():
                 for architecture in profile["architectures"]:
                     for config in architecture["config"]:
                         yield "profile_config", config["path"], config["digest"]

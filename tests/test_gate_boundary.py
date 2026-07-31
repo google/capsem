@@ -30,7 +30,6 @@ from pathlib import Path
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GATE_PACKAGE = PROJECT_ROOT / "src" / "capsem" / "gate"
 
@@ -236,4 +235,66 @@ def test_every_gate_module_imports_on_its_own(module: str) -> None:
         cwd=PROJECT_ROOT / "src",
         check=True,
         capture_output=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# The type-checking ratchet
+# ---------------------------------------------------------------------------
+
+
+def test_the_strict_python_tree_needs_no_rules_held_back() -> None:
+    """`src/` is checked with nothing disabled, and must stay that way.
+
+    `ty` ran on `src/capsem` alone for a long time, so `scripts/` -- release
+    machinery, not scratch -- had no type gate at all. Widening it meant
+    holding some rules back on the trees that were never checked; holding any
+    back on `src/` would give that ground away again.
+    """
+    from capsem.gate.lint import PYTHON_ROOTS, STRICT_ROOTS, TY_FLAGS
+
+    assert set(STRICT_ROOTS) <= set(PYTHON_ROOTS)
+    assert "src" in STRICT_ROOTS
+
+    strict = subprocess.run(
+        ["uv", "run", "ty", "check", *TY_FLAGS, *STRICT_ROOTS],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert strict.returncode == 0, strict.stdout + strict.stderr
+
+
+def test_the_type_ratchet_only_shrinks() -> None:
+    """A rule that no longer fires must leave the list.
+
+    Otherwise the ratchet stops describing outstanding work and starts
+    describing policy, which is how a temporary exemption becomes permanent.
+    """
+    from capsem.gate.lint import TY_FLAGS, _relaxed_roots, ratchet
+
+    held_back = ratchet(PROJECT_ROOT)
+    assert held_back, "an empty ratchet means the list should be deleted, not kept"
+
+    relaxed = _relaxed_roots(PROJECT_ROOT)
+    still_firing = set()
+    for rule in held_back:
+        others = [
+            flag
+            for other in held_back
+            if other != rule
+            for flag in ("--ignore", other)
+        ]
+        result = subprocess.run(
+            ["uv", "run", "ty", "check", *TY_FLAGS, *relaxed, *others],
+            cwd=PROJECT_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            still_firing.add(rule)
+
+    assert set(held_back) == still_firing, (
+        "these rules are held back but no longer fire; remove them from "
+        f"pyproject's ty_ratchet: {sorted(set(held_back) - still_firing)}"
     )

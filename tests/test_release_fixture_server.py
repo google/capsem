@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import subprocess
 import sys
 import time
+from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import urlopen
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "scripts" / "serve-release-test-root.py"

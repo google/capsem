@@ -405,8 +405,7 @@ def build_release_site_from_graph(graph_path: Path) -> None:
             cwd=PROJECT_ROOT,
             env=env,
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=False,
         )
     build_release_site_from_fixture.cache_clear()

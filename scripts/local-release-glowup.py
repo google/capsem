@@ -19,26 +19,26 @@ No hand-authored release manifest is created here.
 from __future__ import annotations
 
 import argparse
-import copy
 import contextlib
-from dataclasses import dataclass
+import copy
 import errno
 import functools
 import hashlib
 import http.server
 import json
 import os
-from pathlib import Path
 import re
-import shutil
 import shlex
+import shutil
 import socketserver
 import subprocess
 import sys
 import tempfile
 import threading
-from typing import cast
 import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import cast
 from urllib.parse import unquote, urljoin, urlparse
 
 try:

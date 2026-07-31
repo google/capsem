@@ -4,12 +4,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import re
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
-
 
 BLOCKING_WARNING_KINDS = frozenset({"unsound", "yanked"})
 _GLIB_FUNCTION_ADVISORY = "RUSTSEC-2024-0429"

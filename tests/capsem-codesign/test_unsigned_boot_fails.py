@@ -4,10 +4,9 @@ import os
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 
 import pytest
-
-from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 TARGET_DIR = PROJECT_ROOT / "target" / "debug"

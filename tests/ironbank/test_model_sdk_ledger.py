@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -12,11 +13,10 @@ import uuid
 from pathlib import Path
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
 from ironbank.model_client_config import HERMETIC_ANTHROPIC_MODEL, HERMETIC_OPENAI_COMPAT_MODEL
 
 pytestmark = pytest.mark.integration
@@ -1895,10 +1895,8 @@ def test_openai_sdk_local_model_path_pays_full_ledger_debt_blackbox():
     finally:
         stop_process(mock_proc)
         if client is not None and vm_id is not None:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{vm_id}/delete", timeout=60)
-            except Exception:
-                pass
         if gateway is not None:
             gateway.stop()
         service.stop()
@@ -2464,11 +2462,7 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
                     "postprocess",
                     "ask_resolution",
                 }
-                if row["event_type"] == "model.call":
-                    assert row["previous_decision"] == "allow"
-                    assert row["requested_decision"] == "allow"
-                    assert row["effective_decision"] == "allow"
-                elif row["rule_id"] == "profiles.rules.capsem_mock_server":
+                if row["event_type"] == "model.call" or row["rule_id"] == "profiles.rules.capsem_mock_server":
                     assert row["previous_decision"] == "allow"
                     assert row["requested_decision"] == "allow"
                     assert row["effective_decision"] == "allow"
@@ -2487,8 +2481,6 @@ def test_codex_cli_poem_path_pays_full_ledger_debt_blackbox():
     finally:
         stop_process(mock_proc)
         if client is not None and vm_id is not None:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{vm_id}/delete", timeout=60)
-            except Exception:
-                pass
         service.stop()

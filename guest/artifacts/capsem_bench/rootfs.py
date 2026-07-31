@@ -8,8 +8,12 @@ import time
 from rich.table import Table
 
 from .helpers import (
-    BLOCK_1M, BLOCK_4K,
-    console, drop_caches, fmt_bytes, throughput_mbps,
+    BLOCK_1M,
+    BLOCK_4K,
+    console,
+    drop_caches,
+    fmt_bytes,
+    throughput_mbps,
 )
 
 ROOTFS_SCAN_DIRS = ["/usr/bin", "/usr/lib", "/opt/ai-clis"]

@@ -1,12 +1,11 @@
 """Contracts for deterministic failures shared by smoke, test, and CI."""
 
 import importlib.util
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 
 import yaml
-
 
 ROOT = Path(__file__).resolve().parents[1]
 JUSTFILE = (ROOT / "justfile").read_text(encoding="utf-8")
@@ -30,7 +29,7 @@ def _recipe(name: str) -> str:
     start = next(
         index
         for index, line in enumerate(lines)
-        if line.startswith(f"{name}:") or line.startswith(f"{name} ")
+        if line.startswith((f"{name}:", f"{name} "))
     )
     end = next(
         (

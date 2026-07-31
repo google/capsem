@@ -16,10 +16,9 @@ from pathlib import Path
 
 import psutil
 import pytest
-
 from conftest import (
-    _ancestry,
     _CAUGHT_THREAD_EXCEPTIONS,
+    _ancestry,
     _desired_open_file_limit,
     _is_pytest_descendant,
     _leak_log_path,

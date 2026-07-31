@@ -6,7 +6,6 @@ used across capsem-mcp and capsem-service test suites.
 
 import os
 
-
 # Default VM resources
 DEFAULT_RAM_MB = 2048
 DEFAULT_CPUS = 2

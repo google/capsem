@@ -7,7 +7,6 @@ from pathlib import Path
 
 from rust_sources import sibling_tests
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_GRAPH = (
     PROJECT_ROOT

@@ -12,22 +12,22 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
-
-import tomli_w
 from typing import Any, cast
 from urllib.parse import unquote, urljoin, urlparse
+
+import tomli_w
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from release_binary_cohort import REQUIRED_LINUX_RELEASE_BINARIES  # noqa: E402
 from release_inputs import (  # noqa: E402
     load_verified_release_inputs,
     safe_component,
     safe_relative,
     verify_payload,
 )
-from release_binary_cohort import REQUIRED_LINUX_RELEASE_BINARIES  # noqa: E402
 
 
 def _host_arch() -> str:

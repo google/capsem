@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from pathlib import Path
 import sys
-
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "audit-pnpm-bulk.py"
@@ -84,12 +83,12 @@ def test_bulk_audit_rejects_malformed_registry_response() -> None:
 def test_default_bulk_audit_covers_every_web_workspace() -> None:
     audit = _load_module()
 
-    assert audit.DEFAULT_PROJECT_DIRS == (
+    assert (
         Path("frontend"),
         Path("docs"),
         Path("site"),
         Path("release-site"),
-    )
+    ) == audit.DEFAULT_PROJECT_DIRS
     for project in audit.DEFAULT_PROJECT_DIRS:
         assert (PROJECT_ROOT / project / "package.json").is_file()
         assert (PROJECT_ROOT / project / "pnpm-lock.yaml").is_file()

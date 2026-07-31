@@ -25,7 +25,6 @@ from pathlib import Path
 from .errors import GateError
 from .proc import Runner
 
-
 # Semver's numeric identifiers carry no leading zeros, which is not pedantry
 # here: it is what separates `2026.0730.16` -- the retired date-derived asset
 # version -- from a real `MAJOR.MINOR.PATCH`. A plain `\d+\.\d+\.\d+` accepts

@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "release_test_binary.py"

@@ -15,7 +15,6 @@ from urllib.request import Request, urlopen
 
 import blake3
 
-
 ASSET_TAG_RE = re.compile(r"/releases/download/(assets-v[^/]+)/")
 USER_AGENT = "capsem-release-mirror/1"
 

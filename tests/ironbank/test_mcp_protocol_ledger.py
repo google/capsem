@@ -2,21 +2,20 @@
 
 from __future__ import annotations
 
-from contextlib import closing
 import json
 import os
-from pathlib import Path
 import sqlite3
 import textwrap
 import time
 import uuid
+from contextlib import closing
+from pathlib import Path
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
 from log_streams import read_log_stream
 
 pytestmark = pytest.mark.integration

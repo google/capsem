@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import shlex
@@ -11,18 +12,16 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import (
     ServiceInstance,
     preserve_tmp_dir_on_failure,
+    vm_name,
     vm_session_db_path,
     wait_exec_ready,
-    vm_name,
 )
 from log_streams import log_stream_files
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ASSETS_DIR = PROJECT_ROOT / "assets"
@@ -617,10 +616,8 @@ def test_capsem_doctor_pays_protocol_and_security_ledger_debt():
             # below deletes it before ServiceInstance.stop() can archive it.
             preserve_tmp_dir_on_failure(service.home_dir, force=True)
         if client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{vm_id or session_id}/delete", timeout=60)
-            except Exception:
-                pass
         service.stop()
 
 
@@ -874,8 +871,6 @@ def test_runtime_plugin_action_matrix_pays_file_import_ledger_debt():
         conn.close()
     finally:
         if client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{vm_id or session_id}/delete", timeout=60)
-            except Exception:
-                pass
         service.stop()

@@ -17,7 +17,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from release_inputs import (  # noqa: E402
+import contextlib
+
+from release_inputs import (
     report_artifacts,
     resolved_artifact_rows,
     verify_payload,
@@ -96,10 +98,8 @@ def _prune_cache(cache_dir: Path, keep_sha256: set[str]) -> None:
                 raise ValueError(f"unexpected release input cache entry: {entry}")
             if entry.name not in keep_sha256:
                 entry.unlink()
-        try:
+        with contextlib.suppress(OSError):
             prefix.rmdir()
-        except OSError:
-            pass
 
 
 def _assert_public_channel_absent(
@@ -205,7 +205,9 @@ def fetch_release_inputs(
             raise
         manifest_bytes, manifest = _read_manifest(bootstrap_manifest_url)
         if manifest.get("profiles") != {}:
-            raise ValueError("bootstrap release-input fallback requires explicit empty profiles")
+            raise ValueError(
+                "bootstrap release-input fallback requires explicit empty profiles"
+            ) from None
         _assert_public_channel_absent(manifest_url, manifest)
         manifest_url = bootstrap_manifest_url
 

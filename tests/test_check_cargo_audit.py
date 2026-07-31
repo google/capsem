@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check-cargo-audit.py"
@@ -64,7 +63,7 @@ def test_glib_function_advisory_rejects_any_resolved_source_caller(
         ]
     }
 
-    with pytest.raises(ValueError, match="RUSTSEC-2024-0429.*consumer"):
+    with pytest.raises(ValueError, match=r"RUSTSEC-2024-0429.*consumer"):
         AUDIT.validate_function_scoped_advisories(metadata)
 
 

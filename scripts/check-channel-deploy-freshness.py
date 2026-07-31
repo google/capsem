@@ -9,7 +9,6 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
-
 CHANNELS = ("stable", "nightly")
 USER_AGENT = "capsem-channel-deploy/1"
 

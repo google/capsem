@@ -11,9 +11,7 @@ import subprocess
 from pathlib import Path
 
 import blake3
-
 from test_release_site_html_contract import RELEASE_SITE_DIST, build_release_site_from_fixture
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_GRAPH = (
@@ -65,8 +63,7 @@ def build_release_site_from_graph(graph_path: Path) -> None:
             cwd=PROJECT_ROOT,
             env=env,
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=False,
         )
     assert result.returncode == 0, result.stdout + result.stderr

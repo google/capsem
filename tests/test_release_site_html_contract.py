@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import subprocess
-import fcntl
 from functools import cache
 from pathlib import Path
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_GRAPH = (
@@ -256,8 +255,7 @@ def build_release_site_from_fixture() -> None:
             cwd=PROJECT_ROOT,
             env=env,
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=False,
         )
     assert result.returncode == 0, result.stdout + result.stderr

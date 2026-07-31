@@ -1,9 +1,9 @@
 """Verify custom CPU and RAM values are applied in guest."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import wait_exec_ready
 
@@ -23,10 +23,8 @@ def test_custom_cpu_count(config_svc):
         nproc = int(resp.get("stdout", "0").strip()) if resp else 0
         assert nproc == 2, f"Expected 2 CPUs, got {nproc}"
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
 
 
 def test_custom_ram(config_svc):
@@ -43,7 +41,5 @@ def test_custom_ram(config_svc):
         assert total_mb > 1800, f"Expected ~2048MB, got {total_mb}MB"
         assert total_mb < 2500, f"Got {total_mb}MB, expected ~2048MB"
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass

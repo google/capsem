@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
-
+from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 JUSTFILE = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
@@ -37,7 +36,7 @@ def _recipe(name: str) -> str:
     start = next(
         index
         for index, line in enumerate(lines)
-        if line.startswith(f"{name}:") or line.startswith(f"{name} ")
+        if line.startswith((f"{name}:", f"{name} "))
     )
     end = len(lines)
     for index in range(start + 1, len(lines)):
@@ -229,8 +228,10 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
         "scripts/check-cargo-audit.py",
         "scripts/audit-pnpm-bulk.py",
         "scripts/audit-python-lock.sh",
-        "uv run ruff check .",
-        "uv run ty check src/capsem",
+        # ruff over the whole tree, and ty over src/scripts/tests/guest. ty
+        # used to run on src/capsem alone, leaving the release scripts with no
+        # type gate at all.
+        "uv run capsem-gate lint",
         "cargo clippy --workspace --all-targets -- -D warnings",
         "bash scripts/check-web-surface.sh frontend",
         "bash scripts/check-web-surface.sh release-site",
@@ -421,8 +422,7 @@ def test_release_contract_module_owns_release_site_dependencies(tmp_path: Path) 
             "TRACE": str(trace),
         },
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
 

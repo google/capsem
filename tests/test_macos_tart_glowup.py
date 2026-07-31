@@ -6,12 +6,11 @@ import errno
 import hashlib
 import importlib.util
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 HARNESS = PROJECT_ROOT / "scripts" / "macos_tart_glowup.py"
@@ -571,7 +570,7 @@ def test_native_report_check_rejects_any_missing_full_probe(tmp_path: Path) -> N
         "schema": "capsem.release_glowup.v1",
         "adapter": "macos-tart-launchd",
         "artifact": {"version": "1.2.3", "sha256": "a" * 64},
-        "capabilities": {capability: True for capability in module.REQUIRED_CAPABILITIES},
+        "capabilities": dict.fromkeys(module.REQUIRED_CAPABILITIES, True),
         "adapter_evidence": {
             "physical_vz": {
                 "package_sha256": "a" * 64,

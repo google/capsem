@@ -8,7 +8,6 @@ import sqlite3
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 CAPSEM_HOME = Path(os.environ.get("CAPSEM_HOME", Path.home() / ".capsem"))
 RUN_DIR = Path(os.environ.get("CAPSEM_RUN_DIR", CAPSEM_HOME / "run"))
@@ -60,10 +59,10 @@ def table(headers: list[str], rows: list[list], color: str = DIM) -> str:
             if i < len(widths):
                 widths[i] = max(widths[i], len(c))
     sep = "  ".join("-" * w for w in widths)
-    hdr = "  ".join(h.ljust(w) for h, w in zip(headers, widths))
+    hdr = "  ".join(h.ljust(w) for h, w in zip(headers, widths, strict=False))
     lines = [f"  {BOLD}{hdr}{RESET}", f"  {DIM}{sep}{RESET}"]
     for cells in str_rows:
-        line = "  ".join(c.ljust(w) for c, w in zip(cells, widths))
+        line = "  ".join(c.ljust(w) for c, w in zip(cells, widths, strict=False))
         lines.append(f"  {color}{line}{RESET}")
     return "\n".join(lines) + "\n"
 
@@ -87,7 +86,7 @@ def list_recent_sessions(n: int = 5) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def resolve_session(session_id: Optional[str]) -> Path:
+def resolve_session(session_id: str | None) -> Path:
     """Resolve a session ID (or latest) to its session.db path.
 
     If the DB has been compressed (session.db.gz), decompress to a temp file.
@@ -108,7 +107,7 @@ def resolve_session(session_id: Optional[str]) -> Path:
     gz = session_dir / "session.db.gz"
     if gz.exists():
         # Decompress to a temp file.
-        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+        tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)  # noqa: SIM115 -- handed to Popen; must outlive this statement
         with gzip.open(gz, "rb") as f:
             tmp.write(f.read())
         tmp.close()
@@ -282,7 +281,7 @@ def check_session(db_path: Path, preview_rows: int = 5):
             print(f"  {DIM}(empty){RESET}\n")
             continue
         # Use only the configured preview columns that exist
-        all_cols = [desc[0] for desc in rows[0].keys()] if rows else []
+        all_cols = [desc[0] for desc in rows[0]] if rows else []
         # rows[0].keys() returns column names for sqlite3.Row
         all_cols = list(dict(rows[0]).keys())
         display_cols = [c for c in cols if c in all_cols]

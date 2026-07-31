@@ -7,8 +7,7 @@ quietly regresses into CPU-bound work such as hashing VM assets on a poll path.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+import contextlib
 import http.client
 import json
 import socket
@@ -16,11 +15,13 @@ import statistics
 import threading
 import time
 import uuid
-from typing import Any, Callable
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import Any
 
 import psutil
 import pytest
-
 from helpers.constants import (
     CODE_PROFILE_ID,
     DEFAULT_CPUS,
@@ -30,9 +31,12 @@ from helpers.constants import (
     HTTP_TIMEOUT,
 )
 from helpers.gateway import GatewayInstance, TcpHttpClient
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_name, wait_exec_ready
+
 from tests.ironbank.test_stats_detail_contract import (
     SESSION_ID as SEEDED_SESSION_ID,
+)
+from tests.ironbank.test_stats_detail_contract import (
     _profile_contract,
     _seed_session_db,
     _write_registry,
@@ -68,13 +72,13 @@ class RouteTiming:
     @property
     def p95_ms(self) -> float:
         ordered = sorted(self.samples_ms)
-        index = min(len(ordered) - 1, int(round((len(ordered) - 1) * 0.95)))
+        index = min(len(ordered) - 1, round((len(ordered) - 1) * 0.95))
         return ordered[index]
 
     @property
     def p99_ms(self) -> float:
         ordered = sorted(self.samples_ms)
-        index = min(len(ordered) - 1, int(round((len(ordered) - 1) * 0.99)))
+        index = min(len(ordered) - 1, round((len(ordered) - 1) * 0.99))
         return ordered[index]
 
     @property
@@ -375,7 +379,7 @@ def _is_vm_scalar_state_route(path: str) -> bool:
     if "/vms/" not in path:
         return False
     suffix = path.split("/vms/", 1)[1].split("?", 1)[0]
-    return suffix.count("/") == 1 and (suffix.endswith("/status") or suffix.endswith("/info"))
+    return suffix.count("/") == 1 and (suffix.endswith(("/status", "/info")))
 
 
 def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float, float]:
@@ -525,7 +529,7 @@ def _hot_route_budget(path: str, *, gateway: bool = False) -> tuple[float, float
             5.0 if not gateway else 8.0,
             0.10 if not gateway else 0.14,
         )
-    if "/plugins/" in path and (path.endswith("/info") or path.endswith("/credentials/info")):
+    if "/plugins/" in path and (path.endswith(("/info", "/credentials/info"))):
         # Plugin and credential inventory routes hydrate runtime counters from
         # in-memory projections. Keep them off Keychain/SQLite/hashing paths.
         return (
@@ -984,10 +988,8 @@ def test_vm_list_table_record_uses_uuid_id_not_display_name_blackbox() -> None:
         assert info["name"] == requested_name
     finally:
         if client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{vm_id or requested_name}/delete", timeout=60)
-            except Exception:
-                pass
         service.stop()
 
 
@@ -1443,12 +1445,8 @@ def test_vm_session_lifecycle_routes_have_state_and_latency_budgets() -> None:
     finally:
         if gateway is not None:
             gateway.stop()
-        try:
+        with contextlib.suppress(Exception):
             service.client().delete(f"/vms/{child_id}/delete", timeout=30)
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(Exception):
             service.client().delete(f"/vms/{source_id}/delete", timeout=30)
-        except Exception:
-            pass
         service.stop()

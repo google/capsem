@@ -11,7 +11,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from helpers.gate import RecordingRunner
 
 from capsem.gate import arch as architectures
@@ -23,7 +22,6 @@ from capsem.gate.crosscompile import (
     signing_key,
 )
 from capsem.gate.errors import GateError
-
 
 TARGET = architectures.ARM64
 PACKAGE = "Capsem_9.9.9_arm64.deb"
@@ -79,7 +77,7 @@ def test_the_toolchain_comes_from_the_file_that_pins_it(tmp_path: Path) -> None:
 def test_a_checkout_with_no_pinned_toolchain_says_so(tmp_path: Path) -> None:
     (tmp_path / "rust-toolchain.toml").write_text("[other]\n")
 
-    with pytest.raises(GateError, match="no .toolchain. channel"):
+    with pytest.raises(GateError, match=r"no .toolchain. channel"):
         pinned_toolchain(tmp_path)
 
 

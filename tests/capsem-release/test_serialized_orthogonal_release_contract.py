@@ -7,12 +7,11 @@ Artifact correctness remains covered by the executable lane and glow-up suites.
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shutil
 import subprocess
+from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
@@ -141,8 +140,7 @@ def test_public_release_command_executes_read_only_preflight_then_full_test_befo
             "GITHUB_TOKEN": "test-token",
         },
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
 
@@ -226,8 +224,7 @@ def test_failed_full_test_prevents_every_release_side_effect(
             "GITHUB_TOKEN": "test-token",
         },
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
 

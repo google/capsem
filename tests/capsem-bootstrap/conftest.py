@@ -3,9 +3,9 @@
 These tests do NOT require a running VM -- they validate the build toolchain.
 """
 
-import pytest
-
 from pathlib import Path
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 ASSETS_DIR = PROJECT_ROOT / "assets"

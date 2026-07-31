@@ -17,16 +17,14 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from helpers.gate import RecordingRunner
 
 from capsem.gate import arch as architectures
+from capsem.gate.docker import Docker
 from capsem.gate.errors import GateError
 from capsem.gate.install import LAYOUT, InstallGate
 from capsem.gate.installproof import SERVE_READY_FILE
 from capsem.gate.releasegraph import GRAPH_MANIFEST, PREINSTALL_ADMIN, ReleaseGraph
-from capsem.gate.docker import Docker
-
 
 VERSION = "9.9.9"
 WORKSPACE = f"""\
@@ -304,7 +302,7 @@ def test_dpkg_reporting_a_different_installed_version_fails(
         },
     )
 
-    with pytest.raises(GateError, match="dpkg reports capsem 0.0.1 installed"):
+    with pytest.raises(GateError, match=r"dpkg reports capsem 0.0.1 installed"):
         InstallGate(runner, macos_glowup_report="report.json").run()
 
 

@@ -20,7 +20,6 @@ import ast
 import re
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CRATES = PROJECT_ROOT / "crates"
 PYTHON_TESTS = PROJECT_ROOT / "tests"
@@ -105,9 +104,12 @@ def test_no_contract_seeks_a_test_name_in_production_source() -> None:
                 left, right = node.left, node.comparators[0]
                 if not (isinstance(left, ast.Constant) and isinstance(left.value, str)):
                     continue
-                if isinstance(right, ast.Name) and right.id in readers:
-                    if left.value in relocated:
-                        named.add(left.value)
+                if (
+                    isinstance(right, ast.Name)
+                    and right.id in readers
+                    and left.value in relocated
+                ):
+                    named.add(left.value)
         if named:
             offenders[str(py.relative_to(PROJECT_ROOT))] = named
 

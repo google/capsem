@@ -10,7 +10,6 @@ from pathlib import Path
 import blake3
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "materialize-graph-profile-artifacts.py"
 

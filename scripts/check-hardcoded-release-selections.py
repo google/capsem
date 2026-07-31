@@ -16,7 +16,6 @@ import sys
 from collections.abc import Iterable
 from pathlib import Path
 
-
 ROOT = Path(os.environ.get("CAPSEM_GUARD_ROOT", Path(__file__).resolve().parent.parent))
 PROFILE_TERMS = r"(?:code|co-work|cowork|terminal|termional|gui)"
 failed = False

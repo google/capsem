@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from helpers.mcp import parse_content
 
-
 FORK_PROBE_COMMAND = "capsem-fork-probe"
 FORK_PROBE_OUTPUT = "fork-package-ok"
 FORK_PROBE_INSTALL_SCRIPT = rf"""set -euo pipefail

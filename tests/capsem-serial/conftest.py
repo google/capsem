@@ -1,9 +1,9 @@
 """Shared fixtures for serial console and boot timing tests."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -26,8 +26,6 @@ def serial_env():
 
     yield client, vm_name
 
-    try:
+    with contextlib.suppress(Exception):
         client.delete(f"/vms/{vm_name}/delete")
-    except Exception:
-        pass
     svc.stop()

@@ -172,7 +172,7 @@ def _infer_filetype(path: str) -> str | None:
         return "toml"
     if path.endswith(".conf"):
         return "conf"
-    if path.endswith(".bashrc") or path.endswith(".bash"):
+    if path.endswith((".bashrc", ".bash")):
         return "bash"
     return None
 

@@ -8,13 +8,13 @@ import copy
 import errno
 import json
 import os
-from pathlib import Path
 import platform
 import re
 import shlex
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import cast
 
 try:
@@ -457,4 +457,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"macOS release glow-up failed: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from error

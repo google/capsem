@@ -9,6 +9,7 @@ pytest asserts (mirroring OP_GATE_MS / FORK_GATE_MS in
 test_lifecycle_benchmark.py).
 """
 
+import contextlib
 import json
 import os
 import re
@@ -18,10 +19,9 @@ import uuid
 from pathlib import Path
 
 import pytest
-
-from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.benchmark_output import benchmark_output_dir
 from helpers.benchmark_gates import validate_capsem_bench_result
+from helpers.benchmark_output import benchmark_output_dir
+from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -144,9 +144,7 @@ def test_capsem_bench_baseline():
         data["mock_server_base_url"] = base_url
         _save(data)
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
         svc.stop()
         stop_process(upstream_proc)

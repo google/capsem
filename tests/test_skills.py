@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from click.testing import CliRunner
 import pytest
+from click.testing import CliRunner
 
 from capsem.builder.cli import cli
 from capsem.builder.skills import parse_skill_document, validate_skill_library
@@ -177,7 +177,7 @@ def test_skill_document_must_not_be_symlink(tmp_path: Path) -> None:
     link_path = link_dir / "SKILL.md"
     link_path.symlink_to(real_path)
 
-    with pytest.raises(ValueError, match="SKILL.md must be a real file"):
+    with pytest.raises(ValueError, match=r"SKILL.md must be a real file"):
         parse_skill_document(link_path)
 
 
@@ -237,7 +237,7 @@ def test_skill_library_rejects_file_entries(tmp_path: Path) -> None:
 def test_skill_library_rejects_missing_skill_document(tmp_path: Path) -> None:
     (tmp_path / "dev-missing").mkdir()
 
-    with pytest.raises(ValueError, match="missing SKILL.md"):
+    with pytest.raises(ValueError, match=r"missing SKILL.md"):
         validate_skill_library(tmp_path)
 
 
@@ -255,7 +255,7 @@ def test_skill_library_rejects_nested_skill_files(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="nested SKILL.md"):
+    with pytest.raises(ValueError, match=r"nested SKILL.md"):
         validate_skill_library(tmp_path)
 
 

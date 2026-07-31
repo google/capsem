@@ -10,7 +10,6 @@ from pathlib import Path
 
 import blake3
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 

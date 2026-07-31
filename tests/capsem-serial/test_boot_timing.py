@@ -1,10 +1,10 @@
 """Boot timing regression gates: provision to exec-ready."""
 
+import contextlib
 import time
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -38,10 +38,8 @@ def test_boot_under_30_seconds():
         )
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
         svc.stop()
 
 
@@ -66,10 +64,8 @@ def test_exec_latency_within_gate():
         print(f"Exec latency: {elapsed:.2f}s (gate: {EXEC_LATENCY_GATE}s)")
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
         svc.stop()
 
 
@@ -126,8 +122,6 @@ def test_avg_exec_latency_3_concurrent_vms():
         )
     finally:
         for name in names:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{name}/delete")
-            except Exception:
-                pass
         svc.stop()

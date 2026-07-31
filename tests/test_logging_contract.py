@@ -13,7 +13,6 @@ from pathlib import Path
 
 from rust_sources import production
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SERVICE_MAIN = PROJECT_ROOT / "crates" / "capsem-service" / "src" / "main.rs"
 GATEWAY_MAIN = PROJECT_ROOT / "crates" / "capsem-gateway" / "src" / "main.rs"

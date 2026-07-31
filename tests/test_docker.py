@@ -4,8 +4,8 @@ TDD: these tests define the expected behavior of docker.py before implementation
 Build execution tests mock run_cmd (single subprocess seam) -- no Docker needed.
 """
 
-import json
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -13,28 +13,28 @@ import subprocess
 import sys
 import tomllib
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from capsem.builder.config import load_guest_config
-from capsem.builder.models import ErofsConfig
 from capsem.builder.docker import (
     BUILD_LEDGER_NAME,
     CDXGEN_VERSION,
     GUEST_BINARIES,
     ROOTFS_SCRIPTS,
     _append_build_ledger,
-    _cdxgen_command,
     _cdx_validate_command,
+    _cdxgen_command,
     _directory_tree_hash,
     _file_ledger_entry,
     _normalize_cyclonedx_obom,
     _rootfs_config_input_record,
     _validate_cyclonedx_obom,
     build_all_architectures,
-    build_version_script,
     build_image,
+    build_version_script,
     container_compile_agent,
     create_erofs,
     cross_compile_agent,
@@ -42,11 +42,11 @@ from capsem.builder.docker import (
     docker_build,
     experimental_erofs_build_config,
     export_container_fs,
-    extract_tool_versions,
     extract_kernel_assets,
+    extract_tool_versions,
     generate_build_context,
-    generate_cyclonedx_obom,
     generate_checksums,
+    generate_cyclonedx_obom,
     get_project_version,
     is_ci,
     prepare_build_context,
@@ -55,6 +55,7 @@ from capsem.builder.docker import (
     run_cmd,
     sync_container_clock,
 )
+from capsem.builder.models import ErofsConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -754,7 +755,7 @@ class TestResolveKernelVersion:
     @patch("capsem.builder.docker.urllib.request.urlopen")
     def test_network_error_fails_closed(self, mock_urlopen):
         mock_urlopen.side_effect = Exception("network error")
-        with pytest.raises(RuntimeError, match="failed to fetch kernel.org releases"):
+        with pytest.raises(RuntimeError, match=r"failed to fetch kernel.org releases"):
             resolve_kernel_version("6.6")
 
     @patch("capsem.builder.docker.urllib.request.urlopen")
@@ -1130,7 +1131,7 @@ class TestAptClockSkewOptions:
     "Release file is not valid yet" errors even with Check-Valid-Until=false.
     """
 
-    APT_CLOCK_SKEW_OPTIONS = [
+    APT_CLOCK_SKEW_OPTIONS: ClassVar[list[str]] = [
         "Acquire::Check-Valid-Until=false",
         "Acquire::Check-Date=false",
     ]
@@ -1778,7 +1779,7 @@ class TestErofsConfig:
             )
 
     def test_env_config_rejects_zstd_level_outside_range(self):
-        with pytest.raises(ValueError, match="0..22"):
+        with pytest.raises(ValueError, match=r"0..22"):
             experimental_erofs_build_config(
                 {
                     "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
@@ -2224,7 +2225,7 @@ class TestGenerateChecksums:
         (arm64 / "initrd.img").write_bytes(b"initrd")
         (arm64 / "rootfs.squashfs").write_bytes(b"rootfs")
 
-        with pytest.raises(FileNotFoundError, match="rootfs.erofs"):
+        with pytest.raises(FileNotFoundError, match=r"rootfs.erofs"):
             generate_checksums(tmp_path, "0.13.0")
 
     def test_manifest_rejects_rootfs_only_arch(self, tmp_path):
@@ -2243,7 +2244,7 @@ class TestGenerateChecksums:
         (arm64 / "vmlinuz").write_bytes(b"kernel")
         (arm64 / "initrd.img").write_bytes(b"initrd")
 
-        with pytest.raises(FileNotFoundError, match="rootfs.erofs"):
+        with pytest.raises(FileNotFoundError, match=r"rootfs.erofs"):
             generate_checksums(tmp_path, "0.13.0")
 
 

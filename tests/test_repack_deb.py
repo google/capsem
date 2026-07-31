@@ -73,7 +73,7 @@ def _build_fixture_deb(workdir: Path, name: str = "capsem-fixture", version: str
     return deb_path
 
 
-def _seed_binaries(bin_dir: Path, which: list[str] = None):
+def _seed_binaries(bin_dir: Path, which: list[str] | None = None):
     """Drop fake executable files named like the companion binaries."""
     if which is None:
         which = REQUIRED_BINARIES
@@ -129,7 +129,7 @@ def _run_repack(
     input_deb: Path,
     bin_dir: Path,
     config_dir: Path,
-    output_deb: Path = None,
+    output_deb: Path | None = None,
     timeout: int = 30,
 ) -> subprocess.CompletedProcess:
     manifest = input_deb.parent / "manifest.json"
@@ -378,7 +378,7 @@ def test_repacked_deb_declares_tray_runtime_dependency(tmp_path):
     depends = " ".join(
         line.strip()
         for line in control.splitlines()
-        if line.startswith("Depends:") or line.startswith(" ")
+        if line.startswith(("Depends:", " "))
     )
     assert "libxdo3" in depends
 

@@ -1,9 +1,9 @@
 """Error handling: operations on deleted/invalid VMs, concurrent VMs."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import EXEC_READY_TIMEOUT
 from helpers.mcp import parse_content, wait_exec_ready
 
@@ -118,7 +118,5 @@ def test_two_vms_isolated(mcp_session):
         assert by_id[vm_b_id]["name"] == vm_b
     finally:
         for vm in (vm_a, vm_b):
-            try:
+            with contextlib.suppress(Exception):
                 mcp_session.call_tool("capsem_delete", {"id": vm})
-            except Exception:
-                pass

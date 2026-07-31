@@ -19,7 +19,6 @@ from .errors import GateError
 from .proc import Runner
 from .storage import Storage
 
-
 IMAGE = "capsem-install-test"
 DOCKERFILE = "docker/Dockerfile.install-test"
 VENV = "/home/capsem/.venv-install-test"

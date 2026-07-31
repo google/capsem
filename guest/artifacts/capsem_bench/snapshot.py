@@ -21,7 +21,7 @@ def snapshot_run(args):
     start = time.monotonic()
     try:
         result = subprocess.run(
-            ["snapshots"] + args + ["--json"],
+            ["snapshots", *args, "--json"],
             capture_output=True, text=True, timeout=30,
         )
         elapsed_ms = round((time.monotonic() - start) * 1000, 1)

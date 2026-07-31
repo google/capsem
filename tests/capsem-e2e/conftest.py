@@ -14,10 +14,9 @@ import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 
 import pytest
-
-from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -75,8 +74,8 @@ class RealService:
 
         log_path = self.tmp_dir / "service.log"
         stderr_path = self.tmp_dir / "service.stderr.log"
-        self._log_file = open(log_path, "w")
-        self._stderr_file = open(stderr_path, "w")
+        self._log_file = open(log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
+        self._stderr_file = open(stderr_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
 
         self.proc = subprocess.Popen(
             [
@@ -133,7 +132,7 @@ class RealService:
 
     def cli(self, *args, timeout=60):
         """Run the real capsem CLI binary. Returns CompletedProcess."""
-        cmd = [str(CLI_BINARY), "--uds-path", str(self.uds_path)] + list(args)
+        cmd = [str(CLI_BINARY), "--uds-path", str(self.uds_path), *list(args)]
         return subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout,
         )

@@ -6,12 +6,13 @@ Boot a VM, install packages, write workspace files, fork, verify:
   - boot from image preserves packages (rootfs overlay) AND workspace files
 """
 
+import contextlib
 import time
 import uuid
 
 import pytest
-
-from helpers.mcp import content_text, parse_content, wait_exec_ready as wait_ready
+from helpers.mcp import content_text, parse_content
+from helpers.mcp import wait_exec_ready as wait_ready
 from helpers.package_probe import assert_fork_probe_with_mcp, install_fork_probe_with_mcp
 
 pytestmark = pytest.mark.mcp
@@ -98,7 +99,5 @@ def test_winter_is_coming(mcp_session):
 
     finally:
         for v in [forked, image, vm]:
-            try:
+            with contextlib.suppress(Exception):
                 mcp_session.call_tool("capsem_delete", {"id": v})
-            except Exception:
-                pass

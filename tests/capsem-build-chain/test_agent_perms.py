@@ -6,9 +6,9 @@ on the host. The builder must re-apply 555 on the host so the guest-binary
 read-only invariant (CLAUDE.md) holds for every caller.
 """
 
-import pytest
 from pathlib import Path
 
+import pytest
 
 from capsem.builder.docker import GUEST_BINARIES, enforce_guest_binary_perms
 

@@ -23,7 +23,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CRATES = PROJECT_ROOT / "crates"
 
@@ -31,7 +30,7 @@ MANAGED_VARS = ("CAPSEM_HOME", "CAPSEM_RUN_DIR", "CAPSEM_ASSETS_DIR")
 
 # Sets a managed variable directly instead of going through the guard.
 RAW_SET = re.compile(
-    r"""(?:std::env::)?set_var\(\s*["'](%s)["']""" % "|".join(MANAGED_VARS)
+    r"""(?:std::env::)?set_var\(\s*["']({})["']""".format("|".join(MANAGED_VARS))
 )
 
 # Owns the rule, so it is the one place allowed to implement it.

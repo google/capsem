@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
-
 
 ROOT = Path(__file__).resolve().parents[1]
 HELPER = ROOT / "scripts" / "pkg-scripts" / "install-manifest"
@@ -26,8 +25,7 @@ def _resolve(packaged: str, request: Path) -> subprocess.CompletedProcess[str]:
             str(request),
         ],
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
 
@@ -121,8 +119,7 @@ exit "$5"
             str(exit_status),
         ],
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
 

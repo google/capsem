@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import tomllib
 import json
+import tomllib
 from pathlib import Path
 
 import blake3
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROFILES_DIR = PROJECT_ROOT / "config" / "profiles"

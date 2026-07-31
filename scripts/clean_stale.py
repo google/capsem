@@ -10,7 +10,6 @@ probes liveness via socket.connect() instead (~4 us per socket).
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass
 import errno
 import fnmatch
 import json
@@ -20,8 +19,8 @@ import socket
 import subprocess
 import sys
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
-
 
 SOCKET_CONNECT_TIMEOUT_S = 0.05
 TMP_DIR_MAX_AGE_S = 60 * 60  # 1 hour
@@ -146,7 +145,7 @@ def _socket_is_alive(path: Path) -> bool:
         return True
     except ConnectionRefusedError:
         return False
-    except (BlockingIOError, socket.timeout):
+    except (TimeoutError, BlockingIOError):
         return True
     except OSError as e:
         if e.errno in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EINPROGRESS):

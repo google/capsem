@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from contextlib import closing
-from dataclasses import dataclass
 import json
 import re
 import sqlite3
 import time
+from contextlib import closing
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -534,6 +534,7 @@ def assert_live_model_ledger_exchange(
         credential_refs = _assert_brokered_model_credentials(
             conn,
             provider=spec.credential_provider or spec.provider,
+            expected_source=spec.credential_source,
             model_rows=model_rows,
             tool_rows=tool_rows,
             response_rows=response_rows,

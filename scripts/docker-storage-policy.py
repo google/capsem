@@ -4,18 +4,17 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import sys
 import tomllib
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
-
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_POLICY = ROOT / "config" / "storage-policy.toml"
@@ -46,7 +45,7 @@ class CommandResult:
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def load_policy(path: Path) -> dict[str, Any]:
@@ -636,7 +635,7 @@ def command_snapshot(args: argparse.Namespace, policy: dict[str, Any]) -> int:
 
 
 def release_boundaries(resource: dict[str, Any]) -> set[str]:
-    boundaries = set(str(value) for value in resource.get("release_boundaries", []))
+    boundaries = {str(value) for value in resource.get("release_boundaries", [])}
     boundary = resource.get("release_boundary")
     if boundary:
         boundaries.add(str(boundary))
@@ -1117,7 +1116,7 @@ def rotate_debug_artifacts(root: Path, debug: dict[str, Any]) -> None:
         return
     minimum = int(debug["minimum_runs"])
     maximum = int(debug["maximum_runs"])
-    cutoff = datetime.now(timezone.utc).timestamp() - (
+    cutoff = datetime.now(UTC).timestamp() - (
         int(debug["maximum_age_days"]) * 24 * 60 * 60
     )
     protected = set(directories[-minimum:]) if minimum > 0 else set()
@@ -1146,7 +1145,7 @@ def rotate_debug_artifacts(root: Path, debug: dict[str, Any]) -> None:
 def command_capture_failure(args: argparse.Namespace, policy: dict[str, Any]) -> int:
     debug = policy["debug_artifacts"]
     root = ROOT / str(debug["root"])
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
     safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "-", args.label).strip("-") or "candidate"
     destination = root / f"{stamp}-storage-{safe_label}"
     destination.mkdir(parents=True, exist_ok=False)

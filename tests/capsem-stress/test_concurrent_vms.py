@@ -1,9 +1,9 @@
 """Concurrent VM creation, execution, and cleanup."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.service import ServiceInstance, wait_exec_ready
 
 pytestmark = pytest.mark.stress
@@ -28,7 +28,7 @@ def test_create_five_vms():
             assert wait_exec_ready(client, vm_id, timeout=60), f"VM {name} never exec-ready"
 
         # Exec in each, verify isolation
-        for i, (name, vm_id) in enumerate(vms):
+        for i, (_name, vm_id) in enumerate(vms):
             resp = client.post(f"/vms/{vm_id}/exec", {"command": f"echo vm-{i}"})
             assert f"vm-{i}" in resp.get("stdout", "")
 
@@ -40,10 +40,8 @@ def test_create_five_vms():
 
     finally:
         for _name, vm_id in vms:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{vm_id}/delete")
-            except Exception:
-                pass
         svc.stop()
 
 

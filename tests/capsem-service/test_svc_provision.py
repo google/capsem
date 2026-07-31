@@ -1,8 +1,8 @@
 """Provision, list, info, and delete endpoint tests."""
 
-import pytest
 import uuid
 
+import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import vm_name
 

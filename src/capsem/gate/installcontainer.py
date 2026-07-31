@@ -24,7 +24,6 @@ from .docker import Docker, Mount
 from .errors import GateError
 from .proc import Runner
 
-
 SYSTEMD_READY_ATTEMPTS = 30
 SYSTEMD_READY_INTERVAL = 0.5
 

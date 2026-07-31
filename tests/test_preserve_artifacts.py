@@ -8,16 +8,17 @@ so a future "helpful" loosening that reintroduces the bloat surfaces
 in CI rather than on the next `just test` run.
 """
 
-from pathlib import Path
 import tomllib
+from pathlib import Path
 
 import pytest
+
+from tests import conftest as tests_conftest
 
 # Import the module under test. Fixture below resets the module-level
 # FAILED_NODEIDS / ARTIFACTS_ROOT state that the helper reads from
 # tests.conftest.
 from tests.helpers import service as svc_mod
-from tests import conftest as tests_conftest
 
 
 @pytest.fixture
@@ -62,10 +63,10 @@ def test_failure_artifact_limits_come_from_storage_policy() -> None:
     with (svc_mod.PROJECT_ROOT / "config" / "storage-policy.toml").open("rb") as stream:
         debug = tomllib.load(stream)["debug_artifacts"]
 
-    assert svc_mod.ARTIFACT_MIN_KEPT_DIRS == debug["minimum_runs"]
-    assert svc_mod.ARTIFACT_MAX_KEPT_DIRS == debug["maximum_runs"]
-    assert svc_mod.ARTIFACT_MAX_TOTAL_BYTES == debug["maximum_total_gib"] * 1024**3
-    assert svc_mod.ARTIFACT_MAX_FILE_BYTES == debug["maximum_file_mib"] * 1024**2
+    assert debug["minimum_runs"] == svc_mod.ARTIFACT_MIN_KEPT_DIRS
+    assert debug["maximum_runs"] == svc_mod.ARTIFACT_MAX_KEPT_DIRS
+    assert debug["maximum_total_gib"] * 1024**3 == svc_mod.ARTIFACT_MAX_TOTAL_BYTES
+    assert debug["maximum_file_mib"] * 1024**2 == svc_mod.ARTIFACT_MAX_FILE_BYTES
 
 
 def test_make_capsem_tmp_dir_honors_configured_parent(tmp_path, monkeypatch):

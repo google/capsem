@@ -7,11 +7,10 @@ keep the source contract visible to the release CI lane.
 
 from __future__ import annotations
 
-from pathlib import Path
 import json
+from pathlib import Path
 
 import rust_sources
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"

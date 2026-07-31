@@ -6,7 +6,6 @@ import os
 import subprocess
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FIXTURE_GRAPH = (
     PROJECT_ROOT
@@ -28,8 +27,7 @@ def test_release_site_builds_from_release_graph_fixture() -> None:
         cwd=PROJECT_ROOT,
         env=env,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     assert result.returncode == 0, result.stdout + result.stderr

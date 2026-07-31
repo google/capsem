@@ -1,7 +1,6 @@
 """Shared fixtures for VM cleanup verification tests."""
 
 import pytest
-
 from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.cleanup

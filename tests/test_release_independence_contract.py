@@ -7,7 +7,6 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_GRAPH = (
     PROJECT_ROOT
@@ -317,8 +316,9 @@ def _changed_paths(old: Any, new: Any, prefix: tuple[str, ...] = ()) -> set[tupl
 
 
 def _digest(seed: str) -> dict[str, str]:
-    import blake3
     import hashlib
+
+    import blake3
 
     payload = seed.encode("utf-8")
     return {

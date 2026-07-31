@@ -1,9 +1,9 @@
 """Verify VM names can be reused after deletion."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -39,10 +39,8 @@ def test_create_delete_reuse_name():
         assert name not in ids, f"VM {name} still in list after final delete"
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
         svc.stop()
 
 
@@ -72,8 +70,6 @@ def test_service_healthy_after_mass_delete():
 
     finally:
         for name in vms:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{name}/delete")
-            except Exception:
-                pass
         svc.stop()

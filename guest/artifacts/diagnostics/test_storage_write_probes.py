@@ -3,7 +3,6 @@
 import pathlib
 
 import pytest
-
 from conftest import run
 
 

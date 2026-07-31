@@ -13,12 +13,10 @@ import re
 from pathlib import Path
 
 import pytest
-
 from helpers.gate import RecordingRunner
 
 from capsem.gate import versions
 from capsem.gate.errors import GateError
-
 
 WORKSPACE = """\
 [workspace]
@@ -78,7 +76,7 @@ def test_an_earlier_version_key_does_not_win(tmp_path: Path) -> None:
 def test_a_checkout_without_a_workspace_version_says_so(tmp_path: Path) -> None:
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "capsem"\n')
 
-    with pytest.raises(GateError, match="no .workspace.package. version"):
+    with pytest.raises(GateError, match=r"no .workspace.package. version"):
         versions.workspace_version(tmp_path)
 
 

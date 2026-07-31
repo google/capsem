@@ -22,7 +22,6 @@ from macos_tart_glowup import (
     wait_for_ssh,
 )
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -138,4 +137,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as error:
         print(f"Tart readiness failed: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from error

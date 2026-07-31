@@ -12,11 +12,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import Mapping, cast
-
+from typing import cast
 
 REPORT_SCHEMA = "capsem.release_glowup.v1"
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -46,13 +45,13 @@ class ArtifactIdentity:
     """Content and release-graph identity for the exact native package."""
 
     __slots__ = (
-        "path",
-        "name",
-        "version",
-        "platform",
         "architecture",
         "bytes",
+        "name",
+        "path",
+        "platform",
         "sha256",
+        "version",
     )
 
     def __init__(
@@ -127,8 +126,8 @@ class PairingIdentity:
     __slots__ = (
         "channel",
         "manifest_sha256",
-        "package_version",
         "package_sha256",
+        "package_version",
         "profiles_sha256",
     )
 

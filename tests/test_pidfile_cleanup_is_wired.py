@@ -16,7 +16,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 JUSTFILE = PROJECT_ROOT / "justfile"
 CRATES = PROJECT_ROOT / "crates"

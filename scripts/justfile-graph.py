@@ -18,7 +18,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 # A recipe header is `name params: deps`, anchored at column zero so recipe
@@ -44,7 +43,7 @@ def recipe_body(justfile: str, name: str) -> str:
     start = next(
         index
         for index, line in enumerate(lines)
-        if line.startswith(f"{name}:") or line.startswith(f"{name} ")
+        if line.startswith((f"{name}:", f"{name} "))
     )
     end = len(lines)
     for index in range(start + 1, len(lines)):
