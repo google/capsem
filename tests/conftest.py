@@ -32,6 +32,22 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Every service this suite starts spawns a real capsem-tray: the spawn falls
+# back to `find_sibling_binary("capsem-tray")` when --tray-binary is omitted,
+# and the tray's singleton lock lives under CAPSEM_RUN_DIR, which each service
+# points at its own temp dir -- so the locks never dedupe and a suite run puts
+# one menu bar icon on the developer's screen per service.
+#
+# Headless keeps the companion and drops only the NSStatusItem, so the
+# service's spawn-and-reap path stays covered while the menu bar stays quiet.
+# Set here rather than in one fixture because capsem-mcp and capsem-e2e build
+# their own service env; all of them inherit this process's environment.
+#
+# Assigned, not setdefault: the tray tests for presence, so any value including
+# "0" means headless, and a conditional set would only look like an opt-out
+# while behaving identically. Debugging the icon means editing this line.
+os.environ["CAPSEM_TRAY_HEADLESS"] = "1"
+
 # Populated by the hookwrapper below; read by fixtures (ServiceInstance.stop)
 # that archive their tmp_dir when this worker session saw any failure.
 FAILED_NODEIDS: list[str] = []

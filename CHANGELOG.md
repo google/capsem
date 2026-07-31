@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gate, and it reaps what it finds by exact pid. The existing guard proved the
   reaping was *wired* to a pidfile some binary writes; it stayed green through
   this entire bug, because wiring and working are different claims.
+- Test runs no longer put a menu bar icon on the developer's screen per
+  service. Omitting `--tray-binary` was believed to prevent the tray; it does
+  not, because the spawn falls back to `find_sibling_binary("capsem-tray")` --
+  a fallback the CLI's auto-started daemon depends on, since it passes no
+  companion paths at all. The tray's singleton lock lives under
+  `CAPSEM_RUN_DIR`, which every test service points at its own temp dir, so
+  the locks never deduped either: one live tray per service. The suite now
+  sets `CAPSEM_TRAY_HEADLESS`, which drops the icon while the companion still
+  starts, holds its guard and lock, and is reaped with its service -- so the
+  service's spawn-and-reap path stays covered rather than going untested.
 - The release stamper no longer builds a version from the clock. It still
   assembled `1.${RELEASE_MINOR}.$(date +%s)` for the whole semver rewrite, so
   `just release-binaries` would have stamped `1.6.<timestamp>` and then failed

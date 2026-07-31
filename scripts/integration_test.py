@@ -137,11 +137,17 @@ def _test_isolation_env() -> dict[str, str]:
     The credential broker must not touch the developer's native keychain.
     Tests use an isolated JSON store inside CAPSEM_HOME so captured credentials
     can be asserted without host prompts or hidden state.
+
+    The tray runs headless for the same reason: a service started here spawns
+    one (the spawn falls back to the sibling binary when --tray-binary is
+    omitted), and a smoke run should not put an icon in the developer's menu
+    bar. The companion still starts, so its lifecycle stays exercised.
     """
     return {
         "CAPSEM_CREDENTIAL_STORE_PATH": str(
             INTEGRATION_HOME / "run" / "credential-store.json"
-        )
+        ),
+        "CAPSEM_TRAY_HEADLESS": "1",
     }
 
 

@@ -463,10 +463,13 @@ class ServiceInstance:
         print(f"SERVICE LOG: {log_path}")
         self._log_file = open(log_path, "w")
 
-        # Deliberately omit --tray-binary: the tray is a user-facing macOS
-        # menu bar icon and spawning it on every test instance flashes the
-        # menu bar dozens of times during a full suite run. Companion
-        # lifecycle tests exercise the tray via their own spawn.
+        # Omitting --tray-binary does NOT suppress the tray: the service falls
+        # back to `find_sibling_binary("capsem-tray")`, which the CLI's own
+        # direct spawn depends on, so every instance here starts a tray on
+        # macOS once the gateway writes its token. What keeps it off the menu
+        # bar is CAPSEM_TRAY_HEADLESS, set for the whole suite in
+        # tests/conftest.py and inherited through this env. capsem-guard binds
+        # the tray to this service, so it dies with us rather than leaking.
         self.proc = subprocess.Popen(
             [
                 str(SERVICE_BINARY),

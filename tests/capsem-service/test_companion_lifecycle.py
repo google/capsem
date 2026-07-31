@@ -30,6 +30,7 @@ import time
 import uuid
 from pathlib import Path
 
+import psutil
 import pytest
 
 from helpers.sign import sign_binary
@@ -936,3 +937,51 @@ def _pid_alive(pid: int) -> bool:
         return False
     state = out.strip()
     return bool(state) and not state.startswith("Z")
+
+
+class TestServiceTrayStaysOffTheMenuBar:
+    """A suite run must not put icons in the developer's menu bar.
+
+    Omitting --tray-binary does not prevent the tray: the service falls back
+    to `find_sibling_binary("capsem-tray")`, a fallback the CLI's own
+    auto-start depends on because it passes no companion paths at all. And the
+    tray's singleton lock lives at `$CAPSEM_RUN_DIR/tray.lock`, which every
+    ServiceInstance points at its own temp dir, so the locks never dedupe --
+    one live tray per service, each building a real NSStatusItem.
+
+    CAPSEM_TRAY_HEADLESS is what actually keeps the menu bar quiet. It drops
+    only the icon: the companion still starts, holds its guard and lock, and
+    is reaped with the service, so the coverage above stays intact.
+    """
+
+    def test_suite_env_runs_trays_headless(self):
+        assert os.environ.get("CAPSEM_TRAY_HEADLESS"), (
+            "tests/conftest.py must mark the whole suite headless before any "
+            "service starts; without it every ServiceInstance adds a menu bar "
+            "icon on macOS"
+        )
+
+    def test_service_passes_headless_through_to_its_tray(self):
+        """The setting is useless if it does not reach the spawned companion."""
+        svc = ServiceInstance()
+        svc.start()
+        try:
+            time.sleep(1.0)
+            if sys.platform != "darwin":
+                pytest.skip("the tray is macOS-only")
+            trays = [
+                psutil.Process(pid)
+                for pid in _list_direct_children(svc.proc.pid)
+                if "capsem-tray" in " ".join(psutil.Process(pid).cmdline())
+            ]
+            assert trays, (
+                "expected the service to spawn a tray via sibling fallback; if "
+                "this stops being true the headless rail is guarding nothing"
+            )
+            for tray in trays:
+                assert "CAPSEM_TRAY_HEADLESS" in tray.environ(), (
+                    f"tray {tray.pid} did not inherit CAPSEM_TRAY_HEADLESS, so "
+                    "it built a real menu bar icon"
+                )
+        finally:
+            svc.stop()
