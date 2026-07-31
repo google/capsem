@@ -37,7 +37,7 @@ BOUNDARY = CONFIG.boundary
 QUALIFIED = {
     "shutil": {"rmtree", "copytree", "copy", "copy2", "copyfile", "move"},
     "tempfile": {"mkdtemp", "mkstemp", "TemporaryDirectory"},
-    "os": {"replace", "remove", "removedirs", "makedirs", "rename", "unlink"},
+    "os": {"replace", "remove", "removedirs", "makedirs", "rename", "unlink", "kill", "killpg"},
 }
 
 # Bare method names that only `Path` has, so a call to one is unambiguous.
@@ -123,19 +123,24 @@ def test_every_ratchet_entry_still_exists() -> None:
     assert not missing, f"these modules no longer exist: {missing}"
 
 
-def test_the_three_permitted_modules_are_the_ones_that_have_to_be() -> None:
+def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
     """Widening this is a design decision, not a convenience.
 
-    `fileactions` is the primitives. `proc` is the funnel every invocation
-    passes through, which is why the run log only has to hook one place.
-    `pidfiles` is the one place a signal is sent, so "which process did the
-    gate kill" has a single answer -- and why nothing anywhere reaches for
-    `pkill`, which is how a gate kills a developer's own daemon.
+    Each of these owns one piece of machine state as its entire purpose, which
+    is why routing it through an action would be ceremony rather than
+    visibility -- there is no gate work here for a dry run to show.
+
+    `fileactions` is the primitives themselves. `proc` is the funnel every
+    invocation passes through, which is why the run log has one place to hook.
+    `pidfiles` is where a signal is sent, so "which process did the gate kill"
+    has a single answer. `locks` owns the lockfile that makes one gate per
+    machine true, and it has to place that file before any workspace exists.
     """
     assert set(BOUNDARY.direct_machine_access) == {
         "fileactions.py",
         "proc.py",
         "pidfiles.py",
+        "locks.py",
     }
 
 

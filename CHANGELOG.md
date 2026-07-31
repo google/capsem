@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Two gate runs can no longer start on one machine. A run's first act is to
+  remove `$CAPSEM_HOME` and stop the service inside it, so a second run
+  deletes the first's home mid-flight and both report failures belonging to
+  neither. The lock is `flock`, not a pidfile: the kernel drops it when the
+  holder dies, so a killed gate cannot wedge the machine and there is no
+  staleness heuristic to get wrong. Contention names the holder -- what it is
+  running, which pid, for how long -- instead of blocking mutely, and a
+  missing or half-written holder record still reports the contention rather
+  than an error about the record. All three subtleties the shell version
+  carried in comments are now tests: the lockfile sits outside every tree the
+  gate wipes, a daemon launched from a shell does not keep the lock alive
+  after the gate dies, and the descriptor is explicitly non-inheritable.
 - Gate ordering is declared as a dependency graph and derived by topological
   sort, rather than written out as a list whose order is its meaning. The
   install gate's defect was exactly this shape -- a manifest URL consumed

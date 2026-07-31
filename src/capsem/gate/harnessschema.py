@@ -79,6 +79,7 @@ class LockConfig(Strict):
     holder_record: str
     report_after_seconds: float
     wait_timeout_seconds: float
+    poll_interval_seconds: float
 
 
 class LocksConfig(Strict):

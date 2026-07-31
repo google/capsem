@@ -438,12 +438,20 @@ remaining_shell_recipes = [
 shell_control_flow = ["if ", "for ", "while ", "case ", "until ", "trap "]
 recipes_with_inline_control_flow = ["_pnpm-install"]
 
-# The only modules allowed to touch the machine directly. `fileactions` is the
-# filesystem primitives themselves; `proc` is the single funnel every
-# invocation passes through, which is why the run log has one place to hook;
-# `pidfiles` is the one place a signal is sent, so "which process did the gate
-# kill" has a single answer. Widening this is a design decision.
-direct_machine_access = ["fileactions.py", "proc.py", "pidfiles.py"]
+# The only modules allowed to touch the machine directly. Each owns one piece
+# of machine state as its entire purpose, so there is no gate work here for a
+# dry run to show and routing it through an action would be ceremony.
+#
+#   fileactions  the filesystem primitives themselves
+#   proc         the single funnel every invocation passes through, and so the
+#                one place the run log has to hook
+#   pidfiles     where a signal is sent, so "which process did the gate kill"
+#                has a single answer
+#   locks        the lockfile that makes one gate per machine true, which has
+#                to be placed before any workspace exists to put it in
+#
+# Widening this is a design decision, not a convenience.
+direct_machine_access = ["fileactions.py", "proc.py", "pidfiles.py", "locks.py"]
 
 # Only the plan schedules concurrent work. A module that reaches for its own
 # thread pool has parallelism the graph cannot see -- and therefore parallelism
@@ -511,6 +519,7 @@ holder_record = "target/capsem-test-execution.holder"
 # running in another terminal deserves to be told that, not to watch a cursor.
 report_after_seconds = 2
 wait_timeout_seconds = 7200
+poll_interval_seconds = 0.25
 
 # ---------------------------------------------------------------------------
 # The execution log
