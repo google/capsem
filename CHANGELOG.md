@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokens. Rotation is bounded by both count and bytes, and gives up completed
   runs before crashed ones -- a crashed run is precisely the case where the
   terminal output was lost with it.
+- A run now reports where its time went, and reports the right thing: the
+  critical path, not the slowest step. Shortening a step that runs beside
+  something longer changes nothing, so the number worth acting on is the
+  longest chain that had to happen in order. Slow actions are named by what
+  they invoked rather than by a label, and a failure is reported with the
+  steps it took down with it. Computed from the recorded events, so the
+  question can be asked about a finished run from a directory somebody
+  attached to a bug report.
 - Two gate runs can no longer start on one machine. A run's first act is to
   remove `$CAPSEM_HOME` and stop the service inside it, so a second run
   deletes the first's home mid-flight and both report failures belonging to

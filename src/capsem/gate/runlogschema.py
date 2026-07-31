@@ -36,6 +36,20 @@ class RunStart(Payload):
     free_gb: float
 
 
+class PlanShape(Payload):
+    """The graph, recorded so a finished run can still be explained.
+
+    Without it a stored run has durations but no edges, and the critical path
+    -- the only number worth acting on -- could be computed while the run was
+    in memory and never again.
+    """
+
+    event: Literal["plan"] = "plan"
+    steps: tuple[str, ...]
+    edges: tuple[tuple[str, str], ...]
+    """`(before, after)` pairs, in the order the plan declared them."""
+
+
 class StepStart(Payload):
     event: Literal["step.start"] = "step.start"
     step: str
@@ -118,6 +132,7 @@ PAYLOADS: dict[str, type[Payload]] = {
     model.model_fields["event"].default: model
     for model in (
         RunStart,
+        PlanShape,
         StepStart,
         ActionRun,
         Exec,
