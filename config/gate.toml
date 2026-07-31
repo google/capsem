@@ -438,6 +438,29 @@ remaining_shell_recipes = [
 shell_control_flow = ["if ", "for ", "while ", "case ", "until ", "trap "]
 recipes_with_inline_control_flow = ["_pnpm-install"]
 
+# The only modules allowed to touch the machine directly. `fileactions` is the
+# filesystem primitives themselves; `proc` is the single funnel every
+# invocation passes through, which is why the run log has one place to hook;
+# `pidfiles` is the one place a signal is sent, so "which process did the gate
+# kill" has a single answer. Widening this is a design decision.
+direct_machine_access = ["fileactions.py", "proc.py", "pidfiles.py"]
+
+# Modules that still reach past the primitives, pending extraction onto them.
+# Work that goes around `actions`/`fileactions` is work the dry run cannot show
+# and the run log cannot time.
+#
+# A ratchet, not an exemption list: a module may leave it, nothing may join it,
+# and one that has been extracted must be struck so the list cannot describe a
+# past that is no longer true.
+modules_bypassing_primitives = [
+    "assetlanes.py",
+    "assets.py",
+    "crosscompile.py",
+    "doctor.py",
+    "install.py",
+    "versions.py",
+]
+
 # ---------------------------------------------------------------------------
 # What may not run beside what
 # ---------------------------------------------------------------------------

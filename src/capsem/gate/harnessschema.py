@@ -37,6 +37,8 @@ class BoundaryConfig(Strict):
     remaining_shell_recipes: tuple[str, ...]
     shell_control_flow: tuple[str, ...]
     recipes_with_inline_control_flow: tuple[str, ...]
+    direct_machine_access: tuple[str, ...]
+    modules_bypassing_primitives: tuple[str, ...]
 
 
 class Exclusive(Strict):

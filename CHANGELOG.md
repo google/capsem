@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Exactly three gate modules may touch the machine directly: the filesystem
+  primitives, the single funnel every invocation passes through, and the one
+  place a signal is sent. Work that goes around them is work a dry run cannot
+  show and a run log cannot time, so a contract test holds the line, with the
+  not-yet-extracted modules on a ratchet that can only shrink. The same guard
+  forbids `pkill`, `killall` and `pgrep` anywhere in the package: killing by
+  process name cannot tell this run's daemons from the developer's own, and
+  `_ensure-service` avoided it deliberately with nothing enforcing that.
 - The initrd repack rule is enforced rather than remembered. The initrd is a
   hash-named file hardlinked into every asset tree built from the same bytes,
   so rewriting it in place rewrites all of them and the damage surfaces later
