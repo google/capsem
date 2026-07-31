@@ -2889,10 +2889,15 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     # package build moved out of the recipe body, "local" is the justfile plus
     # what it dispatches to -- the point of the rule is that both rails run the
     # same code, not that one file contains it.
+    # "Local" is the justfile plus everything it dispatches to: the gate
+    # package, the config that names the scripts it runs, and the build script
+    # the package rail hands to its builder. The point of the rule is that both
+    # rails execute the same code, not that one file contains it.
     local_rail = "\n".join(
         [
             just,
             (PROJECT_ROOT / "scripts" / "build-linux-package.sh").read_text(),
+            (PROJECT_ROOT / "config" / "gate.toml").read_text(),
             *(
                 path.read_text()
                 for path in sorted((PROJECT_ROOT / "src" / "capsem" / "gate").glob("*.py"))

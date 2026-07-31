@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coverage run in `ci.yaml` enforced no floor at all, because its copy had been
   forgotten.
 
+- The exact-package proof moved into `capsem.gate.debproof`. It mounts the
+  checkout read-only -- a package that only works because it wrote back into
+  `/src` is not a package that works -- and now fails when a shipped binary
+  reports a version other than the package's own. A `.deb` can install cleanly
+  carrying binaries from an earlier build, since the package metadata and the
+  ELF inside it are stamped separately, and every file-existence check passes
+  on that package.
 - The VM asset build and boot gate moved into `capsem.gate.assets`. Its two
   architecture lanes ran concurrently in shell, with each lane's exit status
   coming back through `wait` into a variable -- and a variable that goes unread

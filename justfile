@@ -495,6 +495,7 @@ _test-candidate-run:
         tests/test_gate_cli.py
         tests/test_gate_config.py
         tests/test_gate_crosscompile.py
+        tests/test_gate_debproof.py
         tests/test_gate_docker.py
         tests/test_gate_doctor.py
         tests/test_gate_install_container.py
@@ -1243,150 +1244,7 @@ smoke:
 # Builds the real .deb (Tauri + repack), installs with dpkg -i (exercises
 # deb-postinst.sh), then runs the pytest suite against the installed layout.
 _prove-linux-deb: _test-install-harness-preflight
-    #!/bin/bash
-    set -euo pipefail
-    ROOT="{{justfile_directory()}}"
-    MANIFEST_URL="${CAPSEM_PROOF_MANIFEST_URL:?exact package proof requires CAPSEM_PROOF_MANIFEST_URL}"
-    MANIFEST_CHANNEL="${CAPSEM_PROOF_MANIFEST_CHANNEL:?exact package proof requires CAPSEM_PROOF_MANIFEST_CHANNEL}"
-    case "$MANIFEST_CHANNEL" in
-        stable|nightly|corp) ;;
-        *)
-            echo "ERROR: unsupported exact package proof channel: $MANIFEST_CHANNEL" >&2
-            exit 1
-            ;;
-    esac
-    DEB_INPUT="${CAPSEM_PROOF_DEB:?exact package proof requires CAPSEM_PROOF_DEB}"
-    DEB_DIR=$(cd "$(dirname "$DEB_INPUT")" && pwd -P)
-    DEB="$DEB_DIR/$(basename "$DEB_INPUT")"
-    case "$DEB" in
-        "$ROOT"/dist/*.deb) ;;
-        *)
-            echo "ERROR: exact Debian package proof only accepts dist/*.deb (got: $DEB)" >&2
-            exit 1
-            ;;
-    esac
-    test -f "$DEB"
-    test -r /dev/kvm -a -w /dev/kvm
-    test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
-
-    IMAGE="capsem-install-test"
-    CONTAINER="capsem-qualified-deb-proof"
-    RELATIVE_DEB="${DEB#$ROOT/}"
-    CONTAINER_DEB="/src/$RELATIVE_DEB"
-    EXPECTED_VERSION=$(dpkg-deb -f "$DEB" Version)
-    test -n "$EXPECTED_VERSION"
-
-    DEVICE_ARGS=(
-        --device /dev/kvm
-        --device /dev/vhost-vsock
-    )
-    if [ -r /dev/vsock ] && [ -w /dev/vsock ]; then
-        DEVICE_ARGS+=(--device /dev/vsock)
-    fi
-    cleanup() {
-        docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-    }
-    trap cleanup EXIT
-    cleanup
-
-    echo "Starting clean systemd container for exact package proof..."
-    docker run -d --name "$CONTAINER" \
-        --privileged --cgroupns=host \
-        --security-opt seccomp=unconfined \
-        "${DEVICE_ARGS[@]}" \
-        -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
-        --tmpfs /run --tmpfs /tmp \
-        -v "$ROOT:/src:ro" \
-        "$IMAGE" /usr/lib/systemd/systemd
-
-    SYSTEMD_READY=false
-    for _ in $(seq 1 60); do
-        if docker exec "$CONTAINER" systemctl is-system-running --wait 2>/dev/null \
-            | grep -qE 'running|degraded'; then
-            SYSTEMD_READY=true
-            break
-        fi
-        sleep 0.5
-    done
-    if [ "$SYSTEMD_READY" != "true" ]; then
-        echo "ERROR: systemd did not become ready for exact Debian package proof" >&2
-        docker logs "$CONTAINER" >&2 || true
-        exit 1
-    fi
-    docker exec "$CONTAINER" test -r /dev/kvm -a -w /dev/kvm
-    docker exec "$CONTAINER" test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
-
-    echo "Installing exact package: $DEB"
-    docker exec -e CONTAINER_DEB="$CONTAINER_DEB" "$CONTAINER" \
-        bash -c 'dpkg -i "$CONTAINER_DEB" 2>&1 || apt-get install -f -y'
-    INSTALLED_STATE=$(docker exec "$CONTAINER" dpkg-query -W -f='${Status}' capsem)
-    INSTALLED_VERSION=$(docker exec "$CONTAINER" dpkg-query -W -f='${Version}' capsem)
-    test "$INSTALLED_STATE" = "install ok installed"
-    test "$INSTALLED_VERSION" = "$EXPECTED_VERSION"
-    for bin in \
-        capsem \
-        capsem-admin \
-        capsem-app \
-        capsem-gateway \
-        capsem-mcp \
-        capsem-mcp-aggregator \
-        capsem-mcp-builtin \
-        capsem-process \
-        capsem-service \
-        capsem-tray \
-        capsem-tui \
-        capsem-mock-server \
-        capsem-bench-rs; do
-        docker exec "$CONTAINER" test -x "/usr/bin/$bin"
-        if [ "$bin" != "capsem-app" ]; then
-            docker exec "$CONTAINER" "/usr/bin/$bin" --version | grep -F "$EXPECTED_VERSION"
-        fi
-    done
-
-    STATUS_OUTPUT=$(docker exec \
-        -u capsem \
-        -e HOME=/home/capsem \
-        -e XDG_RUNTIME_DIR=/run/user/1000 \
-        "$CONTAINER" /usr/bin/capsem status)
-    printf '%s\n' "$STATUS_OUTPUT"
-    grep -F "Installed: true" <<<"$STATUS_OUTPUT"
-    grep -F "Running:   true" <<<"$STATUS_OUTPUT"
-    grep -F "Service:   ok" <<<"$STATUS_OUTPUT"
-    grep -F "Gateway:   ok" <<<"$STATUS_OUTPUT"
-    PROFILE_COUNTS=$(sed -n 's/^Profiles:[[:space:]]*\([0-9][0-9]*\)\/\([0-9][0-9]*\) ready.*/\1 \2/p' <<<"$STATUS_OUTPUT" | head -n 1)
-    if [ -z "$PROFILE_COUNTS" ]; then
-        echo "ERROR: exact package status has no Profiles: ready count" >&2
-        exit 1
-    fi
-    read -r READY_PROFILES TOTAL_PROFILES <<<"$PROFILE_COUNTS"
-    if [ "$TOTAL_PROFILES" -le 0 ] || [ "$READY_PROFILES" -ne "$TOTAL_PROFILES" ]; then
-        echo "ERROR: exact package profiles are not all ready: $READY_PROFILES/$TOTAL_PROFILES" >&2
-        exit 1
-    fi
-
-    docker exec \
-        -u capsem \
-        -e HOME=/home/capsem \
-        -e XDG_RUNTIME_DIR=/run/user/1000 \
-        "$CONTAINER" \
-        python3 /src/scripts/verify-installed-release.py \
-            --capsem /usr/bin/capsem \
-            --capsem-home /home/capsem/.capsem \
-            --manifest-url "$MANIFEST_URL" \
-            --channel "$MANIFEST_CHANNEL" \
-            --package-version "$EXPECTED_VERSION"
-
-    docker exec \
-        -u capsem \
-        -e HOME=/home/capsem \
-        -e XDG_RUNTIME_DIR=/run/user/1000 \
-        "$CONTAINER" \
-        python3 /src/scripts/prove-installed-shell.py \
-            --capsem /usr/bin/capsem \
-            --marker CAPSEM_QUALIFIED_DEB_SHELL_OK \
-            --session-name qualification-exact-deb-shell \
-            --timeout 300
-    echo "Exact Debian package proof passed: version=$EXPECTED_VERSION profiles=$READY_PROFILES/$TOTAL_PROFILES"
+    @uv run capsem-gate prove-deb
 
 _test-install-harness-preflight:
     @uv run capsem-gate install-image

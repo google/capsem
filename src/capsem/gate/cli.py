@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from . import (
     assets,
     crosscompile,
+    debproof,
     doctor,
     install,
     installimage,
@@ -34,6 +35,7 @@ COMMAND_MODULES = (
     installimage,
     install,
     crosscompile,
+    debproof,
     lint,
     doctor,
 )

@@ -166,6 +166,46 @@ channels = ["stable", "nightly", "corp"]
 # Per-architecture, so alternating targets does not rebuild the world.
 target_volume = "capsem-host-target-{arch}"
 
+# Installing the exact package into a clean systemd container and proving it
+# works: every binary present and reporting the package's own version, the
+# service and gateway up, every profile ready, and a real guest shell.
+[package.proof]
+container = "capsem-qualified-deb-proof"
+systemd_ready_attempts = 60
+verify_script = "scripts/verify-installed-release.py"
+shell_proof_script = "scripts/prove-installed-shell.py"
+shell_marker = "CAPSEM_QUALIFIED_DEB_SHELL_OK"
+session_name = "qualification-exact-deb-shell"
+shell_timeout_seconds = 300
+
+# Every binary the package must install. Each reports the package version
+# except capsem-app, which is the Tauri bundle and has no --version.
+binaries = [
+    "capsem",
+    "capsem-admin",
+    "capsem-app",
+    "capsem-gateway",
+    "capsem-mcp",
+    "capsem-mcp-aggregator",
+    "capsem-mcp-builtin",
+    "capsem-process",
+    "capsem-service",
+    "capsem-tray",
+    "capsem-tui",
+    "capsem-mock-server",
+    "capsem-bench-rs",
+]
+binaries_without_version = ["capsem-app"]
+
+# `capsem status` lines that must be present. A package that installs and then
+# cannot start its own service passes every file-existence check.
+status_requires = [
+    "Installed: true",
+    "Running:   true",
+    "Service:   ok",
+    "Gateway:   ok",
+]
+
 # Shared across every package build, so the second architecture reuses the
 # first's downloads instead of refetching the index.
 [[package.volumes]]
@@ -310,7 +350,6 @@ remaining_shell_recipes = [
     "_install-tools",
     "_materialize-config",
     "_pack-initrd",
-    "_prove-linux-deb",
     "_sign",
     "_sign-release",
     "_test-candidate-run",

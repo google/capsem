@@ -112,19 +112,12 @@ class InstallContainer:
         self._claim_paths()
 
     def _await_systemd(self) -> None:
-        for _ in range(self._settings.systemd_ready_attempts):
-            state = self._docker.shell_capture(
-                self.name, "systemctl is-system-running --wait 2>/dev/null || true"
-            )
-            if "running" in state or "degraded" in state:
-                return
-            self._sleep(self._settings.systemd_ready_interval_seconds)
-        waited = (
-            self._settings.systemd_ready_attempts
-            * self._settings.systemd_ready_interval_seconds
-        )
-        raise GateError(
-            f"systemd never reached running or degraded in {self.name} after {waited:.0f}s"
+        await_systemd(
+            self._docker,
+            self.name,
+            attempts=self._settings.systemd_ready_attempts,
+            interval=self._settings.systemd_ready_interval_seconds,
+            sleep=self._sleep,
         )
 
     def _claim_paths(self) -> None:
@@ -154,3 +147,30 @@ class InstallContainer:
 
     def stop(self) -> None:
         self._docker.remove(self.name)
+
+
+def await_systemd(
+    docker: Docker,
+    container: str,
+    *,
+    attempts: int,
+    interval: float,
+    sleep=time.sleep,
+) -> None:
+    """Wait for systemd to finish coming up inside a container.
+
+    `degraded` counts: a container with one failed unit still installs
+    packages, and refusing it would fail the gate on something it does not
+    test.
+    """
+    for _ in range(attempts):
+        state = docker.shell_capture(
+            container, "systemctl is-system-running --wait 2>/dev/null || true"
+        )
+        if "running" in state or "degraded" in state:
+            return
+        sleep(interval)
+    raise GateError(
+        f"systemd never reached running or degraded in {container} after "
+        f"{attempts * interval:.0f}s"
+    )
