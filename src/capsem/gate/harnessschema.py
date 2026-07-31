@@ -30,17 +30,14 @@ class LintConfig(Strict):
     def relaxed_roots(self) -> tuple[str, ...]:
         return tuple(name for name in self.python_roots if name not in self.strict_roots)
 
-
 class BoundaryConfig(Strict):
     max_recipe_lines: int
     max_module_lines: int
-    remaining_shell_recipes: tuple[str, ...]
     shell_control_flow: tuple[str, ...]
     recipes_with_inline_control_flow: tuple[str, ...]
     direct_machine_access: tuple[str, ...]
     direct_concurrency: tuple[str, ...]
     modules_bypassing_primitives: tuple[str, ...]
-
 
 class Exclusive(Strict):
     """Something only one step may hold at a time, and why.
@@ -60,7 +57,6 @@ class Exclusive(Strict):
 
     reason: str
 
-
 class ExecutionConfig(Strict):
     exclusives: dict[str, Exclusive]
 
@@ -71,7 +67,6 @@ class ExecutionConfig(Strict):
                 object.__setattr__(exclusive, "name", key)
         return self
 
-
 class LockConfig(Strict):
     """One holder at a time, proven by the kernel rather than by a PID file."""
 
@@ -81,176 +76,8 @@ class LockConfig(Strict):
     wait_timeout_seconds: float
     poll_interval_seconds: float
 
-
 class LocksConfig(Strict):
     gate: LockConfig
-
-
-class CrateTool(Strict):
-    """A cargo-installed tool: how to find it, and how to get it."""
-
-    name: str
-    install: tuple[str, ...]
-
-
-class ToolchainConfig(Strict):
-    sync: tuple[str, ...]
-    node_workspaces: tuple[str, ...]
-    node_install: tuple[str, ...]
-    node_env: dict[str, str]
-    rust_targets: tuple[str, ...]
-    rust_components: tuple[str, ...]
-    crates: tuple[CrateTool, ...]
-
-
-class ModulesConfig(Strict):
-    build_chain_artifact_tests: tuple[str, ...]
-    release_suites: tuple[str, ...]
-    contract_glob: str
-    rust_coverage: tuple[str, ...]
-    rust_coverage_floor: str
-    guest_agent_build: tuple[str, ...]
-    guest_binaries: tuple[str, ...]
-    guest_binary_root: str
-    guest_binary_tests: tuple[str, ...]
-    release_input_dir: str
-    release_profile: str
-    release_package: str
-    verify_inputs_script: str
-    prove_profile_assets_script: str
-    glowup_script: str
-    macos_glowup_script: str
-    macos_glowup_report: str
-    macos_report_variable: str
-    glowup_work_dir: str
-    channel_switch_work_dir: str
-    release_bin_dir: str
-    default_bin_dir: str
-    channel_switch_cleared: tuple[str, ...]
-
-
-class FunctionalConfig(Strict):
-    injection_script: str
-    integration_script: str
-    binary: str
-    assets_dir: str
-    config_root: str
-    profiles_subdir: str
-    binary_variable: str
-    assets_variable: str
-    config_root_variable: str
-    assets_dir_variable: str
-
-
-class NamedVolume(Strict):
-    source: str
-    target: str
-
-
-class HostImageConfig(Strict):
-    tag: str
-    dockerfile: str
-    context: str
-    script: str
-    output_dir: str
-    nextest_dir: str
-    mount: str
-    container_output: str
-    container_home: str
-    probe_user: str
-    alpine: str
-    tmpfs: str
-    nextest_mount: str
-    cached_volumes: tuple[NamedVolume, ...]
-    environment: dict[str, str]
-
-
-class SbomConfig(Strict):
-    script: str
-    output: str
-    dist_glob: str
-    macos_package: str
-    expected_debs: int
-    spdx_version: str
-
-
-class SigningConfig(Strict):
-    entitlements: str
-    binaries: tuple[str, ...]
-    release_binary: str
-
-
-class FrontendConfig(Strict):
-    build_script: str
-    build_target: str
-    app_crate: str
-    profiles: tuple[str, ...]
-
-
-class LogsConfig(Strict):
-    service_log: str
-    failure_root: str
-    cli: str
-
-
-class ImageBuildConfig(Strict):
-    admin: tuple[str, ...]
-    templates: tuple[str, ...]
-    profiles_glob: str
-    profile_manifest: str
-    config_root: str
-    output: str
-    doctor_skips: dict[str, str]
-    required: tuple[str, ...]
-
-
-class AuditsConfig(Strict):
-    cargo: str
-    pnpm: str
-    python_lock: str
-    public_surface: str
-    source_syntax: str
-    hardcoded_selections: str
-    skills_dir: str
-
-
-class WebSurfacesConfig(Strict):
-    script: str
-    targets: tuple[str, ...]
-    blocks_clippy: str
-
-
-class PytestConfig(Strict):
-    root: str
-    base_flags: tuple[str, ...]
-    stop_at_first: str
-    parallel_flags: tuple[str, ...]
-    coverage_flags: tuple[str, ...]
-    broad_ignores: tuple[str, ...]
-    host_snapshot_serial: tuple[str, ...]
-    serial_paths: tuple[str, ...]
-    benchmark_baseline: str
-    benchmark_deselect: str
-    require_artifacts: str
-    profile_variable: str
-    base_profile: str
-    materialized_profiles: str
-    test_manifest: str
-
-
-class SuitesConfig(Strict):
-    source_contract: tuple[str, ...]
-    pytest: PytestConfig
-
-
-class WorkspaceConfig(Strict):
-    home: str
-    run_dir: str
-    seeded_dirs: tuple[str, ...]
-    benchmark_root: str
-    coverage_file: str
-    evidence_dir: str
-
 
 class RunLogConfig(Strict):
     root: str
@@ -263,7 +90,6 @@ class RunLogConfig(Strict):
     keep_bytes: int
     artifact_digest: str
     slow_action_seconds: float
-
 
 class DiskConfig(Strict):
     reclaimable: tuple[str, ...]
@@ -285,3 +111,11 @@ class DiskConfig(Strict):
             if parts.is_absolute() or ".." in parts.parts:
                 raise ValueError(f"{path!r} must be relative and must not escape upwards")
         return paths
+
+class WorkspaceConfig(Strict):
+    home: str
+    run_dir: str
+    seeded_dirs: tuple[str, ...]
+    benchmark_root: str
+    coverage_file: str
+    evidence_dir: str

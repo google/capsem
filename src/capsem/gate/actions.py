@@ -198,3 +198,32 @@ class Call(Action, name="call"):
 
     def perform(self, context: Context) -> None:
         self._action(context)
+
+
+class Launch(Action, name="launch"):
+    """Start a process that outlives the step, and record its pid.
+
+    Distinct from `Run`, which waits. A daemon the gate starts has to be
+    stopped by whatever is holding it, which is why the pid goes to a file the
+    `pidfiles` module can read rather than being remembered.
+    """
+
+    def __init__(
+        self,
+        argv: list[str] | tuple[str, ...],
+        *,
+        pidfile: Path,
+        env: dict[str, str] | None = None,
+    ) -> None:
+        self._argv = tuple(str(part) for part in argv)
+        self._pidfile = pidfile
+        self._env = dict(env or {})
+
+    def render(self) -> str:
+        return f"start (detached) {Command(argv=self._argv, env=self._env)}"
+
+    def perform(self, context: Context) -> None:
+        pid = context.runner.launch(self._argv, env={**context.env, **self._env})
+        self._pidfile.parent.mkdir(parents=True, exist_ok=True)
+        self._pidfile.write_text(str(pid), encoding="utf-8")
+        context.journal.note(f"{self._argv[0]} started (pid {pid})")

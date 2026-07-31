@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `code` inside a script -- a product decision that had been spelled as a
   lambda. `scripts/release-test-profiles.py` stays as the command-line surface
   CI already calls.
+- The justfile no longer contains a shell body. It went from 2457 lines with
+  roughly 2070 of inline `bash` across thirty-five recipes to 73 body lines
+  across sixty-four, none over five, none with a shebang -- and the ratchet
+  that tracked the outstanding extraction has been deleted rather than
+  emptied, because a list describing no remaining work reads as permission for
+  some. The ceiling is five lines and the inline-control-flow exception list
+  is empty.
 - Fourteen more recipes are dispatches: the image-build family (four recipes
   spelling out one `capsem-admin image build` invocation where only the
   template varied), the asset presence check (which hand-rolled a

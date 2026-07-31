@@ -131,14 +131,18 @@ def test_every_declared_console_script_is_runnable() -> None:
 
 
 def test_the_justfile_dispatches_to_the_gate_rather_than_reimplementing_it() -> None:
-    """The whole point of the boundary: recipes call, they do not decide."""
+    """The whole point of the boundary: recipes call, they do not decide.
+
+    The extraction ratchet is gone because the extraction finished. What
+    replaces it is stronger and unconditional -- no recipe carries a shell
+    body at all, held by `tests/test_gate_boundary.py`.
+    """
     justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
     config = gate_config.load(PROJECT_ROOT)
 
     assert "uv run capsem-gate" in justfile
-    assert config.boundary.remaining_shell_recipes, (
-        "an empty list means the ratchet is finished and should be deleted"
-    )
+    assert config.boundary.max_recipe_lines <= 5
+    assert not config.boundary.recipes_with_inline_control_flow
 
 
 # ---------------------------------------------------------------------------

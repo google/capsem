@@ -20,6 +20,25 @@ from pathlib import Path
 from pydantic import Field, ValidationError, model_validator
 
 from . import host
+from .buildschema import (
+    AuditsConfig,
+    DevLoopConfig,
+    FrontendConfig,
+    FunctionalConfig,
+    HostImageConfig,
+    ImageBuildConfig,
+    InitrdConfig,
+    LogsConfig,
+    ModulesConfig,
+    ReleaseConfig,
+    SbomConfig,
+    ServiceConfig,
+    SigningConfig,
+    SmokeConfig,
+    SuitesConfig,
+    ToolchainConfig,
+    WebSurfacesConfig,
+)
 from .configschema import (
     Arch,
     AssetsConfig,
@@ -34,25 +53,13 @@ from .configschema import (
 )
 from .errors import GateError
 from .harnessschema import (
-    AuditsConfig,
     BoundaryConfig,
     DiskConfig,
     Exclusive,
     ExecutionConfig,
-    FrontendConfig,
-    FunctionalConfig,
-    HostImageConfig,
-    ImageBuildConfig,
     LintConfig,
     LocksConfig,
-    LogsConfig,
-    ModulesConfig,
     RunLogConfig,
-    SbomConfig,
-    SigningConfig,
-    SuitesConfig,
-    ToolchainConfig,
-    WebSurfacesConfig,
     WorkspaceConfig,
 )
 
@@ -77,6 +84,11 @@ class GateConfig(Strict):
     runlog: RunLogConfig
     disk: DiskConfig
     workspace: WorkspaceConfig
+    service: ServiceConfig
+    smoke: SmokeConfig
+    initrd: InitrdConfig
+    release: ReleaseConfig
+    devloop: DevLoopConfig
     audits: AuditsConfig
     websurfaces: WebSurfacesConfig
     suites: SuitesConfig

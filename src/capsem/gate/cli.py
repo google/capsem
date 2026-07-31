@@ -26,11 +26,15 @@ from . import (
     hostimage,
     hostpackage,
     imagebuild,
+    initrd,
     install,
     installimage,
     lint,
     project_root,
+    release,
     runs,
+    service,
+    smoke,
     storage,
     testmodules,
     versions,
@@ -60,6 +64,10 @@ COMMAND_MODULES = (
     imagebuild,
     hostimage,
     hostpackage,
+    service,
+    smoke,
+    initrd,
+    release,
 )
 
 

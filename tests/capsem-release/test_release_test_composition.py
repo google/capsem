@@ -54,6 +54,25 @@ def _planned(module: str) -> str:
     return command.plan().describe()
 
 
+def _planned_labels(module: str) -> tuple[str, ...]:
+    """Every step a module's plan contains, in an order the graph permits."""
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    return (
+        GateCommand.registry[module](
+            RecordingRunner(PROJECT_ROOT),
+            argparse.Namespace(dry_run=False, graph=False, timing=False),
+        )
+        .plan()
+        .labels
+    )
+
+
 def _all_modules() -> str:
     """Every module's plan, in both of the shapes a module can take.
 
@@ -238,33 +257,32 @@ def _source_digest_module():
 def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() -> None:
     """The fast module first, then the expensive one under the Colima wrapper.
 
-    Read out of the recipe when `test:` was shell. The order is now asserted
-    against the commands the gate issues, in tests/test_gate_candidate.py.
+    Read out of the recipe when `test:` was shell, and out of the plan now
+    that `_test-candidate` is a command. The module order is edges, so it
+    holds however the source is arranged.
     """
     candidate = (
         PROJECT_ROOT / "src" / "capsem" / "gate" / "candidate.py"
     ).read_text(encoding="utf-8")
-    local = _recipe("_test-candidate")
 
     assert "capsem-gate candidate" in _recipe("test")
     assert candidate.index("self._settings.fast_module") < candidate.index(
         "self._settings.colima_wrapper"
     )
-    expected = (
-        "just _test-static",
-        "just _test-artifacts",
-        "just _test-functional",
-        "just _test-glowup",
-        "just _test-recipes",
-    )
-    positions = [local.index(command) for command in expected]
+
+    order = list(_planned_labels("test-candidate"))
+    expected = [
+        "prepare",
+        "test-static",
+        "test-artifacts",
+        "test-functional",
+        "test-glowup",
+        "recipes",
+    ]
+    positions = [order.index(step) for step in expected]
     assert positions == sorted(positions)
-    assert "CAPSEM_TEST_MODULE=all" not in local
 
-    from capsem.gate import config as gate_config
-
-    settings = gate_config.load(PROJECT_ROOT).candidate
-    assert settings.source_digest_script.endswith("source-state-digest.py")
+    assert CONFIG.candidate.source_digest_script.endswith("source-state-digest.py")
 
 
 def test_private_release_modules_select_one_shared_runner() -> None:
@@ -602,14 +620,11 @@ def test_reusable_fast_gate_installs_workspace_static_prerequisites() -> None:
 def test_standalone_functional_scripts_use_the_project_python() -> None:
     """`python3` is whatever the machine has; on a release runner that is not
     the interpreter the lockfile pins."""
-    functional = _planned("test-functional")
-    smoke = _recipe("smoke")
-
-    for script in ("scripts/injection_test.py", "scripts/integration_test.py"):
-        assert f"uv run python {script}" in functional
-        assert f"python3 {script}" not in functional
-        assert f"python3 {script}" not in smoke
-        assert f"uv run python {script}" in smoke
+    for module in ("test-functional", "smoke"):
+        planned = _planned(module)
+        for script in ("scripts/injection_test.py", "scripts/integration_test.py"):
+            assert f"uv run python {script}" in planned
+            assert f"python3 {script}" not in planned
 
 
 def test_release_glowup_consumes_the_exact_pairing_environment() -> None:

@@ -31,6 +31,24 @@ def _step(job: str, name: str, next_name: str | None) -> str:
     return body.split(f"      - name: {next_name}\n", maxsplit=1)[0]
 
 
+
+def _release_plan(command: str, *arguments: str):
+    """The plan a release command would run, without running any of it."""
+    import argparse
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+    from capsem.gate.proc import Runner
+
+    parsed = argparse.Namespace(
+        dry_run=False,
+        graph=False,
+        timing=False,
+        **dict(zip(("channel", "profile"), arguments, strict=False)),
+    )
+    return GateCommand.registry[command](Runner(ROOT), parsed).plan()
+
+
 def test_staged_profile_declares_minimum_and_maximum_binary_bounds() -> None:
     graph = RELEASE_GRAPH.read_text(encoding="utf-8")
     profile = graph.split("pub struct ProfileDocument", maxsplit=1)[1].split(
@@ -209,22 +227,21 @@ def test_staged_incompatible_profile_runs_every_non_activation_gate() -> None:
 
 
 def test_hosted_macos_never_claims_the_local_apple_vz_proof() -> None:
+    """GitHub-hosted macOS cannot nest Apple Virtualization.framework, so the
+    boot proof belongs to a local run and the workflow must not claim it."""
     workflow = PROFILE_WORKFLOW.read_text(encoding="utf-8")
     release_skill = (
         ROOT / "skills" / "release-process" / "SKILL.md"
     ).read_text(encoding="utf-8")
     local_gate = (ROOT / "justfile").read_text(encoding="utf-8")
-    release_profile = local_gate.split(
-        "release-profile channel profile:\n", maxsplit=1
-    )[1].split("\n# Compile all host binaries", maxsplit=1)[0]
 
     assert "test-profile-arm64-boot:" not in workflow
     assert "scripts/prove-release-profile-assets.py" not in workflow
     assert "Local Apple Silicon `just test` owns that VZ proof" in release_skill
     assert "_gate-assets" in local_gate
-    assert release_profile.index("just test") < release_profile.index(
-        "capsem-admin -- release"
-    )
+
+    order = list(_release_plan("release-profile", "nightly", "code").labels)
+    assert order.index("gate") < order.index("release")
 
 
 def test_profile_activation_readiness_requires_the_pulled_binary_functional_cohort() -> None:

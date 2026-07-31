@@ -394,38 +394,22 @@ ty_ratchet = [
 [boundary]
 # A recipe body over this many executable lines is inline logic, and a gate
 # module over its ceiling is the 2000-line justfile growing back in Python.
-max_recipe_lines = 12
+max_recipe_lines = 5
 max_module_lines = 300
-
-# Recipe bodies that are still inline shell, pending extraction. A ratchet, not
-# an exemption list: a recipe may leave it, nothing may join it, and one that
-# has been extracted must be struck from it so the list cannot describe a past
-# that is no longer true.
-remaining_shell_recipes = [
-    "_check-generated-settings",
-    "_dev-ui",
-    "_ensure-dev-ready",
-    "_ensure-service",
-    "_generate-settings",
-    "_materialize-config",
-    "_pack-initrd",
-    "exec",
-    "release-binaries",
-    "release-profile",
-    "shell",
-    "smoke",
-]
 
 # Shell control flow in a body with no shebang is still a program no test can
 # reach: `just` hands each line to a shell, so a `for` loop spread across
 # continuations runs untested.
 shell_control_flow = ["if ", "for ", "while ", "case ", "until ", "trap "]
-recipes_with_inline_control_flow = ["_pnpm-install"]
+# Empty, and it stays empty: a recipe is a dispatch or a single command.
+recipes_with_inline_control_flow = []
 
 # The only modules allowed to touch the machine directly. Each owns one piece
 # of machine state as its entire purpose, so there is no gate work here for a
 # dry run to show and routing it through an action would be ceremony.
 #
+#   actions      the process primitives, including a detached launch that
+#                has to record the pid `pidfiles` will later stop
 #   fileactions  the filesystem primitives themselves
 #   proc         the single funnel every invocation passes through, and so the
 #                one place the run log has to hook
@@ -447,6 +431,7 @@ recipes_with_inline_control_flow = ["_pnpm-install"]
 #
 # Widening this is a design decision, not a convenience.
 direct_machine_access = [
+    "actions.py",
     "fileactions.py",
     "proc.py",
     "pidfiles.py",
@@ -567,6 +552,131 @@ install = ["cargo", "install", "cargo-sbom", "--locked"]
 [[toolchain.crates]]
 name = "cargo-tauri"
 install = ["cargo", "install", "tauri-cli"]
+
+[release]
+# The order is non-negotiable, and it is the reason this exists as a command
+# rather than a script: nothing may stamp a version, mutate a tracked file,
+# push, tag, or dispatch a workflow before the complete local gate has passed
+# against the exact HEAD that gets published.
+precheck = ["scripts/publish-tested-main.py", "--precheck"]
+notes = ["scripts/extract-release-notes.py", "--check"]
+fetch_manifest = "scripts/fetch-channel-source-manifest.py"
+publish = "scripts/publish-tested-main.py"
+binaries = "scripts/release-binaries.py"
+profile = ["cargo", "run", "-p", "capsem-admin", "--", "release"]
+preflight_dir = "target/release-preflight"
+channel_source = "target/release-preflight/channel-source.json"
+default_repository = "google/capsem"
+repository_variable = "GITHUB_REPOSITORY"
+token_variable = "GITHUB_TOKEN"
+
+[devloop]
+setup_sentinel = ".dev-setup"
+dev_lock = "run/execution.lock"
+tauri = ["cargo", "tauri", "dev", "--config", "crates/capsem-app/tauri.conf.json"]
+frontend_dev = ["pnpm", "run", "dev"]
+frontend_dir = "frontend"
+tui = ["cargo", "run", "-p", "capsem-tui"]
+surfaces = ["ui", "frontend", "tui"]
+generate_settings = "scripts/generate-settings.sh"
+check_settings = "scripts/check-generated-settings.sh"
+materialize_config = "scripts/materialize-config.sh"
+
+[initrd]
+# The guest binaries the initrd carries, all cross-compiled to musl.
+binaries = [
+    "capsem-pty-agent", "capsem-net-proxy", "capsem-dns-proxy",
+    "capsem-mcp-server", "capsem-sysutil", "capsem-bench-rs",
+]
+staging = "target/linux-agent"
+# Rebuilt when a staged binary is missing, or older than the sources it came
+# from. Cheaper than an unconditional cross-compile, and correct because these
+# are the only crates that produce them.
+sources = ["crates/capsem-agent", "crates/capsem-proto", "crates/capsem-bench"]
+build = ["uv", "run", "capsem-builder", "agent", "config/docker/image"]
+
+# Checked-in guest payloads copied in beside the binaries.
+init = "guest/artifacts/capsem-init"
+files = ["guest/artifacts/capsem-doctor", "guest/artifacts/capsem-bench", "guest/artifacts/snapshots"]
+trees = ["guest/artifacts/capsem_bench", "guest/artifacts/diagnostics"]
+prune = "__pycache__"
+
+# 555 on every guest binary: the rootfs is mounted read-only and the guest may
+# not modify its own binaries. The builder applies this after a fresh
+# cross-compile; reasserted here because a cached staging directory may have
+# had its modes changed between builds.
+binary_mode = 0o555
+init_mode = 0o755
+
+manifest = ["cargo", "run", "-p", "capsem-admin", "--", "manifest", "generate"]
+hash_assets = "scripts/create_hash_assets.py"
+# Touched so cargo re-runs build.rs and picks up the new manifest hashes.
+rebuild_trigger = "crates/capsem-app/build.rs"
+
+[smoke]
+# Focused developer feedback, never release qualification. Three groups that
+# can share the machine, then the two that cannot.
+doctor = ["target/debug/capsem", "doctor"]
+run_id_variable = "CAPSEM_TEST_RUN_ID"
+log = "target/smoke.log"
+
+# Suspend/resume is host-resource sensitive under Apple VZ: an unrelated VM can
+# make a resume fail before the guest signals ready. These run after the
+# parallel phase, for the same reason the full gate serializes them.
+[[smoke.groups]]
+name = "mcp"
+paths = ["tests/capsem-mcp/"]
+markers = "mcp"
+parallel = 0
+
+[[smoke.groups]]
+name = "service-cli"
+paths = ["tests/capsem-service/", "tests/capsem-cli/"]
+markers = "integration"
+# The longest group, and the big lever: -n 2 with --dist=loadfile takes it from
+# about 67s to about 36s, and loadfile keeps a file's tests on one worker so
+# module-scoped fixtures are not rebuilt.
+parallel = 2
+
+[[smoke.groups]]
+name = "gateway"
+paths = ["tests/capsem-gateway/"]
+markers = "gateway"
+parallel = 0
+
+[[smoke.serial_groups]]
+name = "mcp-serial"
+paths = ["tests/capsem-mcp/test_state_transitions.py"]
+markers = "mcp"
+
+[[smoke.serial_groups]]
+name = "service-serial"
+paths = [
+    "tests/capsem-service/test_svc_resume_paths.py",
+    "tests/capsem-service/test_svc_suspend_corruption.py",
+    "tests/capsem-service/test_svc_loop_device_after_resume.py",
+]
+markers = "integration"
+
+[service]
+# The development daemon: the same profile/assets rail an installed package
+# uses, so the dev service cannot mix stale profile pins with fresh assets and
+# make profiles look broken in the UI.
+binary = "target/debug/capsem-service"
+process_binary = "target/debug/capsem-process"
+sync_assets_script = "scripts/sync-dev-assets.sh"
+generated_profiles = "target/config/profiles"
+assets_dir = "assets"
+home_assets = "assets"
+home_profiles = "profiles"
+socket = "service.sock"
+pidfile = "service.pid"
+# Config files an older layout wrote into the home. Removed on every start so a
+# checkout that predates the change cannot keep booting from them.
+retired_config = ["user.toml", "service.toml"]
+ready_attempts = 30
+ready_interval_seconds = 0.5
+log_level = "capsem=debug"
 
 [hostimage]
 # The Linux builder image, and the Linux-Rust parity lane that runs inside it.

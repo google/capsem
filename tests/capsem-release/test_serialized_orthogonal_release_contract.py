@@ -6,9 +6,6 @@ Artifact correctness remains covered by the executable lane and glow-up suites.
 
 from __future__ import annotations
 
-import os
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -46,43 +43,59 @@ def _job_block(workflow: str, job: str) -> str:
     return "\n".join(lines[start:end])
 
 
+
+def _release_plan(command: str, *arguments: str):
+    """The plan a release command would run, without running any of it."""
+    import argparse
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+    from capsem.gate.proc import Runner
+
+    names = ("channel", "profile")
+    parsed = argparse.Namespace(
+        dry_run=False,
+        graph=False,
+        timing=False,
+        **dict(zip(names, arguments, strict=False)),
+    )
+    return GateCommand.registry[command](Runner(ROOT), parsed).plan()
+
+
+def _release_order(command: str, *arguments: str) -> list[str]:
+    """Every step, in an order the graph permits."""
+    return list(_release_plan(command, *arguments).labels)
+
+
+
+def _context(runner):
+    from capsem.gate import config as gate_config
+    from capsem.gate.context import Context
+
+    return Context(runner, gate_config.load(ROOT))
+
+
 def test_release_commands_are_two_single_purpose_recipes() -> None:
+    """Each owns one artifact family, and neither rebuilds the other's.
+
+    The recipes dispatch, so this asks the plans. That is the stronger
+    question: a recipe body could stop *containing* `just test` while still
+    running it, and could contain it while running it too late.
+    """
     justfile = "\n" + _read("justfile")
 
-    binary = _recipe_block(justfile, "release-binaries")
-    profile = _recipe_block(justfile, "release-profile")
+    binary = _release_plan("release-binaries", "nightly").describe()
+    profile = _release_plan("release-profile", "nightly", "code").describe()
 
     assert "scripts/release-binaries.py" in binary
     assert "capsem-admin" not in binary
     assert "_build-kernel" not in binary
     assert "_build-rootfs" not in binary
-    assert "just test" in binary
-    assert binary.index("just test") < binary.index("scripts/release-binaries.py")
-    # publish-tested-main.py appears twice, so the ordering is asserted per
-    # invocation rather than by script name: --precheck is a read-only
-    # precondition that must run before the gate, --expected-head is the
-    # publication that must run after it.
-    assert "scripts/publish-tested-main.py --precheck" in binary
-    assert binary.index("--precheck") < binary.index("just test")
-    assert (
-        binary.index("just test")
-        < binary.index("publish-tested-main.py --expected-head")
-        < binary.index("scripts/release-binaries.py")
-    )
 
     assert "capsem-admin -- release" in profile
     assert "scripts/release-binaries.py" not in profile
     assert "_cross-compile" not in profile
     assert "build-pkg" not in profile
-    assert "just test" in profile
-    assert profile.index("just test") < profile.index("capsem-admin -- release")
-    assert "scripts/publish-tested-main.py --precheck" in profile
-    assert profile.index("--precheck") < profile.index("just test")
-    assert (
-        profile.index("just test")
-        < profile.index("publish-tested-main.py --expected-head")
-        < profile.index("capsem-admin -- release")
-    )
 
     retired_commands = (
         "release",
@@ -96,17 +109,41 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
 
 
 @pytest.mark.parametrize(
+    "command, arguments, publication",
+    [
+        ("release-binaries", ("nightly",), "release"),
+        ("release-profile", ("nightly", "code"), "release"),
+    ],
+)
+def test_nothing_is_published_before_the_complete_gate_passes(
+    command: str, arguments: tuple[str, ...], publication: str
+) -> None:
+    """The order that is the entire reason these are commands.
+
+    Nothing may stamp a version, mutate a tracked file, push, tag, or dispatch
+    a workflow before the complete local gate has passed against the exact
+    HEAD being published. As graph edges that ordering cannot be lost by
+    moving a line.
+    """
+    order = _release_order(command, *arguments)
+
+    assert order.index("precheck") < order.index("gate")
+    assert order.index("gate") < order.index("confirm-head")
+    assert order.index("confirm-head") < order.index(publication)
+
+
+@pytest.mark.parametrize(
     ("recipe", "arguments", "release_trace"),
     (
         (
             "release-binaries",
             ("nightly",),
-            "python3:scripts/release-binaries.py nightly",
+            r"scripts/release-binaries\.py nightly",
         ),
         (
             "release-profile",
             ("nightly", "code"),
-            "cargo:run -p capsem-admin -- release --channel nightly --profile code",
+            r"capsem-admin -- release --channel nightly --profile code",
         ),
     ),
 )
@@ -116,56 +153,32 @@ def test_public_release_command_executes_read_only_preflight_then_full_test_befo
     arguments: tuple[str, ...],
     release_trace: str,
 ) -> None:
-    real_just = shutil.which("just")
-    assert real_just is not None
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    trace = tmp_path / "trace"
-    for command in ("just", "python3", "cargo"):
-        executable = fake_bin / command
-        executable.write_text(
-            "#!/bin/sh\n"
-            f'printf "{command}:%s\\n" "$*" >> "$TRACE"\n',
-            encoding="utf-8",
-        )
-        executable.chmod(0o755)
+    """Driven for real against a runner that records instead of executing.
 
-    result = subprocess.run(
-        [real_just, recipe, *arguments],
-        cwd=ROOT,
-        env={
-            **os.environ,
-            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
-            "TRACE": str(trace),
-            "GITHUB_TOKEN": "test-token",
-        },
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    Stubbing `just`, `python3` and `cargo` on PATH no longer works: the recipe
+    dispatches through `uv run capsem-gate`, so a fake `uv` would replace the
+    gate itself rather than the commands it issues.
+    """
+    from helpers.gate import RecordingRunner
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    lines = trace.read_text(encoding="utf-8").splitlines()
-    # Both recipes verify the publication preconditions first. A dirty tree or
-    # the wrong branch invalidates everything after it, so learning that costs
-    # seconds rather than a complete gate.
-    assert lines.pop(0) == "python3:scripts/publish-tested-main.py --precheck"
-    if recipe == "release-binaries":
-        assert lines.pop(0) == (
-            "python3:scripts/extract-release-notes.py --check"
-        )
-        assert lines.pop(0) == (
-            "python3:scripts/fetch-channel-source-manifest.py "
-            "--channel nightly "
-            "--repository google/capsem "
-            "--require-profile-membership "
-            "--output target/release-preflight/channel-source.json"
-        )
-    assert lines[0] == "just:test"
-    assert lines[1].startswith(
-        "python3:scripts/publish-tested-main.py --expected-head "
-    )
-    assert lines[2] == release_trace
+    command = recipe
+    runner = RecordingRunner(ROOT)
+    plan = _release_plan(command, *arguments)
+    plan.run(_context(runner))
+
+    issued = runner.rendered
+    # Read-only preconditions first: a dirty tree or the wrong branch
+    # invalidates everything after, and learning that costs seconds rather
+    # than a complete gate.
+    assert "publish-tested-main.py --precheck" in issued[0]
+    if command == "release-binaries":
+        assert any("extract-release-notes.py --check" in line for line in issued)
+        assert any("fetch-channel-source-manifest.py" in line for line in issued)
+
+    gate = runner.index_of(r"just test")
+    confirm = runner.index_of(r"publish-tested-main\.py --expected-head")
+    assert runner.index_of(r"--precheck") < gate < confirm
+    assert confirm < runner.index_of(release_trace)
 
 
 @pytest.mark.parametrize(
@@ -180,67 +193,34 @@ def test_failed_full_test_prevents_every_release_side_effect(
     recipe: str,
     arguments: tuple[str, ...],
 ) -> None:
-    real_just = shutil.which("just")
-    assert real_just is not None
-    fake_bin = tmp_path / "bin"
-    fake_bin.mkdir()
-    trace = tmp_path / "trace"
-    fake_just = fake_bin / "just"
-    fake_just.write_text(
-        '#!/bin/sh\nprintf "just:%s\\n" "$*" >> "$TRACE"\nexit 17\n',
-        encoding="utf-8",
-    )
-    fake_just.chmod(0o755)
-    for command in ("python3", "cargo"):
-        executable = fake_bin / command
-        executable.write_text(
-            "#!/bin/sh\n"
-            f'printf "{command}:%s\\n" "$*" >> "$TRACE"\n'
-            # Only read-only preflight may succeed before the gate. Anything
-            # else exits 99, so a mutation reached early fails the test rather
-            # than being recorded as an ordinary step.
-            'case "$*" in\n'
-            '  "scripts/publish-tested-main.py --precheck"'
-            '|"scripts/extract-release-notes.py --check"'
-            '|"scripts/fetch-channel-source-manifest.py --channel nightly '
-            '--repository google/capsem '
-            '--require-profile-membership '
-            '--output target/release-preflight/channel-source.json")\n'
-            "  exit 0\n"
-            "  ;;\n"
-            "esac\n"
-            "exit 99\n",
-            encoding="utf-8",
-        )
-        executable.chmod(0o755)
+    """A failing gate stops everything downstream of it.
 
-    result = subprocess.run(
-        [real_just, recipe, *arguments],
-        cwd=ROOT,
-        env={
-            **os.environ,
-            "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
-            "TRACE": str(trace),
-            "GITHUB_TOKEN": "test-token",
-        },
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    The plan makes this structural: publication is `after=(confirm-head,)`
+    which is `after=(gate,)`, and a step whose dependency failed is never
+    submitted. Inspecting recipe text could never have proved this.
+    """
+    from helpers.gate import RecordingRunner
 
-    assert result.returncode != 0
-    expected = ["python3:scripts/publish-tested-main.py --precheck"]
-    if recipe == "release-binaries":
-        expected += [
-            "python3:scripts/extract-release-notes.py --check",
-            "python3:scripts/fetch-channel-source-manifest.py "
-            "--channel nightly "
-            "--repository google/capsem "
-            "--require-profile-membership "
-            "--output target/release-preflight/channel-source.json",
-        ]
-    expected.append("just:test")
-    assert trace.read_text(encoding="utf-8").splitlines() == expected
+    from capsem.gate.errors import GateError
+
+    runner = RecordingRunner(ROOT, failures=["just test"])
+    plan = _release_plan(recipe, *arguments)
+
+    with pytest.raises(GateError):
+        plan.run(_context(runner))
+
+    issued = "\n".join(runner.rendered)
+    assert "just test" in issued, "the gate must actually have been attempted"
+    for mutation in (
+        "publish-tested-main.py --expected-head",
+        "scripts/release-binaries.py",
+        "capsem-admin -- release",
+    ):
+        assert mutation not in issued, f"{mutation} ran after a failing gate"
+
+    outcomes = plan.outcomes
+    assert outcomes["gate"].status == "failed"
+    assert outcomes["confirm-head"].status == "skipped"
 
 
 def test_binary_and_profile_workflows_share_channel_transaction_lock() -> None:

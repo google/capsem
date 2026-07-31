@@ -71,35 +71,23 @@ def _executable_lines(recipe: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def test_no_new_recipe_grows_a_shell_body() -> None:
+def test_no_recipe_has_a_shell_body() -> None:
+    """Not "fewer than before" -- none.
+
+    The ratchet that tracked the outstanding extraction is gone, because the
+    extraction is finished. An empty ratchet should be deleted rather than
+    kept: a list describing no remaining work is a list that will be read as
+    permission for some.
+    """
     recipes = _recipes()
     assert recipes, "no recipes parsed; this guard would pass vacuously"
 
-    inline = {name for name, recipe in recipes.items() if recipe["shebang"]}
-    remaining = set(BOUNDARY.remaining_shell_recipes)
+    inline = sorted(name for name, recipe in recipes.items() if recipe["shebang"])
 
-    assert not inline - remaining, (
-        "these recipes have inline shell bodies that no test can reach; put "
-        "the logic in src/capsem/gate/ and call it from a one-line recipe: "
-        f"{sorted(inline - remaining)}"
+    assert not inline, (
+        "these recipes carry inline shell that no test can reach; put the "
+        f"logic in src/capsem/gate/ and dispatch to it: {inline}"
     )
-
-
-def test_the_extraction_ratchet_never_runs_backwards() -> None:
-    """An extracted recipe must leave the list, or the list becomes fiction."""
-    recipes = _recipes()
-    inline = {name for name, recipe in recipes.items() if recipe["shebang"]}
-
-    remaining = set(BOUNDARY.remaining_shell_recipes)
-    stale = sorted(remaining - inline)
-    assert not stale, (
-        "these recipes no longer carry inline shell -- remove them from "
-        "config/gate.toml's remaining_shell_recipes so the outstanding work "
-        f"stays honest: {stale}"
-    )
-
-    gone = sorted(remaining - set(recipes))
-    assert not gone, f"these recipes no longer exist: {gone}"
 
 
 def test_a_dispatching_recipe_stays_short_enough_to_read() -> None:

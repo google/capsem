@@ -130,7 +130,7 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
     is why routing it through an action would be ceremony rather than
     visibility -- there is no gate work here for a dry run to show.
 
-    `fileactions` is the primitives themselves. `proc` is the funnel every
+    `actions` and `fileactions` are the primitives themselves. `proc` is the funnel every
     invocation passes through, which is why the run log has one place to hook.
     `pidfiles` is where a signal is sent, so "which process did the gate kill"
     has a single answer. `locks` owns the lockfile that makes one gate per
@@ -145,6 +145,7 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
     would mean work that the dry run cannot show and the log cannot time.
     """
     assert set(BOUNDARY.direct_machine_access) == {
+        "actions.py",
         "fileactions.py",
         "proc.py",
         "pidfiles.py",
@@ -246,18 +247,40 @@ def test_a_mutex_is_not_mistaken_for_a_scheduler(tmp_path: Path) -> None:
     assert found == ["ThreadPoolExecutor"], "the pool, not the lock"
 
 
+#: Ways to name a process that are not "the pid in this run's pidfile".
+BY_NAME = ("pkill", "killall", "pgrep")
+
+
 @pytest.mark.parametrize("module", _modules(), ids=lambda p: p.name)
 def test_nothing_kills_a_process_by_name(module: Path) -> None:
     """`_ensure-service` stopped only the pidfile-tracked service and never
     ran `pkill capsem-service`, because the developer running the gate may
-    have their own daemon up. That care was deliberate and unenforced."""
-    source = module.read_text(encoding="utf-8")
+    have their own daemon up. That care was deliberate and unenforced.
 
-    for weapon in ("pkill", "killall", "pgrep"):
-        assert weapon not in source, (
-            f"{module.name} reaches for {weapon}, which cannot tell this run's "
-            "processes from someone else's; stop what the pidfile names"
-        )
+    Checked against string *values* rather than the file's text, so a
+    docstring may say `pkill` while explaining why nothing uses it.
+    """
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+    docstrings = {
+        ast.get_docstring(node, clean=False)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef)
+    }
+
+    offenders = [
+        f"{node.lineno}: {node.value!r}"
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and node.value not in docstrings
+        and any(weapon in node.value for weapon in BY_NAME)
+    ]
+
+    assert not offenders, (
+        f"{module.name} reaches for a process by name, which cannot tell this "
+        "run's processes from someone else's; stop what the pidfile names:\n  "
+        + "\n  ".join(offenders)
+    )
 
 
 def test_a_direct_call_would_be_caught(tmp_path: Path) -> None:

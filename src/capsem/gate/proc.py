@@ -160,6 +160,34 @@ class Runner:
         )
         return self.execute(command).returncode == 0
 
+    def launch(
+        self,
+        argv: list[str] | tuple[str, ...],
+        *,
+        env: dict[str, str] | None = None,
+        cwd: Path | None = None,
+    ) -> int:
+        """Start a process that outlives this call, and return its pid.
+
+        Detached into its own session, and with no inherited descriptors: a
+        daemon that keeps the gate's execution-lock fd holds the flock after
+        the gate exits, and the next run blocks on a run that finished. The
+        shell needed `3>&-` for that; Python closes non-inheritable
+        descriptors across `exec` by default.
+        """
+        command = Command(
+            argv=tuple(str(part) for part in argv), cwd=cwd, env=dict(env or {})
+        )
+        process = subprocess.Popen(
+            list(command.argv),
+            cwd=str(command.cwd) if command.cwd else str(self.root),
+            env={**os.environ, **command.env},
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return process.pid
+
     # -- convenience -------------------------------------------------------
 
     def bash(

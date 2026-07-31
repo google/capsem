@@ -222,6 +222,24 @@ def _release_tree(tmp_path: Path) -> None:
     )
 
 
+
+def _release_plan(command: str, *arguments: str):
+    """The plan a release command would run, without running any of it."""
+    import argparse
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+    from capsem.gate.proc import Runner
+
+    parsed = argparse.Namespace(
+        dry_run=False,
+        graph=False,
+        timing=False,
+        **dict(zip(("channel", "profile"), arguments, strict=False)),
+    )
+    return GateCommand.registry[command](Runner(PROJECT_ROOT), parsed).plan()
+
+
 def test_binary_release_owns_one_scripted_build_and_dispatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -270,37 +288,37 @@ def test_binary_release_checks_notes_before_version_stamp(
 
 
 def test_binary_recipe_checks_notes_before_complete_local_gate_and_push() -> None:
-    justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
-    recipe = justfile.split("\nrelease-binaries channel:", 1)[1].split(
-        "\nrelease-profile channel profile:", 1
-    )[0]
+    """Missing release notes cost seconds, not a complete gate.
 
-    check = recipe.index("python3 scripts/extract-release-notes.py --check")
-    test = recipe.index("just test")
-    # The publishing invocation, not the --precheck precondition that now
-    # runs before the gate; both share a script name.
-    push = recipe.index("publish-tested-main.py --expected-head")
-    assert check < test < push
-    assert "extract-release-notes.py" not in justfile.split(
-        "\nrelease-profile channel profile:", 1
-    )[1].split("\n# Compile all host binaries", 1)[0]
+    Asked of the plan: the recipe dispatches, so its text no longer carries
+    the order. The plan does, as edges rather than line positions.
+    """
+    plan = _release_plan("release-binaries", "nightly")
+    order = list(plan.labels)
+
+    assert "extract-release-notes.py --check" in plan.describe()
+    assert order.index("precheck") < order.index("gate") < order.index("confirm-head")
+
+    profile = _release_plan("release-profile", "nightly", "code").describe()
+    assert "extract-release-notes.py" not in profile
 
 
 def test_binary_recipe_fetches_serialized_channel_source_before_full_local_gate() -> None:
-    justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
-    recipe = justfile.split("\nrelease-binaries channel:", 1)[1].split(
-        "\nrelease-profile channel profile:", 1
-    )[0]
+    """The manifest is the bible, and it is read before the gate spends hours.
 
-    fetch = recipe.index("scripts/fetch-channel-source-manifest.py")
-    full_gate = recipe.index("just test")
-    assert fetch < full_gate
-    assert '--channel "{{channel}}"' in recipe
-    assert '--repository "$RELEASE_REPOSITORY"' in recipe
-    assert 'RELEASE_REPOSITORY="${GITHUB_REPOSITORY:-' in recipe
-    assert "--bootstrap-missing-first-party" not in recipe
-    assert "--require-profile-membership" in recipe
-    assert "GITHUB_TOKEN" in recipe
+    Fetched fresh: a cached copy would let a release run against membership a
+    concurrent release had already changed.
+    """
+    plan = _release_plan("release-binaries", "nightly")
+    order = list(plan.labels)
+    rendering = plan.describe()
+
+    assert order.index("channel-source") < order.index("gate")
+    assert "fetch-channel-source-manifest.py" in rendering
+    assert "--channel nightly" in rendering
+    assert "--require-profile-membership" in rendering
+    assert "--bootstrap-missing-first-party" not in rendering
+    assert "--repository" in rendering
 
 
 def test_unexpected_write_aborts_before_commit_and_restores_owned_files(

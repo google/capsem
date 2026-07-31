@@ -153,3 +153,19 @@ class ToolchainCommand(
         plan.add(toolchain.rust(self._config), after=(python,))
         plan.add(toolchain.node(self._config), after=(python,))
         return plan
+
+
+class NodeCommand(
+    GateCommand,
+    name="install-node",
+    help="install every Node workspace a local gate exercises",
+):
+    """CI has separate jobs for docs, site and release-site. A local gate
+    builds all of them in one checkout, so all of them are installed here."""
+
+    def plan(self) -> Plan:
+        from . import toolchain
+
+        plan = Plan(self.name)
+        plan.add(toolchain.node(self._config))
+        return plan
