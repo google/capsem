@@ -78,6 +78,20 @@ def _read_update_log(capsem_home: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+# Fixtures must not exclude the binary under test. A literal "1.0.0" floor here
+# silently skipped every asset release once the project moved below that line,
+# and the tests reported "no compatible asset release" as if the product were
+# broken. Deriving it from the workspace version keeps the fixture honest
+# through the next line change too.
+def _fixture_min_binary() -> str:
+    cargo = Path(__file__).resolve().parents[2] / "Cargo.toml"
+    for line in cargo.read_text(encoding="utf-8").splitlines():
+        if line.startswith("version = "):
+            major, minor, *_ = line.split('"')[1].split(".")
+            return f"{major}.{minor}.0"
+    raise RuntimeError("workspace version not found in Cargo.toml")
+
+
 def _make_manifest(arch: str, files: dict[str, bytes], asset_version: str = ASSET_VERSION) -> dict:
     """Build a minimal v2 manifest for the given arch + byte blobs."""
     return {
@@ -89,7 +103,7 @@ def _make_manifest(arch: str, files: dict[str, bytes], asset_version: str = ASSE
                 asset_version: {
                     "date": "2030-01-01",
                     "deprecated": False,
-                    "min_binary": "1.0.0",
+                    "min_binary": _fixture_min_binary(),
                     "arches": {
                         arch: {
                             name: {"hash": _blake3(blob), "size": len(blob)}
