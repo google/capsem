@@ -117,9 +117,25 @@ def test_justfile_uses_named_rails_and_keeps_builder_until_packages_finish() -> 
     assert "resource --name capsem-install-target --field maximum_gib" not in justfile
     assert "docker builder prune" not in justfile
     assert "docker volume rm" not in justfile
-    assert "docker-storage-policy.py gc" in justfile
-    assert "--boundary after-package-arm64" in justfile
-    assert "--boundary after-package-x86_64" in justfile
+    assert "capsem-gate storage gc" in justfile
+
+
+def test_both_package_architectures_release_their_own_install_headroom() -> None:
+    """Each package rail frees the install rail once, under its own boundary.
+
+    The justfile used to spell the `--boundary`/`--rail` pair at each of eleven
+    call sites, so this read them out of the recipe text. They are now a table
+    in the module the recipes dispatch to, which is where a typo can be caught
+    before any storage is touched.
+    """
+    from capsem.gate.storage import RELEASE_PHASES
+
+    assert RELEASE_PHASES["completed-package-arm64"] == ("after-package-arm64", "install")
+    assert RELEASE_PHASES["completed-package-x86_64"] == ("after-package-x86_64", "install")
+
+    justfile = (ROOT / "justfile").read_text()
+    for phase in ("completed-package-arm64", "completed-package-x86_64"):
+        assert f"capsem-gate storage release {phase}" in justfile
 
 
 def test_shell_space_guard_is_only_a_python_controller_entrypoint() -> None:

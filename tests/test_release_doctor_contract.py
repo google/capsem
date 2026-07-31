@@ -2937,7 +2937,10 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
         assert "just _test-release-contracts" not in workflow
     assert "cargo llvm-cov --workspace --bins --lib --tests" in just
     assert RUST_LINE_COVERAGE_FLOOR in just
-    assert "--cov-fail-under=85" in just
+    # The Python floor is `fail_under` in pyproject's [tool.coverage.report], so
+    # every run that reports inherits it. What the gate must still do is measure:
+    # a run with no `--cov` reports nothing, and a floor over nothing passes.
+    assert "--cov=src/capsem" in just
     assert "CAPSEM_REQUIRE_ARTIFACTS=1" in just
     assert "tests/ironbank/test_route_health.py" in just
     assert "scripts/integration_test.py" in just

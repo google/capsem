@@ -30,43 +30,9 @@ host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/c
 assets_dir := "assets"
 entitlements := "entitlements.plist"
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
-# Propagate the workspace version across the whole release cohort.
-#
-# The version itself is a human decision recorded in Cargo.toml: only a person
-# knows whether a release is a fix, a feature, or a break, which is the entire
-# point of semver and the reason `min_capsem_version` can mean something. This
-# recipe fans that one value out to tauri.conf.json, pyproject.toml, and both
-# frozen lockfiles -- it never invents a version. A previous scheme appended
-# `$(date +%s)`, which ordered releases but described none of them.
-#
-# Refusing an already-tagged version is what keeps the bump deliberate: the
-# release stops until someone chooses the next MAJOR.MINOR.PATCH.
+# Propagate Cargo.toml's version across the release cohort (capsem.gate.versions).
 _stamp-version:
-    #!/bin/bash
-    set -euo pipefail
-    VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-        echo "Cargo.toml version is not semver MAJOR.MINOR.PATCH: ${VERSION}" >&2
-        exit 1
-    fi
-    if git rev-parse -q --verify "refs/tags/v${VERSION}" >/dev/null 2>&1; then
-        echo "v${VERSION} is already tagged. Bump the version in Cargo.toml to" >&2
-        echo "the next semver MAJOR.MINOR.PATCH for this change, then re-run." >&2
-        exit 1
-    fi
-    echo "Stamping release cohort at ${VERSION}"
-    sed_in_place() {
-        sed -i.bak "$1" "$2"
-        rm -f "$2.bak"
-    }
-    sed_in_place "s/\"version\": \"[0-9]*\.[0-9]*\.[0-9]*\"/\"version\": \"${VERSION}\"/" crates/capsem-app/tauri.conf.json
-    sed_in_place "s/^version = \"[0-9]*\.[0-9]*\.[0-9]*\"/version = \"${VERSION}\"/" pyproject.toml
-    # Cargo refreshes workspace package versions in-place while preserving
-    # the already locked dependency graph.
-    cargo update --workspace --offline
-    # Keep the editable project metadata in the frozen lockfile on the
-    # release version before release-binaries creates its commit and tag.
-    uv lock --offline
+    @uv run capsem-gate stamp-version
 
 # Build, test, and publish only Capsem binaries/packages for one channel.
 release-binaries channel:
@@ -782,6 +748,7 @@ _test-candidate-run:
         tests/test_exec_lock.py
         tests/test_exit_status_integrity.py
         tests/test_fast_gate_ci_contract.py
+        tests/test_gate_boundary.py
         tests/test_integration_script_profiles.py
         tests/test_live_channel_watch.py
         tests/test_macos_tart_glowup.py
@@ -1066,7 +1033,7 @@ _test-candidate-run:
         --ignore=tests/capsem-install \
         --ignore=tests/capsem-build-chain \
         --ignore=tests/capsem-release \
-        --cov=src/capsem --cov-report=xml:codecov-python.xml --cov-fail-under=85
+        --cov=src/capsem --cov-report=xml:codecov-python.xml
 
     echo "=== Python: host snapshot tests (serial) ==="
     CAPSEM_TEST_PROFILE="$BASE_PROFILE" CAPSEM_REQUIRE_ARTIFACTS=1 uv run python -m pytest \
@@ -1362,8 +1329,28 @@ _gate-host-package-sbom:
 
 # Remove cross-compilation image and cached volumes.
 _clean-host-image:
-    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py clean --scope all
+    @uv run capsem-gate storage clean --scope all
 
+_release-completed-linux-rust-target:
+    @uv run capsem-gate storage release completed-linux-rust-target
+
+_release-completed-docker-rails:
+    @uv run capsem-gate storage release completed-docker-rails
+
+_release-completed-buildkit-graph:
+    @uv run capsem-gate storage release completed-buildkit-graph
+
+_release-completed-package-rails:
+    @uv run capsem-gate storage release completed-package-arm64
+    @uv run capsem-gate storage release completed-package-x86_64
+
+_release-deferred-install-target:
+    @uv run capsem-gate storage release deferred-install-target
+
+# repack-deb.sh below reads the materialized profile catalog from target/config,
+# so this recipe owns filling it rather than leaving each call site to remember.
+# Release CI never enters here: it consumes an already-built package with its
+# staged profile cohort, so nothing it pulled can be clobbered.
 # Build the full Linux release in a container (agent + deb).
 # Uses the private cached capsem-host-builder image.
 # Supports arm64 and x86_64 via native cross-compilation (no QEMU).
@@ -1377,32 +1364,6 @@ _clean-host-image:
 #   - CI runs on bare ubuntu runners; this runs in capsem-host-builder via docker
 #   - Tauri signing keys: CI from secrets, local from private/tauri/
 #   - See: .github/workflows/release.yaml build-app-linux job
-_release-completed-linux-rust-target:
-    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
-        --boundary after-linux-rust --rail assets
-
-_release-completed-docker-rails:
-    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
-        --boundary after-assets --rail package
-
-_release-completed-buildkit-graph:
-    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
-        --boundary after-packages --rail package
-
-_release-completed-package-rails:
-    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
-        --boundary after-package-arm64 --rail install
-    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
-        --boundary after-package-x86_64 --rail install
-
-_release-deferred-install-target:
-    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
-        --boundary before-packages --rail package
-
-# repack-deb.sh below reads the materialized profile catalog from target/config,
-# so this recipe owns filling it rather than leaving each call site to remember.
-# Release CI never enters here: it consumes an already-built package with its
-# staged profile cohort, so nothing it pulled can be clobbered.
 _cross-compile arch="": _clean-stale _check-assets _generate-settings _materialize-config
     #!/bin/bash
     set -euo pipefail
@@ -2202,20 +2163,18 @@ _clean-stale:
 # Auto-prune Docker after builds: stopped containers, dangling images, build cache >7d.
 # Keeps named volumes (cross-compile cargo caches) and recent build cache for fast rebuilds.
 _docker-gc:
-    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py gc
+    @uv run capsem-gate storage gc
 
 # Enforce release-rail headroom while preserving content-addressed Cargo,
 # registry, rustup, and recent BuildKit caches that make forward fixes fast.
 _bound-docker-test-storage:
-    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py release \
-        --boundary candidate-boundary --rail default
-    @bash {{justfile_directory()}}/scripts/ensure-docker-space.sh default candidate-boundary
+    @uv run capsem-gate storage release candidate-boundary
+    @uv run capsem-gate storage ensure-space default candidate-boundary
 
 # Explicit deep cleanup for a human-requested cold rebuild. The canonical gate
 # deliberately does not call this recipe.
 _clean-docker-test-targets:
-    @uv run python {{justfile_directory()}}/scripts/docker-storage-policy.py clean \
-        --scope working --rail default
+    @uv run capsem-gate storage clean --scope working --rail default
 
 # --- Internal helpers (hidden from `just --list`) ---
 

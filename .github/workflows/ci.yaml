@@ -228,7 +228,6 @@ jobs:
             tests/capsem-rootfs-artifacts/test_rootfs_artifacts.py \
             --cov=src/capsem \
             --cov-report=xml:codecov-python.xml \
-            --cov-fail-under=85 \
             --junitxml=python-junit.xml
 
       # Python integration tests that need no VM

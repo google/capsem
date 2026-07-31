@@ -49,6 +49,10 @@ STAMPING_SOURCES = (
     *sorted((PROJECT_ROOT / "scripts").rglob("*.py")),
     *sorted((PROJECT_ROOT / "scripts").rglob("*.sh")),
     *sorted((PROJECT_ROOT / ".github" / "workflows").rglob("*.yaml")),
+    # The stamping logic moved out of the justfile and into this package. A
+    # guard that keeps scanning only where the code used to live protects an
+    # empty recipe body.
+    *sorted((PROJECT_ROOT / "src" / "capsem" / "gate").rglob("*.py")),
 )
 
 # A version component sourced from a clock. The left side is what makes it a

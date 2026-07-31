@@ -11,6 +11,7 @@ dependencies = [
 
 [project.scripts]
 capsem-builder = "capsem.builder.cli:main"
+capsem-gate = "capsem.gate.cli:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -74,8 +75,25 @@ target-version = "py311"
 select = ["E4", "E7", "E9", "F"]
 
 [tool.coverage.report]
-# Keep two decimal places so the blocking 85% release floor is exact.
+# Keep two decimal places so the blocking release floor is exact rather than
+# rounded up to it.
 precision = 2
+# The blocking Python coverage floor, declared once. It used to be spelled as
+# `--cov-fail-under=85` in the justfile, again in ci.yaml, and a third time in
+# the test that checks them -- so raising it meant finding all three, and a
+# fourth `--cov=` invocation in ci.yaml enforced no floor at all because its
+# copy had been forgotten. Coverage applies this to every run that reports.
+fail_under = 85
+
+[tool.capsem.gate]
+# The justfile dispatches; `src/capsem/gate` decides. Both halves of that
+# boundary are held by contract tests that read these numbers, so the shape of
+# the build system is configuration rather than a habit.
+#
+# A recipe body over this many lines is inline logic, and a gate module over
+# its ceiling is the 2000-line justfile growing back in a different language.
+max_recipe_lines = 12
+max_module_lines = 300
 
 [dependency-groups]
 dev = [

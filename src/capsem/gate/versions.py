@@ -1,0 +1,134 @@
+"""The workspace version, read from its one authority and fanned out.
+
+Four recipes each read the version with `grep '^version' Cargo.toml | head -1 |
+sed ...`, which is a guess about file layout rather than a parse: it matches the
+first line starting with `version` anywhere in the file, so a `[dependencies]`
+table gaining such a line silently changes what the release calls itself.
+
+The version is a human decision recorded in `Cargo.toml`. Only a person knows
+whether a change is a fix, a feature, or a break, which is the entire point of
+semver and the reason `min_capsem_version` can mean anything. Nothing here
+invents a version, and in particular nothing here derives one from the clock: a
+previous scheme appended `$(date +%s)`, which ordered releases but described
+none of them, and left every version above every compatibility floor by
+accident. `tests/test_retired_version_formats.py` scans this package for that
+shape.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import tomllib
+from pathlib import Path
+
+from .errors import GateError
+from .proc import Runner
+
+
+# Semver's numeric identifiers carry no leading zeros, which is not pedantry
+# here: it is what separates `2026.0730.16` -- the retired date-derived asset
+# version -- from a real `MAJOR.MINOR.PATCH`. A plain `\d+\.\d+\.\d+` accepts
+# the date, and accepting the date is how a version ended up above every
+# compatibility floor it was supposed to be compared against.
+SEMVER = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
+
+# Files carrying a copy of the workspace version, each with the pattern that
+# names it. `Cargo.lock` and `uv.lock` are absent on purpose: their copies are
+# refreshed by the tools that own them, not by substitution.
+STAMPED = (
+    (
+        Path("crates/capsem-app/tauri.conf.json"),
+        re.compile(r'"version": "\d+\.\d+\.\d+"'),
+        '"version": "{version}"',
+    ),
+    (
+        Path("pyproject.toml"),
+        re.compile(r'^version = "\d+\.\d+\.\d+"$', re.M),
+        'version = "{version}"',
+    ),
+)
+
+
+def require_semver(version: str, *, source: str) -> str:
+    """The version, if it is strict `MAJOR.MINOR.PATCH`."""
+    if not SEMVER.match(version):
+        raise GateError(f"{source} version is not semver MAJOR.MINOR.PATCH: {version}")
+    return version
+
+
+def workspace_version(root: Path) -> str:
+    """The version every Capsem artifact in this checkout is stamped with."""
+    cargo = Path(root) / "Cargo.toml"
+    try:
+        declared = tomllib.loads(cargo.read_text(encoding="utf-8"))["workspace"][
+            "package"
+        ]["version"]
+    except (KeyError, tomllib.TOMLDecodeError) as exc:
+        raise GateError(f"{cargo} declares no [workspace.package] version: {exc}") from None
+    return require_semver(declared, source="Cargo.toml")
+
+
+def _substitute(path: Path, pattern: re.Pattern[str], template: str, version: str) -> None:
+    """Rewrite the one place a file spells the version.
+
+    `sed` was happy to match nothing, so a renamed key would have left a stale
+    version behind and reported success. Requiring exactly one match turns that
+    into a failure at the point the assumption broke.
+    """
+    text = path.read_text(encoding="utf-8")
+    replaced, count = pattern.subn(template.format(version=version), text)
+    if count != 1:
+        raise GateError(
+            f"{path} should spell the version exactly once, matched {count} times"
+        )
+    path.write_text(replaced, encoding="utf-8")
+
+
+def stamp(root: Path, runner: Runner) -> str:
+    """Propagate `Cargo.toml`'s version across the release cohort.
+
+    Refusing an already-tagged version is what keeps the bump deliberate: the
+    release stops until someone chooses the next MAJOR.MINOR.PATCH.
+    """
+    root = Path(root)
+    version = workspace_version(root)
+
+    if runner.succeeds(["git", "rev-parse", "-q", "--verify", f"refs/tags/v{version}"]):
+        raise GateError(
+            f"v{version} is already tagged. Bump the version in Cargo.toml to "
+            "the next semver MAJOR.MINOR.PATCH for this change, then re-run."
+        )
+
+    runner.note(f"Stamping release cohort at {version}")
+    for relative, pattern, template in STAMPED:
+        _substitute(root / relative, pattern, template, version)
+
+    # Cargo refreshes workspace package versions in place while preserving the
+    # already locked dependency graph.
+    runner.run(["cargo", "update", "--workspace", "--offline"])
+    # Keep the editable project metadata in the frozen lockfile on the release
+    # version before release-binaries creates its commit and tag.
+    runner.run(["uv", "lock", "--offline"])
+    return version
+
+
+def register(subparsers: argparse._SubParsersAction) -> None:
+    stamp_parser = subparsers.add_parser(
+        "stamp-version",
+        help="propagate Cargo.toml's version across the release cohort",
+    )
+    stamp_parser.set_defaults(handler=_stamp_command)
+
+    show = subparsers.add_parser("version", help="print the workspace version")
+    show.set_defaults(handler=_version_command)
+
+
+def _stamp_command(args: argparse.Namespace, runner: Runner) -> int:
+    stamp(runner.root, runner)
+    return 0
+
+
+def _version_command(args: argparse.Namespace, runner: Runner) -> int:
+    print(workspace_version(runner.root))
+    return 0

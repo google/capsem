@@ -7,7 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Build and release logic is moving out of the justfile and into
+  `capsem.gate`, a unit-tested Python package the justfile dispatches to. The
+  justfile held roughly 2070 lines of `bash` inside recipe bodies, none of it
+  reachable by a test, so every defect in it was found by running the
+  forty-minute gate and reading the wreckage. Two contract tests now hold both
+  sides of that boundary: the justfile may not grow a shell body back, and no
+  gate module may swell into the file it replaced.
+- The Python coverage floor is declared once, as `fail_under` in pyproject's
+  `[tool.coverage.report]`. It had been spelled in the justfile, again in
+  `ci.yaml`, and a third time in the test that checked them -- while a fourth
+  coverage run in `ci.yaml` enforced no floor at all, because its copy had been
+  forgotten.
+
 ### Fixed
+
+- Version stamping reads `[workspace.package].version` from `Cargo.toml`
+  instead of `grep '^version' | head -1`, which matched the first line in the
+  file beginning with `version` wherever it lived -- so any table added above
+  it that declared a version would have renamed the release after a
+  dependency. A version with a zero-padded component (`2026.0730.16`, the
+  retired date-derived asset format) is now refused as the invalid semver it
+  is, rather than accepted and sorted above every compatibility floor it was
+  meant to be compared against.
+- `_stamp-version` fails when a file in the release cohort stops spelling the
+  version, instead of `sed` matching nothing and reporting success. A silent
+  no-op there leaves one artifact on the previous release's version while the
+  rest move.
+- The `just --list` description of `_cross-compile` had drifted onto the
+  storage recipe that followed it, so the two documented each other's
+  behaviour.
 
 - A gate run could finish green while leaving a `capsem-service` -- and the
   gateway and tray it holds -- alive under launchd. The service wrote
