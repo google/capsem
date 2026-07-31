@@ -660,19 +660,29 @@ test:
     TESTED_HEAD=$(git rev-parse HEAD)
     TESTED_SOURCE=$(uv run python scripts/source-state-digest.py)
     echo "=== Testing source state $TESTED_SOURCE at $TESTED_HEAD ==="
-    capture_candidate_failure() {
+    # Record what was already running so the orphan check below blames this run
+    # for its own processes only, never a developer's dev daemon or editor MCP.
+    uv run python scripts/check-orphan-processes.py baseline
+    # Stays armed through the tail checks: an aborted gate is exactly the run
+    # that skips its cleanup, so it is the one that most needs the process
+    # count.
+    close_out_candidate() {
         status=$?
         if [ "$status" -ne 0 ]; then
             uv run python scripts/docker-storage-policy.py capture-failure \
                 --rail default \
                 --label "${TESTED_HEAD:0:12}" || true
         fi
+        # Raise the status, never lower it. A trap that `return`s cannot fail a
+        # passing run, but `exit "$status"` would report success for an
+        # interrupted one: $? at trap time is the last command's, and on Ctrl-C
+        # that is 0, so exiting with it discards the shell's own 130.
+        uv run python scripts/check-orphan-processes.py check || exit 1
         return "$status"
     }
-    trap capture_candidate_failure EXIT
+    trap close_out_candidate EXIT
     just _test-fast
     scripts/with-gate-colima.sh just _test-candidate
-    trap - EXIT
     test "$(git rev-parse HEAD)" = "$TESTED_HEAD" || {
         echo "source HEAD changed while just test was running" >&2
         exit 1
@@ -775,6 +785,7 @@ _test-candidate-run:
         tests/test_integration_script_profiles.py
         tests/test_live_channel_watch.py
         tests/test_macos_tart_glowup.py
+        tests/test_orphan_process_gate.py
         tests/test_profile_revision_semver.py
         tests/test_path_and_log_wrappers_are_mandatory.py
         tests/test_pidfile_cleanup_is_wired.py

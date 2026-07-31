@@ -25,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aborted run or a SIGKILL never reaches, and nothing else bounded that
   service's lifetime. Real users still get an unbounded daemon: theirs must
   outlive the CLI that spawns it.
+- `just test` now counts capsem processes at the end of every run, passing or
+  aborted, and fails when any process from this checkout outlived it. It takes
+  a baseline first, so a developer's own dev daemon is never blamed on the
+  gate, and it reaps what it finds by exact pid. The existing guard proved the
+  reaping was *wired* to a pidfile some binary writes; it stayed green through
+  this entire bug, because wiring and working are different claims.
 - The release stamper no longer builds a version from the clock. It still
   assembled `1.${RELEASE_MINOR}.$(date +%s)` for the whole semver rewrite, so
   `just release-binaries` would have stamped `1.6.<timestamp>` and then failed
