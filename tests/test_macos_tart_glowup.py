@@ -345,7 +345,14 @@ def test_guest_rejects_tampered_poll_and_reproves_preserved_install() -> None:
     assert 'launchctl bootstrap "gui/$(id -u)" "$SERVICE_PLIST"' in source
     assert "launchctl kickstart -k" in source
     assert "automatic release update failed" in source
-    assert 'SERVICE_LOG="$CAPSEM_HOME/run/service.log"' in source
+    # The rejection is proved from the rotated stream, never from the bare
+    # `service.log`. Pinning that exact name is what let the proof poll an empty
+    # file for three minutes and report a service that had rejected the tampered
+    # manifest as one that had not.
+    assert 'SERVICE_LOG_DIR="$CAPSEM_HOME/run"' in source
+    assert 'cat "$SERVICE_LOG_DIR"/service*.log' in source
+    assert 'service_log_stream | tail -n "+$first_line"' in source
+    assert '"$CAPSEM_HOME/run/service.log"' not in source
     assert "manifest-before-rejection.json" in source
     assert "manifest-metadata-before-rejection.json" in source
     assert "profile_tree_digest" in source
