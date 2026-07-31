@@ -59,15 +59,49 @@ const AUTOMATIC_UPDATE_POLL_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS";
 
 use capsem_core::paths::checkpoint_complete_path;
 
-/// Removes the service pidfile on clean shutdown so a stale pid cannot make a
-/// dead service look alive to whatever is waiting to reap it.
+/// Owns `$run_dir/service.pid` -- the only handle a harness has on a detached
+/// service. Written when this process takes the socket, removed on clean
+/// shutdown so a stale pid cannot make a dead service look alive to whatever
+/// is waiting to reap it.
+///
+/// Removal is ownership-checked. A pidfile that no longer records our pid
+/// belongs to a successor that claimed the run directory while we were shutting
+/// down, and erasing it strands that successor exactly as this guard exists to
+/// prevent: `stop_gate_pidfile` on a missing file is indistinguishable from a
+/// successful reap.
 struct ServicePidfile {
     path: std::path::PathBuf,
+    pid: u32,
+}
+
+impl ServicePidfile {
+    /// Claim the pidfile for this process.
+    ///
+    /// Call only once we own the service socket. A starter that claims before
+    /// the startup race resolves and then loses it -- the "compatible
+    /// capsem-service already running; exiting 0" path -- drops this guard on
+    /// the way out and takes the winner's pid with it.
+    fn claim(path: std::path::PathBuf) -> Self {
+        let pid = std::process::id();
+        if let Err(error) = std::fs::write(&path, pid.to_string()) {
+            warn!(path = %path.display(), %error, "failed to write service pidfile");
+        }
+        Self { path, pid }
+    }
+
+    fn records_us(&self) -> bool {
+        std::fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u32>().ok())
+            .is_some_and(|recorded| recorded == self.pid)
+    }
 }
 
 impl Drop for ServicePidfile {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        if self.records_us() {
+            let _ = std::fs::remove_file(&self.path);
+        }
     }
 }
 
@@ -12906,18 +12940,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    // Write the pidfile the harness reaps by. Without it, every cleanup that
-    // targets `$run_dir/service.pid` no-ops silently -- indistinguishable from
-    // success -- and the asset gate left a service (and its tray) behind on
-    // every run.
-    let service_pidfile = run_dir.join("service.pid");
-    if let Err(error) = std::fs::write(&service_pidfile, std::process::id().to_string()) {
-        warn!(path = %service_pidfile.display(), %error, "failed to write service pidfile");
-    }
-    let _pidfile_guard = ServicePidfile {
-        path: service_pidfile,
-    };
-
     let instances_dir = run_dir.join("instances");
     let sessions_dir = run_dir.join("sessions");
     let persistent_dir = run_dir.join("persistent");
@@ -13247,6 +13269,16 @@ async fn main() -> Result<()> {
             return Err(error);
         }
     };
+    // We hold the socket, so we are the service a reaper should kill. Claim the
+    // pidfile before releasing the startup lock: from the moment a peer can
+    // fast-probe us and exit 0, `$run_dir/service.pid` must already name us and
+    // not the peer, whose guard would otherwise erase our pid on its way out.
+    //
+    // Without a pidfile, every cleanup targeting `$run_dir/service.pid` no-ops
+    // silently -- indistinguishable from success -- and the asset gate left a
+    // service (and its tray) behind on every run.
+    let _pidfile_guard = ServicePidfile::claim(run_dir.join("service.pid"));
+
     // Socket is bound; release the startup lock so any peer starter still in
     // its flock wait can fast-probe us and exit 0.
     drop(startup_lock_guard);

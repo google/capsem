@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A gate run could finish green while leaving a `capsem-service` -- and the
+  gateway and tray it holds -- alive under launchd. The service wrote
+  `$run_dir/service.pid` before resolving its own startup race, so a second
+  starter that found a compatible peer already serving deleted the *winner's*
+  pidfile on the way out. Every later `stop_gate_pidfile` then found no file,
+  no-opped, and reported success, because a no-op cleanup is indistinguishable
+  from a successful one. Six services accumulated across one session of
+  release-lane runs, each alive for hours. The pidfile is now claimed only once
+  a process owns the service socket, and removed only while it still records
+  that process's own pid, so neither a losing starter nor a shutting-down
+  predecessor can strand whoever is actually serving.
 - The release stamper no longer builds a version from the clock. It still
   assembled `1.${RELEASE_MINOR}.$(date +%s)` for the whole semver rewrite, so
   `just release-binaries` would have stamped `1.6.<timestamp>` and then failed

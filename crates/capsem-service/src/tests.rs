@@ -11716,3 +11716,52 @@ fn spawn_env_allowlist_keeps_the_vars_the_child_actually_needs() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Service pidfile ownership
+// ---------------------------------------------------------------------------
+//
+// The pidfile is the only handle a harness has on a detached service: the
+// asset gate, `_ensure-service`, and every abort path reap by
+// `$run_dir/service.pid`. A guard that removes that file when it no longer
+// records us erases the pid of whichever service is now serving, and every
+// later `stop_gate_pidfile` reads as a silent success while the real service
+// runs on under launchd.
+
+#[test]
+fn service_pidfile_removes_its_own_record_on_drop() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("service.pid");
+
+    let guard = ServicePidfile::claim(path.clone());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap().trim(),
+        std::process::id().to_string(),
+        "claim must record our own pid for the reaper to find"
+    );
+
+    drop(guard);
+    assert!(
+        !path.exists(),
+        "a dead service must not leave a stale pid for the reaper to kill"
+    );
+}
+
+#[test]
+fn service_pidfile_leaves_a_successors_record_intact() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("service.pid");
+
+    let guard = ServicePidfile::claim(path.clone());
+    // A successor service claims the same run directory while we shut down.
+    std::fs::write(&path, "424242").unwrap();
+    drop(guard);
+
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap().trim(),
+        "424242",
+        "erasing a successor's pid strands it: every later reap finds no \
+         pidfile and reports success while the service keeps running"
+    );
+}
+
