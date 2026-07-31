@@ -139,6 +139,57 @@ def test_the_three_permitted_modules_are_the_ones_that_have_to_be() -> None:
     }
 
 
+#: Reaching for any of these is scheduling work outside the graph.
+SCHEDULERS = {"threading", "multiprocessing", "concurrent", "asyncio"}
+
+
+def _schedulers(module: Path) -> list[str]:
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            found += [
+                f"{node.lineno}: import {alias.name}"
+                for alias in node.names
+                if alias.name.split(".")[0] in SCHEDULERS
+            ]
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.split(".")[0] in SCHEDULERS
+        ):
+            found.append(f"{node.lineno}: from {node.module}")
+    return sorted(found)
+
+
+@pytest.mark.parametrize("module", _modules(), ids=lambda p: p.name)
+def test_only_the_plan_schedules_concurrent_work(module: Path) -> None:
+    """Parallelism the graph cannot see is parallelism the exclusives cannot
+    constrain -- which is exactly what seven bare `&` in one recipe body were.
+
+    `assetlanes` hand-rolled its own pool and is on the ratchet until it is
+    expressed as two independent steps that both contend for the daemon.
+    """
+    allowed = set(BOUNDARY.direct_concurrency) | set(
+        BOUNDARY.modules_bypassing_primitives
+    )
+    if module.name in allowed:
+        pytest.skip("the scheduler itself, or on the ratchet")
+
+    found = _schedulers(module)
+
+    assert not found, (
+        f"{module.name} schedules its own concurrency; declare the work as "
+        "independent steps in a Plan, and name what they contend for:\n  "
+        + "\n  ".join(found)
+    )
+
+
+def test_the_plan_is_the_only_scheduler() -> None:
+    """Widening this is a design decision. The graph decides what overlaps."""
+    assert set(BOUNDARY.direct_concurrency) == {"plan.py"}
+
+
 @pytest.mark.parametrize("module", _modules(), ids=lambda p: p.name)
 def test_nothing_kills_a_process_by_name(module: Path) -> None:
     """`_ensure-service` stopped only the pidfile-tracked service and never

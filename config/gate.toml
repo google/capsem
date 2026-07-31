@@ -445,6 +445,12 @@ recipes_with_inline_control_flow = ["_pnpm-install"]
 # kill" has a single answer. Widening this is a design decision.
 direct_machine_access = ["fileactions.py", "proc.py", "pidfiles.py"]
 
+# Only the plan schedules concurrent work. A module that reaches for its own
+# thread pool has parallelism the graph cannot see -- and therefore parallelism
+# the exclusives cannot constrain, which is exactly what seven bare `&` in one
+# recipe body were.
+direct_concurrency = ["plan.py"]
+
 # Modules that still reach past the primitives, pending extraction onto them.
 # Work that goes around `actions`/`fileactions` is work the dry run cannot show
 # and the run log cannot time.

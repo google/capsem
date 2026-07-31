@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Gate ordering is declared as a dependency graph and derived by topological
+  sort, rather than written out as a list whose order is its meaning. The
+  install gate's defect was exactly this shape -- a manifest URL consumed
+  before anything staged the file it pointed at -- and the fix was to move two
+  lines, which no arrangement of source lines can now get wrong. A cycle is
+  reported before any step runs, naming the steps involved. Whatever the sort
+  makes simultaneously ready is independent by construction, so concurrency is
+  no longer a human judgement about which jobs are safe beside each other;
+  seven bare `&` in one recipe body were exactly that judgement, made once and
+  never rechecked. Steps that are independent but still cannot share the
+  machine declare what they contend for, and the plan serializes only those.
+- Every gate command can now be asked what it would do without doing it.
+  `--dry-run` prints the steps in execution order with the argv each would
+  invoke and the contention each declares; `--graph` emits the same thing as a
+  diagram. Both are free, which is the point: the question "what does `just
+  test` actually do" previously cost forty minutes to answer.
+- A failed step's dependents are reported as skipped rather than failed. They
+  never ran, and a report that conflates the two hides how far the real failure
+  reached. Independent failures are all reported together, so a broken gate
+  takes one round to diagnose instead of three.
+- Gate runs know their own critical path -- the longest chain of steps by
+  measured duration, not the slowest single step. Shortening the slowest step
+  does nothing when it runs beside something longer; the critical path is what
+  a run's duration is actually made of.
 - Exactly three gate modules may touch the machine directly: the filesystem
   primitives, the single funnel every invocation passes through, and the one
   place a signal is sent. Work that goes around them is work a dry run cannot
