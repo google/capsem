@@ -449,9 +449,23 @@ recipes_with_inline_control_flow = ["_pnpm-install"]
 #                has a single answer
 #   locks        the lockfile that makes one gate per machine true, which has
 #                to be placed before any workspace exists to put it in
+#   runlog       the run directory itself, which cannot be written through
+#                actions because actions report into it
+#   runhistory   reclaiming those directories, for the same reason
+#
+# The through-line: these are the harness, and the harness is what gate work is
+# expressed *in*. Anything built on top of it -- a capability, a command -- goes
+# through actions, or its work is invisible to the dry run and the log.
 #
 # Widening this is a design decision, not a convenience.
-direct_machine_access = ["fileactions.py", "proc.py", "pidfiles.py", "locks.py"]
+direct_machine_access = [
+    "fileactions.py",
+    "proc.py",
+    "pidfiles.py",
+    "locks.py",
+    "runlog.py",
+    "runhistory.py",
+]
 
 # Only the plan schedules concurrent work. A module that reaches for its own
 # thread pool has parallelism the graph cannot see -- and therefore parallelism

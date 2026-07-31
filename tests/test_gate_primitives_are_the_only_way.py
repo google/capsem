@@ -5,11 +5,11 @@ itself before it runs and be timed while it runs. Both properties are lost the
 moment a module calls `shutil.rmtree` or `subprocess.run` directly: the dry run
 cannot mention what it does not know about, and the run log cannot record it.
 
-So there are exactly three modules allowed to touch the machine.
-`fileactions` is the filesystem primitives themselves. `proc` is the single
-funnel every invocation passes through -- the one place the run log has to
-hook. `pidfiles` is the one place a signal is sent, deliberately narrow so that
-"which process did the gate kill" has one answer.
+So only the harness may touch the machine: the primitives themselves, the
+funnel every invocation passes through, and the modules that own one piece of
+machine state as their entire purpose -- the pidfiles, the lock, the run
+directory. Everything built on top of that is gate work, and gate work goes
+through actions or it is invisible.
 
 The rest are on a ratchet while they are extracted. Entries may leave, nothing
 may join, and a module that no longer applies must be struck, so the list
@@ -134,37 +134,64 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
     invocation passes through, which is why the run log has one place to hook.
     `pidfiles` is where a signal is sent, so "which process did the gate kill"
     has a single answer. `locks` owns the lockfile that makes one gate per
-    machine true, and it has to place that file before any workspace exists.
+    machine true, and has to place it before any workspace exists. `runlog`
+    owns the run directory and cannot write through actions because actions
+    report into it; `runhistory` reclaims those directories.
+
+    The through-line is that these are the harness, and the harness is what
+    gate work is expressed *in*. A capability or a command appearing here
+    would mean work that the dry run cannot show and the log cannot time.
     """
     assert set(BOUNDARY.direct_machine_access) == {
         "fileactions.py",
         "proc.py",
         "pidfiles.py",
         "locks.py",
+        "runlog.py",
+        "runhistory.py",
     }
 
 
-#: Reaching for any of these is scheduling work outside the graph.
-SCHEDULERS = {"threading", "multiprocessing", "concurrent", "asyncio"}
+# Whole worlds of their own scheduling; importing one at all is the decision.
+FORBIDDEN_RUNTIMES = {"multiprocessing", "asyncio"}
+
+# Things that *create* concurrent execution, as opposed to constraining it.
+# `threading.Lock` is deliberately absent: a mutex serializes access to
+# something and starts nothing, which is the opposite of what this guards.
+SPAWNERS = {
+    "Thread",
+    "Timer",
+    "ThreadPoolExecutor",
+    "ProcessPoolExecutor",
+    "Process",
+    "Pool",
+}
 
 
 def _schedulers(module: Path) -> list[str]:
+    """Every place a module starts concurrent work of its own."""
     tree = ast.parse(module.read_text(encoding="utf-8"))
     found: list[str] = []
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             found += [
                 f"{node.lineno}: import {alias.name}"
                 for alias in node.names
-                if alias.name.split(".")[0] in SCHEDULERS
+                if alias.name.split(".")[0] in FORBIDDEN_RUNTIMES
             ]
         elif (
             isinstance(node, ast.ImportFrom)
             and node.module
-            and node.module.split(".")[0] in SCHEDULERS
+            and node.module.split(".")[0] in FORBIDDEN_RUNTIMES
         ):
             found.append(f"{node.lineno}: from {node.module}")
-    return sorted(found)
+        elif isinstance(node, ast.Name) and node.id in SPAWNERS:
+            found.append(f"{node.lineno}: {node.id}")
+        elif isinstance(node, ast.Attribute) and node.attr in SPAWNERS:
+            found.append(f"{node.lineno}: .{node.attr}")
+
+    return sorted(set(found))
 
 
 @pytest.mark.parametrize("module", _modules(), ids=lambda p: p.name)
@@ -193,6 +220,26 @@ def test_only_the_plan_schedules_concurrent_work(module: Path) -> None:
 def test_the_plan_is_the_only_scheduler() -> None:
     """Widening this is a design decision. The graph decides what overlaps."""
     assert set(BOUNDARY.direct_concurrency) == {"plan.py"}
+
+
+def test_a_mutex_is_not_mistaken_for_a_scheduler(tmp_path: Path) -> None:
+    """Serializing access to a file starts nothing.
+
+    `runlog` is appended to by steps the plan is running concurrently, so it
+    needs a lock; forbidding that would push it towards either corrupting its
+    own output or inventing a worse way to avoid it.
+    """
+    module = tmp_path / "example.py"
+    module.write_text(
+        "import threading\n"
+        "from concurrent.futures import ThreadPoolExecutor\n"
+        "guard = threading.Lock()\n"
+        "pool = ThreadPoolExecutor()\n"
+    )
+
+    found = [entry.split(": ", 1)[1] for entry in _schedulers(module)]
+
+    assert found == ["ThreadPoolExecutor"], "the pool, not the lock"
 
 
 @pytest.mark.parametrize("module", _modules(), ids=lambda p: p.name)

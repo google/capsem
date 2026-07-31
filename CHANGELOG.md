@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every gate run now writes a record: an event stream, a log per step, and a
+  summary, under `target/gate-runs/<id>/` with `latest` pointing at the most
+  recent. Diagnosing a failure used to require having been present when it
+  happened -- which command ran with which arguments, what it exited with,
+  where the time went, which bytes came out all lived in a terminal, for
+  whoever was watching. Every line is validated against a model on the way
+  out, so the log cannot drift into a shape nothing reads back. `exec` records
+  only the environment a command *added*, never the ambient one, because this
+  file gets attached to bug reports and a release machine's environment holds
+  tokens. Rotation is bounded by both count and bytes, and gives up completed
+  runs before crashed ones -- a crashed run is precisely the case where the
+  terminal output was lost with it.
 - Two gate runs can no longer start on one machine. A run's first act is to
   remove `$CAPSEM_HOME` and stop the service inside it, so a second run
   deletes the first's home mid-flight and both report failures belonging to
