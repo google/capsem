@@ -163,17 +163,18 @@ def test_package_provenance_check_rejects_stale_revision(tmp_path: Path) -> None
 
 def test_every_package_builder_enforces_exact_provenance() -> None:
     macos_builder = (REPO_ROOT / "scripts" / "build-test-macos-package.sh").read_text()
-    justfile = (REPO_ROOT / "justfile").read_text()
+    linux_builder = (REPO_ROOT / "scripts" / "build-linux-package.sh").read_text()
     release_workflow = (REPO_ROOT / ".github" / "workflows" / "release.yaml").read_text()
 
     assert (
         'bash scripts/check-build-provenance.sh "$ROOT/target/release/capsem"'
         in macos_builder
     )
+    # Was asserted against the justfile, where this lived as an escaped
+    # fragment of a `docker run ... bash -c` argument.
     assert (
-        'bash scripts/check-build-provenance.sh '
-        '\\"/cargo-target/\\$RUST_TARGET/release/capsem\\"'
-        in justfile
+        'bash scripts/check-build-provenance.sh "/cargo-target/$RUST_TARGET/release/capsem"'
+        in linux_builder
     )
     assert (
         release_workflow.count(

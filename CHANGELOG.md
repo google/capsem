@@ -34,6 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   being shipped, and handed over before `dpkg -i`. A handoff naming a file that
   does not exist, or naming the legacy runtime projection instead of the
   authoritative graph, is refused rather than silently ignored.
+- The Linux package build no longer spells the pinned Rust toolchain three
+  times. It reads `rust-toolchain.toml`, so a toolchain bump cannot leave the
+  package rail behind on the old one. The build itself moved out of an escaped
+  `bash -c` argument into `scripts/build-linux-package.sh`, where the repository's
+  shell syntax gate can see it.
 - Version stamping reads `[workspace.package].version` from `Cargo.toml`
   instead of `grep '^version' | head -1`, which matched the first line in the
   file beginning with `version` wherever it lived -- so any table added above

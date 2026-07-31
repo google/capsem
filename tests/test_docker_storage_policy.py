@@ -102,7 +102,6 @@ def test_justfile_uses_named_rails_and_keeps_builder_until_packages_finish() -> 
 
     assert "CAPSEM_DOCKER_CACHE_KEEP_GB=" not in justfile
     assert 'scripts/ensure-docker-space.sh" assets' in justfile
-    assert 'scripts/ensure-docker-space.sh" package' in justfile
 
     arm64 = justfile.index("just _cross-compile arm64")
     x86_64 = justfile.index("just _cross-compile x86_64")
@@ -128,6 +127,12 @@ def test_the_install_rails_reserve_headroom_before_and_during_the_proof() -> Non
 
     assert 'ensure_space("install-preflight")' in install
     assert 'ensure_space("install")' in install
+
+    # The package rail owns its own headroom the same way, and reserves it
+    # twice: once before the builder image and once after, since the image
+    # build itself is what consumes the first reservation.
+    package = (ROOT / "src" / "capsem" / "gate" / "crosscompile.py").read_text()
+    assert package.count('ensure_space("package")') == 2
 
 
 def test_both_package_architectures_release_their_own_install_headroom() -> None:

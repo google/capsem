@@ -12,13 +12,13 @@ import argparse
 import sys
 from collections.abc import Sequence
 
-from . import install, installimage, project_root, storage, versions
+from . import crosscompile, install, installimage, project_root, storage, versions
 from .errors import GateError
 from .proc import Runner
 
 
 # Each module owns its own subcommand surface.
-COMMAND_MODULES = (versions, storage, installimage, install)
+COMMAND_MODULES = (versions, storage, installimage, install, crosscompile)
 
 
 def build_parser() -> argparse.ArgumentParser:

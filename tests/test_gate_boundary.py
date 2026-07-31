@@ -44,7 +44,6 @@ REMAINING_SHELL_RECIPES = frozenset(
     {
         "_test-candidate-run",
         "_gate-assets",
-        "_cross-compile",
         "_prove-linux-deb",
         "_pack-initrd",
         "smoke",

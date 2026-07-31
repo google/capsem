@@ -2850,12 +2850,26 @@ def test_release_critical_workflows_share_local_entrypoints_or_name_platform_bou
     ):
         assert shared_script in release
     assert "scripts/build-test-macos-package.sh" in macos_glowup
+    # The local rail must reach the same shared scripts CI does. Since the
+    # package build moved out of the recipe body, "local" is the justfile plus
+    # what it dispatches to -- the point of the rule is that both rails run the
+    # same code, not that one file contains it.
+    local_rail = "\n".join(
+        [
+            just,
+            (PROJECT_ROOT / "scripts" / "build-linux-package.sh").read_text(),
+            *(
+                path.read_text()
+                for path in sorted((PROJECT_ROOT / "src" / "capsem" / "gate").glob("*.py"))
+            ),
+        ]
+    )
     for shared_script in (
         "scripts/repack-deb.sh",
         "scripts/verify-installed-release.py",
         "scripts/prove-installed-shell.py",
     ):
-        assert shared_script in just
+        assert shared_script in local_rail
 
     for unavoidable_boundary in (
         "Apple signing and notarization",
