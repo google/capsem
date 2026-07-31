@@ -89,7 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   snapshots its output into a private directory while that lock is still held;
   callers read the snapshot, and nothing outside the helper touches
   `release-site/dist`. Snapshots are keyed by graph content, so the gates that
-  share the fixture graph still share one build.
+  share the fixture graph still share one build. A contract gate holds both
+  halves: a module that spawns a release-site build must reach the shared
+  lock, and only the helper may name `release-site/dist`.
 - Three defects the widened source gates found immediately: an ironbank ledger
   assertion called with a required argument missing, so that path raised
   `TypeError` rather than asserting anything; a gateway test whose assertion
