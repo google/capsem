@@ -163,14 +163,20 @@ def test_no_gate_module_grows_into_the_justfile_it_replaced() -> None:
 def test_the_cli_only_parses_and_dispatches() -> None:
     """Business logic in the entry point is how one file becomes all of them.
 
-    Every subcommand is contributed by the module that implements it, so this
-    file has no reason to name a command, run one, or branch on what one means.
+    Every subcommand is contributed by the module that implements it, by
+    subclassing `GateCommand`, so this file builds its parsers by looping over
+    the registry and has no reason to name a command, run one, or branch on
+    what one means.
     """
+    from capsem.gate.command import GateCommand
+
     cli = (GATE_PACKAGE / "cli.py").read_text(encoding="utf-8")
 
-    assert "add_parser(" not in cli, (
-        "a subcommand defined here is a subcommand defined away from its "
-        "implementation; add `register(subparsers)` to the owning module"
+    named = sorted(name for name in GateCommand.registry if f'"{name}"' in cli)
+    assert not named, (
+        f"the CLI names these commands: {named}. A subcommand spelled here is "
+        "a subcommand defined away from its implementation; it should arrive "
+        "through the registry."
     )
     assert "subprocess" not in cli, "the CLI dispatches; the modules run things"
     for smell in ("docker ", "cargo ", "pnpm ", "uv run"):

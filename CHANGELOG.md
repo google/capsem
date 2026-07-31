@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokens. Rotation is bounded by both count and bytes, and gives up completed
   runs before crashed ones -- a crashed run is precisely the case where the
   terminal output was lost with it.
+- Every gate command now shares one lifecycle. A command declares what it
+  holds and what work it contains; when to release, in what order steps run,
+  whether it needs the machine to itself and how any of it is recorded are the
+  same for all of them, and a contract test forbids a command from defining
+  its own. That is what makes `--dry-run`, `--graph` and `--timing` exist on
+  every command by construction rather than by each author remembering.
+- Two new commands: `capsem-gate runs` reads a recorded run back -- list it,
+  explain one, or jump to the last failure -- and `capsem-gate gc` reclaims
+  the disk the gate is holding, replacing four scattered ways to clean up one
+  of which a developer had to know to pick. Neither takes the machine lock,
+  because asking what a run did is a question you should be able to ask while
+  the next one is going.
 - The gate now bounds and reclaims what it occupies. Every tree it can create
   is declared in `[disk] reclaimable`, nothing outside that may be removed,
   and `ensure_space` reclaims before refusing -- running out of disk an hour

@@ -17,13 +17,16 @@ shape.
 
 from __future__ import annotations
 
-import argparse
 import re
 import tomllib
 from pathlib import Path
 
 from . import config as gate_config
+from .actions import Call
+from .command import GateCommand
 from .errors import GateError
+from .execution import step
+from .plan import Plan
 from .proc import Runner
 
 # Semver's numeric identifiers carry no leading zeros, which is not pedantry
@@ -116,22 +119,43 @@ def stamp(root: Path, runner: Runner) -> str:
     return version
 
 
-def register(subparsers: argparse._SubParsersAction) -> None:
-    stamp_parser = subparsers.add_parser(
-        "stamp-version",
-        help="propagate Cargo.toml's version across the release cohort",
-    )
-    stamp_parser.set_defaults(handler=_stamp_command)
+class StampCommand(
+    GateCommand,
+    name="stamp-version",
+    help="propagate Cargo.toml's version across the release cohort",
+):
+    exclusive = True
 
-    show = subparsers.add_parser("version", help="print the workspace version")
-    show.set_defaults(handler=_version_command)
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        plan.add(
+            step(
+                "stamp",
+                Call(
+                    "stamp the workspace version into every file that carries it",
+                    _stamp,
+                ),
+            )
+        )
+        return plan
 
 
-def _stamp_command(args: argparse.Namespace, runner: Runner) -> int:
-    stamp(runner.root, runner)
-    return 0
+def _stamp(context) -> None:
+    stamp(context.root, context.runner)
 
 
-def _version_command(args: argparse.Namespace, runner: Runner) -> int:
-    print(workspace_version(runner.root))
-    return 0
+class VersionCommand(
+    GateCommand, name="version", help="print the workspace version"
+):
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        plan.add(
+            step(
+                "read",
+                Call(
+                    "read the version from its one authority",
+                    lambda ctx: print(workspace_version(ctx.root)),
+                ),
+            )
+        )
+        return plan

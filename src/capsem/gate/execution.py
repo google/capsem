@@ -48,7 +48,8 @@ class Step:
         against what it was supposed to produce.
         """
         for action in self.actions:
-            action.perform(context)
+            with context.journal.action(action):
+                action.perform(context)
         for artifact in self.produces:
             Hash(artifact).perform(context)
 

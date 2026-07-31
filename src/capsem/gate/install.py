@@ -15,17 +15,20 @@ broke when those public artifacts were retired. See `releasegraph`.
 
 from __future__ import annotations
 
-import argparse
 import os
 import shutil
 from pathlib import Path
 
 from . import config as gate_config
 from . import installimage
+from .actions import Call
+from .command import GateCommand
 from .docker import Docker, container_path
 from .errors import GateError
+from .execution import step
 from .installcontainer import InstallContainer
 from .installproof import InstallProof
+from .plan import Plan
 from .proc import Runner
 from .releasegraph import ReleaseGraph
 from .storage import Storage
@@ -190,17 +193,30 @@ class InstallGate:
         self._graph.hand_off(manifest)
 
 
-def register(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "install", help="install the exact release package and prove it works"
-    )
-    parser.set_defaults(handler=_command)
+class InstallCommand(
+    GateCommand,
+    name="install",
+    help="install the exact release package and prove it works",
+):
+    exclusive = True
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        plan.add(
+            step(
+                "install",
+                Call(
+                    "install the exact package and prove the installed product",
+                    _install,
+                ),
+            )
+        )
+        return plan
 
 
-def _command(args: argparse.Namespace, runner: Runner) -> int:
+def _install(context) -> None:
     InstallGate(
-        runner,
+        context.runner,
         profile_inputs=os.environ.get("CAPSEM_INSTALL_PROFILE_INPUTS"),
         macos_glowup_report=os.environ.get("CAPSEM_MACOS_NATIVE_GLOWUP_REPORT"),
     ).run()
-    return 0

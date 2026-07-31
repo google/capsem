@@ -15,14 +15,17 @@ minutes into a release.
 
 from __future__ import annotations
 
-import argparse
 import shutil
 import subprocess
 import tomllib
 from dataclasses import dataclass
 
 from . import config as gate_config
+from .actions import Call
+from .command import GateCommand
 from .errors import GateError
+from .execution import step
+from .plan import Plan
 from .proc import Runner
 
 
@@ -126,18 +129,24 @@ def check(runner: Runner) -> list[Finding]:
     ]
 
 
-def register(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "doctor", help="check that this checkout's gate is installed and coherent"
-    )
-    parser.set_defaults(handler=_command)
+class DoctorCommand(
+    GateCommand,
+    name="doctor",
+    help="check that this checkout's gate is installed and coherent",
+):
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        plan.add(step("check", Call("would the gate work if we started now", _report)))
+        return plan
 
 
-def _command(args: argparse.Namespace, runner: Runner) -> int:
-    findings = check(runner)
+def _report(context) -> None:
+    findings = check(context.runner)
     if not findings:
-        runner.note("gate: configuration valid, entry points installed, dispatch intact")
-        return 0
+        context.runner.note(
+            "gate: configuration valid, entry points installed, dispatch intact"
+        )
+        return
     raise GateError(
         "the gate is not ready:\n"
         + "\n".join(f"  {finding.check}: {finding.detail}" for finding in findings)

@@ -18,15 +18,18 @@ rest of the shell in the repository.
 
 from __future__ import annotations
 
-import argparse
 import os
 import tomllib
 from pathlib import Path
 
 from . import config as gate_config
 from . import host
+from .actions import Call
+from .command import GateCommand
 from .config import Arch
 from .errors import GateError
+from .execution import step
+from .plan import Plan
 from .proc import Runner
 from .storage import Storage
 
@@ -238,22 +241,41 @@ class PackageRail:
         )
 
 
-def register(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "cross-compile", help="build the Linux release package for one architecture"
-    )
-    parser.add_argument("arch", nargs="?", help="arm64 or x86_64; defaults to the host")
-    parser.set_defaults(handler=_command)
+class CrossCompileCommand(
+    GateCommand,
+    name="cross-compile",
+    help="build the Linux release package for one architecture",
+):
+    exclusive = True
+
+    @classmethod
+    def add_arguments(cls, parser) -> None:
+        parser.add_argument(
+            "arch", nargs="?", help="arm64 or x86_64; defaults to the host"
+        )
+
+    def plan(self) -> Plan:
+        config = self._config
+        target = config.arch(self._args.arch) if self._args.arch else config.host_arch()
+        plan = Plan(self.name)
+        plan.add(
+            step(
+                f"package.{target.name}",
+                Call(
+                    f"build the Linux release package for {target.name}",
+                    lambda ctx: _build(ctx, target),
+                ),
+                contends=(config.exclusive("docker_daemon"),),
+            )
+        )
+        return plan
 
 
-def _command(args: argparse.Namespace, runner: Runner) -> int:
-    config = gate_config.for_root(runner.root)
-    target = config.arch(args.arch) if args.arch else config.host_arch()
+def _build(context, target) -> None:
     PackageRail(
-        runner,
+        context.runner,
         target,
         manifest_url=os.environ.get("CAPSEM_INSTALL_MANIFEST_URL"),
         channel=os.environ.get("CAPSEM_INSTALL_CHANNEL"),
         require_proof=os.environ.get("CAPSEM_REQUIRE_LINUX_DEB_PROOF", "0") == "1",
     ).run()
-    return 0

@@ -152,8 +152,7 @@ class Plan:
         lines = ["graph TD"]
         for step in self._steps:
             lines.append(f"  {_node(step.label)}[{step.label}]")
-        for label, earlier in sorted(self._after.items()):
-            lines += [f"  {_node(before)} --> {_node(label)}" for before in sorted(earlier)]
+        lines += [f"  {_node(before)} --> {_node(after)}" for before, after in self.edges]
         return "\n".join(lines)
 
     def critical_path(self) -> list[Step]:
@@ -180,6 +179,20 @@ class Plan:
         return [self._by_label[label] for label in path]
 
     @property
+    def labels(self) -> tuple[str, ...]:
+        """Every step, in an order the graph allows -- as the log records it."""
+        return tuple(step.label for wave in self.order() for step in wave)
+
+    @property
+    def edges(self) -> tuple[tuple[str, str], ...]:
+        """`(before, after)` pairs, for the log and for the diagram."""
+        return tuple(
+            (before, after)
+            for after, earlier in sorted(self._after.items())
+            for before in sorted(earlier)
+        )
+
+    @property
     def outcomes(self) -> dict[str, Outcome]:
         return dict(self._outcomes)
 
@@ -188,6 +201,7 @@ class Plan:
     def run(self, context: Context) -> None:
         """Execute, honouring the graph and what each step contends for."""
         sorter = self._sorter()
+        context.journal.shape(self.labels, self.edges)
         self._outcomes = {}
         locks = {
             resource.name: threading.Lock()
@@ -227,7 +241,8 @@ class Plan:
         with ExitStack() as stack:
             for resource in sorted(step.contends, key=attrgetter("name")):
                 stack.enter_context(locks[resource.name])
-            step.run(context)
+            with context.journal.step(step):
+                step.run(context)
         return time.monotonic() - started
 
     def _record(self, step: Step, future: Future[float], broken: set[str]) -> None:
@@ -235,6 +250,12 @@ class Plan:
         if error is None:
             self._outcomes[step.label] = Outcome(step.label, OK, future.result())
             return
+        if not isinstance(error, Exception):
+            # An interrupt is not a step that failed, and recording it as one
+            # would turn Ctrl-C into a gate result. This is the hazard the
+            # shell trap had in another form, where `$?` inside EXIT read 0 on
+            # abort and reported an interrupted run as a pass.
+            raise error
         self._outcomes[step.label] = Outcome(step.label, FAILED, 0.0, error)
         broken.add(step.label)
 

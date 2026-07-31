@@ -20,7 +20,7 @@ from pathlib import Path
 
 import blake3
 import pytest
-from helpers.gate import RecordingRunner
+from helpers.gate import RecordingJournal, RecordingRunner
 
 from capsem.gate import config as gate_config
 from capsem.gate.context import Context
@@ -40,27 +40,13 @@ from capsem.gate.fileactions import (
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-class Recording:
-    """A journal that keeps what was reported, so a test can read it back."""
-
-    def __init__(self) -> None:
-        self.notes: list[str] = []
-        self.artifacts: list[tuple[Path, str, int]] = []
-
-    def note(self, message: str) -> None:
-        self.notes.append(message)
-
-    def artifact(self, path: Path, *, digest: str, size: int) -> None:
-        self.artifacts.append((path, digest, size))
+@pytest.fixture
+def journal() -> RecordingJournal:
+    return RecordingJournal()
 
 
 @pytest.fixture
-def journal() -> Recording:
-    return Recording()
-
-
-@pytest.fixture
-def context(journal: Recording) -> Context:
+def context(journal: RecordingJournal) -> Context:
     return Context(
         RecordingRunner(PROJECT_ROOT), gate_config.load(PROJECT_ROOT), journal=journal
     )
@@ -129,7 +115,7 @@ def test_atomic_replace_renders_the_target_without_touching_it(
 
 
 def test_hash_records_the_artifact_in_the_journal(
-    context: Context, journal: Recording, tmp_path: Path
+    context: Context, journal: RecordingJournal, tmp_path: Path
 ) -> None:
     """So a run log answers "which bytes did this gate build" without
     re-hashing a tree that may already have been reclaimed."""
@@ -160,7 +146,7 @@ def test_the_digest_comes_from_config_rather_than_the_call_site(
 
 
 def test_an_unknown_digest_names_the_alternatives(
-    journal: Recording, tmp_path: Path
+    journal: RecordingJournal, tmp_path: Path
 ) -> None:
     artifact = tmp_path / "vmlinuz"
     artifact.write_bytes(b"kernel")

@@ -1,10 +1,13 @@
 """Argument parsing and dispatch. Nothing decides anything here.
 
-Every command is contributed by the module that implements it, through a
-`register(subparsers)` function, so this file never grows a branch about what a
-command means. If a rule appears in this file, it is in the wrong file --
+Every command is contributed by the module that implements it, by subclassing
+`GateCommand`, so this file never grows a branch about what a command means. If
+a rule appears here, it is in the wrong file --
 `test_the_cli_only_parses_and_dispatches` in `tests/test_gate_boundary.py`
 says so.
+
+The three inspection flags are declared once, on a shared parent parser, so
+every command has them by construction rather than by each author remembering.
 """
 
 from __future__ import annotations
@@ -19,17 +22,21 @@ from . import (
     crosscompile,
     debproof,
     doctor,
+    gc,
     install,
     installimage,
     lint,
     project_root,
+    runs,
     storage,
     versions,
 )
+from .command import GateCommand
 from .errors import GateError
 from .proc import Runner
 
-# Each module owns its own subcommand surface.
+# Imported for the registration their subclasses perform. Named rather than
+# star-imported so the set is visible, and so removing one is a decision.
 COMMAND_MODULES = (
     versions,
     candidate,
@@ -41,7 +48,30 @@ COMMAND_MODULES = (
     debproof,
     lint,
     doctor,
+    runs,
+    gc,
 )
+
+
+def _inspection() -> argparse.ArgumentParser:
+    """Flags every command shares, so none of them can lack one."""
+    shared = argparse.ArgumentParser(add_help=False)
+    shared.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print what would run, in order, without running it",
+    )
+    shared.add_argument(
+        "--graph",
+        action="store_true",
+        help="print the step graph as a mermaid diagram",
+    )
+    shared.add_argument(
+        "--timing",
+        action="store_true",
+        help="print where the time went, by critical path",
+    )
+    return shared
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -50,22 +80,26 @@ def build_parser() -> argparse.ArgumentParser:
         description="Build and release gate operations invoked by the justfile.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
-    for module in COMMAND_MODULES:
-        module.register(subparsers)
+    shared = _inspection()
+
+    for name, command in sorted(GateCommand.registry.items()):
+        child = subparsers.add_parser(name, help=command.help, parents=[shared])
+        command.add_arguments(child)
+
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        runner = Runner(project_root())
-        return args.handler(args, runner)
+        GateCommand.registry[args.command](Runner(project_root()), args).execute()
     except GateError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         print("interrupted", file=sys.stderr)
         return 130
+    return 0
 
 
 if __name__ == "__main__":  # pragma: no cover - exercised through the console script

@@ -19,6 +19,7 @@ has to hook.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
 from typing import ClassVar
 
@@ -167,3 +168,24 @@ class Shell(Action, name="shell"):
             env={**context.env, **self._env},
             check=self._check,
         )
+
+
+class Call(Action, name="call"):
+    """Work that is not expressed as primitives yet.
+
+    A bridge, and deliberately a poor one: a dry run can only print the
+    description it was handed, so a plan built from these says far less than a
+    plan built from `Run` and `Copy`. That is the incentive, not an oversight
+    -- `modules_bypassing_primitives` in `config/gate.toml` tracks what is
+    still on this side of the line, and it only shrinks.
+    """
+
+    def __init__(self, description: str, action: Callable[[Context], None]) -> None:
+        self._description = description
+        self._action = action
+
+    def render(self) -> str:
+        return self._description
+
+    def perform(self, context: Context) -> None:
+        self._action(context)

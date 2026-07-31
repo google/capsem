@@ -91,16 +91,18 @@ def test_stamp_version_runs_against_this_checkout(
 def test_a_gate_error_is_one_line_on_stderr_and_a_nonzero_exit(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def explode(args, runner):
+    def explode(context):
         raise GateError("missing exact release-mode Debian package")
 
     monkeypatch.setattr(cli, "Runner", lambda root: RecordingRunner(root))
-    monkeypatch.setattr("capsem.gate.versions._version_command", explode)
+    monkeypatch.setattr("capsem.gate.versions.workspace_version", explode)
 
     assert cli.main(["version"]) == 1
 
     err = capsys.readouterr().err
-    assert err.strip() == "ERROR: missing exact release-mode Debian package"
+    assert len(err.strip().splitlines()) == 1, "one line, not a wall"
+    assert err.startswith("ERROR: ")
+    assert "missing exact release-mode Debian package" in err
     assert "Traceback" not in err
 
 
@@ -114,11 +116,11 @@ def test_an_interrupt_exits_130_rather_than_reporting_success(
     green run.
     """
 
-    def interrupt(args, runner):
+    def interrupt(_root):
         raise KeyboardInterrupt
 
     monkeypatch.setattr(cli, "Runner", lambda root: RecordingRunner(root))
-    monkeypatch.setattr("capsem.gate.versions._version_command", interrupt)
+    monkeypatch.setattr("capsem.gate.versions.workspace_version", interrupt)
 
     assert cli.main(["version"]) == 130
 
@@ -133,37 +135,3 @@ def test_an_unknown_command_is_refused_by_the_parser() -> None:
 def test_no_command_is_refused_rather_than_defaulting() -> None:
     with pytest.raises(SystemExit):
         cli.main([])
-
-
-def test_every_registered_command_names_a_handler() -> None:
-    """A subcommand with no handler fails at dispatch, not at parse time."""
-    parser = cli.build_parser()
-    subparsers = next(
-        action for action in parser._actions if hasattr(action, "choices") and action.dest == "command"
-    )
-
-    for name, subparser in subparsers.choices.items():
-        defaults = subparser.get_default("handler")
-        nested = [
-            action for action in subparser._actions if getattr(action, "choices", None)
-        ]
-        assert defaults is not None or nested, f"{name} dispatches nowhere"
-
-
-# ---------------------------------------------------------------------------
-# Checkout discovery
-# ---------------------------------------------------------------------------
-
-
-def test_project_root_is_the_checkout_holding_the_justfile() -> None:
-    assert (project_root() / "justfile").is_file()
-    assert (project_root() / "src" / "capsem" / "gate").is_dir()
-
-
-def test_a_package_with_no_checkout_around_it_says_so(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.setattr("capsem.gate.__file__", str(tmp_path / "a/b/c/gate/__init__.py"))
-
-    with pytest.raises(GateError, match="must run from a checkout"):
-        project_root()

@@ -13,10 +13,12 @@ phase now fails by name, before any storage is touched.
 
 from __future__ import annotations
 
-import argparse
-
 from . import config as gate_config
+from .actions import Call
+from .command import GateCommand
 from .errors import GateError
+from .execution import step
+from .plan import Plan
 from .proc import Runner
 
 
@@ -78,47 +80,57 @@ class Storage:
         )
 
 
-def register(subparsers: argparse._SubParsersAction) -> None:
-    storage = subparsers.add_parser(
-        "storage", help="release, collect, or clear gate-owned Docker storage"
-    )
-    actions = storage.add_subparsers(dest="action", required=True)
+class StorageCommand(
+    GateCommand,
+    name="storage",
+    help="release, collect, or clear gate-owned Docker storage",
+):
+    """Four operations on one resource, so they stay one command.
 
-    release = actions.add_parser("release", help="release storage a finished rail held")
-    release.add_argument("phase")
-    release.set_defaults(handler=_release_command)
+    Splitting them into four top-level names would read as four unrelated
+    things; they are four points on one budget, and the justfile calls them
+    that way.
+    """
 
-    gc = actions.add_parser("gc", help="prune stopped containers and dangling images")
-    gc.add_argument("--rail")
-    gc.set_defaults(handler=_gc_command)
+    exclusive = True
 
-    clean = actions.add_parser("clean", help="deep cleanup for a cold rebuild")
-    clean.add_argument("--scope", required=True)
-    clean.add_argument("--rail")
-    clean.set_defaults(handler=_clean_command)
+    @classmethod
+    def add_arguments(cls, parser) -> None:
+        actions = parser.add_subparsers(dest="action", required=True)
 
-    space = actions.add_parser("ensure-space", help="refuse work the daemon cannot finish")
-    space.add_argument("rail")
-    space.add_argument("boundary", nargs="?")
-    space.set_defaults(handler=_ensure_space_command)
+        release = actions.add_parser("release", help="release storage a finished rail held")
+        release.add_argument("phase")
 
+        collect = actions.add_parser("gc", help="prune stopped containers and dangling images")
+        collect.add_argument("--rail")
 
-def _release_command(args: argparse.Namespace, runner: Runner) -> int:
-    Storage(runner).release(args.phase)
-    return 0
+        clean = actions.add_parser("clean", help="deep cleanup for a cold rebuild")
+        clean.add_argument("--scope", required=True)
+        clean.add_argument("--rail")
 
+        space = actions.add_parser("ensure-space", help="refuse work the daemon cannot finish")
+        space.add_argument("rail")
+        space.add_argument("boundary", nargs="?")
 
-def _gc_command(args: argparse.Namespace, runner: Runner) -> int:
-    Storage(runner).gc(rail=args.rail)
-    return 0
+    def plan(self) -> Plan:
+        action = self._args.action
+        plan = Plan(f"{self.name} {action}")
+        plan.add(
+            step(
+                action,
+                Call(f"storage {action}", self._operation(action)),
+                contends=(self._config.exclusive("docker_daemon"),),
+            )
+        )
+        return plan
 
-
-def _clean_command(args: argparse.Namespace, runner: Runner) -> int:
-    Storage(runner).clean(scope=args.scope, rail=args.rail)
-    return 0
-
-
-def _ensure_space_command(args: argparse.Namespace, runner: Runner) -> int:
-    boundary = (args.boundary,) if args.boundary else ()
-    Storage(runner).ensure_space(args.rail, *boundary)
-    return 0
+    def _operation(self, action: str):
+        args = self._args
+        if action == "release":
+            return lambda ctx: Storage(ctx.runner).release(args.phase)
+        if action == "gc":
+            return lambda ctx: Storage(ctx.runner).gc(rail=args.rail)
+        if action == "clean":
+            return lambda ctx: Storage(ctx.runner).clean(scope=args.scope, rail=args.rail)
+        boundary = (args.boundary,) if args.boundary else ()
+        return lambda ctx: Storage(ctx.runner).ensure_space(args.rail, *boundary)

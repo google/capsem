@@ -16,10 +16,12 @@ that left them unchecked. Entries may leave the ratchet; nothing may join it.
 
 from __future__ import annotations
 
-import argparse
-
 from . import config as gate_config
+from .actions import Call
+from .command import GateCommand
 from .errors import GateError
+from .execution import step
+from .plan import Plan
 from .proc import Runner
 
 
@@ -62,13 +64,12 @@ def check(runner: Runner) -> None:
         raise GateError(f"Python source gates failed: {', '.join(failures)}")
 
 
-def register(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "lint", help="ruff and ty over every first-party Python tree"
-    )
-    parser.set_defaults(handler=_command)
-
-
-def _command(args: argparse.Namespace, runner: Runner) -> int:
-    check(runner)
-    return 0
+class LintCommand(
+    GateCommand, name="lint", help="ruff and ty over every first-party Python tree"
+):
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        plan.add(
+            step("lint", Call("ruff and ty over every Python tree", lambda ctx: check(ctx.runner)))
+        )
+        return plan

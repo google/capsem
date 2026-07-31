@@ -16,6 +16,7 @@ from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
 from capsem.gate import doctor
+from capsem.gate.context import Context
 from capsem.gate.errors import GateError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -103,7 +104,7 @@ def test_the_command_names_every_problem_at_once(
     )
 
     with pytest.raises(GateError) as failure:
-        doctor._command(None, RecordingRunner(PROJECT_ROOT))
+        doctor._report(Context(RecordingRunner(PROJECT_ROOT), gate_config.load(PROJECT_ROOT)))
 
     assert "one thing" in str(failure.value)
     assert "another" in str(failure.value)
@@ -113,7 +114,7 @@ def test_a_ready_gate_says_so(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(doctor, "check", lambda _runner: [])
     runner = RecordingRunner(PROJECT_ROOT)
 
-    assert doctor._command(None, runner) == 0
+    doctor._report(Context(runner, gate_config.load(PROJECT_ROOT)))
     assert any("configuration valid" in note for note in runner.notes)
 
 

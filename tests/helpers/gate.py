@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import re
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TextIO
 
@@ -120,3 +121,37 @@ class RecordingRunner(Runner):
             + "\nran:\n  "
             + "\n  ".join(self.rendered)
         )
+
+
+class RecordingJournal:
+    """A `Journal` that keeps what was reported, so a test can read it back.
+
+    Shared rather than re-declared per test file: three of them had grown their
+    own, and each widening of the protocol had to find all three.
+    """
+
+    def __init__(self) -> None:
+        self.notes: list[str] = []
+        self.artifacts: list[tuple[Path, str, int]] = []
+        self.steps: list[str] = []
+        self.actions: list[str] = []
+        self.shapes: list[tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = []
+
+    def note(self, message: str) -> None:
+        self.notes.append(message)
+
+    def artifact(self, path: Path, *, digest: str, size: int) -> None:
+        self.artifacts.append((path, digest, size))
+
+    def shape(self, steps: tuple[str, ...], edges: tuple[tuple[str, str], ...]) -> None:
+        self.shapes.append((steps, edges))
+
+    @contextmanager
+    def step(self, step) -> Iterator[None]:
+        self.steps.append(step.label)
+        yield
+
+    @contextmanager
+    def action(self, action) -> Iterator[None]:
+        self.actions.append(action.render())
+        yield

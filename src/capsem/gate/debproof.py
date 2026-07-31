@@ -18,7 +18,6 @@ file-existence check in the world passes on that package.
 
 from __future__ import annotations
 
-import argparse
 import os
 import re
 import time
@@ -26,9 +25,13 @@ from pathlib import Path
 
 from . import config as gate_config
 from . import host
+from .actions import Call
+from .command import GateCommand
 from .docker import Docker, Mount
 from .errors import GateError
+from .execution import step
 from .installcontainer import await_systemd
+from .plan import Plan
 from .proc import Runner
 
 # `Profiles: 3/3 ready`, whose two numbers must match and must not be zero.
@@ -251,11 +254,23 @@ class DebProof:
         )
 
 
-def register(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "prove-deb", help="install one exact dist/*.deb in a clean container and prove it"
-    )
-    parser.set_defaults(handler=_command)
+class ProveDebCommand(
+    GateCommand,
+    name="prove-deb",
+    help="install one exact dist/*.deb in a clean container and prove it",
+):
+    exclusive = True
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        plan.add(
+            step(
+                "prove",
+                Call("install the exact .deb in a clean container", _prove),
+                contends=(self._config.exclusive("docker_daemon"),),
+            )
+        )
+        return plan
 
 
 def _required(name: str) -> str:
@@ -265,11 +280,10 @@ def _required(name: str) -> str:
     return value
 
 
-def _command(args: argparse.Namespace, runner: Runner) -> int:
+def _prove(context) -> None:
     DebProof(
-        runner,
+        context.runner,
         package=Path(_required("CAPSEM_PROOF_DEB")),
         manifest_url=_required("CAPSEM_PROOF_MANIFEST_URL"),
         channel=_required("CAPSEM_PROOF_MANIFEST_CHANNEL"),
     ).run()
-    return 0

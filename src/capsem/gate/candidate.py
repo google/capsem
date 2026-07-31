@@ -22,13 +22,16 @@ on its own account.
 
 from __future__ import annotations
 
-import argparse
 import os
 import shutil
 
 from . import config as gate_config
 from . import host
+from .actions import Call
+from .command import GateCommand
 from .errors import GateError
+from .execution import step
+from .plan import Plan
 from .proc import Runner
 from .storage import Storage
 
@@ -141,20 +144,24 @@ def keep_awake(runner: Runner) -> list[str] | None:
     return [*settings.keep_awake_command, "env", f"{settings.keep_awake_marker}=1"]
 
 
-def register(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "candidate", help="run the complete local qualification gate"
-    )
-    parser.set_defaults(handler=_command)
+class CandidateCommand(
+    GateCommand, name="candidate", help="run the complete local qualification gate"
+):
+    exclusive = True
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        plan.add(step("qualify", Call("the complete local gate", _qualify)))
+        return plan
 
 
-def _command(args: argparse.Namespace, runner: Runner) -> int:
-    prefix = keep_awake(runner)
+def _qualify(context) -> None:
+    prefix = keep_awake(context.runner)
     if prefix is not None:
         # Re-exec under the keep-awake wrapper rather than holding an assertion
         # open across the whole run.
-        runner.step("Holding macOS awake for the complete candidate gate")
-        return runner.run([*prefix, "just", "test"], check=False)
+        context.runner.step("Holding macOS awake for the complete candidate gate")
+        context.runner.run([*prefix, "just", "test"], check=False)
+        return
 
-    CandidateGate(runner).run()
-    return 0
+    CandidateGate(context.runner).run()

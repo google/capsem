@@ -13,22 +13,29 @@ what lets a test hand an action a recording runner and a list.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .config import GateConfig
 from .proc import Runner
 
+if TYPE_CHECKING:  # pragma: no cover - imported for typing only
+    from contextlib import AbstractContextManager
+
+    from .actions import Action
+    from .execution import Step
+
 
 class Journal(Protocol):
-    """The part of the run log an action is allowed to write to.
+    """What a run is recorded into, as the rest of the package sees it.
 
-    A protocol rather than the concrete run log, so the primitives do not
-    depend on how a run is stored and a test can pass a list. Deliberately
-    narrow: an action reports what it produced, it does not decide what a step
-    or a run means.
+    A protocol rather than the concrete run log, so nothing below the harness
+    depends on how a run is stored and a test can pass a list. The plan marks
+    boundaries; an action reports what it produced. Neither decides where any
+    of it goes.
     """
 
     def note(self, message: str) -> None:
@@ -41,12 +48,21 @@ class Journal(Protocol):
         re-hashing an asset tree that may already have been reclaimed.
         """
 
+    def shape(self, steps: tuple[str, ...], edges: tuple[tuple[str, str], ...]) -> None:
+        """Record the graph, so a finished run can still be explained."""
+
+    def step(self, step: Step) -> AbstractContextManager[None]:
+        """Bracket a step, recording what it was and how long it took."""
+
+    def action(self, action: Action) -> AbstractContextManager[None]:
+        """Bracket one primitive, so a slow line can name itself."""
+
 
 class NullJournal:
     """Writes nothing.
 
-    The default, so an action can be exercised -- in a test, or in a command
-    that has not opened a run log yet -- without one.
+    The default, so a plan or an action can be exercised -- in a test, or in a
+    command asked only what it would do -- without a run behind it.
     """
 
     def note(self, message: str) -> None:
@@ -54,6 +70,17 @@ class NullJournal:
 
     def artifact(self, path: Path, *, digest: str, size: int) -> None:
         """Discarded."""
+
+    def shape(self, steps: tuple[str, ...], edges: tuple[tuple[str, str], ...]) -> None:
+        """Discarded."""
+
+    @contextmanager
+    def step(self, step: Step) -> Iterator[None]:
+        yield
+
+    @contextmanager
+    def action(self, action: Action) -> Iterator[None]:
+        yield
 
 
 @dataclass(frozen=True)

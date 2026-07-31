@@ -23,7 +23,6 @@ hermetic.
 
 from __future__ import annotations
 
-import argparse
 import shutil
 import tempfile
 from contextlib import suppress
@@ -31,8 +30,12 @@ from pathlib import Path
 
 from . import config as gate_config
 from . import host, pidfiles
+from .actions import Call
 from .assetlanes import AssetLanes, Profile, discover_profiles
+from .command import GateCommand
 from .errors import GateError
+from .execution import step
+from .plan import Plan
 from .proc import Runner
 from .storage import Storage
 
@@ -237,13 +240,20 @@ class AssetGate:
         )
 
 
-def register(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "assets", help="build every profile's VM assets and boot each one"
-    )
-    parser.set_defaults(handler=_command)
+class AssetsCommand(
+    GateCommand, name="assets", help="build every profile's VM assets and boot each one"
+):
+    exclusive = True
 
-
-def _command(args: argparse.Namespace, runner: Runner) -> int:
-    AssetGate(runner).run()
-    return 0
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        plan.add(
+            step(
+                "assets",
+                Call(
+                    "build and boot every profile's VM assets",
+                    lambda ctx: AssetGate(ctx.runner).run(),
+                ),
+            )
+        )
+        return plan

@@ -13,10 +13,12 @@ saying so is more use than a third attempt.
 
 from __future__ import annotations
 
-import argparse
-
 from . import config as gate_config
+from .actions import Call
+from .command import GateCommand
 from .errors import GateError
+from .execution import step
+from .plan import Plan
 from .proc import Runner
 from .storage import Storage
 
@@ -70,13 +72,22 @@ def prepare(runner: Runner) -> None:
     Storage(runner).release("linux-rust-builder")
 
 
-def register(subparsers: argparse._SubParsersAction) -> None:
-    parser = subparsers.add_parser(
-        "install-image", help="build and smoke the disposable install-test image"
-    )
-    parser.set_defaults(handler=_command)
+class InstallImageCommand(
+    GateCommand,
+    name="install-image",
+    help="build and smoke the disposable install-test image",
+):
+    exclusive = True
 
-
-def _command(args: argparse.Namespace, runner: Runner) -> int:
-    prepare(runner)
-    return 0
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        plan.add(
+            step(
+                "image",
+                Call(
+                    "build the disposable install-test image",
+                    lambda ctx: prepare(ctx.runner),
+                ),
+            )
+        )
+        return plan

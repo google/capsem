@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 import pytest
-from helpers.gate import RecordingRunner
+from helpers.gate import RecordingJournal, RecordingRunner
 
 from capsem.gate import config as gate_config
 from capsem.gate.actions import Action, Run
@@ -328,16 +328,7 @@ def test_a_step_records_the_artifacts_it_declared(tmp_path: Path) -> None:
     """So a run log answers "which bytes did this build" after the tree that
     held them has been reclaimed."""
 
-    class Recording:
-        def __init__(self) -> None:
-            self.artifacts: list[tuple[Path, str, int]] = []
-
-        def note(self, message: str) -> None: ...
-
-        def artifact(self, path: Path, *, digest: str, size: int) -> None:
-            self.artifacts.append((path, digest, size))
-
-    journal = Recording()
+    journal = RecordingJournal()
     context = Context(RecordingRunner(PROJECT_ROOT), CONFIG, journal=journal)
     kernel = tmp_path / "vmlinuz"
     kernel.write_bytes(b"kernel")
@@ -353,16 +344,7 @@ def test_a_failing_step_records_nothing_it_did_not_produce(tmp_path: Path) -> No
     """Hashing after the actions, not before: a step that failed halfway has
     an output file, and recording it would claim a build that did not finish."""
 
-    class Recording:
-        def __init__(self) -> None:
-            self.artifacts: list = []
-
-        def note(self, message: str) -> None: ...
-
-        def artifact(self, path: Path, *, digest: str, size: int) -> None:
-            self.artifacts.append(path)
-
-    journal = Recording()
+    journal = RecordingJournal()
     context = Context(RecordingRunner(PROJECT_ROOT), CONFIG, journal=journal)
     half_built = tmp_path / "rootfs.erofs"
     half_built.write_bytes(b"partial")
@@ -399,6 +381,30 @@ def test_the_outcomes_are_readable_after_a_run(context: Context) -> None:
 
     assert plan.outcomes["a"].status == "ok"
     assert plan.outcomes["a"].duration >= 0
+
+
+def test_an_interrupt_is_not_recorded_as_a_step_that_failed(
+    context: Context,
+) -> None:
+    """Ctrl-C is not a gate result.
+
+    Recording it as a failed step would let the run finish and report on
+    itself, which is the shell trap hazard in another form: `$?` inside EXIT
+    read 0 on abort, so an interrupted run came back green.
+    """
+
+    class Interrupt(Action, name="interrupt"):
+        def render(self) -> str:
+            return "interrupt"
+
+        def perform(self, context: Context) -> None:
+            raise KeyboardInterrupt
+
+    plan = Plan("aborted")
+    plan.add(step("work", Interrupt()))
+
+    with pytest.raises(KeyboardInterrupt):
+        plan.run(context)
 
 
 # ---------------------------------------------------------------------------
