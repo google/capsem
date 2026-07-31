@@ -84,7 +84,16 @@ class Run(Action, name="run"):
         )
 
     def render(self) -> str:
-        return str(self._command)
+        """The command, and where it runs if that is not the checkout root.
+
+        Four identical `pnpm install` lines differing only by directory are
+        four lines a reader cannot tell apart, which defeats the point of
+        printing them.
+        """
+        rendered = str(self._command)
+        if self._command.cwd is None:
+            return rendered
+        return f"(in {self._command.cwd.name}) {rendered}"
 
     def perform(self, context: Context) -> None:
         command = self._command

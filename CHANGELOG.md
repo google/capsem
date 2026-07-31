@@ -21,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokens. Rotation is bounded by both count and bytes, and gives up completed
   runs before crashed ones -- a crashed run is precisely the case where the
   terminal output was lost with it.
+- The fast gate is the first module ported out of `_test-candidate-run`, and
+  it is now a graph rather than seven backgrounded jobs aggregating into one
+  `FAIL` bit. Every failure comes back named. The one real dependency in it --
+  clippy reads `frontend/dist`, which `capsem-app` embeds at compile time --
+  is an edge instead of a conditional that used to skip clippy entirely when
+  the frontend failed, losing that result on exactly the runs where the most
+  had changed.
+- The source-contract test inventory moved from 47 hand-maintained lines in
+  the justfile into `config/gate.toml`, with a guard requiring every
+  `tests/test_gate_*.py` to appear in it. Eleven had been added without
+  reaching the list, so they ran in neither the fast module nor the exclusion
+  that keeps them out of the VM matrix.
 - The isolated gate home is one `Workspace` resource rather than three
   hand-written setups. `_test-candidate-run`, `smoke` and the asset gate each
   built the same thing with the same four exported variables and an EXIT trap,

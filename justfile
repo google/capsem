@@ -378,13 +378,9 @@ _test-candidate:
 # and every JavaScript/web check run before Colima, bootstrap, artifacts, or
 # VMs. This is private composition, not a public release shortcut.
 _test-fast:
-    uv sync
-    uv run python scripts/check-source-syntax.py
     just _check-generated-settings
-    just _install-tools
-    just _pnpm-install
     just _test-release-contracts
-    CAPSEM_TEST_MODULE=fast just _test-candidate-run
+    uv run capsem-gate test-fast
 
 _test-static: _install-tools _clean-stale _pnpm-install _check-generated-settings
     uv sync

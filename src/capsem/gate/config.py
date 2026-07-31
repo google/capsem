@@ -34,6 +34,7 @@ from .configschema import (
 )
 from .errors import GateError
 from .harnessschema import (
+    AuditsConfig,
     BoundaryConfig,
     DiskConfig,
     Exclusive,
@@ -41,6 +42,9 @@ from .harnessschema import (
     LintConfig,
     LocksConfig,
     RunLogConfig,
+    SuitesConfig,
+    ToolchainConfig,
+    WebSurfacesConfig,
     WorkspaceConfig,
 )
 
@@ -65,6 +69,10 @@ class GateConfig(Strict):
     runlog: RunLogConfig
     disk: DiskConfig
     workspace: WorkspaceConfig
+    audits: AuditsConfig
+    websurfaces: WebSurfacesConfig
+    suites: SuitesConfig
+    toolchain: ToolchainConfig
 
     root: Path = Field(exclude=True)
     """The checkout this configuration was loaded from."""

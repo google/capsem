@@ -29,6 +29,7 @@ from . import (
     project_root,
     runs,
     storage,
+    testmodules,
     versions,
 )
 from .command import GateCommand
@@ -50,6 +51,7 @@ COMMAND_MODULES = (
     doctor,
     runs,
     gc,
+    testmodules,
 )
 
 

@@ -86,6 +86,43 @@ class LocksConfig(Strict):
     gate: LockConfig
 
 
+class CrateTool(Strict):
+    """A cargo-installed tool: how to find it, and how to get it."""
+
+    name: str
+    install: tuple[str, ...]
+
+
+class ToolchainConfig(Strict):
+    sync: tuple[str, ...]
+    node_workspaces: tuple[str, ...]
+    node_install: tuple[str, ...]
+    node_env: dict[str, str]
+    rust_targets: tuple[str, ...]
+    rust_components: tuple[str, ...]
+    crates: tuple[CrateTool, ...]
+
+
+class AuditsConfig(Strict):
+    cargo: str
+    pnpm: str
+    python_lock: str
+    public_surface: str
+    source_syntax: str
+    hardcoded_selections: str
+    skills_dir: str
+
+
+class WebSurfacesConfig(Strict):
+    script: str
+    targets: tuple[str, ...]
+    blocks_clippy: str
+
+
+class SuitesConfig(Strict):
+    source_contract: tuple[str, ...]
+
+
 class WorkspaceConfig(Strict):
     home: str
     run_dir: str

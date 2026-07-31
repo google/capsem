@@ -542,6 +542,149 @@ wait_timeout_seconds = 7200
 poll_interval_seconds = 0.25
 
 # ---------------------------------------------------------------------------
+# The tools a gate needs before it can start
+# ---------------------------------------------------------------------------
+
+[toolchain]
+# Every entry is idempotent: present means nothing happens. Written as eight
+# near-identical `if ! ... ; then ... fi` blocks in shell, where the only thing
+# that varied was the probe and the install.
+sync = ["uv", "sync"]
+node_workspaces = ["frontend", "docs", "site", "release-site"]
+# CI=true suppresses pnpm's interactive "remove and reinstall node_modules?"
+# prompt, which hangs an unattended gate when the store layout drifts from the
+# lockfile.
+node_install = ["pnpm", "install", "--frozen-lockfile"]
+node_env = { CI = "true" }
+
+# Rust targets the guest binaries cross-compile to.
+rust_targets = ["aarch64-unknown-linux-musl", "x86_64-unknown-linux-musl"]
+# rust-lld comes from here.
+rust_components = ["llvm-tools"]
+
+# `probe` is what proves it is already present; `install` is what puts it
+# there. A table rather than eight code blocks, so adding one is a line.
+[[toolchain.crates]]
+name = "cargo-llvm-cov"
+install = ["cargo", "install", "cargo-llvm-cov"]
+
+[[toolchain.crates]]
+name = "b3sum"
+install = ["cargo", "install", "b3sum", "--locked"]
+
+[[toolchain.crates]]
+name = "cargo-audit"
+install = ["cargo", "install", "cargo-audit"]
+
+[[toolchain.crates]]
+name = "cargo-sbom"
+install = ["cargo", "install", "cargo-sbom", "--locked"]
+
+[[toolchain.crates]]
+name = "cargo-tauri"
+install = ["cargo", "install", "tauri-cli"]
+
+# ---------------------------------------------------------------------------
+# The cheap checks, and what they may overlap with
+# ---------------------------------------------------------------------------
+
+[audits]
+# Independent by construction: none reads what another writes, so the graph
+# runs them at once and reports every failure rather than the first. As shell
+# these were seven `&` and seven `wait` aggregating into a single FAIL bit,
+# which told you something broke but not what.
+cargo = "scripts/check-cargo-audit.py"
+pnpm = "scripts/audit-pnpm-bulk.py"
+python_lock = "scripts/audit-python-lock.sh"
+public_surface = "scripts/check_public_surface.py"
+source_syntax = "scripts/check-source-syntax.py"
+hardcoded_selections = "scripts/check-hardcoded-release-selections.sh"
+skills_dir = "skills"
+
+[websurfaces]
+script = "scripts/check-web-surface.sh"
+# Each is a separate target of the same script, so a failure names the surface.
+targets = ["frontend", "docs", "site", "release-site"]
+# The frontend must finish before clippy: capsem-app embeds frontend/dist at
+# compile time via `tauri::generate_context!`, so clippy reads a directory the
+# frontend build produces. Expressed as an edge, where the shell expressed it
+# as a conditional that skipped clippy entirely when the frontend failed.
+blocks_clippy = "frontend"
+
+[suites]
+# Tests that inspect release/CI/Just composition or adversarially test the
+# cheap gate scripts. None needs built artifacts or a VM, which is why they run
+# in the fast module and are excluded from the VM matrix later -- one
+# inventory, used from both ends, rather than two lists that drift.
+#
+# Enumerated rather than globbed because membership is a claim about what a
+# test *needs*, not about where it happens to live. A guard requires every
+# `tests/test_gate_*.py` to appear here, since by construction those need
+# neither.
+source_contract = [
+    "tests/test_agent_skill_index.py",
+    "tests/test_authoritative_values_are_not_restated.py",
+    "tests/test_build_assets_profile.py",
+    "tests/test_build_provenance.py",
+    "tests/test_builder_probe_timeouts.py",
+    "tests/test_cargo_audit_gate.py",
+    "tests/test_check_cargo_audit.py",
+    "tests/test_complete_release_channel.py",
+    "tests/test_docker_storage_policy.py",
+    "tests/test_exec_lock.py",
+    "tests/test_exit_status_integrity.py",
+    "tests/test_fast_gate_ci_contract.py",
+    "tests/test_gate_actions.py",
+    "tests/test_gate_assetlanes.py",
+    "tests/test_gate_assets.py",
+    "tests/test_gate_boundary.py",
+    "tests/test_gate_candidate.py",
+    "tests/test_gate_cli.py",
+    "tests/test_gate_command.py",
+    "tests/test_gate_config.py",
+    "tests/test_gate_crosscompile.py",
+    "tests/test_gate_debproof.py",
+    "tests/test_gate_disk.py",
+    "tests/test_gate_docker.py",
+    "tests/test_gate_doctor.py",
+    "tests/test_gate_fileactions.py",
+    "tests/test_gate_has_no_literal_data.py",
+    "tests/test_gate_install_container.py",
+    "tests/test_gate_install_ordering.py",
+    "tests/test_gate_lifecycle.py",
+    "tests/test_gate_locks.py",
+    "tests/test_gate_pidfiles.py",
+    "tests/test_gate_plan.py",
+    "tests/test_gate_primitives_are_the_only_way.py",
+    "tests/test_gate_proc.py",
+    "tests/test_gate_runlog.py",
+    "tests/test_gate_storage.py",
+    "tests/test_gate_testmodules.py",
+    "tests/test_gate_timing.py",
+    "tests/test_gate_versions.py",
+    "tests/test_gate_workspace.py",
+    "tests/test_integration_script_profiles.py",
+    "tests/test_live_channel_watch.py",
+    "tests/test_macos_tart_glowup.py",
+    "tests/test_orphan_process_gate.py",
+    "tests/test_path_and_log_wrappers_are_mandatory.py",
+    "tests/test_pidfile_cleanup_is_wired.py",
+    "tests/test_pnpm_bulk_audit.py",
+    "tests/test_profile_revision_semver.py",
+    "tests/test_prove_installed_shell.py",
+    "tests/test_release_gate_integrity.py",
+    "tests/test_release_manifest_assets.py",
+    "tests/test_release_site_generated_from_json.py",
+    "tests/test_release_site_review_regressions.py",
+    "tests/test_retired_version_formats.py",
+    "tests/test_rust_test_layout.py",
+    "tests/test_rust_test_name_assertions.py",
+    "tests/test_skills.py",
+    "tests/test_source_syntax_gate.py",
+    "tests/test_sync_container_clock.py",
+]
+
+# ---------------------------------------------------------------------------
 # The isolated home a gate run works in
 # ---------------------------------------------------------------------------
 
