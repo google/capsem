@@ -26,6 +26,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import ClassVar
 
 from .errors import GateError
 
@@ -33,13 +34,26 @@ from .errors import GateError
 class Resource(ABC):
     """Something acquired for the length of a phase and then given back.
 
-    Subclasses implement `acquire` and `release`; `preserve` is optional and
-    exists for resources that hold diagnostics worth copying out before
-    teardown removes them.
+    Subclasses implement `acquire` and `release`, and declare their name at
+    class definition:
+
+        class Workspace(Resource, name="workspace"): ...
+
+    A required class keyword rather than a defaulted attribute, because the
+    name is what a teardown failure says failed. Defaulted, forgetting it
+    produces `failed to release: resource: ...` at the end of a forty-minute
+    run; required, it is a `TypeError` at import.
+
+    `preserve` is optional and exists for resources holding diagnostics worth
+    copying out before teardown removes them.
     """
 
     #: Named in failure messages, so a teardown error says what failed.
-    name: str = "resource"
+    name: ClassVar[str]
+
+    def __init_subclass__(cls, *, name: str, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        cls.name = name
 
     @abstractmethod
     def acquire(self) -> None:

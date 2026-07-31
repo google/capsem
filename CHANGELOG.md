@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Gate teardown is a stack rather than a sequence of lines. `capsem.gate.held`
+  acquires resources in order, releases them in reverse, and collects evidence
+  on failure *before* releasing, because release is what destroys it. The two
+  rules this replaces were both enforced only by where their `finally` lines
+  happened to sit: the manifest handoff must clear before the install container
+  goes, and the service must stop before its run directory is deleted, because
+  stopping it is what flushes `serial.log`. A resource now declares its name at
+  class definition, so forgetting it is an import error rather than a teardown
+  message that says `resource` failed forty minutes in.
 - The gate's policy for running *itself* is now declared in `config/gate.toml`
   rather than implied by shell: which work may not run beside which and why
   (`[execution.exclusives]`), who holds the machine (`[locks.gate]`), where a
