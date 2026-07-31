@@ -172,6 +172,14 @@ class AssetsConfig(Strict):
     failure_tail_lines: int
     shell_proof_timeout_seconds: int
     run_dir_template: str
+    admin_command: tuple[str, ...]
+    capsem_binary: str
+    hash_assets_script: str
+    shell_proof_script: str
+    container_cleanup_script: str
+    cross_platform_probe_image: str
+    evidence_suffixes: tuple[str, ...]
+    evidence_prune_dirs: tuple[str, ...]
 
 
 class StampedFile(Strict):

@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coverage run in `ci.yaml` enforced no floor at all, because its copy had been
   forgotten.
 
+- The VM asset build and boot gate moved into `capsem.gate.assets`. Its two
+  architecture lanes ran concurrently in shell, with each lane's exit status
+  coming back through `wait` into a variable -- and a variable that goes unread
+  turns a failed build into a passing gate. Both lanes are now always awaited
+  before either result is read, and a run with two broken lanes reports two.
 - The gate's data lives in `config/gate.toml`, loaded through a Pydantic model
   that validates it. Container names, scratch paths, timeouts, the
   boundary/rail pairs the storage policy accepts, the artifacts an asset build

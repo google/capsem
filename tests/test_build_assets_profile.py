@@ -7,6 +7,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
+def _source_text(relative: str) -> str:
+    return (PROJECT_ROOT / relative).read_text(encoding="utf-8")
+
+
 def _recipe_block(name: str) -> str:
     lines = (PROJECT_ROOT / "justfile").read_text().splitlines()
     start = next(i for i, line in enumerate(lines) if line == name or line.startswith(f"{name} "))
@@ -50,82 +54,110 @@ def test_asset_build_primitives_accept_an_isolated_output_root() -> None:
 
 
 def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
-    test = _recipe_block("_test-candidate-run:")
-    asset_gate = _recipe_block("_gate-assets:")
+    """Every profile, both architectures, built and then booted.
 
-    assert "just _gate-assets" in test
-    assert "profile_paths=(config/profiles/*/profile.toml)" in asset_gate
-    assert 'for profile_path in "${profile_paths[@]}"; do' in asset_gate
-    assert "for arch in arm64 x86_64; do" in asset_gate
-    assert 'just _build-image-template "$arch" "$profile" "$lane_assets" kernel' in asset_gate
-    assert 'just _build-image-template "$arch" "$profile" "$lane_assets" rootfs' in asset_gate
-    assert 'ln -sfn "$HOST_ARCH" "$profile_assets/current"' in asset_gate
-    assert 'readlink "$profile_assets/current"' in asset_gate
-    assert 'cp target/config/settings/settings.toml "$profile_home/settings.toml"' not in asset_gate
-    assert "mktemp -d /tmp/capsem-a.XXXXXX" in asset_gate
-    assert 'profile_run="$profile_root/run"' not in asset_gate
-    # A failed proof leaves its session behind, so the evidence copy must walk
-    # the run dir for the host-side logs that name the boot failure -- and only
-    # those. A blanket `cp -R` also takes the guest's workspace, duplicated
-    # once per auto-snapshot generation, into target/.
-    assert 'cp -R "$profile_run"/. "$profile_root/run-failure"/' not in asset_gate
-    assert "-name '*.log'" in asset_gate
-    assert r"\( -name guest -o -name auto_snapshots \) -prune" in asset_gate
-    assert 'cp "$evidence" "$profile_root/run-failure/$evidence"' in asset_gate
-    assert 'python3 scripts/create_hash_assets.py "$profile_assets"' in asset_gate
-    assert asset_gate.index("scripts/create_hash_assets.py") < asset_gate.index(
-        "cargo run -p capsem-admin -- manifest check"
+    Read out of the recipe text when this was shell. The steps are now asserted
+    against the commands the gate issues, in tests/test_gate_assets.py; what
+    stays here is that `just test` still owns the gate and that the gate still
+    does each of these things at all.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    assets = _source_text("src/capsem/gate/assets.py")
+    lanes = _source_text("src/capsem/gate/assetlanes.py")
+
+    assert "just _gate-assets" in _recipe_block("_test-candidate-run:")
+    assert "capsem-gate assets" in _recipe_block("_gate-assets:")
+
+    # Profiles are discovered, not listed.
+    assert config.assets.profiles_glob == "config/profiles/*/profile.toml"
+    assert "profiles_glob" in lanes
+
+    # Both image stages, per architecture.
+    assert 'for stage in ("kernel", "rootfs")' in lanes
+
+    # `current` is repointed by whichever lane finished last, and the
+    # host-architecture VM proof that follows needs it aimed at this machine.
+    assert "current.symlink_to(self.host_arch.name)" in assets
+    assert "current.readlink()" in assets
+
+    # Hash aliases before the manifest check, or startup falls through to a
+    # remote fetch for a local-only asset version and the gate stops being
+    # hermetic.
+    assert assets.index("hash_assets_script") < assets.index('"manifest", "check"')
+
+    # AF_UNIX paths must stay under macOS SUN_LEN once the gateway appends its
+    # session path, so the run dir lives outside the descriptive scratch root.
+    assert config.assets.run_dir_template.startswith("/tmp/")
+    assert "tempfile.mkdtemp" in assets
+
+    assert "shell_proof_script" in assets
+    assert config.assets.shell_proof_script.endswith("prove-installed-shell.py")
+
+
+def test_a_failed_boot_preserves_only_host_side_evidence() -> None:
+    """A blanket copy also takes the guest's workspace into target/.
+
+    The snapshots duplicate that workspace once per generation, and the same
+    name filter is what keeps the VM disk image and session.db out.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+
+    assert set(config.assets.evidence_prune_dirs) == {"guest", "auto_snapshots"}
+    assert ".log" in config.assets.evidence_suffixes
+    assert ".toml" in config.assets.evidence_suffixes, (
+        "vm/active_profile.toml records the asset pins a hash mismatch is "
+        "argued from"
     )
-    assert "cargo run -p capsem-admin -- manifest check" in asset_gate
-    assert "scripts/prove-installed-shell.py" in asset_gate
-    assert '--profile "$profile"' in asset_gate
-    assert 'CAPSEM_ASSETS_DIR="$profile_assets"' in asset_gate
-    assert 'CAPSEM_PROFILES_DIR="$profile_config/profiles"' in asset_gate
 
 
 def test_asset_gate_runs_architecture_lanes_in_parallel_before_boot_proofs() -> None:
-    asset_gate = _recipe_block("_gate-assets:")
+    """Both lanes complete before anything merges or boots.
 
-    assert asset_gate.startswith("_gate-assets: _bootstrap ")
-    assert "build_arch_lane()" in asset_gate
-    assert 'build_arch_lane arm64 2>&1 | tee "$ARM64_BUILD_LOG"' in asset_gate
-    assert 'build_arch_lane x86_64 2>&1 | tee "$X86_64_BUILD_LOG"' in asset_gate
-    assert 'wait "$ARM64_BUILD_PID"' in asset_gate
-    assert 'wait "$X86_64_BUILD_PID"' in asset_gate
-    assert 'lane_assets="$profile_root/build-$arch"' in asset_gate
-    assert 'cargo run -p capsem-admin -- manifest generate "$profile_assets"' in asset_gate
-    assert asset_gate.index('wait "$ARM64_BUILD_PID"') < asset_gate.index(
-        'cargo run -p capsem-admin -- manifest generate "$profile_assets"'
-    )
-    assert asset_gate.index('wait "$X86_64_BUILD_PID"') < asset_gate.index(
-        "scripts/prove-installed-shell.py"
-    )
+    A hosted release runner has an observed hard lifetime below the workflow's
+    nominal timeout, so the four-cell matrix only fits if the architectures
+    build concurrently -- and merging before both finish would publish a
+    manifest for assets that do not exist yet.
+    """
+    assets = _source_text("src/capsem/gate/assets.py")
+    lanes = _source_text("src/capsem/gate/assetlanes.py")
+
+    assert "ThreadPoolExecutor" in lanes
+    assert "lanes.run(" in assets
+    assert assets.index("lanes.run(") < assets.index("self._merge_lanes(")
+    assert assets.index("self._merge_lanes(") < assets.index("self._prove(")
 
 
 def test_asset_gate_reaps_gateway_and_service_between_profile_proofs() -> None:
-    asset_gate = _recipe_block("_gate-assets:")
+    """Each profile's daemons stop before the next profile starts.
 
-    assert "stop_gate_pidfile" in asset_gate
-    assert "gate_pid_running" in asset_gate
-    assert "ps -o stat=" in asset_gate
-    assert '"$state" != Z*' in asset_gate
-    assert 'stop_gate_pidfile "$run_dir/gateway.pid"' in asset_gate
-    assert 'stop_gate_pidfile "$run_dir/service.pid"' in asset_gate
-    assert asset_gate.index('stop_gate_pidfile "$run_dir/gateway.pid"') < asset_gate.index(
-        'stop_gate_pidfile "$run_dir/service.pid"'
-    )
-    assert asset_gate.index('stop_gate_pidfile "$run_dir/service.pid"') < asset_gate.index(
-        'rm -rf "$profile_run"'
+    The gateway goes first: it owns the fixed localhost port, and one that
+    outlives its service attaches the next profile to a UDS pointing at a run
+    directory that has already been deleted.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    assets = _source_text("src/capsem/gate/assets.py")
+
+    assert config.pidfiles.names == ("gateway.pid", "service.pid")
+    assert "pidfiles.stop_gate_service" in assets
+    # In the `finally`, so an aborted proof still reaps.
+    assert assets.index("finally:", assets.index("def _prove(")) < assets.index(
+        "shutil.rmtree(run_dir"
     )
 
 
 def test_asset_ci_uses_primitives_owned_by_just_test() -> None:
     workflow = (PROJECT_ROOT / ".github/workflows/release-assets.yaml").read_text()
-    asset_gate = _recipe_block("_gate-assets:")
+    lanes = _source_text("src/capsem/gate/assetlanes.py")
 
     assert 'just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
     assert 'just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
-    assert "just _build-image-template" in asset_gate
+    assert "_build-image-template" in lanes
 
 
 def test_asset_ci_installs_pinned_pnpm_before_running_build_primitives() -> None:

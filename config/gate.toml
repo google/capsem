@@ -199,6 +199,25 @@ required_artifacts = [
 ]
 failure_tail_lines = 200
 shell_proof_timeout_seconds = 300
+
+# `cargo run` rather than a built binary: the asset gate runs before anything
+# has installed one, and the admin under test is this checkout's.
+admin_command = ["cargo", "run", "-p", "capsem-admin", "--"]
+capsem_binary = "target/debug/capsem"
+hash_assets_script = "scripts/create_hash_assets.py"
+shell_proof_script = "scripts/prove-installed-shell.py"
+container_cleanup_script = "scripts/cleanup-docker-containers-by-mount.sh"
+
+# Docker must be able to execute the *other* architecture before any lane
+# starts, or the second lane fails an hour in with an exec format error.
+cross_platform_probe_image = "debian:bookworm-slim"
+
+# Copied out of a failed run before its scratch is removed. Host-side
+# diagnostics only: `guest/` and `auto_snapshots/` duplicate the guest's own
+# workspace once per generation, and the same filter keeps the VM disk image
+# and session.db out of target/.
+evidence_suffixes = [".log", ".json", ".toml"]
+evidence_prune_dirs = ["guest", "auto_snapshots"]
 # AF_UNIX paths must stay under macOS SUN_LEN once the gateway appends its
 # session path, and target/ironbank-assets is already too long.
 run_dir_template = "/tmp/capsem-a.XXXXXX"
@@ -285,7 +304,6 @@ remaining_shell_recipes = [
     "_dev-ui",
     "_ensure-dev-ready",
     "_ensure-service",
-    "_gate-assets",
     "_gate-host-package-sbom",
     "_gate-linux-rust",
     "_generate-settings",

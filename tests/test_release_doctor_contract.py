@@ -207,16 +207,24 @@ def test_doctor_fix_builds_assets_for_each_checked_in_profile() -> None:
 
 
 def test_macos_doctor_requires_live_rosetta_registration() -> None:
-    source = _source_text("scripts/doctor-macos.sh")
-    asset_gate = _recipe_block("_gate-assets:")
+    from capsem.gate import config as gate_config
 
-    assert "/proc/sys/fs/binfmt_misc/rosetta" in source
+    source = _source_text("scripts/doctor-macos.sh")
+    assets = _source_text("src/capsem/gate/assets.py")
+    config = gate_config.load(PROJECT_ROOT)
+
+    assert config.install.rosetta_binfmt in source
     assert "colima rosetta configured but not registered" in source
     assert "colima restart" in source
-    assert "CROSS_PLATFORM=linux/amd64" in asset_gate
-    assert "CROSS_PLATFORM=linux/arm64" in asset_gate
-    assert 'docker run --rm --platform "$CROSS_PLATFORM"' in asset_gate
-    assert "Docker cannot execute $CROSS_PLATFORM containers" in asset_gate
+
+    # The asset gate proves Docker can execute the architecture this host is
+    # *not*, before any lane starts -- discovering otherwise an hour in wastes
+    # the whole matrix. Both platform names are derived from the architecture
+    # table rather than spelled here.
+    assert '"--platform", platform' in assets
+    assert 'f"linux/{other.dpkg}"' in assets
+    assert "Docker cannot execute {platform} containers" in assets
+    assert "colima restart" in assets, "macOS needs its own remedy in the message"
 
 
 def test_bootstrap_and_doctor_prove_tart_cache_clone_boot_and_ssh() -> None:
@@ -263,24 +271,43 @@ def test_profile_release_builds_both_published_architectures() -> None:
 
 
 def test_parallel_asset_gate_preserves_and_names_failed_architecture_logs() -> None:
-    gate = _recipe_block("_gate-assets:")
+    """Each lane logs separately, and a failing lane surfaces its own tail.
 
-    assert 'ARM64_BUILD_LOG="$TEST_ROOT/build-arm64.log"' in gate
-    assert 'X86_64_BUILD_LOG="$TEST_ROOT/build-x86_64.log"' in gate
-    assert 'tee "$ARM64_BUILD_LOG"' in gate
-    assert 'tee "$X86_64_BUILD_LOG"' in gate
-    assert 'build_arch_lane arm64 2>&1 | tee "$ARM64_BUILD_LOG"' in gate
-    assert 'build_arch_lane x86_64 2>&1 | tee "$X86_64_BUILD_LOG"' in gate
-    assert '> >(tee "$ARM64_BUILD_LOG")' not in gate
-    assert '> >(tee "$X86_64_BUILD_LOG")' not in gate
-    assert 'report_asset_lane_failure "arm64"' in gate
-    assert 'report_asset_lane_failure "x86_64"' in gate
-    assert 'tail -n 200 "$log"' in gate
+    Read out of the recipe when this was shell, where the lane's exit status
+    came back through `wait` into a variable -- and a variable that goes unread
+    turns a failed build into a passing gate. The behaviour is now asserted
+    against the commands the lanes issue, in tests/test_gate_assetlanes.py;
+    what stays here is that both halves still exist.
+    """
+    from capsem.gate import config as gate_config
+
+    lanes = _source_text("src/capsem/gate/assetlanes.py")
+    config = gate_config.load(PROJECT_ROOT)
+
+    # One log per lane, named for its architecture.
+    assert 'f"build-{arch.name}.log"' in lanes
+    # Both lanes are awaited before either result is read: cancelling the
+    # second would leave its containers running and report one error for a run
+    # that had two.
+    assert "future.exception()" in lanes
+    assert "failures[arch] = error" in lanes
+    assert "failure_tail_lines" in lanes
+    assert config.assets.failure_tail_lines > 0
 
 
 def test_asset_gate_interrupt_cleanup_only_reaps_owned_mounts(tmp_path: Path) -> None:
-    gate = _recipe_block("_gate-assets:")
-    assert 'cleanup-docker-containers-by-mount.sh" "$TEST_ROOT"' in gate
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    assets = _source_text("src/capsem/gate/assets.py")
+
+    # Scoped to this gate's own scratch root, and run from a `finally` so an
+    # aborted lane still releases its containers.
+    assert "container_cleanup_script" in assets
+    assert "str(self.test_root)" in assets
+    assert config.assets.container_cleanup_script.endswith(
+        "cleanup-docker-containers-by-mount.sh"
+    )
 
     mount_root = tmp_path / "asset-root"
     mount_root.mkdir()

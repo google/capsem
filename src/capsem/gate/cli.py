@@ -13,6 +13,7 @@ import sys
 from collections.abc import Sequence
 
 from . import (
+    assets,
     crosscompile,
     doctor,
     install,
@@ -28,6 +29,7 @@ from .proc import Runner
 # Each module owns its own subcommand surface.
 COMMAND_MODULES = (
     versions,
+    assets,
     storage,
     installimage,
     install,
