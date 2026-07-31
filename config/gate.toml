@@ -656,6 +656,7 @@ source_contract = [
     "tests/test_gate_pidfiles.py",
     "tests/test_gate_plan.py",
     "tests/test_gate_primitives_are_the_only_way.py",
+    "tests/test_gate_pytestsuite.py",
     "tests/test_gate_proc.py",
     "tests/test_gate_runlog.py",
     "tests/test_gate_storage.py",
@@ -683,6 +684,54 @@ source_contract = [
     "tests/test_source_syntax_gate.py",
     "tests/test_sync_container_clock.py",
 ]
+
+[suites.pytest]
+# Where the tests are. Spelled here rather than in the module, so the broad
+# suite and the compatibility runs cannot come to disagree about it.
+root = "tests/"
+# One spelling of "run pytest", so sixteen call sites cannot drift into
+# sixteen slightly different opinions about --tb, --maxfail and -n.
+base_flags = ["-v", "--tb=short"]
+stop_at_first = "--maxfail=1"
+parallel_flags = ["-n", "4", "--dist=loadfile"]
+coverage_flags = ["--cov=src/capsem", "--cov-report=xml:codecov-python.xml"]
+
+# Directories the broad suite never collects, each for its own reason.
+#
+#   capsem-recipes   its meta-tests invoke `cargo build --workspace`, which
+#                    atomically replaces the codesigned binaries a concurrent
+#                    VM test is using
+#   capsem-install   also spawns `cargo build -p capsem` from inside pytest;
+#                    owned by the install gate, which runs it in Docker
+#   capsem-build-chain / capsem-release
+#                    artifact and composition suites with their own entrypoints
+broad_ignores = [
+    "tests/capsem-recipes",
+    "tests/capsem-install",
+    "tests/capsem-build-chain",
+    "tests/capsem-release",
+]
+
+# Production has one service and one service-scoped save/restore lock. An
+# xdist worker per service does not reproduce that, so these run alone.
+host_snapshot_serial = [
+    "tests/capsem-mcp/test_state_transitions.py",
+    "tests/capsem-service/test_svc_resume_paths.py",
+    "tests/capsem-service/test_svc_suspend_corruption.py",
+    "tests/capsem-service/test_svc_loop_device_after_resume.py",
+]
+
+# Timing probes. They run alone so their numbers measure Capsem rather than
+# another benchmark file competing for the same Apple VZ launch budget.
+serial_paths = ["tests/capsem-serial/", "tests/ironbank/test_route_health.py"]
+benchmark_baseline = "tests/capsem-serial/test_capsem_bench_baseline.py"
+benchmark_deselect = "not test_capsem_bench_baseline"
+
+# Fails closed before collection rather than passing vacuously against a tree
+# whose assets were never built.
+require_artifacts = "CAPSEM_REQUIRE_ARTIFACTS"
+profile_variable = "CAPSEM_TEST_PROFILE"
+profiles_script = "scripts/release-test-profiles.py"
 
 # ---------------------------------------------------------------------------
 # The isolated home a gate run works in

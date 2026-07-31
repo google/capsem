@@ -119,8 +119,25 @@ class WebSurfacesConfig(Strict):
     blocks_clippy: str
 
 
+class PytestConfig(Strict):
+    root: str
+    base_flags: tuple[str, ...]
+    stop_at_first: str
+    parallel_flags: tuple[str, ...]
+    coverage_flags: tuple[str, ...]
+    broad_ignores: tuple[str, ...]
+    host_snapshot_serial: tuple[str, ...]
+    serial_paths: tuple[str, ...]
+    benchmark_baseline: str
+    benchmark_deselect: str
+    require_artifacts: str
+    profile_variable: str
+    profiles_script: str
+
+
 class SuitesConfig(Strict):
     source_contract: tuple[str, ...]
+    pytest: PytestConfig
 
 
 class WorkspaceConfig(Strict):

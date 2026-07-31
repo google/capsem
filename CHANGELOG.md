@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokens. Rotation is bounded by both count and bytes, and gives up completed
   runs before crashed ones -- a crashed run is precisely the case where the
   terminal output was lost with it.
+- pytest is invoked one way now. Sixteen call sites across two recipes each
+  assembled their own flags and agreed by hand -- the same `--tb=short`, the
+  same four `--ignore` directories, the same `CAPSEM_REQUIRE_ARTIFACTS=1` --
+  which is sixteen chances for one to differ with nothing to notice which.
+  More importantly, what may not share a machine is now declared rather than
+  achieved by placement: the host-snapshot suites claim the single service,
+  the benchmarks claim the Apple VZ launch budget, and the suites that rebuild
+  the workspace claim the binaries a running VM test is using. In shell those
+  held only because each sat below a `wait`.
 - The fast gate is the first module ported out of `_test-candidate-run`, and
   it is now a graph rather than seven backgrounded jobs aggregating into one
   `FAIL` bit. Every failure comes back named. The one real dependency in it --
