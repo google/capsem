@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the line base, not the exact version, so a compatibility window survives: any
   0.6.x binary runs these assets and a patch release does not force everyone to
   re-hydrate.
+- The macOS glow-up reported a working tamper rejection as a failure. Its guest
+  script tailed `$CAPSEM_HOME/run/service.log`, the bare name of a rotated
+  stream, so it polled an empty file for three minutes while the rejection it
+  waited for sat in `service.<date>.log`. The service had rejected the tampered
+  manifest correctly; only the proof could not see it. The wrapper guard now
+  tracks a shell variable from its assignment to its read, the same
+  indirection that hid the Python case.
 - `GET /host-logs/{name}` returned an empty log for a service that was writing
   normally, so the `capsem_host_logs` MCP tool and `capsem` support bundles
   reported nothing. It opened the rotated stream by its bare name with its own

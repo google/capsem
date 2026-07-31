@@ -22,7 +22,16 @@ INSTALLED_MANIFEST="$CAPSEM_HOME/assets/manifest.json"
 INSTALLED_METADATA="$CAPSEM_HOME/assets/manifest-metadata.json"
 MANIFEST_BEFORE_REJECTION="$SHARE/manifest-before-rejection.json"
 METADATA_BEFORE_REJECTION="$SHARE/manifest-metadata-before-rejection.json"
-SERVICE_LOG="$CAPSEM_HOME/run/service.log"
+SERVICE_LOG_DIR="$CAPSEM_HOME/run"
+
+# `service.log` names a daily-rotated stream, so the bare name is an empty
+# file the moment the service has rotated. Reading it directly polled
+# nothing for three minutes while the rejection this proof waits for sat in
+# `service.<date>.log`, and reported a service that had not rejected the
+# tampered manifest when it had.
+service_log_stream() {
+    cat "$SERVICE_LOG_DIR"/service*.log 2>/dev/null || true
+}
 SERVICE_PLIST="$HOME/Library/LaunchAgents/com.capsem.service.plist"
 SERVICE_PLIST_BACKUP="$SHARE/com.capsem.service.plist.before-glowup"
 RELEASE_HTTP_PORT=18765
@@ -198,13 +207,13 @@ wait_for_automatic_rejection() {
     local first_line="$1"
     local attempt
     for attempt in $(seq 1 90); do
-        if tail -n "+$first_line" "$SERVICE_LOG" 2>/dev/null \
+        if service_log_stream | tail -n "+$first_line" \
             | grep -Fq "automatic release update failed"; then
             return 0
         fi
         sleep 2
     done
-    tail -n "+$first_line" "$SERVICE_LOG" >&2 || true
+    service_log_stream | tail -n "+$first_line" >&2 || true
     launchctl print "gui/$(id -u)/com.capsem.service" >&2 || true
     return 1
 }
@@ -237,9 +246,8 @@ echo "=== Rejecting a tampered manifest through automatic polling ==="
 cp "$INSTALLED_MANIFEST" "$MANIFEST_BEFORE_REJECTION"
 cp "$INSTALLED_METADATA" "$METADATA_BEFORE_REJECTION"
 PROFILE_DIGEST_BEFORE=$(profile_tree_digest)
-mkdir -p "$(dirname "$SERVICE_LOG")"
-touch "$SERVICE_LOG"
-SERVICE_LOG_FIRST_LINE=$(( $(wc -l < "$SERVICE_LOG") + 1 ))
+mkdir -p "$SERVICE_LOG_DIR"
+SERVICE_LOG_FIRST_LINE=$(( $(service_log_stream | wc -l) + 1 ))
 cp "$TAMPERED_MANIFEST" "$REMOTE_MANIFEST"
 cmp -s "$TAMPERED_MANIFEST" "$REMOTE_MANIFEST"
 python3 - "$MANIFEST_URL" "$TAMPERED_MANIFEST" <<'PY'

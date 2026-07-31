@@ -165,6 +165,15 @@ PY_STREAM_BINDING = re.compile(
 )
 SH_STREAM_READ = re.compile(r"""(?:tail|cat|head)\s+[^\n|]*?/(?:service|gateway|mcp|tray)\.log["']?\s""")
 
+# Shell hides the same read behind a variable. `SERVICE_LOG=".../service.log"`
+# was tailed for three minutes in the macOS glow-up while the line it waited for
+# sat in `service.<date>.log`, so a working tamper rejection was reported as a
+# failure to reject.
+SH_STREAM_BINDING = re.compile(
+    r"""^\s*(\w+)=["']?[^\n]*?/(?:service|gateway|mcp|tray)\.log["']?\s*$""",
+    re.M,
+)
+
 
 def test_python_and_shell_read_streams_through_the_helper() -> None:
     offenders = []
@@ -184,6 +193,17 @@ def test_python_and_shell_read_streams_through_the_helper() -> None:
                     offenders.append(
                         f"{path.relative_to(PROJECT_ROOT)}:{line} reads a rotated "
                         f"stream by name ({how})"
+                    )
+            for binding in SH_STREAM_BINDING.finditer(text):
+                name = binding.group(1)
+                for read in re.finditer(
+                    rf"""(?:tail|cat|head|grep)\b[^\n|]*?["']?\$\{{?{re.escape(name)}\b""",
+                    text,
+                ):
+                    line = text[: read.start()].count("\n") + 1
+                    offenders.append(
+                        f"{path.relative_to(PROJECT_ROOT)}:{line} reads log path "
+                        f"`${name}` directly (shell)"
                     )
             for binding in PY_STREAM_BINDING.finditer(text):
                 name = binding.group(1)
