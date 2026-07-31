@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Gate work is built from reusable primitives rather than opaque callables. An
+  action says what it would do and does it, and the two are independent, so
+  `--dry-run` can print the argv a command would actually invoke instead of a
+  list of step names, and a run can be timed below the step level. A context is
+  handed to each action rather than closed over, which is what lets the same
+  piece of work be reused by a command that sequences it differently.
 - Gate teardown is a stack rather than a sequence of lines. `capsem.gate.held`
   acquires resources in order, releases them in reverse, and collects evidence
   on failure *before* releasing, because release is what destroys it. The two
