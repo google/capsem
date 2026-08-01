@@ -55,6 +55,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-shot fresh session the recipe documents. The payload is now one exact
   string, quoted by `just` and passed after `--`, so a leading dash stays a
   payload rather than becoming a flag.
+- Mutating commands hold the machine lock. `sign`, `build-ui`, `install-tools`,
+  `install-node` and `test-release-contracts` all write something another
+  process could be reading, and none of them took it. Per-step
+  `[execution.exclusives]` are `threading.Lock`s -- they order steps inside one
+  plan and coordinate nothing between two `capsem-gate` processes, so `just
+  _sign` in one terminal could replace the codesigned binaries a qualification
+  in another was executing. Only genuine inspection is non-exclusive now, and
+  the guard names each one with its reason.
+- An empty artifact stops counting as a built one. `imagebuild.missing` asked
+  `is_file()`, so a zero-length `vmlinuz` -- which is what a build that ran out
+  of disk leaves -- satisfied the check meant to catch exactly that.
+- `release-profile` refuses an unknown channel or profile before the gate
+  rather than after it. `release-binaries` already validated its channel; the
+  asymmetry cost a complete run to learn something knowable in milliseconds.
 - A run log can now be trusted, which is the whole reason it exists. Step
   attribution was one mutable string on the `RunLog`, and the plan runs
   independent steps concurrently -- so whichever step started last owned every

@@ -58,6 +58,8 @@ class SignCommand(
     """Apple Virtualization.framework refuses an unsigned caller, so this is a
     precondition for every VM test rather than a packaging nicety."""
 
+    exclusive = True
+
     def plan(self) -> Plan:
         plan = Plan(self.name)
         if not host.on_macos():
@@ -143,6 +145,8 @@ class BuildUiCommand(
     whatever was there before -- which is why a rebuilt frontend appeared to
     change nothing.
     """
+
+    exclusive = True
 
     @classmethod
     def add_arguments(cls, parser) -> None:

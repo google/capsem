@@ -193,6 +193,8 @@ class ReleaseContractsModule(
     vacuously, and both are worse than not running them.
     """
 
+    exclusive = True
+
     def plan(self) -> Plan:
         plan = Plan(self.name)
         release_contracts(plan, self._config)

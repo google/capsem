@@ -853,6 +853,7 @@ source_contract = [
     "tests/test_gate_exec_boundary.py",
     "tests/test_gate_execute_funnel.py",
     "tests/test_gate_fileactions.py",
+    "tests/test_gate_hardening.py",
     "tests/test_gate_has_no_literal_data.py",
     "tests/test_gate_hostimage_composition.py",
     "tests/test_gate_install_container.py",

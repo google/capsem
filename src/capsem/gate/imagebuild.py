@@ -31,9 +31,18 @@ def profiles(config: GateConfig) -> list[str]:
 
 
 def missing(config: GateConfig, arch: Arch) -> list[str]:
-    """Which required artifacts this architecture's tree does not have."""
+    """Which required artifacts this architecture's tree does not have.
+
+    Present *and* non-empty. `is_file()` alone accepted a zero-length
+    `vmlinuz`, which is exactly what a build that ran out of disk leaves --
+    and this is the check meant to notice.
+    """
     tree = config.path(config.imagebuild.output) / arch.name
-    return [name for name in config.imagebuild.required if not (tree / name).is_file()]
+    return [
+        name
+        for name in config.imagebuild.required
+        if not (tree / name).is_file() or (tree / name).stat().st_size == 0
+    ]
 
 
 def doctor(config: GateConfig) -> Step:
@@ -195,6 +204,8 @@ class ToolchainCommand(
 ):
     """Idempotent: present means nothing happens, and nothing is said."""
 
+    exclusive = True
+
     def plan(self) -> Plan:
         from . import toolchain
 
@@ -212,6 +223,8 @@ class NodeCommand(
 ):
     """CI has separate jobs for docs, site and release-site. A local gate
     builds all of them in one checkout, so all of them are installed here."""
+
+    exclusive = True
 
     def plan(self) -> Plan:
         from . import toolchain

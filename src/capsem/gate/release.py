@@ -25,6 +25,24 @@ from .plan import Plan
 from .releasehead import ConfirmHead, RecordHead, head_file
 
 
+def _require_channel(config: GateConfig, channel: str) -> None:
+    if channel not in config.package.channels:
+        raise GateError(
+            f"unknown channel {channel!r}; expected one of "
+            f"{', '.join(config.package.channels)}"
+        )
+
+
+def _require_profile(config: GateConfig, profile: str) -> None:
+    from . import imagebuild
+
+    known = imagebuild.profiles(config)
+    if profile not in known:
+        raise GateError(
+            f"unknown profile {profile!r}; expected one of {', '.join(known)}"
+        )
+
+
 def _gate(plan: Plan, config: GateConfig, *, after):
     """The complete local proof, composed rather than launched.
 
@@ -62,11 +80,7 @@ class ReleaseBinariesCommand(
         settings = config.release
         channel = self._args.channel
 
-        if channel not in config.package.channels:
-            raise GateError(
-                f"unknown channel {channel!r}; expected one of "
-                f"{', '.join(config.package.channels)}"
-            )
+        _require_channel(config, channel)
 
         checked = plan.add(
             step(
@@ -129,6 +143,14 @@ class ReleaseProfileCommand(
         plan = Plan(self.name)
         config = self._config
         settings = config.release
+
+        # Both arguments, checked in milliseconds. This command spends a
+        # complete gate before it publishes, so a name that is wrong is worth
+        # discovering now rather than forty minutes from now. `release-binaries`
+        # validated its channel and this did not, which is the kind of asymmetry
+        # nobody notices until the run that needed it.
+        _require_channel(config, self._args.channel)
+        _require_profile(config, self._args.profile)
 
         checked = plan.add(
             step(
