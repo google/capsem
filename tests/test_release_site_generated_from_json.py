@@ -37,7 +37,7 @@ def build_release_site_from_graph(graph_path: Path) -> None:
             env={
                 **os.environ,
                 "ASTRO_TELEMETRY_DISABLED": "1",
-                "CAPSEM_RELEASE_CHANNEL_DIST": str(graph_path),
+                "CAPSEM_RELEASE_GRAPH": str(graph_path),
             },
             text=True,
             capture_output=True,

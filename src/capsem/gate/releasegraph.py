@@ -143,7 +143,10 @@ class ReleaseGraph:
             self._container,
             f"bash {self._config.suite.web_surface_script} release-site-build",
             cwd=self._mount,
-            env={"CAPSEM_RELEASE_CHANNEL_DIST": f"{self._mount}/{dist}"},
+            env={
+                "CAPSEM_RELEASE_GRAPH": f"{self._mount}/{dist}",
+                "CAPSEM_RELEASE_CHANNEL_DIST": f"{self._mount}/{dist}",
+            },
         )
 
     def check_channel(self, admin: str, *, channel: str, dist: str, manifest: str) -> None:

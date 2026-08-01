@@ -127,7 +127,7 @@ per-channel manifest JSON, profile-owned image/config/evidence files,
 `_headers`, and `robots.txt`. The human release pages are built by the
 `release-site/` Astro
 app from those JSON files with
-`CAPSEM_RELEASE_CHANNEL_DIST=/path/to/target/release-channel pnpm run
+`CAPSEM_RELEASE_GRAPH=/path/to/target/release-channel CAPSEM_RELEASE_CHANNEL_DIST=/path/to/target/release-channel pnpm run
 build:channel`, which overlays the root channel list, per-channel pages, and
 per-profile pages into the same deploy root before channel validation or
 deployment.

@@ -82,7 +82,7 @@ def _build_release_site(dist: Path) -> None:
     build = subprocess.run(
         ["pnpm", "run", "build:channel"],
         cwd=PROJECT_ROOT / "release-site",
-        env={**os.environ, "CAPSEM_RELEASE_CHANNEL_DIST": str(dist)},
+        env={**os.environ, "CAPSEM_RELEASE_GRAPH": str(dist), "CAPSEM_RELEASE_CHANNEL_DIST": str(dist)},
         text=True,
         capture_output=True,
         check=False,

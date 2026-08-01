@@ -39,6 +39,11 @@ case "$surface" in
         ;;
     release-site-build)
         require_release_site_astro
+        # Two roles, two names. The generated distribution happens to be both
+        # here -- Astro renders the graph it contains, and the overlay writes
+        # the rendered site back into it -- which is exactly why one name
+        # survived as long as it did. Other callers pass a graph *file*.
+        : "${CAPSEM_RELEASE_GRAPH:?CAPSEM_RELEASE_GRAPH is required}"
         : "${CAPSEM_RELEASE_CHANNEL_DIST:?CAPSEM_RELEASE_CHANNEL_DIST is required}"
         pnpm --dir release-site run build:channel
         test -s "$CAPSEM_RELEASE_CHANNEL_DIST/404.html"

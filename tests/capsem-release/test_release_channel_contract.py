@@ -355,7 +355,7 @@ def _build_release_channel(
     _run(
         ["pnpm", "--dir", "release-site", "run", "build:channel"],
         timeout=180,
-        env={"CAPSEM_RELEASE_CHANNEL_DIST": str(dist)},
+        env={"CAPSEM_RELEASE_GRAPH": str(dist), "CAPSEM_RELEASE_CHANNEL_DIST": str(dist)},
     )
     _run_admin("assets", "channel", "check", "--channel", CHANNEL, "--dist", str(dist))
 

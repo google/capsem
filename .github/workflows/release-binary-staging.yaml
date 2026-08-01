@@ -138,6 +138,9 @@ jobs:
 
       - name: Build release site pages
         env:
+          # The graph to render, and where the render is overlaid. One path,
+          # two roles -- and two names, so neither can be mistaken for the other.
+          CAPSEM_RELEASE_GRAPH: ${{ github.workspace }}/target/release-channel
           CAPSEM_RELEASE_CHANNEL_DIST: ${{ github.workspace }}/target/release-channel
         run: bash scripts/check-web-surface.sh release-site-build
 

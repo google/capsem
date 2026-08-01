@@ -430,7 +430,7 @@ def build_release_site_from_fixture() -> None:
         env = {
             **os.environ,
             "ASTRO_TELEMETRY_DISABLED": "1",
-            "CAPSEM_RELEASE_CHANNEL_DIST": str(FIXTURE_GRAPH),
+            "CAPSEM_RELEASE_GRAPH": str(FIXTURE_GRAPH),
         }
         result = subprocess.run(
             ["pnpm", "--dir", "release-site", "run", "build"],

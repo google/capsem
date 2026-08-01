@@ -55,6 +55,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-shot fresh session the recipe documents. The payload is now one exact
   string, quoted by `just` and passed after `--`, so a leading dash stays a
   payload rather than becoming a flag.
+- `CAPSEM_RELEASE_CHANNEL_DIST` meant two things and now means one.
+  `loadReleaseData` read it to decide *what to render*; `overlay-dist.mjs` read
+  it to decide *where to copy the built output*. Those are an input and an
+  output, and nothing but convention kept a caller from setting one where the
+  other was expected. `CAPSEM_RELEASE_GRAPH` is the input; the old name is the
+  output directory and only that.
+  The overload had grown a branch to survive itself: the overlay inspected its
+  target and skipped its own work when the path turned out to be a *file*,
+  because a file meant "graph fixture" -- the input meaning arriving at the
+  output variable. That check is deleted with the ambiguity that required it.
+  No compatibility path: both consumers are in this repository, so the rename
+  lands atomically. Where one path genuinely plays both roles -- a generated
+  distribution is both the graph rendered and the directory rendered into --
+  callers set both names, and a guard requires them to be driving the command
+  that does both halves rather than merely naming both.
 - No plan action starts a second gate anywhere. The last three modules are
   composed: the asset lanes call the image builder directly, the package rail
   calls the Debian proof directly, and both release commands *contain* the

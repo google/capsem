@@ -194,6 +194,10 @@ def build_complete_dist(args: argparse.Namespace) -> None:
             graph_channels.append(channel)
 
     env = dict(os.environ)
+    # The graph to render, and the directory to overlay the render onto. The
+    # same path here, and deliberately two names: they are an input and an
+    # output, and callers that pass a graph fixture set only the first.
+    env["CAPSEM_RELEASE_GRAPH"] = str(out_dir)
     env["CAPSEM_RELEASE_CHANNEL_DIST"] = str(out_dir)
     run(["bash", "scripts/check-web-surface.sh", "release-site-build"], env=env)
     for channel in graph_channels:

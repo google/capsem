@@ -33,7 +33,7 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
         env={
             **os.environ,
             "ASTRO_TELEMETRY_DISABLED": "1",
-            "CAPSEM_RELEASE_CHANNEL_DIST": str(dist),
+            "CAPSEM_RELEASE_GRAPH": str(dist), "CAPSEM_RELEASE_CHANNEL_DIST": str(dist),
         },
         text=True,
         capture_output=True,

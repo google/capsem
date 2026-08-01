@@ -26,10 +26,11 @@ if (!existsSync(source)) {
 if (!existsSync(target)) {
   throw new Error(`Release-channel dist does not exist: ${target}`);
 }
-if (statSync(target).isFile()) {
-  console.log(`CAPSEM_RELEASE_CHANNEL_DIST points at a graph fixture file (${target}); skipping release-channel overlay.`);
-  process.exit(0);
-}
+// No check on what kind of path this is. There used to be one: a *file* meant
+// "really a graph fixture, do nothing", because CAPSEM_RELEASE_CHANNEL_DIST
+// also named the render input and the input's value could arrive here. With
+// the input split out to CAPSEM_RELEASE_GRAPH this is always an output
+// directory, and a file reaching it is a caller's bug rather than a mode.
 
 overlayTree(source, target);
 
