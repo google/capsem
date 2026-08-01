@@ -68,6 +68,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (an aborted run is exactly the run whose survivors need counting), and so is
   the Colima lifecycle, which was a shell trap wrapping only the commands that
   happened to sit inside the wrapper. `scripts/with-gate-colima.sh` goes.
+- A cleanup that cannot happen now says so. `Remove` used
+  `shutil.rmtree(ignore_errors=True)`, so every removal succeeded on paper: a
+  busy or unwritable path survived into the next qualification while the plan
+  recorded the cleanup as done. Run-history rotation had the same shape and
+  additionally reported reclaimed bytes that were still on the disk, so every
+  later capacity decision was made against a wrong number. Absence is still the
+  tolerable outcome -- teardown runs against whatever a failure left behind --
+  but a refusal is a failure, and the path is now verified gone before success
+  is recorded.
 - A teardown failure no longer replaces the failure that caused it. `held`
   released resources in a `finally`, and an exception raised there *replaces*
   the one in flight -- so an operator was told a process had leaked and never

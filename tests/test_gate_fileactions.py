@@ -325,3 +325,46 @@ def test_no_file_action_touches_anything_when_rendered(tmp_path: Path) -> None:
     assert not (tmp_path / "new").exists()
     assert not (tmp_path / "copied").exists()
     assert not (tmp_path / "current").exists()
+
+
+# ---------------------------------------------------------------------------
+# Cleanup that reports what actually happened
+# ---------------------------------------------------------------------------
+
+
+def test_a_tree_that_cannot_be_removed_is_a_failure(tmp_path: Path, context) -> None:
+    """`ignore_errors=True` made every removal succeed on paper.
+
+    Stale benchmark, asset or run data then survives into the next
+    qualification while the plan records the cleanup as done -- and retention
+    reports bytes it reclaimed that are still on the disk. Absence is the
+    tolerable outcome; a refusal is not.
+    """
+    tree = tmp_path / "held"
+    (tree / "inner").mkdir(parents=True)
+    (tree / "inner" / "file").write_text("x")
+    tree.chmod(0o500)  # no write bit: the entry cannot be unlinked from
+    try:
+        with pytest.raises(GateError, match=str(tree.name)):
+            Remove(tree).perform(context)
+    finally:
+        tree.chmod(0o700)
+
+
+def test_a_path_that_was_never_there_is_not_a_failure(tmp_path: Path, context) -> None:
+    """Teardown runs against whatever state a failure left behind, which may
+    be nothing at all -- so absence is the expected case."""
+    Remove(tmp_path / "never-existed").perform(context)
+
+
+def test_a_file_that_cannot_be_removed_is_a_failure(tmp_path: Path, context) -> None:
+    parent = tmp_path / "locked"
+    parent.mkdir()
+    victim = parent / "file"
+    victim.write_text("x")
+    parent.chmod(0o500)
+    try:
+        with pytest.raises(GateError, match="file"):
+            Remove(victim).perform(context)
+    finally:
+        parent.chmod(0o700)

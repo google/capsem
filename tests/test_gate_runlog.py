@@ -498,3 +498,29 @@ def config_log(config: gate_config.GateConfig):
         settings = config.runlog
 
     return _Resolved()
+
+
+def test_rotation_does_not_claim_a_run_it_could_not_delete(tmp_path, monkeypatch) -> None:
+    """`ignore_errors=True` let retention report reclaimed bytes still on disk.
+
+    A run directory that refuses to go is a real condition -- a file held open,
+    a permission the gate does not have -- and reporting it as removed means
+    the next capacity decision is made against a number that is wrong.
+    """
+    from capsem.gate import fileactions, runhistory
+    from capsem.gate.errors import GateError
+
+    def refuses(path, *args, **kwargs):
+        raise PermissionError(13, "Permission denied", str(path))
+
+    # The real removal refuses, so `remove` has to turn that into a failure
+    # rather than swallowing it -- patching `remove` itself would test the
+    # patch.
+    monkeypatch.setattr(fileactions.shutil, "rmtree", refuses)
+    config = _checkout(tmp_path, keep_runs=1)
+    root = config.path(config.runlog.root)
+    for name in ("20260101-000000-a", "20260102-000000-b"):
+        _finished_run(root, name)
+
+    with pytest.raises(GateError, match="Permission denied"):
+        runhistory.rotate(config)

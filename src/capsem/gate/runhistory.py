@@ -17,6 +17,7 @@ import shutil
 from pathlib import Path
 
 from .config import GateConfig
+from .fileactions import remove
 from .harnessschema import RunLogConfig
 
 _GB = 1024**3
@@ -71,7 +72,10 @@ def rotate(config: GateConfig, *, keep: Path | None = None) -> list[Path]:
         if not surplus(kept):
             break
         kept.remove(candidate)
-        shutil.rmtree(candidate, ignore_errors=True)
+        # Not `ignore_errors=True`: retention decides capacity from what it
+        # reports here, so a run that refused to go and was counted as removed
+        # makes every later decision against a number that is wrong.
+        remove(candidate)
         removed.append(candidate)
     return removed
 

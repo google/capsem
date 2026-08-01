@@ -83,10 +83,16 @@ class MakeDir(Action, name="make-dir"):
 
 
 class Remove(Action, name="remove"):
-    """Delete a file or a whole tree, tolerating its absence.
+    """Delete a file or a whole tree, tolerating its absence and nothing else.
 
     Teardown runs against whatever state the failure left behind, which may be
     nothing at all -- so "it was not there" is the expected case, not an error.
+
+    Absence is the *only* tolerable outcome. `ignore_errors=True` made every
+    removal succeed on paper, so a busy or unwritable path survived into the
+    next qualification while the plan recorded the cleanup as done, and
+    retention reported bytes it had reclaimed that were still on the disk. A
+    cleanup that cannot happen has to say so.
     """
 
     def __init__(self, path: Path) -> None:
@@ -96,10 +102,32 @@ class Remove(Action, name="remove"):
         return f"rm -rf {self._path}"
 
     def perform(self, context: Context) -> None:
-        if self._path.is_dir() and not self._path.is_symlink():
-            shutil.rmtree(self._path, ignore_errors=True)
+        remove(self._path)
+
+
+def remove(path: Path) -> None:
+    """Delete a path, tolerating absence, and verify it is gone.
+
+    A helper as well as an action, because the modules that own machine state
+    -- run-history rotation, the workspace, the disk reclaimer -- delete on
+    paths where an action cannot reach, and were each repeating the same
+    silent `ignore_errors` shape.
+    """
+    try:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
         else:
-            self._path.unlink(missing_ok=True)
+            path.unlink(missing_ok=True)
+    except FileNotFoundError:
+        return
+    except OSError as failure:
+        raise GateError(f"could not remove {path}: {failure}") from failure
+
+    if path.exists() or path.is_symlink():
+        raise GateError(
+            f"{path} is still present after being removed; the cleanup that "
+            "reported success did not happen"
+        )
 
 
 class Copy(Action, name="copy"):
