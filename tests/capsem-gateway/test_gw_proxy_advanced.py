@@ -134,13 +134,17 @@ class TestProxyEdgeCases:
 
     def test_double_slash_in_path(self, gw_client):
         """Double slashes in path are handled gracefully."""
-        # axum normalizes // to /, so this should work or 404
-        resp = gw_client.get("//vms/list")
-        # Any answer is acceptable, including 404 -- the point is that the
-        # gateway answered rather than dying. `assert resp is not None or True`
-        # stood here, which is true for every value `get` can return.
-        assert resp is not None
-        assert resp.status_code < 500
+        # axum normalizes `//` to `/`, so this either answers or 404s. Any
+        # answer is acceptable; the point is that the gateway answered rather
+        # than dying.
+        #
+        # Asked through `get_raw`, which reports the status code. `get` parses
+        # a JSON body and returns None when there is none, so `is not None`
+        # asked whether the gateway happened to send JSON -- and a 404, the
+        # most likely correct answer here, does not.
+        status = gw_client.get_raw("//vms/list")
+        assert status != 0, "the gateway did not answer at all"
+        assert status < 500
 
     def test_very_long_query_string(self, gw_client):
         """Long query strings are forwarded without truncation."""

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `test_double_slash_in_path` asks the gateway for a status code rather than a
+  JSON body. It had been rewritten from a vacuous `assert resp is not None or
+  True` into `assert resp is not None` plus `resp.status_code < 500` -- but the
+  test client returns parsed JSON or `None`, never anything with a
+  `status_code`, and a 404 (the most likely correct answer for `//vms/list`)
+  has no body at all. The claim was always "the gateway answered rather than
+  died"; `get_raw` is what answers it.
+
 - The asset lane creates its VM run directory where `config/gate.toml` says
   to. `run_dir_template = "/tmp/capsem-a.XXXXXX"` exists because AF_UNIX paths
   must fit macOS's 104-byte `sun_path` once the gateway appends
