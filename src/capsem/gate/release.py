@@ -258,18 +258,31 @@ class ShellCommand(
 class ExecCommand(
     GateCommand, name="exec", help="run one command in a fresh temporary VM"
 ):
+    """One string, carried to the guest without a host shell ever seeing it.
+
+    `guest_command`, not `command`: the latter is the subparser's own slot, and
+    a positional named that overwrote the subcommand name -- registry lookup
+    then indexed a dict with a list and the public command could not dispatch.
+
+    One positional rather than `nargs="+"`, because the payload is a command
+    line for the guest, and rejoining a list is where its quoting is lost.
+    `capsem run`, not `capsem exec`: the Rust CLI's `exec` executes in an
+    *existing* session and takes one, so the payload would have been consumed
+    as a session name. `run` is the one-shot fresh session this documents.
+    """
+
     exclusive = True
 
     @classmethod
     def add_arguments(cls, parser) -> None:
-        parser.add_argument("command", nargs="+")
+        parser.add_argument("guest_command")
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
         plan.add(
             step(
                 "exec",
-                Run([self._config.logs.cli, "exec", *self._args.command]),
+                Run([self._config.logs.cli, "run", self._args.guest_command]),
                 contends=(self._config.exclusive("apple_vz"),),
             )
         )

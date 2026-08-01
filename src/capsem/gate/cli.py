@@ -97,7 +97,11 @@ def build_parser() -> argparse.ArgumentParser:
         prog="capsem-gate",
         description="Build and release gate operations invoked by the justfile.",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    # `gate_command`, not `command`: a subcommand storing its own positional in
+    # `command` overwrote the subcommand name, and registry lookup then indexed
+    # a dict with a list. `exec` did exactly that, and could not dispatch at
+    # all. A guard in `tests/test_gate_exec_boundary.py` keeps the slot free.
+    subparsers = parser.add_subparsers(dest="gate_command", required=True)
     shared = _inspection()
 
     for name, command in sorted(GateCommand.registry.items()):
@@ -110,7 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        GateCommand.registry[args.command](Runner(project_root()), args).execute()
+        GateCommand.registry[args.gate_command](Runner(project_root()), args).execute()
     except GateError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 
 from . import config as gate_config
 from . import host
@@ -150,18 +151,24 @@ class CandidateCommand(
     exclusive = True
 
     def reexec(self) -> tuple[str, ...] | None:
-        """Become the same command under a keep-awake wrapper, once.
+        """Become *this* command under a keep-awake wrapper, once.
 
         Before the machine lock, not inside it. As a step this deadlocked --
         the re-exec'd child asked for the lock its own parent was holding and
         waited out the two-hour timeout. `keep_awake` returns None on the
         second pass, so this happens exactly once.
+
+        The replacement is the operator's own argv, not `just test`. Returning
+        the recipe dropped whatever flags they passed and sent an already-
+        dispatched command back through the dispatch chain -- a wrapper should
+        wrap the thing it was given, not substitute something that usually
+        arrives at the same place.
         """
         prefix = keep_awake(self._runner)
         if prefix is None:
             return None
         self._runner.step("Holding macOS awake for the complete candidate gate")
-        return (*prefix, "just", "test")
+        return (*prefix, *sys.argv)
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

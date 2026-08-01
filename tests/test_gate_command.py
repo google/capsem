@@ -310,6 +310,35 @@ def test_the_candidate_gate_only_reexecs_once() -> None:
     )
 
 
+def test_a_reexec_becomes_the_same_command_it_replaced(monkeypatch, tmp_path) -> None:
+    """The keep-awake wrapper wraps this command, it does not redirect.
+
+    It returned `caffeinate ... just test`, which is a different thing that
+    merely usually ends up here. Two consequences, both bad: the flags the
+    operator actually passed were dropped, and the replacement went back
+    through `just` -- so a command that had already decided it was running
+    started the dispatch chain again from the top.
+    """
+    from capsem.gate import candidate
+    from capsem.gate import config as gate_config
+
+    marker = gate_config.load(Path(__file__).resolve().parents[1]).candidate.keep_awake_marker
+    monkeypatch.setattr(candidate.host, "on_macos", lambda: True)
+    monkeypatch.setattr(candidate.shutil, "which", lambda _name: "/usr/bin/caffeinate")
+    monkeypatch.delenv(marker, raising=False)
+    monkeypatch.setattr(
+        candidate.sys, "argv", ["/opt/bin/capsem-gate", "candidate", "--timing"]
+    )
+
+    replacement = _command(candidate.CandidateCommand, tmp_path).reexec()
+
+    assert replacement is not None
+    assert "just" not in replacement, "a re-exec must not go back through just"
+    assert replacement[-3:] == ("/opt/bin/capsem-gate", "candidate", "--timing"), (
+        f"the operator's own invocation was not preserved: {replacement}"
+    )
+
+
 def test_only_the_commands_that_must_replace_themselves_do() -> None:
     """A re-exec discards the run log and the lock, so it is not a thing to
     reach for casually."""

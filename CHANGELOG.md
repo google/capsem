@@ -43,6 +43,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokens. Rotation is bounded by both count and bytes, and gives up completed
   runs before crashed ones -- a crashed run is precisely the case where the
   terminal output was lost with it.
+- `just exec` works, and no longer lets guest text run on the host. Three
+  independent defects met in one command. The CLI subparser stored the
+  subcommand name in `command` and `ExecCommand` stored its payload there too,
+  so argparse overwrote the name and dispatch raised `TypeError: cannot use
+  'list' as a dict key` -- the public command could not run at all. The recipe
+  interpolated `{{CMD}}` unquoted, so `just exec 'echo guest; echo HOST'`
+  rendered a second *host* command: text a user believes is going into a
+  sandbox executed outside it. And it invoked `capsem exec`, which executes in
+  an existing session and takes one, rather than `capsem run`, which is the
+  one-shot fresh session the recipe documents. The payload is now one exact
+  string, quoted by `just` and passed after `--`, so a leading dash stays a
+  payload rather than becoming a flag.
+- The macOS keep-awake wrapper re-execs the operator's own invocation rather
+  than `just test`, so the flags they passed survive and an already-dispatched
+  command does not re-enter the dispatch chain from the top.
 - Profile selection for a functional proof moved into `capsem.gate.profiles`,
   where a plan can be built from it without a subprocess. The base profile is
   named in config rather than by a sort key comparing against the string

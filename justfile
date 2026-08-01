@@ -120,7 +120,7 @@ run-service: _prepared-runtime _ensure-service
 # Execute a command in a fresh temporary VM (auto-provisioned and destroyed)
 # Usage: just exec "echo hello"   or   just exec "ls -la"
 exec +CMD: run-service
-    uv run capsem-gate exec {{CMD}}
+    uv run capsem-gate exec -- {{quote(CMD)}}
 
 
 
