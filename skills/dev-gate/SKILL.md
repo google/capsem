@@ -129,7 +129,20 @@ repoint `latest` at the question.
 
 ## Testing a command
 
-`RecordingRunner` from `tests/helpers/gate.py`. Assert **edges**, not positions.
+`tests/helpers/gate.py` is the one place that knows how to interrogate the
+gate. Assert **edges**, not positions.
+
+| | |
+|---|---|
+| `RecordingRunner` | records what a plan would run, for a test that drives its own plan |
+| `gate_plan(name)` | a built plan; `after_of(label)` is how "these run in parallel" is asserted |
+| `gate_labels(name)` | its step labels in graph order, for ordering claims |
+| `gate_issues(name)` | real argv for everything a command would issue -- `None` reads the whole gate |
+
+All three are cached. Contracts that used to grep the `justfile` for a command
+use `gate_issues`; contracts about ordering use `gate_labels`. Do not grow a
+local copy of these in a test file -- eight files did during the port, and the
+copies drifted.
 
 Two lessons paid for here:
 
