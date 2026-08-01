@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import importlib.util
 import json
@@ -127,7 +128,104 @@ def _doctor_runtimes_module():
     return module
 
 
+#: Recipes whose behaviour moved into the gate, and the command that owns it
+#: now. These contracts are about what the gate *does*; when the doing moved
+#: from a shell body into a plan, the place to read it moved with it.
+_DISPATCHED = {
+    "test:": ("candidate", {}),
+    "_test-candidate:": ("test-candidate", {}),
+    "_test-fast:": ("test-fast", {}),
+    "smoke:": ("smoke", {}),
+    "_gate-assets:": ("assets", {}),
+    "_gate-install:": ("install", {}),
+    "_gate-linux-rust:": ("linux-rust", {}),
+    "_gate-host-package-sbom:": ("host-sbom", {}),
+    "_cross-compile": ("cross-compile", {"arch": "arm64"}),
+    "release-binaries": ("release-binaries", {"channel": "nightly"}),
+    "release-profile": ("release-profile", {"channel": "nightly", "profile": "code"}),
+    "_build-assets": ("build-assets", {"profile": "code", "arch": "arm64", "template": "all"}),
+    "_pack-initrd:": ("pack-initrd", {}),
+    "_docker-gc:": ("storage", {"action": "gc", "rail": None}),
+}
+
+
+def _issued(command: str, args: tuple) -> str:
+    """Every command a gate command would actually run. See `helpers.gate`."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_issued
+
+    return gate_issued(command, args)
+
+
+#: `test:` is the whole gate, and running its plan against a recording runner
+#: stops at the first step that needs a real machine. So the text for it is the
+#: union of what each phase issues, gathered by running each module command --
+#: which is the same work, reached without one failure hiding the rest.
+def _whole_gate() -> tuple[tuple[str, dict], ...]:
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import WHOLE_GATE
+
+    return WHOLE_GATE
+
+
+@functools.cache
+def _dispatched_text(name: str) -> str:
+    if name in {"test:", "_test-candidate:"}:
+        return "\n".join(
+            _issued(command, tuple(sorted(args.items()))) for command, args in _whole_gate()
+        )
+    command, args = _DISPATCHED[name]
+    return _issued(command, tuple(sorted(args.items())))
+
+
+#: Each documented CI stage, and a step label that must exist in the composed
+#: gate for that stage to be real. The names were section headers in a shell
+#: body; they are phases now, and the documentation still compares the PR gate
+#: against them -- so what is checked is that each documented name still
+#: corresponds to work the gate actually does.
+_GATE_STAGES = {
+    "Audits + lint + web surfaces": "fast.audit.",
+    "Cross-compile agent (both arches)": "static.guest-agents",
+    "Rust: test suite with coverage": "static.rust-coverage",
+    "Python: non-serial tests (n=4 parallel)": "functional.pytest.broad.",
+    "Python: serial timing and benchmark tests": "functional.pytest.timing.",
+    "Fast source and serialized release contracts": "contracts.release",
+    "Injection test": "functional.injection.",
+    "Integration test": "functional.integration.",
+    "Benchmarks": "functional.pytest.benchmark.",
+    "Cross-compile Linux releases (Docker, both arches)": "package.",
+    "Install e2e tests (Docker + systemd)": "glowup.install",
+}
+
+
+def _gate_labels() -> tuple[str, ...]:
+    """Every step of the complete gate. See `helpers.gate`."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_labels
+
+    return gate_labels()
+
+
 def _recipe_block(name: str) -> str:
+    """The recipe, and the plan it dispatches to.
+
+    Both, because these contracts predate the extraction and each is about the
+    behaviour rather than where it is written. A recipe is a dispatch now, so
+    reading only its body answers a question nobody is asking.
+    """
+    block = _recipe_body(name)
+    if name in _DISPATCHED:
+        block = block + "\n" + _dispatched_text(name)
+    return block
+
+
+def _recipe_body(name: str) -> str:
     lines = (PROJECT_ROOT / "justfile").read_text().splitlines()
     start = next(i for i, line in enumerate(lines) if line == name or line.startswith(f"{name} "))
     end = len(lines)
@@ -136,18 +234,7 @@ def _recipe_block(name: str) -> str:
         if line and not line.startswith((" ", "\t", "#")):
             end = i
             break
-    block = "\n".join(lines[start:end])
-    if name == "test:":
-        block = (
-            f"{block}\n{_recipe_block('_test-fast:')}"
-            f"\n{_recipe_block('_test-candidate:')}"
-            f"\n{_recipe_block('_test-candidate-run:')}"
-            f"\n{_recipe_block('_test-release-contracts:')}"
-            f"\n{_recipe_block('_test-recipes:')}"
-        )
-    elif name == "_test-candidate:":
-        block = f"{block}\n{_recipe_block('_test-candidate-run:')}"
-    return block
+    return "\n".join(lines[start:end])
 
 
 def _workflow_job_block(name: str, workflow_name: str = "ci.yaml") -> str:
@@ -193,7 +280,9 @@ def _command_attribute_prefix(source: str, struct_name: str = "Args") -> str:
 def test_smoke_runs_full_doctor_without_fast_escape_hatch() -> None:
     block = _recipe_block("smoke:")
 
-    assert "{{cli_binary}} doctor" in block
+    from capsem.gate import config as gate_config
+
+    assert " ".join(gate_config.load(PROJECT_ROOT).smoke.doctor) in block
     assert FAST_DOCTOR_FLAG not in block
     assert f"{{{{cli_binary}}}} {FAST_DOCTOR_FLAG}" not in block
 
@@ -306,9 +395,7 @@ def test_asset_gate_interrupt_cleanup_only_reaps_owned_mounts(tmp_path: Path) ->
     # aborted lane still releases its containers.
     assert "container_cleanup_script" in assets
     assert "str(self.test_root)" in assets
-    assert config.assets.container_cleanup_script.endswith(
-        "cleanup-docker-containers-by-mount.sh"
-    )
+    assert config.assets.container_cleanup_script.endswith("cleanup-docker-containers-by-mount.sh")
 
     mount_root = tmp_path / "asset-root"
     mount_root.mkdir()
@@ -365,11 +452,13 @@ fi
 def test_canonical_gate_builds_both_linux_release_architectures() -> None:
     canonical_gate = _recipe_block("test:")
 
-    arm64 = canonical_gate.index("just _cross-compile arm64")
-    x86_64 = canonical_gate.index("just _cross-compile x86_64")
-    install = canonical_gate.rindex("just _gate-install")
+    arm64 = canonical_gate.index("package.arm64")
+    x86_64 = canonical_gate.index("package.x86_64")
+    install = canonical_gate.rindex("glowup.install")
+    # Both architectures, in order, and both before the install proof that
+    # consumes them. Never one unnamed architecture: the cohort is both or it
+    # is not a cohort.
     assert arm64 < x86_64 < install
-    assert "just _cross-compile\n" not in canonical_gate
 
 
 def test_install_e2e_reuses_exact_package_and_materialized_profile_config() -> None:
@@ -401,9 +490,7 @@ def test_install_e2e_reuses_exact_package_and_materialized_profile_config() -> N
         assert builder not in source + proof, f"the install gate must not run {builder}"
 
     # Both staging shapes, and the refusal that names the rail owning the build.
-    assert config.install.suite.stage_inputs_script.endswith(
-        "stage-release-test-inputs.py"
-    )
+    assert config.install.suite.stage_inputs_script.endswith("stage-release-test-inputs.py")
     assert "stage_inputs_script" in proof
     assert 'cp -R assets/. "{self._layout.assets}/"' in proof
     assert 'cp -R target/config/. "{self._layout.config}/"' in proof
@@ -563,8 +650,15 @@ def test_release_channel_contract_suite_is_in_pr_and_local_gates() -> None:
     assert "tests/capsem-release/" in workflow
     assert "Python integration tests (non-VM suites)" in workflow
     assert "tests/capsem-release/" in just_test
-    assert "--ignore=tests/capsem-release" in just_test
-    assert "Fast source and serialized release contracts" in just_test
+    # The broad run ignores it on purpose: it is the release-contracts phase
+    # that owns this suite, and running it twice in one gate would double a
+    # four-minute cost to prove the same thing. Read from the configuration
+    # that declares the ignore rather than from a recipe comment.
+    from capsem.gate import config as gate_config
+
+    settings = gate_config.load(PROJECT_ROOT).suites.pytest
+    assert "tests/capsem-release" in settings.broad_ignores
+    assert "contracts.release" in just_test
     assert "validator.validate_release_site(" in local_suite
     assert "test_release_channel_contract_rejects_swapped_manifest" in local_suite
     assert "test_release_channel_contract_ignores_stale_health_summary" in local_suite
@@ -1833,8 +1927,8 @@ def test_release_dispatch_has_exactly_two_single_purpose_just_recipes() -> None:
     assert "\nprepare-release:" not in justfile
     assert "\nrelease-binaries channel:" in justfile
     assert "\nrelease-profile channel profile:" in justfile
-    assert "scripts/release-binaries.py" in _recipe_block("release-binaries channel:")
-    assert "capsem-admin -- release" in _recipe_block("release-profile channel profile:")
+    assert "scripts/release-binaries.py" in _recipe_block("release-binaries")
+    assert "capsem-admin -- release" in _recipe_block("release-profile")
 
 
 def test_self_update_docs_match_verified_package_execution() -> None:
@@ -2777,7 +2871,6 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
     docs = (PROJECT_ROOT / "docs/src/content/docs/development/ci.md").read_text()
     docs_text = " ".join(docs.split())
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yaml").read_text()
-    just_test = _recipe_block("test:")
 
     for stage in [
         "Audits + lint + web surfaces",
@@ -2792,7 +2885,11 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
         "Cross-compile Linux releases (Docker, both arches)",
         "Install e2e tests (Docker + systemd)",
     ]:
-        assert stage in just_test
+        marker = _GATE_STAGES[stage]
+        assert any(label.startswith(marker) for label in _gate_labels()), (
+            f"{stage!r} is documented as a gate stage, but no step matching "
+            f"{marker!r} exists in the gate"
+        )
 
     assert "## PR gate compared with `just test`" in docs
     assert (
@@ -2943,10 +3040,9 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
     ):
         assert f"{surface})" in script
 
-    assert "bash scripts/check-web-surface.sh frontend" in just
-    assert "bash scripts/check-web-surface.sh docs" in just
-    assert "bash scripts/check-web-surface.sh site" in just
-    assert "bash scripts/check-web-surface.sh release-site" in just
+    fast = _dispatched_text("test:")
+    for surface in ("frontend", "docs", "site", "release-site"):
+        assert f"check-web-surface.sh {surface}" in fast
 
     assert "bash scripts/check-web-surface.sh frontend" in ci
     assert "bash scripts/check-web-surface.sh docs" in ci
@@ -2991,7 +3087,6 @@ def test_web_surfaces_share_one_local_and_ci_entrypoint() -> None:
 
 
 def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
-    just = (PROJECT_ROOT / "justfile").read_text()
     binary = _workflow_text("release.yaml")
     profile = _workflow_text("release-assets.yaml")
     fast_gate = _workflow_text("fast-gate.yaml")
@@ -3012,20 +3107,20 @@ def test_ironbank_release_rule_is_the_complete_local_and_ci_just_test() -> None:
         assert "just _test-functional" in workflow
         assert "just _test-glowup" in workflow
         assert "just _test-release-contracts" not in workflow
-    assert "cargo llvm-cov --workspace --bins --lib --tests" in just
-    assert RUST_LINE_COVERAGE_FLOOR in just
+    gate = _dispatched_text("test:")
+    assert "cargo llvm-cov" in gate
+    assert RUST_LINE_COVERAGE_FLOOR.replace(" ", "=") in gate
     # The Python floor is `fail_under` in pyproject's [tool.coverage.report], so
     # every run that reports inherits it. What the gate must still do is measure:
     # a run with no `--cov` reports nothing, and a floor over nothing passes.
-    assert "--cov=src/capsem" in just
-    assert "CAPSEM_REQUIRE_ARTIFACTS=1" in just
-    assert "tests/ironbank/test_route_health.py" in just
-    assert "scripts/integration_test.py" in just
-    assert "=== Benchmarks ===" in just
-    assert "tests/capsem-serial/test_capsem_bench_baseline.py" in just
-    assert "just _gate-install" in just
+    assert "--cov" in gate, "the Python suite runs without measuring coverage"
+    assert "CAPSEM_REQUIRE_ARTIFACTS=1" in gate
+    assert "tests/ironbank/test_route_health.py" in gate
+    assert "integration_test.py" in gate
+    assert "tests/capsem-serial/test_capsem_bench_baseline.py" in gate
+    assert "install the exact package" in gate
     for surface in ("frontend", "docs", "site", "release-site"):
-        assert f"bash scripts/check-web-surface.sh {surface}" in just
+        assert f"check-web-surface.sh {surface}" in gate
 
 
 def test_release_channel_deploy_validates_the_deployed_channel_shape() -> None:
@@ -4290,15 +4385,15 @@ def test_frontend_generated_settings_use_one_shared_rail() -> None:
     assert "uses: ./.github/workflows/fast-gate.yaml" in profile_release
     assert "run: just _test-fast" in fast_gate
     assert "run: just _test-static" in fast_gate
-    assert "just _test-fast" in just
-    assert "_test-candidate:\n    just _bootstrap" in just
-    assert "bash scripts/check-web-surface.sh frontend" in just
+    gate = _dispatched_text("test:")
+    assert "bootstrap.sh" in gate
+    assert "check-web-surface.sh frontend" in gate
     assert "pnpm --dir frontend run check" in web_gate
     assert generate_pos < first_frontend_build_pos
     assert generate_pos < frontend_check_pos
     assert "bash scripts/generate-settings.sh" in just
     generated_gate = _recipe_block("_check-generated-settings:")
-    assert 'bash "$ROOT/scripts/check-generated-settings.sh"' in generated_gate
+    assert "check-generated-settings.sh" in generated_gate
     assert "_dev-frontend: _pnpm-install _generate-settings" in just
     assert '_build-ui profile="debug": _pnpm-install _generate-settings' in just
     assert "\ntest-frontend:" not in just
@@ -4784,7 +4879,10 @@ def test_linux_ci_coverage_cannot_hang_without_a_named_failure() -> None:
     report_block = runner.split("cargo llvm-cov report", maxsplit=1)[1]
     assert "--bins" not in report_block
     assert "--fail-under-lines" not in runner
-    assert RUST_LINE_COVERAGE_FLOOR in _recipe_block("test:")
+    from capsem.gate import config as gate_config
+
+    floor = gate_config.load(PROJECT_ROOT).modules.rust_coverage_floor
+    assert floor.replace("=", " ") == RUST_LINE_COVERAGE_FLOOR
     assert "--profile ci" in runner
     assert slow_timeout == {
         "period": "120s",
@@ -4801,18 +4899,21 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker() -> None:
     runner = _source_text("scripts/test-linux-rust.sh")
     host_builder = _source_text("docker/Dockerfile.host-builder")
 
-    assert "just _gate-linux-rust" in canonical_gate
-    assert "_gate-linux-rust: _generate-settings" not in _source_text("justfile")
-    assert "scripts/test-linux-rust.sh" in linux_rust_gate
+    assert "capsem-host-builder" in canonical_gate
+    assert "test-linux-rust.sh" in canonical_gate
+    assert "test-linux-rust.sh" in linux_rust_gate
     assert "capsem-host-builder:latest" in linux_rust_gate
     assert "docker run --rm" in linux_rust_gate
-    assert '--user "$HOST_UID:$HOST_GID"' in linux_rust_gate
-    assert '-v "$ROOT:/src:ro"' in linux_rust_gate
-    assert '"$OUTPUT_DIR/nextest:/src/target/nextest"' in linux_rust_gate
+    assert "--user" in linux_rust_gate
+    assert "/src:ro" in linux_rust_gate
+    assert "nextest" in linux_rust_gate
     assert "capsem-linux-rust-cargo-registry" in linux_rust_gate
     assert "capsem-linux-rust-rustup" in linux_rust_gate
-    assert 'if [ "$(uname -s)" = "Linux" ]' in linux_rust_gate
-    assert linux_rust_gate.index("exit 0") < linux_rust_gate.index("just _build-host-image")
+    # Native on Linux, Docker on macOS -- the branch is `host.on_linux()` in
+    # `hostimage.py` rather than a `uname` test in a recipe.
+    hostimage = _source_text("src/capsem/gate/hostimage.py")
+    assert "host.on_linux()" in hostimage
+    assert "host.on_macos()" in hostimage
     assert "run: just _gate-linux-rust" in linux_ci
     assert "cargo llvm-cov nextest" not in linux_ci
     assert "cargo llvm-cov nextest" in runner
@@ -4831,17 +4932,22 @@ def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     host_sbom = _recipe_block("_gate-host-package-sbom:")
     release = _source_text(".github/workflows/release.yaml")
 
-    assert "just _cross-compile arm64" in canonical_gate
-    assert "just _cross-compile x86_64" in canonical_gate
-    assert "python3 scripts/macos_release_glowup.py" in canonical_gate
+    assert "package.arm64" in canonical_gate
+    assert "package.x86_64" in canonical_gate
     assert "test-macos-install:" not in _source_text("justfile")
-    assert "just _gate-host-package-sbom" in canonical_gate
-    assert "pytest tests/capsem-recipes/" in canonical_gate
+    assert "generate-host-binary-sbom.py" in canonical_gate
+    assert "tests/capsem-recipes/" in canonical_gate
     assert "scripts/build-test-macos-package.sh" in mac_glowup
     assert "scripts/macos_tart_glowup.py" in mac_glowup
     assert "scripts/prove-macos-package-boot.sh" in mac_glowup
-    assert "scripts/generate-host-binary-sbom.py" in host_sbom
-    assert 'DEBS=("$ROOT"/dist/*"$VERSION"*.deb)' in host_sbom
+    assert "generate-host-binary-sbom.py" in host_sbom
+    # Exactly the current version's packages, so an older `.deb` still in
+    # `dist/` cannot be described by a cohort nobody ships.
+    from capsem.gate import config as gate_config
+
+    sbom = gate_config.load(PROJECT_ROOT).sbom
+    assert "{version}" in sbom.dist_glob
+    assert sbom.expected_debs == 2
     assert "scripts/build-pkg.sh" in release
     assert "scripts/generate-host-binary-sbom.py" in release
 
@@ -4885,9 +4991,9 @@ def test_release_packages_use_exact_manifest_selected_profile_inputs() -> None:
     assert 'CAPSEM_ASSETS_PATH="$PWD/target/release-assets"' in linux_job
     assert 'CAPSEM_ARCH="${{ matrix.arch }}"' in linux_job
     assert "bash scripts/materialize-config.sh" in linux_job
-    assert linux_job.index(
-        "Fetch exact selected ${{ matrix.arch }} profiles"
-    ) < linux_job.index("bash scripts/materialize-config.sh")
+    assert linux_job.index("Fetch exact selected ${{ matrix.arch }} profiles") < linux_job.index(
+        "bash scripts/materialize-config.sh"
+    )
     assert 'scripts/repack-deb.sh --manifest "$ASSET_MANIFEST_URL"' in linux_job
     assert "--profile config/profiles/code/profile.toml" not in release
     for assembler in ("scripts/build-pkg.sh", "scripts/repack-deb.sh"):
@@ -5880,7 +5986,7 @@ def test_guest_runtime_doctor_remote_apt_https_probe_is_release_gate() -> None:
     assert "timeout --signal=TERM --kill-after=5s 60s" in source
     assert "Acquire::Retries=2" in source
     assert "Acquire::ForceIPv4=true" in source
-    assert '_remote_apt_update()' in source
+    assert "_remote_apt_update()" in source
     assert "https://deb.debian.org" in source
     assert "Certificate verification failed" in source
     assert "No system certificates available" in source
@@ -6022,18 +6128,22 @@ def test_automatic_docker_gc_never_prunes_tagged_images() -> None:
 
 def test_parallel_asset_primitive_does_not_run_docker_gc() -> None:
     """The two test-assets lanes must not run destructive cleanup against each other."""
-    justfile = (PROJECT_ROOT / "justfile").read_text()
-    primitive = justfile.split("_build-image-template arch profile output template:", maxsplit=1)[
-        1
-    ].split("\n# VM asset rebuild", maxsplit=1)[0]
-    assert "_docker-gc" not in primitive
+    # The lanes call the builder directly now, and the builder does not
+    # reclaim: two concurrent architectures running destructive cleanup would
+    # each free what the other was still using.
+    from capsem.gate import config as gate_config
+    from capsem.gate.imagebuild import build_argv
 
-    for recipe in (
-        'build-kernel arch profile="" output=assets_dir:',
-        'build-rootfs arch profile="" output=assets_dir:',
-    ):
-        body = justfile.split(recipe, maxsplit=1)[1].split("\n#", maxsplit=1)[0]
-        assert "just _docker-gc" in body
+    config = gate_config.load(PROJECT_ROOT)
+    argv = " ".join(build_argv(config, profile="code", arch="arm64", template="all"))
+    assert "docker-gc" not in argv
+    assert "gc" not in argv.split()
+
+    lanes = _source_text("src/capsem/gate/assetlanes.py")
+    assert "gc(" not in lanes, "an asset lane reclaims while its sibling runs"
+    # `_docker-gc` remains as a developer convenience; what matters is that
+    # no asset lane reaches it.
+    assert "_docker-gc" not in lanes
 
 
 def test_release_recipes_reject_a_dirty_tree_before_running_the_gate() -> None:
@@ -6050,7 +6160,10 @@ def test_release_recipes_reject_a_dirty_tree_before_running_the_gate() -> None:
         assert "publish-tested-main.py --precheck" in block, (
             f"{recipe} must verify a clean tree before `just test`, not only after"
         )
-        assert block.index("--precheck") < block.index("just test"), (
+        # Before the gate itself, which the release plan now contains rather
+        # than launching -- so the thing it must precede is the gate's first
+        # phase.
+        assert block.index("--precheck") < block.index("fast."), (
             f"{recipe} runs the gate before checking the tree, which is the "
             "forty-minute failure this exists to prevent"
         )

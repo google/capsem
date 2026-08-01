@@ -15,6 +15,17 @@ POLICY_PATH = ROOT / "config" / "storage-policy.toml"
 POLICY_SCRIPT = ROOT / "scripts" / "docker-storage-policy.py"
 
 
+def _gate_labels(name: str = "candidate") -> tuple[str, ...]:
+    """Every step of a command's plan, in graph order. See `helpers.gate`."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests"))
+    from helpers.gate import gate_labels
+
+    return gate_labels(name)
+
+
+
 def load_policy_module():
     spec = importlib.util.spec_from_file_location("docker_storage_policy", POLICY_SCRIPT)
     assert spec and spec.loader
@@ -100,9 +111,12 @@ def test_justfile_uses_named_rails_and_keeps_builder_until_packages_finish() -> 
     justfile = (ROOT / "justfile").read_text()
 
     assert "CAPSEM_DOCKER_CACHE_KEEP_GB=" not in justfile
-    arm64 = justfile.index("just _cross-compile arm64")
-    x86_64 = justfile.index("just _cross-compile x86_64")
-    release = justfile.index("just _release-completed-buildkit-graph", arm64)
+    # The builder's final tag survives until neither package build needs it.
+    # Ordering is an edge in the gate now rather than line order in a recipe.
+    labels = list(_gate_labels())
+    arm64 = labels.index("package.arm64")
+    x86_64 = labels.index("package.x86_64")
+    release = labels.index("glowup.storage.completed-buildkit-graph")
     assert arm64 < x86_64 < release
 
     assert "docker buildx prune --all --force --reserved-space 2GB" not in justfile
@@ -153,9 +167,8 @@ def test_both_package_architectures_release_their_own_install_headroom() -> None
     assert (phases["completed-package-x86_64"].boundary,
             phases["completed-package-x86_64"].rail) == ("after-package-x86_64", "install")
 
-    justfile = (ROOT / "justfile").read_text()
     for phase in ("completed-package-arm64", "completed-package-x86_64"):
-        assert f"capsem-gate storage release {phase}" in justfile
+        assert f"glowup.storage.{phase}" in _gate_labels()
 
 
 def test_shell_space_guard_is_only_a_python_controller_entrypoint() -> None:
@@ -260,14 +273,37 @@ def test_offline_snapshot_reports_every_managed_resource_and_decision() -> None:
 def test_candidate_failure_captures_storage_and_asset_logs_before_next_cleanup() -> None:
     """Evidence is taken on the way out of a failure, before anything reclaims
     the storage that holds it."""
-    candidate = (ROOT / "src" / "capsem" / "gate" / "candidate.py").read_text()
+    import sys as _sys
 
-    assert "capture_failure" in candidate
-    # In the `except`, so it runs before the `finally` closes the run out.
-    assert candidate.index("except BaseException") < candidate.index(
-        "self._storage.capture_failure"
-    )
-    assert candidate.index("self._storage.capture_failure") < candidate.index("finally:")
+    _sys.path.insert(0, str(ROOT / "tests"))
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import config as gate_config
+    from capsem.gate.candidate import FailureEvidence
+    from capsem.gate.lifecycle import held
+
+    # It is a resource now, so the ordering is the lifecycle's guarantee rather
+    # than the shape of one `try` block: `preserve` runs on the failure path,
+    # and it runs before the release that reclaims what it captured.
+    config = gate_config.load(ROOT)
+    runner = RecordingRunner(ROOT)
+    evidence = FailureEvidence(config, runner)
+    order: list[str] = []
+    evidence.release = lambda: order.append("release")  # type: ignore[method-assign]
+
+    try:
+        with held(evidence):
+            order.append("body")
+            raise RuntimeError("the gate failed")
+    except RuntimeError:
+        pass
+
+    issued = " ".join(" ".join(command.argv) for command in runner.commands)
+    assert "capture-failure" in issued
+    assert order == ["body", "release"]
+    # ...and the capture happened while the body's failure was in flight,
+    # meaning before the release that follows it.
+    assert runner.commands, "no evidence was captured on the failure path"
 
 
 def test_failure_capture_has_a_side_effect_free_offline_mode(tmp_path: Path) -> None:

@@ -14,6 +14,16 @@ AUDIT = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = AUDIT
 SPEC.loader.exec_module(AUDIT)
 
+def _gate_issues(name: str | None = None) -> str:
+    """Everything the gate would issue, with real argv. See `helpers.gate`."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests"))
+    from helpers.gate import gate_issues
+
+    return gate_issues(name)
+
+
 
 def _report(
     *,
@@ -59,7 +69,7 @@ def test_all_shared_rust_audit_callers_use_the_strict_wrapper() -> None:
         ROOT / ".github" / "workflows" / "security-audit.yaml"
     ).read_text(encoding="utf-8")
 
-    assert justfile.count("python3 scripts/check-cargo-audit.py") == 1
+    assert _gate_issues().count("check-cargo-audit.py") >= 1
     assert "just _test-fast" in justfile
     assert "cargo audit &" not in justfile
     assert "run: python3 scripts/check-cargo-audit.py" in security

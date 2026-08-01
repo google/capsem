@@ -27,6 +27,26 @@ PINNED_TART_IMAGE = (
     "@sha256:fdd8b72a6ee46fc8ad35dc1b9f3b1f162b6607b82a584947d20bb28d3dcb99ed"
 )
 
+def _gate_labels(name: str = "candidate") -> tuple[str, ...]:
+    """Every step of a command's plan, in graph order. See `helpers.gate`."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_labels
+
+    return gate_labels(name)
+
+
+def _gate_issues(name: str | None = None) -> str:
+    """Everything the gate would issue, with real argv. See `helpers.gate`."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_issues
+
+    return gate_issues(name)
+
+
 
 def _load_script(path: Path, name: str):
     assert path.is_file(), f"missing script: {path}"
@@ -661,27 +681,23 @@ def test_bootstrap_doctor_and_canonical_gate_own_tart_without_polluting_smoke() 
     assert "sshpass" in doctor
     assert 'uv run python "$PROJECT_ROOT/scripts/tart_readiness.py"' in doctor
     assert "test-macos-install:" not in justfile
-    assert "python3 scripts/macos_release_glowup.py" in justfile
-    dependency_line = next(
-        line for line in justfile.splitlines() if line.startswith("_test-candidate:")
+    from capsem.gate import config as gate_config
+
+    assert gate_config.load(PROJECT_ROOT).modules.macos_glowup_script.endswith(
+        "macos_release_glowup.py"
     )
-    assert dependency_line == "_test-candidate:"
-    candidate = justfile.split("_test-candidate:", maxsplit=1)[1].split(
-        "\n# Parser errors", maxsplit=1
-    )[0]
-    assert candidate.lstrip().startswith("just _bootstrap")
+    # The recipe is a dispatch and the ordering is an edge in the plan: the
+    # bootstrap that installs Tart runs before anything that needs it.
+    labels = _gate_labels("test-candidate")
+    assert labels.index("prepare.bootstrap") < min(
+        index for index, label in enumerate(labels) if label.startswith("glowup.")
+    )
 
-    test_start = justfile.index("test:")
-    test_end = justfile.index("\n# Build the capsem-host-builder", test_start)
-    canonical_gate = justfile[test_start:test_end]
-    assert "python3 scripts/macos_release_glowup.py" in canonical_gate
-
-    smoke_start = justfile.index("smoke:")
-    smoke_end = justfile.index("\n# Run install e2e tests", smoke_start)
-    smoke = justfile[smoke_start:smoke_end]
-    assert "tart run" not in smoke.lower()
-    assert "macos_tart_glowup.py" not in smoke
-    assert "test-macos-install" not in smoke
+    # And the whole gate is the only thing that boots a Tart VM -- `just smoke`
+    # dispatches a different command, whose plan cannot reach the script.
+    assert "macos_release_glowup.py" in _gate_issues("candidate")
+    assert "macos_release_glowup.py" not in _gate_issues("test-fast")
+    assert "tart" not in _gate_issues("test-fast").lower()
 
 
 def test_standalone_glowup_owns_build_tart_install_and_physical_boot() -> None:

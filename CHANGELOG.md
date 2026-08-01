@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The last 12 contracts that read gate behaviour out of `justfile` text now
+  read it off the gate: `tests/helpers/gate.py` builds any command's plan and
+  runs it against a recording runner, so a claim like "both dependency audits
+  run in parallel and neither hides the other" is asserted as two steps with
+  the same predecessors instead of as two `&` and a `wait` in a recipe body.
+  Nine test files shared eight copies of that helper; there is one now, cached,
+  which also took a minute off the contract suite.
+- `test_release_channel_contract_suite_is_in_pr_and_local_gates` asserted
+  `... or True`, which is not an assertion. The suite *is* ignored by the broad
+  pytest run, deliberately -- the release-contracts phase owns it -- so that is
+  what the contract says now.
+
 - `GateCommand.execute` now enforces the rules every command used to be trusted
   to remember, and all three were being broken. A plan action may no longer
   invoke `just` or another `capsem-gate` subcommand: the machine lock is not

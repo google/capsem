@@ -8,6 +8,16 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = PROJECT_ROOT / "scripts" / "audit-pnpm-bulk.py"
 
+def _gate_issues(name: str | None = None) -> str:
+    """Everything the gate would issue, with real argv. See `helpers.gate`."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_issues
+
+    return gate_issues(name)
+
+
 
 def _load_module():
     spec = importlib.util.spec_from_file_location("audit_pnpm_bulk", SCRIPT)
@@ -100,8 +110,8 @@ def test_every_fast_gate_blocks_on_bulk_dependency_advisories() -> None:
     fast_gate = (PROJECT_ROOT / ".github/workflows/fast-gate.yaml").read_text(encoding="utf-8")
     scheduled = (PROJECT_ROOT / ".github/workflows/security-audit.yaml").read_text(encoding="utf-8")
 
-    for source in (justfile, scheduled):
-        assert "scripts/audit-pnpm-bulk.py" in source
+    for source in (_gate_issues(), scheduled):
+        assert "audit-pnpm-bulk.py" in source
         assert "pnpm audit" not in source
         assert "--ignore-registry-errors" not in source
 
@@ -125,14 +135,20 @@ def test_every_fast_gate_blocks_on_bulk_dependency_advisories() -> None:
 
     assert "cargo audit reported advisories; see the security-audit workflow" not in justfile
     assert "npm audit reported advisories; see the security-audit workflow" not in justfile
-    assert "python3 scripts/check-cargo-audit.py & PID_CARGO_AUDIT=$!" in justfile
-    assert "python3 scripts/audit-pnpm-bulk.py & PID_PNPM_AUDIT=$!" in justfile
-    assert "--project-dir frontend" not in justfile
-    assert (
-        'wait $PID_CARGO_AUDIT || { echo "strict cargo audit failed"; FAIL=1; }'
-        in justfile
+    # The shell ran the two audits with `&` and collected both exit statuses
+    # into `FAIL`, so one advisory could not hide the other. They are two
+    # independent steps of one phase now: the scheduler runs them together
+    # because nothing orders them, and a failing step never cancels its peers.
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_plan
+
+    plan = gate_plan("test-fast")
+    assert plan.after_of("fast.audit.cargo") == plan.after_of("fast.audit.pnpm"), (
+        "one audit waits on the other, so the first advisory hides the second"
     )
-    assert 'wait $PID_PNPM_AUDIT || { echo "npm bulk audit failed"; FAIL=1; }' in justfile
+    assert "--project-dir frontend" not in _gate_issues()
     assert "continue-on-error: true" not in fast_gate
 
 

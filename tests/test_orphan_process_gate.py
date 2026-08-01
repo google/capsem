@@ -13,6 +13,7 @@ alive, and that a survivor fails the run.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import json
 import shutil
@@ -35,20 +36,39 @@ sys.modules[SPEC.name] = ORPHANS
 SPEC.loader.exec_module(ORPHANS)
 
 
+def _gate_issues(name: str | None = None) -> str:
+    """Everything the gate would issue, with real argv. See `helpers.gate`."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests"))
+    from helpers.gate import gate_issues
+
+    return gate_issues(name)
+
+
 def _candidate_source() -> str:
     return (ROOT / "src" / "capsem" / "gate" / "candidate.py").read_text(encoding="utf-8")
 
 
-def _run_body() -> str:
-    """`CandidateGate.run`, where the order of these calls is decided.
+def _accounting():
+    """`OrphanAccounting`, where the order of the count is now decided.
 
-    Scoped deliberately: `_close_out` is *defined* above `run`, so an index
-    comparison over the whole file compares definition order against execution
-    order and gets the wrong answer.
+    It was a `run` method whose statement order was the contract, so this read
+    the source between two markers. The baseline and the check are a resource's
+    `acquire` and `release` now, so the order is the lifecycle's guarantee --
+    which is a thing that can be *run* rather than read.
     """
-    source = _candidate_source()
-    start = source.index("    def run(self) -> None:")
-    return source[start : source.index("\ndef ", start)]
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests"))
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import config as gate_config
+    from capsem.gate.candidate import OrphanAccounting, gate_resources
+
+    runner = RecordingRunner(ROOT)
+    config = gate_config.load(ROOT)
+    return OrphanAccounting(config, runner), runner, gate_resources(config, runner)
 
 
 # ---------------------------------------------------------------------------
@@ -68,31 +88,45 @@ def _run_body() -> str:
 
 
 def test_gate_takes_a_baseline_and_checks_it() -> None:
-    body = _run_body()
+    accounting, runner, _ = _accounting()
 
-    assert 'self._orphan("baseline")' in body, (
+    accounting.acquire()
+    assert "baseline" in " ".join(runner.commands[-1].argv), (
         "without a baseline the check cannot tell this run's processes from a "
         "developer's own dev daemon, so it can only be reckless or useless"
     )
-    assert "self._close_out(head)" in body
-    assert '_orphan("check"' in _candidate_source()
+    accounting.release()
+    assert "check" in " ".join(runner.commands[-1].argv)
 
 
 def test_the_baseline_precedes_anything_that_can_spawn_a_process() -> None:
-    body = _run_body()
+    """It is the first resource the gate acquires, so nothing the plan runs can
+    have spawned a process before the count that will be blamed for it."""
+    _, _, resources = _accounting()
 
-    assert body.index('self._orphan("baseline")') < body.index(
-        "self._settings.fast_module"
-    )
+    assert type(resources[0]).__name__ == "OrphanAccounting"
 
 
 def test_the_count_runs_even_when_the_gate_aborts() -> None:
     """An aborted run is the one that skips its cleanup, so it is exactly the
-    run whose processes need counting."""
-    body = _run_body()
+    run whose processes need counting.
 
-    close_out = body.index("self._close_out(head)")
-    assert body.rindex("finally:", 0, close_out) < close_out
+    A resource is released on every path out of `held` -- which is what makes
+    this a resource and not a step, since a step after a failed step is
+    skipped.
+    """
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests"))
+    from capsem.gate.lifecycle import held
+
+    accounting, runner, _ = _accounting()
+    with contextlib.suppress(RuntimeError), held(accounting):
+        raise RuntimeError("the gate aborted")
+
+    issued = [" ".join(command.argv) for command in runner.commands]
+    assert any("baseline" in command for command in issued)
+    assert any("check" in command for command in issued)
 
 
 def test_the_check_still_reaches_the_justfile() -> None:
@@ -172,8 +206,10 @@ def test_check_detects_and_reaps_a_real_orphan(tmp_path: Path) -> None:
     sign_binary(binary)
 
     baseline_file = tmp_path / "baseline.json"
-    assert ORPHANS.main(["baseline", "--baseline-file", str(baseline_file),
-                         "--root", str(fake_root)]) == 0
+    assert (
+        ORPHANS.main(["baseline", "--baseline-file", str(baseline_file), "--root", str(fake_root)])
+        == 0
+    )
     assert json.loads(baseline_file.read_text()) == {}
 
     leaked = subprocess.Popen([str(binary), "300"])
@@ -185,8 +221,9 @@ def test_check_detects_and_reaps_a_real_orphan(tmp_path: Path) -> None:
             time.sleep(0.05)
         assert ORPHANS.repo_capsem_processes(fake_root), "fake orphan never became visible"
 
-        status = ORPHANS.main(["check", "--baseline-file", str(baseline_file),
-                               "--root", str(fake_root)])
+        status = ORPHANS.main(
+            ["check", "--baseline-file", str(baseline_file), "--root", str(fake_root)]
+        )
 
         assert status == 1, "a process that outlived the gate must fail the gate"
         assert leaked.poll() is not None, "the orphan must be reaped, not just reported"
@@ -216,8 +253,12 @@ def test_baseline_announces_leftovers_from_an_earlier_run(tmp_path: Path, capsys
             time.sleep(0.05)
 
         baseline_file = tmp_path / "baseline.json"
-        assert ORPHANS.main(["baseline", "--baseline-file", str(baseline_file),
-                             "--root", str(fake_root)]) == 0
+        assert (
+            ORPHANS.main(
+                ["baseline", "--baseline-file", str(baseline_file), "--root", str(fake_root)]
+            )
+            == 0
+        )
 
         err = capsys.readouterr().err
         assert "already running before the gate started" in err
@@ -225,8 +266,10 @@ def test_baseline_announces_leftovers_from_an_earlier_run(tmp_path: Path, capsys
 
         # Still not blamed on this run: the point is visibility, not a new
         # failure mode for a developer's own dev daemon.
-        assert ORPHANS.main(["check", "--baseline-file", str(baseline_file),
-                             "--root", str(fake_root)]) == 0
+        assert (
+            ORPHANS.main(["check", "--baseline-file", str(baseline_file), "--root", str(fake_root)])
+            == 0
+        )
         assert leftover.poll() is None, "a pre-existing process must not be reaped"
     finally:
         leftover.kill()
@@ -234,8 +277,9 @@ def test_baseline_announces_leftovers_from_an_earlier_run(tmp_path: Path, capsys
 
 
 def test_check_refuses_to_guess_without_a_baseline(tmp_path: Path, capsys) -> None:
-    status = ORPHANS.main(["check", "--baseline-file", str(tmp_path / "absent.json"),
-                           "--root", str(tmp_path)])
+    status = ORPHANS.main(
+        ["check", "--baseline-file", str(tmp_path / "absent.json"), "--root", str(tmp_path)]
+    )
 
     assert status == 2, "a missing baseline is a wiring bug, not a clean run"
     assert "no process baseline" in capsys.readouterr().err
@@ -245,5 +289,6 @@ def test_clean_run_passes(tmp_path: Path) -> None:
     baseline_file = tmp_path / "baseline.json"
     ORPHANS.main(["baseline", "--baseline-file", str(baseline_file), "--root", str(tmp_path)])
 
-    assert ORPHANS.main(["check", "--baseline-file", str(baseline_file),
-                         "--root", str(tmp_path)]) == 0
+    assert (
+        ORPHANS.main(["check", "--baseline-file", str(baseline_file), "--root", str(tmp_path)]) == 0
+    )

@@ -15,11 +15,14 @@ from __future__ import annotations
 import re
 import subprocess
 from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
+from functools import cache
 from pathlib import Path
 from typing import TextIO
 
 from capsem.gate.proc import Command, Runner
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class RecordingRunner(Runner):
@@ -198,3 +201,102 @@ class RecordingJournal:
     def action(self, action) -> Iterator[None]:
         self.actions.append(action.render())
         yield
+
+
+# ---------------------------------------------------------------------------
+# Reading a contract off the gate instead of off a recipe
+# ---------------------------------------------------------------------------
+#
+# Dozens of contracts asserted against `justfile` text, because that is where
+# the work was. The recipes are one-line dispatches now and the work is a plan,
+# so the same claims are read by running the plan against a recording runner
+# and asking what it would have issued.
+#
+# Cached: building and walking a plan costs seconds, and a suite that asks the
+# same question thirty times should pay once.
+
+#: Running the whole gate's plan stops at the first step that needs a real
+#: machine, so "what does the gate run" is gathered per module instead -- the
+#: same work, reached without one failure hiding the rest.
+WHOLE_GATE: tuple[tuple[str, dict[str, object]], ...] = (
+    ("candidate", {}),
+    ("test-fast", {}),
+    ("test-static", {}),
+    ("test-artifacts", {}),
+    ("test-functional", {}),
+    ("test-glowup", {}),
+    ("cross-compile", {"arch": "arm64"}),
+    ("cross-compile", {"arch": "x86_64"}),
+    ("linux-rust", {}),
+    ("host-sbom", {}),
+    ("install", {}),
+    ("assets", {}),
+)
+
+
+def _built(root: Path, name: str, args: tuple[tuple[str, object], ...]):
+    import argparse
+
+    from capsem.gate import cli  # noqa: F401 - importing registers every command
+    from capsem.gate.command import GateCommand
+
+    return GateCommand.registry[name](
+        RecordingRunner(root),
+        argparse.Namespace(dry_run=False, graph=False, timing=False, **dict(args)),
+    )
+
+
+@cache
+def gate_plan(name: str = "candidate", root: Path | None = None):
+    """A command's plan, built but not run -- for asserting on its edges."""
+    return _built(root or PROJECT_ROOT, name, ())._describe()
+
+
+@cache
+def gate_labels(name: str = "candidate", root: Path | None = None) -> tuple[str, ...]:
+    """Every step of a command's plan, in an order the graph permits."""
+    return tuple(gate_plan(name, root).labels)
+
+
+@cache
+def gate_issued(
+    name: str, args: tuple[tuple[str, object], ...] = (), root: Path | None = None
+) -> str:
+    """Every command one gate command would actually run, with real argv.
+
+    The plan is *run* against a recording runner rather than described: much of
+    this work is still behind `Call`, which renders as prose, and these
+    contracts are about the arguments underneath.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate.context import Context
+
+    root = root or PROJECT_ROOT
+    command = _built(root, name, args)
+    runner = command._runner
+    try:
+        plan = command._describe()
+    except Exception as exc:
+        return f"<plan for {name} unavailable: {exc}>"
+
+    rendered = plan.describe()
+    # A step that needs a machine fails here; what it issued before failing is
+    # still the evidence.
+    with suppress(Exception):
+        plan.run(Context(runner, gate_config.load(root)))
+    return "\n".join([rendered, *runner.rendered, *runner.notes])
+
+
+@cache
+def gate_issues(name: str | None = None, root: Path | None = None) -> str:
+    """Everything the gate would issue, with real argv.
+
+    `name` reads one command; the default reads the whole gate, which is what a
+    contract about "does the gate ever run X" is really asking.
+    """
+    selection = (
+        tuple(entry for entry in WHOLE_GATE if entry[0] == name) if name is not None else WHOLE_GATE
+    )
+    return "\n".join(
+        gate_issued(command, tuple(sorted(args.items())), root) for command, args in selection
+    )

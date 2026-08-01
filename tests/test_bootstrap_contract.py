@@ -5,6 +5,26 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _gate_labels(name: str = "candidate") -> tuple[str, ...]:
+    """Every step of a command's plan, in graph order. See `helpers.gate`."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_labels
+
+    return gate_labels(name)
+
+
+def _gate_issues(name: str | None = None) -> str:
+    """Everything the gate would issue, with real argv. See `helpers.gate`."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_issues
+
+    return gate_issues(name)
+
+
 def _read(path: str) -> str:
     return (PROJECT_ROOT / path).read_text()
 
@@ -75,12 +95,13 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     web_gate = _read("scripts/check-web-surface.sh")
 
     assert "_bootstrap:\n    sh {{justfile_directory()}}/bootstrap.sh -y" in justfile
-    assert "just _test-candidate" in justfile
-    assert "just _test-fast" in justfile
-    assert "just _bootstrap" in justfile
-    assert "just _bound-docker-test-storage" in justfile
+    # The gate is one plan now, so these are phases rather than recipe calls.
+    labels = _gate_labels()
+    assert any(label.startswith("fast.") for label in labels)
+    assert "prepare.bootstrap" in labels
+    assert "prepare.storage-budget" in labels
+    assert "fast.lint" in labels
     for command in [
-        "uv run capsem-gate lint",
         "uv run capsem-builder validate-skills skills",
         "cargo clippy --workspace --all-targets -- -D warnings",
         "bash scripts/check-web-surface.sh frontend",
@@ -88,7 +109,7 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
         "bash scripts/check-web-surface.sh site",
         "bash scripts/check-web-surface.sh release-site",
     ]:
-        assert command in justfile
+        assert command in _gate_issues()
     for command in [
         "pnpm --dir frontend run check",
         "pnpm --dir frontend run test",
@@ -101,7 +122,6 @@ def test_both_release_lanes_reuse_fail_closed_static_module() -> None:
     binary_workflow = _read(".github/workflows/release.yaml")
     profile_workflow = _read(".github/workflows/release-assets.yaml")
     fast_gate = _read(".github/workflows/fast-gate.yaml")
-    just = _read("justfile")
 
     assert "uses: ./.github/workflows/fast-gate.yaml" in binary_workflow
     assert "uses: ./.github/workflows/fast-gate.yaml" in profile_workflow
@@ -109,7 +129,7 @@ def test_both_release_lanes_reuse_fail_closed_static_module() -> None:
     assert "run: just _test-static" in fast_gate
     assert "run: just test" not in binary_workflow
     assert "run: just test" not in profile_workflow
-    assert "cargo clippy --workspace --all-targets -- -D warnings" in just
+    assert "cargo clippy --workspace --all-targets -- -D warnings" in _gate_issues()
 
 
 def test_frontend_release_gate_is_owned_by_the_canonical_test() -> None:
