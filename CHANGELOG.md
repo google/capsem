@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The asset lane creates its VM run directory where `config/gate.toml` says
+  to. `run_dir_template = "/tmp/capsem-a.XXXXXX"` exists because AF_UNIX paths
+  must fit macOS's 104-byte `sun_path` once the gateway appends
+  `instances/<uuid>-ws.sock`, but the code used the template's *name* as an
+  `mkdtemp` prefix and dropped its parent -- so the directory landed in
+  `$TMPDIR`, which on macOS is `/var/folders/<11>/<24>/T/` and spends 57 bytes
+  before anything else. Every terminal connection failed with `path must be
+  shorter than SUN_LEN`, 12,024 times in one gate run, while the VM sat at a
+  healthy prompt the TUI could never display and the shell proof timed out
+  reporting only that no prompt appeared.
+
 - Storage a later step still needs is no longer reclaimed by an earlier one.
   `install-image` ended by releasing the linux-rust builder rail, and 164ms
   later `cache-ownership` ran that exact image and got exit 125. Four rails

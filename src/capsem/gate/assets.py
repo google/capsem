@@ -149,9 +149,14 @@ class AssetGate:
         )
         home.mkdir(parents=True, exist_ok=True)
         # AF_UNIX paths must stay under macOS SUN_LEN once the gateway appends
-        # its session path, and test_root is already too long.
+        # `instances/<uuid>-ws.sock` -- 54 characters -- and test_root is
+        # already too long. The template names the *directory*, not just a
+        # prefix: `mkdtemp` without `dir=` uses $TMPDIR, which on macOS is
+        # `/var/folders/<11>/<24>/T/` and blows the 104-byte limit on its own.
+        template = Path(self._assets.run_dir_template)
+        template.parent.mkdir(parents=True, exist_ok=True)
         run_dir = Path(
-            tempfile.mkdtemp(prefix=Path(self._assets.run_dir_template).name.split(".")[0] + ".")
+            tempfile.mkdtemp(prefix=template.name.split(".")[0] + ".", dir=template.parent)
         )
         marker = (
             f"CAPSEM_ASSET_{profile.name.replace('-', '_')}_{self.host_arch.name}_SHELL_OK"
