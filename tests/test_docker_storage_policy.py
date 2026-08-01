@@ -65,8 +65,13 @@ def test_policy_declares_last_consumers_before_release_boundaries() -> None:
     policy = load_policy()
     resources = policy["resources"]
 
-    assert resources["capsem-host-builder"]["last_consumer"] == "package-x86_64"
-    assert resources["capsem-host-builder"]["release_boundary"] == "after-packages"
+    # `install`, not `package-x86_64`: `docker/Dockerfile.install-test` is
+    # `FROM capsem-host-builder:latest`, and the install proof always rebuilds
+    # rather than reusing a tag that may be stale. Declaring the packages as
+    # the last consumer released the base image out from under it, and the
+    # gate died at `docker build` with `pull access denied`.
+    assert resources["capsem-host-builder"]["last_consumer"] == "install"
+    assert resources["capsem-host-builder"]["release_boundary"] == "after-install"
     assert resources["capsem-linux-rust-target"]["last_consumer"] == "linux-rust"
     assert resources["capsem-linux-rust-target"]["release_boundary"] == "after-linux-rust"
     assert resources["capsem-agent-target-arm64"]["last_consumer"] == "assets"
@@ -104,7 +109,7 @@ def test_policy_cli_reports_resolved_rail_without_docker() -> None:
     assert report["limits"]["minimum_free_gib"] == 40
     assert report["docker"]["minimum_disk_gib"] == 160
     assert report["docker"]["recommended_disk_gib"] == 200
-    assert report["resources"]["capsem-host-builder"]["last_consumer"] == "package-x86_64"
+    assert report["resources"]["capsem-host-builder"]["last_consumer"] == "install"
 
 
 def test_justfile_uses_named_rails_and_keeps_builder_until_packages_finish() -> None:
@@ -116,8 +121,11 @@ def test_justfile_uses_named_rails_and_keeps_builder_until_packages_finish() -> 
     labels = list(_gate_labels())
     arm64 = labels.index("package.arm64")
     x86_64 = labels.index("package.x86_64")
-    release = labels.index("glowup.storage.completed-buildkit-graph")
-    assert arm64 < x86_64 < release
+    # The builder's tag now outlives the packages too: the install proof's
+    # image is `FROM` it. `after-install` is the first boundary at which
+    # nothing derives from it.
+    install = labels.index("glowup.install")
+    assert arm64 < x86_64 < install
 
     assert "docker buildx prune --all --force --reserved-space 2GB" not in justfile
     assert "docker image rm rust:slim-bookworm" not in justfile

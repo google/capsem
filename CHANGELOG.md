@@ -18,7 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   composed into one plan, `hostimage.fragment` is `plan.shared` and runs once,
   so an early release is simply destruction. The extra boundary is gone, and a
   guard now fails when any resource is reclaimed before the step its own policy
-  names as its last consumer.
+  names as its last consumer. Its real last consumer turned out not to be a
+  package build at all: `docker/Dockerfile.install-test` is `FROM
+  capsem-host-builder:latest` and the install proof always rebuilds -- on
+  purpose, so a stale tag cannot hide a new prerequisite -- so releasing at
+  `after-packages` broke `glowup.install` with `pull access denied` fifty-three
+  minutes in. The tag is released at `after-install`, and the `after-packages`
+  boundary, which held nothing else, is gone.
 - The parity lane's build tree is released at all. That boundary held one
   resource, so removing it left the phase empty and the phase went too -- which
   surfaced that the contract asserting "the build tree is handed back before

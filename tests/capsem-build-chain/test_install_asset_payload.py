@@ -1128,11 +1128,21 @@ def test_full_gate_releases_completed_buildkit_graph_after_packages() -> None:
     """
     order = _gate_order()
 
-    assert _boundary("completed-buildkit-graph") == "after-packages"
+    # `after-install`, not `after-packages`: the install proof's Dockerfile is
+    # `FROM capsem-host-builder:latest` and it always rebuilds, so the packages
+    # are not the last thing that needs the tag.
+    import tomllib
+
+    policy = tomllib.loads(
+        (PROJECT_ROOT / "config" / "storage-policy.toml").read_text(encoding="utf-8")
+    )
+    builder = policy["resources"]["capsem-host-builder"]
+    assert builder["release_boundary"] == "after-install"
+    assert builder["last_consumer"] == "install"
     assert (
         _at(order, "package.arm64")
         < _at(order, "package.x86_64")
-        < _at(order, "storage.completed-buildkit-graph")
+        < _at(order, "glowup.install")
     )
 
 
@@ -1179,7 +1189,6 @@ def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> N
         _at(order, "artifacts.assets")
         < _at(order, "package.arm64")
         < _at(order, "package.x86_64")
-        < _at(order, "storage.completed-buildkit-graph")
         < _at(order, "glowup.install")
     )
 

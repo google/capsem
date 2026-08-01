@@ -52,7 +52,6 @@ ensure_space_script = "scripts/ensure-docker-space.sh"
 [storage.phases]
 completed-linux-rust-target = { boundary = "after-linux-rust", rail = "assets" }
 completed-docker-rails = { boundary = "after-assets", rail = "package" }
-completed-buildkit-graph = { boundary = "after-packages", rail = "package" }
 completed-package-arm64 = { boundary = "after-package-arm64", rail = "install" }
 completed-package-x86_64 = { boundary = "after-package-x86_64", rail = "install" }
 deferred-install-target = { boundary = "before-packages", rail = "package" }

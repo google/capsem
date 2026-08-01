@@ -265,20 +265,21 @@ def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Ste
             else (released,)
         )
 
-    # capsem-host-builder is a dependency of both package builds, so its final
-    # tag is released only after the second consumer -- never between the
-    # assets and the package assembly.
-    graph = phase.add(storagerelease(config, "completed-buildkit-graph"), after=previous)
-
+    # Nothing releases capsem-host-builder here. Both package builds need it,
+    # and so does `docker/Dockerfile.install-test`, which the install proof
+    # always rebuilds from -- so `after-install` is the earliest boundary at
+    # which nothing derives from that tag any more.
     if host.on_macos():
-        graph = phase.add(
-            step(
-                "macos-package",
-                Script(config.modules.macos_glowup_script),
-                contends=(config.exclusive("apple_vz"),),
+        previous = (
+            phase.add(
+                step(
+                    "macos-package",
+                    Script(config.modules.macos_glowup_script),
+                    contends=(config.exclusive("apple_vz"),),
+                ),
+                after=previous,
             ),
-            after=(graph,),
         )
 
-    sbom = phase.add(hostpackage.sbom_step(config), after=(graph,))
+    sbom = phase.add(hostpackage.sbom_step(config), after=previous)
     return phase.add(install.install_step(config), after=(sbom,))

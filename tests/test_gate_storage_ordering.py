@@ -60,9 +60,7 @@ def _released_inline() -> dict[str, list[str]]:
                 and node.args
                 and isinstance(node.args[0], ast.Constant)
             ):
-                found.setdefault(node.args[0].value, []).append(
-                    f"{path.name}:{node.lineno}"
-                )
+                found.setdefault(node.args[0].value, []).append(f"{path.name}:{node.lineno}")
     return found
 
 
@@ -77,9 +75,7 @@ def test_no_rail_is_handed_back_from_two_places() -> None:
     steps = _released_as_steps()
     inline = _released_inline()
 
-    both = {
-        phase: sites for phase, sites in inline.items() if phase in steps
-    }
+    both = {phase: sites for phase, sites in inline.items() if phase in steps}
 
     assert not both, (
         "these rails are released both as a plan step and as a statement "
@@ -101,11 +97,21 @@ def test_the_builder_image_is_released_after_the_last_build_that_runs_it() -> No
     import sys as _sys
 
     _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    import tomllib
+
     from helpers.gate import gate_labels
 
     labels = list(gate_labels("candidate"))
-    release = labels.index("glowup.storage.completed-buildkit-graph")
+    policy = tomllib.loads(
+        (PROJECT_ROOT / "config" / "storage-policy.toml").read_text(encoding="utf-8")
+    )
+    builder = policy["resources"]["capsem-host-builder"]
+
+    # No step frees it: `after-install` is released inside the install proof,
+    # on its way out, which is the last thing that derives from the tag.
+    assert builder["release_boundary"] == "after-install"
+    assert not [label for label in labels if "storage.completed-buildkit-graph" in label]
     for consumer in ("host-image", "package.arm64", "package.x86_64"):
-        assert labels.index(consumer) < release, (
-            f"{consumer} runs the builder image after the step that frees it"
+        assert labels.index(consumer) < labels.index("glowup.install"), (
+            f"{consumer} runs the builder image after the install proof frees it"
         )

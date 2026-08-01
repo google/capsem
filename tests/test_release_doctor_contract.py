@@ -1885,8 +1885,11 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
     # Nothing releases it early any more, because both package builds run it:
     # `capsem-host-builder`'s own `last_consumer` is `package-x86_64`. It is
     # freed at `after-packages`, after every consumer.
+    # Nothing releases it early any more. Both package builds run it, and the
+    # install proof's image is `FROM` it, so `after-install` -- released on the
+    # way out of that proof -- is the first point at which nothing needs it.
     labels = list(_gate_labels())
-    release = labels.index("glowup.storage.completed-buildkit-graph")
+    release = labels.index("glowup.install")
     for consumer in ("install-image", "cache-ownership", "linux-rust"):
         if consumer in labels:
             assert labels.index(consumer) < release
@@ -1895,8 +1898,8 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
             "the package builds run this image; releasing it first is exit 125"
         )
 
-    phase = config.storage.phases["completed-buildkit-graph"]
-    assert (phase.boundary, phase.rail) == ("after-packages", "package")
+    phase = config.storage.phases["after-install"]
+    assert (phase.boundary, phase.rail) == ("after-install", "install")
 
     # An image that merely exists is not an image that works: checking the tag
     # lets a stale local build hide a new prerequisite.

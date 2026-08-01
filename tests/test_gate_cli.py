@@ -45,10 +45,10 @@ def dispatch(argv: list[str], runner: RecordingRunner) -> int:
 
 
 def test_storage_release_reaches_the_policy_script(recorded: RecordingRunner) -> None:
-    assert dispatch(["storage", "release", "completed-buildkit-graph"], recorded) == 0
+    assert dispatch(["storage", "release", "completed-package-arm64"], recorded) == 0
 
     assert recorded.matching(
-        r"docker-storage-policy.py release --boundary after-packages --rail package"
+        r"docker-storage-policy.py release --boundary after-package-arm64 --rail install"
     )
 
 
