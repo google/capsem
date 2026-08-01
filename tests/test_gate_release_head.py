@@ -70,8 +70,19 @@ def test_the_head_is_captured_before_the_gate_and_confirmed_after(name, args) ->
     plan = _command(name, **args)._describe()
     order = list(plan.labels)
 
-    assert order.index("record-head") < order.index("gate")
-    assert order.index("gate") < order.index("confirm-head")
+    # There is no single `gate` step any more: the release plan *contains* the
+    # complete gate rather than launching `just test`, so what has to sit
+    # between the two head steps is every phase of it. Asserted on the phases
+    # themselves, which is the stronger claim -- a step named `gate` could
+    # have run a reduced proof and this would not have noticed.
+    phases = [
+        next(i for i, label in enumerate(order) if label.startswith(prefix))
+        for prefix in ("fast.", "static.", "artifacts.", "functional.", "glowup.")
+    ]
+
+    assert order.index("record-head") < min(phases)
+    assert max(phases) < order.index("confirm-head")
+    assert order.index("confirm-head") < order.index("release")
 
 
 @pytest.mark.parametrize(

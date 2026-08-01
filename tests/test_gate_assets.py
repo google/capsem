@@ -43,8 +43,11 @@ class Gating(RecordingRunner):
     def execute(self, command):
         completed = super().execute(command)
         rendered = str(command)
-        if "_build-image-template" in rendered:
-            _just, _recipe, arch, _profile, output, _stage = command.argv
+        # Keyed on the builder's own argv: the lane no longer goes through a
+        # dispatcher, and the output root it names is the thing under test.
+        if "--output" in command.argv and "--arch" in command.argv:
+            output = command.argv[command.argv.index("--output") + 1]
+            arch = command.argv[command.argv.index("--arch") + 1]
             produced = Path(output) / arch
             produced.mkdir(parents=True, exist_ok=True)
             config = gate_config.for_root(self.root)
@@ -83,7 +86,7 @@ def test_cross_architecture_execution_is_proven_before_any_lane_starts(
 
     gate.run()
 
-    runner.assert_order(r"docker run --rm --platform", r"_build-image-template")
+    runner.assert_order(r"docker run --rm --platform", r"image build")
 
 
 def test_the_probe_targets_the_architecture_this_host_is_not(
@@ -272,4 +275,4 @@ def test_leftover_containers_are_cleaned_up_after_the_lanes(
 
     gate.run()
 
-    runner.assert_order(r"_build-image-template", r"cleanup-docker-containers-by-mount\.sh")
+    runner.assert_order(r"image build", r"cleanup-docker-containers-by-mount\.sh")

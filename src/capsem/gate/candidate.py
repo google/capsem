@@ -153,21 +153,32 @@ class Colima(Resource, name="colima"):
             self._runner.note("WARNING: failed to stop Colima started by this gate")
 
 
+def gate_resources(config, runner: Runner) -> tuple[Resource, ...]:
+    """What anything running the complete gate must hold.
+
+    Order is the guarantee: acquired left to right, released in reverse. The
+    orphan baseline is first taken and last compared, and the workspace stops
+    its service before that comparison happens -- so what is still alive by
+    then really is a leak.
+
+    Shared with the release commands, which run the gate in-process now rather
+    than launching it, and therefore hold exactly what it holds.
+    """
+    return (
+        OrphanAccounting(config, runner),
+        FailureEvidence(config, runner),
+        Workspace(config),
+        Colima(config, runner),
+    )
+
+
 class CandidateCommand(
     GateCommand, name="candidate", help="run the complete local qualification gate"
 ):
     exclusive = True
 
     def resources(self) -> tuple[Resource, ...]:
-        # Order is the guarantee: acquired left to right, released in reverse.
-        # The orphan baseline is first taken and last compared, and the
-        # workspace stops its service before that comparison happens.
-        return (
-            OrphanAccounting(self._config, self._runner),
-            FailureEvidence(self._config, self._runner),
-            Workspace(self._config),
-            Colima(self._config, self._runner),
-        )
+        return gate_resources(self._config, self._runner)
 
     def reexec(self) -> tuple[str, ...] | None:
         """Become *this* command under a keep-awake wrapper, once.
@@ -192,4 +203,27 @@ class CandidateCommand(
     def plan(self) -> Plan:
         plan = Plan(self.name)
         candidateplan.compose(plan, self._config)
+        return plan
+
+
+class CandidateModulesCommand(
+    GateCommand,
+    name="test-candidate",
+    help="every checked-in module, after rebuilding the assets they run against",
+):
+    """The gate minus its fast phase, for when that phase already passed.
+
+    Shares `candidateplan` with `candidate` rather than launching the four
+    module commands as separate processes, which is what it used to do -- four
+    exclusive children, each waiting for the lock this command was holding.
+    """
+
+    exclusive = True
+
+    def resources(self) -> tuple[Resource, ...]:
+        return gate_resources(self._config, self._runner)
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        candidateplan.compose_modules(plan, self._config)
         return plan

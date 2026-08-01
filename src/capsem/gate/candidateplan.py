@@ -28,23 +28,41 @@ from .sourcestate import RecordSourceState, RequireSourceUnchanged
 from .storage import Storage
 
 
-def compose(plan: Plan, config: GateConfig) -> None:
-    """Every phase of the gate, in the order each depends on the last."""
-    recorded = plan.add(step("source.record", RecordSourceState()))
+def compose(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+    """Every phase of the gate, in the order each depends on the last.
+
+    Composed by `candidate` and, unchanged, by both release commands -- which
+    is the point: a release runs the complete local proof rather than a
+    reduced one, and now it runs it in the same process rather than launching
+    `just test` and hoping.
+    """
+    recorded = plan.add(step("source.record", RecordSourceState()), after=after)
 
     contracts = testmodules.release_contracts(plan, config, after=(recorded,))
     fast = testmodules.fast(plan, config, after=(contracts,))
+    modules = compose_modules(plan, config, after=(fast,))
 
-    prepared = _prepare(plan, config, after=(fast,))
+    return plan.add(step("source.verify", RequireSourceUnchanged()), after=(modules,))
+
+
+def compose_modules(
+    plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()
+) -> Step:
+    """Everything after the fast phase: the artifacts, the VMs, the install.
+
+    Separate from `compose` because it is independently runnable as
+    `test-candidate`, which is what a developer reaches for when the fast
+    checks already passed and they do not want to repeat them.
+    """
+    prepared = _prepare(plan, config, after=after)
     static = testmodules.static(plan, config, after=(prepared,))
     artifacts = vmmodules.artifacts(plan, config, after=(static,))
     functional = vmmodules.functional(plan, config, after=(artifacts,))
     glowup = vmmodules.glowup(plan, config, after=(functional,))
 
-    recipes = plan.add(
+    return plan.add(
         step("recipes", Run(config.candidate.recipe_suite)), after=(glowup,)
     )
-    plan.add(step("source.verify", RequireSourceUnchanged()), after=(recipes,))
 
 
 def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:

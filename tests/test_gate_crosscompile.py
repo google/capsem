@@ -290,12 +290,30 @@ def test_a_provable_target_runs_the_systemd_kvm_proof(
     monkeypatch.setattr("capsem.gate.host.device_available", lambda _path: True)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "prove"})
 
+    # The proof is called, not launched: the three `CAPSEM_PROOF_*` variables
+    # existed only to carry these arguments across a process boundary that no
+    # longer exists, and `DebProof` always took them as arguments. What is
+    # asserted is therefore what it was handed, which is the same claim
+    # without a subprocess in the middle.
+    from capsem.gate import crosscompile
+
+    handed = {}
+
+    class Recording:
+        def __init__(self, _runner, **kwargs):
+            handed.update(kwargs)
+
+        def run(self):
+            handed["ran"] = True
+
+    monkeypatch.setattr(crosscompile.debproof, "DebProof", Recording)
+
     _rail(runner, channel="nightly", manifest_url="file:///src/m.json").run()
 
-    proof = runner.matching(r"just _prove-linux-deb")[0]
-    assert "CAPSEM_PROOF_MANIFEST_CHANNEL=nightly" in proof
-    assert "CAPSEM_PROOF_MANIFEST_URL=file:///src/m.json" in proof
-    assert PACKAGE in proof
+    assert handed.get("ran"), "a provable target did not run the proof"
+    assert handed["channel"] == "nightly"
+    assert handed["manifest_url"] == "file:///src/m.json"
+    assert handed["package"].name == PACKAGE
 
 
 def test_a_cross_target_skips_the_proof_and_says_why(

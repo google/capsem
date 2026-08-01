@@ -44,9 +44,13 @@ class Building(RecordingRunner):
 
     def execute(self, command):
         completed = super().execute(command)
-        rendered = str(command)
-        if "_build-image-template" in rendered:
-            _just, _recipe, arch, _profile, output, _stage = command.argv
+        # Keyed on the argv that actually reaches the builder, not on a
+        # dispatcher's. Fabricating artifacts from the recipe's arguments was
+        # what let the lane's output root be dropped one layer further down
+        # without a single test noticing.
+        if "--output" in command.argv:
+            output = command.argv[command.argv.index("--output") + 1]
+            arch = command.argv[command.argv.index("--arch") + 1]
             if command.log is not None:
                 command.log.parent.mkdir(parents=True, exist_ok=True)
                 with command.log.open("a", encoding="utf-8") as sink:
@@ -99,11 +103,14 @@ def test_every_profile_is_built_for_every_architecture(tmp_path: Path) -> None:
 
     _lanes(runner, root).run(ARCHES)
 
+    # Matched on the builder invocation rather than on a recipe name: the
+    # dispatcher is gone, and matching it would have kept passing while the
+    # build reached the wrong directory.
     for arch in ARCHES:
         for profile in ("code", "co-work"):
-            for stage in ("kernel", "rootfs"):
+            for stage in CONFIG.imagebuild.lane_templates:
                 assert runner.matching(
-                    rf"_build-image-template {arch.name} {profile} .* {stage}"
+                    rf"--profile \S*{profile}\S* .*--template {stage}.*--arch {arch.name}"
                 ), f"{profile}/{arch.name}/{stage} was never built"
 
 
@@ -188,3 +195,55 @@ def test_a_lane_whose_log_is_missing_says_so_rather_than_crashing(
         _lanes(runner, root).run(ARCHES)
 
     assert any("expected lane log is missing" in note for note in runner.notes)
+
+
+# ---------------------------------------------------------------------------
+# The output root, all the way to the builder
+# ---------------------------------------------------------------------------
+
+
+def test_each_lane_tells_the_builder_where_to_write(tmp_path: Path) -> None:
+    """The lane's isolation has to survive the whole way down.
+
+    `_build-image-template` declared an `output` parameter and never forwarded
+    it, so `capsem-admin` wrote to the one configured assets directory while
+    each lane checked a per-lane directory nothing had written. Two concurrent
+    architectures then overwrote each other in the shared tree.
+
+    Asserted on the argv that actually reaches the builder, not on the argv the
+    lane hands to a dispatcher: the defect lived precisely in the layer between
+    those two, which is why every existing test walked straight past it.
+    """
+    root = _checkout(tmp_path, profiles=("code",))
+    runner = Building(root)
+    lanes = _lanes(runner, root)
+    (profile,) = discover_profiles(gate_config.for_root(root))
+
+    lanes.run(ARCHES)
+
+    for arch in ARCHES:
+        expected = str(lanes.lane_assets(profile, arch))
+        issued = [c for c in runner.commands if "--output" in c.argv]
+        assert any(
+            c.argv[c.argv.index("--output") + 1] == expected for c in issued
+        ), (
+            f"the {arch.name} lane did not tell the builder to write to "
+            f"{expected}; it issued:\n  " + "\n  ".join(str(c) for c in issued)
+        )
+
+
+def test_two_lanes_never_name_the_same_output_root(tmp_path: Path) -> None:
+    """The property the isolation exists for, stated directly."""
+    root = _checkout(tmp_path, profiles=("code",))
+    runner = Building(root)
+    lanes = _lanes(runner, root)
+
+    lanes.run(ARCHES)
+
+    outputs = {
+        command.argv[command.argv.index("--output") + 1]
+        for command in runner.commands
+        if "--output" in command.argv
+    }
+
+    assert len(outputs) == len(ARCHES), f"lanes shared an output root: {outputs}"

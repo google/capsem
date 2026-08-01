@@ -23,7 +23,7 @@ import tomllib
 from pathlib import Path
 
 from . import config as gate_config
-from . import host, hostimage
+from . import debproof, host, hostimage
 from .actions import Call
 from .command import GateCommand
 from .config import Arch
@@ -232,14 +232,15 @@ class PackageRail:
             return
 
         self._runner.step("Proving exact Debian package in systemd + KVM")
-        self._runner.run(
-            ["just", "_prove-linux-deb"],
-            env={
-                "CAPSEM_PROOF_DEB": str(package),
-                "CAPSEM_PROOF_MANIFEST_URL": self.manifest_url,
-                "CAPSEM_PROOF_MANIFEST_CHANNEL": self.channel,
-            },
-        )
+        # Called, not launched. The three `CAPSEM_PROOF_*` variables existed
+        # only to carry these arguments across a process boundary that no
+        # longer exists -- and `DebProof` always took them as arguments.
+        debproof.DebProof(
+            self._runner,
+            package=package,
+            manifest_url=self.manifest_url,
+            channel=self.channel,
+        ).run()
 
 
 def fragment(plan: Plan, config, target, *, after: tuple = ()):

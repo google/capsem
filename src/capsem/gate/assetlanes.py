@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import config as gate_config
+from . import imagebuild
 from .config import Arch
 from .errors import GateError
 from .proc import Runner
@@ -68,10 +69,19 @@ class AssetLanes:
         for profile in self._profiles:
             output = self.lane_assets(profile, arch)
             self._runner.step(f"Ironbank asset build lane: {profile.name} ({arch.name})")
-            for stage in ("kernel", "rootfs"):
+            for stage in self._config.imagebuild.lane_templates:
+                # Straight to the builder, with this lane's output. It used to
+                # go through `just _build-image-template`, which accepted an
+                # output argument and dropped it -- so every lane wrote into
+                # the one shared assets tree while checking a private one.
                 self._runner.run(
-                    ["just", "_build-image-template", arch.name, profile.name,
-                     str(output), stage],
+                    imagebuild.build_argv(
+                        self._config,
+                        profile=profile.name,
+                        arch=arch.name,
+                        template=stage,
+                        output=str(output),
+                    ),
                     log=log,
                 )
             self._require_artifacts(output / arch.name)

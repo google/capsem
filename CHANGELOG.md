@@ -55,6 +55,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-shot fresh session the recipe documents. The payload is now one exact
   string, quoted by `just` and passed after `--`, so a leading dash stays a
   payload rather than becoming a flag.
+- No plan action starts a second gate anywhere. The last three modules are
+  composed: the asset lanes call the image builder directly, the package rail
+  calls the Debian proof directly, and both release commands *contain* the
+  complete gate rather than launching `just test`. Because both are exclusive,
+  that launch could never have succeeded -- the child would have waited out its
+  timeout for the lock its own parent held -- so "nothing publishes before the
+  complete proof passes" was a promise no run could keep, and is now an edge.
+  The ratchet tracking the remaining offenders is deleted rather than emptied:
+  a list describing no remaining work reads as permission for some.
+- Concurrent asset lanes stop overwriting each other. `_build-image-template`
+  declared an `output` parameter and never forwarded it, so `capsem-admin`
+  wrote into the one configured assets tree while each lane verified a private
+  directory nothing had written. Every test walked past it because the fakes
+  fabricated artifacts from the argv the *dispatcher* was handed, one layer
+  above where the value was dropped; they key on the builder's own argv now.
+- The three `CAPSEM_PROOF_*` variables are gone. They existed only to carry
+  arguments across a process boundary that no longer exists, and `DebProof`
+  always took them as arguments.
 - `just test` is one process, one machine lock, one workspace and one plan --
   64 steps and 91 actions in a single graph, where it used to be a tree of
   exclusive commands each waiting out a 7200-second timeout for the lock its

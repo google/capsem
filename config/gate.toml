@@ -467,23 +467,6 @@ direct_machine_access = [
 # recipe body were.
 direct_concurrency = ["planrunner.py"]
 
-# Modules whose plan actions still start a second gate -- `just ...` or another
-# `capsem-gate ...`. Each one is a deadlock: the machine lock is not reentrant,
-# so the child waits out its timeout for the lock its own parent is holding.
-# `GuardedRunner` refuses them at runtime; this list is what makes the
-# outstanding work countable, and it is also why the cross-reference check is
-# scoped past these modules -- `_build-host-image` is invoked by two of them
-# and has never existed.
-#
-# A ratchet, not an exemption list. A module may leave it, nothing may join it,
-# and a module that no longer re-enters must be struck, so the list cannot
-# quietly describe a past that is no longer true.
-modules_still_re_entering = [
-    "assetlanes.py",
-    "crosscompile.py",
-    "release.py",
-]
-
 # Modules that still reach past the primitives, pending extraction onto them.
 # Work that goes around `actions`/`fileactions` is work the dry run cannot show
 # and the run log cannot time.
@@ -789,6 +772,10 @@ cli = "target/debug/capsem"
 # thing that varies. Four recipes spelled it out, and the shape of the argv was
 # the same in all four.
 admin = ["cargo", "run", "-p", "capsem-admin", "--", "image", "build"]
+# The stages a concurrent asset lane builds, in order. Named here because the
+# lanes build kernel and rootfs separately while a single-shot build uses
+# "all", and a second copy of that list in code is a second opinion.
+lane_templates = ["kernel", "rootfs"]
 templates = ["kernel", "rootfs", "all"]
 profiles_glob = "config/profiles/*/profile.toml"
 profile_manifest = "config/profiles/{profile}/profile.toml"

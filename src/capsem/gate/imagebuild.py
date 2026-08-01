@@ -57,8 +57,22 @@ def doctor(config: GateConfig) -> Step:
     )
 
 
-def build(config: GateConfig, *, profile: str, arch: str | None, template: str) -> Step:
-    """One image build. The template is the only thing that varies."""
+def build_argv(
+    config: GateConfig,
+    *,
+    profile: str,
+    arch: str | None,
+    template: str,
+    output: str | None = None,
+) -> list[str]:
+    """The one spelling of `capsem-admin image build`.
+
+    `output` defaults to the configured assets tree and is overridable because
+    the concurrent asset lanes each need their own. It used to be a `just`
+    parameter that the recipe accepted and never forwarded, so every lane wrote
+    into the one shared directory while each checked a private one -- two
+    architectures overwriting each other, and nothing looking at the result.
+    """
     settings = config.imagebuild
     if template not in settings.templates:
         raise GateError(
@@ -70,15 +84,30 @@ def build(config: GateConfig, *, profile: str, arch: str | None, template: str) 
         *settings.admin,
         "--profile", settings.profile_manifest.format(profile=profile),
         "--config-root", settings.config_root,
-        "--output", settings.output,
+        "--output", output or settings.output,
         "--template", template,
         "--clean",
     ]
     if arch:
         argv += ["--arch", config.arch(arch).name]
+    return argv
 
+
+def build(
+    config: GateConfig,
+    *,
+    profile: str,
+    arch: str | None,
+    template: str,
+    output: str | None = None,
+) -> Step:
+    """One image build. The template is the only thing that varies."""
     label = f"image.{profile}.{template}" + (f".{arch}" if arch else "")
-    return step(label, Run(argv), contends=(config.exclusive("docker_daemon"),))
+    return step(
+        label,
+        Run(build_argv(config, profile=profile, arch=arch, template=template, output=output)),
+        contends=(config.exclusive("docker_daemon"),),
+    )
 
 
 class BuildAssetsCommand(

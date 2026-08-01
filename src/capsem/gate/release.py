@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 
+from . import candidateplan, imagebuild
 from .actions import Run, Script
 from .command import GateCommand
 from .config import GateConfig
@@ -24,9 +25,16 @@ from .plan import Plan
 from .releasehead import ConfirmHead, RecordHead, head_file
 
 
-def _gate(config: GateConfig):
-    """The complete local proof. Never a reduced one."""
-    return step("gate", Run(["just", "test"]))
+def _gate(plan: Plan, config: GateConfig, *, after):
+    """The complete local proof, composed rather than launched.
+
+    `Run(["just", "test"])` from here started a second gate, and both release
+    commands are exclusive -- so the child waited out its timeout for the lock
+    its own parent held, and no release could ever have run. Composed, the
+    release plan *contains* the gate, so "nothing publishes before the
+    complete proof passes" is an edge rather than a promise.
+    """
+    return candidateplan.compose(plan, config, after=after)
 
 
 class ReleaseBinariesCommand(
@@ -35,6 +43,14 @@ class ReleaseBinariesCommand(
     help="run the complete gate, then release packages for one channel",
 ):
     exclusive = True
+
+    def resources(self):
+        # The gate runs inside this command now, so this command holds what
+        # the gate holds: an isolated home, the process accounting, the
+        # Colima it may have started, and the evidence a failure leaves.
+        from .candidate import gate_resources
+
+        return gate_resources(self._config, self._runner)
 
     @classmethod
     def add_arguments(cls, parser) -> None:
@@ -83,7 +99,7 @@ class ReleaseBinariesCommand(
         recorded = plan.add(
             step("record-head", RecordHead(head_file(config))), after=(fetched,)
         )
-        gate = plan.add(_gate(config), after=(recorded,))
+        gate = _gate(plan, config, after=(recorded,))
         confirmed = plan.add(
             step("confirm-head", ConfirmHead(settings.publish, head_file(config))),
             after=(gate,),
@@ -98,6 +114,11 @@ class ReleaseProfileCommand(
     help="run the complete gate, then release one channel profile",
 ):
     exclusive = True
+
+    def resources(self):
+        from .candidate import gate_resources
+
+        return gate_resources(self._config, self._runner)
 
     @classmethod
     def add_arguments(cls, parser) -> None:
@@ -119,7 +140,7 @@ class ReleaseProfileCommand(
         recorded = plan.add(
             step("record-head", RecordHead(head_file(config))), after=(checked,)
         )
-        gate = plan.add(_gate(config), after=(recorded,))
+        gate = _gate(plan, config, after=(recorded,))
         confirmed = plan.add(
             step("confirm-head", ConfirmHead(settings.publish, head_file(config))),
             after=(gate,),
@@ -138,47 +159,6 @@ class ReleaseProfileCommand(
         return plan
 
 
-class CandidateModulesCommand(
-    GateCommand,
-    name="test-candidate",
-    help="every checked-in module, after rebuilding the assets they run against",
-):
-    """Composition, and one thing that is not.
-
-    The benchmark recordings are cleared exactly once here, before any module
-    runs. Clearing them per module is what left a fortnight of full gates with
-    an empty directory and froze the published arm64 history.
-    """
-
-    exclusive = True
-
-    def plan(self) -> Plan:
-        from .fileactions import Remove
-
-        plan = Plan(self.name)
-        config = self._config
-
-        prepared = plan.add(
-            step(
-                "prepare",
-                Run(["just", "_bootstrap"]),
-                Run(["just", "_bound-docker-test-storage"]),
-                Run(["just", "_clean-stale"]),
-                Run(["just", "_check-generated-settings"]),
-                Remove(config.path(config.workspace.benchmark_root)),
-                Run(["just", "_prepared-runtime"]),
-            )
-        )
-
-        previous = prepared
-        for module in ("test-static", "test-artifacts", "test-functional", "test-glowup"):
-            previous = plan.add(
-                step(module, Run(["uv", "run", "capsem-gate", module])), after=(previous,)
-            )
-        plan.add(step("recipes", Run(["just", "_test-recipes"])), after=(previous,))
-        return plan
-
-
 class DevReadyCommand(
     GateCommand, name="dev-ready", help="run doctor once, on a fresh checkout"
 ):
@@ -188,7 +168,7 @@ class DevReadyCommand(
         plan = Plan(self.name)
         if self._config.path(self._config.devloop.setup_sentinel).exists():
             return plan
-        plan.add(step("first-run-doctor", Run(["just", "doctor"])))
+        plan.add(imagebuild.doctor(self._config))
         return plan
 
 

@@ -31,7 +31,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 GATE_PACKAGE = PROJECT_ROOT / "src" / "capsem" / "gate"
 
 CONFIG = gate_config.load(PROJECT_ROOT)
-PENDING = tuple(CONFIG.boundary.modules_still_re_entering)
 
 
 def _recipes() -> dict[str, str]:
@@ -135,9 +134,6 @@ def test_no_plan_action_re_enters_the_gate(module: Path) -> None:
     "_sign"])` reads like naming a step. What it does is start a second gate
     that waits out its timeout for the lock this one is holding.
     """
-    if module.name in PENDING:
-        pytest.skip(f"{module.name} is on the re-entry ratchet")
-
     offences = [
         f"{module.name}:{line}: {' '.join(argv)}"
         for line, argv in _invocations(module)
@@ -150,32 +146,6 @@ def test_no_plan_action_re_enters_the_gate(module: Path) -> None:
     )
 
 
-def test_the_re_entry_ratchet_only_shrinks() -> None:
-    """A module that no longer re-enters must leave the list.
-
-    Otherwise the ratchet describes a past that is no longer true, and the next
-    reader takes it as permission rather than as debt.
-    """
-    stale = sorted(
-        name
-        for name in PENDING
-        if not any(
-            program(argv) in ENTRYPOINTS for _, argv in _invocations(GATE_PACKAGE / name)
-        )
-    )
-
-    assert not stale, (
-        "these no longer start a second gate; strike them from "
-        f"[boundary] modules_still_re_entering in config/gate.toml: {stale}"
-    )
-
-
-def test_the_ratchet_names_modules_that_exist() -> None:
-    missing = sorted(name for name in PENDING if not (GATE_PACKAGE / name).is_file())
-
-    assert not missing, f"these modules are gone: {missing}"
-
-
 # ---------------------------------------------------------------------------
 # Cross-references
 # ---------------------------------------------------------------------------
@@ -185,13 +155,10 @@ def test_the_ratchet_names_modules_that_exist() -> None:
 def test_every_just_recipe_named_from_python_exists(module: Path) -> None:
     """`_build-host-image` was invoked by two modules and never existed.
 
-    Scoped past the re-entry ratchet: both offenders are on it, and the fix is
-    the same edit -- composing the host-image fragment removes the call and the
-    dangling name together. A module leaving the ratchet must satisfy this too.
+    Composing the host-image fragment removed the call and the dangling name
+    together, which is the usual shape: a name that resolves to nothing is
+    almost always a name nobody should have been writing.
     """
-    if module.name in PENDING:
-        pytest.skip(f"{module.name} is on the re-entry ratchet")
-
     missing = [
         f"{module.name}:{line}: just {argv[1]}"
         for line, argv in _invocations(module)
