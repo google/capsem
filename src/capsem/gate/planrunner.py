@@ -84,7 +84,6 @@ def execute(plan: Plan, context: Context) -> dict[str, Outcome]:
             _record(step, finished, outcomes, broken)
             sorter.done(step.label)
 
-    _raise_for_failures(plan.name, outcomes)
     return outcomes
 
 
@@ -121,7 +120,13 @@ def _record(
     broken.add(step.label)
 
 
-def _raise_for_failures(name: str, outcomes: dict[str, Outcome]) -> None:
+def raise_for_failures(name: str, outcomes: dict[str, Outcome]) -> None:
+    """Report every failure by name, and what never ran because of them.
+
+    Separate from `execute` so the plan can record the outcomes *before* this
+    raises. A failed run is exactly the run whose timings and critical path
+    somebody wants, and they were empty at the only moment they mattered.
+    """
     failed = [o for o in outcomes.values() if o.status == FAILED]
     if not failed:
         return

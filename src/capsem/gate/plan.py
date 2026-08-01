@@ -215,7 +215,11 @@ class Plan:
         by any other route still cannot run unchecked.
         """
         self.validate(context.config)
+        # Assigned before anything raises: a failed run is exactly the run
+        # whose timings and critical path somebody wants, and leaving the
+        # outcomes unset made them empty at the only moment they mattered.
         self._outcomes = planrunner.execute(self, context)
+        planrunner.raise_for_failures(self.name, self._outcomes)
 
     # -- what the runner and the checks need to walk this graph ------------
 

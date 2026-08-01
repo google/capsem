@@ -291,15 +291,13 @@ def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() ->
     assert "colima" in {r.name for r in _command("candidate").resources()}
 
     order = list(_planned_labels("test-candidate"))
-    expected = [
-        "prepare",
-        "test-static",
-        "test-artifacts",
-        "test-functional",
-        "test-glowup",
-        "recipes",
+    # The modules are phases of one plan now rather than four child processes,
+    # so each is a namespace rather than a step name.
+    expected = ("prepare.", "static.", "artifacts.", "functional.", "glowup.", "recipes")
+    positions = [
+        next(i for i, label in enumerate(order) if label.startswith(prefix))
+        for prefix in expected
     ]
-    positions = [order.index(step) for step in expected]
     assert positions == sorted(positions)
 
     assert CONFIG.candidate.source_digest_script.endswith("source-state-digest.py")
@@ -487,7 +485,7 @@ def test_parallel_coverage_state_is_kept_out_of_the_source_tree() -> None:
 
     from capsem.gate.workspace import Workspace
 
-    environment = Workspace(CONFIG).environment
+    environment = Workspace(CONFIG).environment()
     assert environment["COVERAGE_FILE"].endswith(workspace.coverage_file)
 
 

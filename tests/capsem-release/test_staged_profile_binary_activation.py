@@ -241,7 +241,13 @@ def test_hosted_macos_never_claims_the_local_apple_vz_proof() -> None:
     assert "_gate-assets" in local_gate
 
     order = list(_release_plan("release-profile", "nightly", "code").labels)
-    assert order.index("gate") < order.index("release")
+    # There is no `gate` step: the release plan contains the gate itself, so
+    # what must precede the publication is every phase of it.
+    phases = [
+        next(i for i, label in enumerate(order) if label.startswith(prefix))
+        for prefix in ("fast.", "static.", "artifacts.", "functional.", "glowup.")
+    ]
+    assert max(phases) < order.index("release")
 
 
 def test_profile_activation_readiness_requires_the_pulled_binary_functional_cohort() -> None:

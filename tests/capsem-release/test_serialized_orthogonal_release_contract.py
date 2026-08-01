@@ -62,6 +62,20 @@ def _release_plan(command: str, *arguments: str):
     return GateCommand.registry[command](Runner(ROOT), parsed).plan()
 
 
+def _publishing(plan) -> str:
+    """What the steps after the gate would run.
+
+    "This lane does not rebuild the other's artifacts" is a claim about the
+    publishing tail, not about the plan -- which contains the complete gate and
+    therefore builds both families before publishing either.
+    """
+    labels = list(plan.labels)
+    after = labels[labels.index("confirm-head") :]
+    return "\n".join(
+        line for label in after for line in plan.step_named(label).render()
+    )
+
+
 def _release_order(command: str, *arguments: str) -> list[str]:
     """Every step, in an order the graph permits."""
     return list(_release_plan(command, *arguments).labels)
@@ -84,18 +98,19 @@ def test_release_commands_are_two_single_purpose_recipes() -> None:
     """
     justfile = "\n" + _read("justfile")
 
-    binary = _release_plan("release-binaries", "nightly").describe()
-    profile = _release_plan("release-profile", "nightly", "code").describe()
+    binary_plan = _release_plan("release-binaries", "nightly")
+    profile_plan = _release_plan("release-profile", "nightly", "code")
+    binary = _publishing(binary_plan)
+    profile = _publishing(profile_plan)
 
+    # Each lane owns one artifact family, and neither rebuilds the other's.
+    # Read from the *publishing* steps rather than the whole plan: both plans
+    # now contain the complete gate, which legitimately builds everything.
     assert "scripts/release-binaries.py" in binary
     assert "capsem-admin" not in binary
-    assert "_build-kernel" not in binary
-    assert "_build-rootfs" not in binary
 
     assert "capsem-admin -- release" in profile
     assert "scripts/release-binaries.py" not in profile
-    assert "_cross-compile" not in profile
-    assert "build-pkg" not in profile
 
     retired_commands = (
         "release",
@@ -127,8 +142,16 @@ def test_nothing_is_published_before_the_complete_gate_passes(
     """
     order = _release_order(command, *arguments)
 
-    assert order.index("precheck") < order.index("gate")
-    assert order.index("gate") < order.index("confirm-head")
+    # There is no single `gate` step: the release plan *contains* the complete
+    # gate rather than launching `just test`, so what has to sit between the
+    # precheck and the confirmation is every phase of it. A step named `gate`
+    # could have run a reduced proof; these cannot.
+    phases = [
+        next(i for i, label in enumerate(order) if label.startswith(prefix))
+        for prefix in ("fast.", "static.", "artifacts.", "functional.", "glowup.")
+    ]
+    assert order.index("precheck") < min(phases)
+    assert max(phases) < order.index("confirm-head")
     assert order.index("confirm-head") < order.index(publication)
 
 
@@ -153,32 +176,46 @@ def test_public_release_command_executes_read_only_preflight_then_full_test_befo
     arguments: tuple[str, ...],
     release_trace: str,
 ) -> None:
-    """Driven for real against a runner that records instead of executing.
+    """Read-only preflight, then the complete gate, then mutation.
 
-    Stubbing `just`, `python3` and `cargo` on PATH no longer works: the recipe
-    dispatches through `uv run capsem-gate`, so a fake `uv` would replace the
-    gate itself rather than the commands it issues.
+    The preflight steps are driven for real against a recording runner -- they
+    are cheap and their argv is the claim. The gate itself is read from the
+    graph rather than executed: it is the whole 69-step gate now, and running
+    it here would mean building an initrd against a runner that records.
     """
     from helpers.gate import RecordingRunner
 
-    command = recipe
     runner = RecordingRunner(ROOT)
-    plan = _release_plan(command, *arguments)
-    plan.run(_context(runner))
+    plan = _release_plan(recipe, *arguments)
+    order = list(plan.labels)
+
+    # The read-only preconditions, actually issued. A dirty tree or the wrong
+    # branch invalidates everything after, and learning that costs seconds
+    # rather than a complete gate.
+    for label in order[: order.index("record-head") + 1]:
+        plan.step_named(label).run(_context(runner))
 
     issued = runner.rendered
-    # Read-only preconditions first: a dirty tree or the wrong branch
-    # invalidates everything after, and learning that costs seconds rather
-    # than a complete gate.
     assert "publish-tested-main.py --precheck" in issued[0]
-    if command == "release-binaries":
+    if recipe == "release-binaries":
         assert any("extract-release-notes.py --check" in line for line in issued)
         assert any("fetch-channel-source-manifest.py" in line for line in issued)
 
-    gate = runner.index_of(r"just test")
-    confirm = runner.index_of(r"publish-tested-main\.py --expected-head")
-    assert runner.index_of(r"--precheck") < gate < confirm
-    assert confirm < runner.index_of(release_trace)
+    # Then the gate, then the confirmation, then the mutation. Every phase of
+    # the gate, not a step named after it.
+    phases = [
+        next(i for i, label in enumerate(order) if label.startswith(prefix))
+        for prefix in ("fast.", "static.", "artifacts.", "functional.", "glowup.")
+    ]
+    assert order.index("precheck") < min(phases)
+    assert max(phases) < order.index("confirm-head") < order.index("release")
+
+    # And the publishing step is the one the trace names.
+    import re
+
+    assert re.search(
+        release_trace, "\n".join(plan.step_named("release").render())
+    ), f"the release step does not run {release_trace}"
 
 
 @pytest.mark.parametrize(
@@ -203,14 +240,18 @@ def test_failed_full_test_prevents_every_release_side_effect(
 
     from capsem.gate.errors import GateError
 
-    runner = RecordingRunner(ROOT, failures=["just test"])
+    # The gate is composed into the release plan now, so "make the gate fail"
+    # means failing a step inside it rather than failing a `just test`
+    # subprocess. Clippy is as good as any: it is early, it is in every
+    # release plan, and everything that publishes is downstream of it.
+    runner = RecordingRunner(ROOT, failures=["cargo clippy"])
     plan = _release_plan(recipe, *arguments)
 
     with pytest.raises(GateError):
         plan.run(_context(runner))
 
     issued = "\n".join(runner.rendered)
-    assert "just test" in issued, "the gate must actually have been attempted"
+    assert "cargo clippy" in issued, "the gate must actually have been attempted"
     for mutation in (
         "publish-tested-main.py --expected-head",
         "scripts/release-binaries.py",
@@ -219,8 +260,12 @@ def test_failed_full_test_prevents_every_release_side_effect(
         assert mutation not in issued, f"{mutation} ran after a failing gate"
 
     outcomes = plan.outcomes
-    assert outcomes["gate"].status == "failed"
+    assert outcomes["fast.clippy"].status == "failed"
+    # Everything downstream is skipped rather than failed: it did not fail, it
+    # never ran, and a report conflating the two hides how far the real
+    # failure reached.
     assert outcomes["confirm-head"].status == "skipped"
+    assert outcomes["release"].status == "skipped"
 
 
 def test_binary_and_profile_workflows_share_channel_transaction_lock() -> None:

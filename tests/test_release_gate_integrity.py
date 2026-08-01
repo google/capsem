@@ -62,82 +62,126 @@ def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> N
     assert "benchmarks/**/data_*.json" in _read(".gitignore")
 
 
+def _gate_plan():
+    """The complete gate, as one plan.
+
+    These contracts were written against `_test-candidate`'s shell body. The
+    ordering they are about is edges in a single graph now, so it is read from
+    there -- which also means they cover the whole gate rather than the part
+    that happened to live in one recipe.
+    """
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    return GateCommand.registry["candidate"](
+        RecordingRunner(Path(__file__).resolve().parents[1]),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+    )._describe()
+
+
+def _step_at(labels: list[str], fragment: str) -> int:
+    for position, label in enumerate(labels):
+        if fragment in label:
+            return position
+    raise AssertionError(f"no step matching {fragment!r} in:\n  " + "\n  ".join(labels))
+
+
+
 def test_gate_run_retains_the_vm_performance_recordings_it_produces() -> None:
-    """`functional` writes the VM performance recordings and `glowup` runs after
-    it. While the wipe lived in the per-module runner, the later module deleted
-    the earlier one's numbers, so a full gate produced a complete set and then
-    destroyed it -- a fortnight of green runs left target/test-benchmarks empty
-    and froze the published arm64 history at 1.3. Clearing belongs to the gate
-    run, once, not to each module inside it."""
-    justfile = _read("justfile")
-    runner = justfile.split("\n_test-candidate-run:", maxsplit=1)[1].split(
-        "\n\n_", maxsplit=1
-    )[0]
+    """`functional` writes the VM recordings and `glowup` runs after it.
 
-    assert 'rm -rf "$CAPSEM_BENCHMARK_OUTPUT_ROOT"' not in runner
+    While the wipe lived in the per-module runner, the later module deleted the
+    earlier one's numbers, so a full gate produced a complete set and then threw
+    most of it away. It is cleared exactly once, in the preparation phase,
+    before any module runs.
+    """
+    from capsem.gate import config as gate_config
 
-    # The composition recipe clears it once, before the module sequence runs.
-    candidate = justfile.split("\n_test-candidate:", maxsplit=1)[1].split(
-        "\n_test-candidate-run:", maxsplit=1
-    )[0]
-    clear = candidate.index('rm -rf "{{justfile_directory()}}/target/test-benchmarks"')
-    assert clear < candidate.index("just _test-functional")
-    assert clear < candidate.index("just _test-glowup")
+    root = Path(__file__).resolve().parents[1]
+    config = gate_config.load(root)
+    labels = list(_gate_plan().labels)
+    workspace = (root / "src/capsem/gate/workspace.py").read_text(encoding="utf-8")
+
+    assert config.workspace.benchmark_root == "target/test-benchmarks"
+    # The workspace deliberately does not clear it on acquire: one gate runs
+    # several modules through one workspace.
+    assert "Deliberately not the benchmark root" in workspace
+
+    cleared = _step_at(labels, "prepare.storage-budget")
+    assert cleared < _step_at(labels, "functional.")
+    assert cleared < _step_at(labels, "glowup.")
 
 
 def test_full_gate_runs_capsem_bench_baseline_for_every_selected_profile() -> None:
-    justfile = _read("justfile")
-    candidate = justfile.split("\n_test-candidate:", maxsplit=1)[1].split(
-        "\n_build-host-image:", maxsplit=1
-    )[0]
-    base_profile, remaining_profiles = candidate.split(
-        'for TEST_PROFILE in "${TEST_PROFILES[@]:1}"; do',
-        maxsplit=1,
-    )
-    benchmark = "tests/capsem-serial/test_capsem_bench_baseline.py"
+    """One recorded baseline per selected profile, and exactly one.
 
-    assert base_profile.count(benchmark) == 1
-    assert remaining_profiles.count(benchmark) == 1
-    assert 'CAPSEM_TEST_PROFILE="$BASE_PROFILE"' in base_profile
-    assert 'CAPSEM_TEST_PROFILE="$TEST_PROFILE"' in remaining_profiles
+    Two files launching VMs at once measure each other rather than Capsem,
+    which is why the baseline claims `apple_vz` and runs alone.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate import profiles
+
+    root = Path(__file__).resolve().parents[1]
+    config = gate_config.load(root)
+    labels = list(_gate_plan().labels)
+
+    for profile in profiles.selected(config):
+        matching = [
+            label for label in labels if label.endswith(f"pytest.benchmark.{profile}")
+        ]
+        assert len(matching) == 1, (
+            f"{profile} has {len(matching)} recorded baselines, expected one"
+        )
+
+    step = _gate_plan().step_named(
+        next(label for label in labels if "pytest.benchmark." in label)
+    )
+    assert [e.name for e in step.contends] == ["apple_vz"]
 
 
 def test_full_gate_serializes_host_snapshot_files_without_dropping_coverage() -> None:
-    justfile = _read("justfile")
-    candidate = justfile.split("\n_test-candidate:", maxsplit=1)[1].split(
-        "\n_build-host-image:", maxsplit=1
-    )[0]
-    snapshot_files = (
-        "tests/capsem-mcp/test_state_transitions.py",
-        "tests/capsem-service/test_svc_resume_paths.py",
-        "tests/capsem-service/test_svc_suspend_corruption.py",
-        "tests/capsem-service/test_svc_loop_device_after_resume.py",
+    """The snapshot files run once, alone, and are excluded from the parallel run.
+
+    Production has one service and one service-scoped save/restore lock; an
+    xdist worker per service does not reproduce that. Run in both places they
+    would run twice, once in the way that proves nothing.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate import pytestsuite
+
+    root = Path(__file__).resolve().parents[1]
+    config = gate_config.load(root)
+    base = config.suites.pytest.base_profile
+
+    broad = pytestsuite.broad(config, profile=base).argv(config)
+    snapshot = pytestsuite.host_snapshot(config, profile=base)
+
+    for path in config.suites.pytest.host_snapshot_serial:
+        assert f"--ignore={path}" in broad, f"{path} runs twice"
+        assert path in snapshot.argv(config)
+
+    assert "--maxfail=1" in broad
+    assert [e.name for e in snapshot.contends] == ["host_service"]
+    assert not snapshot.parallel
+
+    labels = list(_gate_plan().labels)
+    assert (
+        _step_at(labels, f"pytest.broad.{base}")
+        < _step_at(labels, f"pytest.host-snapshot.{base}")
+        < _step_at(labels, f"pytest.timing.{base}")
     )
-
-    declaration = candidate.split("HOST_SNAPSHOT_SERIAL=(", maxsplit=1)[1].split(
-        ")", maxsplit=1
-    )[0]
-    for path in snapshot_files:
-        assert f'"{path}"' in declaration
-        assert candidate.count(path) == 1
-
-    parallel = candidate.index("=== Python: non-serial tests (n=4 parallel) ===")
-    serial = candidate.index("=== Python: host snapshot tests (serial) ===")
-    timing = candidate.index("=== Python: serial timing and benchmark tests ===")
-    assert parallel < serial < timing
-    assert '"${HOST_SNAPSHOT_IGNORE_ARGS[@]}"' in candidate[parallel:serial]
-    assert "--maxfail=1" in candidate[parallel:serial]
-    assert '"${HOST_SNAPSHOT_SERIAL[@]}"' in candidate[serial:timing]
 
 
 def test_local_gate_bootstraps_docker_before_storage_preflight() -> None:
-    justfile = _read("justfile")
-    candidate = justfile.split("\n_test-candidate:", maxsplit=1)[1].split(
-        "\n_test-fast:", maxsplit=1
-    )[0]
+    """A storage budget measured before the daemon exists measures nothing."""
+    labels = list(_gate_plan().labels)
 
-    assert candidate.index("just _bootstrap") < candidate.index(
-        "just _bound-docker-test-storage"
+    assert _step_at(labels, "prepare.bootstrap") < _step_at(
+        labels, "prepare.storage-budget"
     )
 
 
@@ -204,15 +248,25 @@ def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
 
 
 def test_host_builder_trusts_the_bind_mounted_source_checkout() -> None:
-    """/src is a bind mount of the host checkout, so on Linux its owner is not
-    the container user and git rejects it as "dubious ownership". That failure
-    is quiet where it matters: crates/capsem/build.rs embeds "unknown" for the
-    build hash rather than failing, so without this the only thing between a
-    provenance-less binary and a release is check-build-provenance.sh."""
-    builder = _read("docker/Dockerfile.host-builder")
+    """On Linux CI the checkout's owner is not the image's user, so git rejects
+    the mount as dubious ownership -- and `build.rs` answers that by embedding
+    `unknown` rather than failing, which is how a binary with no source identity
+    reaches the provenance check.
 
-    assert "git config --system --add safe.directory /src" in builder
-    assert "/src" in _read("justfile"), "the builder still bind-mounts /src"
+    The mount path is config now, and the probe that reproduces the condition
+    is a step rather than a hope.
+    """
+    from capsem.gate import config as gate_config
+
+    root = Path(__file__).resolve().parents[1]
+    config = gate_config.load(root)
+    builder = _read(config.hostimage.dockerfile)
+    hostimage_source = _read("src/capsem/gate/hostimage.py")
+
+    assert f"git config --system --add safe.directory {config.hostimage.mount}" in builder
+    assert "_ForeignUidProbe" in hostimage_source
+    assert "probe_user" in hostimage_source
+    assert config.hostimage.mount == "/src"
 
 
 def test_remote_storage_images_are_immutable() -> None:

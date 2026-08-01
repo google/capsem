@@ -297,7 +297,14 @@ def test_binary_recipe_checks_notes_before_complete_local_gate_and_push() -> Non
     order = list(plan.labels)
 
     assert "extract-release-notes.py --check" in plan.describe()
-    assert order.index("precheck") < order.index("gate") < order.index("confirm-head")
+    # Every phase of the gate sits between them: there is no step named `gate`
+    # now that the release plan contains the gate rather than launching it.
+    first_phase = next(i for i, label in enumerate(order) if label.startswith("fast."))
+    last_phase = max(
+        i for i, label in enumerate(order) if label.startswith("glowup.")
+    )
+    assert order.index("precheck") < first_phase
+    assert last_phase < order.index("confirm-head")
 
     profile = _release_plan("release-profile", "nightly", "code").describe()
     assert "extract-release-notes.py" not in profile
@@ -313,7 +320,9 @@ def test_binary_recipe_fetches_serialized_channel_source_before_full_local_gate(
     order = list(plan.labels)
     rendering = plan.describe()
 
-    assert order.index("channel-source") < order.index("gate")
+    assert order.index("channel-source") < next(
+        i for i, label in enumerate(order) if label.startswith("fast.")
+    )
     assert "fetch-channel-source-manifest.py" in rendering
     assert "--channel nightly" in rendering
     assert "--require-profile-membership" in rendering

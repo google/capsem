@@ -883,6 +883,7 @@ source_contract = [
     "tests/test_profile_revision_semver.py",
     "tests/test_prove_installed_shell.py",
     "tests/test_release_gate_integrity.py",
+    "tests/test_release_graph_variable_split.py",
     "tests/test_release_manifest_assets.py",
     "tests/test_release_site_generated_from_json.py",
     "tests/test_release_site_review_regressions.py",
