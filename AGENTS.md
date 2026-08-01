@@ -87,8 +87,16 @@ The justfile dispatches; `src/capsem/gate/` decides. No recipe carries a shell
 body and none exceeds five lines, both held by contract tests rather than
 convention.
 
-Five rules, each with a guard:
+`just test` is **one process, one machine lock, one workspace, one plan** -- 64
+steps in a single graph. Both release commands contain that same plan rather
+than launching it.
 
+Six rules, each with a guard:
+
+- **A plan action may never invoke `just` or another `capsem-gate` command.**
+  `GuardedRunner` refuses it at runtime. The machine lock is not reentrant, so
+  every such call was a child waiting out its 7200-second timeout for the lock
+  its own parent held. Compose the other command's `fragment` instead.
 - **Work is composed from primitives.** `actions` and `fileactions` are the only
   modules that touch the machine, alongside the four that own one piece of
   machine state as their whole purpose. Anything else going around them is work
@@ -104,7 +112,18 @@ Five rules, each with a guard:
 - **Every value lives in `config/gate.toml`.** No path, filename, architecture
   or channel name in code.
 
+Two more, which follow from the first:
+
+- **A plan describes; it does not act.** `plan()` is built with the machine
+  sealed, so `--dry-run` cannot touch it -- and inspection is answered before
+  any re-exec, or asking becomes doing.
+- **Anything that writes takes the machine lock.** `[execution.exclusives]`
+  entries are `threading.Lock`s: they order steps inside one plan and
+  coordinate nothing between two `capsem-gate` processes.
+
 One gate runs per machine, enforced by `flock` rather than a pidfile, and every
-run is recorded under `target/gate-runs/` and bounded by `[disk]`.
+run is recorded under `target/gate-runs/` and bounded by `[disk]`. The run log
+is written by the runner rather than by call sites, so nothing can be forgotten
+into invisibility.
 
 Read `/dev-gate` before changing any of it.
