@@ -63,6 +63,20 @@ class Resource(ABC):
     def release(self) -> None:
         """Give it back. Runs on every path, including an aborted one."""
 
+    def environment(self) -> dict[str, str]:
+        """What every command inside this resource's scope inherits.
+
+        The reason isolation is structural rather than remembered. A workspace
+        exports `CAPSEM_HOME` here, once, and `GateCommand.execute` folds it
+        into the context -- so acquiring the workspace is what makes an action
+        run inside it. Previously `Workspace.environment` existed and nothing
+        production ever read it, which meant every command advertised as
+        isolated was running against the developer's own `~/.capsem`.
+
+        Empty for the resources that guard something rather than relocate it.
+        """
+        return {}
+
     def preserve(self, error: BaseException) -> None:  # noqa: B027
         """Copy out anything `release` is about to destroy.
 
@@ -88,12 +102,29 @@ def held(*resources: Resource) -> Iterator[tuple[Resource, ...]]:
         for resource in resources:
             resource.acquire()
             acquired.append(resource)
-        yield tuple(resources)
+        # What was taken, not what was asked for. The two differ only when an
+        # acquire raised -- and then the body never runs -- but the body reads
+        # this to build its environment, and a resource that is not there must
+        # not be telling commands where to run.
+        yield tuple(acquired)
     except BaseException as error:
         _preserve(acquired, error)
         raise
     finally:
         _release(acquired)
+
+
+def environment_of(resources: tuple[Resource, ...]) -> dict[str, str]:
+    """What the acquired resources export, later ones winning.
+
+    Acquisition order is precedence order, the way a stack gives it: a service
+    acquired inside a workspace may narrow one of the workspace's variables,
+    and the inner scope is the one that meant it.
+    """
+    environment: dict[str, str] = {}
+    for resource in resources:
+        environment.update(resource.environment())
+    return environment
 
 
 def _preserve(acquired: list[Resource], error: BaseException) -> None:

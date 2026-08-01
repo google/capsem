@@ -448,6 +448,29 @@ direct_machine_access = [
 # recipe body were.
 direct_concurrency = ["plan.py"]
 
+# Modules whose plan actions still start a second gate -- `just ...` or another
+# `capsem-gate ...`. Each one is a deadlock: the machine lock is not reentrant,
+# so the child waits out its timeout for the lock its own parent is holding.
+# `GuardedRunner` refuses them at runtime; this list is what makes the
+# outstanding work countable, and it is also why the cross-reference check is
+# scoped past these modules -- `_build-host-image` is invoked by two of them
+# and has never existed.
+#
+# A ratchet, not an exemption list. A module may leave it, nothing may join it,
+# and a module that no longer re-enters must be struck, so the list cannot
+# quietly describe a past that is no longer true.
+modules_still_re_entering = [
+    "assetlanes.py",
+    "audits.py",
+    "candidate.py",
+    "crosscompile.py",
+    "imagebuild.py",
+    "installimage.py",
+    "release.py",
+    "testmodules.py",
+    "vmmodules.py",
+]
+
 # Modules that still reach past the primitives, pending extraction onto them.
 # Work that goes around `actions`/`fileactions` is work the dry run cannot show
 # and the run log cannot time.
@@ -827,14 +850,17 @@ source_contract = [
     "tests/test_gate_disk.py",
     "tests/test_gate_docker.py",
     "tests/test_gate_doctor.py",
+    "tests/test_gate_execute_funnel.py",
     "tests/test_gate_fileactions.py",
     "tests/test_gate_has_no_literal_data.py",
     "tests/test_gate_install_container.py",
+    "tests/test_gate_no_nested_commands.py",
     "tests/test_gate_install_ordering.py",
     "tests/test_gate_lifecycle.py",
     "tests/test_gate_locks.py",
     "tests/test_gate_pidfiles.py",
     "tests/test_gate_plan.py",
+    "tests/test_gate_release_head.py",
     "tests/test_gate_primitives_are_the_only_way.py",
     "tests/test_gate_pytestsuite.py",
     "tests/test_gate_proc.py",

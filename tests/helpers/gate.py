@@ -136,9 +136,29 @@ class RecordingJournal:
         self.steps: list[str] = []
         self.actions: list[str] = []
         self.shapes: list[tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = []
+        self.execs: list[dict] = []
 
     def note(self, message: str) -> None:
         self.notes.append(message)
+
+    def exec(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: str,
+        env: dict[str, str],
+        exit: int,
+        duration_ms: float,
+    ) -> None:
+        self.execs.append(
+            {
+                "argv": argv,
+                "cwd": cwd,
+                "env": env,
+                "exit": exit,
+                "duration_ms": duration_ms,
+            }
+        )
 
     def artifact(self, path: Path, *, digest: str, size: int) -> None:
         self.artifacts.append((path, digest, size))

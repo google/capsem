@@ -51,6 +51,23 @@ class Journal(Protocol):
     def shape(self, steps: tuple[str, ...], edges: tuple[tuple[str, str], ...]) -> None:
         """Record the graph, so a finished run can still be explained."""
 
+    def exec(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: str,
+        env: dict[str, str],
+        exit: int,
+        duration_ms: float,
+    ) -> None:
+        """Record one subprocess.
+
+        Called by the runner rather than by whatever wanted the command, so
+        that no call site can be the one that forgets. `env` is the delta the
+        command added, never the ambient environment -- this record is attached
+        to bug reports and a release machine's environment holds tokens.
+        """
+
     def step(self, step: Step) -> AbstractContextManager[None]:
         """Bracket a step, recording what it was and how long it took."""
 
@@ -72,6 +89,17 @@ class NullJournal:
         """Discarded."""
 
     def shape(self, steps: tuple[str, ...], edges: tuple[tuple[str, str], ...]) -> None:
+        """Discarded."""
+
+    def exec(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: str,
+        env: dict[str, str],
+        exit: int,
+        duration_ms: float,
+    ) -> None:
         """Discarded."""
 
     @contextmanager

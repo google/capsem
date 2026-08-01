@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `GateCommand.execute` now enforces the rules every command used to be trusted
+  to remember, and all three were being broken. A plan action may no longer
+  invoke `just` or another `capsem-gate` subcommand: the machine lock is not
+  reentrant, so each such call was a child waiting out its timeout for the lock
+  its own parent held, and the static guard finds 22 of them across 9 modules.
+  Every subprocess is recorded by the runner rather than by whatever wanted the
+  command, which is why `RunLog.exec` had no production caller at all and no
+  run log held a single command. And plan construction runs with the machine
+  sealed, so `--dry-run` cannot touch it. The seal is ambient rather than a
+  property of one runner, because `release.py` built its own `Runner` inside
+  `plan()` to capture `git rev-parse HEAD` -- the dry run printed a real
+  revision while nothing recorded that anything had run.
+- Resources contribute their environment through the lifecycle protocol, and
+  `execute` folds what was acquired into the context. `Workspace.environment`
+  existed and production never read it, so every command advertised as isolated
+  was in fact running against the developer's own `~/.capsem`.
+- Inspection is decided before any re-exec, so `--dry-run` and `--graph` can no
+  longer become a real run. Previously `candidate --dry-run` on macOS re-execed
+  into `just test`: an inert question starting a forty-minute destructive gate.
+- The revision a release publishes is captured by a step rather than read while
+  the plan was being built, so the value comes from the run instead of from
+  whenever the description happened to be assembled.
 - Every gate run now writes a record: an event stream, a log per step, and a
   summary, under `target/gate-runs/<id>/` with `latest` pointing at the most
   recent. Diagnosing a failure used to require having been present when it

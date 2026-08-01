@@ -21,10 +21,11 @@ from typing import ClassVar
 
 from . import config as gate_config
 from .context import Context
-from .lifecycle import Resource, held
+from .funnel import GuardedRunner
+from .lifecycle import Resource, environment_of, held
 from .locks import ExclusiveLock
 from .plan import Plan
-from .proc import Runner
+from .proc import Runner, sealed
 from .runhistory import read
 from .runlog import RunLog
 from .timing import measure, report
@@ -98,19 +99,24 @@ class GateCommand(ABC):
     # -- what every command does the same way ------------------------------
 
     def execute(self) -> None:
-        """Planned, locked, held, recorded, then run.
+        """Planned, asserted, locked, held, recorded, then run.
 
         Never overridden: `tests/test_gate_command.py` fails if a subclass
-        defines it, because a command that bypasses this bypasses teardown,
-        the machine lock, and the run log at once.
+        defines it, because a command that bypasses this bypasses teardown, the
+        machine lock, the run log and every invariant below at once.
+
+        The order is the contract. Each line is here because the alternative
+        arrangement was tried and broke something.
         """
-        # Before the plan, and long before any resource: see `reexec`.
-        replacement = self.reexec()
-        if replacement is not None:
-            raise SystemExit(self._runner.run(replacement, check=False))
+        # A plan describes; it does not act. Built against a runner that
+        # refuses everything, so `--dry-run` cannot touch the machine on the
+        # way to telling you it would not.
+        plan = self._describe()
+        plan.validate(self._config)
 
-        plan = self.plan()
-
+        # Inspection before re-exec. The other way round, `candidate --dry-run`
+        # re-execed into a real `just test`: an inert question starting a
+        # forty-minute destructive gate.
         if self._args.graph:
             print(plan.mermaid())
             return
@@ -118,11 +124,40 @@ class GateCommand(ABC):
             print(plan.describe())
             return
 
+        # Before any resource, and outside the lock: a re-exec inside the held
+        # resources deadlocks, because the child asks for the lock its own
+        # parent is holding and waits out the full timeout.
+        replacement = self.reexec()
+        if replacement is not None:
+            raise SystemExit(self._runner.run(replacement, check=False))
+
         with RunLog.open(self._config, self.name, argv=self._argv()) as log:
-            context = Context(self._runner, self._config, journal=log)
-            with held(*self._holdings()):
-                plan.run(context)
-            self._summarize(log)
+            # Every invocation from here is recorded, and none may start a
+            # second gate. Neither is a call site's responsibility.
+            runner = GuardedRunner(self._runner, journal=log)
+            with held(*self._holdings()) as acquired:
+                plan.run(
+                    Context(
+                        runner,
+                        self._config,
+                        journal=log,
+                        env=environment_of(acquired),
+                    )
+                )
+        # Outside the run log's own context, so `run.end` is on disk before
+        # anything reads the run back. Inside it, `--timing` measured a run
+        # that had not finished and reported `total_ms == 0`.
+        self._summarize(log)
+
+    def _describe(self) -> Plan:
+        """Build the plan with the machine sealed off.
+
+        Ambient rather than a swapped-in runner: a module that builds its own
+        `Runner` inside `plan()` -- which `release.py` did, to capture
+        `git rev-parse HEAD` -- escapes anything scoped to this instance.
+        """
+        with sealed():
+            return self.plan()
 
     def _holdings(self) -> tuple[Resource, ...]:
         """The machine lock first, then whatever the command declared.

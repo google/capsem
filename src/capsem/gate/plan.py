@@ -32,9 +32,9 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from graphlib import CycleError, TopologicalSorter
 from operator import attrgetter
-from pathlib import Path
 
-from . import planreport
+from . import planchecks, planreport
+from .config import GateConfig
 from .context import Context
 from .errors import GateError
 from .execution import Step
@@ -113,39 +113,24 @@ class Plan:
                 sorter.done(label)
         return waves
 
-    def _require_one_owner_per_artifact(self) -> None:
-        """Two steps writing one path must contend for the same thing.
+    def validate(self, config: GateConfig) -> None:
+        """Everything a plan must hold before a lock is taken.
 
-        A lock around the mutation is not a lock around the artifact. A step
-        can hold an exclusive while it builds, release it, and hand back "look
-        at this path" -- and the next claimant overwrites that path before the
-        consumer reads it. The edge orders the consumer after *its* producer,
-        and says nothing about a second producer running beside it.
-
-        This is how four helpers came to lock `astro build`, release, and then
-        read a `dist/` the next build had already replaced. Caught when the
-        plan is built, because by the time it happens the evidence is gone.
+        Labels are already unique -- `add` refuses a duplicate -- so what is
+        left is the graph and the two claims a step makes about the world.
+        The checks themselves live in `planchecks`; this is where they are
+        required.
         """
-        owners: dict[Path, list[Step]] = {}
-        for step in self._steps:
-            for artifact in step.produces:
-                owners.setdefault(artifact, []).append(step)
+        planchecks.validate(self, config)
 
-        for artifact, producers in sorted(owners.items()):
-            if len(producers) < 2:
-                continue
-            shared = set.intersection(
-                *({resource.name for resource in step.contends} for step in producers)
-            )
-            if shared:
-                continue
-            raise GateError(
-                f"{len(producers)} steps in the {self.name} plan write "
-                f"{artifact} and share no exclusive: "
-                f"{', '.join(sorted(step.label for step in producers))}. "
-                "Give them one, or have each produce its own path -- an edge "
-                "orders a consumer after its producer, not after every other."
-            )
+    @property
+    def steps(self) -> tuple[Step, ...]:
+        """Every registered step, in declaration order.
+
+        Declaration order, not graph order: the checks walk all of them and
+        must not pay for a topological sort to do it.
+        """
+        return tuple(self._steps)
 
     def _sorter(self) -> TopologicalSorter[str]:
         sorter: TopologicalSorter[str] = TopologicalSorter(self._after)
@@ -203,8 +188,13 @@ class Plan:
     # -- running -----------------------------------------------------------
 
     def run(self, context: Context) -> None:
-        """Execute, honouring the graph and what each step contends for."""
-        self._require_one_owner_per_artifact()
+        """Execute, honouring the graph and what each step contends for.
+
+        Validated again here rather than trusting the caller: `execute` checks
+        before taking the lock so a bad plan costs nothing, and a plan reached
+        by any other route still cannot run unchecked.
+        """
+        self.validate(context.config)
         sorter = self._sorter()
         context.journal.shape(self.labels, self.edges)
         self._outcomes = {}

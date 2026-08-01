@@ -57,6 +57,18 @@ def digest_of(path: Path, *, algorithm: str) -> str:
     return hasher.hexdigest()
 
 
+def write_text(path: Path, text: str) -> None:
+    """Write a file the gate produced, creating its directory.
+
+    A helper rather than an `Action`, for the same reason `digest_of` is one:
+    the value is only known while a step is running. The revision under test is
+    *captured*, not declared, so an action would have to be constructed with
+    something that does not exist yet.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
 class MakeDir(Action, name="make-dir"):
     """Create a directory and its parents, tolerating one already there."""
 

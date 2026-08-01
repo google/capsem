@@ -18,11 +18,53 @@ import os
 import shlex
 import subprocess
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
 from .errors import GateError
+
+#: Set while a command is building its plan. Ambient rather than a property of
+#: one runner, and that is the whole point: `release.py` built a *fresh*
+#: `Runner(config.root)` inside `plan()` to capture `git rev-parse HEAD`, and a
+#: seal that swapped the command's own runner never saw it. The dry run printed
+#: a real revision while the recording runner observed nothing -- the machine
+#: touched, invisibly, by the one operation whose entire value is not touching
+#: it. A context variable is reachable from every runner however it was built.
+_SEALED: ContextVar[bool] = ContextVar("capsem_gate_plan_sealed", default=False)
+
+
+@contextmanager
+def sealed() -> Iterator[None]:
+    """Refuse every invocation for the duration.
+
+    Wrapped around plan construction. A plan describes work; if building the
+    description performs it, `--dry-run` is not merely incomplete but actively
+    misleading, and the description can go stale before it is executed.
+    """
+    token = _SEALED.set(True)
+    try:
+        yield
+    finally:
+        _SEALED.reset(token)
+
+
+def _refuse_while_sealed(argv: tuple[str, ...]) -> None:
+    if not _SEALED.get():
+        return
+    raise GateError(
+        f"building a plan ran {shlex.join(argv)}. plan() must describe work, "
+        f"not perform it, or --dry-run touches the machine. Express the probe "
+        f"as a read-only step in the plan instead."
+    )
+
+#: What `execute` hands back. Named here so the layers above can annotate their
+#: own overrides without importing `subprocess` -- which only the modules that
+#: genuinely touch the machine are allowed to do.
+Completed = subprocess.CompletedProcess[str]
 
 
 @dataclass(frozen=True)
@@ -71,7 +113,7 @@ class Runner:
 
     # -- execution ---------------------------------------------------------
 
-    def execute(self, command: Command) -> subprocess.CompletedProcess[str]:
+    def execute(self, command: Command) -> Completed:
         """The single point every invocation passes through."""
         environment = {**os.environ, **command.env}
         if command.log is not None:
@@ -113,6 +155,10 @@ class Runner:
             check=check,
             log=log,
         )
+        # Checked here rather than in `execute`, which subclasses replace: a
+        # recording runner in a test overrides `execute` wholesale, and a seal
+        # that test doubles slip past is a seal no test can prove.
+        _refuse_while_sealed(command.argv)
         completed = self.execute(command)
         if check and completed.returncode != 0:
             raise GateError(f"command failed ({completed.returncode}): {command}")
@@ -134,6 +180,7 @@ class Runner:
             capture=True,
             check=check,
         )
+        _refuse_while_sealed(command.argv)
         completed = self.execute(command)
         if check and completed.returncode != 0:
             detail = (completed.stderr or "").strip()
@@ -158,6 +205,7 @@ class Runner:
             capture=True,
             check=False,
         )
+        _refuse_while_sealed(command.argv)
         return self.execute(command).returncode == 0
 
     def launch(
@@ -178,6 +226,7 @@ class Runner:
         command = Command(
             argv=tuple(str(part) for part in argv), cwd=cwd, env=dict(env or {})
         )
+        _refuse_while_sealed(command.argv)
         process = subprocess.Popen(
             list(command.argv),
             cwd=str(command.cwd) if command.cwd else str(self.root),

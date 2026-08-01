@@ -38,6 +38,7 @@ class BoundaryConfig(Strict):
     direct_machine_access: tuple[str, ...]
     direct_concurrency: tuple[str, ...]
     modules_bypassing_primitives: tuple[str, ...]
+    modules_still_re_entering: tuple[str, ...]
 
 class Exclusive(Strict):
     """Something only one step may hold at a time, and why.

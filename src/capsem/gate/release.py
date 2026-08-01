@@ -21,18 +21,12 @@ from .errors import GateError
 from .execution import step
 from .fileactions import MakeDir
 from .plan import Plan
+from .releasehead import ConfirmHead, RecordHead, head_file
 
 
 def _gate(config: GateConfig):
     """The complete local proof. Never a reduced one."""
     return step("gate", Run(["just", "test"]))
-
-
-def _head(config: GateConfig) -> str:
-    """The revision the gate is about to qualify."""
-    from .proc import Runner
-
-    return Runner(config.root).capture(["git", "rev-parse", "HEAD"])
 
 
 class ReleaseBinariesCommand(
@@ -86,10 +80,12 @@ class ReleaseBinariesCommand(
             after=(checked,),
         )
 
-        head = _head(config)
-        gate = plan.add(_gate(config), after=(fetched,))
+        recorded = plan.add(
+            step("record-head", RecordHead(head_file(config))), after=(fetched,)
+        )
+        gate = plan.add(_gate(config), after=(recorded,))
         confirmed = plan.add(
-            step("confirm-head", Script(settings.publish, "--expected-head", head)),
+            step("confirm-head", ConfirmHead(settings.publish, head_file(config))),
             after=(gate,),
         )
         plan.add(step("release", Script(settings.binaries, channel)), after=(confirmed,))
@@ -113,11 +109,19 @@ class ReleaseProfileCommand(
         config = self._config
         settings = config.release
 
-        checked = plan.add(step("precheck", Script(*settings.precheck)))
-        head = _head(config)
-        gate = plan.add(_gate(config), after=(checked,))
+        checked = plan.add(
+            step(
+                "precheck",
+                Script(*settings.precheck),
+                MakeDir(config.path(settings.preflight_dir)),
+            )
+        )
+        recorded = plan.add(
+            step("record-head", RecordHead(head_file(config))), after=(checked,)
+        )
+        gate = plan.add(_gate(config), after=(recorded,))
         confirmed = plan.add(
-            step("confirm-head", Script(settings.publish, "--expected-head", head)),
+            step("confirm-head", ConfirmHead(settings.publish, head_file(config))),
             after=(gate,),
         )
         plan.add(
