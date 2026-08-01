@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Storage a later step still needs is no longer reclaimed by an earlier one.
+  `install-image` ended by releasing the linux-rust builder rail, and 164ms
+  later `cache-ownership` ran that exact image and got exit 125. Four rails
+  were handed back from two places each -- once as a properly ordered step, and
+  once as a statement inside some other step's body where nothing could order
+  it. In the shell those statements were ordered by the line they sat on; once
+  the preflight moved ahead of the parity lane, the accident stopped holding.
+  The statements are gone; the steps own their rails.
+- `all_guest_binaries_in_pack_initrd` reads `[initrd] binaries` from
+  `config/gate.toml` rather than the `cp`/`chmod` lines of a recipe that no
+  longer packs anything. Same claim, against the list that now decides it.
+- `event-listener` 5.4.1 -> 5.4.2, clearing RUSTSEC-2026-0221 (`!Send` tags
+  crossing thread boundaries via `StackSlot`), which reached the workspace
+  through zbus under the Tauri plugins.
+
 - A gate command started from inside a gate run is refused instead of
   deadlocking. `GuardedRunner` sees a *subprocess* that re-enters the gate, but
   not a `cli.main([...])` called from Python inside a process the gate itself

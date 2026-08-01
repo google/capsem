@@ -261,9 +261,15 @@ def test_the_image_is_always_rebuilt_then_smoked(tmp_path: Path) -> None:
     runner.assert_order(
         r"docker build -t capsem-install-test",
         r"docker run --rm",
-        r"docker-storage-policy\.py release --boundary after-linux-rust-builder",
     )
     assert not runner.ran(r"--no-cache")
+    # And it reclaims nothing on the way out. It used to release the parity
+    # lane's builder rail from here, which was ordered only by the line it sat
+    # on -- so once this preflight moved ahead of that lane, the release landed
+    # 164ms before `cache-ownership` ran the image it had just deleted.
+    assert not runner.ran(r"docker-storage-policy\.py release"), (
+        "the preflight releases another lane's rail; that rail's own step does"
+    )
 
 
 def test_the_install_image_is_built_after_the_builder_it_derives_from() -> None:

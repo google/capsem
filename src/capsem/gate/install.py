@@ -77,11 +77,10 @@ class InstallGate:
         package = self._require_package()
         options = self._container.runtime_options()
 
-        # A completed install target retains only top-level runtime binaries
-        # and the previous package after its post-install purge; it can no
-        # longer accelerate anything. Release that inactive state before
-        # sacrificing reusable builder layers.
-        self._storage.release("deferred-install-target")
+        # The rails this used to release -- `deferred-install-target` and both
+        # `completed-package-*` -- are steps in the phase that composes this,
+        # hanging off the builds that fill them. Released from here they had no
+        # edges, so nothing could order them against another lane's work.
         # The verified derived image pins roughly 6 GiB until this proof
         # finishes. Reserve that budget before materialising it.
         self._storage.ensure_space("install-preflight")
@@ -94,8 +93,6 @@ class InstallGate:
 
         try:
             self._container.require_rosetta()
-            self._storage.release("completed-package-arm64")
-            self._storage.release("completed-package-x86_64")
             self._storage.ensure_space("install")
             self._container.start(options=options)
             self._prove(package)

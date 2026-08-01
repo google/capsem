@@ -884,6 +884,7 @@ source_contract = [
 
     "tests/test_gate_smoke_lifecycle.py",
     "tests/test_gate_storage.py",
+    "tests/test_gate_storage_ordering.py",
     "tests/test_gate_testmodules.py",
     "tests/test_gate_timing.py",
     "tests/test_gate_versions.py",

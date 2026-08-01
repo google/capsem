@@ -22,7 +22,6 @@ from .errors import GateError
 from .execution import Step, step
 from .plan import Plan
 from .proc import Runner
-from .storage import Storage
 
 # The one behaviour here rather than in config: a check, not a value. It
 # exercises every tool the install gate depends on -- passwordless sudo,
@@ -74,10 +73,11 @@ def prepare(runner: Runner) -> None:
                 "gate's tools even after a cacheless rebuild"
             )
 
-    # The cross-compile lanes that follow stage 0 reuse the base image. Every
-    # other caller only executes the verified derived image, so release the
-    # separate ~6 GiB base tag before their package and runtime work.
-    Storage(runner).release("linux-rust-builder")
+    # The builder image this derives from is *not* released here. It belongs to
+    # the parity lane, which frees it from `static.storage.linux-rust-builder`
+    # once it is done -- and this preflight deliberately runs first, so a
+    # release from here landed 164ms before `cache-ownership` ran that exact
+    # image and got exit 125.
 
 
 def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:

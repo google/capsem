@@ -434,7 +434,7 @@ fn build_profile_server_list_rejects_names_with_separator() {
 
 // ------------------------------------------------------------------
 // Binary coverage: ensure every [[bin]] in capsem-agent/Cargo.toml
-// appears in Dockerfile.rootfs and justfile _pack-initrd.
+// appears in Dockerfile.rootfs and in config/gate.toml's [initrd] binaries.
 // ------------------------------------------------------------------
 
 /// Parse [[bin]] name entries from a Cargo.toml file.
@@ -496,30 +496,40 @@ fn all_guest_binaries_in_dockerfile_rootfs() {
     }
 }
 
+/// Every guest binary the agent crate builds is carried by the initrd.
+///
+/// This read the `_pack-initrd` recipe's `cp` and `chmod` lines, because that
+/// is where the packing was. The recipe is a one-line dispatch now and the
+/// packing is `capsem.gate.initrd`, driven by `[initrd] binaries` in
+/// `config/gate.toml` -- so the list is read from there. Same claim, and the
+/// list is now data rather than twelve repeated shell lines.
 #[test]
 fn all_guest_binaries_in_pack_initrd() {
     let root = repo_root();
     let bins = parse_cargo_bin_names(&root.join("crates/capsem-agent/Cargo.toml"));
     assert!(!bins.is_empty(), "no [[bin]] entries found in capsem-agent");
 
-    let justfile = std::fs::read_to_string(root.join("justfile")).expect("cannot read justfile");
-
-    // Extract the _pack-initrd recipe section (from "_pack-initrd:" to next recipe)
-    let start = justfile
-        .find("_pack-initrd:")
-        .expect("_pack-initrd recipe not found in justfile");
-    let section = &justfile[start..];
-    let end = section[1..]
-        .find("\n\n")
-        .map(|i| i + 1)
-        .unwrap_or(section.len());
-    let recipe = &section[..end];
+    let path = root.join("config/gate.toml");
+    let text = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+    let doc: toml::Value = toml::from_str(&text)
+        .unwrap_or_else(|e| panic!("cannot parse {}: {e}", path.display()));
+    let carried: Vec<&str> = doc
+        .get("initrd")
+        .and_then(|section| section.get("binaries"))
+        .and_then(|value| value.as_array())
+        .map(|entries| entries.iter().filter_map(|e| e.as_str()).collect())
+        .unwrap_or_default();
+    assert!(
+        !carried.is_empty(),
+        "config/gate.toml has no [initrd] binaries list"
+    );
 
     for bin in &bins {
         assert!(
-            recipe.contains(bin),
-            "justfile _pack-initrd missing guest binary '{bin}'. \
-             Add cp + chmod lines for {bin}."
+            carried.contains(&bin.as_str()),
+            "config/gate.toml [initrd] binaries is missing guest binary \
+             '{bin}', so the initrd would not carry it."
         );
     }
 }

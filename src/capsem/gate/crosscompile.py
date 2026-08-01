@@ -121,11 +121,9 @@ class PackageRail:
 
     def _prepare_builder(self) -> None:
         self._storage.release("completed-docker-rails")
-        # A completed install target retains only top-level runtime binaries
-        # and the previous package after its post-install purge, so it cannot
-        # accelerate this build. Release it before sacrificing the reusable
-        # builder image or registries.
-        self._storage.release("deferred-install-target")
+        # `deferred-install-target` is not released here: the package phase
+        # owns it as a step, between the two architectures, which is the only
+        # arrangement that can be ordered against the second build.
         # One named policy owns this rail: the Rust base image and the BuildKit
         # cohort stay warm across candidates, and a capacity failure reports an
         # explicit disk recommendation instead of silently building cold.
