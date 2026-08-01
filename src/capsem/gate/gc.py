@@ -12,7 +12,7 @@ and therefore not something to discard by accident.
 
 from __future__ import annotations
 
-from .actions import Call
+from .actions import Action, Call
 from .command import GateCommand
 from .context import Context
 from .disk import footprint, reclaim
@@ -44,9 +44,14 @@ class GcCommand(
 
         if self._args.dry_run:
             # A dry run of a reclaimer should say what it would free, which is
-            # more useful than the argv it would run. `--dry-run` short-circuits
-            # before any step executes, so this reports rather than acts.
-            plan.add(step("survey", Call(self._survey(), lambda ctx: None)))
+            # more useful than the argv it would run.
+            #
+            # The survey is an `Action` rather than a string computed here: a
+            # plan must describe without doing, and walking the disk while the
+            # description is being built is doing. `render` measures because
+            # that *is* the description -- and it is read-only, which is the
+            # distinction the seal is about.
+            plan.add(step("survey", _Survey(self._config)))
             return plan
 
         trees = plan.add(step("trees", Call("reclaim the gate's own trees", _trees)))
@@ -61,18 +66,32 @@ class GcCommand(
             )
         return plan
 
-    def _survey(self) -> str:
-        measured = footprint(self._config)
-        if not measured:
-            return "nothing to reclaim"
-        lines = [
-            f"{size / _GB:>8.2f} GB  {relative}"
-            for relative, size in sorted(measured.items(), key=lambda e: -e[1])
-        ]
-        total = sum(measured.values()) / _GB
-        return "would reclaim:\n          " + "\n          ".join(
-            [*lines, f"{total:>8.2f} GB  total"]
-        )
+
+class _Survey(Action, name="survey"):
+    """What the reclaimer would free, measured when asked."""
+
+    def __init__(self, config) -> None:
+        self._config = config
+
+    def render(self) -> str:
+        return _measure(self._config)
+
+    def perform(self, context: Context) -> None:
+        """Nothing: the answer is the description."""
+
+
+def _measure(config) -> str:
+    measured = footprint(config)
+    if not measured:
+        return "nothing to reclaim"
+    lines = [
+        f"{size / _GB:>8.2f} GB  {relative}"
+        for relative, size in sorted(measured.items(), key=lambda e: -e[1])
+    ]
+    total = sum(measured.values()) / _GB
+    return "would reclaim:\n          " + "\n          ".join(
+        [*lines, f"{total:>8.2f} GB  total"]
+    )
 
 
 def _trees(context: Context) -> None:

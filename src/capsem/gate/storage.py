@@ -80,6 +80,19 @@ class Storage:
         )
 
 
+def release_action(phase: str) -> Call:
+    """Hand back the storage a finished rail was holding.
+
+    The action, so a caller that wants it inside a step of its own -- the
+    candidate's storage-budget step bundles it with a capacity check -- uses
+    the same spelling as `release_step` rather than writing a second one.
+    """
+    return Call(
+        f"release the storage held after {phase}",
+        lambda ctx: Storage(ctx.runner).release(phase),
+    )
+
+
 def release_step(config, phase: str) -> Step:
     """Hand back the storage a finished rail was holding.
 
@@ -90,10 +103,7 @@ def release_step(config, phase: str) -> Step:
     """
     return step(
         f"storage.{phase}",
-        Call(
-            f"release the storage held after {phase}",
-            lambda ctx: Storage(ctx.runner).release(phase),
-        ),
+        release_action(phase),
         contends=(config.exclusive("docker_daemon"),),
     )
 

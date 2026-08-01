@@ -19,8 +19,8 @@ failed is skipped -- which is exactly wrong for cleanup.
 
 from __future__ import annotations
 
-from . import hostpackage, imagebuild, initrd, testmodules, vmmodules
-from .actions import Run, Script
+from . import hostpackage, imagebuild, initrd, storage, testmodules, vmmodules
+from .actions import Call, Run, Script
 from .config import GateConfig
 from .execution import Step, step
 from .plan import Plan
@@ -88,7 +88,7 @@ def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
     bounded = phase.add(
         step(
             "storage-budget",
-            _release("candidate-boundary"),
+            storage.release_action("candidate-boundary"),
             _ensure_space(config),
             Remove(config.path(config.workspace.benchmark_root)),
             contends=(config.exclusive("docker_daemon"),),
@@ -126,18 +126,13 @@ def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
     return phase.add(hostpackage.sign_step(config), after=(materialised,))
 
 
-def _release(phase: str):
-    from .actions import Call
-
-    return Call(
-        f"release the storage held after {phase}",
-        lambda ctx: Storage(ctx.runner).release(phase),
-    )
-
-
 def _ensure_space(config: GateConfig):
-    from .actions import Call
+    """Refuse to start a gate the daemon has no room to finish.
 
+    The release beside it is `storage.release_action`, which is the same
+    spelling `storage.release_step` uses -- one place decides what releasing a
+    boundary means.
+    """
     settings = config.candidate
     return Call(
         "refuse to start a gate the daemon has no room to finish",
