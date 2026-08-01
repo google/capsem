@@ -19,6 +19,7 @@ forgetting is not available.
 from __future__ import annotations
 
 import argparse
+import os
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
+RUN_MARKER = CONFIG.locks.gate.run_marker
 
 
 # ---------------------------------------------------------------------------
@@ -98,8 +100,29 @@ def journal(monkeypatch) -> RecordingJournal:
     return recording
 
 
-def _probe(runner, **attributes) -> _Probe:
-    command = _Probe(runner, argparse.Namespace(dry_run=False, graph=False, timing=False))
+class _Exclusive(_Probe, name="funnel-exclusive-probe", help="a probe that takes the machine"):
+    """The same probe, for the tests that are about the machine lock.
+
+    A separate class rather than an assignment: `exclusive` is a `ClassVar`,
+    because whether a command needs the machine is a property of the command
+    and not of one invocation of it.
+    """
+
+    exclusive = True
+
+
+def _checkout(root: Path) -> Path:
+    """A throwaway checkout, so a real lock is taken somewhere harmless."""
+    (root / "config").mkdir(parents=True, exist_ok=True)
+    (root / "config" / "gate.toml").write_text(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )
+    (root / "justfile").write_text("# a checkout needs one\n")
+    return root
+
+
+def _probe(runner, *, cls: type[_Probe] = _Probe, **attributes) -> _Probe:
+    command = cls(runner, argparse.Namespace(dry_run=False, graph=False, timing=False))
     for name, value in attributes.items():
         setattr(command, name, value)
     return command
@@ -139,6 +162,69 @@ def test_a_plan_action_may_not_invoke_another_gate_command(journal) -> None:
             command.execute()
 
         assert not runner.commands
+
+
+def test_a_command_may_not_run_inside_another_gate_run(journal, monkeypatch) -> None:
+    """The in-process spelling of the same deadlock, and the one that hid.
+
+    `GuardedRunner` refuses a *subprocess* that starts a second gate. It cannot
+    see a `cli.main([...])` called from Python inside a process the gate
+    launched -- and the gate launches pytest, whose suite calls exactly that.
+    The result was not an error: it was the worker blocking on the lock its own
+    grandparent held, for the full 7200-second timeout, with the run looking
+    alive the whole time.
+    """
+    monkeypatch.setenv(RUN_MARKER, "gate-20260801-abc123")
+    runner = RecordingRunner(PROJECT_ROOT)
+    command = _probe(runner, cls=_Exclusive, steps=(step("work", Run(["echo", "hello"])),))
+
+    with pytest.raises(GateError, match="already inside"):
+        command.execute()
+
+    assert not runner.commands
+
+
+def test_the_re_entry_error_names_the_run_that_is_holding_it(journal, monkeypatch) -> None:
+    monkeypatch.setenv(RUN_MARKER, "gate-20260801-abc123")
+    command = _probe(RecordingRunner(PROJECT_ROOT), cls=_Exclusive)
+
+    with pytest.raises(GateError) as raised:
+        command.execute()
+
+    assert "gate-20260801-abc123" in str(raised.value)
+
+
+def test_a_read_only_command_may_still_answer_inside_a_run(journal, monkeypatch) -> None:
+    """`runs last` and `gc --dry-run` take no lock, so they cannot deadlock --
+    and being able to ask what is happening from inside a running gate is the
+    entire point of them."""
+    monkeypatch.setenv(RUN_MARKER, "gate-20260801-abc123")
+    runner = RecordingRunner(PROJECT_ROOT)
+    command = _probe(runner, steps=(step("look", Run(["echo", "hello"])),))
+
+    command.execute()
+
+    assert runner.commands
+
+
+def test_a_run_marks_the_environment_its_children_inherit(journal, monkeypatch, tmp_path) -> None:
+    """Which is what makes the check above reach a subprocess at all.
+
+    The lock exports it like any other resource, so it arrives the same way a
+    workspace's `CAPSEM_HOME` does -- rather than through a mutated
+    `os.environ` that a failure could leave behind.
+
+    Against a throwaway checkout, because this is the one test here that really
+    takes the lock, and it must not be the developer's own.
+    """
+    monkeypatch.delenv(RUN_MARKER, raising=False)
+    runner = RecordingRunner(_checkout(tmp_path))
+    command = _probe(runner, cls=_Exclusive, steps=(step("look", Run(["echo", "hello"])),))
+
+    command.execute()
+
+    assert runner.commands[-1].env.get(RUN_MARKER), "a child of this run cannot tell that it is one"
+    assert os.environ.get(RUN_MARKER) is None, "and it does not leak into this process"
 
 
 def test_re_entry_is_seen_through_a_wrapper(journal) -> None:
@@ -482,15 +568,13 @@ def test_every_real_resource_satisfies_the_environment_protocol() -> None:
     concrete = [
         cls
         for cls in _descendants(Resource)
-        if cls.__module__.startswith("capsem.gate.")
-        and not inspect.isabstract(cls)
+        if cls.__module__.startswith("capsem.gate.") and not inspect.isabstract(cls)
     ]
     assert len(concrete) >= 4, f"scanned too few resources: {concrete}"
 
     for cls in concrete:
         assert callable(cls.environment), (
-            f"{cls.__name__}.environment is not callable; `environment_of` "
-            "would raise against it"
+            f"{cls.__name__}.environment is not callable; `environment_of` would raise against it"
         )
 
     # And the one every isolated command holds, exercised for real.

@@ -45,6 +45,7 @@ def _settings(tmp_path: Path, **overrides) -> LockConfig:
             "report_after_seconds": 0.01,
             "wait_timeout_seconds": 0.2,
             "poll_interval_seconds": 0.01,
+            "run_marker": "CAPSEM_GATE_RUN",
             **overrides,
         }
     )

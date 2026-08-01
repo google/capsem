@@ -75,6 +75,7 @@ class LockConfig(Strict):
     report_after_seconds: float
     wait_timeout_seconds: float
     poll_interval_seconds: float
+    run_marker: str
 
 class LocksConfig(Strict):
     gate: LockConfig

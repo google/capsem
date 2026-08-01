@@ -16,12 +16,14 @@ do without doing it.
 from __future__ import annotations
 
 import argparse
+import os
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from typing import ClassVar
 
 from . import config as gate_config
 from .context import Context, NullJournal
+from .errors import GateError
 from .funnel import GuardedRunner
 from .lifecycle import Resource, environment_of, held
 from .locks import ExclusiveLock
@@ -140,6 +142,13 @@ class GateCommand(ABC):
             print(plan.describe())
             return
 
+        # The same deadlock, reached from inside Python rather than through a
+        # subprocess. `GuardedRunner` cannot see it: nothing is spawned. A
+        # pytest step calling `cli.main(["storage", ...])` simply blocked on
+        # the lock its own grandparent held, and the run stayed alive-looking
+        # for the full two hours.
+        self._refuse_inside_a_run()
+
         # Before any resource, and outside the lock: a re-exec inside the held
         # resources deadlocks, because the child asks for the lock its own
         # parent is holding and waits out the full timeout.
@@ -164,6 +173,26 @@ class GateCommand(ABC):
         # anything reads the run back. Inside it, `--timing` measured a run
         # that had not finished and reported `total_ms == 0`.
         self._summarize(log)
+
+    def _refuse_inside_a_run(self) -> None:
+        """Refuse to take a lock this process tree is already holding.
+
+        Only for commands that take it. A read-only command is exactly what
+        someone wants from inside a running gate -- `runs last` while it works
+        is the point of `runs last`.
+        """
+        if not self.exclusive:
+            return
+        holder = os.environ.get(self._config.locks.gate.run_marker)
+        if holder is None:
+            return
+        raise GateError(
+            f"{self.name} takes the machine lock, and this process is already "
+            f"inside the gate run holding it ({holder}). It would wait out its "
+            "full timeout for a lock that cannot be released until it returns. "
+            "Compose this command's fragment into that plan, or drive its plan "
+            "directly if this is a test."
+        )
 
     def _describe(self) -> Plan:
         """Build the plan with the machine sealed off.

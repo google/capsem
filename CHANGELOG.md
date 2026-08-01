@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A gate command started from inside a gate run is refused instead of
+  deadlocking. `GuardedRunner` sees a *subprocess* that re-enters the gate, but
+  not a `cli.main([...])` called from Python inside a process the gate itself
+  launched -- and the gate launches pytest, whose suite did exactly that. The
+  worker blocked on the lock its own grandparent held, for the full
+  7200-second timeout, with the run looking alive throughout. The machine lock
+  now exports `CAPSEM_GATE_RUN` like any other resource environment, so every
+  descendant can tell it is inside a run, and an exclusive command that finds
+  it fails in milliseconds saying what to do instead. Read-only commands are
+  unaffected: asking `runs last` what a running gate is doing is the point of
+  `runs last`.
+- The gate CLI's dispatch tests drive the parser and the plan rather than
+  `execute()`. What they assert is that argv reaches the right primitive with
+  the right arguments, which never needed the machine lock.
+
 - The last 12 contracts that read gate behaviour out of `justfile` text now
   read it off the gate: `tests/helpers/gate.py` builds any command's plan and
   runs it against a recording runner, so a claim like "both dependency audits

@@ -533,6 +533,10 @@ holder_record = "target/capsem-test-execution.holder"
 report_after_seconds = 2
 wait_timeout_seconds = 7200
 poll_interval_seconds = 0.25
+# Exported for the length of a run, so a descendant can tell it is one. flock
+# alone cannot say this: a lock the parent holds looks exactly like a lock a
+# stranger holds, and the child dutifully waits out the two hours.
+run_marker = "CAPSEM_GATE_RUN"
 
 # ---------------------------------------------------------------------------
 # The tools a gate needs before it can start

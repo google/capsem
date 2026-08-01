@@ -15,6 +15,9 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import cli, project_root
+from capsem.gate import config as gate_config
+from capsem.gate.command import GateCommand
+from capsem.gate.context import Context
 from capsem.gate.errors import GateError
 
 
@@ -26,8 +29,23 @@ def recorded(monkeypatch: pytest.MonkeyPatch) -> RecordingRunner:
     return runner
 
 
+def dispatch(argv: list[str], runner: RecordingRunner) -> int:
+    """Everything `cli.main` does, short of taking the machine to itself.
+
+    The claim these tests make is that argv reaches the right primitive with
+    the right arguments -- which needs the real parser and the real plan, and
+    does not need the lock. Calling `cli.main` for an exclusive command took
+    it, which is how the gate's own pytest step came to block for two hours on
+    the lock its own grandparent was holding.
+    """
+    args = cli.build_parser().parse_args(argv)
+    command = GateCommand.registry[args.gate_command](runner, args)
+    command.plan().run(Context(runner, gate_config.load(project_root())))
+    return 0
+
+
 def test_storage_release_reaches_the_policy_script(recorded: RecordingRunner) -> None:
-    assert cli.main(["storage", "release", "completed-buildkit-graph"]) == 0
+    assert dispatch(["storage", "release", "completed-buildkit-graph"], recorded) == 0
 
     assert recorded.matching(
         r"docker-storage-policy.py release --boundary after-packages --rail package"
@@ -35,26 +53,26 @@ def test_storage_release_reaches_the_policy_script(recorded: RecordingRunner) ->
 
 
 def test_storage_gc_passes_its_rail_through(recorded: RecordingRunner) -> None:
-    assert cli.main(["storage", "gc", "--rail", "install"]) == 0
+    assert dispatch(["storage", "gc", "--rail", "install"], recorded) == 0
 
     assert recorded.rendered[0].endswith("gc --rail install")
 
 
 def test_storage_gc_without_a_rail_omits_the_flag(recorded: RecordingRunner) -> None:
-    assert cli.main(["storage", "gc"]) == 0
+    assert dispatch(["storage", "gc"], recorded) == 0
 
     assert recorded.rendered[0].endswith("docker-storage-policy.py gc")
 
 
 def test_storage_clean_carries_scope_and_rail(recorded: RecordingRunner) -> None:
-    assert cli.main(["storage", "clean", "--scope", "working", "--rail", "default"]) == 0
+    assert dispatch(["storage", "clean", "--scope", "working", "--rail", "default"], recorded) == 0
 
     assert recorded.rendered[0].endswith("clean --scope working --rail default")
 
 
 def test_ensure_space_makes_the_boundary_optional(recorded: RecordingRunner) -> None:
-    assert cli.main(["storage", "ensure-space", "package"]) == 0
-    assert cli.main(["storage", "ensure-space", "default", "candidate-boundary"]) == 0
+    assert dispatch(["storage", "ensure-space", "package"], recorded) == 0
+    assert dispatch(["storage", "ensure-space", "default", "candidate-boundary"], recorded) == 0
 
     assert recorded.rendered[0].endswith("ensure-docker-space.sh package")
     assert recorded.rendered[1].endswith("ensure-docker-space.sh default candidate-boundary")
@@ -74,12 +92,13 @@ def test_stamp_version_runs_against_this_checkout(
 ) -> None:
     """Dispatched, not reimplemented: the CLI knows only which handler to call."""
     calls: list[Path] = []
-    monkeypatch.setattr(cli, "Runner", lambda root: RecordingRunner(root))
+    runner = RecordingRunner(project_root())
+    monkeypatch.setattr(cli, "Runner", lambda root: runner)
     monkeypatch.setattr(
         "capsem.gate.versions.stamp", lambda root, runner: calls.append(root) or "9.9.9"
     )
 
-    assert cli.main(["stamp-version"]) == 0
+    assert dispatch(["stamp-version"], runner) == 0
     assert calls == [project_root()]
 
 

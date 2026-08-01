@@ -73,6 +73,17 @@ class ExclusiveLock(Resource, name="gate-lock"):
             purpose=purpose,
         )
 
+    def environment(self) -> dict[str, str]:
+        """Tell every descendant that it is inside a run.
+
+        flock cannot answer this from the child's side: the lock its own parent
+        holds is indistinguishable from a stranger's, so a gate command started
+        by anything the gate launched -- the pytest step, most of all -- waited
+        out the full timeout for a lock that would never be released until it
+        returned. Exported rather than global, so it dies with the lock.
+        """
+        return {self._settings.run_marker: self._purpose}
+
     @property
     def fileno(self) -> int:
         if self._fd is None:
