@@ -67,6 +67,11 @@ install-preflight = { boundary = "after-install-preflight", rail = "install-pref
 
 [doctor]
 storage_policy = "config/storage-policy.toml"
+# The host-tooling half of `just doctor`. The gate command checks its own
+# wiring; this checks the machine, and reads the skip variables an image
+# build sets so the asset and KVM checks do not fail on the very thing that
+# build is about to produce.
+common_script = "scripts/doctor-common.sh"
 
 [pidfiles]
 # Ordered. The gateway owns the fixed localhost port, so it must stop before
@@ -461,10 +466,8 @@ direct_concurrency = ["planrunner.py"]
 # quietly describe a past that is no longer true.
 modules_still_re_entering = [
     "assetlanes.py",
-    "audits.py",
     "candidate.py",
     "crosscompile.py",
-    "imagebuild.py",
     "release.py",
     "testmodules.py",
     "vmmodules.py",

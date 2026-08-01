@@ -15,7 +15,7 @@ exactly the runs where the most had changed. It is an edge.
 
 from __future__ import annotations
 
-from .actions import Run, Script
+from .actions import Call, Run, Script
 from .config import GateConfig
 from .execution import Step, step
 
@@ -88,5 +88,17 @@ def blocking_surface(config: GateConfig, surfaces: list[Step]) -> Step:
 
 
 def lint(config: GateConfig) -> Step:
-    """Ruff and ty, through the gate's own command so there is one spelling."""
-    return step("lint", Run(["uv", "run", "capsem-gate", "lint"]))
+    """Ruff and ty, composed rather than launched.
+
+    This used to be `Run(["uv", "run", "capsem-gate", "lint"])` -- one spelling,
+    but bought by starting a second gate process from inside a plan. That is a
+    deadlock wherever the caller holds the machine lock, and the child's work
+    lands in its own run log rather than this one's. Calling the same function
+    the `lint` command calls keeps the single spelling and none of that.
+    """
+    from . import lint as linting
+
+    return step(
+        "lint",
+        Call("ruff and ty over every Python tree", lambda ctx: linting.check(ctx.runner)),
+    )

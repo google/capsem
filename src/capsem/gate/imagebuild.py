@@ -12,7 +12,7 @@ shell is how `arm64` came to mean two different things in one repository.
 
 from __future__ import annotations
 
-from .actions import Run
+from .actions import Call, Run
 from .command import GateCommand
 from .config import Arch, GateConfig
 from .errors import GateError
@@ -42,9 +42,18 @@ def doctor(config: GateConfig) -> Step:
     Those two would fail on exactly the thing this is about to build, which is
     why the skips exist rather than the doctor being skipped entirely.
     """
+    from . import doctor as diagnosis
+
     return step(
         "doctor",
-        Run(["just", "doctor"], env=dict(config.imagebuild.doctor_skips)),
+        # Both halves of `just doctor`, composed rather than dispatched: the
+        # gate's own wiring check, then the host-tooling script that actually
+        # reads the skip variables.
+        Call("would the gate work if we started now", diagnosis.report),
+        Run(
+            ["bash", config.doctor.common_script],
+            env=dict(config.imagebuild.doctor_skips),
+        ),
     )
 
 

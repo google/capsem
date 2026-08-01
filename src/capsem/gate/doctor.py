@@ -136,11 +136,12 @@ class DoctorCommand(
 ):
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        plan.add(step("check", Call("would the gate work if we started now", _report)))
+        plan.add(step("check", Call("would the gate work if we started now", report)))
         return plan
 
 
-def _report(context) -> None:
+def report(context) -> None:
+    """Public: `imagebuild` runs the same check before a build."""
     findings = check(context.runner)
     if not findings:
         context.runner.note(

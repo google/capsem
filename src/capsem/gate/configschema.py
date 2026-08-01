@@ -246,3 +246,4 @@ class VersionsConfig(Strict):
 
 class DoctorConfig(Strict):
     storage_policy: str
+    common_script: str
