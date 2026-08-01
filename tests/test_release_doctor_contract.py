@@ -1859,10 +1859,15 @@ def test_binary_release_installs_exact_artifacts_before_publication() -> None:
 
 
 def test_install_preflight_releases_base_after_derived_image_is_verified() -> None:
-    """The ~6 GiB base tag is released only once the derived image is proven.
+    """The ~6 GiB base tag is released only once everything needing it is done.
 
-    Releasing it earlier would make the rebuild-on-smoke-failure path cold, and
-    releasing it never would starve the package rails that follow.
+    Releasing it earlier makes the rebuild-on-smoke-failure path cold, and
+    releasing it never starves the package rails that follow. It used to be a
+    statement at the end of the preflight, ordered by the line it sat on --
+    which held until the composed plan put the preflight ahead of the parity
+    lane, and then the release landed 164ms before `cache-ownership` ran the
+    image it had just deleted. It is a step with edges now, so "after" is a
+    property of the graph rather than of the file.
     """
     from capsem.gate import config as gate_config
 
@@ -1871,8 +1876,21 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
 
     build = source.index('"docker", "build", "-t", settings.image')
     smoke = source.index("_smoke_passes(runner, settings)")
-    release = source.index('release("linux-rust-builder")')
-    assert build < smoke < release
+    assert build < smoke
+    assert "release(" not in source, (
+        "the preflight reclaims nothing: the rail belongs to the parity lane, "
+        "whose own step hands it back"
+    )
+
+    labels = list(_gate_labels())
+    if "static.storage.linux-rust-builder" in labels:
+        release = labels.index("static.storage.linux-rust-builder")
+        for consumer in ("install-image", "cache-ownership", "linux-rust"):
+            assert labels.index(consumer) < release
+        for later in ("package.arm64", "package.x86_64"):
+            assert release < labels.index(later), (
+                "the package rails need the headroom this hands back"
+            )
 
     phase = config.storage.phases["linux-rust-builder"]
     assert (phase.boundary, phase.rail) == (

@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once as a statement inside some other step's body where nothing could order
   it. In the shell those statements were ordered by the line they sat on; once
   the preflight moved ahead of the parity lane, the accident stopped holding.
-  The statements are gone; the steps own their rails.
+  The statements are gone; the steps own their rails, and the contract that
+  watched the old arrangement now asserts the edge instead of the line.
 - `all_guest_binaries_in_pack_initrd` reads `[initrd] binaries` from
   `config/gate.toml` rather than the `cp`/`chmod` lines of a recipe that no
   longer packs anything. Same claim, against the list that now decides it.
