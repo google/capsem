@@ -11,6 +11,31 @@ def _source_text(relative: str) -> str:
     return (PROJECT_ROOT / relative).read_text(encoding="utf-8")
 
 
+def _planned(command: str, **args) -> str:
+    """What a command's plan would run, rendered.
+
+    These contracts were written against recipe bodies. The recipes are
+    dispatches now, so the same claims are read from the plan -- which is the
+    stronger question: a text search notices a line that stopped being written,
+    while this notices a step that stopped running.
+    """
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    return (
+        GateCommand.registry[command](
+            RecordingRunner(PROJECT_ROOT),
+            argparse.Namespace(dry_run=False, graph=False, timing=False, **args),
+        )
+        ._describe()
+        .describe()
+    )
+
+
 def _recipe_block(name: str) -> str:
     lines = (PROJECT_ROOT / "justfile").read_text().splitlines()
     start = next(i for i, line in enumerate(lines) if line == name or line.startswith(f"{name} "))
@@ -27,30 +52,46 @@ def _recipe_block(name: str) -> str:
 
 
 def test_build_assets_requires_profile_and_uses_capsem_admin() -> None:
-    block = _recipe_block("_build-assets")
+    """Every image build names the profile whose manifest it is building from.
 
-    assert 'if [[ -z "$PROFILE_ARG" ]]' in block
-    assert "internal _build-assets requires" in block
-    assert block.index('if [[ -z "$PROFILE_ARG" ]]') < block.index("just _install-tools")
-    assert "cargo run -p capsem-admin -- image build" in block
-    assert '--profile "config/profiles/${PROFILE_ARG}/profile.toml"' in block
-    assert "${PROFILE_ARG#profile=}" not in block
-    assert "uv run capsem-builder build guest/" not in block
+    The shell guarded this with `if [[ -z "$PROFILE_ARG" ]]`, which could only
+    catch an empty string. Building the argv from the profile means an image
+    build without one cannot be expressed.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate.imagebuild import build_argv
+
+    config = gate_config.load(PROJECT_ROOT)
+    argv = build_argv(config, profile="code", arch="arm64", template="all")
+
+    assert argv[: len(config.imagebuild.admin)] == list(config.imagebuild.admin)
+    assert "cargo" in argv[0] or "capsem-admin" in " ".join(argv)
+    assert "--profile" in argv
+    assert argv[argv.index("--profile") + 1] == "config/profiles/code/profile.toml"
+    assert "uv run capsem-builder build guest/" not in " ".join(argv)
 
 
 def test_asset_build_primitives_accept_an_isolated_output_root() -> None:
-    for recipe in ("_build-kernel", "_build-rootfs", "_build-assets"):
-        block = _recipe_block(recipe)
-        assert "output=assets_dir" in block
-        assert 'OUTPUT_ARG="{{output}}"' in block
-        if recipe == "_build-assets":
-            assert '--output "$OUTPUT_ARG"' in block
-        else:
-            assert '"$OUTPUT_ARG"' in block
-    primitive = _recipe_block("_build-image-template")
-    assert " output template:" in primitive.splitlines()[0]
-    assert 'OUTPUT_ARG="{{output}}"' in primitive
-    assert '--output "$OUTPUT_ARG"' in primitive
+    """And the value reaches the builder, which is where it used to be lost.
+
+    `_build-image-template` declared an `output` parameter and never forwarded
+    it, so the builder wrote to the one configured tree while each concurrent
+    lane verified a private directory nothing had written. This contract was
+    right and the recipe was wrong; asserting on the argv the builder receives
+    is what makes the difference visible.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate.imagebuild import build_argv
+
+    config = gate_config.load(PROJECT_ROOT)
+
+    default = build_argv(config, profile="code", arch="arm64", template="all")
+    assert default[default.index("--output") + 1] == config.imagebuild.output
+
+    isolated = build_argv(
+        config, profile="code", arch="arm64", template="all", output="/tmp/lane-a"
+    )
+    assert isolated[isolated.index("--output") + 1] == "/tmp/lane-a"
 
 
 def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
@@ -67,15 +108,18 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
     assets = _source_text("src/capsem/gate/assets.py")
     lanes = _source_text("src/capsem/gate/assetlanes.py")
 
-    assert "just _gate-assets" in _recipe_block("_test-candidate-run:")
-    assert "capsem-gate assets" in _recipe_block("_gate-assets:")
+    # `just test` still owns the gate -- as a composed phase now rather than a
+    # recipe that dispatched to another recipe, so it is read from the plan.
+    assert "artifacts.assets" in _planned("candidate")
 
     # Profiles are discovered, not listed.
     assert config.assets.profiles_glob == "config/profiles/*/profile.toml"
     assert "profiles_glob" in lanes
 
-    # Both image stages, per architecture.
-    assert 'for stage in ("kernel", "rootfs")' in lanes
+    # Both image stages, per architecture. The stage list is config now, so
+    # this reads it rather than repeating it.
+    assert config.imagebuild.lane_templates == ("kernel", "rootfs")
+    assert "for stage in self._config.imagebuild.lane_templates" in lanes
 
     # `current` is repointed by whichever lane finished last, and the
     # host-architecture VM proof that follows needs it aimed at this machine.
@@ -179,26 +223,50 @@ def test_asset_ci_installs_pinned_pnpm_before_running_build_primitives() -> None
 
 
 def test_asset_matrix_preflights_once_and_reuses_the_public_build_primitive() -> None:
-    asset_gate = _recipe_block("_gate-assets:")
-    kernel = _recipe_block("_build-kernel")
-    rootfs = _recipe_block("_build-rootfs")
-    primitive = _recipe_block("_build-image-template")
+    """One builder invocation, reused per stage, preflighted once.
 
-    assert 'just _build-image-template "{{arch}}" "$PROFILE_ARG" "$OUTPUT_ARG" kernel' in kernel
-    assert 'just _build-image-template "{{arch}}" "$PROFILE_ARG" "$OUTPUT_ARG" rootfs' in rootfs
-    assert "cargo run -p capsem-admin -- image build" in primitive
-    assert "just _install-tools" not in primitive
-    assert "just doctor" not in primitive
-    assert asset_gate.startswith("_gate-assets: _bootstrap ")
-    assert "CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor" not in asset_gate
+    The lanes used to reach it through `just _build-image-template`, so this
+    asserted the dispatch text. They call `build_argv` directly now -- the same
+    single spelling, without a second gate process between the lane and the
+    builder.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate.imagebuild import build_argv
+
+    config = gate_config.load(PROJECT_ROOT)
+    lanes = (PROJECT_ROOT / "src/capsem/gate/assetlanes.py").read_text(encoding="utf-8")
+
+    # Every stage the lanes build goes through the one primitive.
+    assert "imagebuild.build_argv(" in lanes
+    for stage in config.imagebuild.lane_templates:
+        argv = build_argv(config, profile="code", arch="arm64", template=stage)
+        assert argv[argv.index("--template") + 1] == stage
+
+    # The primitive builds; it does not preflight. Preflighting per stage is
+    # what made a four-cell matrix run doctor four times.
+    assert "install-tools" not in " ".join(build_argv(
+        config, profile="code", arch="arm64", template="all"
+    ))
+    assert "doctor" not in lanes
 
 
 def test_check_assets_recovers_by_iterating_checked_in_profiles() -> None:
-    block = _recipe_block("_check-assets:")
+    """Every checked-in profile, discovered rather than named.
 
-    assert "for profile in config/profiles/*/profile.toml; do" in block
-    assert 'just _build-assets "$(basename "$(dirname "$profile")")" "$arch"' in block
-    assert "just _build-assets code" not in block
+    The shell globbed `config/profiles/*/profile.toml`; `imagebuild.profiles`
+    does the same glob from config and raises when it matches nothing, so a
+    checkout with no profiles fails loudly instead of building none of them.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate.imagebuild import profiles
+
+    config = gate_config.load(PROJECT_ROOT)
+    found = profiles(config)
+
+    assert len(found) > 1, "the recovery path must cover every profile, not one"
+    assert "code" in found
+    lanes = (PROJECT_ROOT / "src/capsem/gate/imagebuild.py").read_text(encoding="utf-8")
+    assert 'profile="code"' not in lanes, "a profile is named rather than discovered"
 
 
 def test_in_container_commands_write_only_where_the_container_user_owns() -> None:
@@ -253,7 +321,7 @@ def test_runtime_recipes_materialize_generated_config_before_service() -> None:
 def test_materialize_config_uses_admin_profile_command() -> None:
     block = _recipe_block("_materialize-config:")
 
-    assert 'bash "$ROOT/scripts/materialize-config.sh"' in block
+    assert "scripts/materialize-config.sh" in block
 
     script = (PROJECT_ROOT / "scripts" / "materialize-config.sh").read_text()
     assert "cargo run -p capsem-admin -- profile materialize" in script
@@ -295,21 +363,59 @@ def test_materialize_config_uses_release_manifest_profile_membership() -> None:
 
 
 def test_ensure_service_uses_generated_profiles() -> None:
-    block = _recipe_block("_ensure-service:")
+    """The daemon reads materialized profiles, and says so when they are absent.
 
-    assert 'GENERATED_PROFILES="$ROOT/target/config/profiles"' in block
-    assert 'CAPSEM_PROFILES_DIR="$GENERATED_PROFILES"' in block
-    assert "generated profiles missing" in block
+    A service started against the checked-in sources would boot profiles that
+    had never been through `capsem-admin profile materialize`, which is a
+    different product from the one being tested.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    service = (PROJECT_ROOT / "src/capsem/gate/service.py").read_text(encoding="utf-8")
+
+    assert config.service.generated_profiles == "target/config/profiles"
+    assert "CAPSEM_PROFILES_DIR" in service
+    assert "generated profiles are missing" in service
 
 
 def test_isolated_test_recipes_trap_test_home_service_cleanup() -> None:
-    for recipe in ["_test-candidate-run:", "smoke:"]:
-        block = _recipe_block(recipe)
-        assert "cleanup_test_capsem_home_service()" in block
-        assert "trap cleanup_test_capsem_home_service EXIT" in block
-        assert 'PIDFILE="$CAPSEM_RUN_DIR/service.pid"' in block
-        assert 'kill "$OLD_PID"' in block
-        assert "pkill -f" not in block
+    """Every isolated run stops the service in its own home, by pidfile.
+
+    Two recipes each carried an EXIT trap and a hand-written pidfile read. A
+    trap is correct only for the commands inside it; `Workspace` is a
+    `Resource`, so the stop happens on every path including the aborted one,
+    and for every command that holds one rather than the two that remembered.
+
+    Never by pattern: `pkill -f` takes down a developer's installed capsem, or
+    a parallel run with a different `CAPSEM_HOME`.
+    """
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate import config as gate_config
+    from capsem.gate.command import GateCommand
+
+    workspace_source = (
+        PROJECT_ROOT / "src/capsem/gate/workspace.py"
+    ).read_text(encoding="utf-8")
+    pidfile_source = (
+        PROJECT_ROOT / "src/capsem/gate/pidfiles.py"
+    ).read_text(encoding="utf-8")
+
+    assert "stop_gate_service" in workspace_source
+    assert gate_config.load(PROJECT_ROOT).pidfiles.names == ("gateway.pid", "service.pid")
+    assert "pkill" not in pidfile_source and "killall" not in pidfile_source
+
+    for name in ("candidate", "smoke"):
+        command = GateCommand.registry[name](
+            RecordingRunner(PROJECT_ROOT),
+            argparse.Namespace(dry_run=False, graph=False, timing=False),
+        )
+        held = {resource.name for resource in command.resources()}
+        assert "workspace" in held, f"{name} runs outside an isolated home"
 
 
 def test_release_workflow_uses_same_config_materializer() -> None:

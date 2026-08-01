@@ -18,6 +18,11 @@ ALLOWED_CONFIG_DIRS = {
 
 ALLOWED_CONFIG_FILES = {
     "README.md",
+    # The build and release gate's data: paths, timeouts, the boundary/rail
+    # pairs the storage policy accepts. Product config, read by the gate rather
+    # than by the product, but config/ is where the repository keeps authority
+    # files and a second location would be a second place to look.
+    "gate.toml",
     "public-surface.toml",
     "storage-policy.toml",
 }

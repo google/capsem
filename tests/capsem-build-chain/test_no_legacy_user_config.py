@@ -53,9 +53,18 @@ def iter_files() -> list[Path]:
     return files
 
 
+#: Where a retired name may still be written down, because the thing written
+#: there is an instruction to remove it. `[service] retired_config` is the list
+#: the gate deletes from a home on every start, so a checkout predating the
+#: change cannot keep booting from one. Naming it is how it gets deleted.
+REMOVAL_LISTS = {"config/gate.toml"}
+
+
 def test_no_live_code_mentions_legacy_user_config_rail() -> None:
     failures: list[str] = []
     for path in iter_files():
+        if str(path.relative_to(PROJECT_ROOT)) in REMOVAL_LISTS:
+            continue
         try:
             text = path.read_text(errors="ignore")
         except UnicodeDecodeError:

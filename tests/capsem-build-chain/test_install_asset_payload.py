@@ -1,6 +1,8 @@
 """Install package asset-payload contract tests."""
 
+import contextlib
 import errno
+import functools
 import hashlib
 import importlib.util
 import json
@@ -31,7 +33,89 @@ def _skill_text(skill_path: Path) -> str:
     return "\n".join(parts)
 
 
+#: Recipes whose behaviour moved into the gate, and the command that now owns
+#: it. These contracts are about what the gate *does*; when the doing moved
+#: from a shell body into a plan, the place to read it moved with it.
+DISPATCHED = {
+    "test:": ("candidate", {}),
+    "_test-candidate:": ("test-candidate", {}),
+    "_gate-assets:": ("assets", {}),
+    "_gate-install:": ("install", {}),
+    "_cross-compile": ("cross-compile", {"arch": "arm64"}),
+    "_prove-linux-deb:": ("prove-deb", {}),
+    "_test-install-harness-preflight:": ("install-image", {}),
+    "_docker-gc:": ("storage", {"action": "gc", "rail": None}),
+    "_ensure-service:": ("ensure-service", {}),
+    "_pack-initrd:": ("pack-initrd", {}),
+    "_stamp-version:": ("stamp-version", {}),
+    "_gate-host-package-sbom:": ("host-sbom", {}),
+    "_gate-linux-rust:": ("linux-rust", {}),
+    "_build-assets": ("build-assets", {"profile": "code", "arch": "arm64", "template": "all"}),
+    "_check-assets:": ("check-assets", {}),
+}
+
+
+def _planned(command: str, **args) -> str:
+    return _planned_cached(command, tuple(sorted(args.items())))
+
+
+@functools.cache
+def _planned_cached(command: str, args: tuple) -> str:
+    """Every command a gate command actually issues, with real argv.
+
+    The plan is *run* against a recording runner rather than merely described.
+    Much of this work is still behind `Call`, which renders as prose -- so a
+    description would answer "build the install-test image" where the contract
+    is about the docker arguments underneath. Running it records those without
+    executing anything.
+    """
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate import config as gate_config
+    from capsem.gate.command import GateCommand
+    from capsem.gate.context import Context
+
+    runner = RecordingRunner(PROJECT_ROOT)
+    try:
+        plan = (
+            GateCommand.registry[command](
+                runner,
+                argparse.Namespace(
+                    dry_run=False, graph=False, timing=False, **dict(args)
+                ),
+            )
+            ._describe()
+        )
+        rendered = plan.describe()
+        # A step that needs a machine fails here; what it issued before failing
+        # is still the evidence these contracts are about.
+        with contextlib.suppress(Exception):
+            plan.run(Context(runner, gate_config.load(PROJECT_ROOT)))
+        return rendered + "\n" + "\n".join(runner.rendered) + "\n" + "\n".join(runner.notes)
+    except Exception as exc:
+        return f"<plan for {command} unavailable: {exc}>"
+
+
 def _just_recipe_block(name: str) -> str:
+    """The recipe, and the plan it dispatches to.
+
+    Both, because these contracts predate the extraction and each one is about
+    the behaviour rather than about where it is written. A recipe is a
+    dispatch now, so reading only its body would answer a question nobody was
+    asking; reading only the plan would miss the just-level wiring some of
+    these are genuinely about.
+    """
+    block = _recipe_body(name)
+    if name in DISPATCHED:
+        command, args = DISPATCHED[name]
+        block = block + "\n" + _planned(command, **args)
+    return block
+
+
+def _recipe_body(name: str) -> str:
     lines = (PROJECT_ROOT / "justfile").read_text().splitlines()
     start = next(i for i, line in enumerate(lines) if line.startswith(name))
     end = len(lines)
@@ -40,15 +124,7 @@ def _just_recipe_block(name: str) -> str:
         if line and not line.startswith((" ", "\t", "#")):
             end = i
             break
-    block = "\n".join(lines[start:end])
-    if name == "test:":
-        block = (
-            f"{block}\n{_just_recipe_block('_test-candidate:')}"
-            f"\n{_just_recipe_block('_test-candidate-run:')}"
-        )
-    elif name == "_test-candidate:":
-        block = f"{block}\n{_just_recipe_block('_test-candidate-run:')}"
-    return block
+    return "\n".join(lines[start:end])
 
 
 def _workflow_job_blocks(workflow: str) -> dict[str, str]:

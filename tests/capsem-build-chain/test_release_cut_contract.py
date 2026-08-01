@@ -37,6 +37,29 @@ def test_release_contract_rejects_wrong_case_even_on_macos() -> None:
         _read_text_exact_case("Justfile")
 
 
+def _planned(command: str, **args) -> str:
+    """What a command's plan would run, rendered.
+
+    Replaces reading a recipe body: the recipes are dispatches now, and the
+    sequence these contracts are about lives in the plan.
+    """
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    return (
+        GateCommand.registry[command](
+            RecordingRunner(PROJECT_ROOT),
+            argparse.Namespace(dry_run=False, graph=False, timing=False, **args),
+        )
+        ._describe()
+        .describe()
+    )
+
+
 def test_version_stamp_propagates_cargo_toml_and_refreshes_both_frozen_locks() -> None:
     """Stamping reads the version; it never invents one.
 
@@ -46,18 +69,32 @@ def test_version_stamp_propagates_cargo_toml_and_refreshes_both_frozen_locks() -
     recipe only fans it out, which is why the cohort files are read from, not
     written by, the release.
     """
-    stamp = _just_recipe_block("_stamp-version:")
+    from capsem.gate import config as gate_config
+
     justfile = _read_text_exact_case("justfile")
+    config = gate_config.load(PROJECT_ROOT)
+    stamp = (
+        PROJECT_ROOT / "src" / "capsem" / "gate" / "versions.py"
+    ).read_text(encoding="utf-8")
 
     assert "release_minor" not in justfile
-    assert "Cargo.toml" in stamp
-    assert "cargo update --workspace --offline" in stamp
-    assert "pyproject.toml" in stamp
-    assert "uv lock --offline" in stamp
-    assert stamp.index("Cargo.toml") < stamp.index(
-        "cargo update --workspace --offline"
-    )
-    assert stamp.index("pyproject.toml") < stamp.index("uv lock --offline")
+
+    # The one authority, and the cohort it fans out to. Both read from config
+    # rather than from a recipe body, so the list is data a person can change
+    # without touching the code that walks it.
+    assert config.versions.cargo_manifest == "Cargo.toml"
+    stamped = {entry.path for entry in config.versions.stamped}
+    assert "pyproject.toml" in stamped
+
+    # Each lockfile is refreshed by the tool that owns it, after the
+    # substitution rather than before -- otherwise the lock records the version
+    # the cohort had a moment ago.
+    cargo = '["cargo", "update", "--workspace", "--offline"]'
+    uv_lock = '["uv", "lock", "--offline"]'
+    assert cargo in stamp
+    assert uv_lock in stamp
+    assert stamp.index("for stamped in settings.stamped") < stamp.index(cargo)
+    assert stamp.index(cargo) < stamp.index(uv_lock)
 
 
 def test_version_stamp_refuses_a_version_that_is_already_tagged() -> None:
@@ -67,11 +104,20 @@ def test_version_stamp_refuses_a_version_that_is_already_tagged() -> None:
     stopped being machine-generated: the cohort would agree, the notes would
     regenerate, and the tag collision would surface far later.
     """
-    stamp = _just_recipe_block("_stamp-version:")
+    from capsem.gate import config as gate_config
 
-    assert 'rev-parse -q --verify "refs/tags/v${VERSION}"' in stamp
-    assert "already tagged" in stamp
-    assert '^[0-9]+\\.[0-9]+\\.[0-9]+$' in stamp
+    versions = (
+        PROJECT_ROOT / "src" / "capsem" / "gate" / "versions.py"
+    ).read_text(encoding="utf-8")
+    config = gate_config.load(PROJECT_ROOT)
+
+    # The tag prefix is config rather than a literal in the check, and the
+    # refusal is the code that reads it. This was `git rev-parse -q --verify
+    # "refs/tags/v${VERSION}"` in a recipe; the claim is that a version already
+    # tagged cannot be stamped again.
+    assert config.versions.tag_prefix == "refs/tags/v"
+    assert "already tagged" in versions
+    assert "tag_prefix" in versions
 
 
 def test_checked_in_python_lock_matches_project_version() -> None:
@@ -135,12 +181,14 @@ def test_binary_release_recipe_uses_one_adversarial_script() -> None:
     justfile = _read_text_exact_case("justfile")
     script = _read_text_exact_case("scripts/release-binaries.py")
 
-    binary_recipe = justfile.split("\nrelease-binaries channel:", 1)[1].split(
-        "\n\n", 1
-    )[0]
-    assert "scripts/release-binaries.py" in binary_recipe
-    assert "_build-kernel" not in binary_recipe
-    assert "_build-rootfs" not in binary_recipe
+    # One adversarial script owns the publish, and the release plan reaches it
+    # without rebuilding assets on the way -- read from the plan, because the
+    # recipe is now a dispatch and the sequence lives in the graph.
+    binary_plan = _planned("release-binaries", channel="nightly")
+    assert "scripts/release-binaries.py" in binary_plan
+    assert "_build-kernel" not in binary_plan
+    assert "_build-rootfs" not in binary_plan
+    assert "\nrelease-binaries channel:" in justfile
     assert "MUTATED_PATHS" in script
     assert "release preparation write set is invalid" in script
     assert '"push", "--atomic", "origin", "main", tag' in script

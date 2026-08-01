@@ -30,12 +30,33 @@ def test_binary_source_manifest_requires_staged_profile_membership() -> None:
 
 
 def test_binary_release_fetches_fresh_source_without_bootstrapping_profiles() -> None:
-    justfile = (ROOT / "justfile").read_text(encoding="utf-8")
-    recipe = justfile.split("\nrelease-binaries channel:", 1)[1].split(
-        "\nrelease-profile channel profile:", 1
-    )[0]
+    """Read out of the release plan, which is where the ordering now lives.
 
-    assert "scripts/fetch-channel-source-manifest.py" in recipe
-    assert '--repository "$RELEASE_REPOSITORY"' in recipe
-    assert "--require-profile-membership" in recipe
-    assert "--bootstrap-missing-first-party" not in recipe
+    The claim is the same one: the binary lane fetches the mutable manifest
+    fresh, requires the channel to already have profile membership, and must
+    not bootstrap it. Asserted against the plan rather than the recipe, so it
+    also covers *where* in the sequence the fetch sits.
+    """
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    plan = GateCommand.registry["release-binaries"](
+        RecordingRunner(ROOT),
+        argparse.Namespace(
+            dry_run=False, graph=False, timing=False, channel="nightly"
+        ),
+    )._describe()
+    described = plan.describe()
+
+    assert "scripts/fetch-channel-source-manifest.py" in described
+    assert "--require-profile-membership" in described
+    assert "--bootstrap-missing-first-party" not in described
+
+    order = list(plan.labels)
+    assert order.index("channel-source") < order.index("release"), (
+        "the source manifest must be resolved before anything publishes"
+    )

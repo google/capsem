@@ -29,15 +29,46 @@ def test_smoke_is_developer_feedback_not_a_release_shortcut() -> None:
     policy = tomllib.loads(
         (ROOT / "config" / "public-surface.toml").read_text(encoding="utf-8")
     )["just"]
-    justfile = (ROOT / "justfile").read_text(encoding="utf-8")
-
     assert "test" in public_just
     assert "smoke" in public_just
     assert "smoke" in policy["approved"]
-    for recipe in ("release-binaries", "release-profile"):
-        block = justfile.split(f"\n{recipe} ", maxsplit=1)[1].split("\n\n", maxsplit=1)[0]
-        assert "just test" in block
-        assert "just smoke" not in block
+
+    # Each release command runs the complete gate before it publishes, and
+    # never the reduced developer feedback. The evidence moved from `just test`
+    # appearing in the recipe to the gate's own phases appearing in the plan:
+    # a recipe line proved a command was named, where this proves the work is
+    # actually there and sits ahead of every publishing step.
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    for name, extra in (
+        ("release-binaries", {"channel": "nightly"}),
+        ("release-profile", {"channel": "nightly", "profile": "code"}),
+    ):
+        plan = GateCommand.registry[name](
+            RecordingRunner(ROOT),
+            argparse.Namespace(dry_run=False, graph=False, timing=False, **extra),
+        )._describe()
+        order = list(plan.labels)
+
+        phases = [
+            next(i for i, label in enumerate(order) if label.startswith(prefix))
+            for prefix in ("fast.", "static.", "artifacts.", "functional.", "glowup.")
+        ]
+        assert max(phases) < order.index("release"), (
+            f"{name} publishes before the complete gate has passed"
+        )
+        # By step label, not by substring: `smoke` appears in the name of a
+        # test file the contracts step collects, and matching that would make
+        # this pass or fail on an unrelated rename.
+        assert not [label for label in order if label.startswith("smoke")], (
+            f"{name} contains smoke steps, which are developer feedback and "
+            "never release qualification"
+        )
 
 
 def test_surface_extractors_do_not_silently_return_empty_sets() -> None:
