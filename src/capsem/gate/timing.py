@@ -33,6 +33,22 @@ class Timing:
     failures: dict[str, str] = field(default_factory=dict)
     skipped: list[str] = field(default_factory=list)
 
+    recorded_status: str = "ok"
+    """What `run.end` said, as distinct from what the steps said.
+
+    A run can fail outside every step: the machine lock, a resource that would
+    not acquire, a teardown that raised. `status` is the per-step map; this is
+    the run's own outcome, and reading only the former reported a run whose
+    every step passed and whose workspace then refused to release as a success.
+    """
+
+    @property
+    def outcome(self) -> str:
+        """`failed` if the run failed, by any route."""
+        if self.recorded_status != "ok" or self.failures:
+            return "failed"
+        return "ok"
+
     @property
     def critical_ms(self) -> float:
         return sum(self.steps.get(label, 0.0) for label in self.critical_path)
@@ -65,6 +81,10 @@ def measure(events: list[dict]) -> Timing:
             timing.actions.append((event["step"], event["render"], event["duration_ms"]))
         elif kind == "run.end":
             timing.total_ms = event["duration_ms"]
+            # Defaulted, because a truncated log is a real case: a killed
+            # gate leaves the events it managed to write, and reading one
+            # should degrade rather than raise.
+            timing.recorded_status = event.get("status", "ok")
 
     timing.critical_path = longest_chain(order, edges, timing.steps)
     return timing

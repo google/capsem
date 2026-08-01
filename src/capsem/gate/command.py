@@ -17,10 +17,11 @@ from __future__ import annotations
 
 import argparse
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from typing import ClassVar
 
 from . import config as gate_config
-from .context import Context
+from .context import Context, NullJournal
 from .funnel import GuardedRunner
 from .lifecycle import Resource, environment_of, held
 from .locks import ExclusiveLock
@@ -29,6 +30,12 @@ from .proc import Runner, sealed
 from .runhistory import read
 from .runlog import RunLog
 from .timing import measure, report
+
+
+@contextmanager
+def _no_record():
+    """A journal for a command that must not leave a run behind."""
+    yield NullJournal()
 
 
 class GateCommand(ABC):
@@ -44,6 +51,15 @@ class GateCommand(ABC):
     starts a service -- which is to say every gate proper. False for the ones
     that only read, so a developer can ask `runs show` a question while a gate
     is running.
+    """
+
+    records: ClassVar[bool] = True
+    """Whether this command writes a run of its own.
+
+    False for the ones that only *read* runs. `runs last --failed` opened a run
+    and repointed `latest` at itself before answering, so the honest answer to
+    "which run failed" could be the question. Asking must not become part of
+    what is being asked about.
     """
 
     registry: ClassVar[dict[str, type[GateCommand]]] = {}
@@ -131,7 +147,7 @@ class GateCommand(ABC):
         if replacement is not None:
             raise SystemExit(self._runner.run(replacement, check=False))
 
-        with RunLog.open(self._config, self.name, argv=self._argv()) as log:
+        with self._recording() as log:
             # Every invocation from here is recorded, and none may start a
             # second gate. Neither is a call site's responsibility.
             runner = GuardedRunner(self._runner, journal=log)
@@ -158,6 +174,16 @@ class GateCommand(ABC):
         """
         with sealed():
             return self.plan()
+
+    def _recording(self):
+        """The run log, or a journal that keeps nothing.
+
+        A command that only reads runs must not create one; everything else
+        below is identical either way, which is the point.
+        """
+        if self.records:
+            return RunLog.open(self._config, self.name, argv=self._argv())
+        return _no_record()
 
     def _holdings(self) -> tuple[Resource, ...]:
         """The machine lock first, then whatever the command declared.

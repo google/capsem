@@ -867,6 +867,8 @@ source_contract = [
     "tests/test_gate_pytestsuite.py",
     "tests/test_gate_proc.py",
     "tests/test_gate_runlog.py",
+    "tests/test_gate_runlog_evidence.py",
+
     "tests/test_gate_smoke_lifecycle.py",
     "tests/test_gate_storage.py",
     "tests/test_gate_testmodules.py",

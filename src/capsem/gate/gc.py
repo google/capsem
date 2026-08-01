@@ -27,6 +27,8 @@ _GB = 1024**3
 class GcCommand(
     GateCommand, name="gc", help="reclaim the disk the gate is holding"
 ):
+    records = False
+    """Only reads runs; creating one would answer with the question."""
     exclusive = True
 
     @classmethod

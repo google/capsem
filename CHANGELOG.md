@@ -55,6 +55,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-shot fresh session the recipe documents. The payload is now one exact
   string, quoted by `just` and passed after `--`, so a leading dash stays a
   payload rather than becoming a flag.
+- A run log can now be trusted, which is the whole reason it exists. Step
+  attribution was one mutable string on the `RunLog`, and the plan runs
+  independent steps concurrently -- so whichever step started last owned every
+  action, note, artifact and subprocess any of them emitted. Each write was
+  mutex-protected, which made the *lines* correct and the *attribution* wrong;
+  a record that confidently blames the wrong step is worse than no record. It
+  is a `ContextVar` now, which the worker threads inherit.
+- A run that failed outside every step is no longer reported as passing. The
+  machine lock, a resource that would not acquire and a teardown that raised
+  all live outside a step, so classifying by steps alone called a run whose
+  every step passed and whose workspace then refused to release a success.
+- The summary is written when the run closes rather than when somebody asks
+  for `--timing`, so the run nobody asked about still leaves something a bug
+  report can attach -- which is exactly the run that needs one. Run ids carry a
+  random suffix, because they had one-second resolution and the machine lock is
+  taken *after* the log is opened, so two contenders collided on the way in.
+- `runs` and `gc` no longer record themselves. `runs last --failed` opened a
+  run and repointed `latest` at itself before answering, so the honest answer
+  to "which run failed" could be the question.
 - `just smoke` starts. `SmokeCommand` declared a `Service` resource whose
   `acquire` raised unconditionally, so the command died on acquisition every
   time -- after the recipe had already paid for the fast checks and the runtime

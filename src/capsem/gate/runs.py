@@ -26,6 +26,8 @@ from .timing import measure, report
 class RunsCommand(
     GateCommand, name="runs", help="list recorded gate runs, or explain one"
 ):
+    records = False
+    """Only reads runs; creating one would answer with the question."""
     @classmethod
     def add_arguments(cls, parser) -> None:
         actions = parser.add_subparsers(dest="action", required=False)

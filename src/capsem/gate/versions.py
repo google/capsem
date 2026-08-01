@@ -147,6 +147,8 @@ def _stamp(context) -> None:
 class VersionCommand(
     GateCommand, name="version", help="print the workspace version"
 ):
+    records = False
+    """Only reads runs; creating one would answer with the question."""
     def plan(self) -> Plan:
         plan = Plan(self.name)
         plan.add(

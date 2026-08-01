@@ -21,9 +21,11 @@ from __future__ import annotations
 import json
 import os
 import platform
+import secrets
 import threading
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -51,6 +53,17 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
 OK, FAILED, SKIPPED = "ok", "failed", "skipped"
 _GB = 1024**3
 
+#: Which step the current thread is inside. A `ContextVar` rather than an
+#: attribute, because the plan runs independent steps concurrently: one mutable
+#: string meant whichever step started last owned every action, note, artifact
+#: and subprocess any of them emitted. Each write was mutex-protected, which
+#: made the *lines* correct and the *attribution* wrong -- and a run log that
+#: confidently blames the wrong step is worse than one that says nothing.
+#:
+#: `ThreadPoolExecutor` copies the calling context into each worker, so a step
+#: sets this once and everything it does inherits it.
+_CURRENT: ContextVar[str] = ContextVar("capsem_gate_current_step", default="")
+
 
 class RunLog:
     """The record of one gate run."""
@@ -58,7 +71,13 @@ class RunLog:
     def __init__(self, root: Path, settings: RunLogConfig, *, command: str) -> None:
         self.settings = settings
         self.command = command
-        self.run_id = f"{datetime.now(UTC):%Y%m%d-%H%M%S}-{command}"
+        # A short random suffix, because the id had one-second resolution and
+        # the machine lock is taken *after* the log is opened -- so two
+        # contenders arriving together collided on the way in, and each
+        # rotation then protected only its own path.
+        self.run_id = (
+            f"{datetime.now(UTC):%Y%m%d-%H%M%S}-{secrets.token_hex(3)}-{command}"
+        )
         self.directory = root / self.run_id
         self._events = self.directory / settings.events
         self._steps = self.directory / settings.step_log_dir
@@ -72,7 +91,6 @@ class RunLog:
         # A mutex, not a scheduler: it creates no concurrency of its own.
         self._writing = threading.Lock()
         self._started = time.monotonic()
-        self._current = ""
 
     # -- opening and closing -----------------------------------------------
 
@@ -117,6 +135,25 @@ class RunLog:
                 **summary,
             )
         )
+        self._write_summary()
+
+    def _write_summary(self) -> None:
+        """The human-readable half, written once the run is on disk.
+
+        Written here rather than by whoever asked for `--timing`, so a run that
+        nobody asked about still leaves something a bug report can attach --
+        which is exactly the run that most needs one.
+        """
+        from .runhistory import read
+        from .timing import measure, report
+
+        summary = report(
+            measure(read(self.directory, self.settings)),
+            command=self.command,
+            settings=self.settings,
+            run_id=self.run_id,
+        )
+        (self.directory / self.settings.summary).write_text(summary, encoding="utf-8")
 
     def _point_latest_here(self) -> None:
         """So `runs last` and a bug report have one path to name."""
@@ -155,11 +192,11 @@ class RunLog:
     # -- the Journal an action writes to -----------------------------------
 
     def note(self, message: str) -> None:
-        self.emit(Note(step=self._current, message=message))
+        self.emit(Note(step=_CURRENT.get(), message=message))
 
     def artifact(self, path: Path, *, digest: str, size: int) -> None:
         self.emit(
-            Artifact(step=self._current, path=str(path), size=size, digest=digest)
+            Artifact(step=_CURRENT.get(), path=str(path), size=size, digest=digest)
         )
 
     def exec(
@@ -167,7 +204,7 @@ class RunLog:
     ) -> None:
         self.emit(
             Exec(
-                step=self._current,
+                step=_CURRENT.get(),
                 argv=argv,
                 cwd=cwd,
                 env=env,
@@ -189,7 +226,7 @@ class RunLog:
             )
         )
         started = time.monotonic()
-        previous, self._current = self._current, step.label
+        token = _CURRENT.set(step.label)
         try:
             yield
         except BaseException as error:
@@ -198,7 +235,7 @@ class RunLog:
         else:
             self._end_step(step.label, OK, started, None)
         finally:
-            self._current = previous
+            _CURRENT.reset(token)
 
     def _end_step(
         self, label: str, status: str, started: float, error: BaseException | None
@@ -235,7 +272,7 @@ class RunLog:
     def _end_action(self, action: Action, status: str, started: float) -> None:
         self.emit(
             ActionRun(
-                step=self._current,
+                step=_CURRENT.get(),
                 action=action.name,
                 render=action.render(),
                 duration_ms=(time.monotonic() - started) * 1000,
