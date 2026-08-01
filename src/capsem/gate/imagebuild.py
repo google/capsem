@@ -131,20 +131,32 @@ class CheckAssetsCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        config = self._config
-        arch = config.host_arch()
-        absent = missing(config, arch)
-
-        if not absent:
-            return plan
-
-        checked = plan.add(doctor(config))
-        for profile in profiles(config):
-            plan.add(
-                build(config, profile=profile, arch=arch.name, template="all"),
-                after=(checked,),
-            )
+        check_assets(plan, self._config)
         return plan
+
+
+def check_assets(
+    plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()
+) -> tuple[Step, ...]:
+    """Build this host's VM assets if they are not already there.
+
+    Returns the steps a caller should wait for, which is empty when the assets
+    are already present -- so composing this into a larger plan sequences the
+    next phase behind whatever actually ran, and behind nothing when nothing did.
+    """
+    arch = config.host_arch()
+    if not missing(config, arch):
+        return after
+
+    phase = plan.phase("assets")
+    checked = phase.add(doctor(config), after=after)
+    return tuple(
+        phase.add(
+            build(config, profile=profile, arch=arch.name, template="all"),
+            after=(checked,),
+        )
+        for profile in profiles(config)
+    )
 
 
 class ToolchainCommand(

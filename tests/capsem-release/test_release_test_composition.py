@@ -33,6 +33,21 @@ def test_the_source_contract_inventory_has_one_authority() -> None:
     assert SOURCE_CONTRACT_TESTS
 
 
+def _command(module: str):
+    """The command object, for asking what it holds as well as what it does."""
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - imports every command module
+    from capsem.gate.command import GateCommand
+
+    return GateCommand.registry[module](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+    )
+
+
 def _planned(module: str) -> str:
     """What a module's plan would run, rendered.
 
@@ -261,14 +276,19 @@ def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() ->
     that `_test-candidate` is a command. The module order is edges, so it
     holds however the source is arranged.
     """
-    candidate = (
-        PROJECT_ROOT / "src" / "capsem" / "gate" / "candidate.py"
-    ).read_text(encoding="utf-8")
-
     assert "capsem-gate candidate" in _recipe("test")
-    assert candidate.index("self._settings.fast_module") < candidate.index(
-        "self._settings.colima_wrapper"
+
+    # The fast phase precedes every expensive one, and Colima is given back on
+    # every path. Both used to be read out of `candidate.py` as source text --
+    # the module order as two variable names in the right sequence, and the
+    # Colima lifecycle as a wrapper script name. They are an edge and a
+    # resource now, and the resource covers the *whole* gate rather than the
+    # half that happened to sit inside the wrapper.
+    gate = list(_planned_labels("candidate"))
+    assert next(i for i, s in enumerate(gate) if s.startswith("fast.")) < next(
+        i for i, s in enumerate(gate) if s.startswith("static.")
     )
+    assert "colima" in {r.name for r in _command("candidate").resources()}
 
     order = list(_planned_labels("test-candidate"))
     expected = [
@@ -331,7 +351,7 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
         # ruff over the whole tree, and ty over src/scripts/tests/guest. ty
         # used to run on src/capsem alone, leaving the release scripts with no
         # type gate at all.
-        "capsem-gate lint",
+        "ruff and ty over every Python tree",
         "cargo clippy --workspace --all-targets -- -D warnings",
         "check-web-surface.sh frontend",
         "check-web-surface.sh release-site",
@@ -373,8 +393,10 @@ def test_functional_module_materializes_its_gitignored_settings_fixture() -> Non
     # Signing moved into the module, where it is conditional on the same
     # release-input variable and ordered by an edge rather than by position.
     planned = _planned("test-functional")
-    assert "just _sign" in planned
-    assert planned.index("just _sign") < planned.index("pytest.broad")
+    # Composed rather than dispatched: the same codesign invocations, in the
+    # same place, without starting a second gate to reach them.
+    assert "codesign" in planned
+    assert planned.index("codesign") < planned.index("pytest.broad")
     for forbidden in (
         "_build-assets",
         "_build-kernel",
@@ -399,7 +421,7 @@ def test_modules_retain_complete_named_quality_gates() -> None:
         "scripts/integration_test.py",
         "test_capsem_bench_baseline.py",
         "scripts/local-release-glowup.py",
-        "capsem-gate install",
+        "install the exact package and prove the installed product",
         "tests/capsem-build-chain/",
         "tests/capsem-release/",
     ):
@@ -563,7 +585,7 @@ def test_static_module_orders_fast_checks_before_docker_preflight() -> None:
     assert "check-web-surface.sh frontend" in fast
     assert fast.index("check-web-surface.sh frontend") < fast.index("cargo clippy")
 
-    assert "capsem-gate install-image" in static
+    assert "build the disposable install-test image" in static
     assert "cargo clippy" not in static, "the lint gate belongs to the fast module"
 
 
@@ -582,7 +604,7 @@ def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
     )
 
     assert "scripts/audit-python-lock.sh" in fast
-    assert "capsem-gate install-image" in static
+    assert "build the disposable install-test image" in static
     assert '"pip-audit>=' in pyproject
     for required in (
         "uv export",
@@ -679,7 +701,7 @@ def test_standalone_local_glowup_materializes_config_without_release_builders() 
     runner = _all_modules()
 
     assert "_materialize-config" in _recipe("_cross-compile").splitlines()[0]
-    assert "capsem-gate cross-compile arm64" in _planned("test-glowup")
+    assert "build the Linux release package for arm64" in _planned("test-glowup")
     for forbidden in ("_build-kernel", "_build-rootfs", "_build-images"):
         assert forbidden not in runner
 

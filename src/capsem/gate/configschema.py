@@ -225,9 +225,16 @@ class CandidateConfig(Strict):
     keep_awake_marker: str
     source_digest_script: str
     orphan_script: str
-    colima_wrapper: str
-    fast_module: str
-    candidate_module: str
+    source_state_file: str
+    colima: str
+    bootstrap_script: str
+    clean_stale_script: str
+    generated_settings_script: str
+    materialize_script: str
+    recipe_suite: tuple[str, ...]
+    candidate_budget: tuple[str, ...]
+    failure_rail: str
+    unknown_head: str
 
 
 class StampedFile(Strict):

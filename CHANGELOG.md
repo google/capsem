@@ -55,6 +55,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-shot fresh session the recipe documents. The payload is now one exact
   string, quoted by `just` and passed after `--`, so a leading dash stays a
   payload rather than becoming a flag.
+- `just test` is one process, one machine lock, one workspace and one plan --
+  64 steps and 91 actions in a single graph, where it used to be a tree of
+  exclusive commands each waiting out a 7200-second timeout for the lock its
+  own parent held. The ordering that lived in three languages at once (`just`
+  dependencies, the line order of a shell body, and four separate `plan()`
+  methods) is now edges. Steps are namespaced by phase, so the run log and the
+  timing report say which part of the gate a slow step belongs to.
+- The two things that must happen even when the gate fails became resources
+  rather than steps, because a step whose dependency failed is skipped -- which
+  is right for work and wrong for cleanup. The orphan-process accounting is one
+  (an aborted run is exactly the run whose survivors need counting), and so is
+  the Colima lifecycle, which was a shell trap wrapping only the commands that
+  happened to sit inside the wrapper. `scripts/with-gate-colima.sh` goes.
+- A teardown failure no longer replaces the failure that caused it. `held`
+  released resources in a `finally`, and an exception raised there *replaces*
+  the one in flight -- so an operator was told a process had leaked and never
+  learned which test failed and leaked it. Cleanup failures are now reported
+  and attached to the primary error as a note, and only become the error
+  themselves when there is no primary one to lose.
 - The two VM-owned test modules compose the work they used to launch. The
   assets build, the install proof, the package builds, signing, the host SBOM,
   the install-test image, the Linux parity lane and every storage-release

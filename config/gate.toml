@@ -324,12 +324,26 @@ keep_awake_marker = "CAPSEM_TEST_CAFFEINATED"
 
 source_digest_script = "scripts/source-state-digest.py"
 orphan_script = "scripts/check-orphan-processes.py"
-colima_wrapper = "scripts/with-gate-colima.sh"
+# Where the recorded state waits between the step that measures it and the one
+# that re-asserts it.
+source_state_file = "target/gate-source-state.json"
 
-# Modules, in the order `just test` runs them. The fast one first: its failures
-# come back in minutes rather than after the Docker and VM work.
-fast_module = "_test-fast"
-candidate_module = "_test-candidate"
+# The Colima binary, restored to whatever the developer had. This used to be a
+# shell trap around the expensive half of the gate, so it was correct only for
+# the commands that happened to sit inside the wrapper.
+colima = "colima"
+
+bootstrap_script = "bootstrap.sh"
+clean_stale_script = "scripts/clean_stale.py"
+generated_settings_script = "scripts/check-generated-settings.sh"
+materialize_script = "scripts/materialize-config.sh"
+recipe_suite = ["uv", "run", "python", "-m", "pytest", "tests/capsem-recipes/", "-v", "--tb=short", "-m", "recipe"]
+# The rail and boundary the whole gate's disk budget is taken against.
+candidate_budget = ["default", "candidate-boundary"]
+# Where a failed gate's evidence is kept, and what to call a run whose
+# source state was never recorded.
+failure_rail = "default"
+unknown_head = "unknown"
 
 # ---------------------------------------------------------------------------
 # Version stamping
@@ -466,7 +480,6 @@ direct_concurrency = ["planrunner.py"]
 # quietly describe a past that is no longer true.
 modules_still_re_entering = [
     "assetlanes.py",
-    "candidate.py",
     "crosscompile.py",
     "release.py",
 ]
@@ -845,6 +858,7 @@ source_contract = [
     "tests/test_gate_cli.py",
     "tests/test_gate_command.py",
     "tests/test_gate_config.py",
+    "tests/test_gate_candidate_composition.py",
     "tests/test_gate_crosscompile.py",
     "tests/test_gate_debproof.py",
     "tests/test_gate_disk.py",

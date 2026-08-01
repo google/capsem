@@ -22,7 +22,7 @@ from .command import GateCommand
 from .config import GateConfig
 from .context import Context
 from .errors import GateError
-from .execution import step
+from .execution import Step, step
 from .fileactions import AtomicReplace, Copy, MakeDir, Remove
 from .plan import Plan
 from .versions import workspace_version
@@ -134,40 +134,46 @@ class PackInitrdCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        config = self._config
-        settings = config.initrd
-
-        previous: tuple = ()
-        if needs_rebuild(config):
-            previous = (
-                plan.add(
-                    step(
-                        "guest-agents",
-                        Run([*settings.build, "--arch", config.host_arch().name]),
-                        contends=(config.exclusive("docker_daemon"),),
-                    )
-                ),
-            )
-
-        packed = plan.add(step("repack", _Repack()), after=previous)
-
-        assets = config.path(config.imagebuild.output)
-        manifest = plan.add(
-            step(
-                "manifest",
-                Run([*settings.manifest, str(assets), "--version", workspace_version(config.root)]),
-            ),
-            after=(packed,),
-        )
-        plan.add(
-            step(
-                "hash-aliases",
-                # Hash-named hardlinks, so the dev layout matches the installed
-                # one and startup resolves locally instead of falling through
-                # to a remote fetch.
-                Script(settings.hash_assets, str(assets)),
-                Run(["touch", settings.rebuild_trigger]),
-            ),
-            after=(manifest,),
-        )
+        pack(plan, self._config)
         return plan
+
+
+def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
+    """Rebuild the guest binaries if stale, then repack the initrd."""
+    phase = plan.phase("initrd")
+    settings = config.initrd
+
+    previous: tuple = after
+    if needs_rebuild(config):
+        previous = (
+            phase.add(
+                step(
+                    "guest-agents",
+                    Run([*settings.build, "--arch", config.host_arch().name]),
+                    contends=(config.exclusive("docker_daemon"),),
+                ),
+                after=after,
+            ),
+        )
+
+    packed = phase.add(step("repack", _Repack()), after=previous)
+
+    assets = config.path(config.imagebuild.output)
+    manifest = phase.add(
+        step(
+            "manifest",
+            Run([*settings.manifest, str(assets), "--version", workspace_version(config.root)]),
+        ),
+        after=(packed,),
+    )
+    return phase.add(
+        step(
+            "hash-aliases",
+            # Hash-named hardlinks, so the dev layout matches the installed
+            # one and startup resolves locally instead of falling through
+            # to a remote fetch.
+            Script(settings.hash_assets, str(assets)),
+            Run(["touch", settings.rebuild_trigger]),
+        ),
+        after=(manifest,),
+    )

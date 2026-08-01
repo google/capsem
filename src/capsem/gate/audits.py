@@ -84,7 +84,12 @@ def blocking_surface(config: GateConfig, surfaces: list[Step]) -> Step:
     target list cannot silently move the dependency onto the wrong one.
     """
     wanted = f"web.{config.websurfaces.blocks_clippy}"
-    return next(candidate for candidate in surfaces if candidate.label == wanted)
+    # Suffix, not equality: composed into a larger plan these labels carry
+    # their phase's namespace, and matching the whole thing would silently
+    # find nothing.
+    return next(
+        candidate for candidate in surfaces if candidate.label.endswith(wanted)
+    )
 
 
 def lint(config: GateConfig) -> Step:

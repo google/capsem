@@ -58,7 +58,7 @@ def test_clippy_waits_for_the_frontend_build() -> None:
     when the frontend failed -- which lost the clippy result on exactly the
     runs where the most had changed.
     """
-    assert _wave_of(FastModule, "clippy") > _wave_of(FastModule, "web.frontend")
+    assert _wave_of(FastModule, "fast.clippy") > _wave_of(FastModule, "fast.web.frontend")
 
 
 def test_the_dependency_is_taken_from_config_not_from_position() -> None:
@@ -69,20 +69,25 @@ def test_the_dependency_is_taken_from_config_not_from_position() -> None:
 def test_nothing_runs_before_the_source_parses() -> None:
     """Every check below spends real time; a syntax error makes all of it
     noise about a file nobody can import."""
-    syntax = _wave_of(FastModule, "audit.source-syntax")
+    syntax = _wave_of(FastModule, "fast.audit.source-syntax")
 
-    for label in ("audit.cargo", "audit.public-surface", "lint", "clippy"):
+    for label in (
+        "fast.audit.cargo",
+        "fast.audit.public-surface",
+        "fast.lint",
+        "fast.clippy",
+    ):
         assert _wave_of(FastModule, label) > syntax
 
 
 def test_the_environment_is_installed_before_anything_uses_it() -> None:
     """Everything here runs through uv or pnpm. A gate that assumes the
     lockfile is already installed works only on the machine it was written on."""
-    python = _wave_of(FastModule, "toolchain.python")
-    node = _wave_of(FastModule, "toolchain.node")
+    python = _wave_of(FastModule, "fast.toolchain.python")
+    node = _wave_of(FastModule, "fast.toolchain.node")
 
-    assert _wave_of(FastModule, "audit.source-syntax") > python
-    assert _wave_of(FastModule, "web.frontend") > node
+    assert _wave_of(FastModule, "fast.audit.source-syntax") > python
+    assert _wave_of(FastModule, "fast.web.frontend") > node
 
 
 def test_the_audits_are_independent_of_each_other() -> None:
@@ -90,15 +95,15 @@ def test_the_audits_are_independent_of_each_other() -> None:
     failure comes back named rather than as a single FAIL bit."""
     waves = _waves(FastModule)
     audits = {
-        "audit.cargo",
-        "audit.pnpm",
-        "audit.python-lock",
-        "audit.public-surface",
-        "audit.skills",
-        "audit.release-selections",
+        "fast.audit.cargo",
+        "fast.audit.pnpm",
+        "fast.audit.python-lock",
+        "fast.audit.public-surface",
+        "fast.audit.skills",
+        "fast.audit.release-selections",
     }
 
-    together = next(wave for wave in waves if "audit.cargo" in wave)
+    together = next(wave for wave in waves if "fast.audit.cargo" in wave)
     assert audits <= together
 
 
@@ -108,7 +113,7 @@ def test_every_web_surface_is_its_own_step() -> None:
     labels = {label for wave in _waves(FastModule) for label in wave}
 
     for target in CONFIG.websurfaces.targets:
-        assert f"web.{target}" in labels
+        assert f"fast.web.{target}" in labels
 
 
 def test_the_fast_module_works_in_an_isolated_home() -> None:

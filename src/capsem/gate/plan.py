@@ -25,6 +25,7 @@ library would supply the sort we already have and nothing else we use.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from graphlib import CycleError, TopologicalSorter
 
 from . import planchecks, planreport, planrunner
@@ -35,7 +36,7 @@ from .execution import Step
 from .planrunner import FAILED, OK, SKIPPED, Outcome
 from .timing import longest_chain
 
-__all__ = ["FAILED", "OK", "SKIPPED", "Outcome", "Plan"]
+__all__ = ["FAILED", "OK", "SKIPPED", "Outcome", "Phase", "Plan"]
 
 
 class Plan:
@@ -63,6 +64,17 @@ class Plan:
         for earlier in after:
             self.edge(before=earlier, after=step)
         return step
+
+    def phase(self, prefix: str) -> Phase:
+        """A view that namespaces everything a fragment adds.
+
+        Composed into one plan, `test-static` and `test-functional` both want a
+        step called `sign`, and both legitimately -- the binaries are signed
+        after the coverage build and again before the VM suites. Namespacing
+        makes them `static.sign` and `functional.sign`, which is also what the
+        run log and the timing report then say.
+        """
+        return Phase(self, prefix)
 
     def shared(self, step: Step, *, after: tuple[Step, ...] = ()) -> Step:
         """Register groundwork that several fragments each need, once.
@@ -217,3 +229,28 @@ class Plan:
     def after_of(self, label: str) -> set[str]:
         """The labels that must finish before `label` may start."""
         return self._after[label]
+
+
+class Phase:
+    """One fragment's steps, added to a shared plan under one namespace.
+
+    Composed into a single plan, `test-static` and `test-functional` both want
+    a step called `sign`, and both legitimately -- the binaries are signed after
+    the coverage build and again before the VM suites. Namespacing makes them
+    `static.sign` and `functional.sign`, which is also what the run log and the
+    timing report then say, so a slow step names the phase it belongs to.
+    """
+
+    def __init__(self, plan: Plan, prefix: str) -> None:
+        self._plan = plan
+        self._prefix = prefix
+
+    def add(self, step: Step, *, after: tuple[Step, ...] = ()) -> Step:
+        return self._plan.add(replace(step, label=self.label(step.label)), after=after)
+
+    def shared(self, step: Step, *, after: tuple[Step, ...] = ()) -> Step:
+        """Groundwork several phases need, kept out of any one namespace."""
+        return self._plan.shared(step, after=after)
+
+    def label(self, name: str) -> str:
+        return f"{self._prefix}.{name}"

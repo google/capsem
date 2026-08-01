@@ -1,27 +1,46 @@
 """The three guarantees `just test` makes on the way out.
 
-These were text assertions against the recipe when the gate was shell: the
-trap had to be armed, had to `return "$status"` rather than `exit "$status"`,
-and must not be disarmed early. Each was checked by grepping the justfile,
-which proves the code was written a particular way and not that it behaves a
+These were text assertions against the recipe when the gate was shell: the trap
+had to be armed, had to `return "$status"` rather than `exit "$status"`, and
+must not be disarmed early. Each was checked by grepping the justfile, which
+proves the code was written a particular way and not that it behaves a
 particular way.
 
-`try`/`finally` removes the trap-status hazard entirely -- there is no `$?` to
-misread -- so these assert the behaviour instead: an interrupted run reports
-the interrupt, a leaked process fails an otherwise-passing run, and a failing
-run keeps its own error rather than the cleanup's.
+They then became assertions about an imperative `CandidateGate.run()`. The gate
+is a composed plan now, and the guarantees split cleanly by *when* they must
+hold:
+
+  the source state is a pair of steps, because re-asserting it must not happen
+  when the gate failed -- the failure is the report
+
+  the process count and the failure evidence are `Resource`s, because they must
+  happen on every path including the aborted one, and a step whose dependency
+  failed is skipped
+
+So the claims are unchanged and the evidence moved to whichever of those two
+places now owns each one.
 """
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 
 import pytest
 from helpers.gate import RecordingRunner
 
+from capsem.gate import cli  # noqa: F401 - imported so every command registers
 from capsem.gate import config as gate_config
-from capsem.gate.candidate import CandidateGate, keep_awake
+from capsem.gate.candidate import CandidateCommand, keep_awake
+from capsem.gate.command import GateCommand
+from capsem.gate.context import Context
 from capsem.gate.errors import GateError
+from capsem.gate.lifecycle import held
+from capsem.gate.sourcestate import RecordSourceState, RequireSourceUnchanged
+
+# The Colima lifecycle has its own home in
+# tests/capsem-cleanup-script/test_colima_lifecycle.py, where it is driven
+# against a real executable rather than a recording runner.
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -57,9 +76,19 @@ class Running(RecordingRunner):
         return completed
 
 
-def _gate(tmp_path: Path, **kwargs) -> tuple[CandidateGate, Running]:
-    runner = Running(_checkout(tmp_path), **kwargs)
-    return CandidateGate(runner), runner
+def _command(root: Path, **kwargs) -> CandidateCommand:
+    runner = Running(root, **kwargs)
+    return GateCommand.registry["candidate"](
+        runner, argparse.Namespace(dry_run=False, graph=False, timing=False)
+    )
+
+
+def _context(root: Path, **kwargs) -> Context:
+    return Context(Running(root, **kwargs), gate_config.for_root(root))
+
+
+def _plan():
+    return _command(PROJECT_ROOT)._describe()
 
 
 # ---------------------------------------------------------------------------
@@ -67,98 +96,97 @@ def _gate(tmp_path: Path, **kwargs) -> tuple[CandidateGate, Running]:
 # ---------------------------------------------------------------------------
 
 
-def test_the_source_state_is_captured_before_anything_runs(tmp_path: Path) -> None:
-    gate, runner = _gate(tmp_path)
+def test_the_source_state_is_captured_before_anything_runs() -> None:
+    labels = list(_plan().labels)
 
-    gate.run()
-
-    runner.assert_order(
-        r"rev-parse HEAD", r"source-state-digest\.py", r"just _test-fast"
-    )
+    assert labels[0] == "source.record"
 
 
-def test_the_process_baseline_precedes_anything_that_can_spawn_one(
-    tmp_path: Path,
-) -> None:
-    """Taken later, it would absorb this run's own processes -- and a developer's
-    dev daemon would be blamed for a leak it did not cause."""
-    gate, runner = _gate(tmp_path)
+def test_the_process_baseline_precedes_anything_that_can_spawn_one() -> None:
+    """Taken later, it would absorb this run's own processes -- and a
+    developer's dev daemon would be blamed for a leak it did not cause.
 
-    gate.run()
+    Acquisition order is the guarantee now: resources are taken left to right
+    and released in reverse, so the baseline is first taken and last compared.
+    """
+    names = [resource.name for resource in _command(PROJECT_ROOT).resources()]
 
-    runner.assert_order(
-        r"check-orphan-processes\.py baseline", r"just _test-fast"
-    )
+    assert names[0] == "orphan-accounting"
 
 
-def test_the_fast_module_runs_before_the_expensive_one(tmp_path: Path) -> None:
+def test_the_fast_module_runs_before_the_expensive_one() -> None:
     """Its failures come back in minutes rather than after the Docker and VM
     work."""
-    gate, runner = _gate(tmp_path)
+    labels = list(_plan().labels)
+    fast = next(i for i, label in enumerate(labels) if label.startswith("fast."))
+    static = next(i for i, label in enumerate(labels) if label.startswith("static."))
 
-    gate.run()
-
-    runner.assert_order(r"just _test-fast", r"with-gate-colima\.sh just _test-candidate")
+    assert fast < static
 
 
 def test_a_head_that_moved_mid_run_fails(tmp_path: Path) -> None:
     """A gate that qualified a HEAD nobody has proved nothing about anything."""
-    gate, runner = _gate(tmp_path)
-    original = Running.execute
+    root = _checkout(tmp_path)
+    context = _context(root)
+    RecordSourceState().perform(context)
 
-    def moving(self, command):
-        if "rev-parse HEAD" in str(command) and runner.ran("just _test-fast"):
-            self.head = "0000000000000000"
-        return original(self, command)
-
-    Running.execute = moving
-    try:
-        with pytest.raises(GateError, match="source HEAD changed"):
-            gate.run()
-    finally:
-        Running.execute = original
-        Running.head = HEAD
+    moved = _context(root)
+    moved.runner.head = "0000000000000000"
+    with pytest.raises(GateError, match="source HEAD changed"):
+        RequireSourceUnchanged().perform(moved)
 
 
 def test_a_working_tree_the_gate_edited_fails(tmp_path: Path) -> None:
-    gate, runner = _gate(tmp_path)
-    original = Running.execute
+    root = _checkout(tmp_path)
+    RecordSourceState().perform(_context(root))
 
-    def dirtying(self, command):
-        if "source-state-digest" in str(command) and runner.ran("just _test-fast"):
-            self.digest = "sha256:changed"
-        return original(self, command)
+    dirtied = _context(root)
+    dirtied.runner.digest = "sha256:changed"
+    with pytest.raises(GateError, match="changed the source working tree"):
+        RequireSourceUnchanged().perform(dirtied)
 
-    Running.execute = dirtying
-    try:
-        with pytest.raises(GateError, match="changed the source working tree"):
-            gate.run()
-    finally:
-        Running.execute = original
-        Running.digest = DIGEST
+
+def test_a_verification_with_nothing_recorded_refuses(tmp_path: Path) -> None:
+    """A missing record must not read as agreement."""
+    with pytest.raises(GateError, match="never recorded"):
+        RequireSourceUnchanged().perform(_context(_checkout(tmp_path)))
 
 
 # ---------------------------------------------------------------------------
-# Closing out
+# Closing out: what must happen on every path
 # ---------------------------------------------------------------------------
+
+
+def _accounting(root: Path, **kwargs):
+    from capsem.gate.candidate import OrphanAccounting
+
+    runner = Running(root, **kwargs)
+    return OrphanAccounting(gate_config.for_root(root), runner), runner
 
 
 def test_a_leaked_process_fails_an_otherwise_passing_run(tmp_path: Path) -> None:
     """The whole point: a run that did everything right and left a service
     behind is not a run that passed."""
-    gate, _ = _gate(tmp_path, failures=["orphan-processes.py check"])
+    accounting, _ = _accounting(
+        _checkout(tmp_path), failures=["orphan-processes.py check"]
+    )
+    accounting.acquire()
 
     with pytest.raises(GateError, match="outlived the gate"):
-        gate.run()
+        accounting.release()
 
 
 def test_the_count_still_happens_when_the_gate_fails(tmp_path: Path) -> None:
     """An aborted run is the one that skips its own cleanup, so it is exactly
-    the run whose survivors need counting."""
-    gate, runner = _gate(tmp_path, failures=["just _test-fast"])
+    the run whose survivors need counting.
 
-    with pytest.raises(GateError):
-        gate.run()
+    A `Resource` releases on every path, which is why the accounting is one
+    rather than a step -- a step whose dependency failed is skipped.
+    """
+    accounting, runner = _accounting(_checkout(tmp_path))
+
+    with pytest.raises(GateError, match="boom"), held(accounting):
+        raise GateError("boom")
 
     assert runner.ran(r"check-orphan-processes\.py check")
 
@@ -168,15 +196,14 @@ def test_a_failing_run_keeps_its_own_error_rather_than_the_cleanups(
 ) -> None:
     """Otherwise the operator reads about a leaked process and never sees the
     failure that caused it."""
-    gate, _ = _gate(
-        tmp_path, failures=["just _test-fast", "orphan-processes.py check"]
+    accounting, _ = _accounting(
+        _checkout(tmp_path), failures=["orphan-processes.py check"]
     )
 
-    with pytest.raises(GateError) as failure:
-        gate.run()
+    with pytest.raises(GateError) as failure, held(accounting):
+        raise GateError("the real failure")
 
-    assert "_test-fast" in str(failure.value)
-    assert "outlived" not in str(failure.value)
+    assert "the real failure" in str(failure.value)
 
 
 def test_an_interrupted_run_is_never_reported_as_a_pass(tmp_path: Path) -> None:
@@ -184,22 +211,13 @@ def test_an_interrupted_run_is_never_reported_as_a_pass(tmp_path: Path) -> None:
 
     Inside an EXIT trap `$?` is the last command's status, which on Ctrl-C is
     0, so `exit "$status"` discarded the shell's own 130 and turned an abort
-    into a green gate.
+    into a green gate. An interrupt propagates through `held` unless something
+    explicitly swallows it.
     """
-    gate, runner = _gate(tmp_path)
-    original = Running.execute
+    accounting, runner = _accounting(_checkout(tmp_path))
 
-    def interrupting(self, command):
-        if "just _test-fast" in str(command):
-            raise KeyboardInterrupt
-        return original(self, command)
-
-    Running.execute = interrupting
-    try:
-        with pytest.raises(KeyboardInterrupt):
-            gate.run()
-    finally:
-        Running.execute = original
+    with pytest.raises(KeyboardInterrupt), held(accounting):
+        raise KeyboardInterrupt
 
     assert runner.ran(r"check-orphan-processes\.py check"), (
         "the count must happen on the abort path too"
@@ -209,10 +227,17 @@ def test_an_interrupted_run_is_never_reported_as_a_pass(tmp_path: Path) -> None:
 def test_failure_evidence_is_captured_and_labelled_with_the_head(
     tmp_path: Path,
 ) -> None:
-    gate, runner = _gate(tmp_path, failures=["just _test-fast"])
+    """`preserve` runs only on failure and before release, because release is
+    what destroys the evidence."""
+    from capsem.gate.candidate import FailureEvidence
 
-    with pytest.raises(GateError):
-        gate.run()
+    root = _checkout(tmp_path)
+    RecordSourceState().perform(_context(root))
+    runner = Running(root)
+    evidence = FailureEvidence(gate_config.for_root(root), runner)
+
+    with pytest.raises(GateError), held(evidence):
+        raise GateError("boom")
 
     captured = runner.matching(r"capture-failure")
     assert captured
@@ -220,11 +245,22 @@ def test_failure_evidence_is_captured_and_labelled_with_the_head(
 
 
 def test_a_passing_run_captures_no_failure_evidence(tmp_path: Path) -> None:
-    gate, runner = _gate(tmp_path)
+    from capsem.gate.candidate import FailureEvidence
 
-    gate.run()
+    root = _checkout(tmp_path)
+    runner = Running(root)
+
+    with held(FailureEvidence(gate_config.for_root(root), runner)):
+        pass
 
     assert not runner.ran(r"capture-failure")
+
+
+def test_the_gate_holds_everything_that_must_be_given_back() -> None:
+    """The set, so a later change cannot quietly drop one."""
+    names = {resource.name for resource in _command(PROJECT_ROOT).resources()}
+
+    assert names == {"orphan-accounting", "workspace", "colima", "failure-evidence"}
 
 
 # ---------------------------------------------------------------------------

@@ -24,7 +24,8 @@ from . import (
 )
 from .actions import Script
 from .command import GateCommand
-from .execution import step
+from .config import GateConfig
+from .execution import Step, step
 from .plan import Plan
 from .testmodules import InWorkspace, storagerelease
 
@@ -45,43 +46,49 @@ class ArtifactsModule(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        config = self._config
-        settings = config.modules
-        pulled = os.environ.get(settings.release_input_dir)
-
-        if pulled:
-            verify = plan.add(
-                step(
-                    "release-inputs.verify",
-                    Script(settings.verify_inputs_script, "--input-dir", pulled),
-                )
-            )
-            profile = os.environ.get(settings.release_profile)
-            if profile:
-                plan.add(
-                    step(
-                        "release-inputs.boot",
-                        Script(
-                            settings.prove_profile_assets_script,
-                            "--input-dir", pulled,
-                            "--profile", profile,
-                        ),
-                        contends=(config.exclusive("apple_vz"),),
-                    ),
-                    after=(verify,),
-                )
-            return plan
-
-        assets = plan.add(assetgate.assets_step(config))
-        plan.add(
-            pytestsuite.Suite(
-                label="build-chain",
-                paths=settings.build_chain_artifact_tests,
-                stop_at_first_failure=False,
-            ).as_step(config),
-            after=(assets,),
-        )
+        artifacts(plan, self._config)
         return plan
+
+
+def artifacts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+    """Build every profile's VM assets, or verify the pulled ones."""
+    phase = plan.phase("artifacts")
+    settings = config.modules
+    pulled = os.environ.get(settings.release_input_dir)
+
+    if pulled:
+        verify = phase.add(
+            step(
+                "release-inputs.verify",
+                Script(settings.verify_inputs_script, "--input-dir", pulled),
+            ),
+            after=after,
+        )
+        profile = os.environ.get(settings.release_profile)
+        if not profile:
+            return verify
+        return phase.add(
+            step(
+                "release-inputs.boot",
+                Script(
+                    settings.prove_profile_assets_script,
+                    "--input-dir", pulled,
+                    "--profile", profile,
+                ),
+                contends=(config.exclusive("apple_vz"),),
+            ),
+            after=(verify,),
+        )
+
+    built = phase.add(assetgate.assets_step(config), after=after)
+    return phase.add(
+        pytestsuite.Suite(
+            label="build-chain",
+            paths=settings.build_chain_artifact_tests,
+            stop_at_first_failure=False,
+        ).as_step(config),
+        after=(built,),
+    )
 
 
 class FunctionalModule(
@@ -104,59 +111,51 @@ class FunctionalModule(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        config = self._config
-        axis = profiles.selected(config)
-        base, rest = axis[0], axis[1:]
-
-        first: tuple = ()
-        if not os.environ.get(config.modules.release_input_dir):
-            first = (plan.add(hostpackage.sign_step(config)),)
-
-        broad = plan.add(
-            pytestsuite.broad(config, profile=base).as_step(config), after=first
-        )
-        snapshot = plan.add(
-            pytestsuite.host_snapshot(config, profile=base).as_step(config),
-            after=(broad,),
-        )
-        timing = plan.add(
-            pytestsuite.timing(config, profile=base).as_step(config), after=(snapshot,)
-        )
-
-        injection = plan.add(vmproofs.injection(config, profile=base), after=(timing,))
-        integration = plan.add(
-            vmproofs.integration(config, profile=base), after=(injection,)
-        )
-        previous = plan.add(
-            pytestsuite.benchmark(config, profile=base).as_step(config),
-            after=(integration,),
-        )
-
-        for profile in rest:
-            compatibility = plan.add(
-                pytestsuite.compatibility(config, profile=profile).as_step(config),
-                after=(previous,),
-            )
-            snapshot = plan.add(
-                pytestsuite.host_snapshot(config, profile=profile).as_step(config),
-                after=(compatibility,),
-            )
-            timing = plan.add(
-                pytestsuite.timing(config, profile=profile).as_step(config),
-                after=(snapshot,),
-            )
-            injection = plan.add(
-                vmproofs.injection(config, profile=profile), after=(timing,)
-            )
-            integration = plan.add(
-                vmproofs.integration(config, profile=profile), after=(injection,)
-            )
-            previous = plan.add(
-                pytestsuite.benchmark(config, profile=profile).as_step(config),
-                after=(integration,),
-            )
-
+        functional(plan, self._config)
         return plan
+
+
+def functional(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+    """Every VM-owned suite, for every profile the channel selects."""
+    phase = plan.phase("functional")
+    axis = profiles.selected(config)
+    base, rest = axis[0], axis[1:]
+
+    first: tuple = after
+    if not os.environ.get(config.modules.release_input_dir):
+        first = (phase.add(hostpackage.sign_step(config), after=after),)
+
+    previous = _profile_lane(phase, config, base, after=first, broad=True)
+    for profile in rest:
+        previous = _profile_lane(phase, config, profile, after=(previous,), broad=False)
+    return previous
+
+
+def _profile_lane(phase, config: GateConfig, profile: str, *, after: tuple, broad: bool):
+    """One profile's VM-owned suites, in the order they depend on.
+
+    The base profile takes the broad proof -- everything that can share a
+    machine, four VMs at a time. Each remaining profile repeats the VM-owned
+    suites instead: that is the compatibility axis, not a reduced substitute.
+    """
+    head = (
+        pytestsuite.broad(config, profile=profile)
+        if broad
+        else pytestsuite.compatibility(config, profile=profile)
+    )
+    current = phase.add(head.as_step(config), after=after)
+    current = phase.add(
+        pytestsuite.host_snapshot(config, profile=profile).as_step(config),
+        after=(current,),
+    )
+    current = phase.add(
+        pytestsuite.timing(config, profile=profile).as_step(config), after=(current,)
+    )
+    current = phase.add(vmproofs.injection(config, profile=profile), after=(current,))
+    current = phase.add(vmproofs.integration(config, profile=profile), after=(current,))
+    return phase.add(
+        pytestsuite.benchmark(config, profile=profile).as_step(config), after=(current,)
+    )
 
 
 class GlowupModule(
@@ -181,91 +180,105 @@ class GlowupModule(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        config = self._config
-        settings = config.modules
-        package = os.environ.get(settings.release_package)
-
-        if package:
-            return self._prove_pulled_package(plan, package)
-        return self._build_and_prove(plan)
-
-    # -- the release lane --------------------------------------------------
-
-    def _prove_pulled_package(self, plan: Plan, package: str) -> Plan:
-        settings = self._config.modules
-        staged = plan.add(self._glowup("glowup.package", package, settings.glowup_work_dir))
-        plan.add(
-            self._glowup(
-                "glowup.channel-switch",
-                package,
-                settings.channel_switch_work_dir,
-                # Cleared rather than overridden: the switch has to rediscover
-                # the channel from installed state, and inheriting the previous
-                # run's answer would prove nothing about that.
-                clear=settings.channel_switch_cleared,
-            ),
-            after=(staged,),
-        )
+        glowup(plan, self._config)
         return plan
 
-    def _glowup(self, label: str, package: str, work_dir: str, *, clear: tuple = ()):
-        config = self._config
-        settings = config.modules
-        functional = config.functional
-        return step(
-            label,
-            Script(
-                settings.glowup_script,
-                "--input-deb", package,
-                "--bin-dir", os.environ.get(settings.release_bin_dir, settings.default_bin_dir),
-                "--assets-dir", os.environ.get(functional.assets_variable, functional.assets_dir),
-                "--config-root", os.environ.get(functional.config_root_variable, functional.config_root),
-                "--work-dir", work_dir,
-                "--package-ready",
-                env=dict.fromkeys(clear, ""),
+
+def glowup(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+    """Build the release packages and prove an install upgrades cleanly."""
+    phase = plan.phase("glowup")
+    package = os.environ.get(config.modules.release_package)
+    if package:
+        return _prove_pulled_package(phase, config, package, after)
+    return _build_and_prove(plan, phase, config, after)
+
+
+# -- the release lane ------------------------------------------------------
+
+
+def _prove_pulled_package(phase, config: GateConfig, package: str, after: tuple) -> Step:
+    """The publishable package, proved twice.
+
+    Once as staged, and once with the release environment cleared, so the
+    channel switch has to rediscover its state from the installed system
+    rather than inherit what it was told.
+    """
+    settings = config.modules
+    staged = phase.add(
+        _glowup_step(config, "package", package, settings.glowup_work_dir), after=after
+    )
+    return phase.add(
+        _glowup_step(
+            config,
+            "channel-switch",
+            package,
+            settings.channel_switch_work_dir,
+            clear=settings.channel_switch_cleared,
+        ),
+        after=(staged,),
+    )
+
+
+def _glowup_step(
+    config: GateConfig, label: str, package: str, work_dir: str, *, clear: tuple = ()
+) -> Step:
+    settings = config.modules
+    functional_settings = config.functional
+    return step(
+        label,
+        Script(
+            settings.glowup_script,
+            "--input-deb", package,
+            "--bin-dir", os.environ.get(settings.release_bin_dir, settings.default_bin_dir),
+            "--assets-dir",
+            os.environ.get(functional_settings.assets_variable, functional_settings.assets_dir),
+            "--config-root",
+            os.environ.get(
+                functional_settings.config_root_variable, functional_settings.config_root
             ),
-            contends=(config.exclusive("docker_daemon"),),
+            "--work-dir", work_dir,
+            "--package-ready",
+            env=dict.fromkeys(clear, ""),
+        ),
+        contends=(config.exclusive("docker_daemon"),),
+    )
+
+
+# -- the local lane --------------------------------------------------------
+
+
+def _build_and_prove(plan: Plan, phase, config: GateConfig, after: tuple) -> Step:
+    # `previous` chains each architecture behind the last; the first has
+    # nothing before it beyond whatever this phase was given.
+    previous: tuple = after
+    last = list(config.architectures)[-1]
+    for arch in config.architectures:
+        built = crosscompile.fragment(plan, config, config.arch(arch), after=previous)
+        released = phase.add(
+            storagerelease(config, f"completed-package-{arch}"), after=(built,)
+        )
+        # Between the two package builds, not after both: the second build
+        # needs the headroom the install rail is still reserving.
+        previous = (
+            (phase.add(storagerelease(config, "deferred-install-target"), after=(released,)),)
+            if arch != last
+            else (released,)
         )
 
-    # -- the local lane ----------------------------------------------------
+    # capsem-host-builder is a dependency of both package builds, so its final
+    # tag is released only after the second consumer -- never between the
+    # assets and the package assembly.
+    graph = phase.add(storagerelease(config, "completed-buildkit-graph"), after=previous)
 
-    def _build_and_prove(self, plan: Plan) -> Plan:
-        config = self._config
+    if host.on_macos():
+        graph = phase.add(
+            step(
+                "macos-package",
+                Script(config.modules.macos_glowup_script),
+                contends=(config.exclusive("apple_vz"),),
+            ),
+            after=(graph,),
+        )
 
-        # `previous` chains each architecture behind the last; the first has
-        # nothing before it, which is what the empty tuple means.
-        previous: tuple = ()
-        last = list(config.architectures)[-1]
-        for arch in config.architectures:
-            built = crosscompile.fragment(
-                plan, config, config.arch(arch), after=previous
-            )
-            released = plan.add(
-                storagerelease(config, f"completed-package-{arch}"), after=(built,)
-            )
-            # Between the two package builds, not after both: the second build
-            # needs the headroom the install rail is still reserving.
-            previous = (
-                (plan.add(storagerelease(config, "deferred-install-target"), after=(released,)),)
-                if arch != last
-                else (released,)
-            )
-
-        # capsem-host-builder is a dependency of both package builds, so its
-        # final tag is released only after the second consumer -- never between
-        # the assets and the package assembly.
-        graph = plan.add(storagerelease(config, "completed-buildkit-graph"), after=previous)
-
-        if host.on_macos():
-            graph = plan.add(
-                step(
-                    "macos-package",
-                    Script(config.modules.macos_glowup_script),
-                    contends=(config.exclusive("apple_vz"),),
-                ),
-                after=(graph,),
-            )
-
-        sbom = plan.add(hostpackage.sbom_step(config), after=(graph,))
-        plan.add(install.install_step(config), after=(sbom,))
-        return plan
+    sbom = phase.add(hostpackage.sbom_step(config), after=(graph,))
+    return phase.add(install.install_step(config), after=(sbom,))

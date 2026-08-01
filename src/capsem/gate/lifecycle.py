@@ -98,6 +98,7 @@ def held(*resources: Resource) -> Iterator[tuple[Resource, ...]]:
     acquired are -- so a half-built phase leaves nothing behind.
     """
     acquired: list[Resource] = []
+    failure: BaseException | None = None
     try:
         for resource in resources:
             resource.acquire()
@@ -108,10 +109,17 @@ def held(*resources: Resource) -> Iterator[tuple[Resource, ...]]:
         # not be telling commands where to run.
         yield tuple(acquired)
     except BaseException as error:
+        failure = error
         _preserve(acquired, error)
         raise
     finally:
-        _release(acquired)
+        # A `finally` that raises *replaces* the exception in flight, so a
+        # teardown failure used to be the only thing the operator was told:
+        # they read that a process leaked, and never learned which test failed
+        # and caused the leak. Cleanup failures are reported here and attached
+        # to the primary error, and only become the error themselves when
+        # there is no primary one to lose.
+        _release(acquired, primary=failure)
 
 
 def environment_of(resources: tuple[Resource, ...]) -> dict[str, str]:
@@ -138,11 +146,17 @@ def _preserve(acquired: list[Resource], error: BaseException) -> None:
             print(f"failed to preserve {resource.name} evidence: {failure}")
 
 
-def _release(acquired: list[Resource]) -> None:
+def _release(acquired: list[Resource], *, primary: BaseException | None = None) -> None:
     """Release everything, then report anything that would not let go.
 
     One resource refusing to release must not strand the others, so every
     release is attempted before any failure is raised.
+
+    When something already failed, that failure is the one the operator needs;
+    a teardown error raised from here would silently replace it. The cleanup
+    failures are still surfaced -- printed, and added to the primary error's
+    notes so a traceback carries them -- but the primary error is what
+    propagates.
     """
     failures: list[str] = []
     for resource in reversed(acquired):
@@ -152,5 +166,11 @@ def _release(acquired: list[Resource]) -> None:
             # Broad on purpose: every release is attempted, and the failures
             # are aggregated below rather than stopping at the first.
             failures.append(f"{resource.name}: {failure}")
-    if failures:
-        raise GateError("failed to release: " + "; ".join(failures))
+    if not failures:
+        return
+
+    reported = "failed to release: " + "; ".join(failures)
+    if primary is None:
+        raise GateError(reported)
+    print(reported)
+    primary.add_note(reported)

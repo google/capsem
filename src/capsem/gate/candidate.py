@@ -1,128 +1,46 @@
-"""`just test`: the complete local proof, and what it guarantees on the way out.
+"""`just test`: the complete local proof, as one process holding one lock.
 
-Three guarantees, and each was subtle enough in shell to have been got wrong.
+Two of this command's three guarantees cannot be steps, and understanding why
+is most of the design.
 
-**The source cannot move underneath the run.** A forty-minute gate that
-qualified a HEAD nobody has, or a working tree edited halfway through, has
-proved something about no particular version of the software. Both are captured
-before and compared after.
+**The process count happens even when the run aborts.** An aborted run is the
+one that skips its own cleanup, so it is exactly the run whose surviving
+processes need counting -- sixteen `capsem-service` processes, each holding a
+tray, once accumulated in a day while every run reported success. A step whose
+dependency failed is *skipped*, which is right for work and wrong for cleanup.
+A `Resource` releases on every path, so the accounting is one.
 
-**The count happens even when the run aborts.** An aborted run is the one that
-skips its own cleanup, so it is exactly the run whose surviving processes need
-counting -- sixteen `capsem-service` processes, each holding a tray, once
-accumulated in a day while every run reported success.
+**Colima is restored to what the developer had.** That was a shell trap in
+`with-gate-colima.sh`, wrapping the expensive half of the gate. "Give back what
+I found on the way in" is the resource abstraction exactly, so it is one too --
+and the trap, along with the script, goes.
 
-**An interrupted run is never reported as a pass.** This is the one the shell
-made genuinely hard. Inside an EXIT trap `$?` is the *last command's* status,
-which on Ctrl-C is 0, so `exit "$status"` discarded the shell's own 130 and
-turned an abort into a green gate. `try`/`finally` has no equivalent trap: the
-exception propagates unless something explicitly swallows it, and a leak raises
-on its own account.
+**The source cannot move underneath the run.** That one *is* a pair of steps,
+because it must not run when the gate failed: the failure is the report.
+
+The third hazard the shell had here is gone by construction. Inside an EXIT trap
+`$?` is the *last command's* status, which on Ctrl-C is 0, so `exit "$status"`
+discarded the shell's own 130 and turned an abort into a green gate. An
+interrupt propagates through `held` unless something explicitly swallows it, and
+`planrunner` re-raises rather than recording it as a step result.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import sys
 
+from . import candidateplan, host
 from . import config as gate_config
-from . import host
-from .actions import Call
 from .command import GateCommand
 from .errors import GateError
-from .execution import step
+from .lifecycle import Resource
 from .plan import Plan
 from .proc import Runner
 from .storage import Storage
-
-
-class CandidateGate:
-    """One complete local qualification run."""
-
-    def __init__(self, runner: Runner) -> None:
-        self._runner = runner
-        self._config = gate_config.for_root(runner.root)
-        self._settings = self._config.candidate
-        self._storage = Storage(runner)
-
-    # -- the source state under test ---------------------------------------
-
-    def _head(self) -> str:
-        return self._runner.capture(["git", "rev-parse", "HEAD"])
-
-    def _source_digest(self) -> str:
-        return self._runner.capture(
-            ["uv", "run", "python", str(self._config.path(self._settings.source_digest_script))]
-        )
-
-    def _require_unchanged(self, head: str, digest: str) -> None:
-        """Whatever passed must be what was measured, at both granularities."""
-        if self._head() != head:
-            raise GateError("source HEAD changed while just test was running")
-
-        after = self._source_digest()
-        if after != digest:
-            self._runner.note(f"before={digest} after={after}")
-            self._runner.run(["git", "status", "--short"], check=False)
-            raise GateError("just test changed the source working tree")
-
-    # -- process accounting ------------------------------------------------
-
-    def _orphan(self, action: str, *, check: bool = True) -> int:
-        return self._runner.script(self._settings.orphan_script, action, check=check)
-
-    def _close_out(self, head: str) -> None:
-        """Count what is still alive, and preserve evidence from a failure.
-
-        Runs on every path, including the aborted one. A leak raises here on
-        its own account, so a run that would otherwise have passed still fails
-        for the processes it left behind.
-        """
-        if self._orphan("check", check=False) != 0:
-            raise GateError(
-                "capsem processes from this checkout outlived the gate; see above"
-            )
-
-    # -- the run -----------------------------------------------------------
-
-    def run(self) -> None:
-        head = self._head()
-        digest = self._source_digest()
-        self._runner.step(f"Testing source state {digest} at {head}")
-
-        # Before anything can spawn a capsem process, so a developer's own dev
-        # daemon or editor MCP is never blamed on this run.
-        self._orphan("baseline")
-
-        failure: BaseException | None = None
-        try:
-            self._runner.run(["just", self._settings.fast_module])
-            self._runner.run(
-                [
-                    "bash",
-                    str(self._config.path(self._settings.colima_wrapper)),
-                    "just",
-                    self._settings.candidate_module,
-                ]
-            )
-            self._require_unchanged(head, digest)
-        except BaseException as error:
-            failure = error
-            self._storage.capture_failure(rail="default", label=head[:12])
-            raise
-        finally:
-            # Never lowers the status: an exception in flight keeps propagating,
-            # and a leak raises on its own. The shell equivalent had to be
-            # written as `return "$status"` rather than `exit "$status"`,
-            # because `$?` inside a trap is the last command's -- 0 on Ctrl-C.
-            try:
-                self._close_out(head)
-            except GateError:
-                if failure is None:
-                    raise
-
-        self._runner.step(f"Verified source state {digest}")
+from .workspace import Workspace
 
 
 def keep_awake(runner: Runner) -> list[str] | None:
@@ -145,10 +63,111 @@ def keep_awake(runner: Runner) -> list[str] | None:
     return [*settings.keep_awake_command, "env", f"{settings.keep_awake_marker}=1"]
 
 
+class OrphanAccounting(Resource, name="orphan-accounting"):
+    """Count the capsem processes this gate leaves behind.
+
+    Acquired first, so the baseline is taken before anything can spawn a
+    process and a developer's own dev daemon is never blamed on this run.
+    Released last, after the workspace has stopped its service, so what is
+    still alive at that point really is a leak.
+    """
+
+    def __init__(self, config, runner: Runner) -> None:
+        self._settings = config.candidate
+        self._runner = runner
+
+    def _orphan(self, action: str, *, check: bool = True) -> int:
+        return self._runner.script(self._settings.orphan_script, action, check=check)
+
+    def acquire(self) -> None:
+        self._orphan("baseline")
+
+    def release(self) -> None:
+        if self._orphan("check", check=False) != 0:
+            raise GateError(
+                "capsem processes from this checkout outlived the gate; see above"
+            )
+
+
+class FailureEvidence(Resource, name="failure-evidence"):
+    """Keep what a failed gate leaves behind, labelled with what it was testing.
+
+    `preserve` runs only on failure and only before release, which is the whole
+    reason it is a separate phase: release is what destroys the evidence.
+
+    The label comes from the recorded source state rather than from a value
+    captured while the plan was built, so it names the revision the run
+    actually qualified.
+    """
+
+    def __init__(self, config, runner: Runner) -> None:
+        self._config = config
+        self._runner = runner
+
+    def acquire(self) -> None:
+        """Nothing to take: this exists for what it does on the way out."""
+
+    def release(self) -> None:
+        """Nothing to give back either."""
+
+    def preserve(self, error: BaseException) -> None:
+        Storage(self._runner).capture_failure(
+            rail=self._config.candidate.failure_rail, label=self._label()
+        )
+
+    def _label(self) -> str:
+        recorded = self._config.path(self._config.candidate.source_state_file)
+        if not recorded.is_file():
+            return self._config.candidate.unknown_head
+        return json.loads(recorded.read_text(encoding="utf-8"))["head"][:12]
+
+
+class Colima(Resource, name="colima"):
+    """Leave Colima as the developer had it.
+
+    If it was already running, the gate leaves it alone; if bootstrap started
+    it, this stops it -- on success and on failure alike. That was a shell trap
+    around the expensive half of the gate, which is to say it was correct only
+    for the commands that happened to sit inside the wrapper.
+    """
+
+    def __init__(self, config, runner: Runner) -> None:
+        self._settings = config.candidate
+        self._runner = runner
+        self._was_running = False
+
+    def _available(self) -> bool:
+        return shutil.which(self._settings.colima) is not None
+
+    def _running(self) -> bool:
+        return self._available() and self._runner.succeeds([self._settings.colima, "status"])
+
+    def acquire(self) -> None:
+        self._was_running = self._running()
+
+    def release(self) -> None:
+        if self._was_running or not self._running():
+            return
+        self._runner.step("Stopping gate-owned Colima VM")
+        if self._runner.run([self._settings.colima, "stop"], check=False) != 0:
+            self._runner.note("WARNING: failed to stop Colima started by this gate")
+
+
 class CandidateCommand(
     GateCommand, name="candidate", help="run the complete local qualification gate"
 ):
     exclusive = True
+
+    def resources(self) -> tuple[Resource, ...]:
+        # Order is the guarantee: acquired left to right, released in reverse.
+        # The orphan baseline is first taken and last compared, and the
+        # workspace stops its service before that comparison happens.
+        return (
+            OrphanAccounting(self._config, self._runner),
+            FailureEvidence(self._config, self._runner),
+            Workspace(self._config),
+            Colima(self._config, self._runner),
+        )
 
     def reexec(self) -> tuple[str, ...] | None:
         """Become *this* command under a keep-awake wrapper, once.
@@ -172,11 +191,5 @@ class CandidateCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        plan.add(
-            step("qualify", Call("the complete local gate", _qualify))
-        )
+        candidateplan.compose(plan, self._config)
         return plan
-
-
-def _qualify(context) -> None:
-    CandidateGate(context.runner).run()

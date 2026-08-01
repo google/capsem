@@ -28,17 +28,37 @@ def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> N
     """Both HEAD and the working-tree digest are captured before and compared
     after: a gate that qualified a HEAD nobody has, or a tree edited halfway
     through, proved nothing about any particular version."""
-    justfile = _read("justfile")
-    candidate = _read("src/capsem/gate/candidate.py")
+    import argparse
 
-    assert "capsem-gate candidate" in justfile
-    assert "rev-parse" in candidate and "HEAD" in candidate
-    assert "source_digest_script" in candidate
-    assert "source HEAD changed while just test was running" in candidate
-    assert "just test changed the source working tree" in candidate
-    assert "colima_wrapper" in candidate
-    assert "CAPSEM_BENCHMARK_OUTPUT_ROOT" in justfile
-    assert "target/test-benchmarks" in justfile
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate import config as gate_config
+    from capsem.gate.command import GateCommand
+    from capsem.gate.proc import Runner
+
+    root = Path(__file__).resolve().parents[1]
+    config = gate_config.load(root)
+    command = GateCommand.registry["candidate"](
+        Runner(root), argparse.Namespace(dry_run=False, graph=False, timing=False)
+    )
+
+    assert "capsem-gate candidate" in _read("justfile")
+
+    # The source state is bracketed by two steps rather than read while the
+    # plan is built: a value captured during construction names whatever was
+    # checked out when the description was assembled, not what ran.
+    labels = list(command._describe().labels)
+    assert labels[0] == "source.record"
+    assert labels[-1] == "source.verify"
+    assert config.candidate.source_digest_script.endswith("source-state-digest.py")
+
+    # Colima is given back on every path, including the aborted one -- which is
+    # why it is a resource and not a step, and why the shell wrapper that used
+    # to cover only part of the gate is gone.
+    held = {resource.name for resource in command.resources()}
+    assert {"colima", "orphan-accounting", "failure-evidence"} <= held
+
+    assert "CAPSEM_BENCHMARK_OUTPUT_ROOT" in _read("src/capsem/gate/workspace.py")
+    assert config.workspace.benchmark_root == "target/test-benchmarks"
     assert "benchmarks/**/data_*.json" in _read(".gitignore")
 
 
