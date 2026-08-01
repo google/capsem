@@ -84,3 +84,25 @@ def test_two_lanes_in_one_plan_build_the_builder_once() -> None:
     hostimage.fragment(plan, CONFIG)
 
     assert list(plan.labels).count(hostimage.STEP) == 1
+
+
+def test_chained_lanes_do_not_make_the_builder_depend_on_them() -> None:
+    """Shared groundwork sits before everything, not after its caller.
+
+    The glow-up lane chains architectures so the second package build waits for
+    the first to release its disk. Passing that `after` down to the shared
+    host-image step made the image depend on a package that depends on the
+    image -- a cycle, and one that only appears once two lanes are composed
+    into a single plan.
+
+    The builder image has no ordering requirement of its own. Only the package
+    that runs inside it does.
+    """
+    from capsem.gate import crosscompile
+
+    plan = Plan("chained")
+    first = crosscompile.fragment(plan, CONFIG, CONFIG.arch("arm64"))
+    crosscompile.fragment(plan, CONFIG, CONFIG.arch("x86_64"), after=(first,))
+
+    assert plan.labels, "a cycle would raise before returning any order"
+    assert list(plan.labels).count(hostimage.STEP) == 1

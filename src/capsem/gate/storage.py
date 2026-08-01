@@ -17,7 +17,7 @@ from . import config as gate_config
 from .actions import Call
 from .command import GateCommand
 from .errors import GateError
-from .execution import step
+from .execution import Step, step
 from .plan import Plan
 from .proc import Runner
 
@@ -78,6 +78,24 @@ class Storage:
             ["bash", str(self._runner.root / self._config.ensure_space_script),
              rail, *boundary]
         )
+
+
+def release_step(config, phase: str) -> Step:
+    """Hand back the storage a finished rail was holding.
+
+    Composed rather than dispatched. The modules that mark these boundaries run
+    inside a held machine lock, so `capsem-gate storage release` from a plan
+    action was a child waiting for the lock its own parent held -- and the
+    boundary it recorded landed in the child's run log rather than the gate's.
+    """
+    return step(
+        f"storage.{phase}",
+        Call(
+            f"release the storage held after {phase}",
+            lambda ctx: Storage(ctx.runner).release(phase),
+        ),
+        contends=(config.exclusive("docker_daemon"),),
+    )
 
 
 class StorageCommand(

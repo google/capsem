@@ -21,6 +21,37 @@ from .execution import step
 from .plan import Plan
 
 
+def sign_step(config: GateConfig, *, label: str = "sign"):
+    """Codesign the host binaries, or nothing at all off macOS.
+
+    A step rather than `Run(["just", "_sign"])` at each call site: the two test
+    modules that need signed binaries run inside a held machine lock, so
+    dispatching there was a child waiting for the lock its parent held.
+
+    The label is a parameter because two fragments in one composed plan both
+    need signing, at different points -- once after the coverage build and
+    again before the VM suites -- and a plan cannot hold two steps of one name.
+    """
+    settings = config.signing
+    return step(
+        label,
+        *[
+            Run([
+                "codesign", "--sign", "-",
+                "--entitlements", settings.entitlements,
+                "--force", binary,
+            ])
+            for binary in settings.binaries
+        ],
+        contends=(config.exclusive("workspace_binaries"),),
+    )
+
+
+def sbom_step(config: GateConfig):
+    """Generate the host package SBOM and check it describes something."""
+    return step("host-sbom", _GenerateSbom(), _ValidateSbom())
+
+
 class SignCommand(
     GateCommand, name="sign", help="codesign the host binaries for VM tests"
 ):
@@ -29,25 +60,9 @@ class SignCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        config = self._config
         if not host.on_macos():
             return plan
-
-        settings = config.signing
-        plan.add(
-            step(
-                "sign",
-                *[
-                    Run([
-                        "codesign", "--sign", "-",
-                        "--entitlements", settings.entitlements,
-                        "--force", binary,
-                    ])
-                    for binary in settings.binaries
-                ],
-                contends=(config.exclusive("workspace_binaries"),),
-            )
-        )
+        plan.add(sign_step(self._config))
         return plan
 
 
@@ -58,7 +73,7 @@ class HostSbomCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        plan.add(step("host-sbom", _GenerateSbom(), _ValidateSbom()))
+        plan.add(sbom_step(self._config))
         return plan
 
 

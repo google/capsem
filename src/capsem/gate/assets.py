@@ -240,6 +240,24 @@ class AssetGate:
         )
 
 
+def assets_step(config):
+    """Build every profile's VM assets and boot each one.
+
+    Claims the Docker daemon, which it always did in fact -- it drives the
+    image builds -- but only implicitly, through the `assets` command's own
+    machine lock. Composed into a larger plan that lock is gone, so the
+    contention has to be declared where the graph can see it.
+    """
+    return step(
+        "assets",
+        Call(
+            "build and boot every profile's VM assets",
+            lambda ctx: AssetGate(ctx.runner).run(),
+        ),
+        contends=(config.exclusive("docker_daemon"),),
+    )
+
+
 class AssetsCommand(
     GateCommand, name="assets", help="build every profile's VM assets and boot each one"
 ):
@@ -247,13 +265,5 @@ class AssetsCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        plan.add(
-            step(
-                "assets",
-                Call(
-                    "build and boot every profile's VM assets",
-                    lambda ctx: AssetGate(ctx.runner).run(),
-                ),
-            )
-        )
+        plan.add(assets_step(self._config))
         return plan

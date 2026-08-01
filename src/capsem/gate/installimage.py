@@ -81,8 +81,13 @@ def prepare(runner: Runner) -> None:
 
 
 def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
-    """The install-test image, after the builder image it derives from."""
-    built = hostimage.fragment(plan, config, after=after)
+    """The install-test image, after the builder image it derives from.
+
+    `after` reaches this step, not the shared image beneath it: groundwork
+    several lanes share cannot be sequenced behind any one of them without
+    making a cycle out of the next lane that needs it.
+    """
+    built = hostimage.fragment(plan, config)
     return plan.add(
         step(
             "install-image",
@@ -92,7 +97,7 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
             ),
             contends=(config.exclusive("docker_daemon"),),
         ),
-        after=(built,),
+        after=(built, *after),
     )
 
 

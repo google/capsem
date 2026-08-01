@@ -247,8 +247,14 @@ def fragment(plan: Plan, config, target, *, after: tuple = ()):
 
     The builder is `shared`, so composing several architectures into one plan
     builds it once and hangs every lane off it.
+
+    `after` reaches the package step and deliberately not the image. The
+    glow-up lane chains architectures so the second build waits for the first
+    to release its disk; passing that down made the shared image depend on a
+    package that depends on the image, which is a cycle -- and one that appears
+    only once two lanes share a plan. Groundwork has no ordering of its own.
     """
-    built = hostimage.fragment(plan, config, after=after)
+    built = hostimage.fragment(plan, config)
     return plan.add(
         step(
             f"package.{target.name}",
@@ -258,7 +264,7 @@ def fragment(plan: Plan, config, target, *, after: tuple = ()):
             ),
             contends=(config.exclusive("docker_daemon"),),
         ),
-        after=(built,),
+        after=(built, *after),
     )
 
 

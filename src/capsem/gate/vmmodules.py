@@ -10,8 +10,19 @@ from __future__ import annotations
 
 import os
 
-from . import host, profiles, pytestsuite, vmproofs
-from .actions import Run, Script
+from . import (
+    assets as assetgate,
+)
+from . import (
+    crosscompile,
+    host,
+    hostpackage,
+    install,
+    profiles,
+    pytestsuite,
+    vmproofs,
+)
+from .actions import Script
 from .command import GateCommand
 from .execution import step
 from .plan import Plan
@@ -61,13 +72,7 @@ class ArtifactsModule(
                 )
             return plan
 
-        assets = plan.add(
-            step(
-                "assets",
-                Run(["uv", "run", "capsem-gate", "assets"]),
-                contends=(config.exclusive("docker_daemon"),),
-            )
-        )
+        assets = plan.add(assetgate.assets_step(config))
         plan.add(
             pytestsuite.Suite(
                 label="build-chain",
@@ -105,15 +110,7 @@ class FunctionalModule(
 
         first: tuple = ()
         if not os.environ.get(config.modules.release_input_dir):
-            first = (
-                plan.add(
-                    step(
-                        "sign",
-                        Run(["just", "_sign"]),
-                        contends=(config.exclusive("workspace_binaries"),),
-                    )
-                ),
-            )
+            first = (plan.add(hostpackage.sign_step(config)),)
 
         broad = plan.add(
             pytestsuite.broad(config, profile=base).as_step(config), after=first
@@ -234,20 +231,14 @@ class GlowupModule(
 
     def _build_and_prove(self, plan: Plan) -> Plan:
         config = self._config
-        docker = config.exclusive("docker_daemon")
 
         # `previous` chains each architecture behind the last; the first has
         # nothing before it, which is what the empty tuple means.
         previous: tuple = ()
         last = list(config.architectures)[-1]
         for arch in config.architectures:
-            built = plan.add(
-                step(
-                    f"cross-compile.{arch}",
-                    Run(["uv", "run", "capsem-gate", "cross-compile", arch]),
-                    contends=(docker,),
-                ),
-                after=previous,
+            built = crosscompile.fragment(
+                plan, config, config.arch(arch), after=previous
             )
             released = plan.add(
                 storagerelease(config, f"completed-package-{arch}"), after=(built,)
@@ -275,15 +266,6 @@ class GlowupModule(
                 after=(graph,),
             )
 
-        sbom = plan.add(
-            step("host-sbom", Run(["just", "_gate-host-package-sbom"])), after=(graph,)
-        )
-        plan.add(
-            step(
-                "install-e2e",
-                Run(["uv", "run", "capsem-gate", "install"]),
-                contends=(docker,),
-            ),
-            after=(sbom,),
-        )
+        sbom = plan.add(hostpackage.sbom_step(config), after=(graph,))
+        plan.add(install.install_step(config), after=(sbom,))
         return plan

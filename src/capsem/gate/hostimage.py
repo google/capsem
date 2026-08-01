@@ -100,36 +100,46 @@ class _ForeignUidProbe(Action, name="foreign-uid-probe"):
         context.journal.note(f"host-builder reads {settings.mount} as a stranger ({actual})")
 
 
-class LinuxRustCommand(
-    GateCommand,
-    name="linux-rust",
-    help="run the Linux Rust suite natively, or in Docker on macOS",
-):
-    exclusive = True
+def linux_rust(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+    """The Linux Rust parity lane, composed into an existing plan.
 
-    def plan(self) -> Plan:
-        plan = Plan(self.name)
+    Native Linux exercises the `cfg(target_os = "linux")` branches directly; a
+    Mac host runs the same checked-in script in Docker, or Linux-only
+    regressions stay out of the local gate entirely.
+    """
+    return _LinuxRust(plan, config).build(after)
+
+
+class _LinuxRust:
+    """Builds the parity lane's steps into whichever plan is composing it."""
+
+    def __init__(self, plan: Plan, config: GateConfig) -> None:
+        self._plan = plan
+        self._config = config
+
+    def build(self, after: tuple[Step, ...]) -> Step:
         config = self._config
         settings = config.hostimage
+        plan = self._plan
 
         if host.on_linux():
-            plan.add(
+            return plan.add(
                 step(
                     "linux-rust",
                     Run(
                         ["bash", settings.script],
                         env={"CAPSEM_LINUX_RUST_OUTPUT_DIR": str(config.root)},
                     ),
-                )
+                ),
+                after=after,
             )
-            return plan
 
         if not host.on_macos():
             raise GateError(
                 "Linux Rust parity runs natively on Linux or in Docker on macOS"
             )
 
-        built = fragment(plan, config)
+        built = fragment(plan, config, after=after)
         output = config.path(settings.output_dir)
         uid, gid = os.getuid(), os.getgid()
         docker = config.exclusive("docker_daemon")
@@ -172,7 +182,7 @@ class LinuxRustCommand(
             after=(owned,),
         )
 
-        plan.add(
+        return plan.add(
             step(
                 "output-ownership",
                 Run([
@@ -185,4 +195,16 @@ class LinuxRustCommand(
             ),
             after=(suite,),
         )
+
+
+class LinuxRustCommand(
+    GateCommand,
+    name="linux-rust",
+    help="run the Linux Rust suite natively, or in Docker on macOS",
+):
+    exclusive = True
+
+    def plan(self) -> Plan:
+        plan = Plan(self.name)
+        linux_rust(plan, self._config)
         return plan

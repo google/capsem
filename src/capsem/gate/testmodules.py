@@ -17,7 +17,16 @@ can begin.
 
 from __future__ import annotations
 
-from . import audits, host, pytestsuite, toolchain
+from . import (
+    audits,
+    host,
+    hostimage,
+    hostpackage,
+    installimage,
+    pytestsuite,
+    storage,
+    toolchain,
+)
 from .actions import Run
 from .command import GateCommand
 from .config import GateConfig
@@ -106,13 +115,7 @@ class StaticModule(
         config = self._config
         settings = config.modules
 
-        preflight = plan.add(
-            step(
-                "install-preflight",
-                Run(["uv", "run", "capsem-gate", "install-image"]),
-                contends=(config.exclusive("docker_daemon"),),
-            )
-        )
+        preflight = installimage.fragment(plan, config)
         plan.add(storagerelease(config, "install-preflight"), after=(preflight,))
 
         # `_pack-initrd` already built the host architecture; this proves the
@@ -134,13 +137,7 @@ class StaticModule(
             # Native Linux runs exercise these cfg branches directly. A Mac
             # host has to run the same checked-in Linux runner in Docker, or
             # Linux-only regressions stay out of the local gate entirely.
-            linux = plan.add(
-                step(
-                    "linux-rust",
-                    Run(["just", "_gate-linux-rust"]),
-                    contends=(config.exclusive("docker_daemon"),),
-                )
-            )
+            linux = hostimage.linux_rust(plan, config)
             plan.add(storagerelease(config, "linux-rust-builder"), after=(linux,))
 
         coverage = plan.add(
@@ -151,10 +148,7 @@ class StaticModule(
             ),
             after=(agents,),
         )
-        plan.add(
-            step("sign", Run(["just", "_sign"]), contends=(config.exclusive("workspace_binaries"),)),
-            after=(coverage,),
-        )
+        plan.add(hostpackage.sign_step(config), after=(coverage,))
         return plan
 
 
@@ -211,8 +205,8 @@ def _guest_binaries_present(config: GateConfig):
 
 
 def storagerelease(config: GateConfig, phase: str):
-    """Hand back the storage a finished rail was holding."""
-    return step(
-        f"storage.{phase}",
-        Run(["uv", "run", "capsem-gate", "storage", "release", phase]),
-    )
+    """Hand back the storage a finished rail was holding.
+
+    The one spelling lives in `storage`; this is the name the modules use.
+    """
+    return storage.release_step(config, phase)

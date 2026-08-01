@@ -55,6 +55,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-shot fresh session the recipe documents. The payload is now one exact
   string, quoted by `just` and passed after `--`, so a leading dash stays a
   payload rather than becoming a flag.
+- The two VM-owned test modules compose the work they used to launch. The
+  assets build, the install proof, the package builds, signing, the host SBOM,
+  the install-test image, the Linux parity lane and every storage-release
+  boundary were each a fresh `capsem-gate` or `just` process started from
+  inside a plan whose command already held the machine lock. Composing them
+  surfaced a real cycle immediately: the glow-up lane chains architectures so
+  the second package build waits for the first to release its disk, and passing
+  that ordering down to the shared builder image made the image depend on a
+  package that depends on the image. Shared groundwork now takes no ordering
+  from its caller -- only the work that runs inside it does.
 - The Linux builder image is built again. `installimage.prepare()` and
   `CrossCompiler._prepare_builder()` both ran `just _build-host-image`, a recipe
   that carries a heading in the justfile and no body -- so install-image

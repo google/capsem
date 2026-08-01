@@ -193,6 +193,20 @@ class InstallGate:
         self._graph.hand_off(manifest)
 
 
+def install_step(config):
+    """Install the exact package and prove the installed product.
+
+    Claims the Docker daemon explicitly. It always drove a privileged container
+    and a storage rail; composed into a larger plan there is no per-command
+    machine lock left to make that true by accident.
+    """
+    return step(
+        "install",
+        Call("install the exact package and prove the installed product", _install),
+        contends=(config.exclusive("docker_daemon"),),
+    )
+
+
 class InstallCommand(
     GateCommand,
     name="install",
@@ -202,15 +216,7 @@ class InstallCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        plan.add(
-            step(
-                "install",
-                Call(
-                    "install the exact package and prove the installed product",
-                    _install,
-                ),
-            )
-        )
+        plan.add(install_step(self._config))
         return plan
 
 

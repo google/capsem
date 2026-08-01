@@ -469,8 +469,6 @@ modules_still_re_entering = [
     "candidate.py",
     "crosscompile.py",
     "release.py",
-    "testmodules.py",
-    "vmmodules.py",
 ]
 
 # Modules that still reach past the primitives, pending extraction onto them.
