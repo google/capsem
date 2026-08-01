@@ -62,8 +62,11 @@ class SmokeCommand(
 ):
     def resources(self) -> tuple[Resource, ...]:
         # The workspace first, then the daemon inside it -- released in
-        # reverse, so the service stops before its run directory goes.
-        return (Workspace(self._config), Service(self._config))
+        # reverse, so the service stops before its run directory goes, which
+        # is what flushes `serial.log`. The service is constructed *from* the
+        # workspace, so "which service" cannot drift from "which home".
+        workspace = Workspace(self._config)
+        return (workspace, Service(self._config, workspace, self._runner))
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

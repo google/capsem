@@ -461,3 +461,67 @@ def test_a_step_may_not_claim_an_undeclared_exclusive(journal) -> None:
         command.execute()
 
     assert not runner.commands, "checked before the machine lock, not after"
+
+
+def test_every_real_resource_satisfies_the_environment_protocol() -> None:
+    """The double is not the thing.
+
+    `Resource.environment()` is a method, and `Workspace.environment` was a
+    property -- so `environment_of` raised `TypeError: 'dict' object is not
+    callable` against the one resource every isolated command actually holds.
+    The funnel tests never saw it, because they exercise a recorder written to
+    match the protocol rather than the classes that have to implement it.
+
+    Every concrete `Resource` in the package, then, not a stand-in.
+    """
+    import inspect
+
+    from capsem.gate import cli  # noqa: F401 - imports every module
+    from capsem.gate.lifecycle import Resource, environment_of
+
+    concrete = [
+        cls
+        for cls in _descendants(Resource)
+        if cls.__module__.startswith("capsem.gate.")
+        and not inspect.isabstract(cls)
+    ]
+    assert len(concrete) >= 4, f"scanned too few resources: {concrete}"
+
+    for cls in concrete:
+        assert callable(cls.environment), (
+            f"{cls.__name__}.environment is not callable; `environment_of` "
+            "would raise against it"
+        )
+
+    # And the one every isolated command holds, exercised for real.
+    workspace = _workspace()
+    assert set(environment_of((workspace,))) == set(workspace.environment())
+
+
+def _descendants(root: type) -> list[type]:
+    found = []
+    for child in root.__subclasses__():
+        found.append(child)
+        found += _descendants(child)
+    return found
+
+
+def _workspace():
+    from capsem.gate.workspace import Workspace
+
+    return Workspace(CONFIG)
+
+
+def test_the_workspace_exports_the_four_variables_that_isolate_a_run() -> None:
+    """Named individually, because losing one silently relocates part of a run
+    back into the developer's own home."""
+    exported = _workspace().environment()
+
+    assert set(exported) == {
+        "CAPSEM_HOME",
+        "CAPSEM_RUN_DIR",
+        "CAPSEM_BENCHMARK_OUTPUT_ROOT",
+        "COVERAGE_FILE",
+    }
+    for value in exported.values():
+        assert str(CONFIG.root) in value, f"{value} is outside the checkout"

@@ -46,13 +46,17 @@ class Workspace(Resource, name="workspace"):
         self.run_dir = config.path(self._settings.run_dir)
         self._preserved: Path | None = None
 
-    @property
     def environment(self) -> dict[str, str]:
         """What every command inside this workspace inherits.
 
         Exported once here rather than by each invocation remembering, which is
         how one of them stopped remembering and wrote into the developer's own
         `~/.capsem`.
+
+        A method, not a property: `Resource.environment` is what
+        `GateCommand.execute` calls on everything it acquired, and a property
+        here made that call `TypeError: 'dict' object is not callable` against
+        the one resource every isolated command holds.
         """
         return {
             "CAPSEM_HOME": str(self.home),

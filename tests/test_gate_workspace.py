@@ -71,7 +71,7 @@ def test_the_environment_points_every_command_at_this_home(tmp_path: Path) -> No
     `~/.capsem`."""
     config = _checkout(tmp_path)
 
-    environment = Workspace(config).environment
+    environment = Workspace(config).environment()
 
     assert environment["CAPSEM_HOME"].endswith(config.workspace.home)
     assert environment["CAPSEM_RUN_DIR"].startswith(environment["CAPSEM_HOME"])

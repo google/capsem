@@ -59,6 +59,25 @@ class RecordingRunner(Runner):
             args=list(command.argv), returncode=status, stdout=stdout, stderr=""
         )
 
+    def launch(
+        self,
+        argv: Iterable[str],
+        *,
+        env: dict[str, str] | None = None,
+        cwd: Path | None = None,
+    ) -> int:
+        """Record a detached start instead of spawning one.
+
+        Inherited from `Runner` until now, so any test that reached a `Launch`
+        really did `Popen` a daemon -- which on a checkout without the binary
+        built is a `FileNotFoundError` from a destructor, and on one with it is
+        a stray process.
+        """
+        self.commands.append(
+            Command(argv=tuple(str(part) for part in argv), cwd=cwd, env=dict(env or {}))
+        )
+        return 424242
+
     def step(self, message: str) -> None:
         self.notes.append(message)
 

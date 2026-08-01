@@ -55,6 +55,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-shot fresh session the recipe documents. The payload is now one exact
   string, quoted by `just` and passed after `--`, so a leading dash stays a
   payload rather than becoming a flag.
+- `just smoke` starts. `SmokeCommand` declared a `Service` resource whose
+  `acquire` raised unconditionally, so the command died on acquisition every
+  time -- after the recipe had already paid for the fast checks and the runtime
+  preparation. Underneath that was the ownership mistake the raise stood in
+  for: the service resolved `CAPSEM_HOME` from the ambient environment when it
+  was constructed, so even a working acquire could have started a daemon in one
+  place and stopped something else on the way out. It is built from the
+  `Workspace` beside it now, and handed the runner rather than building one, so
+  "which service" and "which home" cannot drift apart and a recording runner
+  can see the launch.
+- Isolation actually reaches commands. `Workspace.environment` was a property
+  while the `Resource` protocol calls it as a method, so folding an acquired
+  workspace's environment into the context raised `TypeError: 'dict' object is
+  not callable` against the one resource every isolated command holds. The
+  funnel tests never caught it because they exercise a recorder written to
+  match the protocol rather than the classes that implement it; a guard now
+  checks every concrete `Resource` in the package, and the workspace's four
+  variables by name.
 - `CAPSEM_RELEASE_CHANNEL_DIST` meant two things and now means one.
   `loadReleaseData` read it to decide *what to render*; `overlay-dist.mjs` read
   it to decide *where to copy the built output*. Those are an input and an
