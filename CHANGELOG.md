@@ -55,6 +55,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-shot fresh session the recipe documents. The payload is now one exact
   string, quoted by `just` and passed after `--`, so a leading dash stays a
   payload rather than becoming a flag.
+- The Linux builder image is built again. `installimage.prepare()` and
+  `CrossCompiler._prepare_builder()` both ran `just _build-host-image`, a recipe
+  that carries a heading in the justfile and no body -- so install-image
+  preflight and every cross-compiled package had been failing at that line, and
+  with them static qualification and the package lanes. Both compose
+  `hostimage.fragment()` now, which is `shared`, so several lanes in one plan
+  build the six-gigabyte image once and hang off it. Their two ordering
+  contracts moved from watching a runner issue a command to asserting the edge,
+  because watching a runner cannot tell a command that ran from one that failed.
 - The macOS keep-awake wrapper re-execs the operator's own invocation rather
   than `just test`, so the flags they passed survive and an already-dispatched
   command does not re-enter the dispatch chain from the top.

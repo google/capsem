@@ -164,16 +164,38 @@ def test_the_cargo_caches_are_shared_and_the_target_dir_is_per_architecture(
     assert f"-v capsem-host-target-{TARGET.name}:/cargo-target" in build
 
 
-def test_the_builder_image_is_rebuilt_before_every_package(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
-    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
-    runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
+def test_the_builder_image_is_rebuilt_before_every_package() -> None:
+    """Always rebuilt, and always before the package that runs inside it.
 
-    _rail(runner).run()
+    The claim is unchanged; the evidence moved. The rail used to run `just
+    _build-host-image` itself, and this asserted the ordering by watching the
+    runner. That recipe never existed -- it has a heading in the justfile and
+    no body -- so what this actually proved was that the rail issued a command
+    which failed. Watching a runner cannot tell those apart.
 
-    runner.assert_order(r"just _build-host-image", r"docker run --rm")
+    The image is a step now, and the order is an edge, so the assertion is
+    about the graph rather than about a sequence of attempts.
+    """
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import (
+        cli,  # noqa: F401 - registers every command
+        hostimage,
+    )
+    from capsem.gate.command import GateCommand
+
+    plan = GateCommand.registry["cross-compile"](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(
+            dry_run=False, graph=False, timing=False, arch=TARGET.name
+        ),
+    )._describe()
+    order = list(plan.labels)
+
+    assert order.index(hostimage.STEP) < order.index(f"package.{TARGET.name}")
+    assert (hostimage.STEP, f"package.{TARGET.name}") in plan.edges
 
 
 def test_the_container_clock_is_synced_only_on_macos(

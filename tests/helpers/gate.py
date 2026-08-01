@@ -137,6 +137,7 @@ class RecordingJournal:
         self.actions: list[str] = []
         self.shapes: list[tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = []
         self.execs: list[dict] = []
+        self.skips: list[str] = []
 
     def note(self, message: str) -> None:
         self.notes.append(message)
@@ -165,6 +166,9 @@ class RecordingJournal:
 
     def shape(self, steps: tuple[str, ...], edges: tuple[tuple[str, str], ...]) -> None:
         self.shapes.append((steps, edges))
+
+    def skipped(self, label: str) -> None:
+        self.skips.append(label)
 
     @contextmanager
     def step(self, step) -> Iterator[None]:

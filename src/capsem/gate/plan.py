@@ -25,35 +25,17 @@ library would supply the sort we already have and nothing else we use.
 
 from __future__ import annotations
 
-import threading
-import time
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from contextlib import ExitStack
-from dataclasses import dataclass
 from graphlib import CycleError, TopologicalSorter
-from operator import attrgetter
 
-from . import planchecks, planreport
+from . import planchecks, planreport, planrunner
 from .config import GateConfig
 from .context import Context
 from .errors import GateError
 from .execution import Step
+from .planrunner import FAILED, OK, SKIPPED, Outcome
 from .timing import longest_chain
 
-#: What a step's outcome was. `skipped` is deliberately distinct from `failed`:
-#: a step that never ran because its dependency broke did not fail, and a
-#: report that conflates the two hides the blast radius of the real failure.
-OK, FAILED, SKIPPED = "ok", "failed", "skipped"
-
-
-@dataclass
-class Outcome:
-    """What one step did, and how long it took."""
-
-    label: str
-    status: str
-    duration: float = 0.0
-    error: BaseException | None = None
+__all__ = ["FAILED", "OK", "SKIPPED", "Outcome", "Plan"]
 
 
 class Plan:
@@ -81,6 +63,32 @@ class Plan:
         for earlier in after:
             self.edge(before=earlier, after=step)
         return step
+
+    def shared(self, step: Step, *, after: tuple[Step, ...] = ()) -> Step:
+        """Register groundwork that several fragments each need, once.
+
+        Composed into one plan, `install-image` and `cross-compile` both want
+        the Linux builder image. Adding it twice is a duplicate-label error;
+        building it twice is waste; and having one of them silently skip it is
+        an ordering bug waiting for the day they stop running in that order.
+        A shared step is a diamond -- added by whoever asks first, depended on
+        by everyone.
+
+        A step whose label matches but whose actions differ is still the
+        ordinary duplicate bug, and is refused: this must not become the place
+        that hides.
+        """
+        existing = self._by_label.get(step.label)
+        if existing is None:
+            return self.add(step, after=after)
+        if existing.render() != step.render():
+            raise GateError(
+                f"two different steps in the {self.name} plan are both called "
+                f"{step.label!r}:\n  {existing.render()}\n  {step.render()}"
+            )
+        for earlier in after:
+            self.edge(before=earlier, after=existing)
+        return existing
 
     def edge(self, *, before: Step, after: Step) -> None:
         """Order two registered steps.
@@ -191,87 +199,21 @@ class Plan:
         """Execute, honouring the graph and what each step contends for.
 
         Validated again here rather than trusting the caller: `execute` checks
-        before taking the lock so a bad plan costs nothing, and a plan reached
+        before taking the lock, so a bad plan costs nothing; and a plan reached
         by any other route still cannot run unchecked.
         """
         self.validate(context.config)
-        sorter = self._sorter()
-        context.journal.shape(self.labels, self.edges)
-        self._outcomes = {}
-        locks = {
-            resource.name: threading.Lock()
-            for step in self._steps
-            for resource in step.contends
-        }
-        broken: set[str] = set()
+        self._outcomes = planrunner.execute(self, context)
 
-        with ThreadPoolExecutor(max_workers=max(len(self._steps), 1)) as pool:
-            running: dict[Future[float], Step] = {}
-            while sorter.is_active():
-                for label in sorter.get_ready():
-                    step = self._by_label[label]
-                    if self._after[label] & broken:
-                        # Its inputs were never produced. Running it would
-                        # report a second failure that is really the first one.
-                        self._outcomes[label] = Outcome(label, SKIPPED)
-                        broken.add(label)
-                        sorter.done(label)
-                        continue
-                    running[pool.submit(self._guarded, step, context, locks)] = step
+    # -- what the runner and the checks need to walk this graph ------------
 
-                if not running:
-                    continue
-                finished = next(iter(_completed(running)))
-                step = running.pop(finished)
-                self._record(step, finished, broken)
-                sorter.done(step.label)
+    def sorter(self) -> TopologicalSorter[str]:
+        """A prepared sorter over this plan's edges."""
+        return self._sorter()
 
-        self._raise_for_failures()
+    def step_named(self, label: str) -> Step:
+        return self._by_label[label]
 
-    def _guarded(
-        self, step: Step, context: Context, locks: dict[str, threading.Lock]
-    ) -> float:
-        """Hold what the step contends for, run it, and report how long."""
-        started = time.monotonic()
-        with ExitStack() as stack:
-            for resource in sorted(step.contends, key=attrgetter("name")):
-                stack.enter_context(locks[resource.name])
-            with context.journal.step(step):
-                step.run(context)
-        return time.monotonic() - started
-
-    def _record(self, step: Step, future: Future[float], broken: set[str]) -> None:
-        error = future.exception()
-        if error is None:
-            self._outcomes[step.label] = Outcome(step.label, OK, future.result())
-            return
-        if not isinstance(error, Exception):
-            # An interrupt is not a step that failed, and recording it as one
-            # would turn Ctrl-C into a gate result. This is the hazard the
-            # shell trap had in another form, where `$?` inside EXIT read 0 on
-            # abort and reported an interrupted run as a pass.
-            raise error
-        self._outcomes[step.label] = Outcome(step.label, FAILED, 0.0, error)
-        broken.add(step.label)
-
-    def _raise_for_failures(self) -> None:
-        failed = [o for o in self._outcomes.values() if o.status == FAILED]
-        if not failed:
-            return
-        skipped = sorted(o.label for o in self._outcomes.values() if o.status == SKIPPED)
-        detail = "; ".join(f"{o.label}: {o.error}" for o in sorted(failed, key=attrgetter("label")))
-        message = f"{self.name} failed -- {detail}"
-        if skipped:
-            message += f" (skipped, never ran: {', '.join(skipped)})"
-        raise GateError(message)
-
-
-def _completed(running: dict[Future[float], Step]) -> list[Future[float]]:
-    """Block until at least one future is done, then return those that are.
-
-    A plain `as_completed` would need rebuilding every time a wave adds work;
-    waiting on the current set and returning is simpler and lets the loop pick
-    up newly ready steps immediately.
-    """
-    done, _pending = wait(running, return_when=FIRST_COMPLETED)
-    return list(done)
+    def after_of(self, label: str) -> set[str]:
+        """The labels that must finish before `label` may start."""
+        return self._after[label]

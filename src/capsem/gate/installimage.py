@@ -14,10 +14,12 @@ saying so is more use than a third attempt.
 from __future__ import annotations
 
 from . import config as gate_config
+from . import hostimage
 from .actions import Call
 from .command import GateCommand
+from .config import GateConfig
 from .errors import GateError
-from .execution import step
+from .execution import Step, step
 from .plan import Plan
 from .proc import Runner
 from .storage import Storage
@@ -48,11 +50,17 @@ def _smoke_passes(runner: Runner, settings: gate_config.InstallConfig) -> bool:
 
 
 def prepare(runner: Runner) -> None:
-    """Build the install-test image and prove it can run the gate's tools."""
+    """Build the install-test image and prove it can run the gate's tools.
+
+    The builder image it derives from is a separate step, composed by
+    `fragment` and ordered ahead of this. It used to be `just
+    _build-host-image` from right here -- a recipe with a heading and no body,
+    so this whole path failed at runtime and no test crossed the boundary to
+    see it.
+    """
     settings = gate_config.for_root(runner.root).install
     build = ["docker", "build", "-t", settings.image, "-f", settings.dockerfile, "."]
 
-    runner.run(["just", "_build-host-image"])
     runner.run(build)
 
     if not _smoke_passes(runner, settings):
@@ -72,6 +80,22 @@ def prepare(runner: Runner) -> None:
     Storage(runner).release("linux-rust-builder")
 
 
+def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+    """The install-test image, after the builder image it derives from."""
+    built = hostimage.fragment(plan, config, after=after)
+    return plan.add(
+        step(
+            "install-image",
+            Call(
+                "build the disposable install-test image",
+                lambda ctx: prepare(ctx.runner),
+            ),
+            contends=(config.exclusive("docker_daemon"),),
+        ),
+        after=(built,),
+    )
+
+
 class InstallImageCommand(
     GateCommand,
     name="install-image",
@@ -81,13 +105,5 @@ class InstallImageCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        plan.add(
-            step(
-                "image",
-                Call(
-                    "build the disposable install-test image",
-                    lambda ctx: prepare(ctx.runner),
-                ),
-            )
-        )
+        fragment(plan, self._config)
         return plan

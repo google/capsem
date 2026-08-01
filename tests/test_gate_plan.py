@@ -590,3 +590,48 @@ def test_the_conflict_is_reported_before_anything_runs(
         plan.run(context)
 
     assert ran == [], "nothing may run before the plan is known to be sound"
+
+
+# ---------------------------------------------------------------------------
+# Infrastructure two fragments both need
+# ---------------------------------------------------------------------------
+
+
+def test_a_shared_step_is_added_once_and_depended_on_twice() -> None:
+    """Two fragments needing the same groundwork is a diamond, not a clash.
+
+    The Linux builder image is built by `install-image` and again by
+    `cross-compile`. Composed into one plan they must not each add it -- and
+    must not each build it either. `shared` makes the second caller a dependant
+    of the first one's step, which is what the graph is for.
+    """
+    plan = Plan("example")
+    first = plan.shared(_appending("host-image", []))
+    second = plan.shared(_appending("host-image", []))
+
+    assert first is second
+    assert [step.label for step in plan.steps] == ["host-image"]
+
+
+def test_a_shared_step_that_differs_is_still_a_collision() -> None:
+    """Silently returning the first would run the wrong work for the second.
+
+    Two steps sharing a name but not a definition is the ordinary duplicate
+    bug, and `shared` must not become the place it hides.
+    """
+    plan = Plan("example")
+    plan.shared(step("build", Run(["cargo", "build"])))
+
+    with pytest.raises(GateError, match="two different steps"):
+        plan.shared(step("build", Run(["cargo", "build", "--release"])))
+
+
+def test_a_shared_step_can_be_depended_on_by_both_callers() -> None:
+    """The point of the diamond: both dependants wait, the work happens once."""
+    ran: list[str] = []
+    plan = Plan("example")
+    base = plan.shared(_appending("base", ran))
+    plan.add(_appending("left", ran), after=(base,))
+    plan.add(_appending("right", ran), after=(plan.shared(_appending("base", ran)),))
+
+    assert plan.edges == (("base", "left"), ("base", "right"))

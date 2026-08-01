@@ -446,7 +446,7 @@ direct_machine_access = [
 # thread pool has parallelism the graph cannot see -- and therefore parallelism
 # the exclusives cannot constrain, which is exactly what seven bare `&` in one
 # recipe body were.
-direct_concurrency = ["plan.py"]
+direct_concurrency = ["planrunner.py"]
 
 # Modules whose plan actions still start a second gate -- `just ...` or another
 # `capsem-gate ...`. Each one is a deadlock: the machine lock is not reentrant,
@@ -465,7 +465,6 @@ modules_still_re_entering = [
     "candidate.py",
     "crosscompile.py",
     "imagebuild.py",
-    "installimage.py",
     "release.py",
     "testmodules.py",
     "vmmodules.py",
@@ -854,6 +853,7 @@ source_contract = [
     "tests/test_gate_execute_funnel.py",
     "tests/test_gate_fileactions.py",
     "tests/test_gate_has_no_literal_data.py",
+    "tests/test_gate_hostimage_composition.py",
     "tests/test_gate_install_container.py",
     "tests/test_gate_no_nested_commands.py",
     "tests/test_gate_install_ordering.py",

@@ -259,12 +259,35 @@ def test_the_image_is_always_rebuilt_then_smoked(tmp_path: Path) -> None:
     installimage.prepare(runner)
 
     runner.assert_order(
-        r"just _build-host-image",
         r"docker build -t capsem-install-test",
         r"docker run --rm",
         r"docker-storage-policy\.py release --boundary after-linux-rust-builder",
     )
     assert not runner.ran(r"--no-cache")
+
+
+def test_the_install_image_is_built_after_the_builder_it_derives_from() -> None:
+    """The other half of the claim above, now that the builder is a step.
+
+    `prepare` used to run `just _build-host-image` itself -- a recipe that has
+    never existed, so this path failed at that line every time and the test
+    above proved only that the attempt was made in the right order. The
+    dependency is an edge now, so it is checkable rather than merely attempted.
+    """
+    import argparse
+
+    from capsem.gate import (
+        cli,  # noqa: F401 - registers every command
+        hostimage,
+    )
+    from capsem.gate.command import GateCommand
+
+    plan = GateCommand.registry["install-image"](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+    )._describe()
+
+    assert (hostimage.STEP, "install-image") in plan.edges
 
 
 def test_a_failing_smoke_check_earns_exactly_one_cacheless_rebuild(

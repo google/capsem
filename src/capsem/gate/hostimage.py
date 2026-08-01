@@ -35,15 +35,34 @@ def _volumes(config: GateConfig) -> list[str]:
     ]
 
 
+#: One name, so every lane that needs the builder depends on the same step
+#: rather than each spelling its own label.
+STEP = "host-image"
+
+
 def image(config: GateConfig) -> Step:
     """Build the builder, then prove it can read the checkout as a stranger."""
     settings = config.hostimage
     return step(
-        "host-image",
+        STEP,
         Run(["docker", "build", "-t", settings.tag, "-f", settings.dockerfile, settings.context]),
         _ForeignUidProbe(),
         contends=(config.exclusive("docker_daemon"),),
     )
+
+
+def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+    """Make the builder image available in this plan, building it once.
+
+    Composed rather than dispatched. Both `install-image` and `cross-compile`
+    used to run `just _build-host-image` -- a recipe that has never existed, so
+    both were broken at runtime and neither test noticed, because both stopped
+    at the recipe boundary instead of crossing it.
+
+    `shared`, so two lanes in one plan get a diamond rather than a duplicate
+    label or a six-gigabyte image built twice.
+    """
+    return plan.shared(image(config), after=after)
 
 
 class _ForeignUidProbe(Action, name="foreign-uid-probe"):
@@ -110,7 +129,7 @@ class LinuxRustCommand(
                 "Linux Rust parity runs natively on Linux or in Docker on macOS"
             )
 
-        built = plan.add(image(config))
+        built = fragment(plan, config)
         output = config.path(settings.output_dir)
         uid, gid = os.getuid(), os.getgid()
         docker = config.exclusive("docker_daemon")

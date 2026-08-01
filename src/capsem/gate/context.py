@@ -68,6 +68,15 @@ class Journal(Protocol):
         to bug reports and a release machine's environment holds tokens.
         """
 
+    def skipped(self, label: str) -> None:
+        """Record a step that never ran because its dependency failed.
+
+        Distinct from a failure: it did not fail, and conflating the two hides
+        how far the real one reached. `RunLog` had this method and the plan
+        never called it, so a run log showed the failure and no trace of the
+        work it prevented.
+        """
+
     def step(self, step: Step) -> AbstractContextManager[None]:
         """Bracket a step, recording what it was and how long it took."""
 
@@ -100,6 +109,9 @@ class NullJournal:
         exit: int,
         duration_ms: float,
     ) -> None:
+        """Discarded."""
+
+    def skipped(self, label: str) -> None:
         """Discarded."""
 
     @contextmanager

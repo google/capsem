@@ -23,7 +23,7 @@ import tomllib
 from pathlib import Path
 
 from . import config as gate_config
-from . import host
+from . import host, hostimage
 from .actions import Call
 from .command import GateCommand
 from .config import Arch
@@ -130,9 +130,10 @@ class PackageRail:
         # cohort stay warm across candidates, and a capacity failure reports an
         # explicit disk recommendation instead of silently building cold.
         self._storage.ensure_space("package")
-        # Always run the cached image build, so a change to the Dockerfile or
-        # its helpers cannot hide behind a stale local image.
-        self._runner.run(["just", "_build-host-image"])
+        # The builder image is a separate step, composed ahead of this one by
+        # `fragment`. It used to be `just _build-host-image` from here -- a
+        # recipe that has never existed, so every package build was failing at
+        # this line and no test crossed the boundary to notice.
         self._storage.ensure_space("package")
         if host.on_macos():
             # Colima's VM clock drifts, and apt rejects a repository signed in
@@ -241,6 +242,26 @@ class PackageRail:
         )
 
 
+def fragment(plan: Plan, config, target, *, after: tuple = ()):
+    """One architecture's package, after the builder image it needs.
+
+    The builder is `shared`, so composing several architectures into one plan
+    builds it once and hangs every lane off it.
+    """
+    built = hostimage.fragment(plan, config, after=after)
+    return plan.add(
+        step(
+            f"package.{target.name}",
+            Call(
+                f"build the Linux release package for {target.name}",
+                lambda ctx: _build(ctx, target),
+            ),
+            contends=(config.exclusive("docker_daemon"),),
+        ),
+        after=(built,),
+    )
+
+
 class CrossCompileCommand(
     GateCommand,
     name="cross-compile",
@@ -258,16 +279,7 @@ class CrossCompileCommand(
         config = self._config
         target = config.arch(self._args.arch) if self._args.arch else config.host_arch()
         plan = Plan(self.name)
-        plan.add(
-            step(
-                f"package.{target.name}",
-                Call(
-                    f"build the Linux release package for {target.name}",
-                    lambda ctx: _build(ctx, target),
-                ),
-                contends=(config.exclusive("docker_daemon"),),
-            )
-        )
+        fragment(plan, config, target)
         return plan
 
 

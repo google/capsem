@@ -223,8 +223,13 @@ def test_only_the_plan_schedules_concurrent_work(module: Path) -> None:
 
 
 def test_the_plan_is_the_only_scheduler() -> None:
-    """Widening this is a design decision. The graph decides what overlaps."""
-    assert set(BOUNDARY.direct_concurrency) == {"plan.py"}
+    """Widening this is a design decision. The graph decides what overlaps.
+
+    `planrunner`, not `plan`: the scheduler was split out when `plan` outgrew
+    the module ceiling. One module still, and still the only one -- the graph
+    decides what may overlap, and executing that decision is its own job.
+    """
+    assert set(BOUNDARY.direct_concurrency) == {"planrunner.py"}
 
 
 def test_a_mutex_is_not_mistaken_for_a_scheduler(tmp_path: Path) -> None:
