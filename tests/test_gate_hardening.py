@@ -206,6 +206,10 @@ def test_every_command_that_can_mutate_holds_the_machine_lock() -> None:
         "lint",
         "logs",
         "runs",
+        # It runs the source-contract suite, which contains the gate's own
+        # tests. Holding the machine lock while running tests *about* the gate
+        # stalls the command outright -- 27 minutes against 4:41 direct.
+        "test-release-contracts",
         "version",
     }, f"a command changed its exclusivity: {sorted(read_only)}"
 
@@ -218,13 +222,7 @@ def test_the_commands_that_write_shared_artifacts_are_exclusive() -> None:
     So `just _sign` in one terminal could replace the binaries a qualification
     in another was running.
     """
-    for name in (
-        "sign",
-        "build-ui",
-        "install-tools",
-        "install-node",
-        "test-release-contracts",
-    ):
+    for name in ("sign", "build-ui", "install-tools", "install-node"):
         assert GateCommand.registry[name].exclusive, (
             f"{name} writes shared artifacts without holding the machine lock"
         )

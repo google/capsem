@@ -191,9 +191,18 @@ class ReleaseContractsModule(
     The build-chain suites that require artifacts are the artifacts module's
     job. Running them here would either fail on a fresh checkout or pass
     vacuously, and both are worse than not running them.
-    """
 
-    exclusive = True
+    Deliberately **not** exclusive, unlike every other module -- and the one
+    place the "anything that writes takes the machine lock" rule is wrong.
+    This command runs the source-contract suite, which contains the gate's own
+    tests: holding the machine lock while running tests that exercise the gate
+    stalls the command outright. Measured at 27 minutes wall for 27 seconds of
+    CPU, against 4 minutes 41 for the identical selection run directly.
+
+    Its real contention is `astro_build` and `node_modules`, declared on the
+    step where the graph can act on them. A command that *runs tests* is not a
+    command that mutates shared artifacts, whatever the general rule says.
+    """
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
