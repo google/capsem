@@ -74,8 +74,8 @@ def prepare(runner: Runner) -> None:
             )
 
     # The builder image this derives from is *not* released here. It belongs to
-    # the parity lane, which frees it from `static.storage.linux-rust-builder`
-    # once it is done -- and this preflight deliberately runs first, so a
+    # both package builds, which is why `after-packages` frees it and
+    # nothing earlier does -- and this preflight runs first, so a
     # release from here landed 164ms before `cache-ownership` ran that exact
     # image and got exit 125.
 

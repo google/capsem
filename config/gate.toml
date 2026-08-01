@@ -58,7 +58,6 @@ completed-package-x86_64 = { boundary = "after-package-x86_64", rail = "install"
 deferred-install-target = { boundary = "before-packages", rail = "package" }
 candidate-boundary = { boundary = "candidate-boundary", rail = "default" }
 after-install = { boundary = "after-install", rail = "install" }
-linux-rust-builder = { boundary = "after-linux-rust-builder", rail = "install-preflight" }
 install-preflight = { boundary = "after-install-preflight", rail = "install-preflight" }
 
 # ---------------------------------------------------------------------------
@@ -886,6 +885,7 @@ source_contract = [
     "tests/test_gate_storage.py",
     "tests/test_gate_storage_ordering.py",
     "tests/test_gate_socket_length.py",
+    "tests/test_gate_storage_consumers.py",
     "tests/test_gate_testmodules.py",
     "tests/test_gate_timing.py",
     "tests/test_gate_versions.py",

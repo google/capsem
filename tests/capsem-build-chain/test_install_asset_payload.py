@@ -1081,9 +1081,13 @@ def test_linux_rust_target_is_released_before_asset_capacity_preflight() -> None
     order = _gate_order()
 
     assert _boundary("completed-linux-rust-target") == "after-linux-rust"
+    # The build tree, which is what this is about. It used to assert on
+    # `storage.linux-rust-builder` -- the builder *image*, a different resource
+    # whose last consumer is `package-x86_64` -- so the tree itself was never
+    # released at all and the assets ran with its space still held.
     assert (
         _at(order, "linux-rust")
-        < _at(order, "storage.linux-rust-builder")
+        < _at(order, "storage.completed-linux-rust-target")
         < _at(order, "artifacts.assets")
     )
 

@@ -88,19 +88,24 @@ def test_no_rail_is_handed_back_from_two_places() -> None:
     )
 
 
-def test_the_builder_rail_is_released_after_the_lane_that_uses_it() -> None:
-    """And the surviving step is on the right side of its consumers."""
+def test_the_builder_image_is_released_after_the_last_build_that_runs_it() -> None:
+    """`after-packages`, and nothing sooner.
+
+    An earlier `after-linux-rust-builder` boundary existed for this one image
+    and released it before either package build. The shell got away with it
+    because the cross-compile lane rebuilt the image; composed into one plan,
+    `hostimage.fragment` is `plan.shared` and runs exactly once, so the early
+    release was simply destruction. 37 minutes in, `package.arm64` asked
+    Docker to run a tag that was no longer there.
+    """
     import sys as _sys
 
     _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
     from helpers.gate import gate_labels
 
     labels = list(gate_labels("candidate"))
-    if "static.storage.linux-rust-builder" not in labels:
-        return  # a Linux host runs the parity lane natively; no image to hold
-
-    release = labels.index("static.storage.linux-rust-builder")
-    for consumer in ("cache-ownership", "linux-rust"):
+    release = labels.index("glowup.storage.completed-buildkit-graph")
+    for consumer in ("host-image", "package.arm64", "package.x86_64"):
         assert labels.index(consumer) < release, (
-            f"{consumer} runs the builder image after the step that releases it"
+            f"{consumer} runs the builder image after the step that frees it"
         )

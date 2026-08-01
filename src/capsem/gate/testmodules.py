@@ -165,8 +165,12 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
         # has to run the same checked-in Linux runner in Docker, or Linux-only
         # regressions stay out of the local gate entirely.
         linux = hostimage.linux_rust(plan, config, after=after)
+        # The lane's *build tree*, handed back before the assets need room --
+        # `capsem-linux-rust-target`'s last consumer is this lane. Not the
+        # builder image: both package builds still run that, so it is freed at
+        # `after-packages` and nothing earlier may touch it.
         leaves.append(
-            phase.add(storagerelease(config, "linux-rust-builder"), after=(linux,))
+            phase.add(storagerelease(config, "completed-linux-rust-target"), after=(linux,))
         )
 
     coverage = phase.add(

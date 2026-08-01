@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `last_consumer` in `config/storage-policy.toml` is load-bearing instead of
+  decorative. `capsem-host-builder` declared `last_consumer = "package-x86_64"`
+  and `reason = "Final tag is needed by both package builds"`, then also listed
+  an `after-linux-rust-builder` boundary that released it before either --
+  `package.arm64` died with docker exit 125 thirty-seven minutes into a run.
+  The shell survived it because the cross-compile lane rebuilt the image;
+  composed into one plan, `hostimage.fragment` is `plan.shared` and runs once,
+  so an early release is simply destruction. The extra boundary is gone, and a
+  guard now fails when any resource is reclaimed before the step its own policy
+  names as its last consumer.
+- The parity lane's build tree is released at all. That boundary held one
+  resource, so removing it left the phase empty and the phase went too -- which
+  surfaced that the contract asserting "the build tree is handed back before
+  the assets need room" was asserting on the builder *image*'s phase, a
+  different resource. `capsem-linux-rust-target` was therefore never released,
+  and the asset build ran with its space still held.
+
 - `test_double_slash_in_path` asks the gateway for a status code rather than a
   JSON body. It had been rewritten from a vacuous `assert resp is not None or
   True` into `assert resp is not None` plus `resp.status_code < 500` -- but the

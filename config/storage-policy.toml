@@ -86,7 +86,6 @@ retention = "working"
 owner = "packages"
 last_consumer = "package-x86_64"
 release_boundary = "after-packages"
-release_boundaries = ["after-linux-rust-builder", "after-packages"]
 reason = "Final tag is needed by both package builds; BuildKit retains reusable layers."
 
 [resources.capsem-host-target-arm64]

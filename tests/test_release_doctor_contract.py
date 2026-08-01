@@ -1882,21 +1882,21 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
         "whose own step hands it back"
     )
 
+    # Nothing releases it early any more, because both package builds run it:
+    # `capsem-host-builder`'s own `last_consumer` is `package-x86_64`. It is
+    # freed at `after-packages`, after every consumer.
     labels = list(_gate_labels())
-    if "static.storage.linux-rust-builder" in labels:
-        release = labels.index("static.storage.linux-rust-builder")
-        for consumer in ("install-image", "cache-ownership", "linux-rust"):
+    release = labels.index("glowup.storage.completed-buildkit-graph")
+    for consumer in ("install-image", "cache-ownership", "linux-rust"):
+        if consumer in labels:
             assert labels.index(consumer) < release
-        for later in ("package.arm64", "package.x86_64"):
-            assert release < labels.index(later), (
-                "the package rails need the headroom this hands back"
-            )
+    for package in ("package.arm64", "package.x86_64"):
+        assert labels.index(package) < release, (
+            "the package builds run this image; releasing it first is exit 125"
+        )
 
-    phase = config.storage.phases["linux-rust-builder"]
-    assert (phase.boundary, phase.rail) == (
-        "after-linux-rust-builder",
-        "install-preflight",
-    )
+    phase = config.storage.phases["completed-buildkit-graph"]
+    assert (phase.boundary, phase.rail) == ("after-packages", "package")
 
     # An image that merely exists is not an image that works: checking the tag
     # lets a stale local build hide a new prerequisite.
