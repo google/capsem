@@ -1,6 +1,6 @@
 ---
 name: dev-gate
-description: How capsem-gate works and how to add or change a gate command. Use when touching build, test, or release logic, or when a boundary/primitive/contention guard fails.
+description: How capsem-gate works and how to add or change a gate command. Use when touching build, test, or release logic, or when a boundary/primitive/recursion/purity guard fails.
 ---
 
 # The build and release gate
@@ -9,134 +9,143 @@ The justfile dispatches; `src/capsem/gate/` decides. No recipe carries a shell
 body, none exceeds five lines, and both are contract tests rather than
 conventions.
 
-This exists because the justfile reached 2457 lines, roughly 2070 of them
-inline `bash`. None of it could be unit tested, so every defect was found by
-running the forty-minute gate and reading the wreckage: an installer handed a
-manifest URL before anything wrote the manifest, a version built from
-`$(date +%s)`, a log stream opened under a name rotation had already moved, an
-asset compatibility floor hardcoded above the binary shipping beside it.
+`just test` is **one process, one machine lock, one workspace, one plan** — 64
+steps and 91 actions in a single graph. Both release commands *contain* that
+same plan rather than launching it.
 
-## The five layers
+## The rule everything else follows from
 
+**A plan action may never invoke `just` or another `capsem-gate` command.**
+
+`GuardedRunner` refuses it at runtime, seeing through `uv run` and `caffeinate
+env`. This is not style: the machine lock is not reentrant, so every such call
+was a child waiting out its 7200-second timeout for the lock its own parent
+held. Twenty-two of them existed, and each read perfectly at the call site —
+`Run(["just", "_sign"])` looks like naming a step.
+
+When you need another command's work, **compose its fragment**:
+
+```python
+def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+    """Add this module's steps to `plan`; return its terminal step."""
 ```
-primitives     errors  host  config  configschema  proc  docker
-harness        actions  fileactions  context      what can be done
-               execution  plan                    ordering, derived
-               lifecycle  locks                   teardown, exclusion
-               runlog  runhistory  timing  disk    observability, bounds
-               command  cli                        one shape per command
-capabilities   workspace  service  profiles  toolchain  pytestsuite  audits
-               imagebuild  initrd  hostimage  hostpackage  vmproofs  smoke
-commands       testmodules  vmmodules  release  assets  install  ...
-```
 
-A layer composes the one below and never imports the one above.
+Groundwork several fragments share uses `plan.shared(...)`, which makes the
+second caller a dependant rather than a duplicate. **Pass `after` to the work,
+not to the shared step** — sequencing shared groundwork behind one of its
+consumers is a cycle, and one that only appears once two lanes compose.
 
-## Adding a command
+A fragment that has more than one leaf returns *all* of them. `static` returned
+only its last, so the phases after it started while a storage release it owned
+was still outstanding.
+
+## `execute()` enforces; you inherit it
+
+Never overridden — a contract test fails if a subclass defines it. In order:
+
+1. `plan()` is built with the machine **sealed** (`proc.sealed()`). Ambient, not
+   per-runner: `release.py` escaped an instance-scoped seal by constructing its
+   own `Runner` inside `plan()`.
+2. `plan.validate(config)` — cycles, declared exclusives, one owner per
+   artifact. Before the lock, so a bad plan costs nothing.
+3. `--graph` / `--dry-run` answered. **Before** `reexec()`, or asking becomes
+   doing.
+4. `reexec()`, outside the lock.
+5. `RunLog.open` → `GuardedRunner` → `held(*resources)` → `plan.run(context)`.
+6. `_summarize` — outside the log's context, so `run.end` is on disk first.
+
+## Declaring a command
 
 ```python
 class MyCommand(GateCommand, name="my-command", help="one line for --help"):
-    exclusive = True          # needs the machine to itself
+    exclusive = True   # default is False; anything that WRITES needs True
+    records = True     # False only for commands that read runs
 
-    def resources(self):      # acquired in order, released in reverse
+    def resources(self):        # acquired in order, released in reverse
         return (Workspace(self._config),)
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        first = plan.add(step("build", Run(["cargo", "build"])))
-        plan.add(step("verify", Run(["cargo", "test"])), after=(first,))
+        fragment(plan, self._config)
         return plan
 ```
 
-Then add the module to `COMMAND_MODULES` in `cli.py` so its subclass registers.
+Add the module to `COMMAND_MODULES` in `cli.py`.
 
-**`execute()` is never overridden.** A contract test fails if a subclass defines
-it, because a command that bypasses it bypasses teardown, the machine lock and
-the run log at once.
+**`exclusive` is about cross-process safety.** `[execution.exclusives]` entries
+are `threading.Lock`s: they order steps inside one plan and coordinate nothing
+between two `capsem-gate` processes. `just _sign` in one terminal could replace
+the codesigned binaries a qualification in another was executing.
 
-## The rules, and why each exists
+## Step or resource?
 
-**Order is declared, never written.** `after=(...)` builds a graph;
-`graphlib.TopologicalSorter` decides the sequence. A cycle is a plan-time error
-naming the steps. Whatever the sort makes simultaneously ready is independent by
-construction, so parallelism is derived rather than chosen. Never sequence by
-putting one `plan.add` above another.
+The question is *when it must happen*.
 
-**Contention is declared in config.** Two steps can be genuinely independent
-and still unable to share the machine. Name it in `[execution.exclusives]` with
-the reason, and claim it with `contends=(config.exclusive("apple_vz"),)`. The
-existing four came verbatim from shell comments: the Apple VZ launch budget,
-the single service-scoped snapshot lock, the binaries `cargo build` replaces
-under a running VM test, the Docker disk budget.
+| | |
+|---|---|
+| **Step** | Work. Skipped when its dependency fails — which is right: it was written against something that was never produced. |
+| **Resource** | Anything that must happen on **every** path including the aborted one. `held` releases in reverse; `preserve` runs on failure *before* release, because release destroys the evidence. |
 
-**Work goes through primitives.** `Run`, `Script`, `Shell`, `Launch`, `Copy`,
-`Remove`, `MakeDir`, `Symlink`, `AtomicReplace`, `Hash`, `RequireFile`,
-`RequireNonEmpty`. Never `shutil` or `subprocess` directly — a guard enforces
-it, because work that goes around them is invisible to the dry run and the run
-log. `Call` exists as a bridge for work not yet expressed as primitives, and
-renders as prose rather than argv precisely so it is unpleasant to leave.
+The orphan-process count, the Colima lifecycle and the failure-evidence capture
+are resources. The source-state check is a pair of steps — it must *not* run
+when the gate failed, because the failure is the report.
 
-**Every value comes from `config/gate.toml`.** No path, filename, architecture
-name or channel name in code. `tests/test_gate_has_no_literal_data.py` catches
-them; it has already caught a module carrying its own copy of a list config
-declared, and a `tests/` root two call sites were free to disagree about.
+## Everything is data
 
-**Teardown is a stack.** `held(a, b, c)` acquires in order, releases in
-reverse, and runs `preserve` before release because release destroys the
-evidence. Never write a `finally` that removes a directory — that is a
-`Resource` that has not been written yet.
+Every path, filename, architecture and channel comes from `config/gate.toml`.
+`tests/test_gate_has_no_literal_data.py` catches literals — including, recently,
+a glob list I spelled in `initrd.py`.
 
 ## Asking without running
 
 ```bash
 uv run capsem-gate <command> --dry-run    # every step, every action, real argv
-uv run capsem-gate <command> --graph      # the same thing as a diagram
-uv run capsem-gate <command> --timing     # where the time went, on the way out
 ```
-
-All three exist on every command by construction, declared once on the shared
-parser. A dry run must never touch the machine: `render()` is separate from
-`perform()` for exactly this reason.
-
-## After a failure
-
 ```bash
-uv run capsem-gate runs last --failed
+uv run capsem-gate <command> --graph      # the same graph as mermaid
 ```
-
-Every run writes `target/gate-runs/<id>/` with a validated JSONL event stream, a
-log per step, and a summary. The timing report leads with the **critical path** —
-the longest chain, not the slowest step, because shortening a step that runs
-beside something longer changes nothing.
-
 ```bash
-uv run capsem-gate gc --dry-run    # what disk the gate is holding, per tree
+uv run capsem-gate runs last --failed     # what broke, where, how long
 ```
+```bash
+uv run capsem-gate gc --dry-run           # what disk the gate holds, per tree
+```
+
+`runs` and `gc` do not record themselves: `runs last` used to open a run and
+repoint `latest` at the question.
 
 ## The guards that will fail you
 
 | Test | What it holds |
 |---|---|
-| `test_gate_boundary.py` | no recipe has a shell body; ≤5 lines; modules ≤300 lines; `ty` strict on `src/` |
-| `test_gate_primitives_are_the_only_way.py` | only the harness touches the machine; only `plan` schedules; nothing kills by name |
+| `test_gate_execute_funnel.py` | recursion refused; every subprocess logged; plan construction inert; isolation from acquired resources |
+| `test_gate_no_nested_commands.py` | the same recursion rule statically, plus every named recipe and subcommand resolves |
+| `test_gate_boundary.py` | no shell bodies; ≤5 recipe lines; ≤300 module lines; `ty` strict |
+| `test_gate_primitives_are_the_only_way.py` | only the harness touches the machine; only `planrunner` schedules |
 | `test_gate_has_no_literal_data.py` | no path, architecture or channel spelled in code |
-| `test_gate_command.py` | `execute` never overridden; every command has `--dry-run` |
-| `test_gate_plan.py` | order derived, cycles caught, contention honoured, failures aggregated |
-| `test_gate_lifecycle.py` | acquire order, reverse release, preserve before release |
+| `test_gate_hardening.py` | mutation is exclusive; plans are pure; verifications ask the real question |
+| `test_gate_runlog_evidence.py` | attribution under concurrency; run status; non-recording inspection |
+| `test_gate_lifecycle.py` | acquire order, reverse release, preserve first, primary error survives cleanup |
 
 ## Testing a command
 
-Use `RecordingRunner` from `tests/helpers/gate.py`; it records commands instead
-of running them, so ordering is assertable without Docker, a VM or a network.
-Assert **edges**, not positions — "clippy runs after the frontend build" holds
-however the source is arranged.
+`RecordingRunner` from `tests/helpers/gate.py`. Assert **edges**, not positions.
 
-Every guard must be observed failing. Break the thing it guards, watch that test
-alone go red, revert. Clear `__pycache__` between runs: a stale one has made a
-reverted mutation look still-red in this codebase. Mutation testing caught four
-tests here that were passing for the wrong reason.
+Two lessons paid for here:
+
+**The double is not the thing.** `Resource.environment` is a method;
+`Workspace.environment` was a property. Every funnel test passed because they
+used a recorder written to match the protocol, and the one resource every
+isolated command actually holds raised `TypeError`. Guards should walk the real
+subclasses.
+
+**A guard built from the current state asserts nothing.** The exclusivity guard
+passed on first write because I listed what was already non-exclusive. Write the
+claim, watch it fail, then make it true.
+
+Break every guard once and watch it go red. Clear `__pycache__` between runs.
 
 ## See also
 
-`/dev-just` for the public command surface, `/dev-testing` for the test suites,
+`/dev-just` for the public surface, `/dev-testing` for the suites,
 `/release-process` for what the release lanes must guarantee.
