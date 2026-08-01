@@ -339,6 +339,25 @@ def _at(order: list[str], fragment: str) -> int:
     raise AssertionError(f"no step matching {fragment!r} in:\n  " + "\n  ".join(order))
 
 
+def _gate_plan_step(label: str):
+    """One step of the complete gate, by label."""
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    return (
+        GateCommand.registry["candidate"](
+            RecordingRunner(PROJECT_ROOT),
+            argparse.Namespace(dry_run=False, graph=False, timing=False),
+        )
+        ._describe()
+        .step_named(label)
+    )
+
+
 def _boundary(phase: str) -> str:
     """The boundary a named storage phase releases, from config."""
     from capsem.gate import config as gate_config
@@ -1127,8 +1146,16 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
     assert _boundary("candidate-boundary") == "candidate-boundary"
     assert tuple(config.candidate.candidate_budget) == ("default", "candidate-boundary")
     # Released, then the space checked -- the other order asks whether there is
-    # room while still holding what it is about to give back.
-    assert plan_source.index("_release(") < plan_source.index("_ensure_space(")
+    # room while still holding what it is about to give back. Matched on the
+    # actions in the step rather than on a helper's name, so renaming the
+    # helper cannot break the assertion or, worse, make it vacuous.
+    budget = _gate_plan_step("prepare.storage-budget")
+    rendered = budget.render()
+    assert any("release the storage held" in line for line in rendered)
+    assert any("no room to finish" in line for line in rendered)
+    assert next(i for i, line in enumerate(rendered) if "release the storage" in line) < next(
+        i for i, line in enumerate(rendered) if "no room to finish" in line
+    )
     assert _at(order, "prepare.storage-budget") < _at(order, "artifacts.assets")
     for destructive in ("docker image rm -f", "docker volume rm", "docker buildx prune"):
         assert destructive not in plan_source
