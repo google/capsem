@@ -14,10 +14,12 @@ surfacing forty minutes into a run as a `KeyError` inside a Docker call.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from capsem.gate import config as gate_config
 from capsem.gate.errors import GateError
@@ -25,9 +27,22 @@ from capsem.gate.errors import GateError
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
+CONFIG = gate_config.load(PROJECT_ROOT)
+
+
 @pytest.fixture(scope="module")
 def config() -> gate_config.GateConfig:
-    return gate_config.load(PROJECT_ROOT)
+    return CONFIG
+
+
+def _checkout(tmp_path: Path) -> Path:
+    """A tree carrying a copy of the real configuration, for mutating."""
+    (tmp_path / "config").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "config" / "gate.toml").write_text(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return tmp_path
 
 
 # ---------------------------------------------------------------------------
@@ -327,3 +342,78 @@ def test_the_free_space_floor_exceeds_what_one_run_is_warned_about(
 ) -> None:
     """Otherwise the gate refuses to start on a footprint it considers normal."""
     assert config.disk.required_free_gb > config.disk.run_footprint_warn_gb
+
+
+# ---------------------------------------------------------------------------
+# Meaning, not just shape
+# ---------------------------------------------------------------------------
+
+
+def test_the_schema_version_is_the_one_this_code_understands(tmp_path) -> None:
+    """Pydantic accepted any integer, so a file written for a later schema
+    loaded happily and was then read with the wrong meaning."""
+    from capsem.gate.errors import GateError
+
+    root = _checkout(tmp_path)
+    source = root / "config" / "gate.toml"
+    source.write_text(
+        source.read_text(encoding="utf-8").replace("version = 1", "version = 2", 1),
+        encoding="utf-8",
+    )
+
+    with pytest.raises((GateError, ValidationError)):
+        gate_config.load(root)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("keep_runs", 0), ("keep_bytes", -1), ("slow_action_seconds", -1)],
+)
+def test_a_retention_policy_that_keeps_nothing_is_refused(
+    tmp_path, field: str, value: int
+) -> None:
+    """`keep_runs = 0` prunes every run including the one being written, and
+    the failure surfaces as a missing directory rather than as a bad policy."""
+    from capsem.gate.errors import GateError
+
+    root = _checkout(tmp_path)
+    source = root / "config" / "gate.toml"
+    text = source.read_text(encoding="utf-8")
+    replaced = re.sub(rf"^{field} = .*$", f"{field} = {value}", text, count=1, flags=re.M)
+    assert replaced != text, f"{field} is not written where this test expects"
+    source.write_text(replaced, encoding="utf-8")
+
+    with pytest.raises((GateError, ValidationError)):
+        gate_config.load(root)
+
+
+def test_the_default_channel_is_one_of_the_declared_channels() -> None:
+    """Otherwise every release defaults to a channel that does not exist."""
+    assert CONFIG.package.default_channel in CONFIG.package.channels
+
+
+def test_the_base_profile_is_a_checked_in_profile() -> None:
+    """The broad suite runs against it, so a name nobody built is a gate that
+    proves nothing about anything."""
+    from capsem.gate import imagebuild
+
+    assert CONFIG.suites.pytest.base_profile in imagebuild.profiles(CONFIG)
+
+
+def test_no_two_architectures_claim_the_same_alias() -> None:
+    """`uname -m` is resolved through these, so a collision resolves the wrong
+    way exactly once and silently."""
+    seen: dict[str, str] = {}
+    for name, arch in CONFIG.architectures.items():
+        for alias in arch.aliases:
+            assert alias not in seen, (
+                f"{alias!r} is claimed by both {seen[alias]} and {name}"
+            )
+            seen[alias] = name
+
+
+def test_every_architecture_knows_its_own_key() -> None:
+    """The table key is stamped in at load; a mismatch would make `config.arch`
+    hand back something that disagrees with how it was looked up."""
+    for name, arch in CONFIG.architectures.items():
+        assert arch.name == name

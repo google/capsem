@@ -228,3 +228,73 @@ def test_the_commands_that_write_shared_artifacts_are_exclusive() -> None:
         assert GateCommand.registry[name].exclusive, (
             f"{name} writes shared artifacts without holding the machine lock"
         )
+
+
+# ---------------------------------------------------------------------------
+# Building a plan cannot cost anything
+# ---------------------------------------------------------------------------
+
+
+def test_no_command_touches_the_machine_while_building_its_plan() -> None:
+    """Every registered command, not just the one that was caught.
+
+    `release.py` built its own `Runner` inside `plan()` to capture `git
+    rev-parse HEAD`, so `--dry-run` ran a command and the answer could go stale
+    between being printed and being executed. The seal catches it at runtime;
+    this catches it for every command at once, without a machine.
+    """
+    from capsem.gate.errors import GateError
+
+    arguments = {
+        "exec": {"guest_command": "true"},
+        "release-binaries": {"channel": "nightly"},
+        "release-profile": {"channel": "nightly", "profile": "code"},
+        "cross-compile": {"arch": "arm64"},
+        "storage": {"action": "gc", "rail": None},
+        "prove-deb": {"package": "x.deb", "manifest_url": "file:///m", "channel": "nightly"},
+        "build-assets": {"profile": "code", "arch": "arm64", "template": "all"},
+        "dev": {"surface": "ui", "args": []},
+        "logs": {"target": ""},
+        "runs": {"action": "list", "run": None, "failed": False, "other": None},
+        "gc": {"aggressive": False},
+    }
+
+    for name, command in sorted(GateCommand.registry.items()):
+        if not command.__module__.startswith("capsem.gate."):
+            continue
+        runner = RecordingRunner(PROJECT_ROOT)
+        args = argparse.Namespace(
+            dry_run=False, graph=False, timing=False, **arguments.get(name, {})
+        )
+        try:
+            command(runner, args)._describe()
+        except GateError as failure:
+            assert "plan() must describe work" not in str(failure), (
+                f"{name} touches the machine while building its plan"
+            )
+        except (AttributeError, TypeError):
+            continue  # this command needs arguments this test does not model
+        assert not runner.commands, f"{name} issued a command while planning"
+
+
+# ---------------------------------------------------------------------------
+# Freshness that cannot be wrong
+# ---------------------------------------------------------------------------
+
+
+def test_guest_binary_freshness_covers_more_than_rust_sources() -> None:
+    """An mtime comparison against `*.rs` misses most of what a build reads.
+
+    `Cargo.toml`, `Cargo.lock`, a build script, a feature flag, the toolchain
+    pin, any transitive crate -- change one and the staged binary is stale
+    while every `.rs` file is older than it. The staged binary then ships into
+    an initrd that does not match the source it claims to be built from.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    watched = set(config.initrd.freshness_inputs)
+
+    assert "Cargo.lock" in watched
+    assert "Cargo.toml" in watched
+    assert config.package.toolchain_pin in watched

@@ -40,18 +40,32 @@ def _initrd(config: GateConfig) -> Path:
 
 
 def needs_rebuild(config: GateConfig) -> bool:
-    """Whether any staged guest binary is missing or older than its sources."""
+    """Whether any staged guest binary is missing or older than its inputs.
+
+    Its *inputs*, not just its `*.rs` files. A dependency bump, a feature
+    change or a toolchain bump leaves every source file older than the staged
+    binary while the binary is stale -- and a stale guest binary ships into an
+    initrd that does not match the source it claims to have been built from.
+    """
     settings = config.initrd
     staged = [_staging(config) / name for name in settings.binaries]
     if any(not path.is_file() for path in staged):
         return True
 
     oldest = min(path.stat().st_mtime for path in staged)
+    return any(source.stat().st_mtime > oldest for source in _build_inputs(config))
+
+
+def _build_inputs(config: GateConfig):
+    """Every file whose change should invalidate the staged binaries."""
+    settings = config.initrd
     for source_root in settings.sources:
-        for source in config.path(source_root).rglob("*.rs"):
-            if source.stat().st_mtime > oldest:
-                return True
-    return False
+        for pattern in settings.freshness_globs:
+            yield from config.path(source_root).rglob(pattern)
+    for relative in settings.freshness_inputs:
+        candidate = config.path(relative)
+        if candidate.is_file():
+            yield candidate
 
 
 class _Repack(Action, name="repack-initrd"):

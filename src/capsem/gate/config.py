@@ -16,6 +16,7 @@ from __future__ import annotations
 import tomllib
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, ValidationError, model_validator
 
@@ -67,7 +68,12 @@ CONFIG_RELATIVE = Path("config") / "gate.toml"
 
 
 class GateConfig(Strict):
-    version: int
+    version: Literal[1]
+    """The schema this code understands, and only that.
+
+    A bare `int` accepted a file written for a later schema: it loaded happily
+    and was then read with the wrong meaning, which is worse than refusing it.
+    """
     architectures: dict[str, Arch]
     storage: StorageConfig
     pidfiles: PidfileConfig

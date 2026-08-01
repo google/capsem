@@ -613,10 +613,18 @@ binaries = [
     "capsem-mcp-server", "capsem-sysutil", "capsem-bench-rs",
 ]
 staging = "target/linux-agent"
-# Rebuilt when a staged binary is missing, or older than the sources it came
-# from. Cheaper than an unconditional cross-compile, and correct because these
-# are the only crates that produce them.
+# Rebuilt when a staged binary is missing, or older than anything the build
+# reads. Cheaper than an unconditional cross-compile -- but only correct if
+# "anything the build reads" is honest, and `*.rs` under these crates is not:
+# a dependency bump, a feature change or a toolchain bump leaves every source
+# file older than the staged binary while the binary is stale. A stale guest
+# binary ships into an initrd that does not match the source it claims.
 sources = ["crates/capsem-agent", "crates/capsem-proto", "crates/capsem-bench"]
+# Files under the crate roots whose change invalidates a staged binary, and
+# the workspace-wide ones. Split because the first are globbed per crate and
+# the second are single paths.
+freshness_globs = ["*.rs", "Cargo.toml", "build.rs"]
+freshness_inputs = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"]
 build = ["uv", "run", "capsem-builder", "agent", "config/docker/image"]
 
 # Checked-in guest payloads copied in beside the binaries.

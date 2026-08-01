@@ -55,6 +55,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-shot fresh session the recipe documents. The payload is now one exact
   string, quoted by `just` and passed after `--`, so a leading dash stays a
   payload rather than becoming a flag.
+- The configuration is validated for meaning, not only shape. Pydantic rejected
+  unknown keys but accepted any integer, so `version = 2` loaded happily and was
+  then read with the wrong meaning, and `keep_runs = 0` pruned the run being
+  written -- surfacing as a missing directory rather than as the bad policy it
+  was. The schema version is a literal and the retention bounds are on the
+  types.
+- Guest-binary freshness stopped guessing from `*.rs` mtimes. A dependency bump,
+  a feature change or a toolchain bump leaves every source file older than the
+  staged binary while the binary is stale, and a stale guest binary ships into
+  an initrd that does not match the source it claims to be built from.
+  `Cargo.toml`, `Cargo.lock`, `build.rs` and the toolchain pin are inputs now.
 - Mutating commands hold the machine lock. `sign`, `build-ui`, `install-tools`,
   `install-node` and `test-release-contracts` all write something another
   process could be reading, and none of them took it. Per-step

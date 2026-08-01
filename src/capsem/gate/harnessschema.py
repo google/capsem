@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import PurePosixPath
 
-from pydantic import field_validator, model_validator
+from pydantic import NonNegativeFloat, PositiveInt, field_validator, model_validator
 
 from .configschema import Strict
 
@@ -80,16 +80,22 @@ class LocksConfig(Strict):
     gate: LockConfig
 
 class RunLogConfig(Strict):
+    """Retention that keeps nothing prunes the run being written.
+
+    The failure then surfaces as a missing directory somewhere downstream
+    rather than as the bad policy it is, so the bounds are on the types.
+    """
+
     root: str
     events: str
     event_schema: str
     step_log_dir: str
     summary: str
     latest_link: str
-    keep_runs: int
-    keep_bytes: int
+    keep_runs: PositiveInt
+    keep_bytes: PositiveInt
     artifact_digest: str
-    slow_action_seconds: float
+    slow_action_seconds: NonNegativeFloat
 
 class DiskConfig(Strict):
     reclaimable: tuple[str, ...]
