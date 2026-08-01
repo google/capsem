@@ -121,30 +121,43 @@ class StaticModule(
         return plan
 
 
-def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
-    """What can be proved from source, in the order the proofs depend on."""
+def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tuple[Step, ...]:
+    """What can be proved from source, in the order the proofs depend on.
+
+    Returns *every* leaf, not just the last one written. The storage releases
+    hang off their own work rather than off the main chain, so a caller that
+    waited only for the final step would let the next phase start while a
+    release it needs is still outstanding -- which is exactly how the Linux
+    parity lane's build tree came to be handed back after the assets had
+    already asked for room.
+    """
     phase = plan.phase("static")
     settings = config.modules
+    leaves: list[Step] = []
 
     # The install-harness preflight comes first for a blunt reason: proving the
     # clean container can launch its runner takes a minute, and discovering it
     # cannot after the Rust coverage run wastes twenty.
     preflight = installimage.fragment(plan, config, after=after)
-    phase.add(storagerelease(config, "install-preflight"), after=(preflight,))
+    leaves.append(
+        phase.add(storagerelease(config, "install-preflight"), after=(preflight,))
+    )
 
     # `_pack-initrd` already built the host architecture; this proves the other
     # one compiles against musl, so a cross-arch regression surfaces before the
     # Docker cross-compile rather than an hour later.
     agents = phase.add(step("guest-agents", Run(settings.guest_agent_build)), after=after)
     binaries = phase.add(_guest_binaries_present(config), after=(agents,))
-    phase.add(
-        pytestsuite.Suite(
-            label="guest-binary-contracts",
-            paths=settings.guest_binary_tests,
-            stop_at_first_failure=False,
-            require_artifacts=False,
-        ).as_step(config),
-        after=(binaries,),
+    leaves.append(
+        phase.add(
+            pytestsuite.Suite(
+                label="guest-binary-contracts",
+                paths=settings.guest_binary_tests,
+                stop_at_first_failure=False,
+                require_artifacts=False,
+            ).as_step(config),
+            after=(binaries,),
+        )
     )
 
     if host.on_macos():
@@ -152,7 +165,9 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> S
         # has to run the same checked-in Linux runner in Docker, or Linux-only
         # regressions stay out of the local gate entirely.
         linux = hostimage.linux_rust(plan, config, after=after)
-        phase.add(storagerelease(config, "linux-rust-builder"), after=(linux,))
+        leaves.append(
+            phase.add(storagerelease(config, "linux-rust-builder"), after=(linux,))
+        )
 
     coverage = phase.add(
         step(
@@ -162,7 +177,8 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> S
         ),
         after=(agents,),
     )
-    return phase.add(hostpackage.sign_step(config), after=(coverage,))
+    leaves.append(phase.add(hostpackage.sign_step(config), after=(coverage,)))
+    return tuple(leaves)
 
 
 class ReleaseContractsModule(

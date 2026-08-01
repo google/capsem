@@ -56,7 +56,7 @@ def compose_modules(
     """
     prepared = _prepare(plan, config, after=after)
     static = testmodules.static(plan, config, after=(prepared,))
-    artifacts = vmmodules.artifacts(plan, config, after=(static,))
+    artifacts = vmmodules.artifacts(plan, config, after=static)
     functional = vmmodules.functional(plan, config, after=(artifacts,))
     glowup = vmmodules.glowup(plan, config, after=(functional,))
 

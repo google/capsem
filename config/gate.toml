@@ -479,7 +479,6 @@ modules_bypassing_primitives = [
     "assets.py",
     "crosscompile.py",
     "doctor.py",
-    "install.py",
     "versions.py",
 ]
 

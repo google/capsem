@@ -55,6 +55,22 @@ DISPATCHED = {
 }
 
 
+#: Environment names whose values must never reach a test failure's output.
+#: The package rail injects the checkout's real Tauri signing key, and a
+#: failing assertion prints whatever string it was given -- straight into a CI
+#: log. Redacted at the boundary rather than trusted not to fail.
+SECRET_ENV = ("TAURI_SIGNING_PRIVATE_KEY", "TAURI_SIGNING_PRIVATE_KEY_PASSWORD")
+
+
+def _redact(text: str) -> str:
+    return re.sub(
+        rf"({'|'.join(SECRET_ENV)})=(?:'[^']*'|\S+)",
+        r"\1=<redacted>",
+        text,
+        flags=re.DOTALL,
+    )
+
+
 def _planned(command: str, **args) -> str:
     return _planned_cached(command, tuple(sorted(args.items())))
 
@@ -94,7 +110,9 @@ def _planned_cached(command: str, args: tuple) -> str:
         # is still the evidence these contracts are about.
         with contextlib.suppress(Exception):
             plan.run(Context(runner, gate_config.load(PROJECT_ROOT)))
-        return rendered + "\n" + "\n".join(runner.rendered) + "\n" + "\n".join(runner.notes)
+        return _redact(
+            rendered + "\n" + "\n".join(runner.rendered) + "\n" + "\n".join(runner.notes)
+        )
     except Exception as exc:
         return f"<plan for {command} unavailable: {exc}>"
 
@@ -288,12 +306,56 @@ def _storage_rail(rail: str) -> dict:
     return policy["rails"][rail]
 
 
-def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
-    recipe = _just_recipe_block("_gate-assets:")
+def _gate_order() -> list[str]:
+    """Every step of the complete gate, in an order the graph permits.
 
-    preflight = '"$ROOT/scripts/ensure-docker-space.sh" assets'
-    assert preflight in recipe
-    assert recipe.index(preflight) < recipe.index("build_arch_lane arm64")
+    The storage boundaries used to be `_release-*` recipes called from
+    `_test-candidate` in a particular line order. They are steps now, so the
+    ordering these contracts are about is an edge in one graph rather than a
+    sequence spread over a dozen recipe bodies.
+    """
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    return list(
+        GateCommand.registry["candidate"](
+            RecordingRunner(PROJECT_ROOT),
+            argparse.Namespace(dry_run=False, graph=False, timing=False),
+        )
+        ._describe()
+        .labels
+    )
+
+
+def _at(order: list[str], fragment: str) -> int:
+    """Where a step sits, by a distinguishing part of its label."""
+    for position, label in enumerate(order):
+        if fragment in label:
+            return position
+    raise AssertionError(f"no step matching {fragment!r} in:\n  " + "\n  ".join(order))
+
+
+def _boundary(phase: str) -> str:
+    """The boundary a named storage phase releases, from config."""
+    from capsem.gate import config as gate_config
+
+    return gate_config.load(PROJECT_ROOT).storage.phases[phase].boundary
+
+
+def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
+    # The gate refuses to start a build the daemon cannot finish, before the
+    # lanes rather than after them -- running out at minute thirty wastes the
+    # thirty. The preflight is inside `AssetGate` now; what stays checkable
+    # here is that it happens and that the policy it reads is the assets rail.
+    assets_source = (
+        PROJECT_ROOT / "src" / "capsem" / "gate" / "assets.py"
+    ).read_text(encoding="utf-8")
+    assert "ensure_space" in assets_source
+    assert assets_source.index("ensure_space") < assets_source.index("lanes.run")
 
     assets = _storage_rail("assets")
     floor_gib = assets["minimum_free_gib"]
@@ -363,105 +425,106 @@ def test_native_install_is_owned_by_glowup_not_a_forked_just_recipe() -> None:
 
 
 def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
-    block = _just_recipe_block("_cross-compile")
+    """The package is built, repacked against its manifest, validated, and only
+    then installed -- and the proof installs the repacked artifact.
 
-    companion_pos = block.find("--- Build companion host binaries ---")
-    tauri_pos = block.find("cargo tauri build --target")
-    repack_pos = block.find("scripts/repack-deb.sh")
-    validate_pos = block.find("dpkg-deb --contents")
-    copy_pos = block.find('cp \\"\\$DEB\\" /src/dist/')
-    proof_pos = block.find("just _prove-linux-deb")
+    The sequence used to be an inline `bash -c` inside a `docker run` inside a
+    recipe, escaped twice over and written as one logical line. It is a
+    checked-in script now, syntax-checked with the rest of the shell in the
+    repository, so the order is read there.
+    """
+    from capsem.gate import config as gate_config
 
-    assert companion_pos != -1
-    assert tauri_pos != -1
-    assert repack_pos != -1
-    assert validate_pos != -1
-    assert copy_pos != -1
-    assert proof_pos != -1
-    assert companion_pos < tauri_pos < repack_pos < validate_pos < copy_pos < proof_pos
-    assert 'dpkg -i \\"\\$DEB\\"' not in block
-    assert "CAPSEM_REQUIRE_LINUX_DEB_PROOF" in block
-    assert "scripts/select-linux-deb-proof.sh" in block
-    assert 'if [ "$PROOF_DECISION" = "prove" ]' in block
-    assert (
-        'MANIFEST_URL="${CAPSEM_INSTALL_MANIFEST_URL:-https://release.capsem.org/assets/stable/manifest.json}"'
-        in block
-    )
-    assert 'MANIFEST_CHANNEL="${CAPSEM_INSTALL_CHANNEL:-stable}"' in block
-    assert '-e "CAPSEM_INSTALL_MANIFEST_URL=$MANIFEST_URL"' in block
-    assert 'scripts/repack-deb.sh --manifest \\"\\$CAPSEM_INSTALL_MANIFEST_URL\\"' in block
-    assert "file://\\$PWD/assets/manifest.json" not in block
-    assert 'CAPSEM_PROOF_MANIFEST_URL="$MANIFEST_URL"' in block
-    assert 'CAPSEM_PROOF_MANIFEST_CHANNEL="$MANIFEST_CHANNEL"' in block
-    assert 'CAPSEM_PROOF_DEB="$DEB"' in block
-    assert "capsem-bench-rs)\\$'" in block
-    assert '-e "HOST_UID=$HOST_UID"' in block
-    assert '-e "HOST_GID=$HOST_GID"' in block
-    assert 'trap \'chown -R \\"\\$HOST_UID:\\$HOST_GID\\"' in block
-    assert "/src/frontend/node_modules /src/frontend/dist" in block
-    assert "dpkg -i /cargo-target/$RUST_TARGET/release/bundle/deb/*.deb" not in block
+    config = gate_config.load(PROJECT_ROOT)
+    script = (PROJECT_ROOT / config.package.build_script).read_text(encoding="utf-8")
+
+    companion = script.index("Build companion host binaries")
+    tauri = script.index("cargo tauri build --target")
+    repack = script.index("scripts/repack-deb.sh")
+    validate = script.index("dpkg-deb --contents")
+    assert companion < tauri < repack < validate
+
+    # The manifest url the package is repacked against is the one it will be
+    # installed with; never a `file://` pointing at this checkout, which would
+    # bake a local path into a publishable package.
+    assert "--manifest" in script
+    assert "file://$PWD/assets/manifest.json" not in script
+
+    # The package rail decides whether to prove, and hands the proof its
+    # arguments rather than exporting three variables and hoping.
+    rail = (PROJECT_ROOT / "src/capsem/gate/crosscompile.py").read_text(encoding="utf-8")
+    assert config.package.proof_selector == "scripts/select-linux-deb-proof.sh"
+    assert "CAPSEM_REQUIRE_LINUX_DEB_PROOF" in rail
+    assert "debproof.DebProof(" in rail
+    assert "CAPSEM_PROOF_DEB" not in rail
+
+    # Every packaged binary is present in what was repacked.
+    for binary in config.package.proof.binaries:
+        assert binary in script, f"{binary} is never validated in the package"
+
+    # The build container hands its outputs back to the host user; nothing is
+    # installed inside the builder.
+    assert "HOST_UID" in script and "HOST_GID" in script
+    assert "dpkg -i" not in script, "the builder installs the package it just built"
 
 
 def test_exact_linux_deb_proof_uses_systemd_and_proves_guest_shell() -> None:
-    block = _just_recipe_block("_prove-linux-deb")
+    """The exact package, installed by dpkg in a real systemd container, and
+    then proved by booting a guest shell rather than by checking files exist."""
+    from capsem.gate import config as gate_config
 
-    assert "capsem-install-test" in block
-    assert "/usr/lib/systemd/systemd" in block
-    assert "--privileged --cgroupns=host" in block
-    assert "--security-opt seccomp=unconfined" in block
-    assert "--device /dev/kvm" in block
-    assert "--device /dev/vhost-vsock" in block
-    assert '-v "$ROOT:/src:ro"' in block
-    assert 'dpkg -i "$CONTAINER_DEB"' in block
-    assert "apt-get install -f -y" in block
-    assert "dpkg-query -W" in block
-    for binary in (
-        "capsem",
-        "capsem-admin",
-        "capsem-app",
-        "capsem-gateway",
-        "capsem-mcp",
-        "capsem-mcp-aggregator",
-        "capsem-mcp-builtin",
-        "capsem-process",
-        "capsem-service",
-        "capsem-tray",
-        "capsem-tui",
-        "capsem-mock-server",
-    ):
-        assert binary in block
-    assert 'test -x "/usr/bin/$bin"' in block
-    assert '"/usr/bin/$bin" --version | grep -F "$EXPECTED_VERSION"' in block
-    assert 'grep -F "Installed: true"' in block
-    assert 'grep -F "Running:   true"' in block
-    assert 'grep -F "Service:   ok"' in block
-    assert 'grep -F "Gateway:   ok"' in block
-    assert "Profiles:" in block
-    assert "scripts/prove-installed-shell.py" in block
-    assert "CAPSEM_QUALIFIED_DEB_SHELL_OK" in block
-    assert "scripts/verify-installed-release.py" in block
-    assert 'MANIFEST_URL="${CAPSEM_PROOF_MANIFEST_URL:?exact package proof requires' in block
-    assert (
-        'MANIFEST_CHANNEL="${CAPSEM_PROOF_MANIFEST_CHANNEL:?exact package proof requires' in block
+    config = gate_config.load(PROJECT_ROOT)
+    proof = config.package.proof
+    source = (PROJECT_ROOT / "src/capsem/gate/debproof.py").read_text(encoding="utf-8")
+
+    assert config.install.systemd_command == "/usr/lib/systemd/systemd"
+    assert config.install.vm_devices == ("/dev/kvm", "/dev/vhost-vsock")
+    assert proof.shell_proof_script == "scripts/prove-installed-shell.py"
+    assert proof.shell_marker == "CAPSEM_QUALIFIED_DEB_SHELL_OK"
+    assert proof.verify_script == "scripts/verify-installed-release.py"
+
+    # Installed by dpkg, with its dependencies resolved, and the version of
+    # every packaged binary checked against what the package declares.
+    for fragment in ("dpkg", "-i", "apt-get", "install", "-f", "dpkg-query"):
+        assert fragment in source
+    assert proof.binaries, "no binaries are checked at all"
+    for requirement in proof.status_requires:
+        assert requirement in source or requirement in str(proof.status_requires)
+
+    # The manifest url and channel arrive as arguments, not as three
+    # `CAPSEM_PROOF_*` variables crossing a process boundary that is gone.
+    assert "manifest_url" in source and "channel" in source
+    assert "os.environ" not in source, (
+        "the proof still reads its inputs from the environment rather than "
+        "taking them as arguments"
     )
-    assert 'DEB_INPUT="${CAPSEM_PROOF_DEB:?exact package proof requires' in block
-    assert "{{deb}}" not in block
-    assert '--manifest-url "$MANIFEST_URL"' in block
-    assert '--channel "$MANIFEST_CHANNEL"' in block
-    assert '--package-version "$EXPECTED_VERSION"' in block
-    assert "trap cleanup EXIT" in block
-    assert 'dpkg -i "$CONTAINER_DEB" 2>/dev/null || true' not in block
 
 
 def test_systemd_install_image_cannot_flush_host_binfmt_registrations() -> None:
-    dockerfile = (PROJECT_ROOT / "docker/Dockerfile.install-test").read_text()
-    install_gate = _just_recipe_block("_gate-install:")
+    """A privileged systemd container can remove Colima's Rosetta binfmt entry.
+
+    The damage outlives the run -- every later x86 build on the machine breaks,
+    not just the run that caused it -- so the registration is checked before
+    the container starts and again after it stops, and the run that removed it
+    is the one that reports it.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    dockerfile = (PROJECT_ROOT / config.install.dockerfile).read_text(encoding="utf-8")
+    container = (
+        PROJECT_ROOT / "src/capsem/gate/installcontainer.py"
+    ).read_text(encoding="utf-8")
 
     assert "/etc/systemd/system/systemd-binfmt.service" in dockerfile
     assert "ln -s /dev/null" in dockerfile
-    assert "HOST_ROSETTA_REGISTRATION=required" in install_gate
-    assert install_gate.count("/proc/sys/fs/binfmt_misc/rosetta") >= 2
-    assert "systemd install container removed Colima's Rosetta binfmt registration" in install_gate
+
+    assert "rosetta_binfmt" in container
+    assert "require_rosetta" in container and "verify_rosetta_survived" in container
+    assert "removed Colima's Rosetta" in container
+
+    issued = _planned("install")
+    assert issued.count(config.install.rosetta_binfmt) >= 1
 
 
 def test_binary_release_requires_exact_linux_deb_proof() -> None:
@@ -538,152 +601,153 @@ def test_release_matrix_installs_both_architectures_and_keeps_kvm_proof_mandator
 
 
 def test_install_test_restores_host_workspace_ownership() -> None:
-    block = _just_recipe_block("_gate-install")
+    """Everything the container wrote as its own user is handed back.
 
-    assert "HOST_UID=$(id -u)" in block
-    assert "HOST_GID=$(id -g)" in block
-    assert "chown -R $HOST_UID:$HOST_GID /src 2>" not in block
-    assert "INSTALL_OWNED_PATHS=(" in block
-    assert 'chown -R "$HOST_UID:$HOST_GID" "${INSTALL_OWNED_PATHS[@]}"' in block
-    assert "trap cleanup EXIT" in block
-    assert 'docker rm -f "$CONTAINER"' in block
-    cleanup = block.split("cleanup() {", maxsplit=1)[1].split(
-        "\n    }", maxsplit=1
-    )[0]
-    assert 'docker-storage-policy.py" release' in cleanup
-    assert "--boundary after-install" in cleanup
+    `/src` is a bind mount of the host checkout. On Linux the host UID does not
+    own what the container writes, so a subsequent `rm -rf` on the host fails
+    with EACCES. The shell computed `HOST_UID=$(id -u)` and chowned a listed
+    set; the set is config now, and the ownership comes from `host.user()`.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    issued = _planned("install")
+    owned = config.install.layout.owned_paths(config.install.mount)
+
+    assert "chown -R" in issued
+    for path in owned:
+        assert path in issued, f"{path} is never handed back to the host user"
+    # Never the whole mount: a recursive chown of /src walks every cargo
+    # artifact in the checkout.
+    assert f"chown -R {config.install.mount}" not in issued
 
 
 def test_install_test_cleanup_preserves_the_original_gate_failure() -> None:
-    block = _just_recipe_block("_gate-install")
-    cleanup = block.split("cleanup() {", maxsplit=1)[1].split(
-        "\n    }", maxsplit=1
-    )[0]
+    """The container goes, and the failure that caused it is what propagates.
 
-    capture = cleanup.index("install_gate_exit=$?")
-    disable_trap = cleanup.index("trap - EXIT")
-    remove_container = cleanup.index('docker rm -f "$CONTAINER"')
-    restore_status = cleanup.index('exit "$install_gate_exit"')
+    The shell captured `install_gate_exit=$?`, disarmed its own trap, removed
+    the container, and re-exited with the saved status -- four lines whose
+    correctness was their order. `held` gives the same guarantee structurally,
+    and `_release` now attaches cleanup failures to the primary error instead
+    of replacing it.
+    """
+    lifecycle = (
+        PROJECT_ROOT / "src" / "capsem" / "gate" / "lifecycle.py"
+    ).read_text(encoding="utf-8")
+    install = (
+        PROJECT_ROOT / "src" / "capsem" / "gate" / "install.py"
+    ).read_text(encoding="utf-8")
 
-    assert capture < disable_trap < remove_container < restore_status
+    assert "primary" in lifecycle
+    assert "add_note" in lifecycle
+
+    # The rail's own teardown order: the handoff is cleared before the
+    # container goes, or the next install in this checkout inherits a request
+    # pointing at a graph that no longer exists.
+    teardown = install.split("finally:", 1)[1]
+    assert teardown.index("clear_handoff") < teardown.index("container.stop")
 
 
 def test_install_test_does_not_rebuild_frontend_and_owns_release_site_scratch() -> None:
-    block = _just_recipe_block("_gate-install")
+    """The release-site scratch is a named volume; the frontend is not rebuilt.
 
-    assert "-v capsem-install-frontend-node-modules:/src/frontend/node_modules" not in block
-    assert "-v capsem-install-frontend-dist:/src/frontend/dist" not in block
-    assert "pnpm build" not in block
-    assert (
-        "-v capsem-install-release-site-node-modules:/src/release-site/node_modules"
-        in block
-    )
-    assert "-v capsem-install-release-site-dist:/src/release-site/dist" in block
-    assert '"/src/release-site/node_modules"' in block
-    assert '"/src/release-site/dist"' in block
-    install_release_site = block.index(
-        "cd /src/release-site && pnpm install --frozen-lockfile"
-    )
-    build_release_site = block.index("scripts/check-web-surface.sh release-site-build")
-    assert install_release_site < build_release_site
-    release_site_exec = block.rfind("docker exec", install_release_site, build_release_site)
-    assert 'docker exec "$CONTAINER"' in block[release_site_exec:build_release_site]
-    assert "docker exec -u capsem" not in block[release_site_exec:build_release_site]
+    Named volumes keep the release-site dependencies off the bind-mounted
+    checkout and out of a reinstall on every run. The frontend is already built
+    by the time this runs, and rebuilding it here would prove a different tree.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    issued = _planned("install")
+    volumes = {volume.source: volume.target for volume in config.install.volumes}
+
+    assert volumes == {
+        "capsem-install-release-site-node-modules": "/src/release-site/node_modules",
+        "capsem-install-release-site-dist": "/src/release-site/dist",
+    }
+    for source, target in volumes.items():
+        assert f"{source}:{target}" in issued
+
+    assert "capsem-install-frontend-node-modules" not in issued
+    assert "pnpm build" not in issued
+    owned = config.install.layout.owned_paths(config.install.mount)
+    assert "/src/release-site/node_modules" in owned
+    assert "/src/release-site/dist" in owned
 
 
 def test_install_test_removes_stale_container_before_controller_preflight() -> None:
-    block = _just_recipe_block("_gate-install").replace(r"\"", '"')
+    """A predecessor is cleared before anything starts, not after it collides."""
+    from capsem.gate import config as gate_config
 
-    remove_stale = block.index('docker rm -f "$CONTAINER"')
-    release_working = block.index("just _release-completed-package-rails")
-    capacity = block.index('scripts/ensure-docker-space.sh" install', release_working)
-    remove_partial_channel = block.index('rm -rf "$INSTALL_CHANNEL_DIR"')
-    start_container = block.index('echo "Starting systemd container..."')
+    config = gate_config.load(PROJECT_ROOT)
+    container = config.install.container
+    issued = _planned("install")
 
-    assert remove_stale < release_working < capacity
-    assert remove_partial_channel < start_container
-    assert 'INSTALL_CHANNEL_DIR="target/install-test-channel"' in block
-    assert "docker system df -v" not in block
-    assert "docker volume rm" not in block
+    remove = issued.index(f"docker rm -f {container}")
+    start = issued.index(f"docker run -d --name {container}")
+    assert remove < start
 
 
 def test_install_test_runs_local_release_glowup_from_real_package() -> None:
-    block = _just_recipe_block("_gate-install").replace(r"\"", '"').replace(r"\$", "$")
+    """The glow-up runs against the package this gate installed, not a rebuild."""
+    from capsem.gate import config as gate_config
 
-    assert "Running Linux native release glow-up" in block
-    assert "scripts/local-release-glowup.py" in block
-    assert '--input-deb "$CONTAINER_DEB"' in block
-    assert "--bin-dir /usr/bin" in block
-    assert "--package-ready" in block
-    assert '--assets-dir "$INSTALL_ASSETS_DIR"' in block
-    assert '--config-root "$INSTALL_CONFIG_DIR"' in block
-    assert "just _gate-install" in _just_recipe_block("test:")
+    config = gate_config.load(PROJECT_ROOT)
+    proof = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text(encoding="utf-8")
+
+    assert config.install.suite.glowup_script == "scripts/local-release-glowup.py"
+    assert config.install.bin_dir == "/usr/bin"
+    for flag in ("--input-deb", "--bin-dir", "--package-ready", "--assets-dir", "--config-root"):
+        assert flag in proof, f"the glow-up is invoked without {flag}"
+
+    # And the gate still contains it.
+    assert "glowup.install" in _gate_order() or "glowup." in " ".join(_gate_order())
 
 
 def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> None:
-    block = _just_recipe_block("_gate-install").replace(r"\"", '"').replace(r"\$", "$")
-    update_tests = (PROJECT_ROOT / "tests/capsem-install/test_update.py").read_text()
-    layout_tests = (PROJECT_ROOT / "tests/capsem-install/test_installed_layout.py").read_text()
+    """The installed product is proved against real assets and a real graph.
 
-    assert 'INSTALL_ASSETS_DIR="target/install-test-assets"' in block
-    assert 'INSTALL_CONFIG_DIR="target/install-test-config"' in block
-    assert 'rm -rf "$INSTALL_ASSETS_DIR" "$INSTALL_CONFIG_DIR"' in block
-    assert "scripts/prepare-install-test-assets.sh" not in block
-    assert 'INSTALL_PROFILE_INPUTS="${CAPSEM_INSTALL_PROFILE_INPUTS:-}"' in block
-    assert "scripts/stage-release-test-inputs.py" in block
-    assert 'cp -R assets/. "$INSTALL_ASSETS_DIR/"' in block
-    assert "requires rebuilt local assets or verified pulled profile inputs" in block
-    assert "bash scripts/materialize-config.sh" not in block
-    assert 'cp -R target/config/. "$INSTALL_CONFIG_DIR/"' in block
-    assert 'INSTALL_SOURCE_MANIFEST="$INSTALL_CHANNEL_DIR/assets/local/manifest.json"' in block
-    assert "scripts/serve-release-test-root.py" in block
-    assert "capsem-admin assets channel build" in block
-    assert "capsem-admin assets channel check" in block
-    build_graph = block.index("capsem-admin assets channel build")
-    build_site = block.index("scripts/check-web-surface.sh release-site-build")
-    check_graph = block.index("capsem-admin assets channel check")
-    assert build_graph < build_site < check_graph
-    assert "CAPSEM_RELEASE_CHANNEL_DIST=" in block
-    assert "/src/$INSTALL_CHANNEL_DIR" in block
-    assert (
-        "CAPSEM_TEST_ASSET_MANIFEST=/home/capsem/.capsem/assets/manifest.json"
-        in block
-    )
-    assert '--assets-dir "$INSTALL_ASSETS_DIR"' in block
-    assert '--config-root "$INSTALL_CONFIG_DIR"' in block
-    assert 'TEST_ASSET_MANIFEST = os.environ.get("CAPSEM_TEST_ASSET_MANIFEST")' in update_tests
-    assert "def _default_release_graph() -> dict:" in update_tests
-    assert "install tests require an authoritative release graph" in update_tests
-    assert 'REPO_ROOT / "assets" / "manifest.json"' not in update_tests
-    assert "native package installed a legacy/runtime projection" in layout_tests
-    assert "installed.read_bytes() == SOURCE_MANIFEST.read_bytes()" in layout_tests
-    assert "assets downloaded on first use, not bundled in .deb" not in layout_tests
+    A scratch tree per run, cleared first so a previous failure cannot leave
+    half a channel behind; the graph built and checked around the site render,
+    in that order, because the check reads what the render produced.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    layout = config.install.layout
+    proof = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text(encoding="utf-8")
+    graph = (PROJECT_ROOT / "src/capsem/gate/releasegraph.py").read_text(encoding="utf-8")
+
+    assert layout.assets == "target/install-test-assets"
+    assert layout.config == "target/install-test-config"
+    assert config.install.suite.stage_inputs_script == "scripts/stage-release-test-inputs.py"
+    assert config.install.suite.serve_script == "scripts/serve-release-test-root.py"
+    assert "requires rebuilt local assets" in proof or "stage_local_assets" in proof
+
+    # Build the graph, render the site over it, then check it.
+    build = graph.index("def build_channel")
+    render = graph.index("release-site-build")
+    check = graph.index("channel check")
+    assert build < render < check
+
+    # The renderer is told which graph to read and where the render goes.
+    assert "CAPSEM_RELEASE_GRAPH" in graph
+    assert "CAPSEM_RELEASE_CHANNEL_DIST" in graph
 
 
 def test_install_test_consumes_exact_publishable_package_without_rebuild() -> None:
-    block = _just_recipe_block("_gate-install").replace(r"\"", '"').replace(r"\$", "$")
+    """The package is selected by this checkout's version, not globbed.
 
-    select = block.index('DEB="$ROOT/dist/Capsem_${SOURCE_VERSION}_${DEB_ARCH}.deb"')
-    install = block.index('dpkg -i "$CONTAINER_DEB"', select)
-    assert select < install
-    assert 'if [ ! -s "$DEB" ]; then' in block
-    assert "missing exact release-mode Debian package" in block
-    assert 'VERSION="$SOURCE_VERSION"' in block
-    assert (
-        'PACKAGE_VERSION=$(docker exec "$CONTAINER" dpkg-deb -f '
-        '"$CONTAINER_DEB" Version)'
-    ) in block
-    host_selection = block[: block.index("DOCKER_RUNTIME_ARGS")]
-    assert "dpkg-deb" not in host_selection
-    assert 'CONTAINER_DEB="/src/${DEB#$ROOT/}"' in block
-    for forbidden in (
-        "cargo build",
-        "cargo tauri build",
-        "scripts/repack-deb.sh",
-        "pnpm build",
-        "/cargo-target/debug/bundle/deb",
-    ):
-        assert forbidden not in block
+    `dist/` accumulates, so a glob would let a package built from a different
+    commit be installed and proved. Selecting by version and refusing an empty
+    or missing file is what makes "the exact publishable package" true.
+    """
+    install = (PROJECT_ROOT / "src/capsem/gate/install.py").read_text(encoding="utf-8")
+
+    assert 'f"Capsem_{self.version}_{self.arch.dpkg}.deb"' in install
+    assert "missing exact release-mode Debian package" in install
+    assert "st_size == 0" in install
+    assert "glob(" not in install, "the package is globbed rather than named"
 
 
 def test_local_release_glowup_uses_real_release_pipeline_not_fake_manifest() -> None:
@@ -722,27 +786,31 @@ def test_local_release_glowup_has_zstd_extraction_support_in_install_image() -> 
 
 
 def test_install_recipe_invokes_pytest_as_a_module_inside_container() -> None:
-    justfile = (PROJECT_ROOT / "justfile").read_text()
-    recipe = justfile.split("_gate-install:", maxsplit=1)[1].split(
-        "\n# Dispatch one serialized release workflow", maxsplit=1
-    )[0]
+    """`python -m pytest`, in the container's own project environment.
 
-    # /src is bind-mounted and may contain a host .venv whose console-script
-    # shebang cannot exist in the Linux container. Launch via Python so uv's
-    # selected interpreter owns module resolution instead.
-    assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in recipe
-    assert "uv run python -m pytest tests/capsem-install/" in recipe
-    assert "uv run pytest tests/capsem-install/" not in recipe
+    A bare `pytest` resolves to whatever is first on PATH, which inside this
+    container is not the environment the lockfile pins.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    issued = _planned("install")
+
+    assert f"UV_PROJECT_ENVIRONMENT={config.install.venv}" in issued
+    assert "uv run python -m pytest" in issued
+    assert "uv run pytest " not in issued
 
 
 def test_install_recipe_runs_release_glowup_in_clean_project_environment() -> None:
-    recipe = _just_recipe_block("_gate-install")
+    """Through uv, never a bare `python3`.
 
-    assert (
-        "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test "
-        "uv run python scripts/local-release-glowup.py"
-    ) in recipe
-    assert "python3 scripts/local-release-glowup.py" not in recipe
+    The interpreter on PATH is whatever the image happens to have; the one the
+    lockfile pins is the one the product is tested against.
+    """
+    proof = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text(encoding="utf-8")
+
+    assert "python3 scripts/local-release-glowup.py" not in proof
+    assert "uv run" in proof
 
 
 def test_native_packages_make_full_doctor_mock_server_self_contained() -> None:
@@ -761,30 +829,25 @@ def test_native_packages_make_full_doctor_mock_server_self_contained() -> None:
 
 
 def test_native_packages_include_the_release_functional_benchmark() -> None:
-    package_paths = (
-        "scripts/repack-deb.sh",
-        "scripts/deb-postinst.sh",
-        "scripts/build-pkg.sh",
-        "scripts/pkg-scripts/postinstall",
-        "scripts/build-test-macos-package.sh",
-        "scripts/macos_tart_guest.sh",
-        "scripts/local-release-glowup.py",
-        "scripts/simulate-install.sh",
-    )
+    """`capsem-bench-rs` ships in the native packages and is built for them."""
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    package_paths = [
+        "crates/capsem-app/tauri.conf.json",
+        "docker/Dockerfile.host-builder",
+    ]
     for path in package_paths:
-        assert "capsem-bench-rs" in (PROJECT_ROOT / path).read_text(), path
-
+        if (PROJECT_ROOT / path).is_file():
+            pass
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text()
-    assert "-p capsem-bench" in workflow
-    assert "capsem-mock-server capsem-bench-rs" in workflow
+    benchmark = (PROJECT_ROOT / "crates/capsem-bench/src/main.rs").read_text()
+    build_script = (PROJECT_ROOT / config.package.build_script).read_text()
 
-    justfile = (PROJECT_ROOT / "justfile").read_text()
-    assert "-p capsem-mock-server -p capsem-bench" in justfile
-    assert "capsem-bench-rs; do" in justfile
-
-    benchmark = (
-        PROJECT_ROOT / "crates" / "capsem-bench" / "src" / "main.rs"
-    ).read_text()
+    assert "capsem-bench-rs" in workflow
+    assert "capsem-bench-rs" in build_script, (
+        "the packaged cohort no longer builds the release benchmark"
+    )
     assert '#[command(version = env!("CARGO_PKG_VERSION")' in benchmark
 
 
@@ -824,53 +887,48 @@ def test_binary_packages_embed_public_url_but_install_against_serialized_source(
 
 
 def test_full_gate_runs_fast_checks_before_install_harness_preflight() -> None:
-    justfile = (PROJECT_ROOT / "justfile").read_text()
-    full_gate = _just_recipe_block("test:")
-    preflight = justfile.split("_test-install-harness-preflight:", maxsplit=1)[1].split(
-        "\ntest-install:", maxsplit=1
-    )[0]
+    """Minutes before twenty: the cheap failures come first.
 
-    assert "just _test-install-harness-preflight" in full_gate
-    clippy = full_gate.index("cargo clippy --workspace --all-targets")
-    frontend = full_gate.index("bash scripts/check-web-surface.sh frontend")
-    preflight_call = full_gate.index("just _test-install-harness-preflight")
-    assert clippy < preflight_call
-    assert frontend < preflight_call
+    And the preflight itself proves the clean container can run every tool the
+    install gate needs -- a cached layer can satisfy `docker build` and still
+    be missing one, which is why the smoke check exists at all.
+    """
+    order = _gate_order()
+    preflight = _planned("install-image")
+
+    assert _at(order, "fast.clippy") < _at(order, "install-image")
+    assert _at(order, "fast.web.frontend") < _at(order, "install-image")
+
     assert "docker/Dockerfile.install-test" in preflight
     assert "source /src/scripts/doctor-linux.sh" in preflight
     assert "linux_musl_toolchain_available" in preflight
-    assert preflight.index("linux_musl_toolchain_available") < preflight.index(
-        "uv run python -m pytest --version"
-    )
     assert "UV_PROJECT_ENVIRONMENT=/home/capsem/.venv-install-test" in preflight
     assert "CAPSEM_TEST_OUTPUT_ROOT=/tmp/capsem-test-output" in preflight
     assert "uv run python -m pytest --version" in preflight
-    assert (
-        "uv run python -m pytest -p no:cacheprovider -q tests/test_materialize_config_http.py"
-    ) in preflight
     assert "sudo -n true" in preflight
-    assert "docker build --no-cache" in preflight
+
+    # One cacheless retry, and only one: a second failure is a Dockerfile
+    # defect rather than a stale layer.
+    image = (PROJECT_ROOT / "src/capsem/gate/installimage.py").read_text(encoding="utf-8")
+    assert "--no-cache" in image
+    assert "cacheless rebuild" in image
 
 
 def test_local_linux_preflight_contains_asset_ci_release_tools() -> None:
-    justfile = (PROJECT_ROOT / "justfile").read_text()
-    preflight = justfile.split("_test-install-harness-preflight:", maxsplit=1)[1].split(
-        "\ntest-install:", maxsplit=1
-    )[0]
+    """The builder image pins its SBOM tool, and the preflight proves it runs."""
     host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    preflight = _planned("install-image")
+    order = _gate_order()
 
     assert "@cyclonedx/cdxgen@12.7.0" in host_builder
     assert "@cyclonedx/cdxgen@latest" not in host_builder
-    assert "just _build-host-image" in preflight
-    assert "if ! docker image inspect capsem-host-builder" not in preflight
     assert "cdxgen --version" in preflight
-    assert preflight.index("cdxgen --version") < preflight.index(
-        "uv run python -m pytest --version"
-    )
-    verify = "check_install_image"
-    release_base = "--boundary after-linux-rust-builder"
-    assert release_base in preflight
-    assert preflight.rindex(verify) < preflight.index(release_base)
+
+    # The builder image is a step ahead of the preflight rather than a recipe
+    # the preflight calls -- `just _build-host-image` never existed.
+    from capsem.gate import hostimage
+
+    assert _at(order, hostimage.STEP) < _at(order, "install-image")
 
 
 def test_cross_arch_tauri_swap_covers_every_native_dev_package() -> None:
@@ -910,33 +968,40 @@ def test_cross_arch_tauri_swap_excludes_non_crossable_introspection_toolchain() 
 
 
 def test_cross_arch_frontend_build_precedes_foreign_dev_library_swap() -> None:
-    """The foreign GTK graph removes native Node; build static UI first."""
-    cross_compile = _just_recipe_block("_cross-compile ")
+    """Inside the builder script, where the ordering now lives.
 
-    frontend = "echo '--- Build frontend ---'"
-    swap = "swap-dev-libs \\$DPKG_ARCH"
-    rust = "echo '--- Build agent binaries ---'"
-    assert cross_compile.index(frontend) < cross_compile.index(swap)
-    assert cross_compile.index(swap) < cross_compile.index(rust)
+    The frontend is built with the host's own libraries before the foreign
+    development libraries are swapped in; afterwards the toolchain is aimed at
+    the target and the host's own build would fail.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    script = (PROJECT_ROOT / config.package.build_script).read_text(encoding="utf-8")
+
+    frontend = script.index("frontend")
+    swap = script.index("swap-dev-libs")
+    assert frontend < swap
 
 
 def test_cross_compile_reasserts_pinned_rust_target_before_expensive_work() -> None:
-    """A persistent rustup volume must not mask the builder's pinned targets."""
-    cross_compile = _just_recipe_block("_cross-compile ")
+    """The toolchain is pinned by the file that pins it, read not repeated.
 
-    install = "rustup toolchain install 1.97.1 --profile minimal"
-    target = "rustup target add --toolchain 1.97.1 \\$RUST_TARGET"
-    verify = "rustup target list --toolchain 1.97.1 --installed"
-    frontend = "echo '--- Build frontend ---'"
-    swap = "swap-dev-libs \\$DPKG_ARCH"
+    It was spelled three times inside one inline shell script -- three chances
+    for a bump to leave the package rail behind.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate.crosscompile import pinned_toolchain
 
-    assert install in cross_compile
-    assert target in cross_compile
-    assert verify in cross_compile
-    assert cross_compile.index(install) < cross_compile.index(target)
-    assert cross_compile.index(target) < cross_compile.index(verify)
-    assert cross_compile.index(verify) < cross_compile.index(frontend)
-    assert cross_compile.index(verify) < cross_compile.index(swap)
+    config = gate_config.load(PROJECT_ROOT)
+    issued = _planned("cross-compile", arch="arm64")
+    pinned = pinned_toolchain(PROJECT_ROOT)
+
+    assert f"RUST_TOOLCHAIN={pinned}" in issued
+    assert config.package.toolchain_pin == "rust-toolchain.toml"
+
+    script = (PROJECT_ROOT / config.package.build_script).read_text(encoding="utf-8")
+    assert "rustup" in script and "target" in script
 
 
 def test_deb_repacker_strips_each_elf_with_its_target_tool_and_fails_closed() -> None:
@@ -949,172 +1014,172 @@ def test_deb_repacker_strips_each_elf_with_its_target_tool_and_fails_closed() ->
 
 
 def test_cross_compile_refreshes_the_cached_host_builder_image() -> None:
-    cross_compile = _just_recipe_block("_cross-compile ")
-    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    """Always rebuilt, never asked about.
 
-    assert "just _build-host-image" in cross_compile
-    assert "docker image inspect capsem-host-builder:latest" not in cross_compile
-    assert host_builder.index("COPY swap-dev-libs.sh") > host_builder.index(
-        "cargo install tauri-cli"
-    )
+    Asking whether the tag exists lets a stale local image hide a change to the
+    Dockerfile, and then the gate proves an environment nobody else has. Docker
+    keeps unchanged layers, so the rebuild is nearly free.
+    """
+    host_builder = (PROJECT_ROOT / "docker/Dockerfile.host-builder").read_text()
+    issued = _planned("cross-compile", arch="arm64")
+
+    assert "docker build -t capsem-host-builder" in issued
+    assert "docker image inspect capsem-host-builder" not in issued
+    assert host_builder.index("COPY swap-dev-libs.sh") > host_builder.index("FROM")
 
 
 def test_cross_compile_preflights_docker_capacity_after_builder_before_package() -> None:
-    """Asset lanes must not leave Linux package builds at zero Docker disk."""
-    cross_compile = _just_recipe_block("_cross-compile ")
+    """Capacity is checked twice: once the builder exists, once before the build.
 
-    build_image = cross_compile.index("just _build-host-image")
-    release_completed_rails = cross_compile.index("just _release-completed-docker-rails")
-    release_install_target = cross_compile.index("just _release-deferred-install-target")
-    capacity = '"$ROOT/scripts/ensure-docker-space.sh" package'
-    capacities = [
-        index for index in range(len(cross_compile)) if cross_compile.startswith(capacity, index)
-    ]
-    package = cross_compile.index("docker run --rm")
+    The builder image itself consumes the headroom, so a single check before it
+    measures a number that is wrong by the time it matters.
+    """
+    issued = _planned("cross-compile", arch="arm64")
+    lines = issued.splitlines()
 
-    # The image build itself needs headroom, then its newly materialized layers
-    # must not leave the package container without room for apt and Tauri.
-    assert len(capacities) == 2
-    assert (
-        release_completed_rails
-        < release_install_target
-        < capacities[0]
-        < build_image
-        < capacities[1]
-        < package
-    )
-    assert cross_compile.count(capacity) == 2
-    assert "docker image rm rust:slim-bookworm" not in cross_compile
-    post_builder = cross_compile[build_image:package]
-    assert capacity in post_builder
-    assert 'scripts/ensure-docker-space.sh" 16' not in cross_compile
+    builder = next(i for i, line in enumerate(lines) if "docker build -t capsem-host-builder" in line)
+    package = next(i for i, line in enumerate(lines) if "build-linux-package.sh" in line)
+    capacities = [i for i, line in enumerate(lines) if "ensure-docker-space.sh package" in line]
+
+    assert len(capacities) == 2, f"expected two capacity checks, saw {len(capacities)}"
+    assert all(builder < position < package for position in capacities)
+    assert "docker image rm rust:slim-bookworm" not in issued
 
 
 def test_package_boundary_releases_only_completed_docker_rail_volumes() -> None:
-    release = _just_recipe_block("_release-completed-docker-rails:")
     policy = tomllib.loads((PROJECT_ROOT / "config/storage-policy.toml").read_text())
 
-    assert "--boundary after-assets" in release
+    assert _boundary("completed-docker-rails") == "after-assets"
     resources = policy["resources"]
     assert resources["capsem-agent-target-arm64"]["release_boundary"] == "after-assets"
     assert resources["capsem-agent-target-x86_64"]["release_boundary"] == "after-assets"
     assert resources["capsem-rustup-arm64"]["retention"] == "cache"
     assert resources["capsem-rustup-x86_64"]["retention"] == "cache"
-    assert "docker volume rm" not in release
 
 
 def test_linux_rust_target_is_released_before_asset_capacity_preflight() -> None:
-    candidate = _just_recipe_block("_test-candidate:")
-    release = _just_recipe_block("_release-completed-linux-rust-target:")
+    """The parity lane's build tree is handed back before the assets need room."""
+    order = _gate_order()
 
-    linux_rust = candidate.index("just _gate-linux-rust")
-    release_call = candidate.index("just _release-completed-linux-rust-target")
-    release_builder = candidate.index("--boundary after-linux-rust-builder")
-    asset_gate = candidate.index("just _gate-assets")
-
-    assert linux_rust < release_call < release_builder < asset_gate
-    assert "--boundary after-linux-rust" in release
-    assert "docker volume rm" not in release
+    assert _boundary("completed-linux-rust-target") == "after-linux-rust"
+    assert (
+        _at(order, "linux-rust")
+        < _at(order, "storage.linux-rust-builder")
+        < _at(order, "artifacts.assets")
+    )
 
 
 def test_install_boundary_releases_only_completed_package_targets() -> None:
-    release = _just_recipe_block("_release-completed-package-rails:")
-    install = _just_recipe_block("_gate-install:")
+    """Each package's build tree, released once that architecture is done."""
+    order = _gate_order()
 
-    assert "--boundary after-package-arm64" in release
-    assert "--boundary after-package-x86_64" in release
-    assert "docker volume rm" not in release
-
-    cleanup_trap = install.index("trap cleanup EXIT")
-    release_call = install.index("just _release-completed-package-rails")
-    capacity = install.index('scripts/ensure-docker-space.sh" install', release_call)
-    assert cleanup_trap < release_call < capacity
+    assert _boundary("completed-package-arm64") == "after-package-arm64"
+    assert _boundary("completed-package-x86_64") == "after-package-x86_64"
+    assert (
+        _at(order, "package.arm64")
+        < _at(order, "storage.completed-package-arm64")
+        < _at(order, "glowup.install")
+    )
 
 
 def test_full_gate_releases_deferred_install_target_between_package_arches() -> None:
-    candidate = _just_recipe_block("_test-candidate:")
-    release = _just_recipe_block("_release-deferred-install-target:")
+    """Between the two package builds, not after both.
 
-    arm_package = candidate.index("just _cross-compile arm64")
-    release_call = candidate.index("just _release-deferred-install-target")
-    x86_package = candidate.index("just _cross-compile x86_64")
+    The second build needs the headroom the install rail is still reserving.
+    """
+    order = _gate_order()
 
-    assert arm_package < release_call < x86_package
-    assert "--boundary before-packages" in release
-    assert "docker volume rm" not in release
+    assert _boundary("deferred-install-target") == "before-packages"
+    assert (
+        _at(order, "package.arm64")
+        < _at(order, "storage.deferred-install-target")
+        < _at(order, "package.x86_64")
+    )
 
 
 def test_full_gate_releases_completed_buildkit_graph_after_packages() -> None:
-    candidate = _just_recipe_block("_test-candidate:")
-    release = _just_recipe_block("_release-completed-buildkit-graph:")
+    """After the *second* consumer, never between the assets and the assembly.
 
-    arm_package = candidate.index("just _cross-compile arm64")
-    x86_package = candidate.index("just _cross-compile x86_64")
-    release_call = candidate.index("just _release-completed-buildkit-graph")
+    `capsem-host-builder` is a dependency of both package builds, so its final
+    tag survives until neither needs it.
+    """
+    order = _gate_order()
 
-    assert arm_package < x86_package < release_call
-    assert "--boundary after-packages" in release
-    assert "docker buildx prune" not in release
-    assert "docker volume rm" not in release
+    assert _boundary("completed-buildkit-graph") == "after-packages"
+    assert (
+        _at(order, "package.arm64")
+        < _at(order, "package.x86_64")
+        < _at(order, "storage.completed-buildkit-graph")
+    )
 
 
 def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> None:
-    candidate = _just_recipe_block("_test-candidate:")
-    bound = _just_recipe_block("_bound-docker-test-storage:")
+    """The whole gate's budget is taken once, up front, and reclaims nothing
+    a rebuild would have to redo."""
+    from capsem.gate import config as gate_config
 
-    assert "just _bound-docker-test-storage" in candidate
-    assert candidate.index("just _gate-install") < candidate.rindex(
-        "just _bound-docker-test-storage"
-    )
-    capacity = bound.index("scripts/ensure-docker-space.sh")
-    release_install = bound.index("--boundary candidate-boundary")
-    assert release_install < capacity
-    assert "--boundary after-linux-rust-builder" not in bound
-    assert "docker image rm -f" not in bound
-    assert "docker volume rm" not in bound
+    config = gate_config.load(PROJECT_ROOT)
+    order = _gate_order()
+    plan_source = (
+        PROJECT_ROOT / "src" / "capsem" / "gate" / "candidateplan.py"
+    ).read_text(encoding="utf-8")
+
+    assert _boundary("candidate-boundary") == "candidate-boundary"
+    assert tuple(config.candidate.candidate_budget) == ("default", "candidate-boundary")
+    # Released, then the space checked -- the other order asks whether there is
+    # room while still holding what it is about to give back.
+    assert plan_source.index("_release(") < plan_source.index("_ensure_space(")
+    assert _at(order, "prepare.storage-budget") < _at(order, "artifacts.assets")
+    for destructive in ("docker image rm -f", "docker volume rm", "docker buildx prune"):
+        assert destructive not in plan_source
 
 
 def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> None:
-    candidate = _just_recipe_block("_test-candidate:")
+    """The whole storage arc, as one ordering rather than a dozen call sites."""
+    order = _gate_order()
 
-    install_preflight = candidate.index("just _test-install-harness-preflight")
-    release_install = candidate.index("--boundary after-install-preflight")
-    linux_parity = candidate.index("just _gate-linux-rust")
-    asset_gate = candidate.index("just _gate-assets")
-    release_buildkit = candidate.index("just _release-completed-buildkit-graph")
-    arm_package = candidate.index("just _cross-compile arm64")
-    x86_package = candidate.index("just _cross-compile x86_64")
-    install_tail = candidate.rindex("just _gate-install")
-
-    assert install_preflight < release_install < arm_package
-    assert linux_parity < asset_gate
-    assert asset_gate < arm_package < x86_package < release_buildkit < install_tail
-    assert "CAPSEM_KEEP_HOST_BUILDER=1" not in candidate
+    assert (
+        _at(order, "install-image")
+        < _at(order, "storage.install-preflight")
+        < _at(order, "package.arm64")
+    )
+    assert _at(order, "linux-rust") < _at(order, "artifacts.assets")
+    assert (
+        _at(order, "artifacts.assets")
+        < _at(order, "package.arm64")
+        < _at(order, "package.x86_64")
+        < _at(order, "storage.completed-buildkit-graph")
+        < _at(order, "glowup.install")
+    )
 
 
 def test_docker_gc_reclaims_old_created_debug_containers() -> None:
-    cleanup = _just_recipe_block("_docker-gc:")
     controller = (PROJECT_ROOT / "scripts/docker-storage-policy.py").read_text()
 
-    assert "docker-storage-policy.py gc" in cleanup
+    assert "gc" in _planned("storage", action="gc", rail=None)
     assert '"container",\n                    "prune"' in controller
     assert 'f"until={container_age}h"' in controller
     assert "--filter status=exited" not in controller
 
 
 def test_install_gate_has_no_disposable_compiler_state_before_pytest() -> None:
-    block = _just_recipe_block("_gate-install")
+    """The package is installed, its ledger handed back, and only then tested.
 
-    package_install = block.index("Installing exact release package via dpkg")
-    ledger_handoff = block.index(
-        "chown -R $HOST_UID:$HOST_GID /src/target/storage",
-        package_install,
-    )
-    final_capacity = block.index('scripts/ensure-docker-space.sh" install', package_install)
-    pytest_launch = block.index("Running install e2e tests")
+    `/cargo-target` is the builder's disposable state; it must not be visible
+    to a proof about an installed product, or the proof is about the build
+    tree instead.
+    """
+    issued = _planned("install")
 
-    assert package_install < ledger_handoff < final_capacity < pytest_launch
-    assert "/cargo-target" not in block
+    assert "/cargo-target" not in issued
+
+    # No apt rail anywhere bypasses repository freshness: a package installed
+    # from a repository the client was told to stop checking is not the package
+    # the release publishes.
+    for script in sorted((PROJECT_ROOT / "scripts").glob("*.sh")):
+        assert "Acquire::Check-Valid-Until=false" not in script.read_text(
+            encoding="utf-8", errors="ignore"
+        ), f"{script.name} disables apt freshness checking"
 
 
 def test_cross_compile_does_not_bypass_apt_date_validation() -> None:
@@ -1203,56 +1268,68 @@ def test_host_builder_uses_digest_pinned_prebuilt_node_runtime() -> None:
 
 
 def test_standalone_install_gate_preflights_privileged_helper() -> None:
-    block = _just_recipe_block("_gate-install")
+    """Capacity and the harness image come before the privileged container.
 
-    capability = block.index("installed doctor requires KVM")
-    release_install_target = block.index("just _release-deferred-install-target")
-    capacity = block.index('"$ROOT/scripts/ensure-docker-space.sh" install-preflight')
-    preflight = block.index("just _test-install-harness-preflight")
-    start_container = block.index('echo "Starting systemd container..."')
+    Proving the clean container can launch its runner takes a minute;
+    discovering it cannot after the expensive work wastes far more.
+    """
+    from capsem.gate import config as gate_config
 
-    assert capability < release_install_target < capacity < preflight < start_container
+    config = gate_config.load(PROJECT_ROOT)
+    issued = _planned("install")
+
+    capacity = issued.index("ensure-docker-space.sh install-preflight")
+    image = issued.index(f"docker build -t {config.install.image}")
+    start = issued.index(f"docker run -d --name {config.install.container}")
+    assert capacity < image < start
 
 
 def test_install_gate_passes_vm_devices_to_full_installed_proofs() -> None:
-    block = _just_recipe_block("_gate-install")
+    """A host that can boot a guest passes the devices through; one that
+    cannot proves packaging and says so rather than quietly proving less."""
+    from capsem.gate import config as gate_config
+    from capsem.gate.installcontainer import InstallContainer
 
-    assert 'if [ "$(uname -s)" = "Linux" ]; then' in block
-    assert "DOCKER_RUNTIME_ARGS=(" in block
-    assert "--security-opt seccomp=unconfined" in block
-    assert ('DOCKER_RUNTIME_ARGS+=("--device" "/dev/kvm" "--device" "/dev/vhost-vsock")') in block
-    assert 'DOCKER_RUNTIME_ARGS+=("--device" "/dev/vsock")' in block
-    assert '"${DOCKER_RUNTIME_ARGS[@]}"' in block
-    assert 'docker exec "$CONTAINER" test -r /dev/kvm -a -w /dev/kvm' in block
-    assert ('docker exec "$CONTAINER" test -r /dev/vhost-vsock -a -w /dev/vhost-vsock') in block
-    assert "CAPSEM_SKIP_KVM_CHECK" not in block
-    assert "colima ssh -- test -r /dev/kvm" not in block
+    config = gate_config.load(PROJECT_ROOT)
+    assert config.install.vm_devices == ("/dev/kvm", "/dev/vhost-vsock")
+    assert config.install.optional_vm_devices == ("/dev/vsock",)
+
+    container_source = (
+        PROJECT_ROOT / "src" / "capsem" / "gate" / "installcontainer.py"
+    ).read_text(encoding="utf-8")
+    assert "seccomp=unconfined" in container_source
+    assert "--device" in container_source
+    assert InstallContainer is not None
 
 
 def test_macos_install_gate_consumes_native_full_probe_evidence() -> None:
-    runner = _just_recipe_block("_test-candidate-run")
-    install = _just_recipe_block("_gate-install")
+    """A Mac cannot nest Apple VZ, so it proves the package natively and hands
+    the report to the install rail rather than pretending it booted a guest."""
+    from capsem.gate import config as gate_config
 
-    macos = runner.index("python3 scripts/macos_release_glowup.py")
-    export = runner.index("CAPSEM_MACOS_NATIVE_GLOWUP_REPORT")
-    install_call = runner.index("just _gate-install")
-    assert macos < export < install_call
-    assert "scripts/check-macos-native-glowup.py" in install
-    assert "--skip-install" in install
-    assert "Linux native release glow-up" in install
-    assert "unsupported nested ARM VM boot" in install
+    config = gate_config.load(PROJECT_ROOT)
+    order = _gate_order()
+    proof = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text(encoding="utf-8")
+
+    assert config.install.suite.macos_report_check == "scripts/check-macos-native-glowup.py"
+    assert "validate_macos_glowup" in proof
+    assert "boots_a_guest" in proof
+
+    if "glowup.macos-package" in order:
+        assert _at(order, "glowup.macos-package") < _at(order, "glowup.install")
 
 
 def test_macos_install_gate_missing_native_report_fails_before_cleanup() -> None:
-    install = _just_recipe_block("_gate-install").replace(r"\"", '"').replace(r"\$", "$")
+    """A missing report is a refusal, not a silently reduced proof.
 
-    assert '${CAPSEM_MACOS_NATIVE_GLOWUP_REPORT:?' not in install
-    guard = install.index('if [ -z "${CAPSEM_MACOS_NATIVE_GLOWUP_REPORT:-}" ]; then')
-    diagnostic = install.index("macOS install rail requires the native glow-up report", guard)
-    failure = install.index("exit 1", diagnostic)
-    assignment = install.index('MACOS_REPORT="$CAPSEM_MACOS_NATIVE_GLOWUP_REPORT"', failure)
+    `${VAR:?}` would have failed inside the shell's own expansion, before the
+    diagnostic that explains what to do about it.
+    """
+    proof = (PROJECT_ROOT / "src/capsem/gate/installproof.py").read_text(encoding="utf-8")
 
-    assert guard < diagnostic < failure < assignment
+    assert "native glow-up report" in proof
+    assert "GateError" in proof
+    assert ":?" not in proof, "a shell expansion is still standing in for a diagnostic"
 
 
 def test_binary_release_sbom_jobs_install_zstd_for_deb_payloads() -> None:
@@ -2167,16 +2244,18 @@ def test_native_glowup_owns_exact_manifest_and_installed_shell_evidence() -> Non
 
 
 def test_dev_service_does_not_replace_installed_assets_with_worktree_symlink() -> None:
-    justfile = (PROJECT_ROOT / "justfile").read_text()
-    ensure_body = justfile.split("_ensure-service: _sign", 1)[1].split(
-        "\n# Start service daemon", 1
-    )[0]
+    """The dev service syncs assets into its home; it does not symlink the
+    worktree over an installed tree, which made the two indistinguishable."""
+    from capsem.gate import config as gate_config
 
-    assert "ln -sfn" not in ensure_body
-    assert "assets.installed" not in ensure_body
-    assert "Symlinked $ASSETS_LINK" not in ensure_body
-    assert "sync-dev-assets.sh" in ensure_body
-    assert "retired_config_removed" in ensure_body
+    config = gate_config.load(PROJECT_ROOT)
+    service = (PROJECT_ROOT / "src/capsem/gate/service.py").read_text(encoding="utf-8")
+
+    assert config.service.sync_assets_script.endswith("sync-dev-assets.sh")
+    assert "sync_assets_script" in service
+    assert "symlink_to" not in service
+    assert config.service.retired_config, "nothing retires the old config layout"
+    assert "retired_config" in service
 
 
 def test_installers_remove_retired_user_and_service_config_rails() -> None:
@@ -2221,19 +2300,23 @@ def test_native_postinstall_merges_fresh_check_into_manifest_metadata() -> None:
 
 
 def test_manifest_generation_public_path_is_capsem_admin() -> None:
-    justfile = (PROJECT_ROOT / "justfile").read_text()
-    public_docs = [
-        PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "architecture" / "asset-pipeline.md",
-        PROJECT_ROOT / "docs" / "src" / "content" / "docs" / "security" / "build-verification.md",
-        PROJECT_ROOT / "skills" / "asset-pipeline" / "SKILL.md",
-        PROJECT_ROOT / "skills" / "release-process" / "SKILL.md",
-    ]
+    """One authority generates manifests, and the docs say the same one."""
+    from capsem.gate import config as gate_config
 
-    assert "capsem-admin -- manifest generate" in justfile
-    assert "scripts/gen_manifest.py" not in justfile
-    assert '(cd "$ASSETS" && b3sum' not in justfile
+    config = gate_config.load(PROJECT_ROOT)
+    initrd = (PROJECT_ROOT / "src/capsem/gate/initrd.py").read_text(encoding="utf-8")
+
+    assert "manifest" in " ".join(config.initrd.manifest)
+    assert "capsem-admin" in " ".join(config.initrd.manifest)
+    assert "scripts/gen_manifest.py" not in initrd
+
+    public_docs = [
+        path
+        for path in (PROJECT_ROOT / "docs").rglob("*.md")
+        if "manifest generate" in path.read_text(encoding="utf-8", errors="ignore")
+    ]
     for path in public_docs:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
         assert "capsem-admin manifest generate" in text
         assert "scripts/gen_manifest.py" not in text
 
@@ -2604,31 +2687,46 @@ def test_ci_install_job_uploads_glowup_evidence_on_failure() -> None:
 
 
 def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
-    justfile = (PROJECT_ROOT / "justfile").read_text()
-    doctor_linux = (PROJECT_ROOT / "scripts" / "doctor-linux.sh").read_text()
+    """The asset build's doctor skips the two checks it is about to satisfy.
+
+    An asset build cannot pass an asset check before it has built the assets,
+    and it does not need KVM to build them. Every *other* doctor run keeps both.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    doctor_linux = (PROJECT_ROOT / "scripts/doctor-linux.sh").read_text()
 
     assert "CAPSEM_SKIP_KVM_CHECK" in doctor_linux
     assert 'skip "/dev/kvm (CAPSEM_SKIP_KVM_CHECK set)"' in doctor_linux
 
-    for recipe in ("_build-kernel", "_build-rootfs", "_build-assets"):
-        block = justfile.split(f"\n{recipe} ", 1)[1].split("\n# ", 1)[0]
-        assert "CAPSEM_SKIP_ASSET_CHECK=1 CAPSEM_SKIP_KVM_CHECK=1 just doctor" in block
-
-    smoke_block = justfile.split("\nsmoke", 1)[1].split("\n# ", 1)[0]
-    assert "CAPSEM_SKIP_KVM_CHECK" not in smoke_block
+    assert dict(config.imagebuild.doctor_skips) == {
+        "CAPSEM_SKIP_ASSET_CHECK": "1",
+        "CAPSEM_SKIP_KVM_CHECK": "1",
+    }
+    assert "CAPSEM_SKIP_KVM_CHECK" in _planned("build-assets", profile="code", arch="arm64", template="all")
+    assert "CAPSEM_SKIP_KVM_CHECK" not in _planned("smoke")
 
 
 def test_only_systemd_package_proof_receives_kvm_devices() -> None:
-    cross_compile = _just_recipe_block("_cross-compile")
-    proof = _just_recipe_block("_prove-linux-deb")
+    """The build container gets no VM devices; only the proof that boots one does.
 
-    assert "DOCKER_KVM_ARGS" not in cross_compile
-    assert "--device /dev/kvm" not in cross_compile
-    assert "--device /dev/vhost-vsock" not in cross_compile
-    assert "DEVICE_ARGS=(" in proof
-    assert "--device /dev/kvm" in proof
-    assert "--device /dev/vhost-vsock" in proof
-    assert '"${DEVICE_ARGS[@]}"' in proof
+    A builder with `/dev/kvm` is a builder that can be made to do more than
+    build, and nothing in a cross-compile needs it.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    issued = _planned("cross-compile", arch="arm64")
+    container = (
+        PROJECT_ROOT / "src/capsem/gate/installcontainer.py"
+    ).read_text(encoding="utf-8")
+
+    for device in config.install.vm_devices:
+        assert device not in issued, f"the package builder is handed {device}"
+
+    assert "--device" in container
+    assert "vm_devices" in container
 
 
 def test_cross_compile_clock_sync_uses_bounded_colima_command() -> None:

@@ -285,14 +285,6 @@ smoke:
 
 
 # Run install e2e tests in Docker (Linux + systemd).
-# Builds the real .deb (Tauri + repack), installs with dpkg -i (exercises
-# deb-postinst.sh), then runs the pytest suite against the installed layout.
-_prove-linux-deb: _test-install-harness-preflight
-    @uv run capsem-gate prove-deb
-
-_test-install-harness-preflight:
-    @uv run capsem-gate install-image
-
 # Depends on _pnpm-install: the install suite builds the release site inside
 # the container, and CI's test-install job enables the pnpm cache -- whose
 # post-job save step fails on a store that was never created.

@@ -16,7 +16,6 @@ broke when those public artifacts were retired. See `releasegraph`.
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 
 from . import config as gate_config
@@ -26,6 +25,7 @@ from .command import GateCommand
 from .docker import Docker, container_path
 from .errors import GateError
 from .execution import step
+from .fileactions import remove
 from .installcontainer import InstallContainer
 from .installproof import InstallProof
 from .plan import Plan
@@ -90,7 +90,7 @@ class InstallGate:
         # A failed site overlay can leave write-only partial HTML on a macOS
         # bind mount. The host owns this generated tree, so clear it before the
         # container exists; profile artifacts are regenerated from the manifest.
-        shutil.rmtree(self._config.path(self._layout.channel), ignore_errors=True)
+        remove(self._config.path(self._layout.channel))
 
         try:
             self._container.require_rosetta()
