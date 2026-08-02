@@ -3157,6 +3157,24 @@ fn resolve_release_channel_artifact_url(channel_source: &str, artifact: &str) ->
     let base = reqwest::Url::parse(channel_source)
         .with_context(|| format!("parse release channel URL {channel_source}"))?;
     if trimmed.starts_with('/') {
+        // A site-root-relative reference, because a generated channel is a
+        // website: the manifest sits at `<root>/assets/<channel>/manifest.json`
+        // and its artifacts are recorded as `/profiles/...`.
+        //
+        // Over http(s) the site root is the origin, so replacing the path is
+        // exactly right. A `file://` channel is that same tree on disk, and its
+        // root is the dist directory rather than the filesystem root -- so
+        // `set_path` alone sent every local hydration to `/profiles/...` and
+        // failed with ENOENT.
+        if base.scheme() == "file" {
+            if let Some(dist) = base.path().rfind("/assets/") {
+                let mut root = base.clone();
+                root.set_path(&format!("{}{trimmed}", &base.path()[..dist]));
+                root.set_query(None);
+                root.set_fragment(None);
+                return Ok(root.to_string());
+            }
+        }
         let mut root = base;
         root.set_path(trimmed);
         root.set_query(None);

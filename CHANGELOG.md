@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A `file://` release channel resolves its artifacts against its own dist root
+  rather than the filesystem root. A generated channel is a website: the
+  manifest sits at `<root>/assets/<channel>/manifest.json` and records its
+  artifacts site-root-relative, as `/profiles/releases/...`. Over https that is
+  exactly right, because the site root is the origin. Resolved against a
+  `file://` manifest the whole path was replaced, producing
+  `file:///profiles/releases/...` -- the filesystem root -- so every hydration
+  of a locally built channel failed with ENOENT. The gate's install proof hands
+  the postinst exactly such a channel, so the candidate gate could not install
+  the package it had just built, and the `apt-get install -f` retry then
+  reported a 404 against the public channel that nobody had asked it to use.
+
 - The install proof's container mounts `/tmp` and `/run` with `exec`. Docker's
   default tmpfs flags are `rw,nosuid,nodev,noexec`, and the proof unpacks the
   shipped package into `/tmp` to run its `capsem-admin` -- deliberately, so the
