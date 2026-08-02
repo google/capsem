@@ -36,7 +36,16 @@ def compose(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> 
     reduced one, and now it runs it in the same process rather than launching
     `just test` and hoping.
     """
-    recorded = plan.add(step("source.record", RecordSourceState()), after=after)
+    recorded = plan.add(
+        step(
+            "source.record",
+            RecordSourceState(),
+            # What the release guard reads back to prove the tested tree is the
+            # pushed tree.
+            produces=(config.path(config.candidate.source_state_file),),
+        ),
+        after=after,
+    )
 
     contracts = testmodules.release_contracts(plan, config, after=(recorded,))
     fast = testmodules.fast(plan, config, after=(contracts,))
@@ -45,9 +54,7 @@ def compose(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> 
     return plan.add(step("source.verify", RequireSourceUnchanged()), after=(modules,))
 
 
-def compose_modules(
-    plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()
-) -> Step:
+def compose_modules(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
     """Everything after the fast phase: the artifacts, the VMs, the install.
 
     Separate from `compose` because it is independently runnable as
@@ -60,9 +67,7 @@ def compose_modules(
     functional = vmmodules.functional(plan, config, after=(artifacts,))
     glowup = vmmodules.glowup(plan, config, after=(functional,))
 
-    return plan.add(
-        step("recipes", Run(config.candidate.recipe_suite)), after=(glowup,)
-    )
+    return plan.add(step("recipes", Run(config.candidate.recipe_suite)), after=(glowup,))
 
 
 def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step:

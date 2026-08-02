@@ -143,7 +143,18 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
     # `_pack-initrd` already built the host architecture; this proves the other
     # one compiles against musl, so a cross-arch regression surfaces before the
     # Docker cross-compile rather than an hour later.
-    agents = phase.add(step("guest-agents", Run(settings.guest_agent_build)), after=after)
+    agents = phase.add(
+        step(
+            "guest-agents",
+            Run(settings.guest_agent_build),
+            # The musl binaries the initrd carries and the VM executes.
+            produces=tuple(
+                config.path(settings.guest_binary_root) / config.host_arch().name / name
+                for name in settings.guest_binaries
+            ),
+        ),
+        after=after,
+    )
     binaries = phase.add(_guest_binaries_present(config), after=(agents,))
     leaves.append(
         phase.add(

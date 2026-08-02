@@ -32,12 +32,13 @@ def _staging(config: GateConfig) -> Path:
     return config.path(config.initrd.staging) / config.host_arch().name
 
 
+def _initrd_path(config: GateConfig) -> Path:
+    """Where the repack writes, whether or not it is there yet."""
+    return config.path(config.imagebuild.output) / config.host_arch().name / config.artifacts.initrd
+
+
 def _initrd(config: GateConfig) -> Path:
-    found = (
-        config.path(config.imagebuild.output)
-        / config.host_arch().name
-        / config.artifacts.initrd
-    )
+    found = _initrd_path(config)
     if not found.is_file():
         raise GateError(f"initrd not found at {found}; run `just doctor fix` first")
     return found
@@ -120,8 +121,7 @@ class _Repack(Action, name="repack-initrd"):
         # directory may have had its modes changed since.
         staged = [(staging / name, workdir / name) for name in settings.binaries]
         staged += [
-            (config.path(relative), workdir / Path(relative).name)
-            for relative in settings.files
+            (config.path(relative), workdir / Path(relative).name) for relative in settings.files
         ]
         for source, target in staged:
             source.chmod(settings.binary_mode)
@@ -138,9 +138,7 @@ class _Repack(Action, name="repack-initrd"):
                 Remove(cached).perform(self._context)
 
     def _pack(self, context: Context, workdir: Path, scratch: Path) -> None:
-        context.runner.bash(
-            f"find . | cpio -o -H newc | gzip > {scratch}", cwd=workdir
-        )
+        context.runner.bash(f"find . | cpio -o -H newc | gzip > {scratch}", cwd=workdir)
 
 
 class PackInitrdCommand(
@@ -174,7 +172,16 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
             ),
         )
 
-    packed = phase.add(step("repack", _Repack()), after=previous)
+    packed = phase.add(
+        step(
+            "repack",
+            _Repack(),
+            # The initrd the VM boots. The one artifact whose contents decide
+            # whether a guest runs the code this gate just built.
+            produces=(_initrd_path(config),),
+        ),
+        after=previous,
+    )
 
     assets = config.path(config.imagebuild.output)
     manifest = phase.add(

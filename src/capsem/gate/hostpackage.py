@@ -36,14 +36,24 @@ def sign_step(config: GateConfig, *, label: str = "sign"):
     return step(
         label,
         *[
-            Run([
-                "codesign", "--sign", "-",
-                "--entitlements", settings.entitlements,
-                "--force", binary,
-            ])
+            Run(
+                [
+                    "codesign",
+                    "--sign",
+                    "-",
+                    "--entitlements",
+                    settings.entitlements,
+                    "--force",
+                    binary,
+                ]
+            )
             for binary in settings.binaries
         ],
         contends=(config.exclusive("workspace_binaries"),),
+        # The bytes a later step executes. Declared here, at the fragment, so
+        # every command that composes signing inherits the claim rather than
+        # each composer remembering to repeat it.
+        produces=tuple(config.path(binary) for binary in settings.binaries),
     )
 
 
@@ -52,9 +62,7 @@ def sbom_step(config: GateConfig):
     return step("host-sbom", _GenerateSbom(), _ValidateSbom())
 
 
-class SignCommand(
-    GateCommand, name="sign", help="codesign the host binaries for VM tests"
-):
+class SignCommand(GateCommand, name="sign", help="codesign the host binaries for VM tests"):
     """Apple Virtualization.framework refuses an unsigned caller, so this is a
     precondition for every VM test rather than a packaging nicety."""
 
@@ -112,9 +120,9 @@ class _GenerateSbom(Action, name="generate-sbom"):
 
     def perform(self, context: Context) -> None:
         settings = context.config.sbom
-        Script(
-            settings.script, "--output", settings.output, *_artifacts(context.config)
-        ).perform(context)
+        Script(settings.script, "--output", settings.output, *_artifacts(context.config)).perform(
+            context
+        )
 
 
 class _ValidateSbom(Action, name="validate-sbom"):
@@ -125,9 +133,7 @@ class _ValidateSbom(Action, name="validate-sbom"):
 
     def perform(self, context: Context) -> None:
         settings = context.config.sbom
-        document = json.loads(
-            context.config.path(settings.output).read_text(encoding="utf-8")
-        )
+        document = json.loads(context.config.path(settings.output).read_text(encoding="utf-8"))
         if document.get("spdxVersion") != settings.spdx_version:
             raise GateError(f"host SBOM is not {settings.spdx_version}")
         if not document.get("files"):
@@ -159,8 +165,7 @@ class BuildUiCommand(
         profile = self._args.profile
         if profile not in settings.profiles:
             raise GateError(
-                f"unknown build profile {profile!r}; expected one of "
-                f"{', '.join(settings.profiles)}"
+                f"unknown build profile {profile!r}; expected one of {', '.join(settings.profiles)}"
             )
 
         bundle = plan.add(
@@ -178,9 +183,7 @@ class LogsCommand(
 ):
     @classmethod
     def add_arguments(cls, parser) -> None:
-        parser.add_argument(
-            "target", nargs="?", default="", help="a sandbox id, or `failure`"
-        )
+        parser.add_argument("target", nargs="?", default="", help="a sandbox id, or `failure`")
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
@@ -193,9 +196,7 @@ class LogsCommand(
         elif target:
             plan.add(step("sandbox", Run([settings.cli, "logs", target])))
         else:
-            plan.add(
-                step("service", Run(["tail", "-f", str(host.home() / settings.service_log)]))
-            )
+            plan.add(step("service", Run(["tail", "-f", str(host.home() / settings.service_log)])))
         return plan
 
 
@@ -205,9 +206,11 @@ class _ShowPreservedFailure(Action, name="show-preserved-failure"):
 
     def perform(self, context: Context) -> None:
         root = context.config.path(context.config.logs.failure_root)
-        preserved = sorted(
-            (entry for entry in root.iterdir() if entry.is_dir()), reverse=True
-        ) if root.is_dir() else []
+        preserved = (
+            sorted((entry for entry in root.iterdir() if entry.is_dir()), reverse=True)
+            if root.is_dir()
+            else []
+        )
         if not preserved:
             raise GateError(f"no preserved test failure under {root}")
 

@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The artifact contract has real producers. `Step.produces` drove both the
+  per-step hashing into the run log and the "one owner per artifact" check, and
+  no production step supplied it -- so `Hash` had no caller through that
+  mechanism, every run log recorded zero artifacts, and the ownership check
+  iterated an empty set. A guard that is green because it was asked nothing is
+  worse than no guard. The signed host binaries, the cross-compiled guest
+  agents, the repacked initrd and the source-state record declare their outputs
+  at the fragment that builds them, so both release lanes inherit the claim.
+  With real data the check reports what it always should have: three signing
+  steps write the same binaries, which is safe only because they contend for
+  one exclusive -- and that is now asserted rather than assumed.
+
 - The recorded revision survives the checkouts a release is actually cut from.
   `head_revision` parsed `.git/HEAD` and then a loose ref by hand, which
   returns nothing for a linked worktree -- where `.git` is a *file* -- and
