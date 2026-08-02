@@ -29,19 +29,15 @@ from .releasehead import ConfirmHead, RecordHead, head_file
 def _require_channel(config: GateConfig, channel: str) -> None:
     if channel not in config.package.channels:
         raise GateError(
-            f"unknown channel {channel!r}; expected one of "
-            f"{', '.join(config.package.channels)}"
+            f"unknown channel {channel!r}; expected one of {', '.join(config.package.channels)}"
         )
 
 
 def _require_profile(config: GateConfig, profile: str) -> None:
-    from . import imagebuild
 
     known = imagebuild.profiles(config)
     if profile not in known:
-        raise GateError(
-            f"unknown profile {profile!r}; expected one of {', '.join(known)}"
-        )
+        raise GateError(f"unknown profile {profile!r}; expected one of {', '.join(known)}")
 
 
 def _gate(plan: Plan, config: GateConfig, *, after):
@@ -97,19 +93,19 @@ class ReleaseBinariesCommand(
                 "channel-source",
                 Script(
                     settings.fetch_manifest,
-                    "--channel", channel,
+                    "--channel",
+                    channel,
                     "--repository",
                     os.environ.get(settings.repository_variable, settings.default_repository),
                     "--require-profile-membership",
-                    "--output", settings.channel_source,
+                    "--output",
+                    settings.channel_source,
                 ),
             ),
             after=(checked,),
         )
 
-        recorded = plan.add(
-            step("record-head", RecordHead(head_file(config))), after=(fetched,)
-        )
+        recorded = plan.add(step("record-head", RecordHead(head_file(config))), after=(fetched,))
         gate = _gate(plan, config, after=(recorded,))
         confirmed = plan.add(
             step("confirm-head", ConfirmHead(settings.publish, head_file(config))),
@@ -152,9 +148,7 @@ class ReleaseProfileCommand(
                 MakeDir(config.path(settings.preflight_dir)),
             )
         )
-        recorded = plan.add(
-            step("record-head", RecordHead(head_file(config))), after=(checked,)
-        )
+        recorded = plan.add(step("record-head", RecordHead(head_file(config))), after=(checked,))
         gate = _gate(plan, config, after=(recorded,))
         confirmed = plan.add(
             step("confirm-head", ConfirmHead(settings.publish, head_file(config))),
@@ -163,122 +157,16 @@ class ReleaseProfileCommand(
         plan.add(
             step(
                 "release",
-                Run([
-                    *settings.profile,
-                    "--channel", self._args.channel,
-                    "--profile", self._args.profile,
-                ]),
+                Run(
+                    [
+                        *settings.profile,
+                        "--channel",
+                        self._args.channel,
+                        "--profile",
+                        self._args.profile,
+                    ]
+                ),
             ),
             after=(confirmed,),
-        )
-        return plan
-
-
-class DevReadyCommand(
-    GateCommand, name="dev-ready", help="run doctor once, on a fresh checkout"
-):
-    """A sentinel, so the first run is guided and every later one is quiet."""
-
-    def plan(self) -> Plan:
-        plan = Plan(self.name)
-        if self._config.path(self._config.devloop.setup_sentinel).exists():
-            return plan
-        plan.add(imagebuild.doctor(self._config))
-        return plan
-
-
-class DevCommand(
-    GateCommand, name="dev", help="run one development surface"
-):
-    """Three surfaces, one selector.
-
-    The frontend surface stays a passthrough to `pnpm run dev`: it is an
-    interactive server, and putting a Python process between the terminal and
-    it costs signal handling and gains nothing.
-    """
-
-    @classmethod
-    def add_arguments(cls, parser) -> None:
-        parser.add_argument("surface", nargs="?", default="ui")
-        parser.add_argument("args", nargs="*")
-
-    def plan(self) -> Plan:
-        plan = Plan(self.name)
-        config = self._config
-        settings = config.devloop
-        surface = self._args.surface
-
-        if surface not in settings.surfaces:
-            raise GateError(
-                f"unknown surface {surface!r}; expected one of "
-                f"{', '.join(settings.surfaces)}"
-            )
-
-        if surface == "frontend":
-            plan.add(
-                step(
-                    surface,
-                    Run(settings.frontend_dev, cwd=config.path(settings.frontend_dir)),
-                )
-            )
-        elif surface == "tui":
-            plan.add(step(surface, Run([*settings.tui, *self._args.args])))
-        else:
-            plan.add(
-                step(
-                    surface,
-                    Run(
-                        settings.tauri,
-                        env={"CAPSEM_ASSETS_DIR": config.imagebuild.output},
-                    ),
-                )
-            )
-        return plan
-
-
-class ShellCommand(
-    GateCommand, name="shell", help="start the service and enter a temporary VM"
-):
-    exclusive = True
-
-    def plan(self) -> Plan:
-        plan = Plan(self.name)
-        plan.add(
-            step("shell", Run([self._config.logs.cli, "shell"]),
-                 contends=(self._config.exclusive("apple_vz"),))
-        )
-        return plan
-
-
-class ExecCommand(
-    GateCommand, name="exec", help="run one command in a fresh temporary VM"
-):
-    """One string, carried to the guest without a host shell ever seeing it.
-
-    `guest_command`, not `command`: the latter is the subparser's own slot, and
-    a positional named that overwrote the subcommand name -- registry lookup
-    then indexed a dict with a list and the public command could not dispatch.
-
-    One positional rather than `nargs="+"`, because the payload is a command
-    line for the guest, and rejoining a list is where its quoting is lost.
-    `capsem run`, not `capsem exec`: the Rust CLI's `exec` executes in an
-    *existing* session and takes one, so the payload would have been consumed
-    as a session name. `run` is the one-shot fresh session this documents.
-    """
-
-    exclusive = True
-
-    @classmethod
-    def add_arguments(cls, parser) -> None:
-        parser.add_argument("guest_command")
-
-    def plan(self) -> Plan:
-        plan = Plan(self.name)
-        plan.add(
-            step(
-                "exec",
-                Run([self._config.logs.cli, "run", self._args.guest_command]),
-                contends=(self._config.exclusive("apple_vz"),),
-            )
         )
         return plan

@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- One file owns one responsibility. `release.py` claimed the two release
+  commands and also held the development surfaces and the guest entry points;
+  they are `devloop.py` and `guestcommands.py` now. `vmmodules.py` held three
+  independently composed release phases, which is three reasons for one file to
+  change; they are `module_artifacts.py`, `module_functional.py` and
+  `module_glowup.py`, re-exported so composition keeps one import site. Purely
+  mechanical: `candidate`, `release-binaries` and `release-profile` render
+  byte-identical dry-run and graph output before and after, which is the guard
+  this kind of move deserves.
+
 - Deployment data has one owner, and the guard that was supposed to enforce
   that can now see the shapes it was missing. It walked flat strings, so a path
   built with `/` was inspected as separate components and none of them looked

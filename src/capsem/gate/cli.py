@@ -21,8 +21,10 @@ from . import (
     candidate,
     crosscompile,
     debproof,
+    devloop,
     doctor,
     gc,
+    guestcommands,
     hostimage,
     hostpackage,
     imagebuild,
@@ -68,6 +70,8 @@ COMMAND_MODULES = (
     smoke,
     initrd,
     release,
+    devloop,
+    guestcommands,
 )
 
 
