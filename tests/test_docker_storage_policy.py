@@ -119,8 +119,9 @@ def test_justfile_uses_named_rails_and_keeps_builder_until_packages_finish() -> 
     # The builder's final tag survives until neither package build needs it.
     # Ordering is an edge in the gate now rather than line order in a recipe.
     labels = list(_gate_labels())
-    arm64 = labels.index("package.arm64")
-    x86_64 = labels.index("package.x86_64")
+    # The lane is eight steps now; its build is the one that runs the image.
+    arm64 = labels.index("package.arm64.build")
+    x86_64 = labels.index("package.x86_64.build")
     # The builder's tag now outlives the packages too: the install proof's
     # image is `FROM` it. `after-install` is the first boundary at which
     # nothing derives from it.

@@ -130,6 +130,23 @@ def remove(path: Path) -> None:
         )
 
 
+def make_dir(path: Path) -> None:
+    """Create a directory and its parents, tolerating one already there.
+
+    The function form of `MakeDir`, for the phases whose argv cannot be
+    rendered at plan time -- a package build's environment carries signing
+    material, so the action that runs it must not be printed by `--dry-run`.
+    Going through here keeps those phases off raw `Path.mkdir` all the same.
+    """
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def copy_tree(source: Path, target: Path) -> None:
+    """Copy a directory, replacing whatever was at the target."""
+    remove(target)
+    shutil.copytree(source, target)
+
+
 class Copy(Action, name="copy"):
     """Copy a file or a tree, merging into an existing destination tree."""
 

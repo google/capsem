@@ -538,7 +538,6 @@ direct_concurrency = ["planrunner.py"]
 modules_bypassing_primitives = [
     "assetlanes.py",
     "assets.py",
-    "crosscompile.py",
     "doctor.py",
     "versions.py",
 ]

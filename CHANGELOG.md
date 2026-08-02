@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The Linux package lane is eight steps instead of one opaque call. It was a
+  single `Call` whose dry run printed one line of prose while six things
+  happened: storage release, capacity, clock sync, asset sync, the docker
+  build, package resolution, the proof, and reclaim. So `--dry-run` was blind
+  for the gate's most expensive phase, twenty minutes of work carried one
+  duration, and a failure named the whole rail -- which is how an exit-125 came
+  to need a 25 MB log to locate. Every storage-ordering defect in that file
+  came from having to reason about those phases from outside the box. Proven by
+  behaviour rather than by plan text, since the plan changes on purpose: the
+  same seven commands in the same order, captured against a recording runner
+  before and after. `crosscompile.py` is the first module to leave
+  `modules_bypassing_primitives`; its file operations go through the primitive
+  module, while the build itself keeps a `Call` because its argv carries
+  signing material that `--dry-run` must never print.
+
 - The package rail's capacity checks measure two different moments. The pair
   exists because the builder image is itself part of what fills that rail --
   one check once it exists, one before the build spends the headroom -- and

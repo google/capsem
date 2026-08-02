@@ -1893,7 +1893,8 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
     for consumer in ("install-image", "cache-ownership", "linux-rust"):
         if consumer in labels:
             assert labels.index(consumer) < release
-    for package in ("package.arm64", "package.x86_64"):
+    # The lane is eight phases now; the build is the one that runs the image.
+    for package in ("package.arm64.build", "package.x86_64.build"):
         assert labels.index(package) < release, (
             "the package builds run this image; releasing it first is exit 125"
         )

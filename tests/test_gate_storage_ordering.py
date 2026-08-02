@@ -111,7 +111,7 @@ def test_the_builder_image_is_released_after_the_last_build_that_runs_it() -> No
     # on its way out, which is the last thing that derives from the tag.
     assert builder["release_boundary"] == "after-install"
     assert not [label for label in labels if "storage.completed-buildkit-graph" in label]
-    for consumer in ("host-image", "package.arm64", "package.x86_64"):
+    for consumer in ("host-image", "package.arm64.build", "package.x86_64.build"):
         assert labels.index(consumer) < labels.index("glowup.install"), (
             f"{consumer} runs the builder image after the install proof frees it"
         )

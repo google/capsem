@@ -67,6 +67,25 @@ class Building(RecordingRunner):
         return completed
 
 
+
+def _run_lane(rail):
+    """Every phase of one lane, in the order the plan composes them.
+
+    The rail used to have a `run()` that did all of this behind one `Call`.
+    The phases are plan steps now, so a test that wants the whole lane says
+    so -- and a test that wants one phase can finally ask for one.
+    """
+    rail.release_rails()
+    rail.reserve()
+    rail.sync_clock()
+    rail.sync_assets()
+    rail.build()
+    package = rail.resolve()
+    rail.prove()
+    rail.collect()
+    return package
+
+
 def _rail(runner: RecordingRunner, **kwargs) -> PackageRail:
     return PackageRail(runner, TARGET, **kwargs)
 
@@ -134,7 +153,7 @@ def test_the_builder_receives_every_name_for_the_target(
     monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path, toolchain="1.2.3"), replies={"select-linux": "skip"})
 
-    _rail(runner).run()
+    _run_lane(_rail(runner))
 
     build = runner.matching(r"docker run --rm")[0]
     assert f"TARGET_ARCH={TARGET.name}" in build
@@ -154,7 +173,7 @@ def test_the_cargo_caches_are_shared_and_the_target_dir_is_per_architecture(
     monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
 
-    _rail(runner).run()
+    _run_lane(_rail(runner))
 
     build = runner.matching(r"docker run --rm")[0]
     assert "-v capsem-cargo-registry:/usr/local/cargo/registry" in build
@@ -190,8 +209,11 @@ def test_the_builder_image_is_rebuilt_before_every_package() -> None:
     )._describe()
     order = list(plan.labels)
 
-    assert order.index(hostimage.STEP) < order.index(f"package.{TARGET.name}")
-    assert (hostimage.STEP, f"package.{TARGET.name}") in plan.edges
+    assert order.index(hostimage.STEP) < order.index(f"package.{TARGET.name}.build")
+    # The lane's first phase depends on the image; the rest chain from there.
+    # It was one step, so the edge landed on the whole lane -- which is also
+    # why nothing could be ordered against a phase inside it.
+    assert (hostimage.STEP, f"package.{TARGET.name}.storage-release") in plan.edges
 
 
 def test_the_container_clock_is_synced_only_on_macos(
@@ -204,7 +226,7 @@ def test_the_container_clock_is_synced_only_on_macos(
         monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
         runner = Building(_checkout(tmp_path / system), replies={"select-linux": "skip"})
 
-        _rail(runner).run()
+        _run_lane(_rail(runner))
 
         assert runner.ran(r"sync-container-clock\.py") is expected
 
@@ -225,7 +247,7 @@ def test_the_recorded_package_is_the_one_this_run_produced(
     (root / "dist" / "Capsem_0.0.1_arm64.deb").write_text("stale")
     runner = Building(root, replies={"select-linux": "skip"})
 
-    assert _rail(runner).run() == root / "dist" / PACKAGE
+    assert _run_lane(_rail(runner)) == root / "dist" / PACKAGE
 
 
 def test_a_build_that_recorded_nothing_fails(
@@ -236,7 +258,7 @@ def test_a_build_that_recorded_nothing_fails(
     runner = Building(_checkout(tmp_path), records=None)
 
     with pytest.raises(GateError, match="did not record the exact Debian package"):
-        _rail(runner).run()
+        _run_lane(_rail(runner))
 
 
 @pytest.mark.parametrize(
@@ -254,7 +276,7 @@ def test_a_nonsense_package_record_is_refused(
     runner = Building(_checkout(tmp_path), records=recorded)
 
     with pytest.raises(GateError, match=reason):
-        _rail(runner).run()
+        _run_lane(_rail(runner))
 
 
 def test_the_record_does_not_survive_the_run(
@@ -266,7 +288,7 @@ def test_the_record_does_not_survive_the_run(
     root = _checkout(tmp_path)
     runner = Building(root, replies={"select-linux": "skip"})
 
-    _rail(runner).run()
+    _run_lane(_rail(runner))
 
     assert not (root / "dist" / f".cross-compile-{TARGET.name}-deb").exists()
 
@@ -302,7 +324,7 @@ def test_a_provable_target_runs_the_systemd_kvm_proof(
 
     monkeypatch.setattr(crosscompile.debproof, "DebProof", Recording)
 
-    _rail(runner, channel="nightly", manifest_url="file:///src/m.json").run()
+    _run_lane(_rail(runner, channel="nightly", manifest_url="file:///src/m.json"))
 
     assert handed.get("ran"), "a provable target did not run the proof"
     assert handed["channel"] == "nightly"
@@ -319,7 +341,7 @@ def test_a_cross_target_skips_the_proof_and_says_why(
     monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
 
-    _rail(runner).run()
+    _run_lane(_rail(runner))
 
     assert not runner.ran(r"just _prove-linux-deb")
     assert any("Skipping exact Debian package proof" in note for note in runner.notes)
@@ -382,7 +404,7 @@ def test_the_disk_rail_is_measured_at_two_different_moments() -> None:
     )
 
     assert source.count('ensure_space("package")') == 2
-    build = source.index("def _build(self)")
+    build = source.index("def build(self)")
     first = source.index('ensure_space("package")')
     second = source.index('ensure_space("package")', build)
 

@@ -19,7 +19,6 @@ rest of the shell in the repository.
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 
 from . import config as gate_config
@@ -29,7 +28,7 @@ from .command import GateCommand
 from .config import Arch
 from .errors import GateError
 from .execution import step
-from .fileactions import remove
+from .fileactions import copy_tree, make_dir, remove
 from .packageinputs import package_environment, pinned_toolchain, resolve_channel
 from .packagesigning import signing_key
 from .plan import Plan
@@ -67,21 +66,13 @@ class PackageRail:
     def _record(self) -> Path:
         return self._dist / f".cross-compile-{self.target.name}-deb"
 
-    def run(self) -> Path:
-        self._prepare_builder()
-        self._sync_assets_for_tauri()
-        self._build()
-        package = self._recorded_package()
-        self._prove(package)
+    # -- the phases, each one a step ---------------------------------------
+    #
+    # Stateless between phases: `resolve` is a pure read of what the builder
+    # recorded, so `prove` asks again rather than holding an object an earlier
+    # step mutated. See `fragment` for why they are separate at all.
 
-        self._runner.step("Artifacts")
-        self._runner.run(["ls", "-lh", str(self._dist)])
-        self._storage.gc()
-        return package
-
-    # -- before the build --------------------------------------------------
-
-    def _prepare_builder(self) -> None:
+    def release_rails(self) -> None:
         self._storage.release("completed-docker-rails")
         # `deferred-install-target` is not released here: the package phase
         # owns it as a step, between the two architectures, which is the only
@@ -89,17 +80,23 @@ class PackageRail:
         # One named policy owns this rail: the Rust base image and the BuildKit
         # cohort stay warm across candidates, and a capacity failure reports an
         # explicit disk recommendation instead of silently building cold.
-        # Once the builder image exists, because that image is itself part of
-        # what fills this rail. The second check is in `_build`, immediately
-        # before the package build spends it -- these were adjacent lines, so
-        # both measured the same moment and the pair proved nothing.
+
+    def reserve(self) -> None:
+        """Once the builder image exists, because that image fills this rail.
+
+        The second reservation is in `build`, immediately before the package
+        spends it. These were adjacent lines, so both measured the same moment
+        and the pair proved nothing.
+        """
         self._storage.ensure_space("package")
+
+    def sync_clock(self) -> None:
+        """Colima's VM clock drifts, and apt rejects a repository signed in
+        what it believes is the future."""
         if host.on_macos():
-            # Colima's VM clock drifts, and apt rejects a repository signed in
-            # what it believes is the future.
             self._runner.run(["python3", self._package.clock_script])
 
-    def _sync_assets_for_tauri(self) -> None:
+    def sync_assets(self) -> None:
         """`assets/current` is what the bundler embeds; point it at this target.
 
         Through the primitives rather than `rm -rf` and `cp -r`: a raw `rm`
@@ -111,11 +108,11 @@ class PackageRail:
         built = self.root / settings.output / self.target.name
         remove(current)
         if built.is_dir():
-            shutil.copytree(built, current)
+            copy_tree(built, current)
 
     # -- the build ---------------------------------------------------------
 
-    def _build(self) -> None:
+    def build(self) -> None:
         self._runner.step(
             f"Building Linux deb ({self.target.name} via docker, target={self.target.rust_target})"
         )
@@ -123,8 +120,8 @@ class PackageRail:
         # the first reservation, and this is the point where being wrong about
         # capacity costs an hour of compilation.
         self._storage.ensure_space("package")
-        self._dist.mkdir(exist_ok=True)
-        self._record.unlink(missing_ok=True)
+        make_dir(self._dist)
+        remove(self._record)
 
         environment = package_environment(
             self._config,
@@ -152,7 +149,7 @@ class PackageRail:
         ]
         self._runner.run(argv)
 
-    def _recorded_package(self) -> Path:
+    def resolve(self) -> Path:
         """The exact package this run produced, not whatever `dist/` holds.
 
         The builder writes the basename it just created. Globbing `dist/`
@@ -162,7 +159,6 @@ class PackageRail:
         if not self._record.is_file() or not self._record.read_text().strip():
             raise GateError("builder did not record the exact Debian package")
         name = self._record.read_text(encoding="utf-8").strip()
-        self._record.unlink()
 
         if not name.endswith(self._package.package_suffix):
             raise GateError(f"invalid Debian package record: {name}")
@@ -176,7 +172,8 @@ class PackageRail:
 
     # -- after the build ---------------------------------------------------
 
-    def _prove(self, package: Path) -> None:
+    def prove(self) -> None:
+        package = self.resolve()
         native = self._config.host_arch()
         kvm_ready = all(host.device_available(device) for device in self._config.install.vm_devices)
         decision = self._runner.capture(
@@ -208,6 +205,13 @@ class PackageRail:
             channel=self.channel,
         ).run()
 
+    def collect(self) -> None:
+        """List what this lane produced, then give its disk back."""
+        self._runner.step("Artifacts")
+        self._runner.run(["ls", "-lh", str(self._dist)])
+        remove(self._record)
+        self._storage.gc()
+
 
 def fragment(plan: Plan, config, target, *, after: tuple = ()):
     """One architecture's package, after the builder image it needs.
@@ -222,17 +226,56 @@ def fragment(plan: Plan, config, target, *, after: tuple = ()):
     only once two lanes share a plan. Groundwork has no ordering of its own.
     """
     built = hostimage.fragment(plan, config)
-    return plan.add(
-        step(
-            f"package.{target.name}",
-            Call(
-                f"build the Linux release package for {target.name}",
-                lambda ctx: _build(ctx, target),
-            ),
-            contends=(config.exclusive("docker_daemon"),),
-        ),
-        after=(built, *after),
+    phase = plan.phase(f"package.{target.name}")
+    docker = (config.exclusive("docker_daemon"),)
+
+    #: The lane, in order. A phase the graph cannot see is a phase nothing can
+    #: order, time, or name in a failure -- and every storage-ordering defect
+    #: in this file came from reasoning about these six from outside one
+    #: opaque `Call`.
+    phases = (
+        ("storage-release", "hand back the rails the assets finished with", "release_rails"),
+        ("space", "reserve the package rail's headroom", "reserve"),
+        ("clock", "sync the container clock", "sync_clock"),
+        ("sync-assets", f"point the embedded assets at {target.name}", "sync_assets"),
+        ("build", f"build the Linux release package for {target.name}", "build"),
+        ("resolve", "read back the exact package the builder recorded", "resolve"),
+        ("prove", "prove that exact package in systemd + KVM", "prove"),
+        ("storage-gc", "list the artifacts and reclaim this lane's disk", "collect"),
     )
+
+    previous: tuple = (built, *after)
+    for label, description, method in phases:
+        previous = (
+            phase.add(
+                step(label, Call(description, _phase(target, method)), contends=docker),
+                after=previous,
+            ),
+        )
+    return previous[0]
+
+
+def _phase(target, method: str):
+    """One rail method, as a plan action.
+
+    The rail is rebuilt per phase from the context's runner rather than shared
+    across them: a step holding an object an earlier step mutated is a step the
+    graph could reorder into nonsense, and the whole point of this shape is
+    that the graph *can* reorder them.
+    """
+
+    def perform(context) -> None:
+        settings = context.config.package
+        rail = PackageRail(
+            context.runner,
+            target,
+            manifest_url=os.environ.get(settings.manifest_variable),
+            channel=os.environ.get(settings.channel_variable),
+            require_proof=os.environ.get(settings.require_proof_variable, "0") == "1",
+        )
+        getattr(rail, method)()
+
+    return perform
 
 
 class CrossCompileCommand(
@@ -252,14 +295,3 @@ class CrossCompileCommand(
         plan = Plan(self.name)
         fragment(plan, config, target)
         return plan
-
-
-def _build(context, target) -> None:
-    settings = context.config.package
-    PackageRail(
-        context.runner,
-        target,
-        manifest_url=os.environ.get(settings.manifest_variable),
-        channel=os.environ.get(settings.channel_variable),
-        require_proof=os.environ.get(settings.require_proof_variable, "0") == "1",
-    ).run()
