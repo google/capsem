@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The terminal socket path goes through `capsem_core::uds`, which owns the
+  `sun_path` length rule and which neither side was using. The gateway and
+  `capsem-process` each built `{run_dir}/instances/{uuid}-ws.sock` by hand --
+  54 bytes of fixed suffix, leaving about fifty for the run directory against
+  macOS's 104. Past that every connection failed with `path must be shorter
+  than SUN_LEN`, logged at ERROR on each retry (12,024 in one observed run) and
+  surfaced as a session whose shell simply never appeared. The short form has
+  to be deterministic because the two processes derive it independently and
+  never exchange it, so it is a blake3 digest rather than the per-process
+  `DefaultHasher` the existing fallback uses. The close frame now carries the
+  concrete reason instead of "VM not available", which was true of every cause
+  and pointed at none.
+
 - The Linux package lane is eight steps instead of one opaque call. It was a
   single `Call` whose dry run printed one line of prose while six things
   happened: storage release, capacity, clock sync, asset sync, the docker

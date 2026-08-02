@@ -38,5 +38,33 @@ pub fn instance_socket_path(run_dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{:x}.sock", h.finish()))
 }
 
+/// Compute the terminal WebSocket UDS path for a VM instance.
+///
+/// Unlike [`instance_socket_path`], both the gateway and `capsem-process`
+/// derive this *independently* and never exchange it -- so the short form has
+/// to be deterministic across processes. That rules out `DefaultHasher`, whose
+/// seed is randomised per process: a fallback computed with it would leave one
+/// side binding a path the other never dials.
+///
+/// Neither side used this module at all. Each built
+/// `{run_dir}/instances/{id}-ws.sock` by hand, which is 54 bytes of fixed
+/// suffix for a 36-character session id, leaving roughly fifty for the run
+/// directory. Past that every connection failed with `path must be shorter
+/// than SUN_LEN`, logged at ERROR on each retry and surfaced to the user as a
+/// session whose shell never appeared.
+pub fn terminal_socket_path(run_dir: &Path, id: &str) -> PathBuf {
+    let preferred = run_dir.join("instances").join(format!("{id}-ws.sock"));
+    if preferred.as_os_str().len() < SUN_PATH_MAX {
+        return preferred;
+    }
+    let mut digest = blake3::Hasher::new();
+    digest.update(run_dir.as_os_str().as_encoded_bytes());
+    digest.update(id.as_bytes());
+    let short = &digest.finalize().to_hex()[..16];
+    let dir = PathBuf::from("/tmp/capsem");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join(format!("{short}-ws.sock"))
+}
+
 #[cfg(test)]
 mod tests;

@@ -705,7 +705,13 @@ async fn run_async_main_loop(
     }
     info!(socket = %uds_path.display(), "listening for IPC (mode 0600)");
 
-    let ws_sock_path = uds_path.with_file_name(format!("{}-ws.sock", vm_id_ws));
+    // Through `capsem_core::uds`, which owns the length rule -- the gateway
+    // derives this same path independently, so both must apply it identically.
+    let ws_run_dir = uds_path
+        .parent()
+        .and_then(|instances| instances.parent())
+        .unwrap_or_else(|| std::path::Path::new("/tmp"));
+    let ws_sock_path = capsem_core::uds::terminal_socket_path(ws_run_dir, &vm_id_ws);
     if ws_sock_path.exists() {
         std::fs::remove_file(&ws_sock_path)?;
     }
