@@ -27,9 +27,17 @@ _GB = 1024**3
 class GcCommand(
     GateCommand, name="gc", help="reclaim the disk the gate is holding"
 ):
-    records = False
-    """Only reads runs; creating one would answer with the question."""
     exclusive = True
+
+    def should_record(self) -> bool:
+        """`--dry-run` surveys; anything else deletes.
+
+        This was `records = False` with "only reads runs" copied from the run
+        readers. A normal gc reclaims whole trees, so a failed or partial one
+        left terminal output and nothing durable -- while every other mutating
+        command in the gate is locked, visible and timed.
+        """
+        return not self._args.dry_run
 
     @classmethod
     def add_arguments(cls, parser) -> None:

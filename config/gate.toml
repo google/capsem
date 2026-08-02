@@ -896,6 +896,8 @@ source_contract = [
     "tests/test_gate_socket_length.py",
     "tests/test_gate_storage_consumers.py",
     "tests/test_gate_module_prerequisites.py",
+    "tests/test_gate_recording_policy.py",
+    "tests/test_gate_run_status_agrees.py",
     "tests/test_gate_complete_gate_policy.py",
     "tests/test_just_argument_boundary.py",
     "tests/test_gate_testmodules.py",

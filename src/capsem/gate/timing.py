@@ -33,6 +33,15 @@ class Timing:
     failures: dict[str, str] = field(default_factory=dict)
     skipped: list[str] = field(default_factory=list)
 
+    run_failures: dict[str, str] = field(default_factory=dict)
+    """What failed *outside* the steps, as `run.end` recorded it.
+
+    Kept so the summary can name a lock, a resource or a teardown rather than
+    only colouring the line red. A run whose every step passed and whose
+    workspace then refused to release has nothing in `failures`, and without
+    this there is nothing to print either.
+    """
+
     recorded_status: str = "ok"
     """What `run.end` said, as distinct from what the steps said.
 
@@ -85,6 +94,7 @@ def measure(events: list[dict]) -> Timing:
             # gate leaves the events it managed to write, and reading one
             # should degrade rather than raise.
             timing.recorded_status = event.get("status", "ok")
+            timing.run_failures = dict(event.get("failures") or {})
 
     timing.critical_path = longest_chain(order, edges, timing.steps)
     return timing
@@ -115,7 +125,10 @@ def longest_chain(
 
 def report(timing: Timing, *, command: str, settings: RunLogConfig, run_id: str) -> str:
     """The summary printed at the end of a run, and by `runs show`."""
-    status = "FAILED" if timing.failures else "ok"
+    # `outcome`, not `failures`: the steps are only half of what a run can
+    # fail at. Classifying by them reported a run whose workspace refused to
+    # release as a success.
+    status = "FAILED" if timing.outcome == "failed" else "ok"
     lines = [f"{command} -- {_clock(timing.total_ms)} -- {status}", ""]
 
     if timing.critical_path:
@@ -143,9 +156,16 @@ def report(timing: Timing, *, command: str, settings: RunLogConfig, run_id: str)
         ]
         lines.append("")
 
-    if timing.failures:
+    if timing.failures or timing.run_failures:
         lines.append("failed")
         lines += [f"  {step}  {error}" for step, error in sorted(timing.failures.items())]
+        # Named, not merely counted: a run that failed outside its steps has
+        # nothing in `failures`, and "FAILED" with no cause is a line an
+        # operator cannot act on.
+        lines += [
+            f"  {where}  {error}  (outside the plan)"
+            for where, error in sorted(timing.run_failures.items())
+        ]
         if timing.skipped:
             lines.append(f"  (never ran: {', '.join(sorted(timing.skipped))})")
         lines.append("")

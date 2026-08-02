@@ -174,24 +174,63 @@ def test_the_summary_is_written_where_a_bug_report_can_find_it(
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("command", ["runs", "gc"])
-def test_inspecting_runs_does_not_create_one(command: str) -> None:
+@pytest.mark.parametrize(
+    ("command", "args"),
+    [("runs", {}), ("gc", {"dry_run": True, "aggressive": False})],
+)
+def test_inspecting_runs_does_not_create_one(command: str, args: dict) -> None:
     """`runs last` opened a run and repointed `latest` at itself first.
 
     So the honest answer to "which run failed" could be the question.
+
+    `gc` is here only in its `--dry-run` shape. It used to be listed outright,
+    which is how a command that reclaims whole trees came to be classified
+    with the run readers and approved for silence by name.
     """
-    assert GateCommand.registry[command].records is False
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    instance = GateCommand.registry[command](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(
+            **{"dry_run": False, "graph": False, "timing": False, **args}
+        ),
+    )
+    assert instance.should_record() is False
 
 
 def test_every_command_that_changes_something_still_records(tmp_path: Path) -> None:
-    """Non-recording is for inspection, and must not spread quietly."""
-    silent = sorted(
-        name
-        for name, command in GateCommand.registry.items()
-        if command.records is False and command.__module__.startswith("capsem.gate.")
-    )
+    """Non-recording is for inspection, and must not spread quietly.
 
-    assert silent == ["gc", "runs", "version"]
+    Asked of an invocation rather than a class, because whether a command
+    records can depend on how it was called -- which is exactly the
+    distinction `gc` needed and did not have.
+    """
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    silent = []
+    for name, command in GateCommand.registry.items():
+        if not command.__module__.startswith("capsem.gate."):
+            continue
+        extra = {"aggressive": False} if name == "gc" else {}
+        try:
+            instance = command(
+                RecordingRunner(PROJECT_ROOT),
+                argparse.Namespace(
+                    dry_run=False, graph=False, timing=False, **extra
+                ),
+            )
+        except TypeError:
+            continue
+        if not instance.should_record():
+            silent.append(name)
+
+    assert sorted(silent) == ["runs", "version"], (
+        "a normal gc reclaims disk, so it is not inspection"
+    )
 
 
 # ---------------------------------------------------------------------------

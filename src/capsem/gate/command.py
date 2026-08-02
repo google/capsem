@@ -204,13 +204,24 @@ class GateCommand(ABC):
         with sealed():
             return self.plan()
 
+    def should_record(self) -> bool:
+        """Whether *this invocation* writes a run of its own.
+
+        A method rather than the class constant it was, because the answer can
+        depend on how the command was called: `gc --dry-run` is inspection and
+        a normal `gc` reclaims whole trees. As a constant, `gc` was marked
+        silent and classified with the run readers, so a partial reclaim left
+        no durable evidence of what it had deleted.
+        """
+        return self.records
+
     def _recording(self):
         """The run log, or a journal that keeps nothing.
 
         A command that only reads runs must not create one; everything else
         below is identical either way, which is the point.
         """
-        if self.records:
+        if self.should_record():
             return RunLog.open(self._config, self.name, argv=self._argv())
         return _no_record()
 
@@ -227,8 +238,17 @@ class GateCommand(ABC):
         return (lock, *self.resources())
 
     def _summarize(self, log: RunLog) -> None:
-        """Say where the time went, on the way out."""
+        """Say where the time went, on the way out.
+
+        A command that recorded no run has no time to report. This assumed the
+        journal always had a run directory, so `--timing` on any of the
+        readers ended in `AttributeError: 'NullJournal' object has no
+        attribute 'directory'` after printing the answer.
+        """
         if not self._args.timing:
+            return
+        if not self.should_record():
+            print(f"{self.name} records no run, so there is no timing to report")
             return
         timing = measure(read(log.directory, self._config.runlog))
         print(

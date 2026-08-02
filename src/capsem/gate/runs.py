@@ -70,7 +70,10 @@ class RunsCommand(
             return recorded[0]
 
         for directory in recorded:
-            if measure(read(directory, context.config.runlog)).failures:
+            # `outcome`, so a run that failed while taking the lock or
+            # releasing a resource is reachable. Selecting on failed *steps*
+            # skipped exactly the runs whose failure was hardest to diagnose.
+            if measure(read(directory, context.config.runlog)).outcome == "failed":
                 return directory
         raise GateError("no recorded run failed; the most recent is " + recorded[0].name)
 
@@ -83,7 +86,7 @@ def _list(context: Context) -> None:
 
     for directory in recorded:
         timing = measure(read(directory, context.config.runlog))
-        state = "FAILED" if timing.failures else "ok"
+        state = "FAILED" if timing.outcome == "failed" else "ok"
         context.runner.note(
             f"{directory.name:<34}  {timing.total_ms / 1000:>8.0f}s  {state}"
         )

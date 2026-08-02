@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every consumer of a run agrees with what `run.end` recorded. `Timing.outcome`
+  already treated a failed run as failed, and nothing read it: the summary, the
+  run list and `runs last --failed` each classified by failed *steps*, so a run
+  that failed while taking the machine lock, acquiring a resource or tearing
+  one down was reported and selected as a success -- exactly the failures that
+  are hardest to diagnose. The summary also names them now, rather than
+  colouring the line red with no cause to act on.
+- Whether a command records a run depends on how it was invoked. `gc` was a
+  class constant `records = False`, with "only reads runs" copied from the run
+  readers, while it reclaims whole trees -- so a partial reclaim left terminal
+  output and no durable evidence. `gc --dry-run` is inspection; any other `gc`
+  records. The guard asks an invocation instead of approving a command by name.
+- `--timing` on a command that records no run says so instead of raising
+  `AttributeError: 'NullJournal' object has no attribute 'directory'`, which is
+  what `version --timing`, `runs --timing` and `gc --dry-run --timing` did.
+
 - Public recipe arguments can no longer become host shell syntax.
   `release-binaries`, `release-profile` and `logs` interpolated their values
   into the recipe body unquoted, and `just release-binaries 'nightly; echo X'`
