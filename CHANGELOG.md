@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The install proof's container mounts `/tmp` and `/run` with `exec`. Docker's
+  default tmpfs flags are `rw,nosuid,nodev,noexec`, and the proof unpacks the
+  shipped package into `/tmp` to run its `capsem-admin` -- deliberately, so the
+  release graph is authored by the exact binary being shipped. On a noexec
+  mount `test -x` returns false, and `test` prints nothing when it says no, so
+  the gate failed after fifty-three minutes with an exit status and no
+  explanation. The Linux-Rust container had already spelled its tmpfs out for
+  the same reason; this is the other one.
+
 - `last_consumer` in `config/storage-policy.toml` is load-bearing instead of
   decorative. `capsem-host-builder` declared `last_consumer = "package-x86_64"`
   and `reason = "Final tag is needed by both package builds"`, then also listed

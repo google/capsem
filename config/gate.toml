@@ -114,7 +114,12 @@ rosetta_binfmt = "/proc/sys/fs/binfmt_misc/rosetta"
 # What a systemd container is, wherever one is started.
 systemd_command = "/usr/lib/systemd/systemd"
 cgroup_path = "/sys/fs/cgroup"
-tmpfs_paths = ["/run", "/tmp"]
+# Options spelled out: Docker's default tmpfs flags are `rw,nosuid,nodev,
+# noexec`, and the install proof unpacks the shipped package into /tmp and runs
+# its capsem-admin from there. On a noexec mount `test -x` simply returns
+# false, and `test` prints nothing when it says no -- so the gate failed after
+# fifty-three minutes with an exit status and no explanation.
+tmpfs_paths = ["/run:rw,exec,mode=755", "/tmp:rw,exec,mode=1777"]
 
 # Where an installed package puts things, and what the runtime calls them.
 bin_dir = "/usr/bin"

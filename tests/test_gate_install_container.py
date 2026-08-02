@@ -345,3 +345,31 @@ def test_the_virtualisation_devices_are_reachable_from_inside(
 
     assert runner.ran(r"test -r /dev/kvm -a -w /dev/kvm")
     assert runner.ran(r"test -r /dev/vhost-vsock -a -w /dev/vhost-vsock")
+
+
+def test_the_install_containers_tmpfs_can_execute_what_is_unpacked_into_it() -> None:
+    """`--tmpfs /tmp` alone is `noexec`, and the proof unpacks a binary there.
+
+    The install proof extracts the shipped package into `/tmp` and runs its
+    `capsem-admin` to author the release graph -- deliberately, so the graph is
+    written by the exact binary being shipped rather than by whatever was on
+    the image. Docker's default tmpfs flags are `rw,nosuid,nodev,noexec`, so
+    `test -x` on the unpacked binary returns false and the proof fails with no
+    output at all: `test` says nothing when it says no.
+
+    The Linux-Rust container already spells this out, for the same reason and
+    with the same comment. This is the other one.
+    """
+    from capsem.gate import config as gate_config
+
+    paths = gate_config.load(PROJECT_ROOT).install.tmpfs_paths
+
+    for entry in paths:
+        assert ":" in entry, (
+            f"{entry!r} takes Docker's default tmpfs flags, which include "
+            "noexec; spell the options out"
+        )
+        mount, options = entry.split(":", 1)
+        assert "exec" in options.split(","), (
+            f"{mount} is mounted noexec; anything unpacked there cannot run"
+        )
