@@ -89,7 +89,10 @@ class AssetLanes:
     def _require_artifacts(self, produced: Path) -> None:
         missing = [
             name
-            for name in self._config.assets.required_artifacts
+            for name in (
+                *self._config.artifacts.bootable,
+                *self._config.assets.evidence_artifacts,
+            )
             if not (produced / name).is_file() or (produced / name).stat().st_size == 0
         ]
         if missing:

@@ -127,7 +127,6 @@ class ImageBuildConfig(Strict):
     config_root: str
     output: str
     doctor_skips: dict[str, str]
-    required: tuple[str, ...]
 
 
 class AuditsConfig(Strict):

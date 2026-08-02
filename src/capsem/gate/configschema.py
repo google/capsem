@@ -141,6 +141,7 @@ class InstallConfig(Strict):
     storage_ledger: str
     test_output_root: str
     install_log_glob: str
+    profile_inputs_variable: str
     preinstall_root: str
     admin_relative: str
     request_script: str
@@ -175,7 +176,43 @@ class PackageProof(Strict):
         )
 
 
+class EnvironmentConfig(Strict):
+    """The variable names that say which capsem a process is talking to."""
+
+    home: str
+    run_dir: str
+    benchmark_root: str
+    coverage_file: str
+
+
+class ArtifactsConfig(Strict):
+    """The three files a bootable per-architecture asset tree is made of."""
+
+    kernel: str
+    initrd: str
+    rootfs: str
+
+    @property
+    def bootable(self) -> tuple[str, ...]:
+        """What must exist for a tree to boot, in build order."""
+        return (self.kernel, self.initrd, self.rootfs)
+
+
+class PackageSigningConfig(Strict):
+    """Where the local Tauri signing material lives, and how it is exported."""
+
+    directory: str
+    key: str
+    password: str
+    key_variable: str
+    password_variable: str
+
+
 class PackageConfig(Strict):
+    signing: PackageSigningConfig
+    manifest_variable: str
+    channel_variable: str
+    require_proof_variable: str
     builder_image: str
     build_script: str
     proof_selector: str
@@ -199,7 +236,7 @@ class PackageConfig(Strict):
 class AssetsConfig(Strict):
     test_root: str
     profiles_glob: str
-    required_artifacts: tuple[str, ...]
+    evidence_artifacts: tuple[str, ...]
     failure_tail_lines: int
     shell_proof_timeout_seconds: int
     run_dir_template: str

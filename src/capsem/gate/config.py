@@ -42,9 +42,11 @@ from .buildschema import (
 )
 from .configschema import (
     Arch,
+    ArtifactsConfig,
     AssetsConfig,
     CandidateConfig,
     DoctorConfig,
+    EnvironmentConfig,
     InstallConfig,
     PackageConfig,
     PidfileConfig,
@@ -78,6 +80,8 @@ class GateConfig(Strict):
     storage: StorageConfig
     pidfiles: PidfileConfig
     install: InstallConfig
+    environment: EnvironmentConfig
+    artifacts: ArtifactsConfig
     package: PackageConfig
     assets: AssetsConfig
     candidate: CandidateConfig

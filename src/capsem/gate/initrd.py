@@ -33,7 +33,11 @@ def _staging(config: GateConfig) -> Path:
 
 
 def _initrd(config: GateConfig) -> Path:
-    found = config.path(config.imagebuild.output) / config.host_arch().name / "initrd.img"
+    found = (
+        config.path(config.imagebuild.output)
+        / config.host_arch().name
+        / config.artifacts.initrd
+    )
     if not found.is_file():
         raise GateError(f"initrd not found at {found}; run `just doctor fix` first")
     return found

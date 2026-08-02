@@ -18,9 +18,9 @@ from capsem.gate.crosscompile import (
     PackageRail,
     pinned_toolchain,
     resolve_channel,
-    signing_key,
 )
 from capsem.gate.errors import GateError
+from capsem.gate.packagesigning import signing_key
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
@@ -37,9 +37,7 @@ def _checkout(tmp_path: Path, *, toolchain: str = "9.99.9") -> Path:
     the one the gate actually runs with.
     """
     tmp_path.mkdir(parents=True, exist_ok=True)
-    (tmp_path / CONFIG.package.toolchain_pin).write_text(
-        f'[toolchain]\nchannel = "{toolchain}"\n'
-    )
+    (tmp_path / CONFIG.package.toolchain_pin).write_text(f'[toolchain]\nchannel = "{toolchain}"\n')
     (tmp_path / "scripts").mkdir()
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "gate.toml").write_text(
@@ -99,7 +97,7 @@ def test_release_keys_are_used_when_the_checkout_has_them(tmp_path: Path) -> Non
     (tmp_path / "private" / "tauri" / "capsem.key").write_text("KEY")
     (tmp_path / "private" / "tauri" / "password.txt").write_text("PASS")
 
-    assert signing_key(tmp_path) == {
+    assert signing_key(tmp_path, CONFIG) == {
         "TAURI_SIGNING_PRIVATE_KEY": "KEY",
         "TAURI_SIGNING_PRIVATE_KEY_PASSWORD": "PASS",
     }
@@ -111,7 +109,7 @@ def test_a_checkout_without_keys_injects_none(tmp_path: Path) -> None:
     (tmp_path / "private" / "tauri").mkdir(parents=True)
     (tmp_path / "private" / "tauri" / "capsem.key").write_text("KEY")
 
-    assert signing_key(tmp_path) == {}
+    assert signing_key(tmp_path, CONFIG) == {}
 
 
 @pytest.mark.parametrize("channel", CONFIG.package.channels)
@@ -188,9 +186,7 @@ def test_the_builder_image_is_rebuilt_before_every_package() -> None:
 
     plan = GateCommand.registry["cross-compile"](
         RecordingRunner(PROJECT_ROOT),
-        argparse.Namespace(
-            dry_run=False, graph=False, timing=False, arch=TARGET.name
-        ),
+        argparse.Namespace(dry_run=False, graph=False, timing=False, arch=TARGET.name),
     )._describe()
     order = list(plan.labels)
 
@@ -206,9 +202,7 @@ def test_the_container_clock_is_synced_only_on_macos(
     monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     for system, expected in (("Darwin", True), ("Linux", False)):
         monkeypatch.setattr("capsem.gate.host.system", lambda system=system: system)
-        runner = Building(
-            _checkout(tmp_path / system), replies={"select-linux": "skip"}
-        )
+        runner = Building(_checkout(tmp_path / system), replies={"select-linux": "skip"})
 
         _rail(runner).run()
 

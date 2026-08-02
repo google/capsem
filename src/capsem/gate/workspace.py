@@ -58,13 +58,16 @@ class Workspace(Resource, name="workspace"):
         here made that call `TypeError: 'dict' object is not callable` against
         the one resource every isolated command holds.
         """
+        names = self._config.environment
         return {
-            "CAPSEM_HOME": str(self.home),
-            "CAPSEM_RUN_DIR": str(self.run_dir),
-            "CAPSEM_BENCHMARK_OUTPUT_ROOT": str(
+            names.home: str(self.home),
+            names.run_dir: str(self.run_dir),
+            names.benchmark_root: str(
                 self._config.path(self._settings.benchmark_root)
             ),
-            "COVERAGE_FILE": str(self._config.path(self._settings.coverage_file)),
+            names.coverage_file: str(
+                self._config.path(self._settings.coverage_file)
+            ),
         }
 
     # -- Resource ----------------------------------------------------------

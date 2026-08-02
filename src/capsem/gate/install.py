@@ -227,8 +227,11 @@ class InstallCommand(
 
 
 def _install(context) -> None:
+    config = context.config
     InstallGate(
         context.runner,
-        profile_inputs=os.environ.get("CAPSEM_INSTALL_PROFILE_INPUTS"),
-        macos_glowup_report=os.environ.get("CAPSEM_MACOS_NATIVE_GLOWUP_REPORT"),
+        profile_inputs=os.environ.get(config.install.profile_inputs_variable),
+        # Already declared; this spelled it a second time, so the two could
+        # drift and the report would simply stop arriving.
+        macos_glowup_report=os.environ.get(config.modules.macos_report_variable),
     ).run()

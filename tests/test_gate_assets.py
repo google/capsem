@@ -51,7 +51,7 @@ class Gating(RecordingRunner):
             produced = Path(output) / arch
             produced.mkdir(parents=True, exist_ok=True)
             config = gate_config.for_root(self.root)
-            for name in config.assets.required_artifacts:
+            for name in (*config.artifacts.bootable, *config.assets.evidence_artifacts):
                 (produced / name).write_text("bytes")
         if "manifest generate" in rendered:
             Path(command.argv[-1]).mkdir(parents=True, exist_ok=True)

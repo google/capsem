@@ -40,7 +40,7 @@ def missing(config: GateConfig, arch: Arch) -> list[str]:
     tree = config.path(config.imagebuild.output) / arch.name
     return [
         name
-        for name in config.imagebuild.required
+        for name in config.artifacts.bootable
         if not (tree / name).is_file() or (tree / name).stat().st_size == 0
     ]
 

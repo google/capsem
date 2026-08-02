@@ -29,6 +29,7 @@ from .command import GateCommand
 from .config import Arch
 from .errors import GateError
 from .execution import step
+from .packagesigning import signing_key
 from .plan import Plan
 from .proc import Runner
 from .storage import Storage
@@ -45,23 +46,6 @@ def pinned_toolchain(root: Path) -> str:
         return tomllib.loads(pin.read_text(encoding="utf-8"))["toolchain"]["channel"]
     except (OSError, KeyError, tomllib.TOMLDecodeError) as exc:
         raise GateError(f"{pin} declares no [toolchain] channel: {exc}") from None
-
-
-def signing_key(root: Path) -> dict[str, str]:
-    """The real Tauri release keys, if this checkout has them.
-
-    Absent, the container generates a throwaway dev key so `cargo tauri build`
-    can finish. The authoritative keys live in GitHub Actions secrets and are
-    applied only on publish.
-    """
-    private = Path(root) / "private" / "tauri" / "capsem.key"
-    password = Path(root) / "private" / "tauri" / "password.txt"
-    if not (private.is_file() and password.is_file()):
-        return {}
-    return {
-        "TAURI_SIGNING_PRIVATE_KEY": private.read_text(encoding="utf-8"),
-        "TAURI_SIGNING_PRIVATE_KEY_PASSWORD": password.read_text(encoding="utf-8"),
-    }
 
 
 def resolve_channel(channel: str, config: gate_config.GateConfig) -> str:
@@ -92,9 +76,7 @@ class PackageRail:
         self.root = runner.root
         self.target = target
         self.manifest_url = manifest_url or self._package.default_manifest_url
-        self.channel = resolve_channel(
-            channel or self._package.default_channel, self._config
-        )
+        self.channel = resolve_channel(channel or self._package.default_channel, self._config)
         self._require_proof = require_proof
 
     @property
@@ -150,8 +132,7 @@ class PackageRail:
 
     def _build(self) -> None:
         self._runner.step(
-            f"Building Linux deb ({self.target.name} via docker, "
-            f"target={self.target.rust_target})"
+            f"Building Linux deb ({self.target.name} via docker, target={self.target.rust_target})"
         )
         self._dist.mkdir(exist_ok=True)
         self._record.unlink(missing_ok=True)
@@ -165,7 +146,7 @@ class PackageRail:
             "CAPSEM_INSTALL_MANIFEST_URL": self.manifest_url,
             "HOST_UID": str(host.user()[0]),
             "HOST_GID": str(host.user()[1]),
-            **signing_key(self.root),
+            **signing_key(self.root, self._config),
         }
         argv = ["docker", "run", "--rm"]
         for name, value in environment.items():
@@ -175,11 +156,14 @@ class PackageRail:
         for volume in self._package.volumes:
             argv += ["-v", f"{volume.source}:{volume.target}"]
         argv += [
-            "-v", f"{self._package.target_volume_for(self.target.name)}"
-                  f":{self._package.cargo_target_mount}",
-            "-w", mount,
+            "-v",
+            f"{self._package.target_volume_for(self.target.name)}"
+            f":{self._package.cargo_target_mount}",
+            "-w",
+            mount,
             self._package.builder_image,
-            "bash", f"{mount}/{self._package.build_script}",
+            "bash",
+            f"{mount}/{self._package.build_script}",
         ]
         self._runner.run(argv)
 
@@ -198,9 +182,7 @@ class PackageRail:
         if not name.endswith(self._package.package_suffix):
             raise GateError(f"invalid Debian package record: {name}")
         if name != Path(name).name:
-            raise GateError(
-                f"Debian package record escaped {self._package.dist_dir}/: {name}"
-            )
+            raise GateError(f"Debian package record escaped {self._package.dist_dir}/: {name}")
 
         package = self._dist / name
         if not package.is_file():
@@ -211,13 +193,14 @@ class PackageRail:
 
     def _prove(self, package: Path) -> None:
         native = self._config.host_arch()
-        kvm_ready = all(
-            host.device_available(device) for device in self._config.install.vm_devices
-        )
+        kvm_ready = all(host.device_available(device) for device in self._config.install.vm_devices)
         decision = self._runner.capture(
             [
-                "bash", str(self.root / self._package.proof_selector),
-                host.system(), native.name, self.target.name,
+                "bash",
+                str(self.root / self._package.proof_selector),
+                host.system(),
+                native.name,
+                self.target.name,
                 "1" if kvm_ready else "0",
                 "1" if self._require_proof else "0",
             ]
@@ -276,9 +259,7 @@ class CrossCompileCommand(
 
     @classmethod
     def add_arguments(cls, parser) -> None:
-        parser.add_argument(
-            "arch", nargs="?", help="arm64 or x86_64; defaults to the host"
-        )
+        parser.add_argument("arch", nargs="?", help="arm64 or x86_64; defaults to the host")
 
     def plan(self) -> Plan:
         config = self._config
@@ -289,10 +270,11 @@ class CrossCompileCommand(
 
 
 def _build(context, target) -> None:
+    settings = context.config.package
     PackageRail(
         context.runner,
         target,
-        manifest_url=os.environ.get("CAPSEM_INSTALL_MANIFEST_URL"),
-        channel=os.environ.get("CAPSEM_INSTALL_CHANNEL"),
-        require_proof=os.environ.get("CAPSEM_REQUIRE_LINUX_DEB_PROOF", "0") == "1",
+        manifest_url=os.environ.get(settings.manifest_variable),
+        channel=os.environ.get(settings.channel_variable),
+        require_proof=os.environ.get(settings.require_proof_variable, "0") == "1",
     ).run()

@@ -473,7 +473,11 @@ def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
     # arguments rather than exporting three variables and hoping.
     rail = (PROJECT_ROOT / "src/capsem/gate/crosscompile.py").read_text(encoding="utf-8")
     assert config.package.proof_selector == "scripts/select-linux-deb-proof.sh"
-    assert "CAPSEM_REQUIRE_LINUX_DEB_PROOF" in rail
+    # The variable is declared in `[package]` and read through it. Asserting
+    # the literal appeared in this module was asserting where it was spelled,
+    # which stopped being true the moment it got one owner.
+    assert config.package.require_proof_variable == "CAPSEM_REQUIRE_LINUX_DEB_PROOF"
+    assert "require_proof_variable" in rail
     assert "debproof.DebProof(" in rail
     assert "CAPSEM_PROOF_DEB" not in rail
 

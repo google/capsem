@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Deployment data has one owner, and the guard that was supposed to enforce
+  that can now see the shapes it was missing. It walked flat strings, so a path
+  built with `/` was inspected as separate components and none of them looked
+  like a path -- `Path(root) / "private" / "tauri" / "capsem.key"` passed
+  cleanly. And an environment variable name is not a path at all, so nothing
+  looked at `os.environ.get("CAPSEM_INSTALL_MANIFEST_URL")`, which is exactly
+  the deployment data this rule exists for. Both are checked now, with the
+  bootstrap exemption honoured and the checks watched failing on the shapes
+  they exist for. What moved: the Tauri signing paths and variable names into
+  `[package.signing]`; the package rail's three inputs into `[package]`; the
+  install profile-inputs variable into `[install]`; `CAPSEM_HOME`,
+  `CAPSEM_RUN_DIR` and the benchmark and coverage names into `[environment]`,
+  where Workspace exports and Service reads the same ones rather than each
+  spelling its own; and the three bootable asset filenames into `[artifacts]`,
+  which two config lists and `initrd.py` had spelled independently. The macOS
+  report variable was already declared and `install.py` spelled it again.
+- `packagesigning.py` owns whether a checkout can sign and under what names.
+  It was a function inside the package rail, which is a different question from
+  how a package is built -- and it pushed that module past the 300-line ceiling
+  the boundary guard holds.
+
 - Resources run through the same guarded, journaling runner as the plan.
   `execute` built one for the plan's context and then constructed resources
   from the command's raw runner, so everything a resource did on the way in or

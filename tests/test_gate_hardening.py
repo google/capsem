@@ -54,11 +54,11 @@ def test_a_zero_length_required_asset_does_not_count_as_built(tmp_path: Path) ->
     arch = config.host_arch()
     tree = tmp_path / config.imagebuild.output / arch.name
     tree.mkdir(parents=True)
-    for name in config.imagebuild.required:
+    for name in config.artifacts.bootable:
         (tree / name).write_bytes(b"")
 
     assert imagebuild.missing(_rooted(config, tmp_path), arch) == list(
-        config.imagebuild.required
+        config.artifacts.bootable
     )
 
 
@@ -70,7 +70,7 @@ def test_a_present_non_empty_asset_counts(tmp_path: Path) -> None:
     arch = config.host_arch()
     tree = tmp_path / config.imagebuild.output / arch.name
     tree.mkdir(parents=True)
-    for name in config.imagebuild.required:
+    for name in config.artifacts.bootable:
         (tree / name).write_bytes(b"bytes")
 
     assert imagebuild.missing(_rooted(config, tmp_path), arch) == []

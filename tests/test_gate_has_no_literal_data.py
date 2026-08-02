@@ -260,3 +260,130 @@ def test_a_composed_path_is_not_flagged(tmp_path: Path) -> None:
     caught = [value for _line, value in _literals(module) if _looks_like_a_path(value)]
 
     assert caught == []
+
+
+# ---------------------------------------------------------------------------
+# What the suffix list and the flat-string walk both miss
+# ---------------------------------------------------------------------------
+#
+# Two shapes slipped past the checks above for as long as they existed.
+#
+# A path built with `/` is a `BinOp` chain, so every component is inspected as
+# a separate string and none of them looks like a path:
+#
+#     Path(root) / "private" / "tauri" / "capsem.key"
+#
+# And an environment variable name is not a path at all, so nothing looked at
+# it -- while `os.environ.get("CAPSEM_INSTALL_MANIFEST_URL")` is exactly the
+# deployment data this file exists to keep in one place. The rail it selects
+# cannot be renamed without finding every literal by hand.
+
+#: Suffixes that name a file on disk, wherever they appear in a `/` chain.
+PATH_SUFFIXES = (*FILE_SUFFIXES, ".key", ".txt", ".img", ".erofs", ".pkg", ".sock")
+
+#: Reading these is how a module asks the environment a question.
+ENVIRONMENT_READERS = {"getenv", "get", "environ"}
+
+
+def _path_chain_literals(tree: ast.AST) -> list[str]:
+    """Literal components of any `x / "a" / "b"` expression."""
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.BinOp) or not isinstance(node.op, ast.Div):
+            continue
+        for side in (node.left, node.right):
+            if not isinstance(side, ast.Constant) or not isinstance(side.value, str):
+                continue
+            if side.value.endswith(PATH_SUFFIXES) or "/" in side.value:
+                found.append(side.value)
+    return found
+
+
+def _environment_literals(tree: ast.AST) -> list[str]:
+    """Literal variable names read straight out of the environment."""
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Subscript)
+            and _is_environ(node.value)
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+        ):
+            found.append(node.slice.value)
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr not in ENVIRONMENT_READERS:
+            continue
+        if not (_is_environ(node.func.value) or _is_os(node.func.value)):
+            continue
+        if not node.args or not isinstance(node.args[0], ast.Constant):
+            continue
+        value = node.args[0].value
+        if isinstance(value, str) and value.isupper():
+            found.append(value)
+    return found
+
+
+def _is_environ(node: ast.AST) -> bool:
+    return isinstance(node, ast.Attribute) and node.attr == "environ"
+
+
+def _is_os(node: ast.AST) -> bool:
+    return isinstance(node, ast.Name) and node.id == "os"
+
+
+@pytest.mark.parametrize("module", _gate_modules(), ids=lambda path: path.name)
+def test_no_module_builds_a_path_out_of_literal_components(module: Path) -> None:
+    allowed = BOOTSTRAP.get(module.name, set())
+    literals = [
+        value
+        for value in _path_chain_literals(ast.parse(module.read_text(encoding="utf-8")))
+        if value not in allowed
+    ]
+
+    assert not literals, (
+        f"{module.name} builds a path from literal components {literals}; "
+        "declare it in config/gate.toml so one place owns where it lives"
+    )
+
+
+@pytest.mark.parametrize("module", _gate_modules(), ids=lambda path: path.name)
+def test_no_module_spells_an_environment_variable(module: Path) -> None:
+    literals = _environment_literals(ast.parse(module.read_text(encoding="utf-8")))
+
+    assert not literals, (
+        f"{module.name} reads {literals} from the environment by name; "
+        "declare the name in config/gate.toml so the rail can be renamed in "
+        "one place"
+    )
+
+
+def test_a_path_built_from_literals_would_be_caught(tmp_path: Path) -> None:
+    """The guard, watched failing on the shape it exists for."""
+    module = tmp_path / "offender.py"
+    module.write_text('x = Path(root) / "private" / "tauri" / "capsem.key"\n')
+
+    assert _path_chain_literals(ast.parse(module.read_text())) == ["capsem.key"]
+
+
+def test_an_environment_read_would_be_caught(tmp_path: Path) -> None:
+    module = tmp_path / "offender.py"
+    module.write_text(
+        'a = os.environ.get("CAPSEM_INSTALL_CHANNEL")\n'
+        'b = os.environ["CAPSEM_HOME"]\n'
+        'c = os.getenv("CAPSEM_RUN_DIR")\n'
+    )
+
+    assert sorted(_environment_literals(ast.parse(module.read_text()))) == [
+        "CAPSEM_HOME",
+        "CAPSEM_INSTALL_CHANNEL",
+        "CAPSEM_RUN_DIR",
+    ]
+
+
+def test_a_composed_path_with_no_literal_is_not_flagged(tmp_path: Path) -> None:
+    """Composition itself is fine; only spelling the destination is not."""
+    module = tmp_path / "fine.py"
+    module.write_text("x = Path(root) / settings.private / settings.key_name\n")
+
+    assert _path_chain_literals(ast.parse(module.read_text())) == []

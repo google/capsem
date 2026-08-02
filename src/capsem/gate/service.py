@@ -34,12 +34,12 @@ from .plan import Plan
 
 def home(config: GateConfig) -> Path:
     """Where the service keeps its state, honouring an override."""
-    override = os.environ.get("CAPSEM_HOME")
+    override = os.environ.get(config.environment.home)
     return Path(override) if override else host.home() / ".capsem"
 
 
 def run_dir(config: GateConfig) -> Path:
-    override = os.environ.get("CAPSEM_RUN_DIR")
+    override = os.environ.get(config.environment.run_dir)
     return Path(override) if override else home(config) / "run"
 
 

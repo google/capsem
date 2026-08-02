@@ -137,6 +137,9 @@ test_output_root = "/tmp/capsem-test-output"
 # `dpkg -i`, because `|| apt-get install -f -y` runs the postinst a second time
 # and a retry must not install from somewhere else.
 install_log_glob = "$HOME/.capsem/logs/install-*.log"
+# The rail's inputs, named once. A release lane sets these; renaming one meant
+# finding every literal by hand across Python, shell and workflow YAML.
+profile_inputs_variable = "CAPSEM_INSTALL_PROFILE_INPUTS"
 
 preinstall_root = "/tmp/capsem-preinstall"
 admin_relative = "usr/bin/capsem-admin"
@@ -197,10 +200,47 @@ target = "/src/release-site/dist"
 # The Linux package rail
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# The files a bootable asset tree is made of
+# ---------------------------------------------------------------------------
+# The variables that say which capsem a process is talking to
+# ---------------------------------------------------------------------------
+#
+# Workspace exports them and Service reads them, and they were spelled
+# separately in both -- so an isolated workspace could export one name while
+# the daemon inside it honoured another, and the daemon would quietly attach
+# to the developer's own home.
+
+[environment]
+home = "CAPSEM_HOME"
+run_dir = "CAPSEM_RUN_DIR"
+benchmark_root = "CAPSEM_BENCHMARK_OUTPUT_ROOT"
+coverage_file = "COVERAGE_FILE"
+
+# ---------------------------------------------------------------------------
+#
+# One owner. These were listed in `[imagebuild] required` and again in
+# `[assets] required_artifacts`, and `initrd.py` reached for the initrd by
+# spelling its filename -- three places to keep in step, none of which
+# referred to the others.
+
+[artifacts]
+kernel = "vmlinuz"
+initrd = "initrd.img"
+rootfs = "rootfs.erofs"
+
 [package]
+# The rail's inputs, named here so a release lane and the gate agree on one
+# spelling. These were literals inside `os.environ.get(...)`, which meant
+# renaming a rail required finding every one of them by hand.
+manifest_variable = "CAPSEM_INSTALL_MANIFEST_URL"
+channel_variable = "CAPSEM_INSTALL_CHANNEL"
+require_proof_variable = "CAPSEM_REQUIRE_LINUX_DEB_PROOF"
+
 builder_image = "capsem-host-builder:latest"
 build_script = "scripts/build-linux-package.sh"
 proof_selector = "scripts/select-linux-deb-proof.sh"
+
 # The sidecar a release lane stages beside its manifest.
 release_inputs_name = "release-inputs.json"
 default_manifest_url = "https://release.capsem.org/assets/stable/manifest.json"
@@ -217,6 +257,17 @@ target_volume = "capsem-host-target-{arch}"
 # Installing the exact package into a clean systemd container and proving it
 # works: every binary present and reporting the package's own version, the
 # service and gateway up, every profile ready, and a real guest shell.
+
+# Local signing material. Absent on a developer machine, which is why the rail
+# treats it as optional -- the release lanes sign in CI from secrets. Declared
+# here so "where is the key" has one answer rather than a path spelled inside
+# a function.
+[package.signing]
+directory = "private/tauri"
+key = "capsem.key"
+password = "password.txt"
+key_variable = "TAURI_SIGNING_PRIVATE_KEY"
+password_variable = "TAURI_SIGNING_PRIVATE_KEY_PASSWORD"
 [package.proof]
 container = "capsem-qualified-deb-proof"
 systemd_ready_attempts = 60
@@ -278,13 +329,9 @@ profiles_glob = "config/profiles/*/profile.toml"
 
 # A build that exits zero having produced none of these is the failure worth
 # naming here rather than much later, inside a VM boot.
-required_artifacts = [
-    "vmlinuz",
-    "initrd.img",
-    "rootfs.erofs",
-    "obom.cdx.json",
-    "software-inventory.json",
-]
+# Derived from `[artifacts]`: the three bootable files plus this build's own
+# evidence. Spelling the three here as well is how two lists come to disagree.
+evidence_artifacts = ["obom.cdx.json", "software-inventory.json"]
 failure_tail_lines = 200
 shell_proof_timeout_seconds = 300
 
@@ -803,8 +850,9 @@ output = "assets"
 # Doctor is run first, with the checks that would fail on the very thing this
 # is about to build turned off.
 doctor_skips = { CAPSEM_SKIP_ASSET_CHECK = "1", CAPSEM_SKIP_KVM_CHECK = "1" }
-# What a per-architecture asset tree must contain to count as built.
-required = ["vmlinuz", "initrd.img", "rootfs.erofs"]
+# What a per-architecture asset tree must contain to count as built comes from
+# `[artifacts]`; it was spelled here and in `[assets]`, and `initrd.py` spelled
+# one of them a third time.
 
 # ---------------------------------------------------------------------------
 # The cheap checks, and what they may overlap with
