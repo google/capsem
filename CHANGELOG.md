@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The service tests' profile-tree copy replaces an existing target and names
+  every failure. `std::fs::copy` gives the destination the source's
+  permissions and then refuses a destination that exists without write
+  permission, so copying one tree twice into one place blocks itself. And the
+  panic was a bare `Os { code: 13, kind: PermissionDenied }` with no path,
+  which under parallel `nextest` in the Linux container produced an
+  intermittent failure identifying neither the file nor the side of the copy.
+  I could not reproduce it on demand -- this removes the mechanism I can see
+  and makes any residual occurrence say what it touched.
+
 - The terminal socket path goes through `capsem_core::uds`, which owns the
   `sun_path` length rule and which neither side was using. The gateway and
   `capsem-process` each built `{run_dir}/instances/{uuid}-ws.sock` by hand --

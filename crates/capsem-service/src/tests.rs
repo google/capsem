@@ -1619,16 +1619,45 @@ fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry 
     }
 }
 
+/// Copy a checked-in profile tree into a test's scratch directory.
+///
+/// Two details that are not incidental.
+///
+/// `std::fs::copy` gives the destination the *source's* permissions, and then
+/// fails with `EACCES` if it is asked to write a destination that already
+/// exists without write permission. Copying a tree twice into one place is
+/// therefore self-blocking, so an existing target is removed first.
+///
+/// And every failure names the file. This panicked as a bare
+/// `Os { code: 13, kind: PermissionDenied }` with no path, which under
+/// parallel `nextest` inside the Linux container produced an intermittent
+/// failure nobody could place -- the message identified neither which file
+/// nor which side of the copy.
 fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
-    std::fs::create_dir_all(dst).unwrap();
-    for entry in std::fs::read_dir(src).unwrap() {
-        let entry = entry.unwrap();
-        let ty = entry.file_type().unwrap();
+    std::fs::create_dir_all(dst)
+        .unwrap_or_else(|e| panic!("create {}: {e}", dst.display()));
+    let entries = std::fs::read_dir(src)
+        .unwrap_or_else(|e| panic!("read dir {}: {e}", src.display()));
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|e| panic!("read entry under {}: {e}", src.display()));
+        let ty = entry
+            .file_type()
+            .unwrap_or_else(|e| panic!("stat {}: {e}", entry.path().display()));
         let target = dst.join(entry.file_name());
         if ty.is_dir() {
             copy_dir_all(&entry.path(), &target);
         } else {
-            std::fs::copy(entry.path(), target).unwrap();
+            if target.exists() {
+                std::fs::remove_file(&target)
+                    .unwrap_or_else(|e| panic!("replace {}: {e}", target.display()));
+            }
+            std::fs::copy(entry.path(), &target).unwrap_or_else(|e| {
+                panic!(
+                    "copy {} -> {}: {e}",
+                    entry.path().display(),
+                    target.display()
+                )
+            });
         }
     }
 }
