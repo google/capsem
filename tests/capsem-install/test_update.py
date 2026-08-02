@@ -39,11 +39,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 def _workspace_version() -> str:
     """The version the binary under test reports, read rather than restated.
 
-    A literal floor outlived the line it was written for: these fixtures said
-    `1.0.0`, which every profile satisfied while the workspace was 1.x and none
-    satisfied the moment it moved back to 0.6 -- so `capsem update` refused
-    every catalog with "profile code requires Capsem 1.0.0 or newer, selected
-    0.6.0". `test_benchmark_retention_contract` carries the same lesson.
+    A literal floor outlives the line it was written for. These fixtures named
+    one directly, which every profile satisfied until the workspace version
+    moved below it -- and then `capsem update` refused every catalog, reporting
+    that the profile required a newer Capsem than the one selected.
+    `test_benchmark_retention_contract` carries the same lesson, and
+    `test_authoritative_values_are_not_restated` fails a docstring that spells
+    the version out, which is how this one was written the first time.
     """
     workspace = tomllib.loads((REPO_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
     return str(workspace["workspace"]["package"]["version"])
