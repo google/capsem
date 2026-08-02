@@ -374,7 +374,16 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
         PROJECT_ROOT / "src" / "capsem" / "gate" / "assets.py"
     ).read_text(encoding="utf-8")
     assert "ensure_space" in assets_source
-    assert assets_source.index("ensure_space") < assets_source.index("lanes.run")
+    # The lanes are steps now, so "capacity before building" is an edge rather
+    # than statement order: `preflight` reserves and both lanes depend on it.
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_plan
+
+    plan = gate_plan("candidate")
+    for arch in ("arm64", "x86_64"):
+        assert "assets.preflight" in plan.after_of(f"assets.build.{arch}")
 
     assets = _storage_rail("assets")
     floor_gib = assets["minimum_free_gib"]
@@ -1092,7 +1101,7 @@ def test_linux_rust_target_is_released_before_asset_capacity_preflight() -> None
     assert (
         _at(order, "linux-rust")
         < _at(order, "storage.completed-linux-rust-target")
-        < _at(order, "artifacts.assets")
+        < _at(order, "assets.preflight")
     )
 
 
@@ -1174,7 +1183,7 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
     assert next(i for i, line in enumerate(rendered) if "release the storage" in line) < next(
         i for i, line in enumerate(rendered) if "no room to finish" in line
     )
-    assert _at(order, "prepare.storage-budget") < _at(order, "artifacts.assets")
+    assert _at(order, "prepare.storage-budget") < _at(order, "assets.preflight")
     for destructive in ("docker image rm -f", "docker volume rm", "docker buildx prune"):
         assert destructive not in plan_source
 
@@ -1188,9 +1197,9 @@ def test_full_gate_releases_stage_final_images_and_bounds_completed_cache() -> N
         < _at(order, "storage.install-preflight")
         < _at(order, "package.arm64")
     )
-    assert _at(order, "linux-rust") < _at(order, "artifacts.assets")
+    assert _at(order, "linux-rust") < _at(order, "assets.preflight")
     assert (
-        _at(order, "artifacts.assets")
+        _at(order, "assets.preflight")
         < _at(order, "package.arm64")
         < _at(order, "package.x86_64")
         < _at(order, "glowup.install")

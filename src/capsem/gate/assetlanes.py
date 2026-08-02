@@ -19,7 +19,6 @@ either result is read.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,6 +26,7 @@ from . import config as gate_config
 from . import imagebuild
 from .config import Arch
 from .errors import GateError
+from .filesystem import make_dir
 from .proc import Runner
 
 
@@ -101,29 +101,26 @@ class AssetLanes:
                 + ", ".join(str(produced / name) for name in missing)
             )
 
-    def run(self, architectures: tuple[Arch, ...]) -> None:
-        """Build every lane, and report every failure rather than the first.
+    def build(self, arch: Arch) -> None:
+        """One architecture's lane, as a step the plan schedules.
 
-        Both lanes are always awaited. Cancelling the second on the first's
-        failure would leave its containers running, and the operator would see
-        one error for a run that had two.
+        This was `run(architectures)` driving a `ThreadPoolExecutor`: two lanes
+        overlapping because they must to fit the time budget, and a graph that
+        could not see either of them. It could not order anything against a
+        lane, time one, or attribute a failure to one -- the pool reported
+        both failures by hand because nothing else could.
+
+        The lanes are steps now, holding Docker *shared* so they still overlap
+        each other while excluding every other Docker step. Both still run even
+        when one fails, because the scheduler skips only what depends on a
+        failed step and these depend on each other not at all.
         """
-        self._root.mkdir(parents=True, exist_ok=True)
-        with ThreadPoolExecutor(max_workers=len(architectures)) as pool:
-            futures = {arch: pool.submit(self._build, arch) for arch in architectures}
-            failures = {}
-            for arch, future in futures.items():
-                error = future.exception()
-                if error is not None:
-                    failures[arch] = error
-
-        for arch, error in failures.items():
+        make_dir(self._root)
+        try:
+            self._build(arch)
+        except BaseException as error:
             self._report(arch, error)
-        if failures:
-            raise GateError(
-                "Ironbank asset-build lanes failed: "
-                + ", ".join(sorted(arch.name for arch in failures))
-            )
+            raise
 
     def _report(self, arch: Arch, error: BaseException) -> None:
         log = self._root / f"build-{arch.name}.log"

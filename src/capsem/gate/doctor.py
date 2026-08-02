@@ -16,7 +16,6 @@ minutes into a release.
 from __future__ import annotations
 
 import shutil
-import subprocess
 import tomllib
 from dataclasses import dataclass
 
@@ -35,7 +34,7 @@ class Finding:
     detail: str
 
 
-def _installed_entry_points(root) -> list[Finding]:
+def _installed_entry_points(root, runner: Runner) -> list[Finding]:
     """The console scripts pyproject declares must actually be runnable."""
     findings = []
     declared = tomllib.loads(
@@ -43,7 +42,7 @@ def _installed_entry_points(root) -> list[Finding]:
     )["project"]["scripts"]
 
     for name in sorted(declared):
-        if shutil.which(name) is None and not _runs_through_uv(root, name):
+        if shutil.which(name) is None and not _runs_through_uv(runner, name):
             findings.append(
                 Finding(
                     f"entry point {name}",
@@ -53,16 +52,14 @@ def _installed_entry_points(root) -> list[Finding]:
     return findings
 
 
-def _runs_through_uv(root, name: str) -> bool:
-    return (
-        subprocess.run(
-            ["uv", "run", name, "--help"],
-            cwd=root,
-            capture_output=True,
-            text=True,
-        ).returncode
-        == 0
-    )
+def _runs_through_uv(runner: Runner, name: str) -> bool:
+    """Through the runner, so the probe is recorded like any other command.
+
+    This called `subprocess.run` directly, which is the one thing the harness
+    exists to own -- a doctor that reaches past it can report on a machine the
+    run log never saw it touch.
+    """
+    return runner.succeeds(["uv", "run", name, "--help"])
 
 
 def _storage_rails(config: gate_config.GateConfig) -> list[Finding]:
@@ -123,7 +120,7 @@ def check(runner: Runner) -> list[Finding]:
     """Everything that must hold before the gate can run at all."""
     config = gate_config.for_root(runner.root)
     return [
-        *_installed_entry_points(config.root),
+        *_installed_entry_points(config.root, runner),
         *_storage_rails(config),
         *_dispatched_subcommands(config, runner),
     ]

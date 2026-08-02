@@ -57,6 +57,23 @@ class Exclusive(Strict):
 
     reason: str
 
+    shared: bool = False
+    """Whether this claim admits other shared claims on the same thing.
+
+    Not a property of the resource -- a property of *this* step's claim on it.
+    The asset lanes hold Docker shared, because they must overlap to fit the
+    time budget; every other Docker step holds it exclusively, because it must
+    not run beside them. One resource, two kinds of holder, which is a
+    readers-writer lock.
+
+    Without this, declaring the resource serialized the lanes and omitting it
+    let anything schedule beside them -- so `assetlanes` grew a thread pool the
+    plan could not see, order against, or attribute a failure to.
+    """
+
+    def held_shared(self) -> Exclusive:
+        return self.model_copy(update={"shared": True})
+
 class ExecutionConfig(Strict):
     exclusives: dict[str, Exclusive]
 

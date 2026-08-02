@@ -157,6 +157,14 @@ class GateConfig(Strict):
 
     # -- contention --------------------------------------------------------
 
+    def shared(self, name: str) -> Exclusive:
+        """A claim that admits other shared claims, and excludes writers.
+
+        Looked up through `exclusive`, so an invented name is refused here for
+        the same reason: a claim on nothing contends with nothing.
+        """
+        return self.exclusive(name).held_shared()
+
     def exclusive(self, name: str) -> Exclusive:
         """The named thing only one step may hold at a time.
 

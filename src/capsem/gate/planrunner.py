@@ -21,8 +21,9 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from operator import attrgetter
 from typing import TYPE_CHECKING
@@ -56,7 +57,7 @@ def execute(plan: Plan, context: Context) -> dict[str, Outcome]:
     context.journal.shape(plan.labels, plan.edges)
     outcomes: dict[str, Outcome] = {}
     locks = {
-        resource.name: threading.Lock()
+        resource.name: _SharedLock()
         for step in plan.steps
         for resource in step.contends
     }
@@ -87,14 +88,62 @@ def execute(plan: Plan, context: Context) -> dict[str, Outcome]:
     return outcomes
 
 
-def _guarded(
-    step: Step, context: Context, locks: dict[str, threading.Lock]
-) -> float:
+class _SharedLock:
+    """One resource, two kinds of holder.
+
+    Shared holders admit each other; an exclusive holder admits nobody. A
+    readers-writer lock, because that is the shape the asset lanes always had:
+    two architectures that must overlap, against every other Docker step that
+    must not run beside them.
+
+    Writers are given the door as soon as one is waiting, so a steady stream
+    of lanes cannot starve the phase that follows them.
+    """
+
+    def __init__(self) -> None:
+        self._state = threading.Condition()
+        self._readers = 0
+        self._writer = False
+        self._writers_waiting = 0
+
+    @contextmanager
+    def held(self, *, shared: bool) -> Iterator[None]:
+        self._acquire(shared=shared)
+        try:
+            yield
+        finally:
+            self._release(shared=shared)
+
+    def _acquire(self, *, shared: bool) -> None:
+        with self._state:
+            if shared:
+                while self._writer or self._writers_waiting:
+                    self._state.wait()
+                self._readers += 1
+                return
+            self._writers_waiting += 1
+            try:
+                while self._writer or self._readers:
+                    self._state.wait()
+            finally:
+                self._writers_waiting -= 1
+            self._writer = True
+
+    def _release(self, *, shared: bool) -> None:
+        with self._state:
+            if shared:
+                self._readers -= 1
+            else:
+                self._writer = False
+            self._state.notify_all()
+
+
+def _guarded(step: Step, context: Context, locks: dict[str, _SharedLock]) -> float:
     """Hold what the step contends for, run it, and report how long."""
     started = time.monotonic()
     with ExitStack() as stack:
         for resource in sorted(step.contends, key=attrgetter("name")):
-            stack.enter_context(locks[resource.name])
+            stack.enter_context(locks[resource.name].held(shared=resource.shared))
         with context.journal.step(step):
             step.run(context)
     return time.monotonic() - started

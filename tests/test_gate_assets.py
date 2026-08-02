@@ -25,6 +25,22 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 
+
+def _run_all(gate) -> None:
+    """Every phase of the asset gate, in the order the plan composes them.
+
+    `run()` did all of this behind one `Call`, with the two architecture lanes
+    on a thread pool the graph could not see. They are steps now, so a test
+    that wants the whole phase says so -- and one that wants a single lane can
+    finally ask for it.
+    """
+    gate.preflight()
+    for name in gate._config.architectures:
+        gate.lane(name)
+    gate.sweep()
+    gate.assemble()
+
+
 def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code",)) -> Path:
     (tmp_path / "config").mkdir(parents=True)
     (tmp_path / "config" / "gate.toml").write_text(
@@ -84,7 +100,7 @@ def test_cross_architecture_execution_is_proven_before_any_lane_starts(
     the whole matrix."""
     gate, runner = _gate(tmp_path, monkeypatch)
 
-    gate.run()
+    _run_all(gate)
 
     runner.assert_order(r"docker run --rm --platform", r"image build")
 
@@ -94,7 +110,7 @@ def test_the_probe_targets_the_architecture_this_host_is_not(
 ) -> None:
     gate, runner = _gate(tmp_path, monkeypatch)
 
-    gate.run()
+    _run_all(gate)
 
     probe = runner.matching(r"docker run --rm --platform")[0]
     assert f"linux/{gate.host_arch.dpkg}" not in probe
@@ -106,7 +122,7 @@ def test_a_host_that_cannot_run_the_other_architecture_says_how_to_fix_it(
     gate, _ = _gate(tmp_path, monkeypatch, failures=["--platform"])
 
     with pytest.raises(GateError) as failure:
-        gate.run()
+        _run_all(gate)
 
     assert "colima restart" in str(failure.value), "macOS needs its own remedy"
 
@@ -118,7 +134,7 @@ def test_a_linux_host_is_told_about_binfmt_instead(
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
 
     with pytest.raises(GateError, match="binfmt QEMU"):
-        gate.run()
+        _run_all(gate)
 
 
 # ---------------------------------------------------------------------------
@@ -131,7 +147,7 @@ def test_both_architectures_are_merged_into_one_asset_tree(
 ) -> None:
     gate, _ = _gate(tmp_path, monkeypatch)
 
-    gate.run()
+    _run_all(gate)
 
     assets = gate.test_root / "code" / "assets"
     for arch in CONFIG.architectures:
@@ -145,7 +161,7 @@ def test_current_is_restored_to_the_host_architecture_after_generation(
     last, and the VM proof that follows runs on this machine."""
     gate, runner = _gate(tmp_path, monkeypatch)
 
-    gate.run()
+    _run_all(gate)
 
     current = gate.test_root / "code" / "assets" / "current"
     assert current.readlink().name == gate.host_arch.name
@@ -159,7 +175,7 @@ def test_hash_aliases_are_materialized_before_the_manifest_is_checked(
     asset version and the gate is no longer hermetic."""
     gate, runner = _gate(tmp_path, monkeypatch)
 
-    gate.run()
+    _run_all(gate)
 
     runner.assert_order(r"create_hash_assets\.py", r"manifest check")
 
@@ -169,7 +185,7 @@ def test_every_runtime_profile_is_materialized_against_the_generated_manifest(
 ) -> None:
     gate, runner = _gate(tmp_path, monkeypatch)
 
-    gate.run()
+    _run_all(gate)
 
     materialized = runner.matching(r"profile materialize")
     assert materialized
@@ -184,7 +200,7 @@ def test_the_boot_proof_runs_after_the_profile_is_materialized(
 ) -> None:
     gate, runner = _gate(tmp_path, monkeypatch)
 
-    gate.run()
+    _run_all(gate)
 
     runner.assert_order(r"profile materialize", r"prove-installed-shell\.py")
 
@@ -196,7 +212,7 @@ def test_the_boot_proof_runs_against_this_profile_s_own_assets(
     own build was broken."""
     gate, runner = _gate(tmp_path, monkeypatch)
 
-    gate.run()
+    _run_all(gate)
 
     proof = runner.matching(r"prove-installed-shell\.py")[0]
     assert f"CAPSEM_ASSETS_DIR={gate.test_root}/code/assets" in proof
@@ -235,7 +251,7 @@ def test_a_failed_boot_preserves_its_evidence(
     )
 
     with pytest.raises(GateError):
-        gate.run()
+        _run_all(gate)
 
     preserved = gate.test_root / "code" / "run-failure"
     assert (preserved / "serial.log").is_file()
@@ -262,7 +278,7 @@ def test_the_run_directory_is_removed_even_when_the_proof_fails(
     )
 
     with pytest.raises(GateError):
-        gate.run()
+        _run_all(gate)
 
     assert seen and not seen[0].exists()
 
@@ -273,6 +289,6 @@ def test_leftover_containers_are_cleaned_up_after_the_lanes(
     """A build container holding the scratch tree open outlives its lane."""
     gate, runner = _gate(tmp_path, monkeypatch)
 
-    gate.run()
+    _run_all(gate)
 
     runner.assert_order(r"image build", r"cleanup-docker-containers-by-mount\.sh")

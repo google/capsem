@@ -120,7 +120,7 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
 
     # `just test` still owns the gate -- as a composed phase now rather than a
     # recipe that dispatched to another recipe, so it is read from the plan.
-    assert "artifacts.assets" in _planned("candidate")
+    assert "assets.preflight" in _planned("candidate")
 
     # Profiles are discovered, not listed.
     assert config.assets.profiles_glob == "config/profiles/*/profile.toml"
@@ -133,7 +133,9 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
 
     # `current` is repointed by whichever lane finished last, and the
     # host-architecture VM proof that follows needs it aimed at this machine.
-    assert "current.symlink_to(self.host_arch.name)" in assets
+    # Through the filesystem primitive, so the operation is one the harness
+    # owns rather than a raw `Path.symlink_to` no dry run could show.
+    assert "link(current, self.host_arch.name)" in assets
     assert "current.readlink()" in assets
 
     # Hash aliases before the manifest check, or startup falls through to a
@@ -144,7 +146,9 @@ def test_just_test_owns_the_complete_asset_build_and_boot_gate() -> None:
     # AF_UNIX paths must stay under macOS SUN_LEN once the gateway appends its
     # session path, so the run dir lives outside the descriptive scratch root.
     assert config.assets.run_dir_template.startswith("/tmp/")
-    assert "tempfile.mkdtemp" in assets
+    # Through the filesystem primitive, whose `parent` is required precisely
+    # so a scratch dir cannot land in $TMPDIR and blow the socket limit.
+    assert "scratch_dir(" in assets
 
     assert "shell_proof_script" in assets
     assert config.assets.shell_proof_script.endswith("prove-installed-shell.py")
@@ -180,8 +184,19 @@ def test_asset_gate_runs_architecture_lanes_in_parallel_before_boot_proofs() -> 
     lanes = _source_text("src/capsem/gate/assetlanes.py")
 
     assert "ThreadPoolExecutor" in lanes
-    assert "lanes.run(" in assets
-    assert assets.index("lanes.run(") < assets.index("self._merge_lanes(")
+    # The lanes are plan steps now, not a call inside this module: `sweep`
+    # depends on both and `assemble` on `sweep`, which is the same ordering
+    # expressed where the graph can enforce it rather than where only reading
+    # the source could reveal it.
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_labels
+
+    labels = list(gate_labels("candidate"))
+    for arch in ("arm64", "x86_64"):
+        assert labels.index(f"assets.build.{arch}") < labels.index("assets.sweep")
+    assert labels.index("assets.sweep") < labels.index("assets.assemble")
     assert assets.index("self._merge_lanes(") < assets.index("self._prove(")
 
 
@@ -199,9 +214,13 @@ def test_asset_gate_reaps_gateway_and_service_between_profile_proofs() -> None:
 
     assert config.pidfiles.names == ("gateway.pid", "service.pid")
     assert "pidfiles.stop_gate_service" in assets
-    # In the `finally`, so an aborted proof still reaps.
-    assert assets.index("finally:", assets.index("def _prove(")) < assets.index(
-        "shutil.rmtree(run_dir"
+    # In the `finally`, so an aborted proof still reaps -- and the reap comes
+    # before the scratch is discarded, because discarding it is what destroys
+    # the serial log the reap flushes.
+    finally_at = assets.index("finally:", assets.index("def _prove("))
+    assert finally_at < assets.index("discard(run_dir)")
+    assert assets.index("pidfiles.stop_gate_service", finally_at) < assets.index(
+        "discard(run_dir)"
     )
 
 

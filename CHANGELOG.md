@@ -32,6 +32,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   concrete reason instead of "VM not available", which was true of every cause
   and pointed at none.
 
+- The plan can express a phase that holds something against outsiders while
+  its own lanes share it, and the asset build's `ThreadPoolExecutor` is gone.
+  An exclusive was a `threading.Lock`, so declaring `docker_daemon` serialized
+  the two architecture lanes -- which must overlap to fit the time budget --
+  and not declaring it let any Docker step schedule beside them. `assetlanes`
+  answered that with its own pool: concurrency the graph could not see, order
+  against, time, or attribute a failure to, which is why it had to collect
+  both failures by hand. A claim now carries a mode, shared or exclusive, and
+  the scheduler holds a readers-writer lock per resource. The lanes are two
+  steps in one wave holding Docker shared; the asset phase is five steps
+  (`preflight`, both `build.<arch>`, `sweep`, `assemble`) instead of one call.
+  Awaiting both lanes stops being a module's promise and becomes the
+  scheduler's rule: two steps with no edge between them both run, and a
+  failure skips only what depends on it.
+- `modules_bypassing_primitives` is empty. `assets`, `assetlanes`, `doctor`
+  and `versions` went through the filesystem primitives, `doctor`'s entry-point
+  probe went through the runner -- it called `subprocess.run` directly, so a
+  doctor could report on a machine the run log never saw it touch -- and the
+  file operations split into `filesystem.py`, with `crossexec.py` and
+  `assetevidence.py` taking the questions that were never about building
+  assets.
+
 - The Linux package lane is eight steps instead of one opaque call. It was a
   single `Call` whose dry run printed one line of prose while six things
   happened: storage release, capacity, clock sync, asset sync, the docker

@@ -23,6 +23,18 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 ARCHES = (CONFIG.arch("arm64"), CONFIG.arch("x86_64"))
 
 
+
+def _build_all(lanes) -> None:
+    """Every architecture's lane, as the plan schedules them.
+
+    `run(architectures)` drove both on a thread pool. They are two steps in
+    one wave now -- holding Docker shared, so they still overlap each other
+    while excluding everything else -- and a caller that wants both says so.
+    """
+    for arch in ARCHES:
+        lanes.build(arch)
+
+
 def _checkout(tmp_path: Path, *, profiles: tuple[str, ...] = ("code", "co-work")) -> Path:
     (tmp_path / "config").mkdir()
     (tmp_path / "config" / "gate.toml").write_text(
@@ -101,7 +113,7 @@ def test_every_profile_is_built_for_every_architecture(tmp_path: Path) -> None:
     root = _checkout(tmp_path)
     runner = Building(root)
 
-    _lanes(runner, root).run(ARCHES)
+    _build_all(_lanes(runner, root))
 
     # Matched on the builder invocation rather than on a recipe name: the
     # dispatcher is gone, and matching it would have kept passing while the
@@ -120,7 +132,7 @@ def test_each_lane_writes_to_its_own_output_root(tmp_path: Path) -> None:
     runner = Building(root)
 
     lanes = _lanes(runner, root)
-    lanes.run(ARCHES)
+    _build_all(lanes)
 
     profile = Profile(name="code", manifest=root / "config/profiles/code/profile.toml")
     outputs = {lanes.lane_assets(profile, arch) for arch in ARCHES}
@@ -132,7 +144,7 @@ def test_each_lane_writes_to_its_own_log(tmp_path: Path) -> None:
     root = _checkout(tmp_path)
     runner = Building(root)
 
-    _lanes(runner, root).run(ARCHES)
+    _build_all(_lanes(runner, root))
 
     logs = {command.log for command in runner.commands if command.log is not None}
     assert len(logs) == len(ARCHES)
@@ -146,21 +158,47 @@ def test_a_lane_producing_nothing_fails_rather_than_carrying_on(
     root = _checkout(tmp_path)
     runner = Building(root, omit="vmlinuz")
 
-    with pytest.raises(GateError, match="asset-build lanes failed"):
-        _lanes(runner, root).run(ARCHES)
+    # The lane raises for itself now; aggregating both is the scheduler's job,
+    # which `test_both_lanes_are_awaited_even_when_the_first_fails` covers.
+    with pytest.raises(GateError, match="did not produce non-empty"):
+        _build_all(_lanes(runner, root))
 
 
 def test_both_lanes_are_awaited_even_when_the_first_fails(tmp_path: Path) -> None:
     """Cancelling the second would leave its containers running, and would
-    report one error for a run that had two."""
+    report one error for a run that had two.
+
+    The pool used to guarantee this by awaiting every future itself. It is the
+    scheduler's rule now, and a stronger one: two steps with no edge between
+    them both run, and a failure skips only what *depends* on it. Asserted
+    through a plan, because that is where the guarantee lives.
+    """
+    from capsem.gate.actions import Call
+    from capsem.gate.context import Context
+    from capsem.gate.execution import step
+    from capsem.gate.plan import Plan
+
     root = _checkout(tmp_path)
     runner = Building(root, omit="vmlinuz")
+    lanes = _lanes(runner, root)
+
+    plan = Plan("lanes")
+    for arch in ARCHES:
+        plan.add(
+            step(
+                f"build.{arch.name}",
+                Call(arch.name, lambda _ctx, a=arch: lanes.build(a)),
+                contends=(CONFIG.shared("docker_daemon"),),
+            )
+        )
 
     with pytest.raises(GateError) as failure:
-        _lanes(runner, root).run(ARCHES)
+        plan.run(Context(runner, CONFIG))
 
     for arch in ARCHES:
-        assert arch.name in str(failure.value)
+        assert f"build.{arch.name}" in str(failure.value), (
+            "a lane that failed beside another must still be named"
+        )
 
 
 def test_a_failing_lane_surfaces_the_tail_of_its_log(tmp_path: Path) -> None:
@@ -168,7 +206,7 @@ def test_a_failing_lane_surfaces_the_tail_of_its_log(tmp_path: Path) -> None:
     runner = Building(root, omit="rootfs.erofs")
 
     with pytest.raises(GateError):
-        _lanes(runner, root).run(ARCHES)
+        _build_all(_lanes(runner, root))
 
     assert any("--- tail of" in note for note in runner.notes)
     assert any("asset-build lane failed" in note for note in runner.notes)
@@ -192,7 +230,7 @@ def test_a_lane_whose_log_is_missing_says_so_rather_than_crashing(
     runner = NeverLogs(root, omit="initrd.img")
 
     with pytest.raises(GateError):
-        _lanes(runner, root).run(ARCHES)
+        _build_all(_lanes(runner, root))
 
     assert any("expected lane log is missing" in note for note in runner.notes)
 
@@ -219,7 +257,7 @@ def test_each_lane_tells_the_builder_where_to_write(tmp_path: Path) -> None:
     lanes = _lanes(runner, root)
     (profile,) = discover_profiles(gate_config.for_root(root))
 
-    lanes.run(ARCHES)
+    _build_all(lanes)
 
     for arch in ARCHES:
         expected = str(lanes.lane_assets(profile, arch))
@@ -238,7 +276,7 @@ def test_two_lanes_never_name_the_same_output_root(tmp_path: Path) -> None:
     runner = Building(root)
     lanes = _lanes(runner, root)
 
-    lanes.run(ARCHES)
+    _build_all(lanes)
 
     outputs = {
         command.argv[command.argv.index("--output") + 1]

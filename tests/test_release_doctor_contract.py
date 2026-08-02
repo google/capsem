@@ -310,11 +310,16 @@ def test_macos_doctor_requires_live_rosetta_registration() -> None:
     # *not*, before any lane starts -- discovering otherwise an hour in wastes
     # the whole matrix. Both platform names are derived from the architecture
     # table rather than spelled here.
-    assert '"--platform", platform' in assets
-    assert "cross_platform_prefix" in assets
+    # The cross-execution probe moved to `crossexec`, which is its own
+    # question: whether this daemon can run a foreign architecture is a
+    # property of the machine, not of building assets.
+    crossexec = _source_text("src/capsem/gate/crossexec.py")
+    assert '"--platform",' in crossexec
+    assert "platform," in crossexec
+    assert "cross_platform_prefix" in crossexec
     assert config.assets.cross_platform_prefix == "linux/"
-    assert "Docker cannot execute {platform} containers" in assets
-    assert "colima restart" in assets, "macOS needs its own remedy in the message"
+    assert "Docker cannot execute {platform} containers" in crossexec
+    assert "colima restart" in crossexec, "macOS needs its own remedy in the message"
 
 
 def test_bootstrap_and_doctor_prove_tart_cache_clone_boot_and_ssh() -> None:
@@ -379,8 +384,14 @@ def test_parallel_asset_gate_preserves_and_names_failed_architecture_logs() -> N
     # Both lanes are awaited before either result is read: cancelling the
     # second would leave its containers running and report one error for a run
     # that had two.
-    assert "future.exception()" in lanes
-    assert "failures[arch] = error" in lanes
+    # Awaiting both lanes is the scheduler's guarantee now, not a pool's:
+    # two steps with no edge between them both run, and a failure skips only
+    # what depends on it. `test_gate_assetlanes` proves it through a plan.
+    assert "def build(self, arch" in lanes
+    # The lane reports its own tail and re-raises; collecting both failures
+    # is the plan's job, and doing it here needed a pool the graph could not
+    # see.
+    assert "self._report(arch, error)" in lanes
     assert "failure_tail_lines" in lanes
     assert config.assets.failure_tail_lines > 0
 

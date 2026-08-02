@@ -147,6 +147,7 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
     assert set(BOUNDARY.direct_machine_access) == {
         "actions.py",
         "fileactions.py",
+        "filesystem.py",
         "proc.py",
         "pidfiles.py",
         "locks.py",

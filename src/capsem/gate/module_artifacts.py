@@ -74,7 +74,7 @@ def artifacts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -
             after=(verify,),
         )
 
-    built = phase.add(assetgate.assets_step(config), after=after)
+    built = assetgate.fragment(plan, config, after=after)
     return phase.add(
         pytestsuite.Suite(
             label="build-chain",

@@ -494,6 +494,8 @@ recipes_with_inline_control_flow = []
 #                has a single answer
 #   locks        the lockfile that makes one gate per machine true, which has
 #                to be placed before any workspace exists to put it in
+#   filesystem   the operations `fileactions` wraps, for the phases that are
+#                already inside a step and cannot render their argv
 #   runlog       the run directory itself, which cannot be written through
 #                actions because actions report into it
 #   summary      the human-readable half of that same directory, for the same
@@ -512,6 +514,7 @@ recipes_with_inline_control_flow = []
 direct_machine_access = [
     "actions.py",
     "fileactions.py",
+    "filesystem.py",
     "proc.py",
     "pidfiles.py",
     "locks.py",
@@ -536,10 +539,6 @@ direct_concurrency = ["planrunner.py"]
 # and one that has been extracted must be struck so the list cannot describe a
 # past that is no longer true.
 modules_bypassing_primitives = [
-    "assetlanes.py",
-    "assets.py",
-    "doctor.py",
-    "versions.py",
 ]
 
 # ---------------------------------------------------------------------------
@@ -949,6 +948,7 @@ source_contract = [
     "tests/test_gate_socket_length.py",
     "tests/test_gate_storage_consumers.py",
     "tests/test_gate_module_prerequisites.py",
+    "tests/test_gate_shared_contention.py",
     "tests/test_gate_artifact_ownership.py",
     "tests/test_gate_run_history_contention.py",
     "tests/test_gate_resource_evidence.py",

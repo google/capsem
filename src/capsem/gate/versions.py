@@ -26,6 +26,7 @@ from .actions import Call
 from .command import GateCommand
 from .errors import GateError
 from .execution import step
+from .fileactions import write_text
 from .plan import Plan
 from .proc import Runner
 
@@ -82,7 +83,7 @@ def _substitute(path: Path, pattern: re.Pattern[str], template: str, version: st
         raise GateError(
             f"{path} should spell the version exactly once, matched {count} times"
         )
-    path.write_text(replaced, encoding="utf-8")
+    write_text(path, replaced)
 
 
 def stamp(root: Path, runner: Runner) -> str:
