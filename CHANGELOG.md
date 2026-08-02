@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Public recipe arguments can no longer become host shell syntax.
+  `release-binaries`, `release-profile` and `logs` interpolated their values
+  into the recipe body unquoted, and `just release-binaries 'nightly; echo X'`
+  ran `echo X` on the host. Python could never contain this: the shell parses
+  the recipe before the gate receives an argument. `dev` was worse -- it built
+  the *recipe name* from input, which quoting cannot fix -- so it dispatches to
+  the `dev` command, which already validates the three surfaces.
+- Both release commands keep the host awake again. Keep-awake belonged to
+  `candidate` because the gate belonged to `candidate`; the releases reached it
+  by launching `just test`. Deleting that child was right, and left them owning
+  the same forty-minute qualification with none of the wrapper, so an
+  unattended macOS release could sleep through its own publication. A
+  `CompleteGate` mixin owns the wrapper and the gate's resources, and the guard
+  states the policy -- everything containing the complete gate -- rather than
+  naming one command, which is why the old one stayed green through the gap.
+
 - An install retry can no longer change where the product comes from. The
   postinst dropped the manifest handoff from an `EXIT` trap, so a failing
   `dpkg -i` consumed it and the `apt-get install -f -y` that immediately

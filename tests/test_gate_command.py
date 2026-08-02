@@ -302,12 +302,18 @@ def test_a_reexec_happens_before_anything_is_acquired(tmp_path: Path) -> None:
 
 def test_the_candidate_gate_only_reexecs_once() -> None:
     """`keep_awake` returns None on the second pass, or the wrapper would
-    re-exec itself forever."""
-    from capsem.gate.candidate import CandidateCommand
+    re-exec itself forever.
 
-    assert "reexec" in vars(CandidateCommand), (
+    Owned by `CompleteGate` rather than by candidate: both release commands
+    contain the same qualification graph and need the same wrapper, and while
+    this asserted on `CandidateCommand` alone they silently ran without it.
+    """
+    from capsem.gate.candidate import CandidateCommand, CompleteGate
+
+    assert "reexec" in vars(CompleteGate), (
         "the keep-awake wrapper belongs in `reexec`, not in a step"
     )
+    assert issubclass(CandidateCommand, CompleteGate)
 
 
 def test_a_reexec_becomes_the_same_command_it_replaced(monkeypatch, tmp_path) -> None:
@@ -341,12 +347,28 @@ def test_a_reexec_becomes_the_same_command_it_replaced(monkeypatch, tmp_path) ->
 
 def test_only_the_commands_that_must_replace_themselves_do() -> None:
     """A re-exec discards the run log and the lock, so it is not a thing to
-    reach for casually."""
+    reach for casually.
+
+    Stated as the policy rather than as one name: this asserted
+    `== ["candidate"]`, which described the implementation, and stayed green
+    while both release commands quietly lost the keep-awake wrapper they need
+    for the same reason candidate does. `CompleteGate` owns it now, so the
+    claim is about what a command *contains*.
+    `test_gate_complete_gate_policy` proves each one keeps the host awake.
+    """
+    from capsem.gate.candidate import CompleteGate
+
     replacing = sorted(
         name
         for name, cls in GateCommand.registry.items()
         # Only the real ones: this file registers commands of its own.
         if "reexec" in vars(cls) and cls.__module__.startswith("capsem.gate.")
     )
+    complete = sorted(
+        name
+        for name, cls in GateCommand.registry.items()
+        if issubclass(cls, CompleteGate)
+    )
 
-    assert replacing == ["candidate"]
+    assert replacing == [], "re-exec belongs to CompleteGate, not to a command"
+    assert complete == ["candidate", "release-binaries", "release-profile"]

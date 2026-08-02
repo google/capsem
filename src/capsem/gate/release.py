@@ -16,6 +16,7 @@ import os
 
 from . import candidateplan, imagebuild
 from .actions import Run, Script
+from .candidate import CompleteGate
 from .command import GateCommand
 from .config import GateConfig
 from .errors import GateError
@@ -56,19 +57,15 @@ def _gate(plan: Plan, config: GateConfig, *, after):
 
 
 class ReleaseBinariesCommand(
+    CompleteGate,
     GateCommand,
     name="release-binaries",
     help="run the complete gate, then release packages for one channel",
 ):
+    """The gate runs inside this command, so it holds what the gate holds and
+    keeps the host awake for the same reason candidate does."""
+
     exclusive = True
-
-    def resources(self):
-        # The gate runs inside this command now, so this command holds what
-        # the gate holds: an isolated home, the process accounting, the
-        # Colima it may have started, and the evidence a failure leaves.
-        from .candidate import gate_resources
-
-        return gate_resources(self._config, self._runner)
 
     @classmethod
     def add_arguments(cls, parser) -> None:
@@ -123,16 +120,12 @@ class ReleaseBinariesCommand(
 
 
 class ReleaseProfileCommand(
+    CompleteGate,
     GateCommand,
     name="release-profile",
     help="run the complete gate, then release one channel profile",
 ):
     exclusive = True
-
-    def resources(self):
-        from .candidate import gate_resources
-
-        return gate_resources(self._config, self._runner)
 
     @classmethod
     def add_arguments(cls, parser) -> None:

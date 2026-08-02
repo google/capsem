@@ -172,10 +172,20 @@ def gate_resources(config, runner: Runner) -> tuple[Resource, ...]:
     )
 
 
-class CandidateCommand(
-    GateCommand, name="candidate", help="run the complete local qualification gate"
-):
-    exclusive = True
+class CompleteGate:
+    """What a command that *contains* the whole gate owes the machine.
+
+    A mixin, not a base command: a base would have to register a runnable
+    name, and there is nothing here to run. It exists because keep-awake used
+    to belong to `candidate` when the gate belonged to `candidate` -- the
+    release commands reached it by launching `just test`. Deleting that child
+    was right; it left them owning the same forty-minute qualification with
+    none of the wrapper, so an unattended macOS release could sleep through
+    its own publication.
+    """
+
+    _config: gate_config.GateConfig
+    _runner: Runner
 
     def resources(self) -> tuple[Resource, ...]:
         return gate_resources(self._config, self._runner)
@@ -188,7 +198,7 @@ class CandidateCommand(
         waited out the two-hour timeout. `keep_awake` returns None on the
         second pass, so this happens exactly once.
 
-        The replacement is the operator's own argv, not `just test`. Returning
+        The replacement is the operator's own argv, not a recipe. Returning
         the recipe dropped whatever flags they passed and sent an already-
         dispatched command back through the dispatch chain -- a wrapper should
         wrap the thing it was given, not substitute something that usually
@@ -197,8 +207,17 @@ class CandidateCommand(
         prefix = keep_awake(self._runner)
         if prefix is None:
             return None
-        self._runner.step("Holding macOS awake for the complete candidate gate")
+        self._runner.step("Holding macOS awake for the complete gate")
         return (*prefix, *sys.argv)
+
+
+class CandidateCommand(
+    CompleteGate,
+    GateCommand,
+    name="candidate",
+    help="run the complete local qualification gate",
+):
+    exclusive = True
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

@@ -36,12 +36,12 @@ _stamp-version:
 
 # Build, test, and publish only Capsem binaries/packages for one channel.
 release-binaries channel:
-    uv run capsem-gate release-binaries {{channel}}
+    uv run capsem-gate release-binaries {{quote(channel)}}
 
 
 # Build, test, and publish exactly one channel/profile through capsem-admin.
 release-profile channel profile:
-    uv run capsem-gate release-profile {{channel}} {{profile}}
+    uv run capsem-gate release-profile {{quote(channel)}} {{quote(profile)}}
 
 
 # Compile all host binaries
@@ -93,8 +93,8 @@ build-docs: _pnpm-install
     bash scripts/check-web-surface.sh site
 
 # Select one deliberate development surface.
-dev surface="ui" *ARGS:
-    just _dev-{{surface}} {{ARGS}}
+dev surface="ui" *ARGS: _ensure-dev-ready _pnpm-install
+    uv run capsem-gate dev {{quote(surface)}} {{ARGS}}
 
 
 # Build the desktop application with its embedded frontend.
@@ -299,7 +299,7 @@ doctor fix="": _pnpm-install
 # View service logs, a sandbox's logs, or the latest preserved test failure.
 # `just logs`, `just logs <sandbox-id>`, `just logs failure`.
 logs target="":
-    uv run capsem-gate logs {{target}}
+    uv run capsem-gate logs {{quote(target)}}
 
 
 # Remove stale rootfs copies, orphan UDS sockets, and trim bloated incremental caches.
