@@ -890,6 +890,7 @@ source_contract = [
     "tests/test_gate_storage_ordering.py",
     "tests/test_gate_socket_length.py",
     "tests/test_gate_storage_consumers.py",
+    "tests/test_gate_module_prerequisites.py",
     "tests/test_gate_testmodules.py",
     "tests/test_gate_timing.py",
     "tests/test_gate_versions.py",

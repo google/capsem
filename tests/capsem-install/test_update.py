@@ -34,6 +34,24 @@ from .conftest import (
 
 UPDATE_CACHE = CAPSEM_DIR / "assets" / "manifest-metadata.json"
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _workspace_version() -> str:
+    """The version the binary under test reports, read rather than restated.
+
+    A literal floor outlived the line it was written for: these fixtures said
+    `1.0.0`, which every profile satisfied while the workspace was 1.x and none
+    satisfied the moment it moved back to 0.6 -- so `capsem update` refused
+    every catalog with "profile code requires Capsem 1.0.0 or newer, selected
+    0.6.0". `test_benchmark_retention_contract` carries the same lesson.
+    """
+    workspace = tomllib.loads((REPO_ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    return str(workspace["workspace"]["package"]["version"])
+
+
+#: A floor the binary under test satisfies: itself.
+COMPATIBLE_MINIMUM = _workspace_version()
+
 TEST_ASSET_MANIFEST = os.environ.get("CAPSEM_TEST_ASSET_MANIFEST")
 
 
@@ -97,7 +115,7 @@ def _default_release_graph() -> dict:
                 "version": "2026.0627.8",
                 "revision": "2026.0627.8",
                 "status": "current",
-                "min_capsem_version": "1.0.0",
+                "min_capsem_version": COMPATIBLE_MINIMUM,
                 "max_capsem_version": None,
                 "architectures": [
                     {
@@ -242,7 +260,9 @@ def _health_to_manifest(health: dict, *, asset_base: str | None = None) -> dict:
     return _update_manifest(
         binary.get("latest") or binary.get("current") or "0.0.0",
         assets.get("latest") or assets.get("current") or "2026.0627.8",
-        min_binary=(assets.get("compatibility") or {}).get("min_binary", "1.0.0"),
+        min_binary=(assets.get("compatibility") or {}).get(
+            "min_binary", COMPATIBLE_MINIMUM
+        ),
         binary_files=binary.get("files", []),
         asset_base=asset_base,
     )
@@ -252,7 +272,7 @@ def _update_manifest(
     binary_version: str,
     asset_version: str,
     *,
-    min_binary: str = "1.0.0",
+    min_binary: str = COMPATIBLE_MINIMUM,
     binary_files: list[dict] | None = None,
     asset_base: str | None = None,
 ) -> dict:
@@ -569,7 +589,7 @@ def _self_contained_profile_graph(
 
     profile["revision"] = revision
     profile["version"] = revision
-    profile["min_capsem_version"] = "1.0.0"
+    profile["min_capsem_version"] = COMPATIBLE_MINIMUM
     profile["architectures"] = [
         {
             **source_arch,

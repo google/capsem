@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The update fixtures read the compatibility floor from `Cargo.toml` instead of
+  restating it. They said `min_capsem_version = "1.0.0"`, which every profile
+  satisfied while the workspace was 1.x and none satisfied once it moved back
+  to 0.6 -- so `capsem update` refused every catalog with "profile code
+  requires Capsem 1.0.0 or newer, selected 0.6.0", and seven update-state tests
+  failed as soon as the install proof got far enough to run them.
+- `capsem-gate install` builds the image its Dockerfile derives from.
+  `docker/Dockerfile.install-test` is `FROM capsem-host-builder:latest`, and
+  the lane's plan was a single step, so it only worked when an earlier phase of
+  a larger plan had left that tag behind. Run on its own -- or on any machine
+  where the previous run released it at `after-install` -- it failed with
+  `pull access denied`. The release contract requires every module to own its
+  prerequisites and be runnable in a clean environment; a guard holds it now.
+
 - A `file://` release channel resolves its artifacts against its own dist root
   rather than the filesystem root. A generated channel is a website: the
   manifest sits at `<root>/assets/<channel>/manifest.json` and records its

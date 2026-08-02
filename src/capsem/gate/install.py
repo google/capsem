@@ -19,7 +19,7 @@ import os
 from pathlib import Path
 
 from . import config as gate_config
-from . import installimage
+from . import hostimage, installimage
 from .actions import Call
 from .command import GateCommand
 from .docker import Docker, container_path
@@ -213,7 +213,13 @@ class InstallCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        plan.add(install_step(self._config))
+        # `docker/Dockerfile.install-test` is `FROM capsem-host-builder:latest`
+        # and this lane rebuilds that derived image itself, so the base is a
+        # prerequisite it owns rather than one an earlier phase happens to
+        # leave behind. `shared`, so composing this into the complete gate
+        # makes it a dependant of the one build rather than a second one.
+        base = hostimage.fragment(plan, self._config)
+        plan.add(install_step(self._config), after=(base,))
         return plan
 
 
