@@ -68,7 +68,7 @@ def _refuse_reentry(argv: tuple[str, ...]) -> None:
     if name not in ENTRYPOINTS:
         return
     raise GateError(
-        f"a plan action invoked {name!r}, which starts a second gate: "
+        f"this run invoked {name!r}, which starts a second gate: "
         f"{shlex.join(argv)}. The machine lock is not reentrant, so that child "
         f"would wait out its timeout for the lock this run is holding. Compose "
         f"the other command's fragment into this plan instead."
@@ -106,9 +106,23 @@ class GuardedRunner(Runner):
         env: dict[str, str] | None = None,
         cwd: Path | None = None,
     ) -> int:
-        """Detached processes are guarded too -- a daemon is still a program."""
-        _refuse_reentry(tuple(str(part) for part in argv))
-        return self._inner.launch(argv, env=env, cwd=cwd)
+        """Detached processes are guarded too -- a daemon is still a program.
+
+        And recorded: a daemon nobody wrote down is a daemon nobody can
+        account for when it outlives the run that started it.
+        """
+        rendered = tuple(str(part) for part in argv)
+        _refuse_reentry(rendered)
+        started = time.monotonic()
+        pid = self._inner.launch(argv, env=env, cwd=cwd)
+        self._journal.launch(
+            rendered,
+            cwd=str(cwd or self.root),
+            env=dict(env or {}),
+            pid=pid,
+            duration_ms=(time.monotonic() - started) * 1000,
+        )
+        return pid
 
     # -- reporting belongs to whoever owns the terminal --------------------
 

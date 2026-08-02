@@ -37,6 +37,7 @@ from .runlogschema import (
     ActionRun,
     Artifact,
     Exec,
+    Launch,
     Note,
     Payload,
     PlanShape,
@@ -75,9 +76,7 @@ class RunLog:
         # the machine lock is taken *after* the log is opened -- so two
         # contenders arriving together collided on the way in, and each
         # rotation then protected only its own path.
-        self.run_id = (
-            f"{datetime.now(UTC):%Y%m%d-%H%M%S}-{secrets.token_hex(3)}-{command}"
-        )
+        self.run_id = f"{datetime.now(UTC):%Y%m%d-%H%M%S}-{secrets.token_hex(3)}-{command}"
         self.directory = root / self.run_id
         self._events = self.directory / settings.events
         self._steps = self.directory / settings.step_log_dir
@@ -195,9 +194,7 @@ class RunLog:
         self.emit(Note(step=_CURRENT.get(), message=message))
 
     def artifact(self, path: Path, *, digest: str, size: int) -> None:
-        self.emit(
-            Artifact(step=_CURRENT.get(), path=str(path), size=size, digest=digest)
-        )
+        self.emit(Artifact(step=_CURRENT.get(), path=str(path), size=size, digest=digest))
 
     def exec(
         self, argv: tuple[str, ...], *, cwd: str, env: dict[str, str], exit: int, duration_ms: float
@@ -209,6 +206,26 @@ class RunLog:
                 cwd=cwd,
                 env=env,
                 exit=exit,
+                duration_ms=duration_ms,
+            )
+        )
+
+    def launch(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: str,
+        env: dict[str, str],
+        pid: int,
+        duration_ms: float,
+    ) -> None:
+        self.emit(
+            Launch(
+                step=_CURRENT.get(),
+                argv=argv,
+                cwd=cwd,
+                env=env,
+                pid=pid,
                 duration_ms=duration_ms,
             )
         )

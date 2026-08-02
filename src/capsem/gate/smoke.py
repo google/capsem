@@ -22,6 +22,7 @@ from .config import GateConfig
 from .execution import Step, step
 from .lifecycle import Resource
 from .plan import Plan
+from .proc import Runner
 from .service import Service
 from .testmodules import InWorkspace
 from .workspace import Workspace
@@ -60,13 +61,16 @@ class SmokeCommand(
     name="smoke",
     help="focused developer integration feedback; never release qualification",
 ):
-    def resources(self) -> tuple[Resource, ...]:
+    def resources(self, runner: Runner) -> tuple[Resource, ...]:
         # The workspace first, then the daemon inside it -- released in
         # reverse, so the service stops before its run directory goes, which
         # is what flushes `serial.log`. The service is constructed *from* the
         # workspace, so "which service" cannot drift from "which home".
+        #
+        # Built with the guarded runner, so the daemon it launches is recorded
+        # and cannot itself start a second gate.
         workspace = Workspace(self._config)
-        return (workspace, Service(self._config, workspace, self._runner))
+        return (workspace, Service(self._config, workspace, runner))
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

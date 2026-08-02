@@ -68,6 +68,23 @@ class Journal(Protocol):
         to bug reports and a release machine's environment holds tokens.
         """
 
+    def launch(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: str,
+        env: dict[str, str],
+        pid: int,
+        duration_ms: float,
+    ) -> None:
+        """Record one detached process.
+
+        Separate from `exec` because there is no exit status to wait for: what
+        a launch can report is that it started, what it started, and as whom.
+        A daemon nobody wrote down is a daemon nobody can account for when it
+        outlives the run -- which is the case the orphan count exists for.
+        """
+
     def skipped(self, label: str) -> None:
         """Record a step that never ran because its dependency failed.
 
@@ -107,6 +124,17 @@ class NullJournal:
         cwd: str,
         env: dict[str, str],
         exit: int,
+        duration_ms: float,
+    ) -> None:
+        """Discarded."""
+
+    def launch(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: str,
+        env: dict[str, str],
+        pid: int,
         duration_ms: float,
     ) -> None:
         """Discarded."""

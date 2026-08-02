@@ -187,8 +187,8 @@ class CompleteGate:
     _config: gate_config.GateConfig
     _runner: Runner
 
-    def resources(self) -> tuple[Resource, ...]:
-        return gate_resources(self._config, self._runner)
+    def resources(self, runner: Runner) -> tuple[Resource, ...]:
+        return gate_resources(self._config, runner)
 
     def reexec(self) -> tuple[str, ...] | None:
         """Become *this* command under a keep-awake wrapper, once.
@@ -239,8 +239,8 @@ class CandidateModulesCommand(
 
     exclusive = True
 
-    def resources(self) -> tuple[Resource, ...]:
-        return gate_resources(self._config, self._runner)
+    def resources(self, runner: Runner) -> tuple[Resource, ...]:
+        return gate_resources(self._config, runner)
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

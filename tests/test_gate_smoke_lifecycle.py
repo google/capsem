@@ -29,6 +29,16 @@ from capsem.gate.service import Service
 from capsem.gate.workspace import Workspace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+#: `resources()` takes the runner it should build with; these tests ask
+#: *what* is held, so any runner will do.
+def _resource_runner():
+    from helpers.gate import RecordingRunner
+
+    return RecordingRunner(PROJECT_ROOT)
+
+
+RUNNER_FOR_RESOURCES = _resource_runner()
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 
@@ -43,10 +53,10 @@ def test_the_smoke_command_can_acquire_everything_it_declares() -> None:
     """The failure was total: `acquire` raised on every invocation."""
     command = _smoke()
 
-    for resource in command.resources():
+    for resource in command.resources(RUNNER_FOR_RESOURCES):
         assert resource.acquire is not None
     # The service is the one that used to refuse outright.
-    names = [resource.name for resource in command.resources()]
+    names = [resource.name for resource in command.resources(RUNNER_FOR_RESOURCES)]
     assert names == ["workspace", "service"]
 
 
@@ -56,7 +66,7 @@ def test_the_service_is_bound_to_the_workspace_beside_it() -> None:
     Acquisition order is what makes this expressible: the workspace is taken
     first, so the service can be handed the thing that already exists.
     """
-    workspace, service = _smoke().resources()
+    workspace, service = _smoke().resources(RUNNER_FOR_RESOURCES)
 
     assert isinstance(workspace, Workspace)
     assert isinstance(service, Service)
@@ -68,7 +78,7 @@ def test_an_ambient_home_cannot_redirect_the_service(monkeypatch) -> None:
     monkeypatch.setenv("CAPSEM_HOME", "/tmp/somebody-elses-capsem")
     monkeypatch.setenv("CAPSEM_RUN_DIR", "/tmp/somebody-elses-capsem/run")
 
-    workspace, service = _smoke().resources()
+    workspace, service = _smoke().resources(RUNNER_FOR_RESOURCES)
 
     assert service.run_dir == workspace.run_dir
     assert "somebody-elses" not in str(service.run_dir)
@@ -122,7 +132,7 @@ def test_the_service_is_released_before_its_run_directory_is_removed(
     """
     order: list[str] = []
     command = _smoke()
-    workspace, service = command.resources()
+    workspace, service = command.resources(RUNNER_FOR_RESOURCES)
 
     monkeypatch.setattr(
         "capsem.gate.pidfiles.stop_gate_service",
@@ -146,7 +156,7 @@ def test_a_failure_preserves_evidence_before_anything_is_released(
     """Release destroys it, so preserve cannot come after."""
     order: list[str] = []
     command = _smoke()
-    workspace, service = command.resources()
+    workspace, service = command.resources(RUNNER_FOR_RESOURCES)
 
     monkeypatch.setattr(type(workspace), "acquire", lambda self: None)
     monkeypatch.setattr(type(service), "acquire", lambda self: None)

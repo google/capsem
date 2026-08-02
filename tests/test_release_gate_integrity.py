@@ -54,7 +54,12 @@ def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> N
     # Colima is given back on every path, including the aborted one -- which is
     # why it is a resource and not a step, and why the shell wrapper that used
     # to cover only part of the gate is gone.
-    held = {resource.name for resource in command.resources()}
+    from helpers.gate import RecordingRunner
+
+    held = {
+        resource.name
+        for resource in command.resources(RecordingRunner(PROJECT_ROOT))
+    }
     assert {"colima", "orphan-accounting", "failure-evidence"} <= held
 
     assert "CAPSEM_BENCHMARK_OUTPUT_ROOT" in _read("src/capsem/gate/workspace.py")

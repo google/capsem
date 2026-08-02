@@ -72,6 +72,26 @@ class ActionRun(Payload):
     status: str
 
 
+class Launch(Payload):
+    """One detached process, recorded where every invocation passes through.
+
+    Distinct from `Exec`: there is no exit status, because nothing waited.
+    What a launch can say is that it started, what it started, and with what
+    pid -- which is what makes an orphaned daemon attributable to the run that
+    spawned it.
+    """
+
+    event: Literal["launch"] = "launch"
+    step: str
+    argv: tuple[str, ...]
+    cwd: str
+    env: dict[str, str]
+    """Only what this command added; see `Exec.env`."""
+
+    pid: int
+    duration_ms: float
+
+
 class Exec(Payload):
     """One subprocess, recorded at the funnel every invocation passes through."""
 

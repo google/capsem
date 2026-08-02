@@ -33,6 +33,16 @@ from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+#: `resources()` takes the runner it should build with; these tests ask
+#: *what* is held, so any runner will do.
+def _resource_runner():
+    from helpers.gate import RecordingRunner
+
+    return RecordingRunner(PROJECT_ROOT)
+
+
+RUNNER_FOR_RESOURCES = _resource_runner()
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 
@@ -112,7 +122,7 @@ def test_the_things_that_must_survive_a_failure_are_resources() -> None:
     while every run reported success. And a Colima the gate started must stop
     whether or not the gate passed.
     """
-    names = [resource.name for resource in _candidate().resources()]
+    names = [resource.name for resource in _candidate().resources(RUNNER_FOR_RESOURCES)]
 
     assert "orphan-accounting" in names
     assert "colima" in names
@@ -124,13 +134,13 @@ def test_the_orphan_baseline_is_taken_before_anything_can_spawn_a_process() -> N
     Acquisition order is the guarantee: resources are acquired in order and
     released in reverse, so the baseline is first taken and last compared.
     """
-    names = [resource.name for resource in _candidate().resources()]
+    names = [resource.name for resource in _candidate().resources(RUNNER_FOR_RESOURCES)]
 
     assert names[0] == "orphan-accounting"
 
 
 def test_the_workspace_is_held_for_the_whole_gate() -> None:
-    names = [resource.name for resource in _candidate().resources()]
+    names = [resource.name for resource in _candidate().resources(RUNNER_FOR_RESOURCES)]
 
     assert "workspace" in names
 

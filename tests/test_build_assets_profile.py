@@ -6,6 +6,16 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+#: `resources()` takes the runner it should build with; these tests ask
+#: *what* is held, so any runner will do.
+def _resource_runner():
+    from helpers.gate import RecordingRunner
+
+    return RecordingRunner(PROJECT_ROOT)
+
+
+RUNNER_FOR_RESOURCES = _resource_runner()
+
 
 def _source_text(relative: str) -> str:
     return (PROJECT_ROOT / relative).read_text(encoding="utf-8")
@@ -414,7 +424,7 @@ def test_isolated_test_recipes_trap_test_home_service_cleanup() -> None:
             RecordingRunner(PROJECT_ROOT),
             argparse.Namespace(dry_run=False, graph=False, timing=False),
         )
-        held = {resource.name for resource in command.resources()}
+        held = {resource.name for resource in command.resources(RUNNER_FOR_RESOURCES)}
         assert "workspace" in held, f"{name} runs outside an isolated home"
 
 

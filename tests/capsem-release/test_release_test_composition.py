@@ -288,7 +288,11 @@ def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() ->
     assert next(i for i, s in enumerate(gate) if s.startswith("fast.")) < next(
         i for i, s in enumerate(gate) if s.startswith("static.")
     )
-    assert "colima" in {r.name for r in _command("candidate").resources()}
+    from helpers.gate import RecordingRunner
+
+    assert "colima" in {
+        r.name for r in _command("candidate").resources(RecordingRunner(PROJECT_ROOT))
+    }
 
     order = list(_planned_labels("test-candidate"))
     # The modules are phases of one plan now rather than four child processes,

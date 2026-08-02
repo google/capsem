@@ -65,7 +65,7 @@ def test_resources_are_held_for_the_whole_command(tmp_path: Path) -> None:
     order: list[str] = []
 
     class Held(GateCommand, name="held-example", help="x"):
-        def resources(self):
+        def resources(self, runner=None):
             return (Tracker(order, "a"), Tracker(order, "b"))
 
         def plan(self) -> Plan:
@@ -83,7 +83,7 @@ def test_a_failing_command_still_releases_what_it_held(tmp_path: Path) -> None:
     order: list[str] = []
 
     class Broken(GateCommand, name="broken-example", help="x"):
-        def resources(self):
+        def resources(self, runner=None):
             return (Tracker(order, "a"),)
 
         def plan(self) -> Plan:
@@ -123,7 +123,7 @@ def test_execute_is_never_overridden() -> None:
 class Inspectable(GateCommand, name="inspectable-example", help="x"):
     log: ClassVar[list[str]] = []
 
-    def resources(self):
+    def resources(self, runner=None):
         return (Tracker(self.log, "a"),)
 
     def plan(self) -> Plan:
@@ -284,7 +284,7 @@ def test_a_reexec_happens_before_anything_is_acquired(tmp_path: Path) -> None:
             order.append("reexec")
             return ("true",)
 
-        def resources(self):
+        def resources(self, runner=None):
             return (Tracker(order, "a"),)
 
         def plan(self) -> Plan:

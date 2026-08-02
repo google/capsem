@@ -70,7 +70,7 @@ class _Probe(GateCommand, name="funnel-probe", help="a command a test builds"):
     on_plan = None
     replacement: tuple[str, ...] | None = None
 
-    def resources(self) -> tuple[Resource, ...]:
+    def resources(self, runner=None) -> tuple[Resource, ...]:
         return self.holdings
 
     def reexec(self) -> tuple[str, ...] | None:

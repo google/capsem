@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Resources run through the same guarded, journaling runner as the plan.
+  `execute` built one for the plan's context and then constructed resources
+  from the command's raw runner, so everything a resource did on the way in or
+  out -- the orphan baseline, Colima, the service launch, the failure-evidence
+  capture -- emitted no `exec` event and skipped the nested-gate refusal. The
+  one code path that runs *while the machine lock is held* was the one path
+  allowed to start a second gate, and a resource failure could leave no trace
+  of the command that caused it.
+- A detached launch is recorded. `GuardedRunner.launch` refused re-entry and
+  delegated, so a daemon appeared in no run at all -- which is exactly the
+  process the orphan count later has to account for. `launch` is now an event
+  of its own, with argv, cwd, environment delta, pid and time-to-spawn; it is
+  not an `exec`, because nothing waited for it and there is no exit status to
+  report.
+
 - Every consumer of a run agrees with what `run.end` recorded. `Timing.outcome`
   already treated a failed run as failed, and nothing read it: the summary, the
   run list and `runs last --failed` each classified by failed *steps*, so a run

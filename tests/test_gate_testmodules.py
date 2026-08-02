@@ -22,6 +22,16 @@ from capsem.gate import config as gate_config
 from capsem.gate.testmodules import FastModule
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+#: `resources()` takes the runner it should build with; these tests ask
+#: *what* is held, so any runner will do.
+def _resource_runner():
+    from helpers.gate import RecordingRunner
+
+    return RecordingRunner(PROJECT_ROOT)
+
+
+RUNNER_FOR_RESOURCES = _resource_runner()
 CONFIG = gate_config.load(PROJECT_ROOT)
 
 
@@ -118,7 +128,7 @@ def test_every_web_surface_is_its_own_step() -> None:
 
 def test_the_fast_module_works_in_an_isolated_home() -> None:
     """Never the developer's `~/.capsem`."""
-    resources = _module(FastModule).resources()
+    resources = _module(FastModule).resources(RUNNER_FOR_RESOURCES)
 
     assert [resource.name for resource in resources] == ["workspace"]
 

@@ -35,6 +35,7 @@ from .execution import Step, step
 from .fileactions import RequireFile
 from .lifecycle import Resource
 from .plan import Plan
+from .proc import Runner
 from .workspace import Workspace
 
 
@@ -50,7 +51,7 @@ class InWorkspace:
     _config: GateConfig
     """Supplied by `GateCommand`, declared here so the mixin type-checks."""
 
-    def resources(self) -> tuple[Resource, ...]:
+    def resources(self, runner: Runner) -> tuple[Resource, ...]:
         return (Workspace(self._config),)
 
 
@@ -93,9 +94,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Ste
         phase.add(check, after=(syntax,))
     phase.add(audits.lint(config), after=(syntax,))
 
-    surfaces = [
-        phase.add(surface, after=(syntax, node)) for surface in audits.web_surfaces(config)
-    ]
+    surfaces = [phase.add(surface, after=(syntax, node)) for surface in audits.web_surfaces(config)]
     return phase.add(
         audits.clippy(config),
         after=(audits.blocking_surface(config, surfaces), rust),
@@ -139,9 +138,7 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
     # clean container can launch its runner takes a minute, and discovering it
     # cannot after the Rust coverage run wastes twenty.
     preflight = installimage.fragment(plan, config, after=after)
-    leaves.append(
-        phase.add(storagerelease(config, "install-preflight"), after=(preflight,))
-    )
+    leaves.append(phase.add(storagerelease(config, "install-preflight"), after=(preflight,)))
 
     # `_pack-initrd` already built the host architecture; this proves the other
     # one compiles against musl, so a cross-arch regression surfaces before the
@@ -214,9 +211,7 @@ class ReleaseContractsModule(
         return plan
 
 
-def release_contracts(
-    plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()
-) -> Step:
+def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
     """The release and composition contracts, without artifacts."""
     phase = plan.phase("contracts")
     settings = config.modules
@@ -225,8 +220,7 @@ def release_contracts(
     # pytest does not expand path arguments itself, so passing the pattern
     # through collects nothing and the module passes vacuously.
     contracts = sorted(
-        str(path.relative_to(config.root))
-        for path in config.root.glob(settings.contract_glob)
+        str(path.relative_to(config.root)) for path in config.root.glob(settings.contract_glob)
     )
     if not contracts:
         raise GateError(f"no contract tests matched {settings.contract_glob}")

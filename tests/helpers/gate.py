@@ -159,6 +159,7 @@ class RecordingJournal:
         self.actions: list[str] = []
         self.shapes: list[tuple[tuple[str, ...], tuple[tuple[str, str], ...]]] = []
         self.execs: list[dict] = []
+        self.launches: list[dict] = []
         self.skips: list[str] = []
 
     def note(self, message: str) -> None:
@@ -181,6 +182,19 @@ class RecordingJournal:
                 "exit": exit,
                 "duration_ms": duration_ms,
             }
+        )
+
+    def launch(
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: str,
+        env: dict[str, str],
+        pid: int,
+        duration_ms: float,
+    ) -> None:
+        self.launches.append(
+            {"argv": argv, "cwd": cwd, "env": env, "pid": pid, "duration_ms": duration_ms}
         )
 
     def artifact(self, path: Path, *, digest: str, size: int) -> None:

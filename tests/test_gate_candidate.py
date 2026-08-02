@@ -43,6 +43,16 @@ from capsem.gate.sourcestate import RecordSourceState, RequireSourceUnchanged
 # against a real executable rather than a recording runner.
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+#: `resources()` takes the runner it should build with; these tests ask
+#: *what* is held, so any runner will do.
+def _resource_runner():
+    from helpers.gate import RecordingRunner
+
+    return RecordingRunner(PROJECT_ROOT)
+
+
+RUNNER_FOR_RESOURCES = _resource_runner()
 CONFIG = gate_config.load(PROJECT_ROOT)
 HEAD = "abcdef1234567890"
 DIGEST = "sha256:cafe"
@@ -109,7 +119,7 @@ def test_the_process_baseline_precedes_anything_that_can_spawn_one() -> None:
     Acquisition order is the guarantee now: resources are taken left to right
     and released in reverse, so the baseline is first taken and last compared.
     """
-    names = [resource.name for resource in _command(PROJECT_ROOT).resources()]
+    names = [resource.name for resource in _command(PROJECT_ROOT).resources(RUNNER_FOR_RESOURCES)]
 
     assert names[0] == "orphan-accounting"
 
@@ -258,7 +268,7 @@ def test_a_passing_run_captures_no_failure_evidence(tmp_path: Path) -> None:
 
 def test_the_gate_holds_everything_that_must_be_given_back() -> None:
     """The set, so a later change cannot quietly drop one."""
-    names = {resource.name for resource in _command(PROJECT_ROOT).resources()}
+    names = {resource.name for resource in _command(PROJECT_ROOT).resources(RUNNER_FOR_RESOURCES)}
 
     assert names == {"orphan-accounting", "workspace", "colima", "failure-evidence"}
 

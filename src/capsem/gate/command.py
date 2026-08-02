@@ -91,12 +91,20 @@ class GateCommand(ABC):
         ceremony that teaches readers to skip the method that matters.
         """
 
-    def resources(self) -> tuple[Resource, ...]:
+    def resources(self, runner: Runner) -> tuple[Resource, ...]:
         """What to hold for the whole command, acquired in this order.
 
         Released in reverse, so the order here *is* the teardown order -- which
         is why it is declared rather than written out in a `finally`.
+
+        `runner` is the guarded, journaling one, and resources are built with
+        it rather than with the command's raw runner. They were not: so the
+        orphan baseline, Colima, the service launch and the failure-evidence
+        capture all ran outside the funnel -- no `exec` events, and no
+        re-entry refusal on the one code path that executes while the machine
+        lock is held.
         """
+        del runner  # a command with nothing to hold needs no runner to hold it
         return ()
 
     def reexec(self) -> tuple[str, ...] | None:
@@ -160,7 +168,7 @@ class GateCommand(ABC):
             # Every invocation from here is recorded, and none may start a
             # second gate. Neither is a call site's responsibility.
             runner = GuardedRunner(self._runner, journal=log)
-            with held(*self._holdings()) as acquired:
+            with held(*self._holdings(runner)) as acquired:
                 plan.run(
                     Context(
                         runner,
@@ -225,7 +233,7 @@ class GateCommand(ABC):
             return RunLog.open(self._config, self.name, argv=self._argv())
         return _no_record()
 
-    def _holdings(self) -> tuple[Resource, ...]:
+    def _holdings(self, runner: Runner) -> tuple[Resource, ...]:
         """The machine lock first, then whatever the command declared.
 
         First because it is released last, and because the resources a command
@@ -233,9 +241,9 @@ class GateCommand(ABC):
         those has started is taking it too late.
         """
         if not self.exclusive:
-            return self.resources()
+            return self.resources(runner)
         lock = ExclusiveLock.for_gate(self._config, purpose=self._purpose())
-        return (lock, *self.resources())
+        return (lock, *self.resources(runner))
 
     def _summarize(self, log: RunLog) -> None:
         """Say where the time went, on the way out.
