@@ -13,6 +13,7 @@ import tarfile
 from pathlib import Path
 
 from blake3 import blake3
+from helpers.release_site import release_site_build_lock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -79,14 +80,22 @@ def _build_release_site(dist: Path) -> None:
         f"stdout:\n{install.stdout}\n"
         f"stderr:\n{install.stderr}"
     )
-    build = subprocess.run(
-        ["pnpm", "run", "build:channel"],
-        cwd=PROJECT_ROOT / "release-site",
-        env={**os.environ, "CAPSEM_RELEASE_GRAPH": str(dist), "CAPSEM_RELEASE_CHANNEL_DIST": str(dist)},
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    # build:channel renders through the shared release-site/dist before
+    # overlaying into `dist`, so it has to serialize with every other build.
+    with release_site_build_lock():
+        build = subprocess.run(
+            ["pnpm", "run", "build:channel"],
+            cwd=PROJECT_ROOT / "release-site",
+            env={
+                **os.environ,
+                # Render from this graph, overlay into this dist.
+                "CAPSEM_RELEASE_GRAPH": str(dist),
+                "CAPSEM_RELEASE_CHANNEL_DIST": str(dist),
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
     assert build.returncode == 0, (
         "release-site Astro build failed\n"
         f"stdout:\n{build.stdout}\n"

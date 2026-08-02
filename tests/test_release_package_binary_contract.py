@@ -2,25 +2,18 @@
 
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
-import os
 import re
-import subprocess
-from pathlib import Path
 
 import blake3
-from test_release_site_html_contract import RELEASE_SITE_DIST, build_release_site_from_fixture
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
+from test_release_site_html_contract import (
+    FIXTURE_GRAPH,
+    PROJECT_ROOT,
+    RELEASE_SITE_DIST,
+    build_release_site_from_fixture,
 )
+
 FIXTURE_FILE_ROOT = PROJECT_ROOT / "tests" / "capsem-release" / "fixtures" / "release-channel-files"
 EXPECTED_BINARY_COHORT = {
     "capsem",
@@ -47,27 +40,6 @@ EXPECTED_MACOS_BINARY_PATHS = {
 EXPECTED_LINUX_BINARY_PATHS = {
     name: f"/usr/bin/{name}" for name in EXPECTED_BINARY_COHORT
 }
-
-
-def build_release_site_from_graph(graph_path: Path) -> None:
-    lock_path = Path(os.environ.get("TMPDIR", "/tmp")) / "capsem-release-site-build.lock"
-    with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        env = {
-            **os.environ,
-            "ASTRO_TELEMETRY_DISABLED": "1",
-            "CAPSEM_RELEASE_GRAPH": str(graph_path),
-        }
-        result = subprocess.run(
-            ["pnpm", "--dir", "release-site", "run", "build"],
-            cwd=PROJECT_ROOT,
-            env=env,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    assert result.returncode == 0, result.stdout + result.stderr
-    build_release_site_from_fixture.cache_clear()
 
 
 def test_package_owns_binaries() -> None:
