@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The package rail's capacity checks measure two different moments. The pair
+  exists because the builder image is itself part of what fills that rail --
+  one check once it exists, one before the build spends the headroom -- and
+  both calls sat on adjacent lines, so the second could only ever agree with
+  the first. Two contracts asserted the count without noticing they were
+  adjacent; deleting one looked right and would have lost a real check.
+- `packageinputs.py` holds what a package build is *told* -- the pinned
+  toolchain, the channel, the builder environment -- as pure functions, so a
+  rename in `config/gate.toml` fails a unit test rather than producing a
+  package built against the wrong manifest. `assets/current` is synced through
+  the removal primitive instead of `rm -rf` and `cp -r` built from Python
+  strings, which is the one shape the reclaimer guards exist to prevent and
+  showed up in no dry run.
+
 - The artifact contract has real producers. `Step.produces` drove both the
   per-step hashing into the run log and the "one owner per artifact" check, and
   no production step supplied it -- so `Hash` had no caller through that

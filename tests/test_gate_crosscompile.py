@@ -323,3 +323,69 @@ def test_a_cross_target_skips_the_proof_and_says_why(
 
     assert not runner.ran(r"just _prove-linux-deb")
     assert any("Skipping exact Debian package proof" in note for note in runner.notes)
+
+
+def test_the_builder_environment_follows_the_configured_names() -> None:
+    """A rename in config must move the rail, not silently leave it behind.
+
+    Asserted against a *changed* config rather than the real one: a test that
+    reads the same literal the implementation reads passes whether or not the
+    implementation reads config at all.
+    """
+    from capsem.gate.crosscompile import package_environment
+
+    renamed = CONFIG.model_copy(
+        update={
+            "package": CONFIG.package.model_copy(
+                update={"manifest_variable": "CAPSEM_RENAMED_MANIFEST"}
+            )
+        }
+    )
+    target = CONFIG.arch(next(iter(CONFIG.architectures)))
+
+    environment = package_environment(
+        renamed,
+        target,
+        toolchain="1.97.1",
+        manifest_url="file:///src/assets/local/manifest.json",
+        signing={},
+    )
+
+    assert environment["CAPSEM_RENAMED_MANIFEST"] == ("file:///src/assets/local/manifest.json")
+    assert "CAPSEM_INSTALL_MANIFEST_URL" not in environment
+
+
+def test_the_builder_environment_carries_the_signing_material_it_was_given() -> None:
+    from capsem.gate.crosscompile import package_environment
+
+    target = CONFIG.arch(next(iter(CONFIG.architectures)))
+    signing = {CONFIG.package.signing.key_variable: "secret-key-bytes"}
+
+    environment = package_environment(
+        CONFIG, target, toolchain="1.97.1", manifest_url="x", signing=signing
+    )
+
+    assert environment[CONFIG.package.signing.key_variable] == "secret-key-bytes"
+
+
+def test_the_disk_rail_is_measured_at_two_different_moments() -> None:
+    """Twice, deliberately -- but not twice in the same breath.
+
+    The pair exists because the builder image is itself part of what fills
+    this rail: one check once it exists, one immediately before the package
+    build spends the headroom. Both calls sat on adjacent lines, so they
+    measured the same moment and the second could only ever agree with the
+    first. Removing one looked right and would have lost a real check.
+    """
+    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "crosscompile.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert source.count('ensure_space("package")') == 2
+    build = source.index("def _build(self)")
+    first = source.index('ensure_space("package")')
+    second = source.index('ensure_space("package")', build)
+
+    assert first < build < second, (
+        "both checks sit in one method, so they measure a single moment"
+    )

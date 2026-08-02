@@ -209,6 +209,7 @@ class PackageSigningConfig(Strict):
 
 
 class PackageConfig(Strict):
+    current_assets: str
     signing: PackageSigningConfig
     manifest_variable: str
     channel_variable: str

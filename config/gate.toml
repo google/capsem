@@ -237,6 +237,9 @@ manifest_variable = "CAPSEM_INSTALL_MANIFEST_URL"
 channel_variable = "CAPSEM_INSTALL_CHANNEL"
 require_proof_variable = "CAPSEM_REQUIRE_LINUX_DEB_PROOF"
 
+# What the Tauri bundler embeds: one directory the build points at the
+# architecture being packaged.
+current_assets = "current"
 builder_image = "capsem-host-builder:latest"
 build_script = "scripts/build-linux-package.sh"
 proof_selector = "scripts/select-linux-deb-proof.sh"

@@ -19,7 +19,7 @@ rest of the shell in the repository.
 from __future__ import annotations
 
 import os
-import tomllib
+import shutil
 from pathlib import Path
 
 from . import config as gate_config
@@ -29,32 +29,12 @@ from .command import GateCommand
 from .config import Arch
 from .errors import GateError
 from .execution import step
+from .fileactions import remove
+from .packageinputs import package_environment, pinned_toolchain, resolve_channel
 from .packagesigning import signing_key
 from .plan import Plan
 from .proc import Runner
 from .storage import Storage
-
-
-def pinned_toolchain(root: Path) -> str:
-    """The Rust version `rust-toolchain.toml` pins, read rather than repeated.
-
-    It was spelled three times inside one inline shell script, which is three
-    chances for a toolchain bump to leave the package rail behind.
-    """
-    pin = Path(root) / gate_config.for_root(root).package.toolchain_pin
-    try:
-        return tomllib.loads(pin.read_text(encoding="utf-8"))["toolchain"]["channel"]
-    except (OSError, KeyError, tomllib.TOMLDecodeError) as exc:
-        raise GateError(f"{pin} declares no [toolchain] channel: {exc}") from None
-
-
-def resolve_channel(channel: str, config: gate_config.GateConfig) -> str:
-    allowed = config.package.channels
-    if channel not in allowed:
-        raise GateError(
-            f"CAPSEM_INSTALL_CHANNEL must be one of {', '.join(allowed)} (got: {channel})"
-        )
-    return channel
 
 
 class PackageRail:
@@ -109,11 +89,10 @@ class PackageRail:
         # One named policy owns this rail: the Rust base image and the BuildKit
         # cohort stay warm across candidates, and a capacity failure reports an
         # explicit disk recommendation instead of silently building cold.
-        self._storage.ensure_space("package")
-        # The builder image is a separate step, composed ahead of this one by
-        # `fragment`. It used to be `just _build-host-image` from here -- a
-        # recipe that has never existed, so every package build was failing at
-        # this line and no test crossed the boundary to notice.
+        # Once the builder image exists, because that image is itself part of
+        # what fills this rail. The second check is in `_build`, immediately
+        # before the package build spends it -- these were adjacent lines, so
+        # both measured the same moment and the pair proved nothing.
         self._storage.ensure_space("package")
         if host.on_macos():
             # Colima's VM clock drifts, and apt rejects a repository signed in
@@ -121,12 +100,18 @@ class PackageRail:
             self._runner.run(["python3", self._package.clock_script])
 
     def _sync_assets_for_tauri(self) -> None:
-        """`assets/current` is what the bundler embeds; point it at this target."""
-        current = self.root / "assets" / "current"
-        built = self.root / "assets" / self.target.name
-        self._runner.run(["rm", "-rf", str(current)])
+        """`assets/current` is what the bundler embeds; point it at this target.
+
+        Through the primitives rather than `rm -rf` and `cp -r`: a raw `rm`
+        with a path built in Python is the one shape the reclaimer guards
+        exist to prevent, and neither showed up in a dry run.
+        """
+        settings = self._config.imagebuild
+        current = self.root / settings.output / self._package.current_assets
+        built = self.root / settings.output / self.target.name
+        remove(current)
         if built.is_dir():
-            self._runner.run(["cp", "-r", str(built), str(current)])
+            shutil.copytree(built, current)
 
     # -- the build ---------------------------------------------------------
 
@@ -134,20 +119,20 @@ class PackageRail:
         self._runner.step(
             f"Building Linux deb ({self.target.name} via docker, target={self.target.rust_target})"
         )
+        # Again, here: the builder image and the asset sync have landed since
+        # the first reservation, and this is the point where being wrong about
+        # capacity costs an hour of compilation.
+        self._storage.ensure_space("package")
         self._dist.mkdir(exist_ok=True)
         self._record.unlink(missing_ok=True)
 
-        environment = {
-            "TARGET_ARCH": self.target.name,
-            "RUST_TARGET": self.target.rust_target,
-            "DPKG_ARCH": self.target.dpkg,
-            "RUST_TOOLCHAIN": pinned_toolchain(self.root),
-            "PKG_CONFIG_PATH": self.target.pkg_config_path,
-            "CAPSEM_INSTALL_MANIFEST_URL": self.manifest_url,
-            "HOST_UID": str(host.user()[0]),
-            "HOST_GID": str(host.user()[1]),
-            **signing_key(self.root, self._config),
-        }
+        environment = package_environment(
+            self._config,
+            self.target,
+            toolchain=pinned_toolchain(self.root),
+            manifest_url=self.manifest_url,
+            signing=signing_key(self.root, self._config),
+        )
         argv = ["docker", "run", "--rm"]
         for name, value in environment.items():
             argv += ["-e", f"{name}={value}"]
