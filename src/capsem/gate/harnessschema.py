@@ -93,6 +93,8 @@ class RunLogConfig(Strict):
     step_log_dir: str
     summary: str
     latest_link: str
+    history_lock: str
+    active_marker: str
     keep_runs: PositiveInt
     keep_bytes: PositiveInt
     artifact_digest: str

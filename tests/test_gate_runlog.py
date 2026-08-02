@@ -230,29 +230,57 @@ def test_a_run_records_the_head_it_qualified(tmp_path: Path) -> None:
     """A timing or artifact comparison against a different revision is not a
     comparison, and the log has to make that checkable."""
     config = _checkout(tmp_path)
-    git = tmp_path / ".git"
-    (git / "refs" / "heads").mkdir(parents=True)
-    (git / "HEAD").write_text("ref: refs/heads/main\n")
-    (git / "refs" / "heads" / "main").write_text("abc123def456\n")
+    expected = _git_repository(tmp_path)
 
     with RunLog.open(config, "test") as log:
         pass
 
     started = next(e for e in _events(log) if e["event"] == "run.start")
-    assert started["head"] == "abc123def456"
+    assert started["head"] == expected
 
 
 def test_a_detached_head_is_recorded_as_the_revision_itself(tmp_path: Path) -> None:
+    """A CI checkout is detached, so this is the ordinary release shape."""
     config = _checkout(tmp_path)
-    git = tmp_path / ".git"
-    git.mkdir(parents=True)
-    (git / "HEAD").write_text("abc123def456\n")
+    expected = _git_repository(tmp_path, detach=True)
 
     with RunLog.open(config, "test") as log:
         pass
 
     started = next(e for e in _events(log) if e["event"] == "run.start")
-    assert started["head"] == "abc123def456"
+    assert started["head"] == expected
+
+
+def _git_repository(root: Path, *, detach: bool = False) -> str:
+    """A real repository, because the revision is resolved by asking git.
+
+    These fabricated a `.git` directory with a hand-written HEAD and ref file,
+    which is what the old parser read. It could not read a linked worktree or
+    a packed ref, and a fabricated tree cannot tell you that.
+    """
+    import subprocess
+
+    for argv in (
+        ["git", "init", "--quiet"],
+        ["git", "config", "user.email", "gate@example.test"],
+        ["git", "config", "user.name", "Gate"],
+        ["git", "config", "commit.gpgsign", "false"],
+        ["git", "commit", "--allow-empty", "--quiet", "-m", "root"],
+    ):
+        subprocess.run(argv, cwd=root, check=True, capture_output=True)
+    revision = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    if detach:
+        subprocess.run(
+            ["git", "-C", str(root), "checkout", "--quiet", "--detach", revision],
+            check=True,
+            capture_output=True,
+        )
+    return revision
 
 
 def test_a_checkout_without_git_still_records_a_run(tmp_path: Path) -> None:

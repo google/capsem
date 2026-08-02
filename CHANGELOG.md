@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The recorded revision survives the checkouts a release is actually cut from.
+  `head_revision` parsed `.git/HEAD` and then a loose ref by hand, which
+  returns nothing for a linked worktree -- where `.git` is a *file* -- and
+  nothing for a packed ref. Both recorded an empty revision, silently, so a
+  timing or artifact comparison could be against a revision nobody knows. It
+  asks git now. The test named after the linked-worktree case took `tmp_path`
+  and ignored it, running against the ordinary checkout instead; it builds a
+  real worktree, a real packed-ref repository, and a tree with no git at all.
+- A live run cannot be rotated away by one that starts after it. Allocation,
+  rotation and the `latest` pointer were uncoordinated, and every candidate for
+  eviction is unfinished -- because unfinished is what a running gate looks
+  like. Under a tight retention cap the oldest live run is the first thing
+  reached for. Each run now holds a lock file for its length, so retention can
+  tell "being written" from "crashed"; the three operations that touch another
+  run's directory are serialized on a short-lived history lock, deliberately
+  not the machine lock, which is held for a whole gate and would make opening a
+  run log wait for one.
+
 - One file owns one responsibility. `release.py` claimed the two release
   commands and also held the development surfaces and the guest entry points;
   they are `devloop.py` and `guestcommands.py` now. `vmmodules.py` held three

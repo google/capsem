@@ -32,7 +32,16 @@ from typing import TYPE_CHECKING, Any
 
 from .config import GateConfig
 from .harnessschema import RunLogConfig
-from .runhistory import free_gb, head_revision, rotate, tree_size
+from .runhistory import (
+    free_gb,
+    head_revision,
+    history_locked,
+    hold_active,
+    point_latest,
+    release_active,
+    rotate,
+    tree_size,
+)
 from .runlogschema import (
     ActionRun,
     Artifact,
@@ -46,6 +55,7 @@ from .runlogschema import (
     StepEnd,
     StepStart,
 )
+from .summary import write_summary
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from .actions import Action
@@ -111,8 +121,16 @@ class RunLog:
 
     def _begin(self, config: GateConfig, argv: tuple[str, ...]) -> None:
         self._steps.mkdir(parents=True, exist_ok=True)
-        rotate(config, keep=self.directory)
-        self._point_latest_here()
+        # Taken before anything else can see this directory, and held until
+        # close: retention reads it to tell a run being written from a crashed
+        # one, and the window between "directory exists" and "marked live" is
+        # exactly when another process would rotate it away.
+        self._active = hold_active(self.directory, self.settings)
+        # One at a time. These are the only operations that touch another
+        # run's directory, and each takes milliseconds.
+        with history_locked(config):
+            rotate(config, keep=self.directory)
+            point_latest(self.directory, self.settings)
         self.emit(
             RunStart(
                 command=self.command,
@@ -126,6 +144,7 @@ class RunLog:
         )
 
     def close(self, status: str, **summary: Any) -> None:
+        self._active = release_active(self._active)
         self.emit(
             RunEnd(
                 status=status,
@@ -134,34 +153,7 @@ class RunLog:
                 **summary,
             )
         )
-        self._write_summary()
-
-    def _write_summary(self) -> None:
-        """The human-readable half, written once the run is on disk.
-
-        Written here rather than by whoever asked for `--timing`, so a run that
-        nobody asked about still leaves something a bug report can attach --
-        which is exactly the run that most needs one.
-        """
-        from .runhistory import read
-        from .timing import measure, report
-
-        summary = report(
-            measure(read(self.directory, self.settings)),
-            command=self.command,
-            settings=self.settings,
-            run_id=self.run_id,
-        )
-        (self.directory / self.settings.summary).write_text(summary, encoding="utf-8")
-
-    def _point_latest_here(self) -> None:
-        """So `runs last` and a bug report have one path to name."""
-        latest = self.directory.parent / self.settings.latest_link
-        if latest.is_symlink() or latest.exists():
-            latest.unlink()
-        latest.symlink_to(self.directory.name)
-
-    # -- writing -----------------------------------------------------------
+        write_summary(self.directory, self.settings, command=self.command, run_id=self.run_id)
 
     def emit(self, payload: Payload) -> None:
         """Append one validated event.

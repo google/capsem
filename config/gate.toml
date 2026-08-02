@@ -493,6 +493,8 @@ recipes_with_inline_control_flow = []
 #                to be placed before any workspace exists to put it in
 #   runlog       the run directory itself, which cannot be written through
 #                actions because actions report into it
+#   summary      the human-readable half of that same directory, for the same
+#                reason: it is written after the run whose actions it describes
 #   runhistory   reclaiming those directories, for the same reason
 #   disk         reclaiming every other tree the gate creates, with the
 #                resolved-path and symlink guards that makes safe
@@ -511,6 +513,7 @@ direct_machine_access = [
     "pidfiles.py",
     "locks.py",
     "runlog.py",
+    "summary.py",
     "runhistory.py",
     "disk.py",
     "workspace.py",
@@ -944,6 +947,7 @@ source_contract = [
     "tests/test_gate_socket_length.py",
     "tests/test_gate_storage_consumers.py",
     "tests/test_gate_module_prerequisites.py",
+    "tests/test_gate_run_history_contention.py",
     "tests/test_gate_resource_evidence.py",
     "tests/test_gate_recording_policy.py",
     "tests/test_gate_run_status_agrees.py",
@@ -1145,6 +1149,13 @@ event_schema = "capsem.gate.runlog.v1"
 step_log_dir = "steps"
 summary = "summary.txt"
 latest_link = "latest"
+# Allocation, rotation and repointing `latest` are serialized on this, briefly.
+# Not the machine lock: that is held for a whole gate, and opening a run log
+# must not wait for one.
+history_lock = ".history.lock"
+# Held for the length of a run, so retention can tell a run still being
+# written from a crashed one somebody wants to read.
+active_marker = ".active"
 # Rotation by count and by bytes. A forty-minute gate writes a lot, and the
 # machine running it is also the machine building VM images.
 keep_runs = 20

@@ -12,8 +12,14 @@ output was lost with it, so it is the one somebody still wants.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
+import os
 import shutil
+import subprocess
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from .config import GateConfig
@@ -22,15 +28,14 @@ from .harnessschema import RunLogConfig
 
 _GB = 1024**3
 
+
 def read(directory: Path, settings: RunLogConfig) -> list[dict]:
     """Every event in a run, in order."""
     source = directory / settings.events
     if not source.is_file():
         return []
     return [
-        json.loads(line)
-        for line in source.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in source.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -46,6 +51,90 @@ def runs(config: GateConfig) -> list[Path]:
     )
 
 
+def history_lock_path(config: GateConfig) -> Path:
+    """Where the short-lived allocation lock lives.
+
+    Deliberately not the machine lock. That one is held for the length of a
+    gate, and a command opening its run log must not wait forty minutes for a
+    directory -- `runs` and `gc --dry-run` would stop answering entirely.
+    """
+    return config.path(config.runlog.root) / config.runlog.history_lock
+
+
+@contextmanager
+def history_locked(config: GateConfig) -> Iterator[None]:
+    """Serialize the operations that touch *another* run's directory.
+
+    Allocation, rotation and repointing `latest` are the only three, and each
+    is measured in milliseconds. Without this, a run opening under a tight
+    retention cap could classify a live run as unfinished -- which is what a
+    running gate looks like -- and delete the directory it was still writing.
+    """
+    path = history_lock_path(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    handle = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    finally:
+        with contextlib.suppress(OSError):
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        os.close(handle)
+
+
+def hold_active(directory: Path, settings) -> int:
+    """Flag a run as being written, for as long as this process lives.
+
+    Taken before anything else can see the directory: the window between "it
+    exists" and "it is marked live" is exactly when another process would
+    classify it as a crashed run and rotate it away.
+    """
+    handle = os.open(directory / settings.active_marker, os.O_RDWR | os.O_CREAT, 0o644)
+    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    return handle
+
+
+def release_active(handle: int | None) -> None:
+    """Give the flag back. Returns None, so the caller cannot double-close."""
+    if handle is None:
+        return
+    with contextlib.suppress(OSError):
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        os.close(handle)
+    return
+
+
+def point_latest(directory: Path, settings) -> None:
+    """So `runs last` and a bug report have one path to name."""
+    latest = directory.parent / settings.latest_link
+    if latest.is_symlink() or latest.exists():
+        latest.unlink()
+    latest.symlink_to(directory.name)
+
+
+def live(config: GateConfig) -> set[str]:
+    """Runs another process is writing right now.
+
+    A directory with no `run.end` is either a crashed run somebody wants to
+    read or a run still being written; the difference is whether its lock file
+    is held. Retention must never reach for the second kind.
+    """
+    running: set[str] = set()
+    for directory in runs(config):
+        marker = directory / config.runlog.active_marker
+        if not marker.is_file():
+            continue
+        handle = os.open(marker, os.O_RDWR)
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        except BlockingIOError:
+            running.add(directory.name)
+        finally:
+            os.close(handle)
+    return running
+
+
 def rotate(config: GateConfig, *, keep: Path | None = None) -> list[Path]:
     """Drop the oldest runs until the policy is satisfied. Returns what went.
 
@@ -58,7 +147,8 @@ def rotate(config: GateConfig, *, keep: Path | None = None) -> list[Path]:
     into is a rotation with a bad day in it.
     """
     settings = config.runlog
-    kept = [entry for entry in runs(config) if entry != keep]
+    running = live(config)
+    kept = [entry for entry in runs(config) if entry != keep and entry.name not in running]
 
     def surplus(remaining: list[Path]) -> bool:
         over_count = len(remaining) > settings.keep_runs
@@ -98,11 +188,24 @@ def tree_size(directory: Path) -> int:
 
 
 def head_revision(root: Path) -> str:
-    head = root / ".git" / "HEAD"
-    if not head.is_file():
+    """The revision this run is of, or empty when there is no repository.
+
+    Asked of git rather than parsed out of `.git` by hand. The hand-rolled
+    version read `.git/HEAD` and then a loose ref, which fails on the two
+    shapes a release is most likely cut from: in a linked worktree `.git` is a
+    *file* pointing elsewhere, and a ref that has been packed has no loose file
+    to read. Both returned "" -- a run recording no revision at all, silently.
+
+    Empty stays the answer for a tree that is not a repository, because a
+    tarball is a real way to receive source and it is not a failure.
+    """
+    try:
+        found = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
         return ""
-    reference = head.read_text(encoding="utf-8").strip()
-    if not reference.startswith("ref: "):
-        return reference
-    resolved = root / ".git" / reference.removeprefix("ref: ")
-    return resolved.read_text(encoding="utf-8").strip() if resolved.is_file() else ""
+    return found.stdout.strip() if found.returncode == 0 else ""

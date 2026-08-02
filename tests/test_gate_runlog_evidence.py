@@ -252,10 +252,85 @@ def test_two_runs_started_in_the_same_second_get_different_directories(
 def test_the_recorded_revision_survives_a_linked_worktree(tmp_path: Path) -> None:
     """`.git` is a *file* in a linked worktree, and loose refs are not the only
     way a revision is stored -- so reading `.git/HEAD` by hand returned nothing
-    for exactly the checkouts a release is most likely cut from."""
+    for exactly the checkouts a release is most likely cut from.
+
+    This took `tmp_path` and never used it: it called `head_revision` on the
+    ordinary main checkout, so it passed while naming a case it never created.
+    A real linked worktree is three commands.
+    """
+    import subprocess
+
     from capsem.gate.runhistory import head_revision
 
-    assert head_revision(PROJECT_ROOT), "this checkout's revision was not resolved"
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    for argv in (
+        ["git", "init", "--quiet"],
+        ["git", "config", "user.email", "gate@example.test"],
+        ["git", "config", "user.name", "Gate"],
+        # A developer's global config may sign commits, which a throwaway
+        # fixture has no key for.
+        ["git", "config", "commit.gpgsign", "false"],
+        ["git", "commit", "--allow-empty", "--quiet", "-m", "root"],
+    ):
+        subprocess.run(argv, cwd=origin, check=True, capture_output=True)
+
+    linked = tmp_path / "linked"
+    subprocess.run(
+        ["git", "worktree", "add", "--quiet", "--detach", str(linked)],
+        cwd=origin,
+        check=True,
+        capture_output=True,
+    )
+    assert (linked / ".git").is_file(), "a linked worktree's .git is a file"
+
+    expected = subprocess.run(
+        ["git", "-C", str(linked), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    assert head_revision(linked) == expected
+
+
+def test_the_recorded_revision_survives_a_packed_ref(tmp_path: Path) -> None:
+    """A ref that has been packed away has no loose file to read."""
+    import subprocess
+
+    from capsem.gate.runhistory import head_revision
+
+    root = tmp_path / "packed"
+    root.mkdir()
+    for argv in (
+        ["git", "init", "--quiet"],
+        ["git", "config", "user.email", "gate@example.test"],
+        ["git", "config", "user.name", "Gate"],
+        # A developer's global config may sign commits, which a throwaway
+        # fixture has no key for.
+        ["git", "config", "commit.gpgsign", "false"],
+        ["git", "commit", "--allow-empty", "--quiet", "-m", "root"],
+        ["git", "pack-refs", "--all"],
+    ):
+        subprocess.run(argv, cwd=root, check=True, capture_output=True)
+
+    expected = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    assert head_revision(root) == expected
+
+
+def test_a_checkout_with_no_git_at_all_records_nothing_rather_than_raising(
+    tmp_path: Path,
+) -> None:
+    """A tarball is a real way to receive a source tree."""
+    from capsem.gate.runhistory import head_revision
+
+    assert head_revision(tmp_path) == ""
 
 
 def _command(name: str, **args):
