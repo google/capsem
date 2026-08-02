@@ -140,6 +140,7 @@ class InstallConfig(Strict):
     release_site_dir: str
     storage_ledger: str
     test_output_root: str
+    install_log_glob: str
     preinstall_root: str
     admin_relative: str
     request_script: str

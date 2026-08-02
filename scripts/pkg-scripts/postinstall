@@ -15,7 +15,13 @@ source "$(dirname "$0")/install-manifest"
 
 USER=$(capsem_resolve_install_user "/var/run/capsem/install-user")
 CAPSEM_INSTALL_MANIFEST_REQUEST="/var/run/capsem/install-manifest"
-trap 'rm -f "$CAPSEM_INSTALL_MANIFEST_REQUEST"' EXIT
+# Cleared on success, at the bottom -- not from an EXIT trap. A failing
+# postinst that consumed the request left the immediately following
+# `apt-get install -f` with none, so the retry of the *same* install silently
+# hydrated from the public channel: the error then named production while the
+# real failure was local, and a retry that happened to succeed would have
+# installed something nobody asked for. The writer clears it too, on every
+# path, so leaving it here cannot strand one.
 
 PKG_SHARE="/usr/local/share/capsem"
 USER_HOME=$(eval echo "~$USER")
@@ -248,4 +254,5 @@ fi
 
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=complete"
 CAPSEM_INSTALL_PHASE="complete"
+rm -f "$CAPSEM_INSTALL_MANIFEST_REQUEST"
 exit 0

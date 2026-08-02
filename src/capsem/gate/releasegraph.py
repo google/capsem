@@ -42,6 +42,8 @@ class ReleaseGraph:
         self._container = self._config.container
         self._mount = self._config.mount
         self._handoff_written = False
+        self.handed_off: str | None = None
+        """The manifest URL the postinst was pointed at, for reading back."""
 
     # -- breaking the circular dependency ----------------------------------
 
@@ -187,6 +189,7 @@ class ReleaseGraph:
             f"bash {self._mount}/{self._config.request_script} write {absolute}",
         )
         self._handoff_written = True
+        self.handed_off = f"{self._config.file_url_scheme}{absolute}"
 
     def clear_handoff(self) -> None:
         """Remove the request, so a later install cannot inherit this one's."""

@@ -98,7 +98,7 @@ class InstallProof:
     def packaged_version(self, package: str) -> str:
         return self._docker.capture(self._container, ["dpkg-deb", "-f", package, "Version"])
 
-    def install(self, package: str, *, expected: str) -> None:
+    def install(self, package: str, *, expected: str, manifest: str | None = None) -> None:
         self._runner.note(f"Installing exact release package via dpkg: {package}")
         self._docker.shell(
             self._container, f'dpkg -i "{package}" 2>&1 || apt-get install -f -y'
@@ -111,6 +111,38 @@ class InstallProof:
             raise GateError(
                 f"dpkg reports capsem {installed} installed, expected {expected}"
             )
+        if manifest is not None:
+            self.verify_manifest_source(manifest)
+
+    def verify_manifest_source(self, manifest: str) -> None:
+        """Prove the installed product was hydrated from the channel handed over.
+
+        `dpkg -i ... || apt-get install -f -y` runs the postinst a second time,
+        and the postinst used to consume the handoff on its way out of a failed
+        first attempt -- so the retry hydrated from the public channel. The
+        error then named production while the failure was local, and a retry
+        that happened to succeed would have qualified an install nobody asked
+        for. Both are invisible unless the source is read back.
+        """
+        recorded = self._docker.shell_capture(
+            self._container,
+            f"grep -h 'event=manifest_source' {self._settings.install_log_glob} "
+            "| tail -n1",
+            user=self._settings.guest_user.name,
+        ).strip()
+        if not recorded:
+            raise GateError(
+                "the installed package recorded no manifest source; the install "
+                "proof cannot tell which channel it hydrated from"
+            )
+        if f"source={manifest}" not in recorded:
+            raise GateError(
+                f"the install hydrated from a channel the gate did not hand it: "
+                f"{recorded}; expected source={manifest}. A failed first attempt "
+                "followed by `apt-get install -f` will do this when the postinst "
+                "consumes the handoff."
+            )
+        self._runner.note(f"Installed product hydrated from {manifest}")
 
     # -- proofs ------------------------------------------------------------
 

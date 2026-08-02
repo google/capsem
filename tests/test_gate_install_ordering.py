@@ -82,13 +82,23 @@ def _macos_checkout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return _checkout(tmp_path, dpkg_arch=CONFIG.host_arch().dpkg)
 
 
-def _recording(root: Path) -> RecordingRunner:
+#: What a healthy postinst records: the channel it actually hydrated from.
+#: Read back after `dpkg -i`, because `|| apt-get install -f -y` runs the
+#: postinst again and a retry must not install from somewhere else.
+HYDRATED = (
+    f"event=manifest_source source={INSTALL.file_url_scheme}"
+    f"{INSTALL.mount}/{AUTHORITATIVE}"
+)
+
+
+def _recording(root: Path, *, hydrated: str = HYDRATED) -> RecordingRunner:
     return RecordingRunner(
         root,
         replies={
             "dpkg-deb -f": VERSION,
             "dpkg-query": VERSION,
             "systemctl is-system-running": "running",
+            "event=manifest_source": hydrated,
         },
     )
 
@@ -396,3 +406,40 @@ def test_a_host_without_a_guest_skips_only_the_install_half(tmp_path: Path) -> N
     InstallProof(runner, CONFIG).prove_glowup("/src/x.deb", boots_a_guest=False)
 
     assert runner.ran(r"local-release-glowup\.py .*--skip-install")
+
+
+def test_an_install_that_hydrated_from_elsewhere_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The retry hazard, asserted as behaviour rather than as a comment.
+
+    `dpkg -i "<deb>" || apt-get install -f -y` runs the postinst twice. The
+    postinst used to drop the handoff on its way out of a failed first attempt,
+    so the second one hydrated from the public channel -- and if it had
+    succeeded, the gate would have qualified an install of something nobody
+    handed it.
+    """
+    root = _macos_checkout(tmp_path, monkeypatch)
+    runner = _recording(
+        root,
+        hydrated=(
+            "event=manifest_source "
+            "source=https://release.capsem.org/assets/stable/manifest.json"
+        ),
+    )
+
+    with pytest.raises(GateError, match="a channel the gate did not hand it"):
+        InstallGate(runner, macos_glowup_report=str(root / "report.json")).run()
+
+
+def test_an_install_that_recorded_no_source_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Silence is not proof. A postinst that recorded nothing leaves the gate
+    unable to say which channel it qualified, which is the same hazard with the
+    evidence missing instead of wrong."""
+    root = _macos_checkout(tmp_path, monkeypatch)
+    runner = _recording(root, hydrated="")
+
+    with pytest.raises(GateError, match="recorded no manifest source"):
+        InstallGate(runner, macos_glowup_report=str(root / "report.json")).run()

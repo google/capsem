@@ -135,7 +135,10 @@ class InstallGate:
         if authoritative_graph:
             self._publish_local_channel(admin)
 
-        self._proof.install(package, expected=self.version)
+        # The manifest handed over, read back from what the postinst recorded.
+        self._proof.install(
+            package, expected=self.version, manifest=self._graph.handed_off
+        )
         self._graph.clear_handoff()
 
         # The Linux CI container chowns the bind-mounted checkout to uid 1000 so

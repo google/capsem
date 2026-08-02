@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- An install retry can no longer change where the product comes from. The
+  postinst dropped the manifest handoff from an `EXIT` trap, so a failing
+  `dpkg -i` consumed it and the `apt-get install -f -y` that immediately
+  follows hydrated from the public channel instead. The reported error then
+  named production while the real failure was local -- and a retry that
+  happened to succeed would have had the gate qualify an install of something
+  nobody handed it. The handoff is now cleared on success only, by the writer
+  that owns it, and the install proof reads back the source the postinst
+  recorded and refuses anything but the channel it handed over. Silence is
+  refused too: an install that recorded no source cannot be qualified.
+
 - The update fixtures read the compatibility floor from `Cargo.toml` instead of
   restating it. They said `min_capsem_version = "1.0.0"`, which every profile
   satisfied while the workspace was 1.x and none satisfied once it moved back
