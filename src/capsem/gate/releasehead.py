@@ -46,6 +46,13 @@ class RecordHead(Action, name="record-head"):
         return f"record the revision under test in {self._target.name}"
 
     def perform(self, context: Context) -> None:
+        if context.observing:
+            # Reading a release plan is not running one. A contract that runs
+            # the plan to read back its argv would otherwise overwrite the
+            # running gate's `tested-head` with the recording runner's empty
+            # capture, and `confirm-head` -- one step before publishing, an
+            # hour later -- refuses to publish a revision nothing recorded.
+            return
         head = context.runner.capture(["git", "rev-parse", "HEAD"])
         write_text(self._target, head)
         context.journal.note(f"qualifying {head}")

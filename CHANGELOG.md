@@ -67,6 +67,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `release-profile` reached the step before publishing and refused, because
+  `tested-head` was empty: four contracts that run a release plan to read back
+  its argv had overwritten the running gate's record of the revision under
+  test. Same defect as the source state, and the fix for that one did not
+  reach here -- it taught the `Action` subclasses to check whether the plan was
+  being read or run, and `RecordHead` writes through the `write_text` helper
+  instead. The guard has been widened from one file to the set a run records
+  its identity in, so the next instance fails by name in seconds rather than
+  an hour into a release.
+
 - A fresh install materialized one profile's images and reported success. A
   channel's profiles own their images, so the release graph gives each its own
   asset release and the channel pointer can name at most one of them -- but

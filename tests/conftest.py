@@ -577,7 +577,16 @@ def pytest_sessionfinish(session, exitstatus):
 # The gate's record of what it is qualifying belongs to the gate
 # ---------------------------------------------------------------------------
 
-_SOURCE_STATE = Path(__file__).resolve().parent.parent / "target/gate-source-state.json"
+_ROOT = Path(__file__).resolve().parent.parent
+#: What a run records about *what it is qualifying*. A suite that overwrites
+#: any of these makes the gate around it publish the wrong thing, or refuse to
+#: publish at all. Guarded as a set rather than one file, because the first
+#: version of this guard watched only the source state and let `tested-head`
+#: be clobbered by the same bug an hour later.
+_RUN_IDENTITY = (
+    _ROOT / "target/gate-source-state.json",
+    _ROOT / "target/release-preflight/tested-head",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -596,17 +605,20 @@ def _the_running_gate_keeps_its_own_source_state(request):
     it. Whoever does this next finds out here instead, and the run survives:
     the file is put back before the failure propagates.
     """
-    before = _SOURCE_STATE.read_bytes() if _SOURCE_STATE.exists() else None
+    read = lambda path: path.read_bytes() if path.exists() else None  # noqa: E731
+    before = {path: read(path) for path in _RUN_IDENTITY}
     yield
-    after = _SOURCE_STATE.read_bytes() if _SOURCE_STATE.exists() else None
-    if after == before:
-        return
-    if before is None:
-        _SOURCE_STATE.unlink(missing_ok=True)
-    else:
-        _SOURCE_STATE.write_bytes(before)
-    raise AssertionError(
-        f"{request.node.nodeid} rewrote {_SOURCE_STATE.name}, which belongs to the "
-        f"gate running this suite. It wrote {after!r}. A test that runs a real "
-        "plan to read it must pass observing=True; see tests/helpers/gate.py."
-    )
+    for path, original in before.items():
+        after = read(path)
+        if after == original:
+            continue
+        if original is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(original)
+        raise AssertionError(
+            f"{request.node.nodeid} rewrote {path.name}, which belongs to the "
+            f"gate running this suite. It wrote {after!r}. A test that runs a "
+            "real plan to read it must pass observing=True; see "
+            "tests/helpers/gate.py."
+        )
