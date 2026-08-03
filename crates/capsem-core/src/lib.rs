@@ -1,4 +1,5 @@
 pub mod asset_manager;
+pub mod auditfs;
 pub mod auto_snapshot;
 pub mod credential_broker;
 pub mod fs_monitor;

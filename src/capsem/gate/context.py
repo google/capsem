@@ -29,6 +29,21 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from .execution import Step
 
 
+class StepObserver(Protocol):
+    """What the scheduler tells the run's filesystem observer.
+
+    A protocol rather than the concrete `Watch`, so nothing below the harness
+    depends on how observation is implemented -- the same reason `Journal` is
+    one.
+    """
+
+    def entered(self, label: str) -> None:
+        """This step's thread is now running."""
+
+    def left(self, label: str) -> None:
+        """It is not."""
+
+
 class Journal(Protocol):
     """What a run is recorded into, as the rest of the package sees it.
 
@@ -185,6 +200,13 @@ class Context:
     runner: Runner
     config: GateConfig
     journal: Journal = field(default_factory=NullJournal)
+
+    watch: StepObserver | None = None
+    """The run's filesystem observer, when one is running.
+
+    Carried here so the scheduler can tell it which steps are in flight; an
+    action never touches it.
+    """
 
     observing: bool = False
     """This plan is being read, not run, so nothing may touch the machine.

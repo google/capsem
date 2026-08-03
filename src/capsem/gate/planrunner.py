@@ -200,6 +200,11 @@ def _guarded(pending: _Pending, context: Context, abandoned: threading.Event) ->
     pending.started = time.monotonic()
     with observing(abandoned), ExitStack() as stack:
         stack.enter_context(context.journal.step(pending.step))
+        # Whoever is in flight owns whatever the disk does next. Attribution
+        # has to come from the scheduler: it is the only thing that knows.
+        if context.watch is not None:
+            context.watch.entered(pending.step.label)
+            stack.callback(context.watch.left, pending.step.label)
         pending.step.run(context)
     return time.monotonic() - pending.started
 

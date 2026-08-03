@@ -114,6 +114,18 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
     reclaims every other tree the gate creates, and `workspace` owns the
     isolated home the actions run against.
 
+    The observation four are the deliberate widening. They are here for the
+    inverse of the usual reason: the others own machine state, these *watch*
+    it. `faults` stats and hashes what changed, `faultlog` writes and fsyncs
+    the report so a killed run still leaves one, `observation` judges each
+    change as it lands, and `interception` is the primitives proxied -- its
+    entire purpose is that nothing reaches `os` without passing through it,
+    which routing through an action would defeat rather than express.
+
+    They were added after a release run died reading a file that was `0644`
+    before and `0644` after, because nothing in the gate was in the path of
+    the call that changed it.
+
     The through-line is that these are the harness, and the harness is what
     gate work is expressed *in*. A capability or a command appearing here
     would mean work that the dry run cannot show and the log cannot time.
@@ -131,6 +143,10 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
         "runhistory.py",
         "disk.py",
         "workspace.py",
+        "faults.py",
+        "faultlog.py",
+        "interception.py",
+        "observation.py",
     }
 
 

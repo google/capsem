@@ -371,6 +371,11 @@ profiles_glob = "config/profiles/*/profile.toml"
 # evidence. Spelling the three here as well is how two lists come to disagree.
 evidence_artifacts = ["obom.cdx.json", "software-inventory.json"]
 failure_tail_lines = 200
+# What the run watches for filesystem faults, and where it writes them the
+# moment they happen. Source trees only: `target/` is where a gate is supposed
+# to write, and watching it would drown the report -- except that build output
+# is exactly where a hardlink to checked-in source lands, so the staged
+# release channel is watched too.
 shell_proof_timeout_seconds = 300
 
 # `cargo run` rather than a built binary: the asset gate runs before anything
@@ -559,6 +564,15 @@ direct_machine_access = [
     "runhistory.py",
     "disk.py",
     "workspace.py",
+    # Observation has to touch the machine: it exists to report what the
+    # machine did. `faults.py` stats and hashes what changed; `faultlog.py`
+    # writes and fsyncs the report so a killed run still leaves one.
+    "faults.py",
+    "faultlog.py",
+    # And `interception.py` *is* the primitives, proxied -- the whole point is
+    # that nothing reaches `os` without passing through it.
+    "interception.py",
+    "observation.py",
 ]
 
 # Only the plan schedules concurrent work. A module that reaches for its own
@@ -930,6 +944,8 @@ blocks_clippy = "frontend"
 # `tests/test_gate_*.py` to appear here, since by construction those need
 # neither.
 source_contract = [
+    "tests/test_gate_observation.py",
+    "tests/test_rust_filesystem_chokepoint.py",
     "tests/test_agent_skill_index.py",
     "tests/test_authoritative_values_are_not_restated.py",
     "tests/test_build_assets_profile.py",
@@ -1192,6 +1208,21 @@ events = "run.jsonl"
 event_schema = "capsem.gate.runlog.v1"
 step_log_dir = "steps"
 summary = "summary.txt"
+# What each run watches for filesystem faults, and where it writes them the
+# moment they happen -- not at the end, and not only into `run.jsonl`, because
+# a fault nobody sees until someone reads a file is a fault nobody acts on.
+# Source trees, because a gate must not edit what it is qualifying; plus the
+# staged release channel, because a hardlink *to* checked-in source lands in
+# build output and leaves the source directory untouched.
+observed_roots = ["config", "crates", "scripts", "guest", "src", "target/web-parity"]
+error_log = "errors.log"
+# Bounded, because a run that trips one rule per file trips it thousands of
+# times and an unbounded fault log on a machine that gates daily is a
+# disk-full outage wearing a helpful name. Total stays under
+# max_bytes * (keep + 1); the newest faults -- the ones describing the failure
+# being looked at -- are the ones kept.
+error_log_max_bytes = 4194304
+error_log_keep = 3
 latest_link = "latest"
 # Allocation, rotation and repointing `latest` are serialized on this, briefly.
 # Not the machine lock: that is held for a whole gate, and opening a run log

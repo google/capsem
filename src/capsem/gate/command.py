@@ -26,6 +26,7 @@ from .errors import GateError
 from .funnel import GuardedRunner
 from .lifecycle import Resource, environment_of, held
 from .locks import ExclusiveLock
+from .observing import observing
 from .plan import Plan
 from .planseal import sealed
 from .proc import Runner
@@ -193,7 +194,7 @@ class GateCommand(Recorded, ABC):
         if replacement is not None:
             raise SystemExit(self._runner.run(replacement, check=False))
 
-        with self._recording() as log:
+        with self._recording() as log, observing(self._config, log, plan) as watch:
             # Every invocation from here is recorded, and none may start a
             # second gate. Neither is a call site's responsibility.
             runner = GuardedRunner(
@@ -208,6 +209,7 @@ class GateCommand(Recorded, ABC):
                         self._config,
                         journal=log,
                         env=environment_of(acquired),
+                        watch=watch,
                     )
                 )
         # Outside the run log's own context, so `run.end` is on disk before

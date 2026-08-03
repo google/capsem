@@ -127,5 +127,6 @@ dev = [
     "pyyaml>=6.0.3",
     "ruff>=0.15.16",
     "ty>=0.0.46",
+    "watchdog>=6.0.0",
     "websockets>=16.0",
 ]
