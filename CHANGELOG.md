@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The local Tauri signing key and its password no longer reach anything that
+  writes them down. The package rail read both out of `private/tauri/` and put
+  them into `docker run`'s argv as `-e NAME=value`, so the values appeared in
+  the process listing -- world-readable through `ps`, and beyond the reach of
+  any log filtering -- and then in `target/gate-runs/*/run.jsonl`, in the step
+  error of a failed build, in `run.end`'s failures, and in the summary. That
+  directly contradicted the run log's own claim that a run directory is safe to
+  attach to a bug report. Docker now receives `-e NAME` and takes the value
+  from its own environment, and secrecy is declared on the invocation itself:
+  a `Command` that names a credential cannot render it, in argv or in the
+  environment, through `str()`, the journal, or the exception a failure raises.
+  The variable name is kept and the value becomes `<redacted>`.
+
 ### Fixed
 
 - A partial release environment can no longer build a hybrid proof. Three gate

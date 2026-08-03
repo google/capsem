@@ -29,7 +29,8 @@ from pathlib import Path
 
 from .context import Journal
 from .errors import GateError
-from .proc import Command, Completed, Runner
+from .invocation import Command
+from .proc import Completed, Runner
 
 #: Programs that start a gate. Invoking one from inside a plan is the deadlock
 #: the composition model exists to make unrepresentable.
@@ -88,12 +89,13 @@ class GuardedRunner(Runner):
         started = time.monotonic()
         completed = self._inner.execute(command)
         self._journal.exec(
-            command.argv,
-            # What the command added, never the ambient environment: this log
-            # is attached to bug reports and a release machine's environment
-            # holds tokens.
+            # The evidence forms, never the raw ones. What the command added,
+            # never the ambient environment -- this log is attached to bug
+            # reports and a release machine's environment holds tokens -- and
+            # with declared credentials reduced to their names.
+            command.evidence_argv,
             cwd=str(command.cwd or self.root),
-            env=dict(command.env),
+            env=command.evidence_env,
             exit=completed.returncode,
             duration_ms=(time.monotonic() - started) * 1000,
         )
@@ -105,6 +107,7 @@ class GuardedRunner(Runner):
         *,
         env: dict[str, str] | None = None,
         cwd: Path | None = None,
+        secret_env: frozenset[str] = frozenset(),
     ) -> int:
         """Detached processes are guarded too -- a daemon is still a program.
 
@@ -114,11 +117,12 @@ class GuardedRunner(Runner):
         rendered = tuple(str(part) for part in argv)
         _refuse_reentry(rendered)
         started = time.monotonic()
-        pid = self._inner.launch(argv, env=env, cwd=cwd)
+        pid = self._inner.launch(argv, env=env, cwd=cwd, secret_env=secret_env)
+        evidence = Command(argv=rendered, env=dict(env or {}), secret_env=secret_env)
         self._journal.launch(
-            rendered,
+            evidence.evidence_argv,
             cwd=str(cwd or self.root),
-            env=dict(env or {}),
+            env=evidence.evidence_env,
             pid=pid,
             duration_ms=(time.monotonic() - started) * 1000,
         )

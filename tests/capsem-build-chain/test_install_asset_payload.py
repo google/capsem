@@ -479,8 +479,13 @@ def test_cross_compile_repacks_deb_before_exact_systemd_install_proof() -> None:
     assert "file://$PWD/assets/manifest.json" not in script
 
     # The package rail decides whether to prove, and hands the proof its
-    # arguments rather than exporting three variables and hoping.
-    rail = (PROJECT_ROOT / "src/capsem/gate/crosscompile.py").read_text(encoding="utf-8")
+    # arguments rather than exporting three variables and hoping. Two modules
+    # since the split: `packagerail` runs the phases, `crosscompile` orders
+    # them, and the claim is about the lane rather than about either file.
+    rail = "\n".join(
+        (PROJECT_ROOT / "src/capsem/gate" / name).read_text(encoding="utf-8")
+        for name in ("packagerail.py", "crosscompile.py")
+    )
     assert config.package.proof_selector == "scripts/select-linux-deb-proof.sh"
     # The variable is declared in `[package]` and read through it. Asserting
     # the literal appeared in this module was asserting where it was spelled,
@@ -1023,7 +1028,7 @@ def test_cross_compile_reasserts_pinned_rust_target_before_expensive_work() -> N
     for a bump to leave the package rail behind.
     """
     from capsem.gate import config as gate_config
-    from capsem.gate.crosscompile import pinned_toolchain
+    from capsem.gate.packageinputs import pinned_toolchain
 
     config = gate_config.load(PROJECT_ROOT)
     issued = _planned("cross-compile", arch="arm64")

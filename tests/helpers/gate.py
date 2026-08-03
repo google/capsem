@@ -20,7 +20,8 @@ from functools import cache
 from pathlib import Path
 from typing import TextIO
 
-from capsem.gate.proc import Command, Runner
+from capsem.gate.invocation import Command
+from capsem.gate.proc import Runner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -68,6 +69,7 @@ class RecordingRunner(Runner):
         *,
         env: dict[str, str] | None = None,
         cwd: Path | None = None,
+        secret_env: frozenset[str] = frozenset(),
     ) -> int:
         """Record a detached start instead of spawning one.
 
@@ -77,7 +79,12 @@ class RecordingRunner(Runner):
         a stray process.
         """
         self.commands.append(
-            Command(argv=tuple(str(part) for part in argv), cwd=cwd, env=dict(env or {}))
+            Command(
+                argv=tuple(str(part) for part in argv),
+                cwd=cwd,
+                env=dict(env or {}),
+                secret_env=secret_env,
+            )
         )
         return 424242
 

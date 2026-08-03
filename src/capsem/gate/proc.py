@@ -21,11 +21,11 @@ import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TextIO
 
 from .errors import GateError
+from .invocation import Command
 
 #: Set while a command is building its plan. Ambient rather than a property of
 #: one runner, and that is the whole point: `release.py` built a *fresh*
@@ -65,32 +65,6 @@ def _refuse_while_sealed(argv: tuple[str, ...]) -> None:
 #: own overrides without importing `subprocess` -- which only the modules that
 #: genuinely touch the machine are allowed to do.
 Completed = subprocess.CompletedProcess[str]
-
-
-@dataclass(frozen=True)
-class Command:
-    """One invocation, in the form the runner will execute it."""
-
-    argv: tuple[str, ...]
-    cwd: Path | None = None
-    env: dict[str, str] = field(default_factory=dict)
-    """Additions to the inherited environment, not a replacement for it."""
-    capture: bool = False
-    check: bool = True
-    log: Path | None = None
-    """Append combined output here instead of streaming it.
-
-    Two build lanes streaming to one terminal interleave into something nobody
-    can read, so each concurrent lane writes its own log and only a failing
-    lane's tail is surfaced.
-    """
-
-    def __str__(self) -> str:
-        assignments = " ".join(
-            f"{name}={shlex.quote(value)}" for name, value in sorted(self.env.items())
-        )
-        return f"{assignments} {shlex.join(self.argv)}".strip()
-
 
 class Runner:
     """Executes gate commands against the real machine.
@@ -146,6 +120,7 @@ class Runner:
         env: dict[str, str] | None = None,
         check: bool = True,
         log: Path | None = None,
+        secret_env: frozenset[str] = frozenset(),
     ) -> int:
         """Run a command, streaming its output. Returns the exit status."""
         command = Command(
@@ -154,6 +129,7 @@ class Runner:
             env=dict(env or {}),
             check=check,
             log=log,
+            secret_env=secret_env,
         )
         # Checked here rather than in `execute`, which subclasses replace: a
         # recording runner in a test overrides `execute` wholesale, and a seal
@@ -171,6 +147,7 @@ class Runner:
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
         check: bool = True,
+        secret_env: frozenset[str] = frozenset(),
     ) -> str:
         """Run a command and return its stripped stdout."""
         command = Command(
@@ -179,6 +156,7 @@ class Runner:
             env=dict(env or {}),
             capture=True,
             check=check,
+            secret_env=secret_env,
         )
         _refuse_while_sealed(command.argv)
         completed = self.execute(command)
@@ -196,6 +174,7 @@ class Runner:
         *,
         cwd: Path | None = None,
         env: dict[str, str] | None = None,
+        secret_env: frozenset[str] = frozenset(),
     ) -> bool:
         """Whether a probe command exits zero, discarding its output."""
         command = Command(
@@ -204,6 +183,7 @@ class Runner:
             env=dict(env or {}),
             capture=True,
             check=False,
+            secret_env=secret_env,
         )
         _refuse_while_sealed(command.argv)
         return self.execute(command).returncode == 0
@@ -214,6 +194,7 @@ class Runner:
         *,
         env: dict[str, str] | None = None,
         cwd: Path | None = None,
+        secret_env: frozenset[str] = frozenset(),
     ) -> int:
         """Start a process that outlives this call, and return its pid.
 
@@ -224,7 +205,10 @@ class Runner:
         descriptors across `exec` by default.
         """
         command = Command(
-            argv=tuple(str(part) for part in argv), cwd=cwd, env=dict(env or {})
+            argv=tuple(str(part) for part in argv),
+            cwd=cwd,
+            env=dict(env or {}),
+            secret_env=secret_env,
         )
         _refuse_while_sealed(command.argv)
         process = subprocess.Popen(

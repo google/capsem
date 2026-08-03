@@ -14,12 +14,9 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
-from capsem.gate.crosscompile import (
-    PackageRail,
-    pinned_toolchain,
-    resolve_channel,
-)
 from capsem.gate.errors import GateError
+from capsem.gate.packageinputs import pinned_toolchain, resolve_channel
+from capsem.gate.packagerail import PackageRail
 from capsem.gate.packagesigning import signing_key
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -311,7 +308,7 @@ def test_a_provable_target_runs_the_systemd_kvm_proof(
     # longer exists, and `DebProof` always took them as arguments. What is
     # asserted is therefore what it was handed, which is the same claim
     # without a subprocess in the middle.
-    from capsem.gate import crosscompile
+    from capsem.gate import packagerail
 
     handed = {}
 
@@ -322,7 +319,7 @@ def test_a_provable_target_runs_the_systemd_kvm_proof(
         def run(self):
             handed["ran"] = True
 
-    monkeypatch.setattr(crosscompile.debproof, "DebProof", Recording)
+    monkeypatch.setattr(packagerail.debproof, "DebProof", Recording)
 
     _run_lane(_rail(runner, channel="nightly", manifest_url="file:///src/m.json"))
 
@@ -354,7 +351,7 @@ def test_the_builder_environment_follows_the_configured_names() -> None:
     reads the same literal the implementation reads passes whether or not the
     implementation reads config at all.
     """
-    from capsem.gate.crosscompile import package_environment
+    from capsem.gate.packageinputs import package_environment
 
     renamed = CONFIG.model_copy(
         update={
@@ -378,7 +375,7 @@ def test_the_builder_environment_follows_the_configured_names() -> None:
 
 
 def test_the_builder_environment_carries_the_signing_material_it_was_given() -> None:
-    from capsem.gate.crosscompile import package_environment
+    from capsem.gate.packageinputs import package_environment
 
     target = CONFIG.arch(next(iter(CONFIG.architectures)))
     signing = {CONFIG.package.signing.key_variable: "secret-key-bytes"}
@@ -399,7 +396,7 @@ def test_the_disk_rail_is_measured_at_two_different_moments() -> None:
     measured the same moment and the second could only ever agree with the
     first. Removing one looked right and would have lost a real check.
     """
-    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "crosscompile.py").read_text(
+    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "packagerail.py").read_text(
         encoding="utf-8"
     )
 

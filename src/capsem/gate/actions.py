@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from .context import Context
-from .proc import Command
+from .invocation import Command
 
 
 class Action(ABC):

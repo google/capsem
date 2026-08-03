@@ -9,7 +9,8 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate.errors import GateError
-from capsem.gate.proc import Command, Runner
+from capsem.gate.invocation import Command
+from capsem.gate.proc import Runner
 
 
 def test_a_failing_command_reports_what_ran(tmp_path: Path) -> None:
