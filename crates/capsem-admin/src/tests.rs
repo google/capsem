@@ -1813,10 +1813,10 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
 
         let source = fs::metadata(assets_dir.join("arm64/vmlinuz")).unwrap();
         let release = fs::metadata(release_dir.join("arm64-vmlinuz")).unwrap();
-        assert_eq!(
+        assert_ne!(
             source.ino(),
             release.ino(),
-            "same-filesystem immutable VM publication must hardlink instead of copying"
+            "an external fixture is unclassified and must copy rather than fail open"
         );
     }
     assert!(release_dir.join("arm64-initrd.img").is_file());
@@ -1853,12 +1853,12 @@ fn assets_channel_build_writes_manifest_under_channel_assets_dir() {
                 .expect("kernel publication URL")
                 .trim_start_matches('/'),
         );
-        assert_eq!(
+        assert_ne!(
             fs::metadata(assets_dir.join("arm64/vmlinuz"))
                 .unwrap()
                 .ino(),
             fs::metadata(published).unwrap().ino(),
-            "duplicate profile references must hardlink immutable VM bytes"
+            "an external fixture must remain independent from published output"
         );
     }
     assert_eq!(
