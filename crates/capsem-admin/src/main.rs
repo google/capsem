@@ -5864,24 +5864,20 @@ fn copy_file_with_digest(source: &Path, destination: &Path) -> Result<(u64, serd
     file_digest(destination)
 }
 
+/// Stage a file into release output.
+///
+/// Delegates, because the decision is not "link if you can". Linking a
+/// checked-in file into published output makes them one file: this put 48
+/// `config/` seeds inside the release channel sharing an inode, where a chmod
+/// on the artifact rewrote tracked source and no content digest noticed. See
+/// `capsem_core::auditfs`.
 fn hardlink_or_copy(source: &Path, destination: &Path) -> Result<()> {
-    if destination.exists() {
-        fs::remove_file(destination)
-            .with_context(|| format!("replace {}", destination.display()))?;
-    }
-    match fs::hard_link(source, destination) {
-        Ok(()) => Ok(()),
-        Err(link_error) => {
-            fs::copy(source, destination).with_context(|| {
-                format!(
-                    "copy {} -> {} after hardlink failed: {link_error}",
-                    source.display(),
-                    destination.display()
-                )
-            })?;
-            Ok(())
-        }
-    }
+    capsem_core::auditfs::stage(source, destination, &repo_root())
+}
+
+/// The checkout this admin invocation is staging from.
+fn repo_root() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
 }
 
 fn validate_asset_digest(

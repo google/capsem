@@ -179,6 +179,13 @@ class RunLogConfig(Strict):
     step_log_dir: str
     summary: str
     latest_link: str
+    #: Trees each run watches for filesystem faults, relative to the checkout.
+    observed_roots: tuple[str, ...]
+    #: Where those faults are written the instant they are found, per run.
+    error_log: str
+    #: Size cap and generations kept, so faults cannot fill the disk.
+    error_log_max_bytes: int
+    error_log_keep: int
     history_lock: str
     active_marker: str
     keep_runs: PositiveInt

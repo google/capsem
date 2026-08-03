@@ -67,6 +67,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A gate now reports what it did to the filesystem, as it does it. `contends`
+  is a list an author typed and the overlap check compares two such lists to
+  each other -- nothing in that loop had ever looked at a disk, so a step that
+  did not mention what it touched satisfied every check by saying nothing, and
+  the writer was frequently a unit test three subprocesses down. Two sources
+  feed it now: the in-process primitives are proxied, so the caller and the
+  state *before* the call are both known exactly, and a `watchdog` observer
+  covers what subprocesses do. Faults land on stderr the minute they occur, in
+  a size-capped log beside the run that survives a `kill -9`, and in the run
+  log. It names hardlinks between checked-in source and build output, modes
+  that change and change back, source writable beyond its owner, artifacts that
+  end a run empty, identical bytes under two names, and two concurrent steps
+  touching one path neither declared.
+
 - `release-profile` reached the step before publishing and refused, because
   `tested-head` was empty: four contracts that run a release plan to read back
   its argv had overwritten the running gate's record of the revision under
