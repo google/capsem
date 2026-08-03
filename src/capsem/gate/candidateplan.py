@@ -24,11 +24,18 @@ from .actions import Call, Run, Script
 from .config import GateConfig
 from .execution import Step, step
 from .plan import Plan
+from .qualification import Qualification
 from .sourcestate import RecordSourceState, RequireSourceUnchanged
 from .storage import Storage
 
 
-def compose(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+def compose(
+    plan: Plan,
+    config: GateConfig,
+    *,
+    qualification: Qualification,
+    after: tuple[Step, ...] = (),
+) -> Step:
     """Every phase of the gate, in the order each depends on the last.
 
     Composed by `candidate` and, unchanged, by both release commands -- which
@@ -49,12 +56,18 @@ def compose(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> 
 
     contracts = testmodules.release_contracts(plan, config, after=(recorded,))
     fast = testmodules.fast(plan, config, after=(contracts,))
-    modules = compose_modules(plan, config, after=(fast,))
+    modules = compose_modules(plan, config, qualification=qualification, after=(fast,))
 
     return plan.add(step("source.verify", RequireSourceUnchanged()), after=(modules,))
 
 
-def compose_modules(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+def compose_modules(
+    plan: Plan,
+    config: GateConfig,
+    *,
+    qualification: Qualification,
+    after: tuple[Step, ...] = (),
+) -> Step:
     """Everything after the fast phase: the artifacts, the VMs, the install.
 
     Separate from `compose` because it is independently runnable as
@@ -63,9 +76,11 @@ def compose_modules(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] =
     """
     prepared = _prepare(plan, config, after=after)
     static = testmodules.static(plan, config, after=(prepared,))
-    artifacts = vmmodules.artifacts(plan, config, after=static)
-    functional = vmmodules.functional(plan, config, after=(artifacts,))
-    glowup = vmmodules.glowup(plan, config, after=(functional,))
+    artifacts = vmmodules.artifacts(plan, config, qualification=qualification, after=static)
+    functional = vmmodules.functional(
+        plan, config, qualification=qualification, after=(artifacts,)
+    )
+    glowup = vmmodules.glowup(plan, config, qualification=qualification, after=(functional,))
 
     return plan.add(step("recipes", Run(config.candidate.recipe_suite)), after=(glowup,))
 

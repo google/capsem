@@ -40,7 +40,7 @@ def _require_profile(config: GateConfig, profile: str) -> None:
         raise GateError(f"unknown profile {profile!r}; expected one of {', '.join(known)}")
 
 
-def _gate(plan: Plan, config: GateConfig, *, after):
+def _gate(plan: Plan, config: GateConfig, *, qualification, after):
     """The complete local proof, composed rather than launched.
 
     `Run(["just", "test"])` from here started a second gate, and both release
@@ -49,7 +49,7 @@ def _gate(plan: Plan, config: GateConfig, *, after):
     release plan *contains* the gate, so "nothing publishes before the
     complete proof passes" is an edge rather than a promise.
     """
-    return candidateplan.compose(plan, config, after=after)
+    return candidateplan.compose(plan, config, qualification=qualification, after=after)
 
 
 class ReleaseBinariesCommand(
@@ -106,7 +106,7 @@ class ReleaseBinariesCommand(
         )
 
         recorded = plan.add(step("record-head", RecordHead(head_file(config))), after=(fetched,))
-        gate = _gate(plan, config, after=(recorded,))
+        gate = _gate(plan, config, qualification=self.qualification, after=(recorded,))
         confirmed = plan.add(
             step("confirm-head", ConfirmHead(settings.publish, head_file(config))),
             after=(gate,),
@@ -149,7 +149,7 @@ class ReleaseProfileCommand(
             )
         )
         recorded = plan.add(step("record-head", RecordHead(head_file(config))), after=(checked,))
-        gate = _gate(plan, config, after=(recorded,))
+        gate = _gate(plan, config, qualification=self.qualification, after=(recorded,))
         confirmed = plan.add(
             step("confirm-head", ConfirmHead(settings.publish, head_file(config))),
             after=(gate,),

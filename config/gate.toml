@@ -929,6 +929,7 @@ source_contract = [
     "tests/test_gate_primitives_are_the_only_way.py",
     "tests/test_gate_pytestsuite.py",
     "tests/test_gate_proc.py",
+    "tests/test_gate_qualification.py",
     "tests/test_gate_runlog.py",
     "tests/test_gate_runlog_evidence.py",
 

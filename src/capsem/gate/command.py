@@ -29,6 +29,7 @@ from .lifecycle import Resource, environment_of, held
 from .locks import ExclusiveLock
 from .plan import Plan
 from .proc import Runner, sealed
+from .qualification import Qualification
 from .runhistory import read
 from .runlog import RunLog
 from .timing import measure, report
@@ -75,10 +76,23 @@ class GateCommand(ABC):
             )
         GateCommand.registry[name] = cls
 
-    def __init__(self, runner: Runner, args: argparse.Namespace) -> None:
+    def __init__(
+        self,
+        runner: Runner,
+        args: argparse.Namespace,
+        *,
+        qualification: Qualification | None = None,
+    ) -> None:
         self._runner = runner
         self._args = args
         self._config = gate_config.for_root(runner.root)
+        # Read once, here, so no module below decides for itself whether it is
+        # in a release lane -- three did, from three different variables, and
+        # nothing compared their answers. Eagerly, and for every command: a
+        # half-exported release environment is a broken machine, not a
+        # condition for the modules that happen to look at it to discover an
+        # hour in.
+        self.qualification = qualification or Qualification.from_environment(self._config)
 
     # -- what a subclass declares ------------------------------------------
 

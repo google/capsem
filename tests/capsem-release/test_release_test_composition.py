@@ -48,7 +48,33 @@ def _command(module: str):
     )
 
 
-def _planned(module: str) -> str:
+def _qualification(**overrides):
+    """A complete release state, or the local one.
+
+    Handed to the command rather than exported into `os.environ`, because a
+    release state is indivisible: the modules no longer each read a variable,
+    and a test that set one of the three was reproducing a hybrid the gate now
+    refuses outright.
+    """
+    from capsem.gate.qualification import Qualification
+
+    return Qualification.from_environment(CONFIG, overrides)
+
+
+#: The two release lanes, spelled once. A binary lane resolves every profile
+#: the manifest names; a profile lane is publishing exactly one.
+BINARY_LANE = _qualification(
+    CAPSEM_RELEASE_INPUT_DIR="target/release-inputs",
+    CAPSEM_RELEASE_PACKAGE="dist/capsem_0.0.0_arm64.deb",
+)
+PROFILE_LANE = _qualification(
+    CAPSEM_RELEASE_INPUT_DIR="target/release-inputs",
+    CAPSEM_RELEASE_PACKAGE="dist/capsem_0.0.0_arm64.deb",
+    CAPSEM_RELEASE_PROFILE="code",
+)
+
+
+def _planned(module: str, qualification=None) -> str:
     """What a module's plan would run, rendered.
 
     Replaces grepping `_test-candidate-run`, which no longer exists. This is
@@ -65,6 +91,7 @@ def _planned(module: str) -> str:
     command = GateCommand.registry[module](
         RecordingRunner(PROJECT_ROOT),
         argparse.Namespace(dry_run=False, graph=False, timing=False),
+        qualification=qualification,
     )
     return command.plan().describe()
 
@@ -95,7 +122,6 @@ def _all_modules() -> str:
     that only a release lane reaches. A plan carries the branch it took, so
     the release-lane shapes are rendered explicitly rather than assumed.
     """
-    import os
 
     plans = [
         _planned(name)
@@ -109,16 +135,10 @@ def _all_modules() -> str:
         )
     ]
 
-    previous = dict(os.environ)
-    try:
-        os.environ["CAPSEM_RELEASE_PACKAGE"] = "dist/capsem_0.0.0_arm64.deb"
-        os.environ["CAPSEM_RELEASE_INPUT_DIR"] = "target/release-inputs"
-        os.environ["CAPSEM_RELEASE_PROFILE"] = "code"
-        plans += [_planned("test-glowup"), _planned("test-artifacts")]
-    finally:
-        os.environ.clear()
-        os.environ.update(previous)
-
+    plans += [
+        _planned("test-glowup", PROFILE_LANE),
+        _planned("test-artifacts", PROFILE_LANE),
+    ]
     return "\n".join(plans)
 
 
@@ -673,15 +693,7 @@ def test_release_glowup_also_runs_pre_activation_channel_switches() -> None:
     """The channel switch runs a second time with the release environment
     cleared, so it has to rediscover its state from the installed system
     rather than inherit what the staged run was told."""
-    import os
-
-    previous = dict(os.environ)
-    try:
-        os.environ["CAPSEM_RELEASE_PACKAGE"] = "dist/capsem_0.0.0_arm64.deb"
-        glowup = _planned("test-glowup")
-    finally:
-        os.environ.clear()
-        os.environ.update(previous)
+    glowup = _planned("test-glowup", BINARY_LANE)
 
     assert glowup.count("scripts/local-release-glowup.py") == 2
     assert "--work-dir target/release-module-glowup" in glowup
@@ -711,16 +723,7 @@ def test_standalone_local_glowup_materializes_config_without_release_builders() 
 def test_release_artifact_module_boots_manifest_selected_profile_bytes_without_builders() -> None:
     """A release lane verifies the bytes it pulled rather than rebuilding
     them; rebuilding would prove something about the source instead."""
-    import os
-
-    previous = dict(os.environ)
-    try:
-        os.environ["CAPSEM_RELEASE_INPUT_DIR"] = "target/release-inputs"
-        os.environ["CAPSEM_RELEASE_PROFILE"] = "code"
-        artifacts = _planned("test-artifacts")
-    finally:
-        os.environ.clear()
-        os.environ.update(previous)
+    artifacts = _planned("test-artifacts", PROFILE_LANE)
 
     assert "scripts/prove-release-profile-assets.py" in artifacts
     assert "--input-dir target/release-inputs" in artifacts

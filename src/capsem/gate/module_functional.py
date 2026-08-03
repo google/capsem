@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from . import (
     hostpackage,
     profiles,
@@ -14,6 +12,7 @@ from .command import GateCommand
 from .config import GateConfig
 from .execution import Step
 from .plan import Plan
+from .qualification import Qualification
 from .testmodules import InWorkspace
 
 
@@ -37,18 +36,26 @@ class FunctionalModule(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        functional(plan, self._config)
+        functional(plan, self._config, qualification=self.qualification)
         return plan
 
 
-def functional(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+def functional(
+    plan: Plan,
+    config: GateConfig,
+    *,
+    qualification: Qualification,
+    after: tuple[Step, ...] = (),
+) -> Step:
     """Every VM-owned suite, for every profile the channel selects."""
     phase = plan.phase("functional")
     axis = profiles.selected(config)
     base, rest = axis[0], axis[1:]
 
+    # A release lane was handed signed binaries; signing them again would
+    # replace the bytes the manifest selected with locally built ones.
     first: tuple = after
-    if not os.environ.get(config.modules.release_input_dir):
+    if not qualification.pulled:
         first = (phase.add(hostpackage.sign_step(config), after=after),)
 
     previous = _profile_lane(phase, config, base, after=first, broad=True)

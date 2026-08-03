@@ -221,7 +221,7 @@ class CandidateCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        candidateplan.compose(plan, self._config)
+        candidateplan.compose(plan, self._config, qualification=self.qualification)
         return plan
 
 
@@ -244,5 +244,7 @@ class CandidateModulesCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        candidateplan.compose_modules(plan, self._config)
+        candidateplan.compose_modules(
+            plan, self._config, qualification=self.qualification
+        )
         return plan

@@ -6,8 +6,6 @@ plan line and no edge changes, which is what its guard asserts.
 
 from __future__ import annotations
 
-import os
-
 from . import (
     assets as assetgate,
 )
@@ -19,6 +17,7 @@ from .command import GateCommand
 from .config import GateConfig
 from .execution import Step, step
 from .plan import Plan
+from .qualification import Qualification
 from .testmodules import InWorkspace
 
 
@@ -38,26 +37,32 @@ class ArtifactsModule(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        artifacts(plan, self._config)
+        artifacts(plan, self._config, qualification=self.qualification)
         return plan
 
 
-def artifacts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
+def artifacts(
+    plan: Plan,
+    config: GateConfig,
+    *,
+    qualification: Qualification,
+    after: tuple[Step, ...] = (),
+) -> Step:
     """Build every profile's VM assets, or verify the pulled ones."""
     phase = plan.phase("artifacts")
     settings = config.modules
-    pulled = os.environ.get(settings.release_input_dir)
 
-    if pulled:
+    if qualification.pulled:
         verify = phase.add(
             step(
                 "release-inputs.verify",
-                Script(settings.verify_inputs_script, "--input-dir", pulled),
+                Script(settings.verify_inputs_script, "--input-dir", qualification.input_dir),
             ),
             after=after,
         )
-        profile = os.environ.get(settings.release_profile)
-        if not profile:
+        # A binary lane resolves every profile the manifest names, so there is
+        # no single one to boot; a profile lane is publishing exactly one.
+        if qualification.profile is None:
             return verify
         return phase.add(
             step(
@@ -65,9 +70,9 @@ def artifacts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -
                 Script(
                     settings.prove_profile_assets_script,
                     "--input-dir",
-                    pulled,
+                    qualification.input_dir,
                     "--profile",
-                    profile,
+                    qualification.profile,
                 ),
                 contends=(config.exclusive("apple_vz"),),
             ),

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A partial release environment can no longer build a hybrid proof. Three gate
+  modules each decided independently whether they were in a release lane --
+  the artifact module from `CAPSEM_RELEASE_INPUT_DIR`, the functional module
+  from the same one, the glow-up module from `CAPSEM_RELEASE_PACKAGE` -- and
+  nothing compared their answers. Exporting only the input directory built a
+  plan that verified manifest-selected assets and then rebuilt the package from
+  source; exporting only the package did the mirror image. Both are green, both
+  cost a full gate, and both prove source bytes in place of the bytes that
+  ship. One dropped `GITHUB_ENV` line was enough. The state is now one
+  indivisible value with exactly three legal shapes -- local, binary release,
+  profile release -- read once per run and passed down, and every partial
+  combination is refused during plan construction with both sides named.
+
 ### Changed
 
 - The service tests' profile-tree copy replaces an existing target and names
