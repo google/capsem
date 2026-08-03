@@ -75,7 +75,7 @@ def journal(monkeypatch) -> RecordingJournal:
         yield recording
 
     monkeypatch.setattr("capsem.gate.runlog.RunLog.open", _open)
-    monkeypatch.setattr("capsem.gate.command.RunLog.open", _open)
+    monkeypatch.setattr("capsem.gate.recording.RunLog.open", _open)
     return recording
 
 

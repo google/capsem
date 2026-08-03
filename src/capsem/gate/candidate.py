@@ -229,6 +229,7 @@ class CandidateCommand(
     help="run the complete local qualification gate",
 ):
     exclusive = True
+    uses_qualification = True
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
@@ -249,6 +250,7 @@ class CandidateModulesCommand(
     """
 
     exclusive = True
+    uses_qualification = True
 
     def resources(self, runner: Runner) -> tuple[Resource, ...]:
         return gate_resources(self._config, runner)

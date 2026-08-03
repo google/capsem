@@ -24,6 +24,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A half-exported release environment no longer takes the diagnostics down
+  with it. Parsing the release state in every command's constructor meant
+  `runs last`, `logs`, `version` and `gc --dry-run` refused with the same
+  message as the gate itself -- which is correct for a command that would
+  *prove* something and useless for one that only reports, at exactly the
+  moment an operator is trying to find out what the broken workflow did.
+  Commands whose plan depends on the answer declare it.
+
+- The release state is a discriminated union, so its illegal shapes are
+  unrepresentable rather than merely unreachable. A dataclass with four
+  optional fields let a local run carry an input directory perfectly happily
+  and kept the invariant inside one parsing function; the path and profile
+  values are validated as text at the boundary, and never against the
+  filesystem -- a `--dry-run` that stats the disk depends on the machine it is
+  only describing.
+
 - Ctrl-C stops the gate instead of scheduling a stop. The plan runner held its
   thread pool through a `with` block, and that context manager's exit joins
   every running future -- an interrupt fifty milliseconds into a 750ms action

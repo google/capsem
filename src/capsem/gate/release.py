@@ -62,6 +62,7 @@ class ReleaseBinariesCommand(
     keeps the host awake for the same reason candidate does."""
 
     exclusive = True
+    uses_qualification = True
 
     @classmethod
     def add_arguments(cls, parser) -> None:
@@ -122,6 +123,7 @@ class ReleaseProfileCommand(
     help="run the complete gate, then release one channel profile",
 ):
     exclusive = True
+    uses_qualification = True
 
     @classmethod
     def add_arguments(cls, parser) -> None:

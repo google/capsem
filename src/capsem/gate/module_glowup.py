@@ -43,6 +43,8 @@ class GlowupModule(
     Virtualization.framework.
     """
 
+    uses_qualification = True
+
     def plan(self) -> Plan:
         plan = Plan(self.name)
         glowup(plan, self._config, qualification=self.qualification)

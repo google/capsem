@@ -18,11 +18,10 @@ from __future__ import annotations
 import argparse
 import os
 from abc import ABC, abstractmethod
-from contextlib import contextmanager
 from typing import ClassVar
 
 from . import config as gate_config
-from .context import Context, NullJournal
+from .context import Context
 from .errors import GateError
 from .funnel import GuardedRunner
 from .lifecycle import Resource, environment_of, held
@@ -31,18 +30,11 @@ from .plan import Plan
 from .planseal import sealed
 from .proc import Runner
 from .qualification import Qualification
-from .runhistory import read
-from .runlog import RunLog
-from .timing import measure, report
+from .qualification import from_environment as qualification_for
+from .recording import Recorded
 
 
-@contextmanager
-def _no_record():
-    """A journal for a command that must not leave a run behind."""
-    yield NullJournal()
-
-
-class GateCommand(ABC):
+class GateCommand(Recorded, ABC):
     """A subcommand. Subclasses declare what they hold and what they do."""
 
     name: ClassVar[str]
@@ -57,13 +49,15 @@ class GateCommand(ABC):
     is running.
     """
 
-    records: ClassVar[bool] = True
-    """Whether this command writes a run of its own.
+    uses_qualification: ClassVar[bool] = False
+    """Whether this command's plan depends on which artifacts a release chose.
 
-    False for the ones that only *read* runs. `runs last --failed` opened a run
-    and repointed `latest` at itself before answering, so the honest answer to
-    "which run failed" could be the question. Asking must not become part of
-    what is being asked about.
+    False for everything that only reports. A half-exported release
+    environment is refused -- it can only produce a hybrid proof -- but that
+    refusal must not reach `runs last`, `logs` or `gc --dry-run`, which are
+    exactly what an operator reaches for *because* the workflow broke. Declared
+    rather than inferred: guessing from the name or from what the plan happens
+    to mention puts the answer somewhere nobody looks when adding a module.
     """
 
     registry: ClassVar[dict[str, type[GateCommand]]] = {}
@@ -91,15 +85,33 @@ class GateCommand(ABC):
         self._config = gate_config.for_root(runner.root)
         # Read once, here, so no module below decides for itself whether it is
         # in a release lane -- three did, from three different variables, and
-        # nothing compared their answers. Eagerly, and for every command: a
-        # half-exported release environment is a broken machine, not a
-        # condition for the modules that happen to look at it to discover an
-        # hour in.
-        self.qualification = qualification or Qualification.from_environment(self._config)
+        # nothing compared their answers. Eagerly, so a broken environment
+        # stops the run before it spends an hour rather than when the module
+        # that happens to look reaches it -- but only for the commands whose
+        # plan depends on the answer.
+        self._qualification = qualification
+        if qualification is None and self.uses_qualification:
+            self._qualification = qualification_for(self._config)
+
+    @property
+    def qualification(self) -> Qualification:
+        """Which artifacts this run is proving.
+
+        Only for commands that declared they depend on it. Reaching for it
+        without that declaration is a wiring mistake worth naming: the state
+        was never parsed, so the answer would be `None` and the plan would
+        silently take the local branch on a release runner.
+        """
+        if self._qualification is None:
+            raise GateError(
+                f"{self.name} read the release qualification without declaring "
+                "uses_qualification = True, so it was never parsed"
+            )
+        return self._qualification
 
     # -- what a subclass declares ------------------------------------------
 
-    @classmethod  # noqa: B027 - concrete and empty on purpose, see below
+    @classmethod
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         """Declare this command's own flags.
 
@@ -233,27 +245,6 @@ class GateCommand(ABC):
         with sealed():
             return self.plan()
 
-    def should_record(self) -> bool:
-        """Whether *this invocation* writes a run of its own.
-
-        A method rather than the class constant it was, because the answer can
-        depend on how the command was called: `gc --dry-run` is inspection and
-        a normal `gc` reclaims whole trees. As a constant, `gc` was marked
-        silent and classified with the run readers, so a partial reclaim left
-        no durable evidence of what it had deleted.
-        """
-        return self.records
-
-    def _recording(self):
-        """The run log, or a journal that keeps nothing.
-
-        A command that only reads runs must not create one; everything else
-        below is identical either way, which is the point.
-        """
-        if self.should_record():
-            return RunLog.open(self._config, self.name, argv=self._argv())
-        return _no_record()
-
     def _holdings(self, runner: Runner) -> tuple[Resource, ...]:
         """The machine lock first, then whatever the command declared.
 
@@ -265,33 +256,6 @@ class GateCommand(ABC):
             return self.resources(runner)
         lock = ExclusiveLock.for_gate(self._config, purpose=self._purpose())
         return (lock, *self.resources(runner))
-
-    def _summarize(self, log: RunLog) -> None:
-        """Say where the time went, on the way out.
-
-        A command that recorded no run has no time to report. This assumed the
-        journal always had a run directory, so `--timing` on any of the
-        readers ended in `AttributeError: 'NullJournal' object has no
-        attribute 'directory'` after printing the answer.
-        """
-        if not self._args.timing:
-            return
-        if not self.should_record():
-            print(f"{self.name} records no run, so there is no timing to report")
-            return
-        timing = measure(read(log.directory, self._config.runlog))
-        print(
-            report(
-                timing,
-                command=self.name,
-                settings=self._config.runlog,
-                run_id=log.run_id,
-            )
-        )
-
-    def _argv(self) -> tuple[str, ...]:
-        """The logical invocation, or the command name when built directly."""
-        return self._invocation or (self.name,)
 
     def _purpose(self) -> str:
         """What contention should call this, for whoever arrives next."""

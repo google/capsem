@@ -34,6 +34,8 @@ class FunctionalModule(
     nobody added a job underneath.
     """
 
+    uses_qualification = True
+
     def plan(self) -> Plan:
         plan = Plan(self.name)
         functional(plan, self._config, qualification=self.qualification)

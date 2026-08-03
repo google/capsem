@@ -35,6 +35,8 @@ class ArtifactsModule(
     prove something about the source rather than about what ships.
     """
 
+    uses_qualification = True
+
     def plan(self) -> Plan:
         plan = Plan(self.name)
         artifacts(plan, self._config, qualification=self.qualification)

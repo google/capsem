@@ -24,6 +24,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "tests"))
 from capsem.gate import config as gate_config  # noqa: E402
 from capsem.gate.errors import GateError  # noqa: E402
 from capsem.gate.qualification import Mode, Qualification  # noqa: E402
+from capsem.gate.qualification import from_environment as qualification_for  # noqa: E402
 
 CONFIG = gate_config.load(PROJECT_ROOT)
 SETTINGS = CONFIG.modules
@@ -65,7 +66,7 @@ PARTIAL = (
 
 @pytest.mark.parametrize(("present", "mode"), sorted(VALID.items()))
 def test_the_three_valid_release_states_parse(present: tuple[str, ...], mode: Mode) -> None:
-    qualification = Qualification.from_environment(CONFIG, environment(*present))
+    qualification = qualification_for(CONFIG, environment(*present))
 
     assert qualification.mode is mode
     assert qualification.pulled is (mode is not Mode.LOCAL)
@@ -75,7 +76,7 @@ def test_the_three_valid_release_states_parse(present: tuple[str, ...], mode: Mo
 def test_every_partial_release_environment_is_refused(present: tuple[str, ...]) -> None:
     """Naming both sides, because the operator has to fix the missing one."""
     with pytest.raises(GateError) as raised:
-        Qualification.from_environment(CONFIG, environment(*present))
+        qualification_for(CONFIG, environment(*present))
 
     message = str(raised.value)
     for name in present:
@@ -92,15 +93,15 @@ def test_an_empty_variable_counts_as_absent() -> None:
     Treating that as present is how a release lane would be told to verify an
     input directory named "".
     """
-    assert Qualification.from_environment(CONFIG, {INPUT_DIR: "", PACKAGE: ""}).mode is Mode.LOCAL
+    assert qualification_for(CONFIG, {INPUT_DIR: "", PACKAGE: ""}).mode is Mode.LOCAL
 
     with pytest.raises(GateError):
-        Qualification.from_environment(CONFIG, {INPUT_DIR: VALUES[INPUT_DIR], PACKAGE: "   "})
+        qualification_for(CONFIG, {INPUT_DIR: VALUES[INPUT_DIR], PACKAGE: "   "})
 
 
 def test_the_profile_release_carries_its_profile_and_the_binary_release_does_not() -> None:
-    binary = Qualification.from_environment(CONFIG, environment(INPUT_DIR, PACKAGE))
-    profile = Qualification.from_environment(CONFIG, environment(INPUT_DIR, PACKAGE, PROFILE))
+    binary = qualification_for(CONFIG, environment(INPUT_DIR, PACKAGE))
+    profile = qualification_for(CONFIG, environment(INPUT_DIR, PACKAGE, PROFILE))
 
     assert binary.profile is None
     assert profile.profile == VALUES[PROFILE]
@@ -129,9 +130,9 @@ def planned(module: str, qualification: Qualification) -> str:
     return command._describe().describe()
 
 
-LOCAL = Qualification.from_environment(CONFIG, {})
-BINARY = Qualification.from_environment(CONFIG, environment(INPUT_DIR, PACKAGE))
-PROFILE_LANE = Qualification.from_environment(CONFIG, environment(INPUT_DIR, PACKAGE, PROFILE))
+LOCAL = qualification_for(CONFIG, {})
+BINARY = qualification_for(CONFIG, environment(INPUT_DIR, PACKAGE))
+PROFILE_LANE = qualification_for(CONFIG, environment(INPUT_DIR, PACKAGE, PROFILE))
 
 
 def test_a_local_run_builds_both_families() -> None:
@@ -226,3 +227,155 @@ def test_the_binary_lane_exports_a_complete_binary_release_state() -> None:
 
 def test_the_profile_lane_exports_a_complete_profile_release_state() -> None:
     assert exported("release-assets.yaml") == {INPUT_DIR, PACKAGE, PROFILE}
+
+
+# ---------------------------------------------------------------------------
+# Diagnostics stay available exactly when the environment is broken
+# ---------------------------------------------------------------------------
+#
+# A half-exported release environment is the moment an operator most needs to
+# ask what the last run did. Parsing the release state in every command's
+# constructor made `runs last` and `gc --dry-run` refuse with the same message
+# as the gate itself -- correct for a command that would *prove* something,
+# useless for one that only reports.
+
+#: Commands that only read. None of them can prove anything, so none of them
+#: has an opinion about which artifacts a release selected.
+INSPECTION = (
+    ("runs", {"action": "last", "failed": False, "run": None}),
+    ("gc", {"dry_run": True}),
+    ("version", {}),
+    ("logs", {"target": "service"}),
+)
+
+
+def _construct(name: str, args: dict):
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    namespace = argparse.Namespace(dry_run=False, graph=False, timing=False)
+    for key, value in args.items():
+        setattr(namespace, key, value)
+    return GateCommand.registry[name](RecordingRunner(PROJECT_ROOT), namespace)
+
+
+@pytest.mark.parametrize(("name", "args"), INSPECTION, ids=[n for n, _ in INSPECTION])
+def test_an_inspection_command_survives_a_partial_release_environment(
+    name: str, args: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`runs last` is what you reach for *because* the workflow broke."""
+    for variable in VALUES:
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv(PACKAGE, VALUES[PACKAGE])
+
+    command = _construct(name, args)
+    command._describe()  # it can still plan; that is the whole point
+
+    assert command.uses_qualification is False
+
+
+@pytest.mark.parametrize(
+    ("name", "args"),
+    (
+        ("candidate", {}),
+        ("test-artifacts", {}),
+        ("test-functional", {}),
+        ("test-glowup", {}),
+        ("release-binaries", {"channel": "nightly"}),
+        ("release-profile", {"channel": "nightly", "profile": "code"}),
+    ),
+)
+def test_a_qualifying_command_still_refuses_a_partial_environment(
+    name: str, args: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The refusal has to survive being made selective."""
+    for variable in VALUES:
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv(PACKAGE, VALUES[PACKAGE])
+
+    with pytest.raises(GateError, match="release"):
+        _construct(name, args)
+
+
+def test_the_capability_is_declared_rather_than_guessed() -> None:
+    """Whether a command proves artifacts is a property of the command.
+
+    Inferring it -- from the name, from whether the plan happens to mention a
+    release script -- puts the answer somewhere nobody looks when adding the
+    next module.
+    """
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    qualifying = {
+        name for name, cls in GateCommand.registry.items() if cls.uses_qualification
+    }
+
+    assert qualifying == {
+        "candidate",
+        "test-candidate",
+        "test-artifacts",
+        "test-functional",
+        "test-glowup",
+        "release-binaries",
+        "release-profile",
+    }
+
+
+# ---------------------------------------------------------------------------
+# The states are unrepresentable, not merely unreachable through one parser
+# ---------------------------------------------------------------------------
+
+
+def test_a_local_state_cannot_carry_release_inputs() -> None:
+    """`from_environment` refuses partials; direct construction did not.
+
+    A dataclass with four optional fields makes `LOCAL` with an input
+    directory a perfectly ordinary object, so the invariant lived in one
+    function rather than in the type.
+    """
+    import pydantic
+
+    from capsem.gate.qualification import LocalQualification
+
+    with pytest.raises((pydantic.ValidationError, TypeError)):
+        LocalQualification(bin_dir="target/debug", input_dir=VALUES[INPUT_DIR])
+
+
+def test_a_binary_release_cannot_be_built_without_its_package() -> None:
+    import pydantic
+
+    from capsem.gate.qualification import BinaryQualification
+
+    with pytest.raises(pydantic.ValidationError):
+        BinaryQualification(input_dir=VALUES[INPUT_DIR], bin_dir="target/debug")
+
+
+def test_a_release_path_may_not_be_empty_or_whitespace() -> None:
+    """`GatePath` is about the text, not the filesystem.
+
+    Existence is a plan action; a `--dry-run` that stats the disk is a dry run
+    that depends on the machine it is describing.
+    """
+    import pydantic
+
+    from capsem.gate.qualification import BinaryQualification
+
+    with pytest.raises(pydantic.ValidationError):
+        BinaryQualification(input_dir="   ", package=VALUES[PACKAGE], bin_dir="target/debug")
+
+
+def test_a_profile_name_follows_the_configured_grammar() -> None:
+    import pydantic
+
+    from capsem.gate.qualification import ProfileQualification
+
+    with pytest.raises(pydantic.ValidationError):
+        ProfileQualification(
+            input_dir=VALUES[INPUT_DIR],
+            package=VALUES[PACKAGE],
+            bin_dir="target/debug",
+            profile="not a profile name",
+        )

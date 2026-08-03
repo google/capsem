@@ -56,9 +56,9 @@ def _qualification(**overrides):
     and a test that set one of the three was reproducing a hybrid the gate now
     refuses outright.
     """
-    from capsem.gate.qualification import Qualification
+    from capsem.gate.qualification import from_environment as qualification_for
 
-    return Qualification.from_environment(CONFIG, overrides)
+    return qualification_for(CONFIG, overrides)
 
 
 #: The two release lanes, spelled once. A binary lane resolves every profile
