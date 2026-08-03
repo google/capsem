@@ -148,6 +148,10 @@ class _Journal:
     def launch(self, argv, *, cwd, env, pid, duration_ms) -> None:
         self.launches.append({"argv": argv, "cwd": cwd, "env": env, "pid": pid})
 
+    def step_output(self):
+        """No step, so nowhere to file output -- which is not this test's claim."""
+        return None
+
 
 @pytest.mark.parametrize("failing", (False, True))
 def test_the_journal_records_the_name_and_never_the_value(failing: bool) -> None:

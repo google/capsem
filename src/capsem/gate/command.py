@@ -28,7 +28,8 @@ from .funnel import GuardedRunner
 from .lifecycle import Resource, environment_of, held
 from .locks import ExclusiveLock
 from .plan import Plan
-from .proc import Runner, sealed
+from .planseal import sealed
+from .proc import Runner
 from .qualification import Qualification
 from .runhistory import read
 from .runlog import RunLog
@@ -82,9 +83,13 @@ class GateCommand(ABC):
         args: argparse.Namespace,
         *,
         qualification: Qualification | None = None,
+        invocation: tuple[str, ...] = (),
     ) -> None:
         self._runner = runner
         self._args = args
+        # What was typed, captured by `cli` before parsing. A run that cannot
+        # say which channel it attempted is a run nobody can read back.
+        self._invocation = invocation
         self._config = gate_config.for_root(runner.root)
         # Read once, here, so no module below decides for itself whether it is
         # in a release lane -- three did, from three different variables, and
@@ -181,7 +186,11 @@ class GateCommand(ABC):
         with self._recording() as log:
             # Every invocation from here is recorded, and none may start a
             # second gate. Neither is a call site's responsibility.
-            runner = GuardedRunner(self._runner, journal=log)
+            runner = GuardedRunner(
+                self._runner,
+                journal=log,
+                tail_lines=self._config.runlog.failure_tail_lines,
+            )
             with held(*self._holdings(runner)) as acquired:
                 plan.run(
                     Context(
@@ -283,7 +292,8 @@ class GateCommand(ABC):
         )
 
     def _argv(self) -> tuple[str, ...]:
-        return (self.name, *getattr(self._args, "argv", ()))
+        """The logical invocation, or the command name when built directly."""
+        return self._invocation or (self.name,)
 
     def _purpose(self) -> str:
         """What contention should call this, for whoever arrives next."""

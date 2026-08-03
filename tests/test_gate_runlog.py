@@ -552,3 +552,190 @@ def test_rotation_does_not_claim_a_run_it_could_not_delete(tmp_path, monkeypatch
 
     with pytest.raises(GateError, match="Permission denied"):
         runhistory.rotate(config)
+
+
+# ---------------------------------------------------------------------------
+# Which command a run *was*
+# ---------------------------------------------------------------------------
+
+
+def _recorded_argv(raw: list[str], tmp_path: Path) -> tuple[str, ...]:
+    """Drive the real CLI construction path, and read back what it recorded."""
+
+    from capsem.gate import cli
+    from capsem.gate.command import GateCommand
+
+    parsed = cli.build_parser().parse_args(raw)
+    command = GateCommand.registry[parsed.gate_command](
+        _Recording(tmp_path), parsed, invocation=cli.invocation(raw)
+    )
+    return command._argv()
+
+
+class _Recording:
+    """Just enough runner for a command to be constructed."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+
+@pytest.mark.parametrize(
+    "raw",
+    (
+        ["release-binaries", "nightly"],
+        ["release-profile", "candidate", "code"],
+        ["logs", "service"],
+        ["candidate", "--timing"],
+        ["cross-compile", "arm64"],
+        ["exec", "--", "echo hi"],
+    ),
+)
+def test_a_run_records_the_invocation_it_was_given(raw: list[str]) -> None:
+    """`release-binaries` recorded `('release-binaries',)` -- no channel.
+
+    The namespace was searched for a field named `argv` that almost no command
+    defines, so every positional and every flag was dropped. Reading a failed
+    release back, there was no way to tell which channel it had attempted.
+    """
+    assert _recorded_argv(raw, PROJECT_ROOT) == ("capsem-gate", *raw)
+
+
+def test_the_recorded_invocation_reaches_the_run_start_event(tmp_path: Path) -> None:
+    config = _checkout(tmp_path)
+    invocation = ("capsem-gate", "release-binaries", "nightly")
+
+    with RunLog.open(config, "release-binaries", argv=invocation) as log:
+        directory = log.directory
+
+    (start,) = [e for e in read(directory, config.runlog) if e["event"] == "run.start"]
+    assert tuple(start["argv"]) == invocation
+
+
+# ---------------------------------------------------------------------------
+# The two windows around a run's own directory
+# ---------------------------------------------------------------------------
+#
+# Both are reproduced by starting a second allocator *inside* the window, with
+# a retention budget of one byte so anything it is allowed to drop, it drops.
+# The existing multiprocessing test begins asserting only after `RunLog.open`
+# has returned, which is after both windows have closed.
+
+
+def _tight(tmp_path: Path):
+    """A checkout whose retention will delete anything it may."""
+    return _checkout(tmp_path, keep_runs=1, keep_bytes=1)
+
+
+def _second_allocator(config) -> threading.Thread:
+    """Another command opening its own run, as a thread we can join."""
+
+    def allocate() -> None:
+        with RunLog.open(config, "other"):
+            pass
+
+    return threading.Thread(target=allocate)
+
+
+def test_a_run_is_protected_before_its_directory_becomes_visible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The directory was created, and only then marked live.
+
+    An allocator arriving in that window saw a directory with no `run.end` and
+    no held marker -- indistinguishable from a run that crashed -- and under
+    any real budget took it. Allocation happens under the history lock now, so
+    the assertion is that a second allocator *cannot even start* while this
+    run is becoming visible.
+    """
+    config = _tight(tmp_path)
+    from capsem.gate import runlog as module
+
+    real = module.hold_active
+    observed: list[bool] = []
+
+    def barrier(directory: Path, settings):
+        # Fires for this run only: the second allocator reaches the same code
+        # and would otherwise start a third, and so on.
+        if not observed:
+            thread = _second_allocator(config)
+            thread.start()
+            thread.join(timeout=1.0)
+            observed.append(thread.is_alive())
+            monkeypatch.setattr(module, "hold_active", real)
+            thread.join(timeout=10)
+        return real(directory, settings)
+
+    monkeypatch.setattr(module, "hold_active", barrier)
+
+    with RunLog.open(config, "mine") as log:
+        directory = log.directory
+
+    assert observed == [True], (
+        "another allocator ran while this directory existed unmarked, which is "
+        "the window it used to be rotated away in"
+    )
+    assert directory.is_dir()
+    events = {entry["event"] for entry in read(directory, config.runlog)}
+    assert {"run.start", "run.end"} <= events
+
+
+def test_a_run_stays_protected_until_its_summary_is_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The marker was released before `run.end` and the summary were written.
+
+    A waiting command could therefore rotate the just-finished directory while
+    its owner was still writing into it -- which under a byte cap turns an
+    otherwise successful release into a logging failure after publication.
+    """
+    config = _tight(tmp_path)
+    from capsem.gate import runlog as module
+
+    real = module.write_summary
+    ran: list[bool] = []
+
+    def barrier(directory: Path, settings, **kwargs):
+        if not ran:
+            monkeypatch.setattr(module, "write_summary", real)
+            thread = _second_allocator(config)
+            thread.start()
+            thread.join(timeout=10)
+            ran.append(not thread.is_alive())
+        return real(directory, settings, **kwargs)
+
+    monkeypatch.setattr(module, "write_summary", barrier)
+
+    with RunLog.open(config, "mine") as log:
+        directory = log.directory
+
+    assert ran == [True], "the second allocator never finished"
+    assert directory.is_dir(), "the just-finished run was rotated while closing"
+    assert (directory / config.runlog.summary).is_file()
+
+
+def test_retention_measures_each_remaining_run_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It re-walked every surviving tree on every removal pass.
+
+    Same answer each time -- a directory that was not removed has not changed
+    size -- at a cost that grows with runs times files.
+    """
+    from capsem.gate import runhistory
+
+    config = _checkout(tmp_path, keep_runs=1, keep_bytes=1)
+    root = config.path(config.runlog.root)
+    for name in ("20260101-000001-aaa-x", "20260101-000002-bbb-x", "20260101-000003-ccc-x"):
+        directory = root / name
+        directory.mkdir(parents=True)
+        (directory / config.runlog.events).write_text('{"event": "run.end"}\n', encoding="utf-8")
+
+    measured: list[Path] = []
+    real = runhistory.tree_size
+    monkeypatch.setattr(
+        runhistory, "tree_size", lambda path: (measured.append(path), real(path))[1]
+    )
+
+    runhistory.rotate(config)
+
+    assert len(measured) == len(set(measured)), f"measured twice: {measured}"

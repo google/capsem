@@ -15,51 +15,20 @@ without Docker, a package, or a network.
 from __future__ import annotations
 
 import os
-import shlex
 import subprocess
 import sys
-from collections.abc import Iterator
-from contextlib import contextmanager
-from contextvars import ContextVar
+import threading
 from pathlib import Path
 from typing import TextIO
 
 from .errors import GateError
 from .invocation import Command
+from .planseal import _refuse_while_sealed
 
-#: Set while a command is building its plan. Ambient rather than a property of
-#: one runner, and that is the whole point: `release.py` built a *fresh*
-#: `Runner(config.root)` inside `plan()` to capture `git rev-parse HEAD`, and a
-#: seal that swapped the command's own runner never saw it. The dry run printed
-#: a real revision while the recording runner observed nothing -- the machine
-#: touched, invisibly, by the one operation whose entire value is not touching
-#: it. A context variable is reachable from every runner however it was built.
-_SEALED: ContextVar[bool] = ContextVar("capsem_gate_plan_sealed", default=False)
-
-
-@contextmanager
-def sealed() -> Iterator[None]:
-    """Refuse every invocation for the duration.
-
-    Wrapped around plan construction. A plan describes work; if building the
-    description performs it, `--dry-run` is not merely incomplete but actively
-    misleading, and the description can go stale before it is executed.
-    """
-    token = _SEALED.set(True)
-    try:
-        yield
-    finally:
-        _SEALED.reset(token)
-
-
-def _refuse_while_sealed(argv: tuple[str, ...]) -> None:
-    if not _SEALED.get():
-        return
-    raise GateError(
-        f"building a plan ran {shlex.join(argv)}. plan() must describe work, "
-        f"not perform it, or --dry-run touches the machine. Express the probe "
-        f"as a read-only step in the plan instead."
-    )
+#: Concurrent steps write to one terminal. Their own logs are private, so this
+#: guards the shared stream and nothing else -- a lock around the sinks would
+#: make two lanes take turns for no reason.
+_TERMINAL = threading.Lock()
 
 #: What `execute` hands back. Named here so the layers above can annotate their
 #: own overrides without importing `subprocess` -- which only the modules that
@@ -87,21 +56,26 @@ class Runner:
 
     # -- execution ---------------------------------------------------------
 
+    # -- where a command's output belongs ----------------------------------
+    #
+    # Two hooks with no-op defaults, so a bare `Runner` behaves exactly as it
+    # did and the funnel can file output against the step that caused it
+    # without any call site passing `log=`.
+
+    def filed(self, command: Command) -> Command:
+        """The command, with somewhere for its output to go. Unchanged here."""
+        return command
+
+    def tail(self, command: Command) -> str:
+        """The part of a failure worth repeating in the error. None here."""
+        del command
+        return ""
+
     def execute(self, command: Command) -> Completed:
         """The single point every invocation passes through."""
         environment = {**os.environ, **command.env}
         if command.log is not None:
-            command.log.parent.mkdir(parents=True, exist_ok=True)
-            with command.log.open("a", encoding="utf-8") as sink:
-                return subprocess.run(
-                    list(command.argv),
-                    cwd=str(command.cwd) if command.cwd else str(self.root),
-                    env=environment,
-                    check=False,
-                    text=True,
-                    stdout=sink,
-                    stderr=subprocess.STDOUT,
-                )
+            return self._teed(command, command.log, environment)
         return subprocess.run(
             list(command.argv),
             cwd=str(command.cwd) if command.cwd else str(self.root),
@@ -111,6 +85,42 @@ class Runner:
             stdout=subprocess.PIPE if command.capture else None,
             stderr=subprocess.PIPE if command.capture else None,
         )
+
+    def _teed(self, command: Command, log: Path, environment: dict[str, str]) -> Completed:
+        """Run it, keeping the output *and* showing it.
+
+        Redirected straight into the file before, so a step's log existed only
+        for the handful of lanes that asked for one and the operator saw
+        nothing while they ran. Both matter: a forty-minute gate that prints
+        nothing is indistinguishable from a hung one, and output that exists
+        only in a terminal is output nobody can attach to a bug report.
+
+        The cost is a pipe, so the child no longer has a TTY -- no progress
+        bars, no colour by default. That is the trade this package is here to
+        make: the evidence is worth more than the animation.
+        """
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with (
+            log.open("a", encoding="utf-8") as sink,
+            subprocess.Popen(
+                list(command.argv),
+                cwd=str(command.cwd) if command.cwd else str(self.root),
+                env=environment,
+                text=True,
+                bufsize=1,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            ) as process,
+        ):
+            assert process.stdout is not None
+            for line in process.stdout:
+                sink.write(line)
+                # Only the terminal is serialized. Each step owns its own sink,
+                # so those need no lock and must not wait behind one.
+                with _TERMINAL:
+                    self._stream.write(line)
+                    self._stream.flush()
+        return subprocess.CompletedProcess(args=list(command.argv), returncode=process.returncode)
 
     def run(
         self,
@@ -135,9 +145,12 @@ class Runner:
         # recording runner in a test overrides `execute` wholesale, and a seal
         # that test doubles slip past is a seal no test can prove.
         _refuse_while_sealed(command.argv)
+        command = self.filed(command)
         completed = self.execute(command)
         if check and completed.returncode != 0:
-            raise GateError(f"command failed ({completed.returncode}): {command}")
+            raise GateError(
+                f"command failed ({completed.returncode}): {command}{self.tail(command)}"
+            )
         return completed.returncode
 
     def capture(

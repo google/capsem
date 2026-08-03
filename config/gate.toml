@@ -932,6 +932,7 @@ source_contract = [
     "tests/test_gate_qualification.py",
     "tests/test_gate_secrets.py",
     "tests/test_gate_source_identity.py",
+    "tests/test_gate_step_output.py",
     "tests/test_gate_runlog.py",
     "tests/test_gate_runlog_evidence.py",
 
@@ -1160,6 +1161,10 @@ keep_bytes = 2_000_000_000
 artifact_digest = "blake3"
 # Actions slower than this are named in the timing summary.
 slow_action_seconds = 30
+# How much of a failed command's own output is repeated in the error. The whole
+# log stays in `steps/`; this is the part that has to be in front of whoever is
+# reading the failure, without putting a gigabyte of compiler output in JSONL.
+failure_tail_lines = 40
 
 # ---------------------------------------------------------------------------
 # Disk the gate is allowed to occupy

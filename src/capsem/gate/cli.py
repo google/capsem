@@ -115,10 +115,26 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def invocation(argv: Sequence[str] | None = None) -> tuple[str, ...]:
+    """What was typed, kept before anything interprets it.
+
+    Not reconstructed from the parsed namespace: reconstruction loses ordering,
+    repeated flags, `--`, and the difference between an omitted option and one
+    passed at its default. The previous attempt looked for a namespace field
+    named `argv` that almost no command declares, so `release-binaries nightly`
+    was recorded as `('release-binaries',)` and a failed release could not say
+    which channel it had tried.
+    """
+    return ("capsem-gate", *(sys.argv[1:] if argv is None else argv))
+
+
 def main(argv: Sequence[str] | None = None) -> int:
+    raw = invocation(argv)
     args = build_parser().parse_args(argv)
     try:
-        GateCommand.registry[args.gate_command](Runner(project_root()), args).execute()
+        GateCommand.registry[args.gate_command](
+            Runner(project_root()), args, invocation=raw
+        ).execute()
     except GateError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

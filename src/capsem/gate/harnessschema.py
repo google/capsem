@@ -115,6 +115,7 @@ class RunLogConfig(Strict):
     keep_bytes: PositiveInt
     artifact_digest: str
     slow_action_seconds: NonNegativeFloat
+    failure_tail_lines: PositiveInt
 
 class DiskConfig(Strict):
     reclaimable: tuple[str, ...]

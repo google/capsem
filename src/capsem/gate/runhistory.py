@@ -150,18 +150,21 @@ def rotate(config: GateConfig, *, keep: Path | None = None) -> list[Path]:
     running = live(config)
     kept = [entry for entry in runs(config) if entry != keep and entry.name not in running]
 
-    def surplus(remaining: list[Path]) -> bool:
-        over_count = len(remaining) > settings.keep_runs
-        over_bytes = sum(tree_size(entry) for entry in remaining) > settings.keep_bytes
-        return over_count or over_bytes
+    # Measured once, then kept as a running total. Re-walking every remaining
+    # tree on every pass made the cost of starting a run quadratic in the runs
+    # times the files they hold, and each re-walk answered the same question:
+    # a directory that was not removed has not changed size.
+    sizes = {entry: tree_size(entry) for entry in kept}
+    total = sum(sizes.values())
 
     # Oldest first, and among equals the ones that finished.
     order = sorted(kept, key=lambda entry: (not finished(entry, settings), entry.name))
     removed: list[Path] = []
     for candidate in order:
-        if not surplus(kept):
+        if len(kept) <= settings.keep_runs and total <= settings.keep_bytes:
             break
         kept.remove(candidate)
+        total -= sizes[candidate]
         # Not `ignore_errors=True`: retention decides capacity from what it
         # reports here, so a run that refused to go and was counted as removed
         # makes every later decision against a number that is wrong.

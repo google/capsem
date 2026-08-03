@@ -72,10 +72,16 @@ def test_every_declared_artifact_is_owned_or_serialized() -> None:
     for path, producers in owners.items():
         if len(producers) < 2:
             continue
-        shared = set.intersection(
-            *({resource.name for resource in step.contends} for step in producers)
+        # Exclusive claims only. This repeated the validator's name-only
+        # intersection, so the test agreed with the bug it was meant to catch:
+        # two producers both holding one name *shared* overlap by design.
+        serializing = set.intersection(
+            *(
+                {resource.name for resource in step.contends if not resource.shared}
+                for step in producers
+            )
         )
-        if not shared:
+        if not serializing:
             unguarded[path] = sorted(step.label for step in producers)
 
     assert not unguarded, f"these paths have racing producers: {unguarded}"
@@ -114,3 +120,59 @@ def test_both_release_lanes_inherit_the_same_producers(command: str) -> None:
     )._describe()
 
     assert set(_producers(plan)) >= EXPECTED
+
+
+# ---------------------------------------------------------------------------
+# What "serialized" has to mean, now that a claim can be shared
+# ---------------------------------------------------------------------------
+
+
+def _two_producers(shared: tuple[bool, bool]):
+    """Two steps writing one path, each claiming `docker_daemon`."""
+    from capsem.gate import config as gate_config
+    from capsem.gate.execution import step
+    from capsem.gate.plan import Plan
+
+    config = gate_config.load(PROJECT_ROOT)
+    artifact = PROJECT_ROOT / "target" / "contested.bin"
+    plan = Plan("synthetic")
+    for index, is_shared in enumerate(shared):
+        claim = (
+            config.shared("docker_daemon") if is_shared else config.exclusive("docker_daemon")
+        )
+        plan.add(step(f"writer-{index}", produces=(artifact,), contends=(claim,)))
+    return plan, config
+
+
+def test_two_shared_claims_do_not_serialize_their_writers() -> None:
+    """A shared claim is a readers-lock: both hold it at once, by design.
+
+    The guard intersected contention *names* and stopped there, so two lanes
+    both holding `docker_daemon` shared passed validation and were free to
+    overwrite one path concurrently. The name was common; the exclusion was
+    never there.
+    """
+    from capsem.gate.errors import GateError
+
+    plan, config = _two_producers((True, True))
+
+    with pytest.raises(GateError, match="shared"):
+        plan.validate(config)
+
+
+def test_one_shared_and_one_exclusive_claim_still_overlap() -> None:
+    """The shared holder is not excluded by the other's exclusivity alone --
+    it is the *writer* that waits, and two writers is the case here."""
+    from capsem.gate.errors import GateError
+
+    plan, config = _two_producers((True, False))
+
+    with pytest.raises(GateError):
+        plan.validate(config)
+
+
+def test_two_exclusive_claims_on_one_name_are_accepted() -> None:
+    """Which is the arrangement the host binaries actually use."""
+    plan, config = _two_producers((False, False))
+
+    plan.validate(config)

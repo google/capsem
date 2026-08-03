@@ -85,6 +85,14 @@ class Journal(Protocol):
         outlives the run -- which is the case the orphan count exists for.
         """
 
+    def step_output(self) -> Path | None:
+        """Where the running step's command output belongs, if a step is running.
+
+        Asked of the journal rather than passed by each call site: `log=` was a
+        parameter roughly three lanes remembered, so every other command's
+        output existed only in a terminal.
+        """
+
     def skipped(self, label: str) -> None:
         """Record a step that never ran because its dependency failed.
 
@@ -138,6 +146,10 @@ class NullJournal:
         duration_ms: float,
     ) -> None:
         """Discarded."""
+
+    def step_output(self) -> Path | None:
+        """Nowhere: a run that is not being recorded has no step to file under."""
+        return None
 
     def skipped(self, label: str) -> None:
         """Discarded."""

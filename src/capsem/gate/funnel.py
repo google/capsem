@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import shlex
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from .context import Journal
@@ -77,12 +78,42 @@ def _refuse_reentry(argv: tuple[str, ...]) -> None:
 
 
 class GuardedRunner(Runner):
-    """Refuses gate re-entry, and records everything it does run."""
+    """Refuses gate re-entry, records everything it runs, and keeps its output."""
 
-    def __init__(self, inner: Runner, *, journal: Journal) -> None:
+    def __init__(self, inner: Runner, *, journal: Journal, tail_lines: int = 0) -> None:
         super().__init__(inner.root)
         self._inner = inner
         self._journal = journal
+        self._tail_lines = tail_lines
+
+    def filed(self, command: Command) -> Command:
+        """Send output to the log of whichever step is running.
+
+        `RunLog.step_log` existed and nothing called it, so a real recorded
+        release run had a `steps/` directory with no files in it. Attached here
+        rather than at the call sites, for the same reason the recording is:
+        there are hundreds of them and one funnel.
+
+        Captured output is exempt -- it is data a caller parses, not narration.
+        """
+        if command.log is not None or command.capture:
+            return command
+        active = self._journal.step_output()
+        return command if active is None else replace(command, log=active)
+
+    def tail(self, command: Command) -> str:
+        """The last few lines the failing command wrote.
+
+        The whole log stays in `steps/`; this is what has to be in front of
+        whoever is reading the failure. It is the tail of the step's log, so a
+        step that ran several commands shows the end of its own story -- which
+        is the context you want anyway.
+        """
+        if command.log is None or self._tail_lines <= 0 or not command.log.is_file():
+            return ""
+        lines = command.log.read_text(encoding="utf-8", errors="replace").splitlines()
+        kept = lines[-self._tail_lines :]
+        return "\n" + "\n".join(kept) if kept else ""
 
     def execute(self, command: Command) -> Completed:
         _refuse_reentry(command.argv)

@@ -24,6 +24,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A run directory now holds what its commands printed. `RunLog.step_log()`
+  existed, the module documentation promised a log per step, and no production
+  code called it -- a real recorded `release-binaries` run in this checkout had
+  a `steps/` directory with zero files in it, so compiler, pytest, Docker and
+  script output survived only as terminal scrollback. Output is teed by the
+  funnel now: filed against whichever step is running, streamed live so a long
+  gate is still distinguishable from a hung one, and a failed command repeats a
+  configured tail of its own output in the error. The cost is deliberate --
+  output goes through a pipe, so children no longer see a TTY.
+
+- A run records the invocation it was given. `RunStart` was reconstructed from
+  the parsed namespace by looking for a field named `argv` that almost no
+  command declares, so `release-binaries nightly` was recorded as
+  `['release-binaries']` and a failed release could not say which channel it
+  had attempted.
+
+- A run's directory is protected from the moment it exists until its summary is
+  written. It was created before the marker that says "being written" was
+  taken, and the marker was dropped before `run.end` and the summary were
+  written -- two windows in which another command allocating its own run could
+  classify this one as crashed and rotate it away, the second of them after a
+  release had already published.
+
+- Duplicate artifact producers are accepted only when they truly serialize. The
+  guard intersected contention *names*, so two steps both claiming one resource
+  in `shared` mode -- a readers-lock, designed to overlap -- passed validation
+  and were free to overwrite one path concurrently. The test repeated the same
+  name-only algorithm, so it agreed with the bug.
+
+- Retention measures each surviving run once instead of re-walking every
+  remaining tree on every removal pass.
+
 - The gate can no longer qualify stale bytecode. CPython validates a `.pyc`
   against the source's mtime and size, so two edits of the same length inside
   one timestamp tick leave bytecode that still looks current -- during a review

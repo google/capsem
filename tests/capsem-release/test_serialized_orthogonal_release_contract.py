@@ -229,6 +229,7 @@ def test_failed_full_test_prevents_every_release_side_effect(
     tmp_path: Path,
     recipe: str,
     arguments: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A failing gate stops everything downstream of it.
 
@@ -239,6 +240,12 @@ def test_failed_full_test_prevents_every_release_side_effect(
     from helpers.gate import RecordingRunner
 
     from capsem.gate.errors import GateError
+    from capsem.gatelaunch import MARKER
+
+    # What a real run has: `capsem-gate` re-execs under a private bytecode
+    # cache and exports this, and the gate's first step refuses without it.
+    # The failure under test is further down, so it has to get past that.
+    monkeypatch.setenv(MARKER, str(tmp_path / "pycache"))
 
     # The gate is composed into the release plan now, so "make the gate fail"
     # means failing a step inside it rather than failing a `just test`

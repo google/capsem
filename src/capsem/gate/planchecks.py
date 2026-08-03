@@ -63,6 +63,10 @@ def require_one_owner_per_artifact(plan: Plan) -> None:
     This is how four helpers came to lock `astro build`, release, and then read
     a `dist/` the next build had already replaced. Caught when the plan is
     built, because by the time it happens the evidence is gone.
+
+    A common *name* is not the test -- a common name held *exclusively* is.
+    Two lanes both claiming `docker_daemon` shared are a readers-lock: they
+    are designed to overlap, and intersecting names alone declared them safe.
     """
     owners: dict[Path, list[Step]] = {}
     for step in plan.steps:
@@ -72,15 +76,27 @@ def require_one_owner_per_artifact(plan: Plan) -> None:
     for artifact, producers in sorted(owners.items()):
         if len(producers) < 2:
             continue
-        shared = set.intersection(
+        labels = ", ".join(sorted(step.label for step in producers))
+        serializing = set.intersection(
+            *(
+                {resource.name for resource in step.contends if not resource.shared}
+                for step in producers
+            )
+        )
+        if serializing:
+            continue
+        overlapping = set.intersection(
             *({resource.name for resource in step.contends} for step in producers)
         )
-        if shared:
-            continue
         raise GateError(
             f"{len(producers)} steps in the {plan.name} plan write {artifact} "
-            f"and share no exclusive: "
-            f"{', '.join(sorted(step.label for step in producers))}. "
-            f"Give them one, or have each produce its own path -- an edge "
-            f"orders a consumer after its producer, not after every other."
+            + (
+                f"and hold {', '.join(sorted(overlapping))} in a way that lets "
+                f"them overlap: {labels}. A shared claim is a readers-lock; "
+                f"every writer of one path has to hold something exclusively."
+                if overlapping
+                else f"and share no exclusive: {labels}. Give them one, or have "
+                f"each produce its own path -- an edge orders a consumer after "
+                f"its producer, not after every other."
+            )
         )

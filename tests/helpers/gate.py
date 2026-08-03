@@ -213,6 +213,10 @@ class RecordingJournal:
     def skipped(self, label: str) -> None:
         self.skips.append(label)
 
+    def step_output(self) -> Path | None:
+        """Nothing: a recording journal keeps events, not bytes."""
+        return None
+
     @contextmanager
     def step(self, step) -> Iterator[None]:
         self.steps.append(step.label)
