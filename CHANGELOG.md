@@ -46,6 +46,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Awaiting both lanes stops being a module's promise and becomes the
   scheduler's rule: two steps with no edge between them both run, and a
   failure skips only what depends on it.
+- The release-channel contract asserts what an *absent* manifest looks like.
+  Every case it covered was the manifest being wrong -- swapped, stale,
+  mutated, digest-drifted -- and none was it being missing, which is the case
+  that actually happens: the site serves its index page for any unknown path,
+  so `GET /assets/nightly/manifest.json` answers `200` with `<!DOCTYPE html>`.
+  The validator already handled it, by fetching bytes and parsing rather than
+  trusting a status code; nothing asserted that, so nothing would have caught
+  it regressing. Mutation-tested: make the parse fall back to a stub and the
+  new case goes red. A manifest that parses but is not an object is covered
+  too, since valid JSON is not a valid manifest.
+
 - `modules_bypassing_primitives` is deleted, not emptied. `assets`, `assetlanes`, `doctor`
   and `versions` went through the filesystem primitives, `doctor`'s entry-point
   probe went through the runner -- it called `subprocess.run` directly, so a

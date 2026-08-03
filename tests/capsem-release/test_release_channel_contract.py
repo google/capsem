@@ -910,3 +910,57 @@ def _semantic_manifest_contract(path: Path) -> dict[str, Any]:
         package.pop("bytes", None)
         package.pop("digest", None)
     return manifest
+
+
+def test_release_channel_contract_rejects_an_html_body_for_a_missing_manifest(
+    tmp_path: Path,
+    release_channel_dist: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A missing manifest answers `200` with the site's SPA fallback.
+
+    Every other case here is about the manifest being *wrong* -- swapped,
+    stale, mutated, digest-drifted. This is the one where it is absent, and it
+    is the one that actually happens: the release site serves its index page
+    for any unknown path, so a check that trusts the status code reports a
+    healthy channel that has never been published to.
+
+    Observed live: `GET /assets/nightly/manifest.json` returns 200 and
+    `<!DOCTYPE html>`, because nothing has ever been published there.
+    """
+    dist = tmp_path / "dist"
+    shutil.copytree(release_channel_dist, dist)
+    manifest_path = dist / "assets" / CHANNEL / "manifest.json"
+    manifest_path.write_text(
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+        "<title>capsem</title></head><body>not a manifest</body></html>\n"
+    )
+
+    with _serve_release_channel(dist) as url:
+        exit_code, _stdout, stderr = _validator_exit_code(url, capsys=capsys)
+
+    assert exit_code == 1, "an HTML body was accepted as a channel manifest"
+    assert "manifest JSON parse failed" in stderr, stderr
+
+
+def test_release_channel_contract_rejects_a_manifest_that_is_not_an_object(
+    tmp_path: Path,
+    release_channel_dist: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Valid JSON is not a valid manifest.
+
+    A body that parses but is a list, a string, or `null` gets past the parse
+    and into every downstream lookup, where it fails as a confusing
+    `AttributeError` somewhere far from the cause.
+    """
+    dist = tmp_path / "dist"
+    shutil.copytree(release_channel_dist, dist)
+    manifest_path = dist / "assets" / CHANNEL / "manifest.json"
+    manifest_path.write_text('["channel", "stable"]\n')
+
+    with _serve_release_channel(dist) as url:
+        exit_code, _stdout, stderr = _validator_exit_code(url, capsys=capsys)
+
+    assert exit_code == 1
+    assert "is not an object" in stderr, stderr
