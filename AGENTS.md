@@ -37,6 +37,19 @@ just release-profile <channel> <profile>
   artifact family owned by its lane. Binary CI pulls every selected profile;
   profile CI pulls the selected channel's package. Pulled inputs are verified
   by immutable identity and digest.
+- Which lane a run is in is **one indivisible value**, not a set of variables
+  each module reads for itself. `capsem.gate.qualification` parses it once, and
+  the only legal shapes are local (nothing set), binary release (input
+  directory and exact package), and profile release (those plus the profile).
+  Every other combination is refused during plan construction. Do not add a
+  module that reads `CAPSEM_RELEASE_*` directly — a half-exported environment
+  used to build a plausible hybrid that proved source-built bytes in one family
+  and manifest-selected bytes in the other.
+- `capsem-gate` re-execs under a per-invocation bytecode cache before importing
+  any of its own package, and the complete gate refuses to start without the
+  marker that says so. A same-size edit inside one timestamp tick otherwise
+  leaves a valid-looking `.pyc`, and the source guard digests the bytes on disk
+  rather than the bytes being executed.
 - Every pairing that becomes public must pass the complete functional and
   glow-up modules. Saving build time never means skipping tests.
 - Binary and profile releases share the workflow-level

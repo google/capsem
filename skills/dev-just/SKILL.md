@@ -15,7 +15,7 @@ allowlist update in the same change.
 
 | Command | Contract |
 |---|---|
-| `just dev [ui\|frontend\|tui]` | Select one development surface. |
+| `just dev [ui\|frontend\|tui]` | Select one development surface. No passthrough arguments: `just` joins a variadic before interpolating it, so no spelling preserves argument boundaries. Use `uv run capsem-gate dev tui …` when you need them. |
 | `just build [debug\|release]` | Build the desktop app with its embedded frontend. |
 | `just build-all [debug\|release]` | Build all host binaries, desktop app, docs, and site. |
 | `just build-docs` | Build documentation and marketing sites. |

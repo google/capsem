@@ -151,7 +151,10 @@ def test_the_install_rails_reserve_headroom_before_and_during_the_proof() -> Non
     # The package rail owns its own headroom the same way, and reserves it
     # twice: once before the builder image and once after, since the image
     # build itself is what consumes the first reservation.
-    package = (ROOT / "src" / "capsem" / "gate" / "crosscompile.py").read_text()
+    # `packagerail` since the rail's runtime operations were split from the
+    # adapter that orders them; the pair has to sit in one file either way,
+    # which is what the count is really asserting.
+    package = (ROOT / "src" / "capsem" / "gate" / "packagerail.py").read_text()
     assert package.count('ensure_space("package")') == 2
 
     # The asset rail reserves its own before the dual-architecture lanes start.

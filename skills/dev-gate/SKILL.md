@@ -39,13 +39,41 @@ A fragment that has more than one leaf returns *all* of them. `static` returned
 only its last, so the phases after it started while a storage release it owned
 was still outstanding.
 
+## The interpreter comes first
+
+`capsem-gate` is `capsem.gatelaunch:main`, not `capsem.gate.cli:main`. It
+re-execs under a per-invocation `pycache_prefix` **before importing any of
+`capsem.gate`**, and exports `PYTHONPYCACHEPREFIX` so pytest and every other
+child inherits it. CPython validates a `.pyc` by mtime and size, so two
+same-length edits inside one timestamp tick leave stale bytecode that still
+looks current — which produced 74 false failures during one review, and which
+would otherwise let a release qualify code that is not in the tree.
+
+The complete gate refuses in `source.record` if `CAPSEM_GATE_PYCACHE` is
+absent. If you drive a full plan from a test, set it.
+
+Nothing in `gatelaunch` may import `capsem.gate` at module scope.
+
+## Release state is one indivisible value
+
+`Qualification.from_environment` is read once in `GateCommand.__init__` and
+passed to `artifacts()`, `functional()` and `glowup()`. Three legal shapes —
+local, binary release, profile release — and every partial combination is
+refused while the plan is being built. **No module below reads
+`CAPSEM_RELEASE_*` itself.** They each did, from a different variable, and a
+dropped `GITHUB_ENV` line built a plan that verified pulled assets against a
+source-rebuilt package.
+
+In a test, hand the command an explicit `qualification=` rather than exporting
+a variable.
+
 ## `execute()` enforces; you inherit it
 
 Never overridden — a contract test fails if a subclass defines it. In order:
 
-1. `plan()` is built with the machine **sealed** (`proc.sealed()`). Ambient, not
-   per-runner: `release.py` escaped an instance-scoped seal by constructing its
-   own `Runner` inside `plan()`.
+1. `plan()` is built with the machine **sealed** (`planseal.sealed()`). Ambient,
+   not per-runner: `release.py` escaped an instance-scoped seal by constructing
+   its own `Runner` inside `plan()`.
 2. `plan.validate(config)` — cycles, declared exclusives, one owner per
    artifact. Before the lock, so a bad plan costs nothing.
 3. `--graph` / `--dry-run` answered. **Before** `reexec()`, or asking becomes
@@ -92,9 +120,41 @@ when the gate failed, because the failure is the report.
 
 ## Everything is data
 
-Every path, filename, architecture and channel comes from `config/gate.toml`.
-`tests/test_gate_has_no_literal_data.py` catches literals — including, recently,
-a glob list I spelled in `initrd.py`.
+Every path, filename, architecture, channel **and environment variable name**
+comes from `config/gate.toml`. `tests/test_gate_has_no_literal_data.py` catches
+literals on both sides — a name read *and* a name used as a key in an
+environment you hand to a process. Standard conventions (`HOME`, `TMPDIR`,
+`PKG_CONFIG_PATH`, `HOST_UID`) are allowlisted; Capsem rails are not.
+
+Reach for the builders rather than assembling dictionaries:
+`config.environment.capsem(home=…, run_dir=…)`,
+`config.environment.content(assets=…, profiles=…)`, and the typed families
+under `[environment.package]`, `[environment.release_site]`,
+`[environment.install_proof]`.
+
+## Secrets are declared on the invocation
+
+A `Command` that names credentials in `secret_env` cannot render them — not
+through `str()`, not in the journal, not in the exception a failure raises. The
+name survives, the value becomes `<redacted>`, and `evidence_argv` scrubs the
+value out of argv too. Docker gets `-e NAME` and takes the value from its own
+environment, because argv is readable through `ps` and no log filter covers
+that.
+
+## Every `Call` says why it is one
+
+`Call` renders as prose, so a plan built from them says less. Pass
+`why=Why.SECRETS` (one phase earns this: the package build), `Why.DYNAMIC`
+(argv known only at run time) or `Why.COMPUTATION` — the last is a to-do,
+not a design, and usually wants to become a named action.
+
+## Stopping a run
+
+`cancellation.check("what you are doing")` at points a partial unit can be
+abandoned from — between files, between chunks, never mid-write. Ctrl-C sets
+the switch, cancels pending steps, wakes lock waiters, and waits a bounded ten
+seconds before naming whatever refused to stop. Pool workers do **not** inherit
+the submitting context: `planrunner` hands the switch to `_guarded` explicitly.
 
 ## Asking without running
 
@@ -126,6 +186,12 @@ repoint `latest` at the question.
 | `test_gate_hardening.py` | mutation is exclusive; plans are pure; verifications ask the real question |
 | `test_gate_runlog_evidence.py` | attribution under concurrency; run status; non-recording inspection |
 | `test_gate_lifecycle.py` | acquire order, reverse release, preserve first, primary error survives cleanup |
+| `test_gate_qualification.py` | the three legal release states; every partial one refused |
+| `test_gate_secrets.py` | no signing material in argv, journal, summaries or errors |
+| `test_gate_source_identity.py` | the launcher; stale bytecode cannot be qualified |
+| `test_gate_step_output.py` | each step keeps what its commands printed |
+| `test_gate_cancellation.py` | Ctrl-C stops pending, running and waiting work |
+| `test_just_argument_boundary.py` | every recipe parameter crosses one exact argv boundary |
 
 ## Testing a command
 
