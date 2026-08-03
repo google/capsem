@@ -85,6 +85,15 @@ class Journal(Protocol):
         outlives the run -- which is the case the orphan count exists for.
         """
 
+    def records(self) -> bool:
+        """Whether there is a run behind this journal.
+
+        Some work only means anything as part of one -- recording the source
+        state a gate is qualifying, most obviously. Asking lets those actions
+        stay out of the way when a plan is being *observed* rather than run,
+        which is what every contract that reads back issued argv is doing.
+        """
+
     def step_output(self) -> Path | None:
         """Where the running step's command output belongs, if a step is running.
 
@@ -156,6 +165,10 @@ class NullJournal:
         duration_ms: float,
     ) -> None:
         """Discarded."""
+
+    def records(self) -> bool:
+        """No: this is what a plan being looked at rather than run gets."""
+        return False
 
     def step_output(self) -> Path | None:
         """Nowhere: a run that is not being recorded has no step to file under."""

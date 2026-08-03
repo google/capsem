@@ -219,6 +219,9 @@ class RecordingJournal:
     ) -> None:
         self.waits.append((label, dependency_ms, resource_ms, execution_ms))
 
+    def records(self) -> bool:
+        return True
+
     def step_output(self) -> Path | None:
         """Nothing: a recording journal keeps events, not bytes."""
         return None

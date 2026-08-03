@@ -66,6 +66,13 @@ class RecordSourceState(Action, name="record-source-state"):
         return "record the HEAD and source digest under test"
 
     def perform(self, context: Context) -> None:
+        if not context.journal.records():
+            # Nothing to identify. A plan being *observed* -- which is what
+            # every contract reading back issued argv does -- would otherwise
+            # overwrite the running gate's own record with the recorder's
+            # empty output, and `source.verify` would report a HEAD change on
+            # a tree nobody touched.
+            return
         state = _measure(context)
         write_text(_record_file(context), json.dumps(state))
         context.journal.note(f"testing source state {state['digest']} at {state['head']}")

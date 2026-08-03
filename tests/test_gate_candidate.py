@@ -24,6 +24,7 @@ places now owns each one.
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import pytest
@@ -43,6 +44,7 @@ from capsem.gate.sourcestate import RecordSourceState, RequireSourceUnchanged
 # against a real executable rather than a recording runner.
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 
 #: `resources()` takes the runner it should build with; these tests ask
 #: *what* is held, so any runner will do.
@@ -94,7 +96,15 @@ def _command(root: Path, **kwargs) -> CandidateCommand:
 
 
 def _context(root: Path, **kwargs) -> Context:
-    return Context(Running(root, **kwargs), gate_config.for_root(root))
+    """A context for a gate that is *running*.
+
+    The journal matters: recording the source state is something a run does,
+    so a context with nothing recording behind it declines to (see
+    `test_recording_the_source_state_needs_a_run_to_record_into`).
+    """
+    from helpers.gate import RecordingJournal
+
+    return Context(Running(root, **kwargs), gate_config.for_root(root), journal=RecordingJournal())
 
 
 def _plan():
@@ -177,9 +187,7 @@ def _accounting(root: Path, **kwargs):
 def test_a_leaked_process_fails_an_otherwise_passing_run(tmp_path: Path) -> None:
     """The whole point: a run that did everything right and left a service
     behind is not a run that passed."""
-    accounting, _ = _accounting(
-        _checkout(tmp_path), failures=["orphan-processes.py check"]
-    )
+    accounting, _ = _accounting(_checkout(tmp_path), failures=["orphan-processes.py check"])
     accounting.acquire()
 
     with pytest.raises(GateError, match="outlived the gate"):
@@ -206,9 +214,7 @@ def test_a_failing_run_keeps_its_own_error_rather_than_the_cleanups(
 ) -> None:
     """Otherwise the operator reads about a leaked process and never sees the
     failure that caused it."""
-    accounting, _ = _accounting(
-        _checkout(tmp_path), failures=["orphan-processes.py check"]
-    )
+    accounting, _ = _accounting(_checkout(tmp_path), failures=["orphan-processes.py check"])
 
     with pytest.raises(GateError) as failure, held(accounting):
         raise GateError("the real failure")
@@ -315,3 +321,76 @@ def test_a_macos_host_without_caffeinate_is_told_why_it_matters(
 
     with pytest.raises(GateError, match="unattended"):
         keep_awake(Running(_checkout(tmp_path)))
+
+
+# ---------------------------------------------------------------------------
+# Observing a plan is not running one
+# ---------------------------------------------------------------------------
+
+
+def test_recording_the_source_state_needs_a_run_to_record_into(tmp_path: Path) -> None:
+    """`tests/helpers/gate.py` runs the real candidate plan against a
+    recording runner to read back the argv it would issue. That stubs
+    subprocesses -- it does not stub filesystem actions, so this step wrote
+    the gate's own `target/gate-source-state.json` with the recorder's empty
+    output, and the gate's `source.verify` then reported
+
+        source HEAD changed while the gate was running:  -> <head>
+
+    for a tree nobody had touched. It only reached that far once the last
+    step in the plan started passing.
+
+    A run's identity belongs to a run. With no journal recording one there is
+    nothing to identify, and writing anyway is how an observer corrupts the
+    thing it is observing.
+    """
+    from capsem.gate.context import Context, NullJournal
+
+    root = _checkout(tmp_path)
+    recorded = gate_config.for_root(root).path(
+        gate_config.for_root(root).candidate.source_state_file
+    )
+
+    RecordSourceState().perform(Context(Running(root), gate_config.for_root(root)))
+    assert not recorded.exists(), "an unrecorded run wrote a source state anyway"
+
+    # And with a real run behind it, it records as before.
+    from capsem.gate.runlog import RunLog
+
+    with RunLog.open(gate_config.for_root(root), "candidate") as log:
+        RecordSourceState().perform(Context(Running(root), gate_config.for_root(root), journal=log))
+    assert json.loads(recorded.read_text(encoding="utf-8"))["head"] == HEAD
+    assert isinstance(NullJournal(), NullJournal)
+
+
+def test_interrogating_the_gate_plan_leaves_the_checkout_alone() -> None:
+    """The helper every contract uses, against the real checkout.
+
+    Guarded here rather than in the helper, because the helper is not the only
+    thing that will ever run a plan to look at it.
+    """
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_issued
+
+    config = gate_config.load(PROJECT_ROOT)
+    recorded = config.path(config.candidate.source_state_file)
+    saved = recorded.read_bytes() if recorded.exists() else None
+
+    # A baseline of this test's own making. Reading whatever happens to be on
+    # disk would compare the observer's output against the observer's output
+    # the moment a previous run left one there -- and pass.
+    sentinel = json.dumps({"head": "sentinel", "digest": "sentinel"}).encode()
+    recorded.parent.mkdir(parents=True, exist_ok=True)
+    recorded.write_bytes(sentinel)
+    try:
+        gate_issued("candidate")
+        assert recorded.read_bytes() == sentinel, (
+            "reading the plan rewrote the gate's own source state"
+        )
+    finally:
+        if saved is None:
+            recorded.unlink(missing_ok=True)
+        else:
+            recorded.write_bytes(saved)

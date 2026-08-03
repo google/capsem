@@ -67,6 +67,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A gate could fail its own last step because a test suite it was running had
+  overwritten the record of what it was qualifying. `tests/helpers/gate.py`
+  reads back the argv a command would issue by *running* its plan against a
+  recording runner, which stubs subprocesses and nothing else -- so the step
+  that writes down the HEAD and source digest under test wrote them, in the
+  real checkout, with the recorder's empty output. Forty minutes later
+  `source.verify` compared that against reality and reported
+
+      source HEAD changed while the gate was running:  -> <head>
+
+  for a tree nobody had touched. A run's identity now belongs to a run: the
+  journal says whether it is recording one, and an action with no run behind
+  it does nothing rather than writing anyway.
+
 - The recipe suite no longer launches a recipe whose graph takes the machine
   lock from inside a run that is holding it. `just doctor` depends on
   `_pnpm-install`, which dispatches to an exclusive command, so the child

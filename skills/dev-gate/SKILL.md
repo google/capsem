@@ -192,11 +192,21 @@ repoint `latest` at the question.
 | `test_gate_step_output.py` | each step keeps what its commands printed |
 | `test_gate_cancellation.py` | Ctrl-C stops pending, running and waiting work |
 | `test_just_argument_boundary.py` | every recipe parameter crosses one exact argv boundary |
+| `test_gate_candidate.py` | the source state belongs to a run; observing a plan leaves the checkout alone |
 
 ## Testing a command
 
 `tests/helpers/gate.py` is the one place that knows how to interrogate the
 gate. Assert **edges**, not positions.
+
+`gate_issued()` reads back real argv by *running* the plan against a recording
+runner. That stubs subprocesses and nothing else -- an action that writes a
+file writes it, in the real checkout, while a gate may be running. An action
+whose meaning is tied to a run must therefore ask `context.journal.records()`
+and do nothing when the answer is no. `RecordSourceState` learned this the
+expensive way: it overwrote the running gate's own state file with the
+recorder's empty output, and `source.verify` -- the last step of a
+forty-minute run -- reported a HEAD change on a tree nobody had touched.
 
 | | |
 |---|---|
