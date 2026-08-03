@@ -16,6 +16,7 @@ foreign UID reproduces it here, and works on macOS too because git compares
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from . import host
 from .actions import Action, Run
@@ -24,6 +25,8 @@ from .config import GateConfig
 from .context import Context
 from .errors import GateError
 from .execution import Step, step
+from .fileactions import MakeDir
+from .gitmetadata import docker_git_metadata_mount
 from .plan import Plan
 
 
@@ -84,6 +87,7 @@ class _ForeignUidProbe(Action, name="foreign-uid-probe"):
                 "--rm",
                 "-v",
                 f"{context.root}:{settings.mount}",
+                *docker_git_metadata_mount(context.runner),
                 "-w",
                 settings.mount,
                 "--user",
@@ -172,36 +176,35 @@ class _LinuxRust:
             after=(built,),
         )
 
+        mountpoints = plan.add(
+            step(
+                "linux-rust-mountpoints",
+                MakeDir(config.path(settings.nextest_mount)),
+                MakeDir(output / settings.nextest_dir),
+                *(
+                    action
+                    for volume in settings.writable_source_mounts
+                    for action in (
+                        MakeDir(config.path(volume.source)),
+                        MakeDir(config.path(volume.target)),
+                    )
+                ),
+            ),
+            after=(owned,),
+        )
+
         suite = plan.add(
             step(
                 "linux-rust",
-                Run(
-                    [
-                        "docker",
-                        "run",
-                        "--rm",
-                        "--user",
-                        f"{uid}:{gid}",
-                        *[f for k, v in settings.environment.items() for f in ("-e", f"{k}={v}")],
-                        "--tmpfs",
-                        settings.tmpfs,
-                        "-v",
-                        f"{config.root}:{settings.mount}:ro",
-                        "-v",
-                        f"{output}:{settings.container_output}",
-                        "-v",
-                        f"{output / settings.nextest_dir}:{settings.mount}/{settings.nextest_mount}",
-                        *_volumes(config),
-                        "-w",
-                        settings.mount,
-                        settings.tag,
-                        "bash",
-                        f"{settings.mount}/{settings.script}",
-                    ]
+                _LinuxRustSuite(
+                    output,
+                    source=config.root,
+                    mount=settings.mount,
+                    script=settings.script,
                 ),
                 contends=(docker,),
             ),
-            after=(owned,),
+            after=(mountpoints,),
         )
 
         return plan.add(
@@ -226,6 +229,60 @@ class _LinuxRust:
             after=(suite,),
         )
 
+
+class _LinuxRustSuite(Action, name="linux-rust-suite"):
+    """Run the Linux parity script with runtime-resolved worktree metadata."""
+
+    def __init__(self, output: Path, *, source: Path, mount: str, script: str) -> None:
+        self._output = output
+        self._source = source
+        self._mount = mount
+        self._script = script
+
+    def render(self) -> str:
+        return (
+            f"docker run --user <host> -v {self._source}:{self._mount}:ro "
+            f"... bash {self._mount}/{self._script}"
+        )
+
+    def perform(self, context: Context) -> None:
+        settings = context.config.hostimage
+        output = self._output
+        uid, gid = host.user()
+        context.runner.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--user",
+                f"{uid}:{gid}",
+                *[f for k, v in settings.environment.items() for f in ("-e", f"{k}={v}")],
+                "--tmpfs",
+                settings.tmpfs,
+                "-v",
+                f"{context.root}:{settings.mount}:ro",
+                *docker_git_metadata_mount(context.runner),
+                "-v",
+                f"{output}:{settings.container_output}",
+                "-v",
+                f"{output / settings.nextest_dir}:{settings.mount}/{settings.nextest_mount}",
+                *[
+                    flag
+                    for volume in settings.writable_source_mounts
+                    for flag in (
+                        "-v",
+                        f"{context.config.path(volume.source)}:"
+                        f"{settings.mount}/{volume.target}",
+                    )
+                ],
+                *_volumes(context.config),
+                "-w",
+                settings.mount,
+                settings.tag,
+                "bash",
+                f"{settings.mount}/{settings.script}",
+            ]
+        )
 
 class LinuxRustCommand(
     GateCommand,

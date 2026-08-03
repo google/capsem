@@ -845,6 +845,12 @@ tmpfs = "/tmp:rw,exec,mode=1777"
 # nextest writes its own state under the target dir; bound out so the results
 # survive the container.
 nextest_mount = "target/nextest"
+# Tauri's build script regenerates ACL schemas inside the application crate.
+# Keep the checkout read-only and give only that generated directory a
+# writable backing store under the lane's owned output tree.
+writable_source_mounts = [
+    { source = "target/linux-rust-coverage/tauri-gen", target = "crates/capsem-app/gen" },
+]
 cached_volumes = [
     { source = "capsem-linux-rust-cargo-registry", target = "/usr/local/cargo/registry" },
     { source = "capsem-linux-rust-cargo-git", target = "/usr/local/cargo/git" },

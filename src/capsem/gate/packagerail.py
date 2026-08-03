@@ -29,6 +29,7 @@ from . import debproof, host
 from .config import Arch
 from .errors import GateError
 from .fileactions import copy_tree, make_dir, remove
+from .gitmetadata import docker_git_metadata_mount
 from .packageinputs import package_environment, pinned_toolchain, resolve_channel
 from .packagesigning import signing_key
 from .proc import Runner
@@ -141,6 +142,7 @@ class PackageRail:
             argv += ["-e", name]
         mount = self._config.install.mount
         argv += ["-v", f"{self.root}:{mount}"]
+        argv += docker_git_metadata_mount(self._runner)
         for volume in self._package.volumes:
             argv += ["-v", f"{volume.source}:{volume.target}"]
         argv += [
