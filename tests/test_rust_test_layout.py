@@ -23,6 +23,8 @@ TEST_MOD_DECL = re.compile(r"^\s*(?:pub\s+)?mod\s+tests\s*;", re.MULTILINE)
 # `//` comments only; a `mod tests {` inside a block comment or string literal has
 # never appeared here, and the guards below fail loudly if one ever does.
 LINE_COMMENT = re.compile(r"//.*$", re.MULTILINE)
+IGNORED_TEST = re.compile(r"#\s*\[\s*ignore(?:\s*=|\s*\])")
+IGNORED_DOCTEST = re.compile(r"```ignore(?:\s|$)")
 
 
 def _rust_sources() -> list[Path]:
@@ -118,4 +120,28 @@ def test_every_crate_ships_unit_tests() -> None:
     assert untested == [], (
         "these crates carry no Rust tests at all; add unit tests in a sibling "
         "tests.rs or an integration test under tests/: " + ", ".join(untested)
+    )
+
+
+def test_rust_correctness_evidence_is_never_silently_ignored() -> None:
+    """Correctness examples and tests must run on their owning test rail."""
+    ignored_tests: list[str] = []
+    ignored_doctests: list[str] = []
+
+    for path in _rust_sources() + sorted(CRATES.glob("*/tests/**/*.rs")):
+        source = path.read_text(encoding="utf-8")
+        if IGNORED_TEST.search(source):
+            ignored_tests.append(_rel(path))
+        if IGNORED_DOCTEST.search(source):
+            ignored_doctests.append(_rel(path))
+
+    assert ignored_tests == [], (
+        "#[ignore] silently removes Rust evidence from the default test run; "
+        "make correctness tests deterministic and move performance scenarios "
+        "to the benchmark rail: " + ", ".join(ignored_tests)
+    )
+    assert ignored_doctests == [], (
+        "```ignore does not even compile the example; use a runnable doctest or "
+        "```no_run when execution requires process context: "
+        + ", ".join(ignored_doctests)
     )

@@ -20,6 +20,18 @@ fn selected_scenarios_are_strict() {
 }
 
 #[test]
+fn deterministic_protocol_rail_owns_ten_megabyte_throughput() {
+    let scenario = SCENARIOS
+        .iter()
+        .find(|scenario| scenario.name == "http_10mb")
+        .expect("the protocol benchmark must retain its 10 MB throughput scenario");
+
+    assert_eq!(scenario.path, "/bytes/10mb");
+    assert_eq!(scenario.expected_bytes, Some(10 * 1024 * 1024));
+    assert_eq!(scenario.body_kind, "10mb");
+}
+
+#[test]
 fn latency_percentiles_are_interpolated() {
     let summary = latency_summary(vec![1.0, 2.0, 3.0, 4.0, 100.0]);
     assert_eq!(summary.min, 1.0);

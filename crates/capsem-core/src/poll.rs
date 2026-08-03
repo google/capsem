@@ -14,13 +14,20 @@ pub type PollOpts = capsem_proto::poll::RetryOpts;
 ///
 /// Returns `Ok(T)` on success, `Err(TimedOut)` on timeout.
 ///
-/// ```ignore
+/// ```no_run
+/// use capsem_core::poll::{poll_until, PollOpts};
+/// use std::{path::Path, time::Duration};
+///
+/// # async fn example() {
+/// let socket_path = Path::new("/run/capsem/service.sock");
 /// let result = poll_until(
 ///     PollOpts::new("vm-ready", Duration::from_secs(30)),
 ///     || async {
 ///         if socket_path.exists() { Some(()) } else { None }
 ///     },
 /// ).await;
+/// # let _ = result;
+/// # }
 /// ```
 pub async fn poll_until<T, F, Fut>(
     opts: PollOpts,

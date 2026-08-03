@@ -17,9 +17,10 @@
 /// the fully-formed expression and the macro just inspects its `Result`.
 ///
 /// Usage:
-/// ```ignore
-/// try_send!("terminal_rekey", terminal_rekey_tx.send(conn).await);
-/// try_send!("ipc_state_change", ipc_tx.send(ProcessToService::StateChanged { .. }));
+/// ```
+/// let (tx, rx) = std::sync::mpsc::channel();
+/// capsem_core::try_send!("state_change", tx.send(7));
+/// assert_eq!(rx.recv().unwrap(), 7);
 /// ```
 ///
 /// Cleanup paths where a closed receiver is the documented design (e.g. a

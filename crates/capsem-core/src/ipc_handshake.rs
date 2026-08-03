@@ -70,9 +70,18 @@ pub fn negotiate_responder(
     peer_id: impl Into<String>,
     traceparent: impl Into<String>,
 ) -> Result<Hello, HandshakeError> {
+    negotiate_responder_with_timeout(stream, peer_id, traceparent, HELLO_TIMEOUT)
+}
+
+fn negotiate_responder_with_timeout(
+    stream: &mut UnixStream,
+    peer_id: impl Into<String>,
+    traceparent: impl Into<String>,
+    timeout: Duration,
+) -> Result<Hello, HandshakeError> {
     let prev_nb = ensure_blocking(stream);
     let result = (|| {
-        let peer = read_hello(stream, HELLO_TIMEOUT)?;
+        let peer = read_hello(stream, timeout)?;
         verify(&peer)?;
         write_hello(stream, &Hello::ours(peer_id, traceparent))?;
         Ok(peer)
