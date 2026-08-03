@@ -67,6 +67,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The complete local gate can finish on macOS. Its last step required the
+  native Tart glow-up report -- correctly, since a macOS host cannot boot a
+  guest inside the Linux install container, so that proof stands in for it --
+  and looked for it only in `CAPSEM_MACOS_NATIVE_GLOWUP_REPORT`, which nothing
+  set. The report's path has been declared in `[modules]` the whole time and
+  the step immediately before writes it exactly there, so every complete local
+  gate failed at its very last step with "requires the native glow-up report
+  from this module" while the report sat where configuration said it would.
+  The variable still wins, because a release lane produces the report in
+  another job; absent both, the refusal stands, which is the case it was
+  written for.
+
 - A VM on a long run directory boots again. `capsem-process` derived the run
   directory for its terminal socket by walking two levels up from its own IPC
   socket -- correct while that socket is `{run}/instances/{id}.sock`, and wrong

@@ -16,6 +16,7 @@ broke when those public artifacts were retired. See `releasegraph`.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from . import config as gate_config
@@ -234,12 +235,32 @@ class InstallCommand(
         return plan
 
 
+def macos_report(config, environ: Mapping[str, str] | None = None) -> str | None:
+    """Where the native macOS glow-up proof left its report, if it ran.
+
+    Two ways in, and it only ever had one. A release lane produces the report
+    in another job and hands it over by variable; a local gate produces it in
+    the `macos-package` step immediately before this one, which writes it at
+    the configured path and exports nothing.
+
+    So the variable was read, nothing set it, and every complete local gate on
+    macOS failed at its very last step with "requires the native glow-up report
+    from this module" -- while the report sat exactly where `[modules]` said it
+    would. Returning `None` when neither exists keeps the refusal for the case
+    it was written for: the proof genuinely did not run.
+    """
+    source = os.environ if environ is None else environ
+    handed = (source.get(config.modules.macos_report_variable) or "").strip()
+    if handed:
+        return handed
+    written = config.path(config.modules.macos_glowup_report)
+    return str(written) if written.is_file() else None
+
+
 def _install(context) -> None:
     config = context.config
     InstallGate(
         context.runner,
         profile_inputs=os.environ.get(config.install.profile_inputs_variable),
-        # Already declared; this spelled it a second time, so the two could
-        # drift and the report would simply stop arriving.
-        macos_glowup_report=os.environ.get(config.modules.macos_report_variable),
+        macos_glowup_report=macos_report(config),
     ).run()

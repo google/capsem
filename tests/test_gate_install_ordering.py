@@ -443,3 +443,55 @@ def test_an_install_that_recorded_no_source_is_refused(
 
     with pytest.raises(GateError, match="recorded no manifest source"):
         InstallGate(runner, macos_glowup_report=str(root / "report.json")).run()
+
+
+# ---------------------------------------------------------------------------
+# The native macOS proof, handed over
+# ---------------------------------------------------------------------------
+
+
+def test_the_macos_report_is_found_where_the_tart_step_writes_it(tmp_path) -> None:
+    """A macOS host cannot boot a guest inside the Linux install container, so
+    the native Tart proof stands in for it -- and the install rail refuses
+    without that report.
+
+    It read `CAPSEM_MACOS_NATIVE_GLOWUP_REPORT` and nothing set it. The path
+    was declared in `[modules]` the whole time and the Tart step wrote exactly
+    there, so a complete local gate always failed at the last step with
+    "requires the native glow-up report from this module".
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate.install import macos_report
+
+    config = gate_config.load(PROJECT_ROOT)
+    written = config.path(config.modules.macos_glowup_report)
+
+    assert macos_report(config, environ={}) in (None, str(written))
+
+    # With the report on disk and no variable, the rail finds it.
+    fake = tmp_path / config.modules.macos_glowup_report
+    fake.parent.mkdir(parents=True)
+    fake.write_text("{}", encoding="utf-8")
+    local = gate_config.load(PROJECT_ROOT).model_copy(update={"root": tmp_path})
+    assert macos_report(local, environ={}) == str(fake)
+
+
+def test_a_release_lane_may_hand_the_report_over_by_variable(tmp_path) -> None:
+    """CI produces it in another job, so the variable still wins."""
+    from capsem.gate import config as gate_config
+    from capsem.gate.install import macos_report
+
+    config = gate_config.load(PROJECT_ROOT)
+    handed = str(tmp_path / "elsewhere.json")
+
+    assert macos_report(config, environ={config.modules.macos_report_variable: handed}) == handed
+
+
+def test_neither_present_still_refuses(tmp_path) -> None:
+    """The refusal is right when the proof genuinely did not run."""
+    from capsem.gate import config as gate_config
+    from capsem.gate.install import macos_report
+
+    config = gate_config.load(PROJECT_ROOT).model_copy(update={"root": tmp_path})
+
+    assert macos_report(config, environ={}) is None
