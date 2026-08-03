@@ -119,15 +119,34 @@ def test_a_ready_gate_says_so(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_every_declared_console_script_is_runnable() -> None:
-    """`uv sync` succeeding is not the same as the entry points working."""
+    """`uv sync` succeeding is not the same as the entry points working.
+
+    Run rather than read. The name it resolves to moved once already -- to
+    `capsem.gatelaunch:main`, which re-execs under an isolated bytecode cache
+    before importing the package -- and a string comparison would have been
+    green for a launcher that never reached the CLI at the other end.
+    """
+    import subprocess
     import tomllib
 
     declared = tomllib.loads(
         (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     )["project"]["scripts"]
-
     assert "capsem-gate" in declared
-    assert declared["capsem-gate"] == "capsem.gate.cli:main"
+
+    result = subprocess.run(
+        ["uv", "run", "capsem-gate", "--help"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "capsem-gate" in result.stdout
+    # It got past the launcher: the subcommands only exist once `capsem.gate`
+    # has been imported, which happens on the far side of the re-exec.
+    assert "candidate" in result.stdout
 
 
 def test_the_justfile_dispatches_to_the_gate_rather_than_reimplementing_it() -> None:

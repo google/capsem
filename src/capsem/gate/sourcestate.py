@@ -19,6 +19,7 @@ was assembled rather than what the run is testing.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from .actions import Action
@@ -31,6 +32,18 @@ def _record_file(context: Context) -> Path:
     return context.path(context.config.candidate.source_state_file)
 
 
+def gate_source() -> Path:
+    """Where the gate's own code is being imported from.
+
+    `HEAD` and the digest describe a checkout. Neither says the code building
+    this plan came from that checkout, and an installed or vendored copy would
+    let the gate measure one tree while qualifying another.
+    """
+    from . import config as _module  # any module of the package answers this
+
+    return Path(_module.__file__).resolve().parent
+
+
 def _measure(context: Context) -> dict[str, str]:
     return {
         "head": context.runner.capture(["git", "rev-parse", "HEAD"]),
@@ -40,6 +53,7 @@ def _measure(context: Context) -> dict[str, str]:
                 str(context.path(context.config.candidate.source_digest_script)),
             ]
         ),
+        "gate_source": str(gate_source()),
     }
 
 
@@ -53,6 +67,40 @@ class RecordSourceState(Action, name="record-source-state"):
         state = _measure(context)
         write_text(_record_file(context), json.dumps(state))
         context.journal.note(f"testing source state {state['digest']} at {state['head']}")
+
+
+class RequireIsolatedBytecode(Action, name="require-isolated-bytecode"):
+    """The recorded digest is of the bytes on disk. Prove those are the ones
+    the interpreter is running.
+
+    CPython validates a `.pyc` against the source's mtime and size, so two
+    edits of the same length inside one timestamp tick leave bytecode that
+    still looks current. `capsem.gatelaunch` closes that by re-execing under a
+    per-invocation cache prefix before importing any of this package -- and
+    exports a marker saying so, which is the only thing a running gate can
+    check about how it was started.
+
+    A step rather than a rule inside `RecordSourceState`, because they are two
+    claims: one is what the tree contains, the other is what this process is
+    executing.
+    """
+
+    def render(self) -> str:
+        return "check this interpreter cannot be running stale bytecode"
+
+    def perform(self, context: Context) -> None:
+        from capsem.gatelaunch import MARKER, PYCACHE
+
+        prefix = os.environ.get(MARKER)
+        if not prefix:
+            raise GateError(
+                "this gate was not started through capsem-gate, so its bytecode "
+                "cache is the ambient one. A same-size edit within one timestamp "
+                f"tick leaves a stale .pyc that still validates, and {MARKER} is "
+                "how a run proves it re-execed under a private cache first. Run "
+                "`uv run capsem-gate ...`, or export it with a fresh directory."
+            )
+        context.journal.note(f"{PYCACHE}={prefix}")
 
 
 class RequireSourceUnchanged(Action, name="require-source-unchanged"):

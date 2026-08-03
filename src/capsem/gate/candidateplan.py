@@ -25,7 +25,11 @@ from .config import GateConfig
 from .execution import Step, step
 from .plan import Plan
 from .qualification import Qualification
-from .sourcestate import RecordSourceState, RequireSourceUnchanged
+from .sourcestate import (
+    RecordSourceState,
+    RequireIsolatedBytecode,
+    RequireSourceUnchanged,
+)
 from .storage import Storage
 
 
@@ -46,6 +50,9 @@ def compose(
     recorded = plan.add(
         step(
             "source.record",
+            # Two claims, in the order they matter: this process is not running
+            # last version's bytecode, and here is the tree it is running.
+            RequireIsolatedBytecode(),
             RecordSourceState(),
             # What the release guard reads back to prove the tested tree is the
             # pushed tree.

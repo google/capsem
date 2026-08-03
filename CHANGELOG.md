@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The gate can no longer qualify stale bytecode. CPython validates a `.pyc`
+  against the source's mtime and size, so two edits of the same length inside
+  one timestamp tick leave bytecode that still looks current -- during a review
+  of the gate that produced 74 identical false failures naming something the
+  source no longer contained, and an isolated cache made them vanish with no
+  source change. That is not just bad local feedback: `just test` and both
+  release commands start with `uv run capsem-gate`, and the source guard
+  records a digest of the bytes on disk rather than the bytes the interpreter
+  is running. `capsem-gate` now re-execs under a per-invocation
+  `pycache_prefix` before importing any of the gate, exports it so pytest and
+  every other child inherit the same isolation, and the complete gate refuses
+  in its first step if it was not started that way.
+
 - Every `just` recipe argument now crosses exactly one argv boundary. `just`
   interpolates `{{value}}` into the recipe body as shell *source*, so
   `just build 'debug; rm -rf ~'` ran the payload before any Python saw it. The
