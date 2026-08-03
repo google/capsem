@@ -109,6 +109,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   profile release -- read once per run and passed down, and every partial
   combination is refused during plan construction with both sides named.
 
+- Internal environment protocols have one owner. `[environment]` named
+  `CAPSEM_HOME` and `CAPSEM_RUN_DIR`, and seven modules spelled those and
+  thirteen others again as dictionary keys -- invisible to the guard that
+  watches for literal environment *reads*, and exactly as hard to rename. The
+  guard inspects writes now too, with an explicit allowlist for standard
+  process and tool conventions: `HOME` and `TMPDIR` mean what they mean
+  everywhere, and moving them into TOML would be dumping strings rather than
+  giving a protocol an owner.
+
+- Every remaining `Call` says why it is opaque to a dry run. Twenty of them
+  shared one rationale -- "a package build carries signing material" -- which
+  is true of exactly one, and a reason that covers everything is not a reason.
+  `Why.SECRETS`, `Why.DYNAMIC` and `Why.COMPUTATION` are required now, a
+  contract holds the first to the single phase that earns it, and the third is
+  named to look weak because work that only decides or reports can usually be
+  a declared action with its own render and its own timing.
+
+- Hashing a declared artifact is bracketed like every other action, so the time
+  it takes appears in the timing report instead of vanishing into its step.
+
 ### Removed
 
 - Ten `justfile` values nothing read (`binary`, `cli_binary`, `service_binary`,

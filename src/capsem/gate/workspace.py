@@ -62,12 +62,8 @@ class Workspace(Resource, name="workspace"):
         return {
             names.home: str(self.home),
             names.run_dir: str(self.run_dir),
-            names.benchmark_root: str(
-                self._config.path(self._settings.benchmark_root)
-            ),
-            names.coverage_file: str(
-                self._config.path(self._settings.coverage_file)
-            ),
+            names.benchmark_root: str(self._config.path(self._settings.benchmark_root)),
+            names.coverage_file: str(self._config.path(self._settings.coverage_file)),
         }
 
     # -- Resource ----------------------------------------------------------
@@ -79,9 +75,7 @@ class Workspace(Resource, name="workspace"):
             _remove_tree(self.home, self._config.root)
         for relative in self._settings.seeded_dirs:
             (self.home / relative).mkdir(parents=True, exist_ok=True)
-        self._config.path(self._settings.coverage_file).parent.mkdir(
-            parents=True, exist_ok=True
-        )
+        self._config.path(self._settings.coverage_file).parent.mkdir(parents=True, exist_ok=True)
         # Deliberately not the benchmark root: `just test` runs several modules
         # through one workspace, the VM recordings come from the functional
         # one, and a later module clearing them is why a fortnight of gates

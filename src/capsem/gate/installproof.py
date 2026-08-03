@@ -23,9 +23,7 @@ from .proc import Runner
 class InstallProof:
     """Stages inputs, installs the package, and runs the proofs against it."""
 
-    def __init__(
-        self, runner: Runner, config: gate_config.GateConfig, *, sleep=time.sleep
-    ) -> None:
+    def __init__(self, runner: Runner, config: gate_config.GateConfig, *, sleep=time.sleep) -> None:
         self._runner = runner
         self._docker = Docker(runner)
         self._settings = config.install
@@ -35,6 +33,7 @@ class InstallProof:
         self._layout = self._settings.layout
         self._mount = self._settings.mount
         self._inputs_name = config.package.release_inputs_name
+        self._environment = config.environment.install_proof
         self._sleep = sleep
 
     # -- staging -----------------------------------------------------------
@@ -45,14 +44,17 @@ class InstallProof:
             self._container,
             f'test -f "{inputs}/{self._settings.manifest_name}" '
             f'&& test -f "{inputs}/{self._inputs_name}"',
-            user=self._guest.name, cwd=self._mount,
+            user=self._guest.name,
+            cwd=self._mount,
         )
         self._docker.shell(
             self._container,
             f'rm -rf "{self._layout.assets}" "{self._layout.config}" && uv run python '
             f'{self._suite.stage_inputs_script} --input-dir "{inputs}" '
             f'--assets-dir "{self._layout.assets}" --config-root "{self._layout.config}"',
-            user=self._guest.name, cwd=self._mount, env={"UV_PROJECT_ENVIRONMENT": self._settings.venv},
+            user=self._guest.name,
+            cwd=self._mount,
+            env={"UV_PROJECT_ENVIRONMENT": self._settings.venv},
         )
 
     def stage_local_assets(self) -> None:
@@ -62,7 +64,8 @@ class InstallProof:
             "test -f assets/manifest.json || { echo 'ERROR: installed VM proof "
             "requires rebuilt local assets or verified pulled profile inputs' >&2; "
             "exit 1; }",
-            user=self._guest.name, cwd=self._mount,
+            user=self._guest.name,
+            cwd=self._mount,
         )
         self._docker.shell(
             self._container,
@@ -70,19 +73,23 @@ class InstallProof:
             f'"{self._layout.config}" && mkdir -p "{self._layout.assets}" '
             f'"{self._layout.config}" && cp -R assets/. "{self._layout.assets}/" '
             f'&& cp -R target/config/. "{self._layout.config}/"',
-            user=self._guest.name, cwd=self._mount,
+            user=self._guest.name,
+            cwd=self._mount,
         )
         self._docker.shell(
             self._container,
             f'rm -rf "{self._layout.channel}" && mkdir -p "{self._layout.channel}" '
             f"&& rm -f {self._settings.serve_ready_file}",
-            user=self._guest.name, cwd=self._mount,
+            user=self._guest.name,
+            cwd=self._mount,
         )
         self._docker.shell(
             self._container,
             f'python3 {self._suite.serve_script} --root "{self._layout.channel}" '
             f"--ready-file {self._settings.serve_ready_file}",
-            user=self._guest.name, cwd=self._mount, detach=True,
+            user=self._guest.name,
+            cwd=self._mount,
+            detach=True,
         )
         for _ in range(self._settings.serve_ready_attempts):
             ready = self._docker.exists(
@@ -100,17 +107,13 @@ class InstallProof:
 
     def install(self, package: str, *, expected: str, manifest: str | None = None) -> None:
         self._runner.note(f"Installing exact release package via dpkg: {package}")
-        self._docker.shell(
-            self._container, f'dpkg -i "{package}" 2>&1 || apt-get install -f -y'
-        )
+        self._docker.shell(self._container, f'dpkg -i "{package}" 2>&1 || apt-get install -f -y')
         installed = self._docker.capture(
             self._container,
             ["dpkg-query", "-W", "-f=${Version}", self._suite.package_name],
         )
         if installed != expected:
-            raise GateError(
-                f"dpkg reports capsem {installed} installed, expected {expected}"
-            )
+            raise GateError(f"dpkg reports capsem {installed} installed, expected {expected}")
         if manifest is not None:
             self.verify_manifest_source(manifest)
 
@@ -126,8 +129,7 @@ class InstallProof:
         """
         recorded = self._docker.shell_capture(
             self._container,
-            f"grep -h 'event=manifest_source' {self._settings.install_log_glob} "
-            "| tail -n1",
+            f"grep -h 'event=manifest_source' {self._settings.install_log_glob} | tail -n1",
             user=self._settings.guest_user.name,
         ).strip()
         if not recorded:
@@ -148,6 +150,7 @@ class InstallProof:
 
     def run_install_suite(self) -> None:
         self._runner.note("Running install e2e tests...")
+        proof = self._environment
         self._docker.shell(
             self._container,
             f"mkdir -p {self._guest.tmp} && uv run python -m pytest "
@@ -156,9 +159,9 @@ class InstallProof:
             cwd=self._mount,
             env={
                 "XDG_RUNTIME_DIR": self._guest.runtime_dir,
-                "CAPSEM_DEB_INSTALLED": "1",
-                "CAPSEM_BIN_SRC": self._settings.bin_dir,
-                "CAPSEM_TEST_ASSET_MANIFEST": self._guest.asset_manifest,
+                proof.installed: "1",
+                proof.bin_src: self._settings.bin_dir,
+                proof.asset_manifest: self._guest.asset_manifest,
                 "UV_PROJECT_ENVIRONMENT": self._settings.venv,
                 "TMPDIR": self._guest.tmp,
             },
@@ -189,7 +192,8 @@ class InstallProof:
         self._docker.shell(
             self._container,
             glowup if boots_a_guest else f"{glowup} --skip-install",
-            user=self._guest.name, cwd=self._mount,
+            user=self._guest.name,
+            cwd=self._mount,
             env={
                 "XDG_RUNTIME_DIR": self._guest.runtime_dir,
                 "UV_PROJECT_ENVIRONMENT": self._settings.venv,
@@ -204,6 +208,8 @@ class InstallProof:
             )
         self._runner.script(
             self._suite.macos_report_check,
-            "--report", report,
-            "--cargo-toml", cargo_toml,
+            "--report",
+            report,
+            "--cargo-toml",
+            cargo_toml,
         )

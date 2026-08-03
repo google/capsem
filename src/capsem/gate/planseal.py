@@ -30,7 +30,6 @@ from .errors import GateError
 _SEALED: ContextVar[bool] = ContextVar("capsem_gate_plan_sealed", default=False)
 
 
-
 @contextmanager
 def sealed() -> Iterator[None]:
     """Refuse every invocation for the duration.

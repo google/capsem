@@ -57,11 +57,7 @@ def execute(plan: Plan, context: Context) -> dict[str, Outcome]:
     sorter = plan.sorter()
     context.journal.shape(plan.labels, plan.edges)
     outcomes: dict[str, Outcome] = {}
-    locks = {
-        resource.name: _SharedLock()
-        for step in plan.steps
-        for resource in step.contends
-    }
+    locks = {resource.name: _SharedLock() for step in plan.steps for resource in step.contends}
     broken: set[str] = set()
 
     pool = ThreadPoolExecutor(max_workers=max(len(plan.steps), 1))
@@ -135,8 +131,7 @@ def _abandon(
     if pending:
         stubborn = sorted(running[future].label for future in pending)
         context.journal.note(
-            f"interrupted; still running after {GRACE_SECONDS:.0f}s: "
-            f"{', '.join(stubborn)}"
+            f"interrupted; still running after {GRACE_SECONDS:.0f}s: {', '.join(stubborn)}"
         )
 
 
@@ -253,9 +248,7 @@ def raise_for_failures(name: str, outcomes: dict[str, Outcome]) -> None:
     if not failed:
         return
     skipped = sorted(o.label for o in outcomes.values() if o.status == SKIPPED)
-    detail = "; ".join(
-        f"{o.label}: {o.error}" for o in sorted(failed, key=attrgetter("label"))
-    )
+    detail = "; ".join(f"{o.label}: {o.error}" for o in sorted(failed, key=attrgetter("label")))
     message = f"{name} failed -- {detail}"
     if skipped:
         message += f" (skipped, never ran: {', '.join(skipped)})"

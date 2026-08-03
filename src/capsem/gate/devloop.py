@@ -75,7 +75,7 @@ class DevCommand(GateCommand, name="dev", help="run one development surface"):
                     surface,
                     Run(
                         settings.tauri,
-                        env={"CAPSEM_ASSETS_DIR": config.imagebuild.output},
+                        env=config.environment.content(assets=config.imagebuild.output),
                     ),
                 )
             )

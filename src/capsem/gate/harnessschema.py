@@ -30,6 +30,7 @@ class LintConfig(Strict):
     def relaxed_roots(self) -> tuple[str, ...]:
         return tuple(name for name in self.python_roots if name not in self.strict_roots)
 
+
 class BoundaryConfig(Strict):
     max_recipe_lines: int
     max_module_lines: int
@@ -37,6 +38,7 @@ class BoundaryConfig(Strict):
     recipes_with_inline_control_flow: tuple[str, ...]
     direct_machine_access: tuple[str, ...]
     direct_concurrency: tuple[str, ...]
+
 
 class Exclusive(Strict):
     """Something only one step may hold at a time, and why.
@@ -73,6 +75,7 @@ class Exclusive(Strict):
     def held_shared(self) -> Exclusive:
         return self.model_copy(update={"shared": True})
 
+
 class ExecutionConfig(Strict):
     exclusives: dict[str, Exclusive]
 
@@ -82,6 +85,7 @@ class ExecutionConfig(Strict):
             if not exclusive.name:
                 object.__setattr__(exclusive, "name", key)
         return self
+
 
 class LockConfig(Strict):
     """One holder at a time, proven by the kernel rather than by a PID file."""
@@ -93,8 +97,10 @@ class LockConfig(Strict):
     poll_interval_seconds: float
     run_marker: str
 
+
 class LocksConfig(Strict):
     gate: LockConfig
+
 
 class RunLogConfig(Strict):
     """Retention that keeps nothing prunes the run being written.
@@ -117,6 +123,7 @@ class RunLogConfig(Strict):
     slow_action_seconds: NonNegativeFloat
     failure_tail_lines: PositiveInt
 
+
 class DiskConfig(Strict):
     reclaimable: tuple[str, ...]
     required_free_gb: int
@@ -137,6 +144,7 @@ class DiskConfig(Strict):
             if parts.is_absolute() or ".." in parts.parts:
                 raise ValueError(f"{path!r} must be relative and must not escape upwards")
         return paths
+
 
 class WorkspaceConfig(Strict):
     home: str

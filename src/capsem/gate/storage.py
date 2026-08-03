@@ -14,7 +14,7 @@ phase now fails by name, before any storage is touched.
 from __future__ import annotations
 
 from . import config as gate_config
-from .actions import Call
+from .actions import Call, Why
 from .command import GateCommand
 from .errors import GateError
 from .execution import Step, step
@@ -75,8 +75,7 @@ class Storage:
     def ensure_space(self, rail: str, *boundary: str) -> None:
         """Refuse to start work the daemon does not have room to finish."""
         self._runner.run(
-            ["bash", str(self._runner.root / self._config.ensure_space_script),
-             rail, *boundary]
+            ["bash", str(self._runner.root / self._config.ensure_space_script), rail, *boundary]
         )
 
 
@@ -90,6 +89,7 @@ def release_action(phase: str) -> Call:
     return Call(
         f"release the storage held after {phase}",
         lambda ctx: Storage(ctx.runner).release(phase),
+        why=Why.DYNAMIC,
     )
 
 
@@ -146,7 +146,7 @@ class StorageCommand(
         plan.add(
             step(
                 action,
-                Call(f"storage {action}", self._operation(action)),
+                Call(f"storage {action}", self._operation(action), why=Why.DYNAMIC),
                 contends=(self._config.exclusive("docker_daemon"),),
             )
         )

@@ -20,7 +20,7 @@ failed is skipped -- which is exactly wrong for cleanup.
 from __future__ import annotations
 
 from . import hostpackage, imagebuild, initrd, storage, testmodules, vmmodules
-from .actions import Call, Run, Script
+from .actions import Call, Run, Script, Why
 from .config import GateConfig
 from .execution import Step, step
 from .plan import Plan
@@ -84,9 +84,7 @@ def compose_modules(
     prepared = _prepare(plan, config, after=after)
     static = testmodules.static(plan, config, after=(prepared,))
     artifacts = vmmodules.artifacts(plan, config, qualification=qualification, after=static)
-    functional = vmmodules.functional(
-        plan, config, qualification=qualification, after=(artifacts,)
-    )
+    functional = vmmodules.functional(plan, config, qualification=qualification, after=(artifacts,))
     glowup = vmmodules.glowup(plan, config, qualification=qualification, after=(functional,))
 
     return plan.add(step("recipes", Run(config.candidate.recipe_suite)), after=(glowup,))
@@ -164,4 +162,5 @@ def _ensure_space(config: GateConfig):
     return Call(
         "refuse to start a gate the daemon has no room to finish",
         lambda ctx: Storage(ctx.runner).ensure_space(*settings.candidate_budget),
+        why=Why.COMPUTATION,
     )

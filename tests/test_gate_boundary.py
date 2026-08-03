@@ -23,6 +23,7 @@ longer true.
 
 from __future__ import annotations
 
+import ast
 import json
 import shutil
 import subprocess
@@ -246,4 +247,69 @@ def test_the_type_ratchet_only_shrinks() -> None:
     assert set(held_back) == still_firing, (
         "these rules are held back but no longer fire; remove them from "
         f"config/gate.toml's ty_ratchet: {sorted(set(held_back) - still_firing)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# What is still opaque, and why
+# ---------------------------------------------------------------------------
+
+
+def _call_sites() -> dict[str, list[ast.Call]]:
+    """Every production `Call(...)`, by the module that builds it."""
+    found: dict[str, list[ast.Call]] = {}
+    for module in sorted((PROJECT_ROOT / "src/capsem/gate").glob("*.py")):
+        if module.name == "actions.py":
+            continue  # where `Call` is defined, not where one is built
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        sites = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "Call"
+        ]
+        if sites:
+            found[module.name] = sites
+    return found
+
+
+def test_every_opaque_call_says_why_it_is_one() -> None:
+    """The extraction ratchet is gone because it was empty, and a raw count
+    would only invite cosmetic movement. What replaces it is a required answer.
+
+    `Call` renders as prose, so a plan built from these says far less than one
+    built from `Run` and `Copy`. Twenty of them shared a single rationale --
+    "a package build carries signing material" -- which is true of exactly one.
+    A reason that covers everything is not a reason.
+    """
+    undeclared = {
+        name: len([site for site in sites if not any(k.arg == "why" for k in site.keywords)])
+        for name, sites in _call_sites().items()
+    }
+    offenders = {name: count for name, count in undeclared.items() if count}
+
+    assert not offenders, (
+        f"these build a `Call` without saying why it cannot be a declared "
+        f"action: {offenders}. Pass `why=Why.SECRETS`, `Why.DYNAMIC` or "
+        f"`Why.COMPUTATION`."
+    )
+
+
+def test_only_the_package_build_claims_to_carry_secrets() -> None:
+    """`Why.SECRETS` is the one reason a dry run genuinely must not render.
+
+    Spreading it would re-create the old docstring's claim in a form the type
+    system endorses, and make the real one unfindable.
+    """
+    claimed = sorted(
+        module.name
+        for module in (PROJECT_ROOT / "src/capsem/gate").glob("*.py")
+        if module.name != "actions.py"
+        and "Why.SECRETS" in module.read_text(encoding="utf-8")
+    )
+
+    assert claimed == ["crosscompile.py"], (
+        "only the package build's environment holds the Tauri signing key; "
+        f"these also claim to: {claimed}"
     )

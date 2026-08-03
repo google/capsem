@@ -19,8 +19,7 @@ def describe(plan: Plan) -> str:
     waves = plan.order()
     actions = sum(len(step.actions) for step in plan._steps)
     lines = [
-        f"plan: {plan.name} -- {len(plan._steps)} steps, "
-        f"{actions} actions, {len(waves)} waves",
+        f"plan: {plan.name} -- {len(plan._steps)} steps, {actions} actions, {len(waves)} waves",
         "",
     ]
     for position, wave in enumerate(waves, start=1):

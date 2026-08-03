@@ -70,10 +70,7 @@ class Service(Resource, name="service"):
 
     def environment(self) -> dict[str, str]:
         """Where this service listens, for anything talking to it."""
-        return {
-            "CAPSEM_HOME": str(self.home),
-            "CAPSEM_RUN_DIR": str(self.run_dir),
-        }
+        return self._config.environment.capsem(home=self.home, run_dir=self.run_dir)
 
     def acquire(self) -> None:
         """Start the daemon and wait until it is actually listening.
@@ -112,17 +109,20 @@ def _launch(config: GateConfig, *, home: Path, run_dir: Path) -> Launch:
     the thing that stops it is looking at the same place.
     """
     settings = config.service
+    names = config.environment
     return Launch(
         [
             str(config.path(settings.binary)),
-            "--assets-dir", str(home / settings.home_assets),
-            "--process-binary", str(config.path(settings.process_binary)),
+            "--assets-dir",
+            str(home / settings.home_assets),
+            "--process-binary",
+            str(config.path(settings.process_binary)),
             "--foreground",
         ],
         pidfile=run_dir / settings.pidfile,
         env={
-            "CAPSEM_HOME": str(home),
-            "CAPSEM_PROFILES_DIR": str(config.path(settings.generated_profiles)),
+            names.home: str(home),
+            **names.content(profiles=config.path(settings.generated_profiles)),
             "RUST_LOG": settings.log_level,
         },
     )
@@ -209,11 +209,14 @@ class EnsureServiceCommand(
         materialized = plan.add(
             step(
                 "materialize",
-                Run([
-                    "bash", settings.sync_assets_script,
-                    settings.assets_dir,
-                    str(target / settings.home_assets),
-                ]),
+                Run(
+                    [
+                        "bash",
+                        settings.sync_assets_script,
+                        settings.assets_dir,
+                        str(target / settings.home_assets),
+                    ]
+                ),
                 Remove(target / settings.home_profiles),
                 Copy(generated, target / settings.home_profiles),
             ),

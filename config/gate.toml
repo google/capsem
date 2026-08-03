@@ -211,11 +211,46 @@ target = "/src/release-site/dist"
 # the daemon inside it honoured another, and the daemon would quietly attach
 # to the developer's own home.
 
+# Which capsem a process is talking to, and where it looks. One owner: these
+# were spelled here and again as dictionary keys in `assets`, `service` and
+# `devloop`, and the guard that watches for literal environment *reads* could
+# not see a write.
 [environment]
 home = "CAPSEM_HOME"
 run_dir = "CAPSEM_RUN_DIR"
+assets_dir = "CAPSEM_ASSETS_DIR"
+profiles_dir = "CAPSEM_PROFILES_DIR"
 benchmark_root = "CAPSEM_BENCHMARK_OUTPUT_ROOT"
 coverage_file = "COVERAGE_FILE"
+
+# What the builder container is told about the target it is building for.
+# `HOST_UID` and `HOST_GID` stay literal: they are the standard convention for
+# handing container output back to the invoking user, not a Capsem rail.
+[environment.package]
+target_arch = "TARGET_ARCH"
+rust_target = "RUST_TARGET"
+dpkg_arch = "DPKG_ARCH"
+rust_toolchain = "RUST_TOOLCHAIN"
+
+# Where a release-site build reads its inputs from and writes its output to.
+# `CAPSEM_RELEASE_GRAPH` is the input and `CAPSEM_RELEASE_CHANNEL_DIST` the
+# output; one name meant both until they were split, and keeping them adjacent
+# here is what makes the pair readable.
+[environment.release_site]
+url = "CAPSEM_RELEASE_URL"
+graph = "CAPSEM_RELEASE_GRAPH"
+channel_dist = "CAPSEM_RELEASE_CHANNEL_DIST"
+
+# What the in-container install proof is told about the package it just
+# installed.
+[environment.install_proof]
+installed = "CAPSEM_DEB_INSTALLED"
+bin_src = "CAPSEM_BIN_SRC"
+asset_manifest = "CAPSEM_TEST_ASSET_MANIFEST"
+
+# Where the Linux parity runner writes, told to the checked-in script.
+[environment.linux_rust]
+output_dir = "CAPSEM_LINUX_RUST_OUTPUT_DIR"
 
 # ---------------------------------------------------------------------------
 #

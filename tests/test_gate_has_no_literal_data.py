@@ -284,6 +284,59 @@ PATH_SUFFIXES = (*FILE_SUFFIXES, ".key", ".txt", ".img", ".erofs", ".pkg", ".soc
 #: Reading these is how a module asks the environment a question.
 ENVIRONMENT_READERS = {"getenv", "get", "environ"}
 
+#: Standard process and tool conventions. These are not Capsem rails and
+#: moving them into TOML would be dumping strings into a file rather than
+#: giving a protocol an owner -- `HOME` means what it means everywhere.
+CONVENTIONS = frozenset(
+    {
+        "HOME",
+        "PATH",
+        "TMPDIR",
+        "USER",
+        "LANG",
+        "LC_ALL",
+        "XDG_RUNTIME_DIR",
+        "PKG_CONFIG_PATH",
+        "UV_PROJECT_ENVIRONMENT",
+        "RUST_LOG",
+        "RUSTFLAGS",
+        "CARGO_TARGET_DIR",
+        "DOCKER_HOST",
+        "GITHUB_ENV",
+        "GITHUB_OUTPUT",
+        "CI",
+        "PYTHONPYCACHEPREFIX",
+        "PYTHONDONTWRITEBYTECODE",
+        "COLUMNS",
+        "TERM",
+        "HOST_UID",
+        "HOST_GID",
+    }
+)
+
+
+def _environment_writes(tree: ast.AST) -> list[str]:
+    """Literal names used as keys of a dictionary handed to a process.
+
+    A read was caught and a *write* was not, so the same rail could be named
+    once through configuration and once as a dict key three modules along --
+    invisible to the guard, and exactly as hard to rename.
+
+    A dictionary whose keys are upper-case identifiers is an environment; no
+    other dictionary in this package is spelled that way.
+    """
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key in node.keys:
+            if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+                continue
+            name = key.value
+            if name.isupper() and name.replace("_", "").isalnum() and "_" in name:
+                found.append(name)
+    return found
+
 
 def _path_chain_literals(tree: ast.AST) -> list[str]:
     """Literal components of any `x / "a" / "b"` expression."""
@@ -356,6 +409,37 @@ def test_no_module_spells_an_environment_variable(module: Path) -> None:
         "declare the name in config/gate.toml so the rail can be renamed in "
         "one place"
     )
+
+
+@pytest.mark.parametrize("module", _gate_modules(), ids=lambda path: path.name)
+def test_no_module_names_an_environment_variable_it_writes(module: Path) -> None:
+    """The other half of the same rule.
+
+    `[environment]` owns `CAPSEM_HOME` and `CAPSEM_RUN_DIR`, and `assets` and
+    `service` spelled both again as dictionary keys. The guard watched reads
+    only, so the duplicates were invisible to the one thing meant to find
+    them.
+    """
+    literals = sorted(
+        {
+            value
+            for value in _environment_writes(ast.parse(module.read_text(encoding="utf-8")))
+            if value not in CONVENTIONS
+        }
+    )
+
+    assert not literals, (
+        f"{module.name} builds an environment naming {literals}; declare the "
+        "names in config/gate.toml and go through it, so the rail can be "
+        "renamed in one place"
+    )
+
+
+def test_an_environment_write_would_be_caught(tmp_path: Path) -> None:
+    module = tmp_path / "offender.py"
+    module.write_text('x = {"CAPSEM_HOME": str(home), "PATH": "/usr/bin"}\n')
+
+    assert _environment_writes(ast.parse(module.read_text())) == ["CAPSEM_HOME"]
 
 
 def test_a_path_built_from_literals_would_be_caught(tmp_path: Path) -> None:

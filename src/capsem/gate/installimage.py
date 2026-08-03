@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from . import config as gate_config
 from . import hostimage
-from .actions import Call
+from .actions import Call, Why
 from .command import GateCommand
 from .config import GateConfig
 from .errors import GateError
@@ -37,13 +37,21 @@ SMOKE = (
 def _smoke_passes(runner: Runner, settings: gate_config.InstallConfig) -> bool:
     return runner.succeeds(
         [
-            "docker", "run", "--rm",
-            "-u", "capsem",
-            "-e", f"UV_PROJECT_ENVIRONMENT={settings.venv}",
-            "-e", f"CAPSEM_TEST_OUTPUT_ROOT={settings.test_output_root}",
-            "-v", f"{runner.root}:{settings.mount}:ro",
+            "docker",
+            "run",
+            "--rm",
+            "-u",
+            "capsem",
+            "-e",
+            f"UV_PROJECT_ENVIRONMENT={settings.venv}",
+            "-e",
+            f"CAPSEM_TEST_OUTPUT_ROOT={settings.test_output_root}",
+            "-v",
+            f"{runner.root}:{settings.mount}:ro",
             settings.image,
-            "bash", "-lc", SMOKE,
+            "bash",
+            "-lc",
+            SMOKE,
         ]
     )
 
@@ -63,9 +71,7 @@ def prepare(runner: Runner) -> None:
     runner.run(build)
 
     if not _smoke_passes(runner, settings):
-        runner.note(
-            "Install-test image smoke check failed; rebuilding without Docker cache..."
-        )
+        runner.note("Install-test image smoke check failed; rebuilding without Docker cache...")
         runner.run([*build[:2], "--no-cache", *build[2:]])
         if not _smoke_passes(runner, settings):
             raise GateError(
@@ -94,6 +100,7 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
             Call(
                 "build the disposable install-test image",
                 lambda ctx: prepare(ctx.runner),
+                why=Why.DYNAMIC,
             ),
             contends=(config.exclusive("docker_daemon"),),
         ),

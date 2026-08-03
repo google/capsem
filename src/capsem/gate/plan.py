@@ -159,8 +159,7 @@ class Plan:
         except CycleError as cycle:
             members = " -> ".join(str(part) for part in cycle.args[1])
             raise GateError(
-                f"the {self.name} plan has a cycle, so no step can be first: "
-                f"{members}"
+                f"the {self.name} plan has a cycle, so no step can be first: {members}"
             ) from None
         return sorter
 

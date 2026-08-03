@@ -75,7 +75,6 @@ class ConfirmHead(Action, name="confirm-head"):
         head = self._source.read_text(encoding="utf-8").strip()
         if not head:
             raise GateError(
-                f"{self._source} is empty; refusing to publish a revision "
-                f"nothing recorded"
+                f"{self._source} is empty; refusing to publish a revision nothing recorded"
             )
         context.runner.script(self._script, "--expected-head", head)

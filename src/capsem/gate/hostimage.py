@@ -73,20 +73,26 @@ class _ForeignUidProbe(Action, name="foreign-uid-probe"):
 
     def perform(self, context: Context) -> None:
         settings = context.config.hostimage
-        expected = context.runner.capture(
-            ["git", "rev-parse", "--short", "HEAD"], check=False
-        )
+        expected = context.runner.capture(["git", "rev-parse", "--short", "HEAD"], check=False)
         if not expected:
             return
 
         actual = context.runner.capture(
             [
-                "docker", "run", "--rm",
-                "-v", f"{context.root}:{settings.mount}",
-                "-w", settings.mount,
-                "--user", settings.probe_user,
+                "docker",
+                "run",
+                "--rm",
+                "-v",
+                f"{context.root}:{settings.mount}",
+                "-w",
+                settings.mount,
+                "--user",
+                settings.probe_user,
                 settings.tag,
-                "git", "rev-parse", "--short", "HEAD",
+                "git",
+                "rev-parse",
+                "--short",
+                "HEAD",
             ],
             check=False,
         )
@@ -128,16 +134,14 @@ class _LinuxRust:
                     "linux-rust",
                     Run(
                         ["bash", settings.script],
-                        env={"CAPSEM_LINUX_RUST_OUTPUT_DIR": str(config.root)},
+                        env={config.environment.linux_rust.output_dir: str(config.root)},
                     ),
                 ),
                 after=after,
             )
 
         if not host.on_macos():
-            raise GateError(
-                "Linux Rust parity runs natively on Linux or in Docker on macOS"
-            )
+            raise GateError("Linux Rust parity runs natively on Linux or in Docker on macOS")
 
         built = fragment(plan, config, after=after)
         output = config.path(settings.output_dir)
@@ -151,10 +155,17 @@ class _LinuxRust:
             step(
                 "cache-ownership",
                 Run(
-                    ["docker", "run", "--rm", *_volumes(config), settings.tag,
-                     "sh", "-c",
-                     f"chown -R {uid}:{gid} "
-                     + " ".join(v.target for v in settings.cached_volumes)],
+                    [
+                        "docker",
+                        "run",
+                        "--rm",
+                        *_volumes(config),
+                        settings.tag,
+                        "sh",
+                        "-c",
+                        f"chown -R {uid}:{gid} "
+                        + " ".join(v.target for v in settings.cached_volumes),
+                    ],
                 ),
                 contends=(docker,),
             ),
@@ -164,19 +175,30 @@ class _LinuxRust:
         suite = plan.add(
             step(
                 "linux-rust",
-                Run([
-                    "docker", "run", "--rm",
-                    "--user", f"{uid}:{gid}",
-                    *[f for k, v in settings.environment.items() for f in ("-e", f"{k}={v}")],
-                    "--tmpfs", settings.tmpfs,
-                    "-v", f"{config.root}:{settings.mount}:ro",
-                    "-v", f"{output}:{settings.container_output}",
-                    "-v", f"{output / settings.nextest_dir}:{settings.mount}/{settings.nextest_mount}",
-                    *_volumes(config),
-                    "-w", settings.mount,
-                    settings.tag,
-                    "bash", f"{settings.mount}/{settings.script}",
-                ]),
+                Run(
+                    [
+                        "docker",
+                        "run",
+                        "--rm",
+                        "--user",
+                        f"{uid}:{gid}",
+                        *[f for k, v in settings.environment.items() for f in ("-e", f"{k}={v}")],
+                        "--tmpfs",
+                        settings.tmpfs,
+                        "-v",
+                        f"{config.root}:{settings.mount}:ro",
+                        "-v",
+                        f"{output}:{settings.container_output}",
+                        "-v",
+                        f"{output / settings.nextest_dir}:{settings.mount}/{settings.nextest_mount}",
+                        *_volumes(config),
+                        "-w",
+                        settings.mount,
+                        settings.tag,
+                        "bash",
+                        f"{settings.mount}/{settings.script}",
+                    ]
+                ),
                 contends=(docker,),
             ),
             after=(owned,),
@@ -185,12 +207,20 @@ class _LinuxRust:
         return plan.add(
             step(
                 "output-ownership",
-                Run([
-                    "docker", "run", "--rm",
-                    "-v", f"{output}:{settings.container_output}",
-                    settings.alpine,
-                    "chown", "-R", f"{uid}:{gid}", settings.container_output,
-                ]),
+                Run(
+                    [
+                        "docker",
+                        "run",
+                        "--rm",
+                        "-v",
+                        f"{output}:{settings.container_output}",
+                        settings.alpine,
+                        "chown",
+                        "-R",
+                        f"{uid}:{gid}",
+                        settings.container_output,
+                    ]
+                ),
                 contends=(docker,),
             ),
             after=(suite,),

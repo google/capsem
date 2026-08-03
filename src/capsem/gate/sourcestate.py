@@ -49,7 +49,9 @@ def _measure(context: Context) -> dict[str, str]:
         "head": context.runner.capture(["git", "rev-parse", "HEAD"]),
         "digest": context.runner.capture(
             [
-                "uv", "run", "python",
+                "uv",
+                "run",
+                "python",
                 str(context.path(context.config.candidate.source_digest_script)),
             ]
         ),
@@ -126,9 +128,7 @@ class RequireSourceUnchanged(Action, name="require-source-unchanged"):
                 f"{before['head']} -> {after['head']}"
             )
         if before["digest"] != after["digest"]:
-            context.journal.note(
-                f"before={before['digest']} after={after['digest']}"
-            )
+            context.journal.note(f"before={before['digest']} after={after['digest']}")
             context.runner.run(["git", "status", "--short"], check=False)
             raise GateError("the gate changed the source working tree")
 

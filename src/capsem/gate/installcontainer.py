@@ -141,9 +141,7 @@ class InstallContainer:
     def return_paths(self) -> None:
         """Hand the container's writes back to the host user that owns them."""
         uid, gid = host.user()
-        self._docker.exec(
-            self.name, ["chown", "-R", f"{uid}:{gid}", *self._owned], check=False
-        )
+        self._docker.exec(self.name, ["chown", "-R", f"{uid}:{gid}", *self._owned], check=False)
 
     def hand_back(self, path: str) -> None:
         """Return one host-owned path mid-run, before a host tool reads it."""
@@ -179,6 +177,5 @@ def await_systemd(
             return
         sleep(interval)
     raise GateError(
-        f"systemd never reached running or degraded in {container} after "
-        f"{attempts * interval:.0f}s"
+        f"systemd never reached running or degraded in {container} after {attempts * interval:.0f}s"
     )

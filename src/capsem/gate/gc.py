@@ -12,7 +12,7 @@ and therefore not something to discard by accident.
 
 from __future__ import annotations
 
-from .actions import Action, Call
+from .actions import Action, Call, Why
 from .command import GateCommand
 from .context import Context
 from .disk import footprint, reclaim
@@ -24,9 +24,7 @@ from .storage import Storage
 _GB = 1024**3
 
 
-class GcCommand(
-    GateCommand, name="gc", help="reclaim the disk the gate is holding"
-):
+class GcCommand(GateCommand, name="gc", help="reclaim the disk the gate is holding"):
     exclusive = True
 
     def should_record(self) -> bool:
@@ -62,12 +60,14 @@ class GcCommand(
             plan.add(step("survey", _Survey(self._config)))
             return plan
 
-        trees = plan.add(step("trees", Call("reclaim the gate's own trees", _trees)))
+        trees = plan.add(
+            step("trees", Call("reclaim the gate's own trees", _trees, why=Why.DYNAMIC))
+        )
         if self._args.aggressive:
             plan.add(
                 step(
                     "rails",
-                    Call("release the Docker rails and build cache", _rails),
+                    Call("release the Docker rails and build cache", _rails, why=Why.DYNAMIC),
                     contends=(self._config.exclusive("docker_daemon"),),
                 ),
                 after=(trees,),
@@ -97,9 +97,7 @@ def _measure(config) -> str:
         for relative, size in sorted(measured.items(), key=lambda e: -e[1])
     ]
     total = sum(measured.values()) / _GB
-    return "would reclaim:\n          " + "\n          ".join(
-        [*lines, f"{total:>8.2f} GB  total"]
-    )
+    return "would reclaim:\n          " + "\n          ".join([*lines, f"{total:>8.2f} GB  total"])
 
 
 def _trees(context: Context) -> None:

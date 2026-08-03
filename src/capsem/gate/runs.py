@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .actions import Call
+from .actions import Call, Why
 from .command import GateCommand
 from .context import Context
 from .errors import GateError
@@ -23,11 +23,10 @@ from .runhistory import read, runs
 from .timing import measure, report
 
 
-class RunsCommand(
-    GateCommand, name="runs", help="list recorded gate runs, or explain one"
-):
+class RunsCommand(GateCommand, name="runs", help="list recorded gate runs, or explain one"):
     records = False
     """Only reads runs; creating one would answer with the question."""
+
     @classmethod
     def add_arguments(cls, parser) -> None:
         actions = parser.add_subparsers(dest="action", required=False)
@@ -45,7 +44,12 @@ class RunsCommand(
     def plan(self) -> Plan:
         action = getattr(self._args, "action", None) or "list"
         plan = Plan(f"{self.name} {action}")
-        plan.add(step(action, Call(f"runs {action}", self._operation(action))))
+        plan.add(
+            step(
+                action,
+                Call(f"runs {action}", self._operation(action), why=Why.DYNAMIC),
+            )
+        )
         return plan
 
     def _operation(self, action: str):
@@ -87,9 +91,7 @@ def _list(context: Context) -> None:
     for directory in recorded:
         timing = measure(read(directory, context.config.runlog))
         state = "FAILED" if timing.outcome == "failed" else "ok"
-        context.runner.note(
-            f"{directory.name:<34}  {timing.total_ms / 1000:>8.0f}s  {state}"
-        )
+        context.runner.note(f"{directory.name:<34}  {timing.total_ms / 1000:>8.0f}s  {state}")
 
 
 def _explain(context: Context, directory: Path) -> None:

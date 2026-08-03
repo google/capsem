@@ -32,9 +32,7 @@ from contextvars import ContextVar
 
 from .errors import GateError
 
-_CANCELLED: ContextVar[threading.Event | None] = ContextVar(
-    "capsem_gate_cancelled", default=None
-)
+_CANCELLED: ContextVar[threading.Event | None] = ContextVar("capsem_gate_cancelled", default=None)
 
 
 class Cancelled(GateError):

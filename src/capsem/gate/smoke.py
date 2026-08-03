@@ -79,9 +79,7 @@ class SmokeCommand(
 
         checked = plan.add(step("doctor", Run(config.smoke.doctor)))
         injection = plan.add(vmproofs.injection(config, profile=base), after=(checked,))
-        integration = plan.add(
-            vmproofs.integration(config, profile=base), after=(injection,)
-        )
+        integration = plan.add(vmproofs.integration(config, profile=base), after=(injection,))
 
         parallel = [
             plan.add(_group(config, group, serial=False), after=(integration,))

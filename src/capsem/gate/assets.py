@@ -27,7 +27,7 @@ from pathlib import Path
 
 from . import assetevidence, crossexec, pidfiles
 from . import config as gate_config
-from .actions import Call
+from .actions import Call, Why
 from .assetlanes import AssetLanes, Profile, discover_profiles
 from .command import GateCommand
 from .errors import GateError
@@ -57,8 +57,6 @@ class AssetGate:
         self.host_arch = self._config.host_arch()
 
     # -- preflight ---------------------------------------------------------
-
-
 
     def _profile_root(self, profile: Profile) -> Path:
         return self.test_root / profile.name
@@ -97,13 +95,20 @@ class AssetGate:
         for runtime in discover_profiles(self._config):
             self._runner.run(
                 self._admin(
-                    "profile", "materialize",
-                    "--profile", str(runtime.manifest),
-                    "--config-root", self._assets.merged_config_dir,
-                    "--manifest", manifest_uri,
-                    "--assets-dir", str(assets),
-                    "--output-root", str(output),
-                    "--arch", self.host_arch.name,
+                    "profile",
+                    "materialize",
+                    "--profile",
+                    str(runtime.manifest),
+                    "--config-root",
+                    self._assets.merged_config_dir,
+                    "--manifest",
+                    manifest_uri,
+                    "--assets-dir",
+                    str(assets),
+                    "--output-root",
+                    str(output),
+                    "--arch",
+                    self.host_arch.name,
                 )
             )
         return output
@@ -124,24 +129,27 @@ class AssetGate:
         # `/var/folders/<11>/<24>/T/` and blows the 104-byte limit on its own.
         template = Path(self._assets.run_dir_template)
         run_dir = scratch_dir(template.name.split(".")[0] + ".", template.parent)
-        marker = (
-            f"CAPSEM_ASSET_{profile.name.replace('-', '_')}_{self.host_arch.name}_SHELL_OK"
-        )
+        marker = f"CAPSEM_ASSET_{profile.name.replace('-', '_')}_{self.host_arch.name}_SHELL_OK"
 
+        names = self._config.environment
         try:
             self._runner.script(
                 self._assets.shell_proof_script,
-                "--capsem", self._config.path(self._assets.capsem_binary),
-                "--marker", marker,
-                "--session-name", f"asset-{profile.name}-{self.host_arch.name}",
-                "--profile", profile.name,
-                "--timeout", self._assets.shell_proof_timeout_seconds,
+                "--capsem",
+                self._config.path(self._assets.capsem_binary),
+                "--marker",
+                marker,
+                "--session-name",
+                f"asset-{profile.name}-{self.host_arch.name}",
+                "--profile",
+                profile.name,
+                "--timeout",
+                self._assets.shell_proof_timeout_seconds,
                 env={
-                    "CAPSEM_HOME": str(home),
-                    "CAPSEM_RUN_DIR": str(run_dir),
-                    "CAPSEM_ASSETS_DIR": str(assets),
-                    "CAPSEM_PROFILES_DIR": str(
-                        config_root / self._assets.materialized_profiles_dir
+                    **names.capsem(home=home, run_dir=run_dir),
+                    **names.content(
+                        assets=assets,
+                        profiles=config_root / self._assets.materialized_profiles_dir,
                     ),
                 },
             )
@@ -153,15 +161,13 @@ class AssetGate:
             assetevidence.preserve(
                 self._runner,
                 self._config,
-                destination=self._profile_root(profile)
-                / self._assets.failure_evidence_dir,
+                destination=self._profile_root(profile) / self._assets.failure_evidence_dir,
                 run_dir=run_dir,
             )
             raise
         finally:
             pidfiles.stop_gate_service(run_dir, self._config.pidfiles)
             discard(run_dir)
-
 
     def preflight(self) -> None:
         """Refuse a build the daemon cannot finish, and clear the tree."""
@@ -201,8 +207,7 @@ class AssetGate:
             self._prove(profile, assets, config_root)
 
         self._runner.note(
-            "Ironbank VM asset build and boot gate passed for every profile "
-            "and architecture."
+            "Ironbank VM asset build and boot gate passed for every profile and architecture."
         )
 
 
@@ -218,17 +223,26 @@ def fragment(plan, config, *, after: tuple = ()):
     shared = (config.shared("docker_daemon"),)
 
     ready = phase.add(
-        step("preflight", Call("check capacity and clear the asset tree",
-                               lambda ctx: AssetGate(ctx.runner).preflight()),
-             contends=exclusive),
+        step(
+            "preflight",
+            Call(
+                "check capacity and clear the asset tree",
+                lambda ctx: AssetGate(ctx.runner).preflight(),
+                why=Why.DYNAMIC,
+            ),
+            contends=exclusive,
+        ),
         after=after,
     )
     lanes = tuple(
         phase.add(
             step(
                 f"build.{name}",
-                Call(f"build every profile's assets for {name}",
-                     _lane(name)),
+                Call(
+                    f"build every profile's assets for {name}",
+                    _lane(name),
+                    why=Why.DYNAMIC,
+                ),
                 contends=shared,
             ),
             after=(ready,),
@@ -236,15 +250,27 @@ def fragment(plan, config, *, after: tuple = ()):
         for name in config.architectures
     )
     swept = phase.add(
-        step("sweep", Call("remove containers the lanes left",
-                           lambda ctx: AssetGate(ctx.runner).sweep()),
-             contends=exclusive),
+        step(
+            "sweep",
+            Call(
+                "remove containers the lanes left",
+                lambda ctx: AssetGate(ctx.runner).sweep(),
+                why=Why.DYNAMIC,
+            ),
+            contends=exclusive,
+        ),
         after=lanes,
     )
     return phase.add(
-        step("assemble", Call("merge, publish, materialise and boot each profile",
-                              lambda ctx: AssetGate(ctx.runner).assemble()),
-             contends=exclusive),
+        step(
+            "assemble",
+            Call(
+                "merge, publish, materialise and boot each profile",
+                lambda ctx: AssetGate(ctx.runner).assemble(),
+                why=Why.DYNAMIC,
+            ),
+            contends=exclusive,
+        ),
         after=(swept,),
     )
 
@@ -254,8 +280,6 @@ def _lane(arch_name: str):
         AssetGate(context.runner).lane(arch_name)
 
     return perform
-
-
 
 
 class AssetsCommand(

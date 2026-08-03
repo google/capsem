@@ -42,8 +42,7 @@ def discover_profiles(config: gate_config.GateConfig) -> list[Profile]:
     """Every checked-in profile, in the order the gate builds them."""
     pattern = config.assets.profiles_glob
     found = [
-        Profile(name=path.parent.name, manifest=path)
-        for path in sorted(config.root.glob(pattern))
+        Profile(name=path.parent.name, manifest=path) for path in sorted(config.root.glob(pattern))
     ]
     if not found:
         raise GateError(f"no profiles matched {pattern} under {config.root}")

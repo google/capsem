@@ -15,7 +15,7 @@ exactly the runs where the most had changed. It is an edge.
 
 from __future__ import annotations
 
-from .actions import Call, Run, Script
+from .actions import Call, Run, Script, Why
 from .config import GateConfig
 from .execution import Step, step
 
@@ -28,7 +28,10 @@ def all_of(config: GateConfig) -> list[Step]:
         step("audit.pnpm", Script(audits.pnpm)),
         step("audit.python-lock", Run(["bash", audits.python_lock])),
         step("audit.public-surface", Script(audits.public_surface)),
-        step("audit.skills", Run(["uv", "run", "capsem-builder", "validate-skills", audits.skills_dir])),
+        step(
+            "audit.skills",
+            Run(["uv", "run", "capsem-builder", "validate-skills", audits.skills_dir]),
+        ),
         step("audit.release-selections", Run(["bash", audits.hardcoded_selections])),
     ]
 
@@ -87,9 +90,7 @@ def blocking_surface(config: GateConfig, surfaces: list[Step]) -> Step:
     # Suffix, not equality: composed into a larger plan these labels carry
     # their phase's namespace, and matching the whole thing would silently
     # find nothing.
-    return next(
-        candidate for candidate in surfaces if candidate.label.endswith(wanted)
-    )
+    return next(candidate for candidate in surfaces if candidate.label.endswith(wanted))
 
 
 def lint(config: GateConfig) -> Step:
@@ -105,5 +106,9 @@ def lint(config: GateConfig) -> Step:
 
     return step(
         "lint",
-        Call("ruff and ty over every Python tree", lambda ctx: linting.check(ctx.runner)),
+        Call(
+            "ruff and ty over every Python tree",
+            lambda ctx: linting.check(ctx.runner),
+            why=Why.DYNAMIC,
+        ),
     )

@@ -84,9 +84,7 @@ class OrphanAccounting(Resource, name="orphan-accounting"):
 
     def release(self) -> None:
         if self._orphan("check", check=False) != 0:
-            raise GateError(
-                "capsem processes from this checkout outlived the gate; see above"
-            )
+            raise GateError("capsem processes from this checkout outlived the gate; see above")
 
 
 class FailureEvidence(Resource, name="failure-evidence"):
@@ -244,7 +242,5 @@ class CandidateModulesCommand(
 
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        candidateplan.compose_modules(
-            plan, self._config, qualification=self.qualification
-        )
+        candidateplan.compose_modules(plan, self._config, qualification=self.qualification)
         return plan

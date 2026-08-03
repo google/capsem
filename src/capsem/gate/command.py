@@ -72,9 +72,7 @@ class GateCommand(ABC):
         super().__init_subclass__(**kwargs)
         cls.name, cls.help = name, help
         if name in GateCommand.registry:
-            raise TypeError(
-                f"two commands claim the name {name!r}; one of them will never run"
-            )
+            raise TypeError(f"two commands claim the name {name!r}; one of them will never run")
         GateCommand.registry[name] = cls
 
     def __init__(

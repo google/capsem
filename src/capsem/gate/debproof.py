@@ -24,17 +24,14 @@ from pathlib import Path
 
 from . import config as gate_config
 from . import host
-from .actions import Call
-from .command import GateCommand
 from .docker import Docker, Mount
 from .errors import GateError
-from .execution import step
 from .installcontainer import await_systemd
-from .plan import Plan
 from .proc import Runner
 
 # `Profiles: 3/3 ready`, whose two numbers must match and must not be zero.
 PROFILE_READY = re.compile(r"^Profiles:\s+(\d+)/(\d+) ready", re.M)
+
 
 class DebProof:
     """One clean-container installation of one exact Debian package."""
@@ -118,8 +115,7 @@ class DebProof:
             self._docker.remove(self._proof.container)
 
         self._runner.note(
-            f"Exact Debian package proof passed: version={expected} "
-            f"profiles={ready}/{total}"
+            f"Exact Debian package proof passed: version={expected} profiles={ready}/{total}"
         )
 
     def _start(self, devices: list[str]) -> None:
@@ -131,8 +127,14 @@ class DebProof:
             name=self._proof.container,
             image=self._install.image,
             command=[self._install.systemd_command],
-            options=["--privileged", "--cgroupns=host",
-                     "--security-opt", "seccomp=unconfined", *devices, *tmpfs],
+            options=[
+                "--privileged",
+                "--cgroupns=host",
+                "--security-opt",
+                "seccomp=unconfined",
+                *devices,
+                *tmpfs,
+            ],
             mounts=[
                 Mount(cgroup, cgroup, "rw"),
                 # Read-only: this proof must not be able to influence the tree
@@ -148,9 +150,7 @@ class DebProof:
             sleep=self._sleep,
         )
         for device in self._install.vm_devices:
-            self._docker.exec(
-                self._proof.container, ["test", "-r", device, "-a", "-w", device]
-            )
+            self._docker.exec(self._proof.container, ["test", "-r", device, "-a", "-w", device])
 
     def _install_package(self, container_deb: str, expected: str) -> None:
         self._runner.note(f"Installing exact package: {self.package}")
@@ -179,9 +179,7 @@ class DebProof:
         """
         bin_dir = self._install.bin_dir
         for name in self._proof.binaries:
-            self._docker.exec(
-                self._proof.container, ["test", "-x", f"{bin_dir}/{name}"]
-            )
+            self._docker.exec(self._proof.container, ["test", "-x", f"{bin_dir}/{name}"])
         for name in self._proof.versioned_binaries:
             reported = self._docker.capture(
                 self._proof.container, [f"{bin_dir}/{name}", "--version"]
@@ -200,25 +198,23 @@ class DebProof:
         """`capsem status` from the installed package, as the user would run it."""
         guest = self._install.guest_user
         output = self._docker.capture(
-            self._proof.container, [self._install.installed_capsem, "status"],
-            user=guest.name, env=self._guest_env(),
+            self._proof.container,
+            [self._install.installed_capsem, "status"],
+            user=guest.name,
+            env=self._guest_env(),
         )
         self._runner.note(output)
 
         missing = [line for line in self._proof.status_requires if line not in output]
         if missing:
-            raise GateError(
-                "the installed package's status is missing: " + ", ".join(missing)
-            )
+            raise GateError("the installed package's status is missing: " + ", ".join(missing))
 
         counts = PROFILE_READY.search(output)
         if counts is None:
             raise GateError("exact package status has no Profiles: ready count")
         ready, total = int(counts.group(1)), int(counts.group(2))
         if total <= 0 or ready != total:
-            raise GateError(
-                f"exact package profiles are not all ready: {ready}/{total}"
-            )
+            raise GateError(f"exact package profiles are not all ready: {ready}/{total}")
         return ready, total
 
     def _verify_release(self, expected: str) -> None:
@@ -226,12 +222,18 @@ class DebProof:
         self._docker.exec(
             self._proof.container,
             [
-                "python3", f"{self._install.mount}/{self._proof.verify_script}",
-                "--capsem", self._install.installed_capsem,
-                "--capsem-home", f"{guest.home}/{self._install.capsem_home}",
-                "--manifest-url", self.manifest_url,
-                "--channel", self.channel,
-                "--package-version", expected,
+                "python3",
+                f"{self._install.mount}/{self._proof.verify_script}",
+                "--capsem",
+                self._install.installed_capsem,
+                "--capsem-home",
+                f"{guest.home}/{self._install.capsem_home}",
+                "--manifest-url",
+                self.manifest_url,
+                "--channel",
+                self.channel,
+                "--package-version",
+                expected,
             ],
             user=guest.name,
             env=self._guest_env(),
@@ -242,55 +244,17 @@ class DebProof:
         self._docker.exec(
             self._proof.container,
             [
-                "python3", f"{self._install.mount}/{self._proof.shell_proof_script}",
-                "--capsem", self._install.installed_capsem,
-                "--marker", self._proof.shell_marker,
-                "--session-name", self._proof.session_name,
-                "--timeout", str(self._proof.shell_timeout_seconds),
+                "python3",
+                f"{self._install.mount}/{self._proof.shell_proof_script}",
+                "--capsem",
+                self._install.installed_capsem,
+                "--marker",
+                self._proof.shell_marker,
+                "--session-name",
+                self._proof.session_name,
+                "--timeout",
+                str(self._proof.shell_timeout_seconds),
             ],
             user=guest.name,
             env=self._guest_env(),
         )
-
-
-class ProveDebCommand(
-    GateCommand,
-    name="prove-deb",
-    help="install one exact dist/*.deb in a clean container and prove it",
-):
-    exclusive = True
-
-    @classmethod
-    def add_arguments(cls, parser) -> None:
-        """Arguments, not environment.
-
-        The three `CAPSEM_PROOF_*` variables existed to carry these across a
-        process boundary the package rail no longer crosses -- it constructs
-        `DebProof` directly. What is left is this command's own surface, and a
-        surface is better as arguments: `--help` lists them, and a missing one
-        is an argparse error rather than a runtime `GateError` deep inside a
-        container start.
-        """
-        parser.add_argument("package", help="the exact .deb to install")
-        parser.add_argument("--manifest-url", required=True)
-        parser.add_argument("--channel", required=True)
-
-    def plan(self) -> Plan:
-        plan = Plan(self.name)
-        args = self._args
-        plan.add(
-            step(
-                "prove",
-                Call(
-                    "install the exact .deb in a clean container",
-                    lambda ctx: DebProof(
-                        ctx.runner,
-                        package=Path(args.package),
-                        manifest_url=args.manifest_url,
-                        channel=args.channel,
-                    ).run(),
-                ),
-                contends=(self._config.exclusive("docker_daemon"),),
-            )
-        )
-        return plan

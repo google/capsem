@@ -24,7 +24,7 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
-from capsem.gate.actions import Call
+from capsem.gate.actions import Call, Why
 from capsem.gate.context import Context
 from capsem.gate.execution import step
 from capsem.gate.plan import Plan
@@ -58,7 +58,7 @@ def test_shared_holders_run_together() -> None:
     plan = Plan("shared")
     shared = (CONFIG.shared("docker_daemon"),)
     for name in ("lane-a", "lane-b"):
-        plan.add(step(name, Call(name, action), contends=shared))
+        plan.add(step(name, Call(name, action, why=Why.DYNAMIC), contends=shared))
 
     _run(plan)
 
@@ -69,9 +69,23 @@ def test_an_exclusive_holder_excludes_the_shared_ones() -> None:
     """The other half: while a writer holds it, no lane may start."""
     state, action = _overlap_probe()
     plan = Plan("mixed")
-    plan.add(step("lane-a", Call("a", action), contends=(CONFIG.shared("docker_daemon"),)))
-    plan.add(step("lane-b", Call("b", action), contends=(CONFIG.shared("docker_daemon"),)))
-    plan.add(step("outsider", Call("o", action), contends=(CONFIG.exclusive("docker_daemon"),)))
+    plan.add(
+        step(
+            "lane-a", Call("a", action, why=Why.DYNAMIC), contends=(CONFIG.shared("docker_daemon"),)
+        )
+    )
+    plan.add(
+        step(
+            "lane-b", Call("b", action, why=Why.DYNAMIC), contends=(CONFIG.shared("docker_daemon"),)
+        )
+    )
+    plan.add(
+        step(
+            "outsider",
+            Call("o", action, why=Why.DYNAMIC),
+            contends=(CONFIG.exclusive("docker_daemon"),),
+        )
+    )
 
     _run(plan)
 
@@ -85,7 +99,11 @@ def test_exclusive_holders_still_exclude_each_other() -> None:
     plan = Plan("exclusive")
     for name in ("one", "two"):
         plan.add(
-            step(name, Call(name, action), contends=(CONFIG.exclusive("docker_daemon"),))
+            step(
+                name,
+                Call(name, action, why=Why.DYNAMIC),
+                contends=(CONFIG.exclusive("docker_daemon"),),
+            )
         )
 
     _run(plan)

@@ -39,6 +39,7 @@ class ReleaseGraph:
     def __init__(self, docker: Docker, config: gate_config.GateConfig) -> None:
         self._docker = docker
         self._config = config.install
+        self._site = config.environment.release_site
         self._container = self._config.container
         self._mount = self._config.mount
         self._handoff_written = False
@@ -91,16 +92,21 @@ class ReleaseGraph:
         self._docker.exec(
             self._container,
             [
-                admin, "assets", "channel", "record-binary",
-                "--manifest-path", assets_manifest,
-                "--version", version,
-                "--artifact", candidate_deb,
-                "--artifact", sbom,
+                admin,
+                "assets",
+                "channel",
+                "record-binary",
+                "--manifest-path",
+                assets_manifest,
+                "--version",
+                version,
+                "--artifact",
+                candidate_deb,
+                "--artifact",
+                sbom,
             ],
             user=self._config.guest_user.name,
-            env={
-                "CAPSEM_RELEASE_URL": f"{self._config.file_url_scheme}{candidate_base}"
-            },
+            env={self._site.url: f"{self._config.file_url_scheme}{candidate_base}"},
         )
 
     def build_channel(
@@ -118,15 +124,23 @@ class ReleaseGraph:
             self._container,
             " ".join(
                 [
-                    admin, "assets", "channel", "build",
+                    admin,
+                    "assets",
+                    "channel",
+                    "build",
                     "--manifest",
                     f'"{self._config.file_url_scheme}{self._mount}/{assets_dir}'
                     f'/{self._config.manifest_name}"',
-                    "--assets-dir", f'"{assets_dir}"',
-                    "--profiles-dir", f'"{profiles_dir}"',
-                    "--channel", channel,
-                    "--manifest-version", manifest_version,
-                    "--out-dir", f'"{out_dir}"',
+                    "--assets-dir",
+                    f'"{assets_dir}"',
+                    "--profiles-dir",
+                    f'"{profiles_dir}"',
+                    "--channel",
+                    channel,
+                    "--manifest-version",
+                    manifest_version,
+                    "--out-dir",
+                    f'"{out_dir}"',
                 ]
             ),
             user=self._config.guest_user.name,
@@ -137,7 +151,8 @@ class ReleaseGraph:
     def build_site(self, *, dist: str) -> None:
         """Render the release site over the generated distribution."""
         self._docker.shell(
-            self._container, "pnpm install --frozen-lockfile",
+            self._container,
+            "pnpm install --frozen-lockfile",
             user=self._config.guest_user.name,
             cwd=f"{self._mount}/{self._config.release_site_dir}",
         )
@@ -146,8 +161,12 @@ class ReleaseGraph:
             f"bash {self._config.suite.web_surface_script} release-site-build",
             cwd=self._mount,
             env={
-                "CAPSEM_RELEASE_GRAPH": f"{self._mount}/{dist}",
-                "CAPSEM_RELEASE_CHANNEL_DIST": f"{self._mount}/{dist}",
+                # Input and output, and deliberately the same directory here:
+                # the proof renders the graph it just built. One name meant
+                # both until they were split, which is why they are spelled
+                # from one owner rather than typed twice.
+                self._site.graph: f"{self._mount}/{dist}",
+                self._site.channel_dist: f"{self._mount}/{dist}",
             },
         )
 

@@ -35,9 +35,7 @@ def materialized(profiles_dir: Path) -> list[str]:
         except (OSError, tomllib.TOMLDecodeError) as error:
             raise GateError(f"invalid materialized profile {profile}: {error}") from None
         if document.get("id") != identity:
-            raise GateError(
-                f"materialized profile {profile} declares an id that is not {identity}"
-            )
+            raise GateError(f"materialized profile {profile} declares an id that is not {identity}")
         found.append(identity)
 
     if not found:

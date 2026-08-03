@@ -35,6 +35,7 @@ _TERMINAL = threading.Lock()
 #: genuinely touch the machine are allowed to do.
 Completed = subprocess.CompletedProcess[str]
 
+
 class Runner:
     """Executes gate commands against the real machine.
 

@@ -408,7 +408,11 @@ def test_ensure_service_uses_generated_profiles() -> None:
     service = (PROJECT_ROOT / "src/capsem/gate/service.py").read_text(encoding="utf-8")
 
     assert config.service.generated_profiles == "target/config/profiles"
-    assert "CAPSEM_PROFILES_DIR" in service
+    # The variable name has one owner now, so asserting the literal appeared
+    # in this module was asserting where it was spelled rather than what the
+    # daemon is told. The claim is that the launch carries it.
+    assert config.environment.profiles_dir == "CAPSEM_PROFILES_DIR"
+    assert "names.content(profiles=" in service
     assert "generated profiles are missing" in service
 
 

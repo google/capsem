@@ -19,9 +19,7 @@ from .filesystem import copy_file, discard, make_dir
 from .proc import Runner
 
 
-def preserve(
-    runner: Runner, config: GateConfig, *, destination: Path, run_dir: Path
-) -> None:
+def preserve(runner: Runner, config: GateConfig, *, destination: Path, run_dir: Path) -> None:
     settings = config.assets
     discard(destination)
     make_dir(destination)

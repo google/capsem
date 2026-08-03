@@ -259,7 +259,7 @@ WHOLE_GATE: tuple[tuple[str, dict[str, object]], ...] = (
 )
 
 
-def _built(root: Path, name: str, args: tuple[tuple[str, object], ...]):
+def _built(root: Path, name: str, args: tuple[tuple[str, object], ...], qualification=None):
     import argparse
 
     from capsem.gate import cli  # noqa: F401 - importing registers every command
@@ -268,22 +268,27 @@ def _built(root: Path, name: str, args: tuple[tuple[str, object], ...]):
     return GateCommand.registry[name](
         RecordingRunner(root),
         argparse.Namespace(dry_run=False, graph=False, timing=False, **dict(args)),
+        qualification=qualification,
     )
 
 
-@cache
-def gate_plan(name: str = "candidate", root: Path | None = None):
-    """A command's plan, built but not run -- for asserting on its edges."""
-    return _built(root or PROJECT_ROOT, name, ())._describe()
+def gate_plan(name: str = "candidate", root: Path | None = None, qualification=None):
+    """A command's plan, built but not run -- for asserting on its edges.
+
+    Deliberately not cached. A plan is a mutable object with an environment in
+    its inputs, and a cache keyed on the name alone hands two callers the same
+    one -- so a test that set a release variable and asked again got the local
+    lane's plan and asserted happily against it. Building one costs
+    milliseconds; the answers it hides cost hours.
+    """
+    return _built(root or PROJECT_ROOT, name, (), qualification)._describe()
 
 
-@cache
 def gate_labels(name: str = "candidate", root: Path | None = None) -> tuple[str, ...]:
     """Every step of a command's plan, in an order the graph permits."""
     return tuple(gate_plan(name, root).labels)
 
 
-@cache
 def gate_issued(
     name: str, args: tuple[tuple[str, object], ...] = (), root: Path | None = None
 ) -> str:
@@ -312,13 +317,26 @@ def gate_issued(
     return "\n".join([rendered, *runner.rendered, *runner.notes])
 
 
-@cache
 def gate_issues(name: str | None = None, root: Path | None = None) -> str:
     """Everything the gate would issue, with real argv.
 
     `name` reads one command; the default reads the whole gate, which is what a
     contract about "does the gate ever run X" is really asking.
+
+    Cached, unlike `gate_plan`: this runs twelve module plans and the answer is
+    an immutable string. The release state is part of the key rather than
+    ambient, because it changes the answer -- which is what a cache with only
+    the name in its key was quietly denying.
     """
+    from capsem.gate import config as gate_config
+    from capsem.gate.qualification import Qualification
+
+    mode = Qualification.from_environment(gate_config.load(root or PROJECT_ROOT)).mode
+    return _issues(name, root, mode)
+
+
+@cache
+def _issues(name: str | None, root: Path | None, mode: object) -> str:
     selection = (
         tuple(entry for entry in WHOLE_GATE if entry[0] == name) if name is not None else WHOLE_GATE
     )

@@ -18,9 +18,7 @@ from .proc import Runner
 
 def other_architecture(config: gate_config.GateConfig, native: gate_config.Arch):
     """The architecture this host is not."""
-    others = [
-        arch for arch in config.architectures.values() if arch.name != native.name
-    ]
+    others = [arch for arch in config.architectures.values() if arch.name != native.name]
     if len(others) != 1:
         raise GateError(
             "the asset gate expects exactly one non-host architecture, got "
@@ -29,9 +27,7 @@ def other_architecture(config: gate_config.GateConfig, native: gate_config.Arch)
     return others[0]
 
 
-def require(
-    runner: Runner, config: gate_config.GateConfig, native: gate_config.Arch
-) -> None:
+def require(runner: Runner, config: gate_config.GateConfig, native: gate_config.Arch) -> None:
     """Refuse to start if the daemon cannot run the other architecture."""
     settings = config.assets
     other = other_architecture(config, native)

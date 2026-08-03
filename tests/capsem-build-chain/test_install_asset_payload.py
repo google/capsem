@@ -768,8 +768,16 @@ def test_install_test_stages_real_profile_assets_for_mandatory_vm_proofs() -> No
     assert build < render < check
 
     # The renderer is told which graph to read and where the render goes.
-    assert "CAPSEM_RELEASE_GRAPH" in graph
-    assert "CAPSEM_RELEASE_CHANNEL_DIST" in graph
+    # Through `[environment.release_site]`, which owns both names -- one used
+    # to mean input *and* output, and keeping them adjacent under one owner is
+    # what makes the pair readable.
+    site = config.environment.release_site
+    assert (site.graph, site.channel_dist) == (
+        "CAPSEM_RELEASE_GRAPH",
+        "CAPSEM_RELEASE_CHANNEL_DIST",
+    )
+    assert "self._site.graph" in graph
+    assert "self._site.channel_dist" in graph
 
 
 def test_install_test_consumes_exact_publishable_package_without_rebuild() -> None:

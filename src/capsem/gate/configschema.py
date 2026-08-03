@@ -59,204 +59,66 @@ class PidfileConfig(Strict):
     proc_stat_template: str
 
 
-class VolumeSpec(Strict):
-    source: str
-    target: str
+class PackageEnvironment(Strict):
+    """What the builder container is told about its target."""
+
+    target_arch: str
+    rust_target: str
+    dpkg_arch: str
+    rust_toolchain: str
 
 
-class InstallLayout(Strict):
-    assets: str
-    config: str
-    channel: str
-    packages: str
-    glowup: str
-    extra_owned_paths: tuple[str, ...]
+class ReleaseSiteEnvironment(Strict):
+    """Where a release-site build reads from and writes to."""
 
-    def owned_paths(self, mount: str) -> tuple[str, ...]:
-        """Everything the container writes as its own user."""
-        return tuple(
-            f"{mount}/{path}"
-            for path in (
-                self.assets, self.config, self.channel, self.packages, self.glowup,
-                *self.extra_owned_paths,
-            )
-        )
+    url: str
+    graph: str
+    channel_dist: str
 
 
-class GuestUser(Strict):
-    """The unprivileged container user, and the paths it may write to.
+class InstallProofEnvironment(Strict):
+    """What the in-container proof is told about what it just installed."""
 
-    Every path here has to stay off the bind mount: `/src` belongs to the host
-    uid, so anything this user writes there fails with EACCES on Linux and only
-    on Linux -- which is why four separate release-gate failures had this one
-    shape.
-    """
-
-    name: str
-    home: str
-    runtime_dir: str
-    tmp: str
-    pytest_cache: str
+    installed: str
+    bin_src: str
     asset_manifest: str
 
 
-class InstallSuite(Strict):
-    path: str
-    glowup_script: str
-    macos_report_check: str
-    stage_inputs_script: str
-    serve_script: str
-    sbom_script: str
-    web_surface_script: str
-    package_name: str
-
-
-class InstallConfig(Strict):
-    container: str
-    image: str
-    dockerfile: str
-    venv: str
-    mount: str
-    channel: str
-    manifest_version: str
-    systemd_ready_attempts: int
-    systemd_ready_interval_seconds: float
-    serve_ready_file: str
-    serve_ready_attempts: int
-    serve_ready_interval_seconds: float
-    vm_devices: tuple[str, ...]
-    optional_vm_devices: tuple[str, ...]
-    rosetta_binfmt: str
-    systemd_command: str
-    cgroup_path: str
-    tmpfs_paths: tuple[str, ...]
-    bin_dir: str
-    installed_capsem: str
-    capsem_home: str
-    manifest_name: str
-    sbom_name: str
-    candidate_prefix: str
-    file_url_scheme: str
-    release_site_dir: str
-    storage_ledger: str
-    test_output_root: str
-    install_log_glob: str
-    profile_inputs_variable: str
-    preinstall_root: str
-    admin_relative: str
-    request_script: str
-    graph_manifest: str
-    legacy_projection: str
-    layout: InstallLayout
-    guest_user: GuestUser
-    suite: InstallSuite
-    volumes: tuple[VolumeSpec, ...]
-
-    @property
-    def preinstall_admin(self) -> str:
-        return f"{self.preinstall_root}/{self.admin_relative}"
-
-
-class PackageProof(Strict):
-    container: str
-    systemd_ready_attempts: int
-    verify_script: str
-    shell_proof_script: str
-    shell_marker: str
-    session_name: str
-    shell_timeout_seconds: int
-    binaries: tuple[str, ...]
-    binaries_without_version: tuple[str, ...]
-    status_requires: tuple[str, ...]
-
-    @property
-    def versioned_binaries(self) -> tuple[str, ...]:
-        return tuple(
-            name for name in self.binaries if name not in self.binaries_without_version
-        )
+class LinuxRustEnvironment(Strict):
+    output_dir: str
 
 
 class EnvironmentConfig(Strict):
-    """The variable names that say which capsem a process is talking to."""
+    """The variable names that say which capsem a process is talking to.
+
+    And the builders below it. Every one of these is a Capsem protocol name
+    rather than a standard process convention -- `HOME` and `TMPDIR` mean what
+    they mean everywhere and stay where they are.
+    """
 
     home: str
     run_dir: str
+    assets_dir: str
+    profiles_dir: str
     benchmark_root: str
     coverage_file: str
+    package: PackageEnvironment
+    release_site: ReleaseSiteEnvironment
+    install_proof: InstallProofEnvironment
+    linux_rust: LinuxRustEnvironment
 
+    def capsem(self, *, home: object, run_dir: object) -> dict[str, str]:
+        """Which capsem a process is talking to."""
+        return {self.home: str(home), self.run_dir: str(run_dir)}
 
-class ArtifactsConfig(Strict):
-    """The three files a bootable per-architecture asset tree is made of."""
-
-    kernel: str
-    initrd: str
-    rootfs: str
-
-    @property
-    def bootable(self) -> tuple[str, ...]:
-        """What must exist for a tree to boot, in build order."""
-        return (self.kernel, self.initrd, self.rootfs)
-
-
-class PackageSigningConfig(Strict):
-    """Where the local Tauri signing material lives, and how it is exported."""
-
-    directory: str
-    key: str
-    password: str
-    key_variable: str
-    password_variable: str
-
-
-class PackageConfig(Strict):
-    current_assets: str
-    signing: PackageSigningConfig
-    manifest_variable: str
-    channel_variable: str
-    require_proof_variable: str
-    builder_image: str
-    build_script: str
-    proof_selector: str
-    release_inputs_name: str
-    default_manifest_url: str
-    channels: tuple[str, ...]
-    default_channel: str
-    toolchain_pin: str
-    clock_script: str
-    cargo_target_mount: str
-    package_suffix: str
-    dist_dir: str
-    target_volume: str
-    proof: PackageProof
-    volumes: tuple[VolumeSpec, ...]
-
-    def target_volume_for(self, arch: str) -> str:
-        return self.target_volume.format(arch=arch)
-
-
-class AssetsConfig(Strict):
-    test_root: str
-    profiles_glob: str
-    evidence_artifacts: tuple[str, ...]
-    failure_tail_lines: int
-    shell_proof_timeout_seconds: int
-    run_dir_template: str
-    admin_command: tuple[str, ...]
-    capsem_binary: str
-    hash_assets_script: str
-    shell_proof_script: str
-    container_cleanup_script: str
-    cross_platform_probe_image: str
-    cross_platform_prefix: str
-    cross_platform_probe_command: str
-    merged_assets_dir: str
-    merged_config_dir: str
-    profile_home_dir: str
-    failure_evidence_dir: str
-    materialized_profiles_dir: str
-    current_link: str
-    evidence_suffixes: tuple[str, ...]
-    evidence_prune_dirs: tuple[str, ...]
+    def content(self, *, assets: object = None, profiles: object = None) -> dict[str, str]:
+        """Where it finds its assets and profiles. Absent means unchanged."""
+        found = {}
+        if assets is not None:
+            found[self.assets_dir] = str(assets)
+        if profiles is not None:
+            found[self.profiles_dir] = str(profiles)
+        return found
 
 
 class CandidateConfig(Strict):

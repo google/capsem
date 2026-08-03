@@ -55,14 +55,18 @@ def package_environment(
     builds against the wrong manifest.
     """
     uid, gid = host.user()
+    names = config.environment.package
     return {
-        "TARGET_ARCH": target.name,
-        "RUST_TARGET": target.rust_target,
-        "DPKG_ARCH": target.dpkg,
-        "RUST_TOOLCHAIN": toolchain,
+        names.target_arch: target.name,
+        names.rust_target: target.rust_target,
+        names.dpkg_arch: target.dpkg,
+        names.rust_toolchain: toolchain,
+        # Standard tool and process conventions, not Capsem rails: these mean
+        # the same thing in every container, and giving them a TOML key would
+        # be moving strings rather than giving a protocol an owner.
         "PKG_CONFIG_PATH": target.pkg_config_path,
-        config.package.manifest_variable: manifest_url,
         "HOST_UID": str(uid),
         "HOST_GID": str(gid),
+        config.package.manifest_variable: manifest_url,
         **signing,
     }

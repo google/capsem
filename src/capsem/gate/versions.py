@@ -22,7 +22,7 @@ import tomllib
 from pathlib import Path
 
 from . import config as gate_config
-from .actions import Call
+from .actions import Call, Why
 from .command import GateCommand
 from .errors import GateError
 from .execution import step
@@ -43,10 +43,14 @@ SEMVER = re.compile(r"^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$")
 # copies are refreshed by the tools that own them, not by substitution.
 SEMVER_PATTERN = r"\d+\.\d+\.\d+"
 FORMATS = {
-    "json_key": (lambda key: re.compile(rf'"{key}": "{SEMVER_PATTERN}"'),
-                 lambda key: f'"{key}": "{{version}}"'),
-    "toml_key": (lambda key: re.compile(rf"^{key} = \"{SEMVER_PATTERN}\"$", re.M),
-                 lambda key: f'{key} = "{{version}}"'),
+    "json_key": (
+        lambda key: re.compile(rf'"{key}": "{SEMVER_PATTERN}"'),
+        lambda key: f'"{key}": "{{version}}"',
+    ),
+    "toml_key": (
+        lambda key: re.compile(rf"^{key} = \"{SEMVER_PATTERN}\"$", re.M),
+        lambda key: f'{key} = "{{version}}"',
+    ),
 }
 
 
@@ -62,9 +66,9 @@ def workspace_version(root: Path) -> str:
     settings = gate_config.for_root(root).versions
     cargo = Path(root) / settings.cargo_manifest
     try:
-        declared = tomllib.loads(cargo.read_text(encoding="utf-8"))["workspace"][
-            "package"
-        ]["version"]
+        declared = tomllib.loads(cargo.read_text(encoding="utf-8"))["workspace"]["package"][
+            "version"
+        ]
     except (KeyError, tomllib.TOMLDecodeError) as exc:
         raise GateError(f"{cargo} declares no [workspace.package] version: {exc}") from None
     return require_semver(declared, source=settings.cargo_manifest)
@@ -80,9 +84,7 @@ def _substitute(path: Path, pattern: re.Pattern[str], template: str, version: st
     text = path.read_text(encoding="utf-8")
     replaced, count = pattern.subn(template.format(version=version), text)
     if count != 1:
-        raise GateError(
-            f"{path} should spell the version exactly once, matched {count} times"
-        )
+        raise GateError(f"{path} should spell the version exactly once, matched {count} times")
     write_text(path, replaced)
 
 
@@ -107,9 +109,7 @@ def stamp(root: Path, runner: Runner) -> str:
     runner.note(f"Stamping release cohort at {version}")
     for stamped in settings.stamped:
         pattern, template = FORMATS[stamped.kind]
-        _substitute(
-            root / stamped.path, pattern(stamped.key), template(stamped.key), version
-        )
+        _substitute(root / stamped.path, pattern(stamped.key), template(stamped.key), version)
 
     # Cargo refreshes workspace package versions in place while preserving the
     # already locked dependency graph.
@@ -135,6 +135,7 @@ class StampCommand(
                 Call(
                     "stamp the workspace version into every file that carries it",
                     _stamp,
+                    why=Why.DYNAMIC,
                 ),
             )
         )
@@ -145,11 +146,10 @@ def _stamp(context) -> None:
     stamp(context.root, context.runner)
 
 
-class VersionCommand(
-    GateCommand, name="version", help="print the workspace version"
-):
+class VersionCommand(GateCommand, name="version", help="print the workspace version"):
     records = False
     """Only reads runs; creating one would answer with the question."""
+
     def plan(self) -> Plan:
         plan = Plan(self.name)
         plan.add(
@@ -158,6 +158,7 @@ class VersionCommand(
                 Call(
                     "read the version from its one authority",
                     lambda ctx: print(workspace_version(ctx.root)),
+                    why=Why.COMPUTATION,
                 ),
             )
         )

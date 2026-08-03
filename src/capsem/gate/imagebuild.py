@@ -12,7 +12,7 @@ shell is how `arm64` came to mean two different things in one repository.
 
 from __future__ import annotations
 
-from .actions import Call, Run
+from .actions import Call, Run, Why
 from .command import GateCommand
 from .config import Arch, GateConfig
 from .errors import GateError
@@ -22,9 +22,7 @@ from .plan import Plan
 
 def profiles(config: GateConfig) -> list[str]:
     """Every checked-in profile, by directory name."""
-    found = sorted(
-        path.parent.name for path in config.root.glob(config.imagebuild.profiles_glob)
-    )
+    found = sorted(path.parent.name for path in config.root.glob(config.imagebuild.profiles_glob))
     if not found:
         raise GateError(f"no profiles under {config.imagebuild.profiles_glob}")
     return found
@@ -58,7 +56,7 @@ def doctor(config: GateConfig) -> Step:
         # Both halves of `just doctor`, composed rather than dispatched: the
         # gate's own wiring check, then the host-tooling script that actually
         # reads the skip variables.
-        Call("would the gate work if we started now", diagnosis.report),
+        Call("would the gate work if we started now", diagnosis.report, why=Why.COMPUTATION),
         Run(
             ["bash", config.doctor.common_script],
             env=dict(config.imagebuild.doctor_skips),
@@ -85,16 +83,19 @@ def build_argv(
     settings = config.imagebuild
     if template not in settings.templates:
         raise GateError(
-            f"unknown image template {template!r}; expected one of "
-            f"{', '.join(settings.templates)}"
+            f"unknown image template {template!r}; expected one of {', '.join(settings.templates)}"
         )
 
     argv = [
         *settings.admin,
-        "--profile", settings.profile_manifest.format(profile=profile),
-        "--config-root", settings.config_root,
-        "--output", output or settings.output,
-        "--template", template,
+        "--profile",
+        settings.profile_manifest.format(profile=profile),
+        "--config-root",
+        settings.config_root,
+        "--output",
+        output or settings.output,
+        "--template",
+        template,
         "--clean",
     ]
     if arch:
@@ -130,9 +131,7 @@ class BuildAssetsCommand(
     def add_arguments(cls, parser) -> None:
         parser.add_argument("profile", nargs="?", help="defaults to every profile")
         parser.add_argument("arch", nargs="?", help="defaults to every architecture")
-        parser.add_argument(
-            "--template", default="all", help="kernel, rootfs, or all"
-        )
+        parser.add_argument("--template", default="all", help="kernel, rootfs, or all")
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

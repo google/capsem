@@ -63,8 +63,7 @@ class Command:
         reader needs, and it is not the part that is a credential.
         """
         return {
-            name: REDACTED if name in self.secret_env else value
-            for name, value in self.env.items()
+            name: REDACTED if name in self.secret_env else value for name, value in self.env.items()
         }
 
     @property

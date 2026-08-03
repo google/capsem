@@ -11,7 +11,7 @@ from __future__ import annotations
 import os
 
 from . import hostimage
-from .actions import Call
+from .actions import Call, Why
 from .command import GateCommand
 from .execution import step
 from .packagerail import PackageRail
@@ -39,21 +39,32 @@ def fragment(plan: Plan, config, target, *, after: tuple = ()):
     #: in this file came from reasoning about these six from outside one
     #: opaque `Call`.
     phases = (
-        ("storage-release", "hand back the rails the assets finished with", "release_rails"),
-        ("space", "reserve the package rail's headroom", "reserve"),
-        ("clock", "sync the container clock", "sync_clock"),
-        ("sync-assets", f"point the embedded assets at {target.name}", "sync_assets"),
-        ("build", f"build the Linux release package for {target.name}", "build"),
-        ("resolve", "read back the exact package the builder recorded", "resolve"),
-        ("prove", "prove that exact package in systemd + KVM", "prove"),
-        ("storage-gc", "list the artifacts and reclaim this lane's disk", "collect"),
+        (
+            "storage-release",
+            "hand back the rails the assets finished with",
+            "release_rails",
+            Why.DYNAMIC,
+        ),
+        ("space", "reserve the package rail's headroom", "reserve", Why.COMPUTATION),
+        ("clock", "sync the container clock", "sync_clock", Why.DYNAMIC),
+        ("sync-assets", f"point the embedded assets at {target.name}", "sync_assets", Why.DYNAMIC),
+        # The one instance the class docstring used to describe as though it
+        # were all of them: this environment carries the Tauri private key.
+        ("build", f"build the Linux release package for {target.name}", "build", Why.SECRETS),
+        ("resolve", "read back the exact package the builder recorded", "resolve", Why.COMPUTATION),
+        ("prove", "prove that exact package in systemd + KVM", "prove", Why.DYNAMIC),
+        ("storage-gc", "list the artifacts and reclaim this lane's disk", "collect", Why.DYNAMIC),
     )
 
     previous: tuple = (built, *after)
-    for label, description, method in phases:
+    for label, description, method, why in phases:
         previous = (
             phase.add(
-                step(label, Call(description, _phase(target, method)), contends=docker),
+                step(
+                    label,
+                    Call(description, _phase(target, method), why=why),
+                    contends=docker,
+                ),
                 after=previous,
             ),
         )

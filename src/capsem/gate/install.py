@@ -20,7 +20,7 @@ from pathlib import Path
 
 from . import config as gate_config
 from . import hostimage, installimage
-from .actions import Call
+from .actions import Call, Why
 from .command import GateCommand
 from .docker import Docker, container_path
 from .errors import GateError
@@ -136,9 +136,7 @@ class InstallGate:
             self._publish_local_channel(admin)
 
         # The manifest handed over, read back from what the postinst recorded.
-        self._proof.install(
-            package, expected=self.version, manifest=self._graph.handed_off
-        )
+        self._proof.install(package, expected=self.version, manifest=self._graph.handed_off)
         self._graph.clear_handoff()
 
         # The Linux CI container chowns the bind-mounted checkout to uid 1000 so
@@ -154,11 +152,10 @@ class InstallGate:
         self._proof.run_install_suite()
         if not self._container.boots_a_guest:
             self._proof.validate_macos_glowup(
-                self._macos_report, cargo_toml=self._config.path(self._config.versions.cargo_manifest)
+                self._macos_report,
+                cargo_toml=self._config.path(self._config.versions.cargo_manifest),
             )
-        self._proof.prove_glowup(
-            package, boots_a_guest=self._container.boots_a_guest
-        )
+        self._proof.prove_glowup(package, boots_a_guest=self._container.boots_a_guest)
 
     def _stage(self) -> bool:
         """Stage assets, and report whether a local graph must be published.
@@ -185,7 +182,9 @@ class InstallGate:
         )
         self._graph.build_site(dist=self._layout.channel)
         self._graph.check_channel(
-            admin, channel=self._settings.channel, dist=self._layout.channel,
+            admin,
+            channel=self._settings.channel,
+            dist=self._layout.channel,
             manifest=manifest,
         )
         # Last thing before dpkg, and only once the graph it names has been
@@ -202,7 +201,9 @@ def install_step(config):
     """
     return step(
         "install",
-        Call("install the exact package and prove the installed product", _install),
+        Call(
+            "install the exact package and prove the installed product", _install, why=Why.DYNAMIC
+        ),
         contends=(config.exclusive("docker_daemon"),),
     )
 

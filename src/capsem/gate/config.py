@@ -42,13 +42,9 @@ from .buildschema import (
 )
 from .configschema import (
     Arch,
-    ArtifactsConfig,
-    AssetsConfig,
     CandidateConfig,
     DoctorConfig,
     EnvironmentConfig,
-    InstallConfig,
-    PackageConfig,
     PidfileConfig,
     StorageConfig,
     Strict,
@@ -64,6 +60,12 @@ from .harnessschema import (
     LocksConfig,
     RunLogConfig,
     WorkspaceConfig,
+)
+from .productschema import (
+    ArtifactsConfig,
+    AssetsConfig,
+    InstallConfig,
+    PackageConfig,
 )
 
 CONFIG_RELATIVE = Path("config") / "gate.toml"
@@ -135,9 +137,7 @@ class GateConfig(Strict):
     @property
     def _arch_aliases(self) -> dict[str, Arch]:
         return {
-            alias.lower(): arch
-            for arch in self.architectures.values()
-            for alias in arch.aliases
+            alias.lower(): arch for arch in self.architectures.values() for alias in arch.aliases
         }
 
     def arch(self, spelling: str) -> Arch:
@@ -147,8 +147,7 @@ class GateConfig(Strict):
             return table[spelling.strip().lower()]
         except KeyError:
             raise GateError(
-                f"unsupported architecture {spelling!r}; "
-                f"expected one of {', '.join(sorted(table))}"
+                f"unsupported architecture {spelling!r}; expected one of {', '.join(sorted(table))}"
             ) from None
 
     def host_arch(self) -> Arch:

@@ -20,7 +20,7 @@ import tomllib
 from dataclasses import dataclass
 
 from . import config as gate_config
-from .actions import Call
+from .actions import Call, Why
 from .command import GateCommand
 from .errors import GateError
 from .execution import step
@@ -37,9 +37,9 @@ class Finding:
 def _installed_entry_points(root, runner: Runner) -> list[Finding]:
     """The console scripts pyproject declares must actually be runnable."""
     findings = []
-    declared = tomllib.loads(
-        (root / "pyproject.toml").read_text(encoding="utf-8")
-    )["project"]["scripts"]
+    declared = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "scripts"
+    ]
 
     for name in sorted(declared):
         if shutil.which(name) is None and not _runs_through_uv(runner, name):
@@ -133,7 +133,11 @@ class DoctorCommand(
 ):
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        plan.add(step("check", Call("would the gate work if we started now", report)))
+        plan.add(
+            step(
+                "check", Call("would the gate work if we started now", report, why=Why.COMPUTATION)
+            )
+        )
         return plan
 
 
@@ -141,9 +145,7 @@ def report(context) -> None:
     """Public: `imagebuild` runs the same check before a build."""
     findings = check(context.runner)
     if not findings:
-        context.runner.note(
-            "gate: configuration valid, entry points installed, dispatch intact"
-        )
+        context.runner.note("gate: configuration valid, entry points installed, dispatch intact")
         return
     raise GateError(
         "the gate is not ready:\n"

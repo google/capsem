@@ -119,9 +119,7 @@ class RunLog(EventJournal):
                     **summary,
                 )
             )
-            write_summary(
-                self.directory, self.settings, command=self.command, run_id=self.run_id
-            )
+            write_summary(self.directory, self.settings, command=self.command, run_id=self.run_id)
         finally:
             self._active = release_active(self._active)
 
@@ -138,4 +136,3 @@ class RunLog(EventJournal):
         """
         label = _CURRENT.get()
         return self.step_log(label) if label else None
-

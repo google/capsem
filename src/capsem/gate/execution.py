@@ -51,7 +51,13 @@ class Step:
             with context.journal.action(action):
                 action.perform(context)
         for artifact in self.produces:
-            Hash(artifact).perform(context)
+            # Bracketed like every other action. Hashing a multi-gigabyte
+            # rootfs is real time, and outside the bracket it was time the
+            # timing report could not see -- so "the gate is slow" resolved to
+            # a step with no line in it accounting for the difference.
+            hashing = Hash(artifact)
+            with context.journal.action(hashing):
+                hashing.perform(context)
 
 
 def step(
