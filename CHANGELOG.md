@@ -67,6 +67,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The recipe suite no longer launches a recipe whose graph takes the machine
+  lock from inside a run that is holding it. `just doctor` depends on
+  `_pnpm-install`, which dispatches to an exclusive command, so the child
+  would have waited out its full timeout for a lock only its own parent could
+  release -- the deadlock the composition model exists to prevent, refused by
+  name. The claim splits where the architecture does: the dispatch is read
+  from the justfile, and the half that can actually fail runs in-process. The
+  same suite asserted a detached service by looking for `nohup` and `3>&-` in
+  a recipe body; that is `Launch` now, and the assertion moved with it.
+
 - `capsem-gate gc` no longer deletes the run it is writing. It reclaims
   `target/gate-runs` and records into it, which were compatible only while
   `gc` recorded nothing -- and a command that removes whole trees is exactly

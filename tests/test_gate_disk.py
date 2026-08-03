@@ -259,12 +259,12 @@ def test_a_reclaim_does_not_delete_the_run_it_is_writing(tmp_path: Path) -> None
     `ensure_space` already passed `keep=(runlog.root,)`. This is the caller
     that did not.
     """
+    from helpers.gate import RecordingRunner
+
     from capsem.gate import config as gate_config
     from capsem.gate.context import Context
     from capsem.gate.gc import _trees
     from capsem.gate.runlog import RunLog
-
-    from helpers.gate import RecordingRunner
 
     (tmp_path / "config").mkdir(parents=True)
     (tmp_path / "config" / "gate.toml").write_text(
