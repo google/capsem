@@ -38,9 +38,7 @@ def _checkout(tmp_path: Path, **overrides: object) -> gate_config.GateConfig:
     (tmp_path / "config").mkdir(parents=True, exist_ok=True)
     source = SOURCE
     for key, value in overrides.items():
-        original = next(
-            line for line in source.splitlines() if line.startswith(f"{key} = ")
-        )
+        original = next(line for line in source.splitlines() if line.startswith(f"{key} = "))
         source = source.replace(original, f"{key} = {value}")
     (tmp_path / "config" / "gate.toml").write_text(source, encoding="utf-8")
     return gate_config.load(tmp_path)
@@ -198,7 +196,7 @@ def test_a_step_records_how_long_it_took(tmp_path: Path) -> None:
 
 
 def test_an_action_is_recorded_by_what_it_would_do(tmp_path: Path) -> None:
-    """"run" as a label says nothing; the whole point of an action being able
+    """ "run" as a label says nothing; the whole point of an action being able
     to describe itself is that this line is readable."""
     config = _checkout(tmp_path)
     action = Run(["cargo", "build", "--release"])
@@ -331,9 +329,7 @@ def test_concurrent_steps_do_not_interleave_their_lines(tmp_path: Path) -> None:
     with RunLog.open(config, "test") as log:
         writers = [
             threading.Thread(
-                target=lambda n=n: [
-                    log.note(f"{n}-{i}-{long_enough}") for i in range(6)
-                ]
+                target=lambda n=n: [log.note(f"{n}-{i}-{long_enough}") for i in range(6)]
             )
             for n in range(8)
         ]

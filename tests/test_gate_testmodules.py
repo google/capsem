@@ -23,6 +23,7 @@ from capsem.gate.testmodules import FastModule
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+
 #: `resources()` takes the runner it should build with; these tests ask
 #: *what* is held, so any runner will do.
 def _resource_runner():

@@ -46,12 +46,7 @@ def _checkout(tmp_path: Path, **overrides: object) -> gate_config.GateConfig:
 
 
 #: Writes to both streams, so "combined" is a claim a test can check.
-BOTH = (
-    "import sys; "
-    "print('OUT-MARKER'); "
-    "print('ERR-MARKER', file=sys.stderr); "
-    "sys.stderr.flush()"
-)
+BOTH = "import sys; print('OUT-MARKER'); print('ERR-MARKER', file=sys.stderr); sys.stderr.flush()"
 
 
 def _run(config, label: str, script: str, *, check: bool = True) -> Path:

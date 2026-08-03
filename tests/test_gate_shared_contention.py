@@ -24,9 +24,10 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
-from capsem.gate.actions import Call, Why
+from capsem.gate.actions import Call
 from capsem.gate.context import Context
 from capsem.gate.execution import step
+from capsem.gate.opacity import CallJustification, OpaqueKind
 from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -58,7 +59,21 @@ def test_shared_holders_run_together() -> None:
     plan = Plan("shared")
     shared = (CONFIG.shared("docker_daemon"),)
     for name in ("lane-a", "lane-b"):
-        plan.add(step(name, Call(name, action, why=Why.DYNAMIC), contends=shared))
+        plan.add(
+            step(
+                name,
+                Call(
+                    name,
+                    action,
+                    justification=CallJustification(
+                        kind=OpaqueKind.RUNTIME_DERIVED,
+                        reason="a synthetic step whose work is decided by the test",
+                        effects=frozenset(),
+                    ),
+                ),
+                contends=shared,
+            )
+        )
 
     _run(plan)
 
@@ -71,18 +86,46 @@ def test_an_exclusive_holder_excludes_the_shared_ones() -> None:
     plan = Plan("mixed")
     plan.add(
         step(
-            "lane-a", Call("a", action, why=Why.DYNAMIC), contends=(CONFIG.shared("docker_daemon"),)
+            "lane-a",
+            Call(
+                "a",
+                action,
+                justification=CallJustification(
+                    kind=OpaqueKind.RUNTIME_DERIVED,
+                    reason="a synthetic step whose work is decided by the test",
+                    effects=frozenset(),
+                ),
+            ),
+            contends=(CONFIG.shared("docker_daemon"),),
         )
     )
     plan.add(
         step(
-            "lane-b", Call("b", action, why=Why.DYNAMIC), contends=(CONFIG.shared("docker_daemon"),)
+            "lane-b",
+            Call(
+                "b",
+                action,
+                justification=CallJustification(
+                    kind=OpaqueKind.RUNTIME_DERIVED,
+                    reason="a synthetic step whose work is decided by the test",
+                    effects=frozenset(),
+                ),
+            ),
+            contends=(CONFIG.shared("docker_daemon"),),
         )
     )
     plan.add(
         step(
             "outsider",
-            Call("o", action, why=Why.DYNAMIC),
+            Call(
+                "o",
+                action,
+                justification=CallJustification(
+                    kind=OpaqueKind.RUNTIME_DERIVED,
+                    reason="a synthetic step whose work is decided by the test",
+                    effects=frozenset(),
+                ),
+            ),
             contends=(CONFIG.exclusive("docker_daemon"),),
         )
     )
@@ -101,7 +144,15 @@ def test_exclusive_holders_still_exclude_each_other() -> None:
         plan.add(
             step(
                 name,
-                Call(name, action, why=Why.DYNAMIC),
+                Call(
+                    name,
+                    action,
+                    justification=CallJustification(
+                        kind=OpaqueKind.RUNTIME_DERIVED,
+                        reason="a synthetic step whose work is decided by the test",
+                        effects=frozenset(),
+                    ),
+                ),
                 contends=(CONFIG.exclusive("docker_daemon"),),
             )
         )

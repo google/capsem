@@ -20,12 +20,12 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from enum import Enum
 from pathlib import Path
 from typing import ClassVar
 
 from .context import Context
 from .invocation import Command
+from .opacity import CallJustification
 
 
 class Action(ABC):
@@ -180,29 +180,6 @@ class Shell(Action, name="shell"):
         )
 
 
-class Why(Enum):
-    """Why this work is opaque to a dry run, stated rather than assumed.
-
-    The extraction ratchet that used to bound these is gone, correctly --
-    it was empty. What replaces it is not a count but a required answer: a
-    `Call` has to say which of three things it is, and two of the three are
-    an invitation to stop being one.
-    """
-
-    SECRETS = "argv carries credentials a dry run must not print"
-    """Exactly one phase: the package build, whose environment holds the Tauri
-    signing key. Rendering it is the leak `invocation` exists to prevent."""
-
-    DYNAMIC = "argv is only known once the step is running"
-    """What to reclaim, which profiles exist, which package the builder just
-    wrote. Real, and the largest group."""
-
-    COMPUTATION = "it decides or reports; no subprocess of its own"
-    """The weakest reason, and deliberately named so it looks weak: work like
-    this can usually be a named action with its own render and its own timing.
-    A `Call` here is a to-do, not a design."""
-
-
 class Call(Action, name="call"):
     """Work that is not expressed as primitives yet.
 
@@ -215,13 +192,25 @@ class Call(Action, name="call"):
     rationale that covers everything stops being a reason for anything.
     """
 
-    def __init__(self, description: str, action: Callable[[Context], None], *, why: Why) -> None:
+    def __init__(
+        self,
+        description: str,
+        action: Callable[[Context], None],
+        *,
+        justification: CallJustification,
+    ) -> None:
         self._description = description
         self._action = action
-        self.why = why
+        self.justification = justification
 
     def render(self) -> str:
-        return self._description
+        """The description, and what kind of opacity this is.
+
+        The kind is in the dry run because that is where a reader decides
+        whether the plan tells them enough -- and `pure-inspection` beside a
+        line is the signal that it could have told them more.
+        """
+        return f"{self._description} [{self.justification.kind.value}]"
 
     def perform(self, context: Context) -> None:
         self._action(context)

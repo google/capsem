@@ -96,10 +96,7 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
 
     # Quoted: a checkout under a path with a space split into two arguments
     # otherwise, so the recipe was not portable to `~/My Projects/capsem`.
-    assert (
-        '_bootstrap:\n    sh {{quote(justfile_directory() / "bootstrap.sh")}} -y'
-        in justfile
-    )
+    assert '_bootstrap:\n    sh {{quote(justfile_directory() / "bootstrap.sh")}} -y' in justfile
     # The gate is one plan now, so these are phases rather than recipe calls.
     labels = _gate_labels()
     assert any(label.startswith("fast.") for label in labels)

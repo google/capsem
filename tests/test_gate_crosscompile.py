@@ -64,7 +64,6 @@ class Building(RecordingRunner):
         return completed
 
 
-
 def _run_lane(rail):
     """Every phase of one lane, in the order the plan composes them.
 
@@ -405,6 +404,4 @@ def test_the_disk_rail_is_measured_at_two_different_moments() -> None:
     first = source.index('ensure_space("package")')
     second = source.index('ensure_space("package")', build)
 
-    assert first < build < second, (
-        "both checks sit in one method, so they measure a single moment"
-    )
+    assert first < build < second, "both checks sit in one method, so they measure a single moment"

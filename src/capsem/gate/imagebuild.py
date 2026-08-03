@@ -12,11 +12,12 @@ shell is how `arm64` came to mean two different things in one repository.
 
 from __future__ import annotations
 
-from .actions import Call, Run, Why
+from .actions import Call, Run
 from .command import GateCommand
 from .config import Arch, GateConfig
 from .errors import GateError
 from .execution import Step, step
+from .opacity import CallJustification, OpaqueKind
 from .plan import Plan
 
 
@@ -56,7 +57,15 @@ def doctor(config: GateConfig) -> Step:
         # Both halves of `just doctor`, composed rather than dispatched: the
         # gate's own wiring check, then the host-tooling script that actually
         # reads the skip variables.
-        Call("would the gate work if we started now", diagnosis.report, why=Why.COMPUTATION),
+        Call(
+            "would the gate work if we started now",
+            diagnosis.report,
+            justification=CallJustification(
+                kind=OpaqueKind.PURE_INSPECTION,
+                reason="reports every wiring problem it can find and changes nothing at all",
+                effects=frozenset({"process"}),
+            ),
+        ),
         Run(
             ["bash", config.doctor.common_script],
             env=dict(config.imagebuild.doctor_skips),

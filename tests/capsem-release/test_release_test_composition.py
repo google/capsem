@@ -22,6 +22,7 @@ CONFIG = _gate_config.load(PROJECT_ROOT)
 #: module nor the exclusion that keeps them out of the VM matrix.
 SOURCE_CONTRACT_TESTS = tuple(CONFIG.suites.source_contract)
 
+
 def test_the_source_contract_inventory_has_one_authority() -> None:
     """`config/gate.toml` owns it, and nothing else may keep a copy.
 
@@ -145,9 +146,7 @@ def _all_modules() -> str:
 def _recipe(name: str) -> str:
     lines = JUSTFILE.splitlines()
     start = next(
-        index
-        for index, line in enumerate(lines)
-        if line.startswith((f"{name}:", f"{name} "))
+        index for index, line in enumerate(lines) if line.startswith((f"{name}:", f"{name} "))
     )
     end = len(lines)
     for index in range(start + 1, len(lines)):
@@ -264,9 +263,9 @@ def test_every_ci_job_provisions_the_tools_its_own_steps_invoke() -> None:
         for name in _workflow_job_names(path):
             job = _workflow_job(path, name)
             shell = _job_shell(job)
-            needs_just = bool(
-                GRAPH.JUST_CALL.search(shell)
-            ) or _selects_a_just_dependent_test(shell, just_tests)
+            needs_just = bool(GRAPH.JUST_CALL.search(shell)) or _selects_a_just_dependent_test(
+                shell, just_tests
+            )
             needs_pnpm = GRAPH.shell_reaches_pnpm(shell, JUSTFILE)
             for required, needed in (
                 (SETUP_JUST, needs_just),
@@ -319,8 +318,7 @@ def test_local_test_composes_all_checked_in_modules_after_rebuilding_assets() ->
     # so each is a namespace rather than a step name.
     expected = ("prepare.", "static.", "artifacts.", "functional.", "glowup.", "recipes")
     positions = [
-        next(i for i, label in enumerate(order) if label.startswith(prefix))
-        for prefix in expected
+        next(i for i, label in enumerate(order) if label.startswith(prefix)) for prefix in expected
     ]
     assert positions == sorted(positions)
 
@@ -348,8 +346,7 @@ def test_private_release_modules_select_one_shared_runner() -> None:
         shell = f"CAPSEM_TEST_MODULE={module} just _test-candidate-run" in body
         ported = f"capsem-gate test-{module}" in body
         assert shell != ported, (
-            f"{recipe} must reach exactly one runner; it has "
-            f"shell={shell} ported={ported}"
+            f"{recipe} must reach exactly one runner; it has shell={shell} ported={ported}"
         )
 
     runner = _all_modules()
@@ -370,10 +367,12 @@ def test_fast_module_owns_every_cheap_failure_before_colima_or_artifact_work() -
         "scripts/check-cargo-audit.py",
         "scripts/audit-pnpm-bulk.py",
         "scripts/audit-python-lock.sh",
-        # ruff over the whole tree, and ty over src/scripts/tests/guest. ty
-        # used to run on src/capsem alone, leaving the release scripts with no
-        # type gate at all.
-        "ruff and ty over every Python tree",
+        # ruff over the whole tree, and ty over src/scripts/tests/guest -- as
+        # three steps, so a ruff failure no longer hides what ty would have
+        # said. ty used to run on src/capsem alone, leaving the release
+        # scripts with no type gate at all.
+        "ruff check .",
+        "ty check --error-on-warning src",
         "cargo clippy --workspace --all-targets -- -D warnings",
         "check-web-surface.sh frontend",
         "check-web-surface.sh release-site",
@@ -486,8 +485,7 @@ def test_every_root_workflow_or_just_source_test_is_owned_by_the_fast_gate() -> 
     for path in (PROJECT_ROOT / "tests").glob("test_*.py"):
         source = path.read_text(encoding="utf-8")
         if not any(
-            needle in source
-            for needle in (".github/workflows", '"Justfile"', '"justfile"')
+            needle in source for needle in (".github/workflows", '"Justfile"', '"justfile"')
         ):
             continue
         relative = path.relative_to(PROJECT_ROOT).as_posix()
@@ -621,9 +619,7 @@ def test_static_module_audits_the_locked_python_graph_fail_closed() -> None:
     fast = _planned("test-fast")
     static = _planned("test-static")
     pyproject = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    audit_script = (PROJECT_ROOT / "scripts/audit-python-lock.sh").read_text(
-        encoding="utf-8"
-    )
+    audit_script = (PROJECT_ROOT / "scripts/audit-python-lock.sh").read_text(encoding="utf-8")
 
     assert "scripts/audit-python-lock.sh" in fast
     assert "build the disposable install-test image" in static
@@ -794,10 +790,7 @@ def test_pulled_binary_functional_preflight_requires_release_inputs_not_build_tr
     )
 
     assert "target/linux-agent/<arch>" not in required
-    assert (
-        required["verified release input report"]
-        == release_inputs / "release-inputs.json"
-    )
+    assert required["verified release input report"] == release_inputs / "release-inputs.json"
     assert required["manifest-selected release package"] == release_package
     assert required["manifest-selected test binary"] == release_binary
     assert _missing_required_artifacts(

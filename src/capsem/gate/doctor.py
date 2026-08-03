@@ -20,10 +20,11 @@ import tomllib
 from dataclasses import dataclass
 
 from . import config as gate_config
-from .actions import Call, Why
+from .actions import Call
 from .command import GateCommand
 from .errors import GateError
 from .execution import step
+from .opacity import CallJustification, OpaqueKind
 from .plan import Plan
 from .proc import Runner
 
@@ -135,7 +136,16 @@ class DoctorCommand(
         plan = Plan(self.name)
         plan.add(
             step(
-                "check", Call("would the gate work if we started now", report, why=Why.COMPUTATION)
+                "check",
+                Call(
+                    "would the gate work if we started now",
+                    report,
+                    justification=CallJustification(
+                        kind=OpaqueKind.PURE_INSPECTION,
+                        reason="reports every wiring problem it can find and changes nothing at all",
+                        effects=frozenset({"process"}),
+                    ),
+                ),
             )
         )
         return plan

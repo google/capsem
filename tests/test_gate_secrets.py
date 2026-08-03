@@ -124,9 +124,7 @@ def test_a_failing_secret_command_keeps_its_secret_out_of_the_error() -> None:
     command = _secret_command()
 
     with pytest.raises(GateError) as raised:
-        runner.run(
-            command.argv, env=command.env, secret_env=command.secret_env, check=True
-        )
+        runner.run(command.argv, env=command.env, secret_env=command.secret_env, check=True)
 
     assert SENTINEL not in str(raised.value)
     assert REDACTED in str(raised.value)
@@ -159,9 +157,7 @@ def test_the_journal_records_the_name_and_never_the_value(failing: bool) -> None
     runner = GuardedRunner(_Recording(PROJECT_ROOT, fail=failing), journal=journal)
     command = _secret_command()
 
-    runner.run(
-        command.argv, env=command.env, secret_env=command.secret_env, check=False
-    )
+    runner.run(command.argv, env=command.env, secret_env=command.secret_env, check=False)
 
     (recorded,) = journal.execs
     serialized = json.dumps(recorded)

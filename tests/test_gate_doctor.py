@@ -24,9 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 def _checkout(tmp_path: Path, *, gate_toml: str | None = None) -> Path:
     for name in ("pyproject.toml", "justfile"):
-        (tmp_path / name).write_text(
-            (PROJECT_ROOT / name).read_text(encoding="utf-8")
-        )
+        (tmp_path / name).write_text((PROJECT_ROOT / name).read_text(encoding="utf-8"))
     (tmp_path / "config").mkdir(exist_ok=True)
     (tmp_path / "config" / "gate.toml").write_text(
         gate_toml or (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
@@ -129,9 +127,9 @@ def test_every_declared_console_script_is_runnable() -> None:
     import subprocess
     import tomllib
 
-    declared = tomllib.loads(
-        (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    )["project"]["scripts"]
+    declared = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]["scripts"]
     assert "capsem-gate" in declared
 
     result = subprocess.run(

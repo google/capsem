@@ -7,9 +7,7 @@ plan line and no edge changes, which is what its guard asserts.
 from __future__ import annotations
 
 from . import (
-    assets as assetgate,
-)
-from . import (
+    assetplan,
     pytestsuite,
 )
 from .actions import Script
@@ -81,7 +79,7 @@ def artifacts(
             after=(verify,),
         )
 
-    built = assetgate.fragment(plan, config, after=after)
+    built = assetplan.fragment(plan, config, after=after)
     return phase.add(
         pytestsuite.Suite(
             label="build-chain",

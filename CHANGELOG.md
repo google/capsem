@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Every `Call` answers, in a form a machine can read, why it is not an ordinary
+  declared action and what it can affect. It carried a required kind before;
+  now it carries a closed kind, a reason its author wrote, and a declared
+  effect set, all of which reach the dry run and `run.jsonl`. A pure inspection
+  that declares a filesystem effect is refused, because that label is the
+  weakest of the four and therefore the most tempting. A contract rejects
+  placeholder reasons -- "temporary", "misc", "legacy", "TODO" -- since that is
+  how an exemption stops describing outstanding work and starts describing
+  policy.
+
 - Ruff, strict Ty and relaxed Ty are three graph steps rather than one opaque
   call around a function that ran them in sequence and gathered their failures
   into a list by hand. They are timed apart, a Ruff failure no longer hides

@@ -185,8 +185,7 @@ def test_no_file_call_receives_a_literal(module: Path) -> None:
             offenders.append(f"{module.name}:{node.lineno}: {name}({argument.value!r})")
 
     assert not offenders, (
-        "pass a value that came from config rather than a literal:\n  "
-        + "\n  ".join(offenders)
+        "pass a value that came from config rather than a literal:\n  " + "\n  ".join(offenders)
     )
 
 
@@ -204,14 +203,11 @@ def test_no_module_spells_an_architecture_or_channel(module: Path) -> None:
     """
     words = _vocabulary()
     offenders = [
-        f"{module.name}:{line}: {value!r}"
-        for line, value in _literals(module)
-        if value in words
+        f"{module.name}:{line}: {value!r}" for line, value in _literals(module) if value in words
     ]
 
     assert not offenders, (
-        "resolve these through the config rather than naming them:\n  "
-        + "\n  ".join(offenders)
+        "resolve these through the config rather than naming them:\n  " + "\n  ".join(offenders)
     )
 
 

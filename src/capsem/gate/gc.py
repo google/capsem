@@ -12,11 +12,12 @@ and therefore not something to discard by accident.
 
 from __future__ import annotations
 
-from .actions import Action, Call, Why
+from .actions import Action, Call
 from .command import GateCommand
 from .context import Context
 from .disk import footprint, reclaim
 from .execution import step
+from .opacity import CallJustification, OpaqueKind
 from .plan import Plan
 from .runhistory import free_gb
 from .storage import Storage
@@ -61,13 +62,32 @@ class GcCommand(GateCommand, name="gc", help="reclaim the disk the gate is holdi
             return plan
 
         trees = plan.add(
-            step("trees", Call("reclaim the gate's own trees", _trees, why=Why.DYNAMIC))
+            step(
+                "trees",
+                Call(
+                    "reclaim the gate's own trees",
+                    _trees,
+                    justification=CallJustification(
+                        kind=OpaqueKind.RUNTIME_DERIVED,
+                        reason="which trees exist and what they occupy is only knowable when the reclaim runs",
+                        effects=frozenset({"filesystem"}),
+                    ),
+                ),
+            )
         )
         if self._args.aggressive:
             plan.add(
                 step(
                     "rails",
-                    Call("release the Docker rails and build cache", _rails, why=Why.DYNAMIC),
+                    Call(
+                        "release the Docker rails and build cache",
+                        _rails,
+                        justification=CallJustification(
+                            kind=OpaqueKind.RUNTIME_DERIVED,
+                            reason="the Docker rails and build cache to release depend on what the daemon holds now",
+                            effects=frozenset({"process", "host-state"}),
+                        ),
+                    ),
                     contends=(self._config.exclusive("docker_daemon"),),
                 ),
                 after=(trees,),

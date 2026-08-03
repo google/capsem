@@ -52,9 +52,7 @@ def macos(monkeypatch):
 def test_every_complete_gate_command_keeps_the_host_awake(name, macos) -> None:
     replacement = _command(name, **COMPLETE_GATE[name]).reexec()
 
-    assert replacement is not None, (
-        f"{name} runs the complete gate but lets macOS sleep through it"
-    )
+    assert replacement is not None, f"{name} runs the complete gate but lets macOS sleep through it"
     assert list(replacement[: len(CONFIG.candidate.keep_awake_command)]) == list(
         CONFIG.candidate.keep_awake_command
     )

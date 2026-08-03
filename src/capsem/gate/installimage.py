@@ -15,11 +15,12 @@ from __future__ import annotations
 
 from . import config as gate_config
 from . import hostimage
-from .actions import Call, Why
+from .actions import Call
 from .command import GateCommand
 from .config import GateConfig
 from .errors import GateError
 from .execution import Step, step
+from .opacity import CallJustification, OpaqueKind
 from .plan import Plan
 from .proc import Runner
 
@@ -100,7 +101,11 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
             Call(
                 "build the disposable install-test image",
                 lambda ctx: prepare(ctx.runner),
-                why=Why.DYNAMIC,
+                justification=CallJustification(
+                    kind=OpaqueKind.RUNTIME_DERIVED,
+                    reason="the disposable install-test image is built from a context assembled at run time",
+                    effects=frozenset({"process", "filesystem"}),
+                ),
             ),
             contends=(config.exclusive("docker_daemon"),),
         ),

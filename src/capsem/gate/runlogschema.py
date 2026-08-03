@@ -89,6 +89,17 @@ class ActionRun(Payload):
     duration_ms: float
     status: str
 
+    opacity: str = ""
+    """Which kind of opaque work this was, for the ones that are.
+
+    Empty for a declared action, which is the answer worth having: a run whose
+    log is full of `runtime-derived` is a run whose plan could say less than it
+    looks like it does.
+    """
+
+    effects: tuple[str, ...] = ()
+    """What an opaque action declared it could touch."""
+
 
 class Launch(Payload):
     """One detached process, recorded where every invocation passes through.

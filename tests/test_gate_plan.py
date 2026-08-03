@@ -549,9 +549,7 @@ def test_two_steps_writing_one_path_must_share_an_exclusive(
         plan.run(context)
 
 
-def test_sharing_an_exclusive_makes_two_producers_legal(
-    context: Context, tmp_path: Path
-) -> None:
+def test_sharing_an_exclusive_makes_two_producers_legal(context: Context, tmp_path: Path) -> None:
     """Serialized producers cannot overwrite each other mid-read."""
     shared = tmp_path / "dist"
     shared.write_text("built")
@@ -562,9 +560,7 @@ def test_sharing_an_exclusive_makes_two_producers_legal(
     plan.run(context)
 
 
-def test_one_producer_per_path_needs_no_exclusive(
-    context: Context, tmp_path: Path
-) -> None:
+def test_one_producer_per_path_needs_no_exclusive(context: Context, tmp_path: Path) -> None:
     """The common case stays free of ceremony."""
     artifact = tmp_path / "vmlinuz"
     artifact.write_text("kernel")
@@ -574,9 +570,7 @@ def test_one_producer_per_path_needs_no_exclusive(
     plan.run(context)
 
 
-def test_the_conflict_is_reported_before_anything_runs(
-    context: Context, tmp_path: Path
-) -> None:
+def test_the_conflict_is_reported_before_anything_runs(context: Context, tmp_path: Path) -> None:
     """By the time the overwrite happens the evidence is gone, so this is a
     plan-time error rather than something to notice afterwards."""
     ran: list[str] = []

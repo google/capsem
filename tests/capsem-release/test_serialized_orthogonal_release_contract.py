@@ -43,7 +43,6 @@ def _job_block(workflow: str, job: str) -> str:
     return "\n".join(lines[start:end])
 
 
-
 def _release_plan(command: str, *arguments: str):
     """The plan a release command would run, without running any of it."""
     import argparse
@@ -71,15 +70,12 @@ def _publishing(plan) -> str:
     """
     labels = list(plan.labels)
     after = labels[labels.index("confirm-head") :]
-    return "\n".join(
-        line for label in after for line in plan.step_named(label).render()
-    )
+    return "\n".join(line for label in after for line in plan.step_named(label).render())
 
 
 def _release_order(command: str, *arguments: str) -> list[str]:
     """Every step, in an order the graph permits."""
     return list(_release_plan(command, *arguments).labels)
-
 
 
 def _context(runner):
@@ -213,9 +209,9 @@ def test_public_release_command_executes_read_only_preflight_then_full_test_befo
     # And the publishing step is the one the trace names.
     import re
 
-    assert re.search(
-        release_trace, "\n".join(plan.step_named("release").render())
-    ), f"the release step does not run {release_trace}"
+    assert re.search(release_trace, "\n".join(plan.step_named("release").render())), (
+        f"the release step does not run {release_trace}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -304,9 +300,7 @@ def test_release_lanes_run_one_reusable_fast_gate_before_builders() -> None:
     assert "  fast-gate:\n    uses: ./.github/workflows/fast-gate.yaml" in binary
     assert "needs: [runtime-preflight, fast-gate]" in _job_block(binary, "preflight")
     assert "Run shared static module" not in _job_block(binary, "test-binary-pairing")
-    assert "Run complete shared fast module" not in _job_block(
-        binary, "test-binary-pairing"
-    )
+    assert "Run complete shared fast module" not in _job_block(binary, "test-binary-pairing")
 
     profile = _workflow("release-assets.yaml")
     assert "  fast-gate:\n    uses: ./.github/workflows/fast-gate.yaml" in profile
@@ -370,9 +364,7 @@ def test_profile_lane_installs_pulled_package_runtime_dependencies() -> None:
     pairing = _job_block(workflow, "test-profile-pairing")
 
     resolve_package = pairing.index("--print-package-path")
-    install_dependencies = pairing.index(
-        'scripts/install-deb-runtime-dependencies.py "$package"'
-    )
+    install_dependencies = pairing.index('scripts/install-deb-runtime-dependencies.py "$package"')
     functional = pairing.index("run: just _test-functional")
 
     assert resolve_package < install_dependencies < functional
@@ -413,10 +405,7 @@ def test_binary_pairing_uses_exact_public_before_and_candidate_after_cohorts() -
     resolve = _job_block(workflow, "resolve-channel-source")
     pairing = _job_block(workflow, "test-binary-pairing")
 
-    assert (
-        "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}"
-        in resolve
-    )
+    assert "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}" in resolve
     assert "allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}" in resolve
     assert "kind: packages" in resolve
     assert "kind: profiles" in resolve
@@ -455,17 +444,11 @@ def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
     assert "Project inactive first-channel public-before state" in workflow
     assert "scripts/project-first-channel-before.py" in workflow
     assert "Select public-before authority for exact pairing" in workflow
-    assert (
-        "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}"
-        in workflow
-    )
+    assert "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}" in workflow
     assert "Fetch exact deployed public-before package" in workflow
     assert "Fetch exact deployed public-before profiles" in workflow
     assert "bootstrap-manifest-url:" not in workflow
-    assert (
-        "allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}"
-        in workflow
-    )
+    assert "allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}" in workflow
     assert "capsem-admin -- release" in workflow
     assert "--publication-base" in workflow
     assert "channel-source-$CHANNEL.json" in workflow
@@ -508,10 +491,7 @@ def test_profile_pairing_reuses_one_staged_publication_and_exact_public_before()
     pairing = _job_block(workflow, "test-profile-pairing")
     publish = _job_block(workflow, "publish-profile-release")
 
-    assert (
-        "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}"
-        in resolve
-    )
+    assert "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}" in resolve
     assert "kind: packages" in resolve
     assert "kind: profiles" in resolve
     assert "architecture: x86_64" in resolve

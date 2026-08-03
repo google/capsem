@@ -20,9 +20,10 @@ failed is skipped -- which is exactly wrong for cleanup.
 from __future__ import annotations
 
 from . import hostpackage, imagebuild, initrd, storage, testmodules, vmmodules
-from .actions import Call, Run, Script, Why
+from .actions import Call, Run, Script
 from .config import GateConfig
 from .execution import Step, step
+from .opacity import CallJustification, OpaqueKind
 from .plan import Plan
 from .qualification import Qualification
 from .sourcestate import (
@@ -162,5 +163,9 @@ def _ensure_space(config: GateConfig):
     return Call(
         "refuse to start a gate the daemon has no room to finish",
         lambda ctx: Storage(ctx.runner).ensure_space(*settings.candidate_budget),
-        why=Why.COMPUTATION,
+        justification=CallJustification(
+            kind=OpaqueKind.PURE_INSPECTION,
+            reason="reads the daemon's free space and refuses a gate it has no room to finish",
+            effects=frozenset({"process"}),
+        ),
     )

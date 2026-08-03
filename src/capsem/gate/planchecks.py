@@ -84,7 +84,8 @@ def require_one_owner_per_artifact(plan: Plan) -> None:
         if not overlapping:
             continue
         pairs = ", ".join(
-            f"{first.label} + {second.label}" for first, second in sorted(
+            f"{first.label} + {second.label}"
+            for first, second in sorted(
                 overlapping, key=lambda pair: (pair[0].label, pair[1].label)
             )
         )

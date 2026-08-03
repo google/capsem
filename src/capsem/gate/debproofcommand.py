@@ -11,10 +11,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .actions import Call, Why
+from .actions import Call
 from .command import GateCommand
 from .debproof import DebProof
 from .execution import step
+from .opacity import CallJustification, OpaqueKind
 from .plan import Plan
 
 
@@ -54,7 +55,11 @@ class ProveDebCommand(
                         manifest_url=args.manifest_url,
                         channel=args.channel,
                     ).run(),
-                    why=Why.DYNAMIC,
+                    justification=CallJustification(
+                        kind=OpaqueKind.DOMAIN_TRANSACTION,
+                        reason="start a systemd container, install the exact package, and prove what it produced",
+                        effects=frozenset({"process", "filesystem", "host-state"}),
+                    ),
                 ),
                 contends=(self._config.exclusive("docker_daemon"),),
             )

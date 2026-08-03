@@ -30,9 +30,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _args(**overrides) -> argparse.Namespace:
-    return argparse.Namespace(
-        **{"dry_run": False, "graph": False, "timing": False, **overrides}
-    )
+    return argparse.Namespace(**{"dry_run": False, "graph": False, "timing": False, **overrides})
 
 
 class Tracker(Resource, name="tracker"):
@@ -103,11 +101,7 @@ def test_a_failing_command_still_releases_what_it_held(tmp_path: Path) -> None:
 def test_execute_is_never_overridden() -> None:
     """A command that defines its own bypasses teardown, the machine lock and
     the run log at once -- which is exactly what this class exists to prevent."""
-    offenders = [
-        cls.__name__
-        for cls in GateCommand.registry.values()
-        if "execute" in vars(cls)
-    ]
+    offenders = [cls.__name__ for cls in GateCommand.registry.values() if "execute" in vars(cls)]
 
     assert not offenders, (
         f"these define their own execute: {offenders}. Put the work in "
@@ -179,9 +173,7 @@ def test_every_command_can_be_asked_what_it_would_do() -> None:
     """
     parser = cli.build_parser()
     subparsers = next(
-        action
-        for action in parser._subparsers._group_actions
-        if hasattr(action, "choices")
+        action for action in parser._subparsers._group_actions if hasattr(action, "choices")
     )
 
     for name, child in subparsers.choices.items():
@@ -213,9 +205,7 @@ def test_the_parser_offers_exactly_the_registered_commands() -> None:
     """The check that caught a subcommand implemented but never registered."""
     parser = cli.build_parser()
     subparsers = next(
-        action
-        for action in parser._subparsers._group_actions
-        if hasattr(action, "choices")
+        action for action in parser._subparsers._group_actions if hasattr(action, "choices")
     )
 
     assert set(subparsers.choices) == set(GateCommand.registry)
@@ -379,9 +369,7 @@ def test_only_the_commands_that_must_replace_themselves_do() -> None:
         if "reexec" in vars(cls) and cls.__module__.startswith("capsem.gate.")
     )
     complete = sorted(
-        name
-        for name, cls in GateCommand.registry.items()
-        if issubclass(cls, CompleteGate)
+        name for name, cls in GateCommand.registry.items() if issubclass(cls, CompleteGate)
     )
 
     assert replacing == [], "re-exec belongs to CompleteGate, not to a command"

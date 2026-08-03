@@ -174,9 +174,7 @@ def test_the_recipe_inventory_is_discovered_and_not_empty() -> None:
     """
     assert len(SINGULAR) >= 10, SINGULAR
     covered = {name for name, _ in SINGULAR} | {name for name, _ in VARIADIC}
-    declared = {
-        name for name, recipe in RECIPES.items() if recipe.get("parameters")
-    }
+    declared = {name for name, recipe in RECIPES.items() if recipe.get("parameters")}
     assert covered == declared, f"parameterized recipes nothing checks: {declared - covered}"
 
 
@@ -213,9 +211,7 @@ def test_a_variadic_recipe_hands_over_one_joined_argument(
     shell source, which is what an unquoted `{{ARGS}}` does.
     """
     parts = ["first arg", HOSTILE]
-    _assert_one_argument(
-        _rendered(recipe, parts), " ".join(parts), f"`just {recipe}`", receiver
-    )
+    _assert_one_argument(_rendered(recipe, parts), " ".join(parts), f"`just {recipe}`", receiver)
 
 
 def test_no_recipe_takes_an_unquotable_variadic_passthrough() -> None:

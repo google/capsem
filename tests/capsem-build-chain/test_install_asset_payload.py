@@ -96,15 +96,10 @@ def _planned_cached(command: str, args: tuple) -> str:
 
     runner = RecordingRunner(PROJECT_ROOT)
     try:
-        plan = (
-            GateCommand.registry[command](
-                runner,
-                argparse.Namespace(
-                    dry_run=False, graph=False, timing=False, **dict(args)
-                ),
-            )
-            ._describe()
-        )
+        plan = GateCommand.registry[command](
+            runner,
+            argparse.Namespace(dry_run=False, graph=False, timing=False, **dict(args)),
+        )._describe()
         rendered = plan.describe()
         # A step that needs a machine fails here; what it issued before failing
         # is still the evidence these contracts are about.
@@ -370,9 +365,9 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     # lanes rather than after them -- running out at minute thirty wastes the
     # thirty. The preflight is inside `AssetGate` now; what stays checkable
     # here is that it happens and that the policy it reads is the assets rail.
-    assets_source = (
-        PROJECT_ROOT / "src" / "capsem" / "gate" / "assets.py"
-    ).read_text(encoding="utf-8")
+    assets_source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "assets.py").read_text(
+        encoding="utf-8"
+    )
     assert "ensure_space" in assets_source
     # The lanes are steps now, so "capacity before building" is an edge rather
     # than statement order: `preflight` reserves and both lanes depend on it.
@@ -394,9 +389,7 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     ample_kib = ample_gib * 1024 * 1024
     starved_kib = starved_gib * 1024 * 1024
 
-    enough = _run_docker_space_gate(
-        tmp_path / "enough", before_kib=ample_kib, after_kib=0
-    )
+    enough = _run_docker_space_gate(tmp_path / "enough", before_kib=ample_kib, after_kib=0)
     assert enough.returncode == 0, enough.stderr
     assert "Docker storage control [enforce/preflight]" in enough.stdout
 
@@ -423,8 +416,7 @@ def test_asset_gate_owns_docker_capacity_preflight(tmp_path: Path) -> None:
     assert f"retain {package['buildkit_keep_gib']} GiB" in package_reclaimed.stdout
     package_commands = (tmp_path / "package-reclaimed" / "docker-commands").read_text()
     assert (
-        f"builder prune --force --keep-storage {package['buildkit_keep_gib']}GB"
-        in package_commands
+        f"builder prune --force --keep-storage {package['buildkit_keep_gib']}GB" in package_commands
     )
 
     exhausted = _run_docker_space_gate(
@@ -532,8 +524,7 @@ def test_exact_linux_deb_proof_uses_systemd_and_proves_guest_shell() -> None:
     # `CAPSEM_PROOF_*` variables crossing a process boundary that is gone.
     assert "manifest_url" in source and "channel" in source
     assert "os.environ" not in source, (
-        "the proof still reads its inputs from the environment rather than "
-        "taking them as arguments"
+        "the proof still reads its inputs from the environment rather than taking them as arguments"
     )
 
 
@@ -549,9 +540,7 @@ def test_systemd_install_image_cannot_flush_host_binfmt_registrations() -> None:
 
     config = gate_config.load(PROJECT_ROOT)
     dockerfile = (PROJECT_ROOT / config.install.dockerfile).read_text(encoding="utf-8")
-    container = (
-        PROJECT_ROOT / "src/capsem/gate/installcontainer.py"
-    ).read_text(encoding="utf-8")
+    container = (PROJECT_ROOT / "src/capsem/gate/installcontainer.py").read_text(encoding="utf-8")
 
     assert "/etc/systemd/system/systemd-binfmt.service" in dockerfile
     assert "ln -s /dev/null" in dockerfile
@@ -668,12 +657,10 @@ def test_install_test_cleanup_preserves_the_original_gate_failure() -> None:
     and `_release` now attaches cleanup failures to the primary error instead
     of replacing it.
     """
-    lifecycle = (
-        PROJECT_ROOT / "src" / "capsem" / "gate" / "lifecycle.py"
-    ).read_text(encoding="utf-8")
-    install = (
-        PROJECT_ROOT / "src" / "capsem" / "gate" / "install.py"
-    ).read_text(encoding="utf-8")
+    lifecycle = (PROJECT_ROOT / "src" / "capsem" / "gate" / "lifecycle.py").read_text(
+        encoding="utf-8"
+    )
+    install = (PROJECT_ROOT / "src" / "capsem" / "gate" / "install.py").read_text(encoding="utf-8")
 
     assert "primary" in lifecycle
     assert "add_note" in lifecycle
@@ -904,12 +891,12 @@ def test_binary_packages_embed_public_url_but_install_against_serialized_source(
     linux = workflow.split("  build-app-linux:\n", maxsplit=1)[1].split(
         "\n  author-binary-candidate:\n", maxsplit=1
     )[0]
-    native_macos = workflow.split(
-        "  test-native-macos-package:\n", maxsplit=1
-    )[1].split("\n  test-native-linux-package:\n", maxsplit=1)[0]
-    native_linux = workflow.split(
-        "  test-native-linux-package:\n", maxsplit=1
-    )[1].split("\n  test-binary-pairing:\n", maxsplit=1)[0]
+    native_macos = workflow.split("  test-native-macos-package:\n", maxsplit=1)[1].split(
+        "\n  test-native-linux-package:\n", maxsplit=1
+    )[0]
+    native_linux = workflow.split("  test-native-linux-package:\n", maxsplit=1)[1].split(
+        "\n  test-binary-pairing:\n", maxsplit=1
+    )[0]
 
     for job in (macos, linux):
         assert "needs: [preflight, resolve-channel-source]" in job
@@ -926,8 +913,7 @@ def test_binary_packages_embed_public_url_but_install_against_serialized_source(
         assert '--manifest-url "$PREACTIVATION_MANIFEST"' in job
         assert "scripts/install-manifest-request.sh clear" in job
     assert (
-        "needs: [test-native-macos-package, test-native-linux-package, "
-        "test-binary-pairing]"
+        "needs: [test-native-macos-package, test-native-linux-package, test-binary-pairing]"
     ) in workflow
 
 
@@ -1082,7 +1068,9 @@ def test_cross_compile_preflights_docker_capacity_after_builder_before_package()
     issued = _planned("cross-compile", arch="arm64")
     lines = issued.splitlines()
 
-    builder = next(i for i, line in enumerate(lines) if "docker build -t capsem-host-builder" in line)
+    builder = next(
+        i for i, line in enumerate(lines) if "docker build -t capsem-host-builder" in line
+    )
     package = next(i for i, line in enumerate(lines) if "build-linux-package.sh" in line)
     capacities = [i for i, line in enumerate(lines) if "ensure-docker-space.sh package" in line]
 
@@ -1165,11 +1153,7 @@ def test_full_gate_releases_completed_buildkit_graph_after_packages() -> None:
     builder = policy["resources"]["capsem-host-builder"]
     assert builder["release_boundary"] == "after-install"
     assert builder["last_consumer"] == "install"
-    assert (
-        _at(order, "package.arm64")
-        < _at(order, "package.x86_64")
-        < _at(order, "glowup.install")
-    )
+    assert _at(order, "package.arm64") < _at(order, "package.x86_64") < _at(order, "glowup.install")
 
 
 def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> None:
@@ -1179,9 +1163,9 @@ def test_full_gate_bounds_docker_storage_without_flushing_rebuild_caches() -> No
 
     config = gate_config.load(PROJECT_ROOT)
     order = _gate_order()
-    plan_source = (
-        PROJECT_ROOT / "src" / "capsem" / "gate" / "candidateplan.py"
-    ).read_text(encoding="utf-8")
+    plan_source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "candidateplan.py").read_text(
+        encoding="utf-8"
+    )
 
     assert _boundary("candidate-boundary") == "candidate-boundary"
     assert tuple(config.candidate.candidate_budget) == ("default", "candidate-boundary")
@@ -1360,9 +1344,9 @@ def test_install_gate_passes_vm_devices_to_full_installed_proofs() -> None:
     assert config.install.vm_devices == ("/dev/kvm", "/dev/vhost-vsock")
     assert config.install.optional_vm_devices == ("/dev/vsock",)
 
-    container_source = (
-        PROJECT_ROOT / "src" / "capsem" / "gate" / "installcontainer.py"
-    ).read_text(encoding="utf-8")
+    container_source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installcontainer.py").read_text(
+        encoding="utf-8"
+    )
     assert "seccomp=unconfined" in container_source
     assert "--device" in container_source
     assert InstallContainer is not None
@@ -1423,10 +1407,7 @@ def test_local_release_glowup_channel_build_uses_local_release_urls() -> None:
     assert 'f"{base_url}/releases/download/{channel}"' in build_channel
     assert "--asset-source-base" in build_channel
     assert 'f"{base_url}/assets/releases/{{asset_version}}"' in build_channel
-    assert (
-        "stage_manifest_artifacts("
-        in script
-    )
+    assert "stage_manifest_artifacts(" in script
 
 
 def test_local_release_glowup_uses_preserved_admin_binary_without_rebuild() -> None:
@@ -1615,10 +1596,7 @@ def test_local_release_glowup_stages_graph_bytes_by_manifest_digest(
     staged = json.loads(manifest_path.read_text(encoding="utf-8"))
     staged_record = staged["profiles"]["code"]["architectures"][0]["config"][0]
     expected_relative = (
-        Path("artifacts")
-        / "sha256"
-        / hashlib.sha256(payload).hexdigest()
-        / "profile.toml"
+        Path("artifacts") / "sha256" / hashlib.sha256(payload).hexdigest() / "profile.toml"
     )
     assert staged_record["url"] == f"{base_url}/{expected_relative.as_posix()}"
     assert (dist / expected_relative).read_bytes() == payload
@@ -1690,10 +1668,7 @@ def test_local_release_glowup_projects_only_fully_staged_architectures(
     assert [row["architecture"] for row in architectures] == ["x86_64"]
     staged_record = architectures[0]["config"][0]
     expected_relative = (
-        Path("artifacts")
-        / "sha256"
-        / hashlib.sha256(payload).hexdigest()
-        / "profile.toml"
+        Path("artifacts") / "sha256" / hashlib.sha256(payload).hexdigest() / "profile.toml"
     )
     assert staged_record["url"] == f"{base_url}/{expected_relative.as_posix()}"
     assert (dist / expected_relative).read_bytes() == payload
@@ -1734,15 +1709,15 @@ def test_local_release_glowup_clones_graph_with_only_channel_identity_changed(
 
 def test_local_release_glowup_projects_both_switch_channels_from_any_candidate() -> None:
     script = (PROJECT_ROOT / "scripts" / "local-release-glowup.py").read_text()
-    setup = script.split(
-        'stable_manifest = manifests / "stable-assets-manifest.json"', maxsplit=1
-    )[1].split("record_binary(", maxsplit=1)[0]
+    setup = script.split('stable_manifest = manifests / "stable-assets-manifest.json"', maxsplit=1)[
+        1
+    ].split("record_binary(", maxsplit=1)[0]
 
     assert 'args.assets_dir / "manifest.json"' in setup
     assert "stable_manifest," in setup
     assert '"stable"' in setup
-    assert "clone_manifest_for_channel(stable_manifest, nightly_manifest, \"nightly\")" in setup
-    assert "shutil.copy2(args.assets_dir / \"manifest.json\"" not in setup
+    assert 'clone_manifest_for_channel(stable_manifest, nightly_manifest, "nightly")' in setup
+    assert 'shutil.copy2(args.assets_dir / "manifest.json"' not in setup
 
     # Nightly must be projected from the *staged* stable manifest. Staging drops
     # architectures whose blobs are absent locally -- ordinary CI pulls one
@@ -1787,9 +1762,7 @@ def test_local_release_glowup_rejects_partially_staged_architecture(
                         "architectures": [
                             {
                                 "architecture": "x86_64",
-                                "config": [
-                                    record("profile", source.resolve().as_uri())
-                                ],
+                                "config": [record("profile", source.resolve().as_uri())],
                                 "images": [
                                     record(
                                         "rootfs",
@@ -1919,9 +1892,10 @@ def test_release_site_overlay_replaces_partial_files_without_clobbering_artifact
 
     assert result.returncode == 0, result.stderr
     assert stale.read_text(encoding="utf-8") == "complete-index"
-    assert target.joinpath("profiles", "code", "index.html").read_text(
-        encoding="utf-8"
-    ) == "complete-profile"
+    assert (
+        target.joinpath("profiles", "code", "index.html").read_text(encoding="utf-8")
+        == "complete-profile"
+    )
     assert immutable.read_text(encoding="utf-8") == "immutable-profile-artifact"
 
 
@@ -2039,7 +2013,9 @@ def test_local_release_glowup_generated_release_checker_rejects_tampered_blob(
         package_path.parent.mkdir(parents=True)
         package_path.write_bytes(b"fixture deb")
         expected = b"verified-rootfs"
-        artifact_path = dist / "artifacts/sha256" / hashlib.sha256(expected).hexdigest() / "rootfs.erofs"
+        artifact_path = (
+            dist / "artifacts/sha256" / hashlib.sha256(expected).hexdigest() / "rootfs.erofs"
+        )
         artifact_path.parent.mkdir(parents=True)
         artifact_path.write_bytes(b"tampered-rootfs")
         manifest_path = dist / "assets" / "stable" / "manifest.json"
@@ -2050,10 +2026,7 @@ def test_local_release_glowup_generated_release_checker_rejects_tampered_blob(
                     "packages": [
                         {
                             "name": "Capsem_1.5.1_amd64.deb",
-                            "url": (
-                                f"{base_url}/releases/download/v1.5.1/"
-                                "Capsem_1.5.1_amd64.deb"
-                            ),
+                            "url": (f"{base_url}/releases/download/v1.5.1/Capsem_1.5.1_amd64.deb"),
                         }
                     ],
                     "profiles": {
@@ -2122,10 +2095,7 @@ def test_local_release_glowup_generated_release_checker_accepts_manifest_root_re
                     "packages": [
                         {
                             "name": "Capsem_1.5.1_amd64.deb",
-                            "url": (
-                                f"{base_url}/releases/download/v1.5.1/"
-                                "Capsem_1.5.1_amd64.deb"
-                            ),
+                            "url": (f"{base_url}/releases/download/v1.5.1/Capsem_1.5.1_amd64.deb"),
                         }
                     ],
                     "profiles": {
@@ -2709,8 +2679,9 @@ def test_ci_install_job_pulls_existing_profiles_before_building_packages() -> No
     assert "architecture: x86_64" in install_job
     assert "output: target/ci-install-profile-inputs" in install_job
     assert "Build exact native release package" in install_job
-    assert "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json" in (
-        install_job
+    assert (
+        "CAPSEM_INSTALL_MANIFEST_URL: https://release.capsem.org/assets/stable/manifest.json"
+        in (install_job)
     )
     assert "CAPSEM_INSTALL_CHANNEL: stable" in install_job
     assert "just _build-host-image" not in install_job
@@ -2770,7 +2741,9 @@ def test_asset_build_recipes_skip_kvm_only_for_build_prereq_doctor() -> None:
         "CAPSEM_SKIP_ASSET_CHECK": "1",
         "CAPSEM_SKIP_KVM_CHECK": "1",
     }
-    assert "CAPSEM_SKIP_KVM_CHECK" in _planned("build-assets", profile="code", arch="arm64", template="all")
+    assert "CAPSEM_SKIP_KVM_CHECK" in _planned(
+        "build-assets", profile="code", arch="arm64", template="all"
+    )
     assert "CAPSEM_SKIP_KVM_CHECK" not in _planned("smoke")
 
 
@@ -2784,9 +2757,7 @@ def test_only_systemd_package_proof_receives_kvm_devices() -> None:
 
     config = gate_config.load(PROJECT_ROOT)
     issued = _planned("cross-compile", arch="arm64")
-    container = (
-        PROJECT_ROOT / "src/capsem/gate/installcontainer.py"
-    ).read_text(encoding="utf-8")
+    container = (PROJECT_ROOT / "src/capsem/gate/installcontainer.py").read_text(encoding="utf-8")
 
     for device in config.install.vm_devices:
         assert device not in issued, f"the package builder is handed {device}"

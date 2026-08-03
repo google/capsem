@@ -25,7 +25,6 @@ def _gate_labels(name: str = "candidate") -> tuple[str, ...]:
     return gate_labels(name)
 
 
-
 def load_policy_module():
     spec = importlib.util.spec_from_file_location("docker_storage_policy", POLICY_SCRIPT)
     assert spec and spec.loader
@@ -174,10 +173,14 @@ def test_both_package_architectures_release_their_own_install_headroom() -> None
 
     phases = gate_config.load(ROOT).storage.phases
 
-    assert (phases["completed-package-arm64"].boundary,
-            phases["completed-package-arm64"].rail) == ("after-package-arm64", "install")
-    assert (phases["completed-package-x86_64"].boundary,
-            phases["completed-package-x86_64"].rail) == ("after-package-x86_64", "install")
+    assert (phases["completed-package-arm64"].boundary, phases["completed-package-arm64"].rail) == (
+        "after-package-arm64",
+        "install",
+    )
+    assert (
+        phases["completed-package-x86_64"].boundary,
+        phases["completed-package-x86_64"].rail,
+    ) == ("after-package-x86_64", "install")
 
     for phase in ("completed-package-arm64", "completed-package-x86_64"):
         assert f"glowup.storage.{phase}" in _gate_labels()
@@ -197,9 +200,7 @@ def test_shell_space_guard_does_not_enter_the_project_uv_environment(
     fake_bin.mkdir()
     python_args = tmp_path / "python-args"
     fake_python = fake_bin / "python"
-    fake_python.write_text(
-        '#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPSEM_TEST_PYTHON_ARGS"\n'
-    )
+    fake_python.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPSEM_TEST_PYTHON_ARGS"\n')
     fake_python.chmod(0o755)
     fake_uv = fake_bin / "uv"
     fake_uv.write_text(

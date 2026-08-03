@@ -188,8 +188,7 @@ def test_the_bound_comes_from_configuration() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_an_outcome_separates_dependency_wait_from_resource_wait(
-) -> None:
+def test_an_outcome_separates_dependency_wait_from_resource_wait() -> None:
     """Three numbers, because they have three different fixes.
 
     A step recorded one duration covering resource wait *and* execution, so a
@@ -260,8 +259,6 @@ def test_the_waits_reach_the_run_log_and_the_report(tmp_path: Path) -> None:
     assert waits["waiter"]["resource_ms"] > 100
     assert waits["holder"]["resource_ms"] < 100
 
-    rendered = report(
-        measure(events), command="test", settings=config.runlog, run_id="x"
-    )
+    rendered = report(measure(events), command="test", settings=config.runlog, run_id="x")
     assert "longest resource waits" in rendered
     assert "waiter" in rendered

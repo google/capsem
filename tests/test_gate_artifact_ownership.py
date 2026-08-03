@@ -138,9 +138,7 @@ def _two_producers(shared: tuple[bool, bool]):
     artifact = PROJECT_ROOT / "target" / "contested.bin"
     plan = Plan("synthetic")
     for index, is_shared in enumerate(shared):
-        claim = (
-            config.shared("docker_daemon") if is_shared else config.exclusive("docker_daemon")
-        )
+        claim = config.shared("docker_daemon") if is_shared else config.exclusive("docker_daemon")
         plan.add(step(f"writer-{index}", produces=(artifact,), contends=(claim,)))
     return plan, config
 

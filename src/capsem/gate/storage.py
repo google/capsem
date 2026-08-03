@@ -14,10 +14,11 @@ phase now fails by name, before any storage is touched.
 from __future__ import annotations
 
 from . import config as gate_config
-from .actions import Call, Why
+from .actions import Call
 from .command import GateCommand
 from .errors import GateError
 from .execution import Step, step
+from .opacity import CallJustification, OpaqueKind
 from .plan import Plan
 from .proc import Runner
 
@@ -89,7 +90,11 @@ def release_action(phase: str) -> Call:
     return Call(
         f"release the storage held after {phase}",
         lambda ctx: Storage(ctx.runner).release(phase),
-        why=Why.DYNAMIC,
+        justification=CallJustification(
+            kind=OpaqueKind.RUNTIME_DERIVED,
+            reason="which rails a boundary releases is resolved from the storage policy at run time",
+            effects=frozenset({"process", "host-state"}),
+        ),
     )
 
 
@@ -146,7 +151,15 @@ class StorageCommand(
         plan.add(
             step(
                 action,
-                Call(f"storage {action}", self._operation(action), why=Why.DYNAMIC),
+                Call(
+                    f"storage {action}",
+                    self._operation(action),
+                    justification=CallJustification(
+                        kind=OpaqueKind.RUNTIME_DERIVED,
+                        reason="which rails a boundary releases is resolved from the storage policy at run time",
+                        effects=frozenset({"process", "host-state"}),
+                    ),
+                ),
                 contends=(self._config.exclusive("docker_daemon"),),
             )
         )

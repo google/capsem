@@ -6,6 +6,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
+
 #: `resources()` takes the runner it should build with; these tests ask
 #: *what* is held, so any runner will do.
 def _resource_runner():
@@ -167,8 +168,7 @@ def test_a_failed_boot_preserves_only_host_side_evidence() -> None:
     assert set(config.assets.evidence_prune_dirs) == {"guest", "auto_snapshots"}
     assert ".log" in config.assets.evidence_suffixes
     assert ".toml" in config.assets.evidence_suffixes, (
-        "vm/active_profile.toml records the asset pins a hash mismatch is "
-        "argued from"
+        "vm/active_profile.toml records the asset pins a hash mismatch is argued from"
     )
 
 
@@ -219,9 +219,7 @@ def test_asset_gate_reaps_gateway_and_service_between_profile_proofs() -> None:
     # the serial log the reap flushes.
     finally_at = assets.index("finally:", assets.index("def _prove("))
     assert finally_at < assets.index("discard(run_dir)")
-    assert assets.index("pidfiles.stop_gate_service", finally_at) < assets.index(
-        "discard(run_dir)"
-    )
+    assert assets.index("pidfiles.stop_gate_service", finally_at) < assets.index("discard(run_dir)")
 
 
 def test_asset_ci_uses_primitives_owned_by_just_test() -> None:
@@ -277,9 +275,9 @@ def test_asset_matrix_preflights_once_and_reuses_the_public_build_primitive() ->
 
     # The primitive builds; it does not preflight. Preflighting per stage is
     # what made a four-cell matrix run doctor four times.
-    assert "install-tools" not in " ".join(build_argv(
-        config, profile="code", arch="arm64", template="all"
-    ))
+    assert "install-tools" not in " ".join(
+        build_argv(config, profile="code", arch="arm64", template="all")
+    )
     assert "doctor" not in lanes
 
 
@@ -313,9 +311,7 @@ def test_in_container_commands_write_only_where_the_container_user_owns() -> Non
 
     config = gate_config.load(PROJECT_ROOT)
     guest = config.install.guest_user
-    container = (
-        PROJECT_ROOT / "src" / "capsem" / "gate" / "installcontainer.py"
-    ).read_text()
+    container = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installcontainer.py").read_text()
     proof = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installproof.py").read_text()
 
     # Removing target/install-test-* needs write permission on their parent.
@@ -435,12 +431,8 @@ def test_isolated_test_recipes_trap_test_home_service_cleanup() -> None:
     from capsem.gate import config as gate_config
     from capsem.gate.command import GateCommand
 
-    workspace_source = (
-        PROJECT_ROOT / "src/capsem/gate/workspace.py"
-    ).read_text(encoding="utf-8")
-    pidfile_source = (
-        PROJECT_ROOT / "src/capsem/gate/pidfiles.py"
-    ).read_text(encoding="utf-8")
+    workspace_source = (PROJECT_ROOT / "src/capsem/gate/workspace.py").read_text(encoding="utf-8")
+    pidfile_source = (PROJECT_ROOT / "src/capsem/gate/pidfiles.py").read_text(encoding="utf-8")
 
     assert "stop_gate_service" in workspace_source
     assert gate_config.load(PROJECT_ROOT).pidfiles.names == ("gateway.pid", "service.pid")

@@ -11,11 +11,36 @@ from __future__ import annotations
 import os
 
 from . import hostimage
-from .actions import Call, Why
+from .actions import Call
 from .command import GateCommand
 from .execution import step
+from .opacity import CallJustification, Effect, OpaqueKind
 from .packagerail import PackageRail
 from .plan import Plan
+
+#: One reason per phase. The class docstring used to carry a single rationale
+#: -- "a package build carries signing material" -- for all eight, which is
+#: true of exactly one of them.
+RAILS = "which rails the assets finished with is resolved from the policy at run time"
+HEADROOM = "reads the daemon's free space before an hour of compilation spends it"
+CLOCK = "Colima's clock drift is a property of the machine this runs on"
+EMBEDDED = "points the embedded asset tree at whichever architecture is building"
+SIGNING = "its environment carries the Tauri private key, which a dry run must not print"
+RECORDED = "reads back the exact package basename the builder just wrote"
+PROOF = "installs that package in a systemd container and proves what it produced"
+RECLAIM = "what this lane left on disk is only knowable once it has finished"
+
+
+def _because(reason: str, *effects: Effect) -> CallJustification:
+    """One phase's justification, with `SECRETS` the only special case."""
+    kind = (
+        OpaqueKind.SECRET_BEARING
+        if reason is SIGNING
+        else OpaqueKind.PURE_INSPECTION
+        if not effects or effects == ("process",)
+        else OpaqueKind.RUNTIME_DERIVED
+    )
+    return CallJustification(kind=kind, reason=reason, effects=frozenset(effects))
 
 
 def fragment(plan: Plan, config, target, *, after: tuple = ()):
@@ -43,26 +68,51 @@ def fragment(plan: Plan, config, target, *, after: tuple = ()):
             "storage-release",
             "hand back the rails the assets finished with",
             "release_rails",
-            Why.DYNAMIC,
+            _because(RAILS, "process", "host-state"),
         ),
-        ("space", "reserve the package rail's headroom", "reserve", Why.COMPUTATION),
-        ("clock", "sync the container clock", "sync_clock", Why.DYNAMIC),
-        ("sync-assets", f"point the embedded assets at {target.name}", "sync_assets", Why.DYNAMIC),
+        ("space", "reserve the package rail's headroom", "reserve", _because(HEADROOM, "process")),
+        ("clock", "sync the container clock", "sync_clock", _because(CLOCK, "process")),
+        (
+            "sync-assets",
+            f"point the embedded assets at {target.name}",
+            "sync_assets",
+            _because(EMBEDDED, "filesystem"),
+        ),
         # The one instance the class docstring used to describe as though it
         # were all of them: this environment carries the Tauri private key.
-        ("build", f"build the Linux release package for {target.name}", "build", Why.SECRETS),
-        ("resolve", "read back the exact package the builder recorded", "resolve", Why.COMPUTATION),
-        ("prove", "prove that exact package in systemd + KVM", "prove", Why.DYNAMIC),
-        ("storage-gc", "list the artifacts and reclaim this lane's disk", "collect", Why.DYNAMIC),
+        (
+            "build",
+            f"build the Linux release package for {target.name}",
+            "build",
+            _because(SIGNING, "process", "filesystem", "network"),
+        ),
+        (
+            "resolve",
+            "read back the exact package the builder recorded",
+            "resolve",
+            _because(RECORDED),
+        ),
+        (
+            "prove",
+            "prove that exact package in systemd + KVM",
+            "prove",
+            _because(PROOF, "process", "filesystem", "host-state"),
+        ),
+        (
+            "storage-gc",
+            "list the artifacts and reclaim this lane's disk",
+            "collect",
+            _because(RECLAIM, "process", "filesystem", "host-state"),
+        ),
     )
 
     previous: tuple = (built, *after)
-    for label, description, method, why in phases:
+    for label, description, method, justification in phases:
         previous = (
             phase.add(
                 step(
                     label,
-                    Call(description, _phase(target, method), why=why),
+                    Call(description, _phase(target, method), justification=justification),
                     contends=docker,
                 ),
                 after=previous,

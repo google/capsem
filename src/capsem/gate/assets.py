@@ -27,11 +27,8 @@ from pathlib import Path
 
 from . import assetevidence, crossexec, pidfiles
 from . import config as gate_config
-from .actions import Call, Why
 from .assetlanes import AssetLanes, Profile, discover_profiles
-from .command import GateCommand
 from .errors import GateError
-from .execution import step
 from .fileactions import (
     discard,
     link,
@@ -39,7 +36,6 @@ from .fileactions import (
     merge_tree,
     scratch_dir,
 )
-from .plan import Plan
 from .proc import Runner
 from .storage import Storage
 
@@ -209,85 +205,3 @@ class AssetGate:
         self._runner.note(
             "Ironbank VM asset build and boot gate passed for every profile and architecture."
         )
-
-
-def fragment(plan, config, *, after: tuple = ()):
-    """The asset phase, as steps the plan can see.
-
-    `sweep` runs after both lanes whatever they did, because the scheduler
-    skips a step only when something it depends on failed -- and this depends
-    on the lanes finishing, not on their succeeding.
-    """
-    phase = plan.phase("assets")
-    exclusive = (config.exclusive("docker_daemon"),)
-    shared = (config.shared("docker_daemon"),)
-
-    ready = phase.add(
-        step(
-            "preflight",
-            Call(
-                "check capacity and clear the asset tree",
-                lambda ctx: AssetGate(ctx.runner).preflight(),
-                why=Why.DYNAMIC,
-            ),
-            contends=exclusive,
-        ),
-        after=after,
-    )
-    lanes = tuple(
-        phase.add(
-            step(
-                f"build.{name}",
-                Call(
-                    f"build every profile's assets for {name}",
-                    _lane(name),
-                    why=Why.DYNAMIC,
-                ),
-                contends=shared,
-            ),
-            after=(ready,),
-        )
-        for name in config.architectures
-    )
-    swept = phase.add(
-        step(
-            "sweep",
-            Call(
-                "remove containers the lanes left",
-                lambda ctx: AssetGate(ctx.runner).sweep(),
-                why=Why.DYNAMIC,
-            ),
-            contends=exclusive,
-        ),
-        after=lanes,
-    )
-    return phase.add(
-        step(
-            "assemble",
-            Call(
-                "merge, publish, materialise and boot each profile",
-                lambda ctx: AssetGate(ctx.runner).assemble(),
-                why=Why.DYNAMIC,
-            ),
-            contends=exclusive,
-        ),
-        after=(swept,),
-    )
-
-
-def _lane(arch_name: str):
-    def perform(context) -> None:
-        AssetGate(context.runner).lane(arch_name)
-
-    return perform
-
-
-class AssetsCommand(
-    GateCommand, name="assets", help="build every profile's VM assets and boot each one"
-):
-    exclusive = True
-
-    def plan(self) -> Plan:
-        plan = Plan(self.name)
-        fragment(plan, self._config)
-        return plan

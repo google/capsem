@@ -22,11 +22,12 @@ import tomllib
 from pathlib import Path
 
 from . import config as gate_config
-from .actions import Call, Why
+from .actions import Call
 from .command import GateCommand
 from .errors import GateError
 from .execution import step
 from .fileactions import write_text
+from .opacity import CallJustification, OpaqueKind
 from .plan import Plan
 from .proc import Runner
 
@@ -135,7 +136,11 @@ class StampCommand(
                 Call(
                     "stamp the workspace version into every file that carries it",
                     _stamp,
-                    why=Why.DYNAMIC,
+                    justification=CallJustification(
+                        kind=OpaqueKind.RUNTIME_DERIVED,
+                        reason="every file carrying the version is rewritten from the workspace value it reads",
+                        effects=frozenset({"filesystem"}),
+                    ),
                 ),
             )
         )
@@ -158,7 +163,11 @@ class VersionCommand(GateCommand, name="version", help="print the workspace vers
                 Call(
                     "read the version from its one authority",
                     lambda ctx: print(workspace_version(ctx.root)),
-                    why=Why.COMPUTATION,
+                    justification=CallJustification(
+                        kind=OpaqueKind.PURE_INSPECTION,
+                        reason="prints the workspace version from its one authority and writes nothing",
+                        effects=frozenset(),
+                    ),
                 ),
             )
         )

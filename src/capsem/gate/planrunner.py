@@ -83,9 +83,7 @@ class _Pending:
     started: float = field(default=0.0)
 
 
-def execute(
-    plan: Plan, context: Context, *, max_parallel: int | None = None
-) -> dict[str, Outcome]:
+def execute(plan: Plan, context: Context, *, max_parallel: int | None = None) -> dict[str, Outcome]:
     """Run every step the graph allows, and report what each one did."""
     sorter = plan.sorter()
     context.journal.shape(plan.labels, plan.edges)

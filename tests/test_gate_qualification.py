@@ -309,9 +309,7 @@ def test_the_capability_is_declared_rather_than_guessed() -> None:
     from capsem.gate import cli  # noqa: F401 - registers every command
     from capsem.gate.command import GateCommand
 
-    qualifying = {
-        name for name, cls in GateCommand.registry.items() if cls.uses_qualification
-    }
+    qualifying = {name for name, cls in GateCommand.registry.items() if cls.uses_qualification}
 
     assert qualifying == {
         "candidate",

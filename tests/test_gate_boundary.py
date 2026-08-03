@@ -120,8 +120,7 @@ def test_no_recipe_hides_shell_logic_without_a_shebang() -> None:
             offenders[name] = opening
 
     assert not offenders, (
-        "shell control flow in a recipe body is logic no test can reach: "
-        f"{offenders}"
+        f"shell control flow in a recipe body is logic no test can reach: {offenders}"
     )
 
 
@@ -172,9 +171,7 @@ def test_the_cli_only_parses_and_dispatches() -> None:
         assert smell not in cli, f"the CLI should not know about {smell.strip()!r}"
 
 
-@pytest.mark.parametrize(
-    "module", sorted(p.name for p in GATE_PACKAGE.glob("*.py"))
-)
+@pytest.mark.parametrize("module", sorted(p.name for p in GATE_PACKAGE.glob("*.py")))
 def test_every_gate_module_imports_on_its_own(module: str) -> None:
     """Independently importable, so it can be independently unit tested."""
     name = f"capsem.gate.{module.removesuffix('.py')}"
@@ -272,42 +269,57 @@ def _call_sites() -> dict[str, list[ast.Call]]:
     return found
 
 
-def test_every_opaque_call_says_why_it_is_one() -> None:
-    """The extraction ratchet is gone because it was empty, and a raw count
-    would only invite cosmetic movement. What replaces it is a required answer.
+def test_every_opaque_call_declares_a_real_reason() -> None:
+    """A closed kind, a reason somebody wrote, and a declared effect set.
 
-    `Call` renders as prose, so a plan built from these says far less than one
-    built from `Run` and `Copy`. Twenty of them shared a single rationale --
-    "a package build carries signing material" -- which is true of exactly one.
-    A reason that covers everything is not a reason.
+    The minimum length is not quality by itself, which is why the placeholders
+    are named: "temporary", "misc", "legacy" and "TODO" are how an exemption
+    stops describing outstanding work and starts describing policy.
     """
-    undeclared = {
-        name: len([site for site in sites if not any(k.arg == "why" for k in site.keywords)])
-        for name, sites in _call_sites().items()
-    }
-    offenders = {name: count for name, count in undeclared.items() if count}
+    import sys as _sys
 
-    assert not offenders, (
-        f"these build a `Call` without saying why it cannot be a declared "
-        f"action: {offenders}. Pass `why=Why.SECRETS`, `Why.DYNAMIC` or "
-        f"`Why.COMPUTATION`."
-    )
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_plan
+
+    from capsem.gate.actions import Call
+
+    placeholders = ("temporary", "misc", "legacy", "todo", "for now", "tbd")
+    calls = [
+        action
+        for command in ("candidate", "assets", "install")
+        for step in gate_plan(command).steps
+        for action in step.actions
+        if isinstance(action, Call)
+    ]
+    assert calls, "no opaque work found, so this guard is asking nothing"
+
+    for call in calls:
+        reason = call.justification.reason.lower()
+        assert not any(word in reason for word in placeholders), (
+            f"{call.render()} justifies itself with a placeholder: {reason!r}"
+        )
+        assert call.justification.effects or call.justification.kind.value == "pure-inspection"
 
 
-def test_only_the_package_build_claims_to_carry_secrets() -> None:
-    """`Why.SECRETS` is the one reason a dry run genuinely must not render.
+def test_secret_bearing_work_is_only_the_package_build() -> None:
+    """The one phase whose environment holds the Tauri key.
 
-    Spreading it would re-create the old docstring's claim in a form the type
-    system endorses, and make the real one unfindable.
+    Spreading the label would recreate the old docstring's claim in a form the
+    type system endorses, and make the real one unfindable.
     """
-    claimed = sorted(
-        module.name
-        for module in (PROJECT_ROOT / "src/capsem/gate").glob("*.py")
-        if module.name != "actions.py"
-        and "Why.SECRETS" in module.read_text(encoding="utf-8")
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_plan
+
+    from capsem.gate.actions import Call
+    from capsem.gate.opacity import OpaqueKind
+
+    secretive = sorted(
+        step.label
+        for step in gate_plan("candidate").steps
+        for action in step.actions
+        if isinstance(action, Call) and action.justification.kind is OpaqueKind.SECRET_BEARING
     )
 
-    assert claimed == ["crosscompile.py"], (
-        "only the package build's environment holds the Tauri signing key; "
-        f"these also claim to: {claimed}"
-    )
+    assert secretive == ["package.arm64.build", "package.x86_64.build"]

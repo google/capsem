@@ -144,6 +144,4 @@ def test_a_detached_launch_is_recorded_as_an_execution(journal) -> None:
 
     command.execute()
 
-    assert [" ".join(entry["argv"]) for entry in journal.launches] == [
-        "capsem-service --serve"
-    ]
+    assert [" ".join(entry["argv"]) for entry in journal.launches] == ["capsem-service --serve"]

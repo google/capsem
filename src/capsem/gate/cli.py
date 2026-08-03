@@ -17,7 +17,7 @@ import sys
 from collections.abc import Sequence
 
 from . import (
-    assets,
+    assetplan,
     candidate,
     crosscompile,
     debproofcommand,
@@ -51,7 +51,7 @@ from .proc import Runner
 COMMAND_MODULES = (
     versions,
     candidate,
-    assets,
+    assetplan,
     storage,
     installimage,
     install,

@@ -173,9 +173,10 @@ def test_both_lanes_are_awaited_even_when_the_first_fails(tmp_path: Path) -> Non
     them both run, and a failure skips only what *depends* on it. Asserted
     through a plan, because that is where the guarantee lives.
     """
-    from capsem.gate.actions import Call, Why
+    from capsem.gate.actions import Call
     from capsem.gate.context import Context
     from capsem.gate.execution import step
+    from capsem.gate.opacity import CallJustification, OpaqueKind
     from capsem.gate.plan import Plan
 
     root = _checkout(tmp_path)
@@ -187,7 +188,11 @@ def test_both_lanes_are_awaited_even_when_the_first_fails(tmp_path: Path) -> Non
         plan.add(
             step(
                 f"build.{arch.name}",
-                Call(arch.name, lambda _ctx, a=arch: lanes.build(a), why=Why.DYNAMIC),
+                Call(arch.name, lambda _ctx, a=arch: lanes.build(a), justification=CallJustification(
+                    kind=OpaqueKind.RUNTIME_DERIVED,
+                    reason="a synthetic step whose work is decided by the test",
+                    effects=frozenset(),
+                )),
                 contends=(CONFIG.shared("docker_daemon"),),
             )
         )

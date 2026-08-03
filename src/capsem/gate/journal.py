@@ -206,6 +206,9 @@ class EventJournal:
             self._end_action(action, OK, started)
 
     def _end_action(self, action: Action, status: str, started: float) -> None:
+        # An opaque action carries its own justification; a declared one has
+        # nothing to justify, and an empty field is the honest answer.
+        justification = getattr(action, "justification", None)
         self.emit(
             ActionRun(
                 step=_CURRENT.get(),
@@ -213,5 +216,7 @@ class EventJournal:
                 render=action.render(),
                 duration_ms=(time.monotonic() - started) * 1000,
                 status=status,
+                opacity="" if justification is None else justification.kind.value,
+                effects=() if justification is None else tuple(sorted(justification.effects)),
             )
         )
