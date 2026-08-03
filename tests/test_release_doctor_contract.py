@@ -299,7 +299,6 @@ def test_macos_doctor_requires_live_rosetta_registration() -> None:
     from capsem.gate import config as gate_config
 
     source = _source_text("scripts/doctor-macos.sh")
-    assets = _source_text("src/capsem/gate/assets.py")
     config = gate_config.load(PROJECT_ROOT)
 
     assert config.install.rosetta_binfmt in source

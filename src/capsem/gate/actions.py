@@ -184,9 +184,12 @@ class Call(Action, name="call"):
 
     A bridge, and deliberately a poor one: a dry run can only print the
     description it was handed, so a plan built from these says far less than a
-    plan built from `Run` and `Copy`. That is the incentive, not an oversight
-    -- `modules_bypassing_primitives` in `config/gate.toml` tracks what is
-    still on this side of the line, and it only shrinks.
+    plan built from `Run` and `Copy`. That is the incentive, not an oversight.
+
+    No module reaches past the primitives any more, so what remains here is
+    work whose argv genuinely cannot be rendered at plan time -- a package
+    build carries signing material, and an action printed by `--dry-run` would
+    print a private key.
     """
 
     def __init__(self, description: str, action: Callable[[Context], None]) -> None:

@@ -37,7 +37,6 @@ class BoundaryConfig(Strict):
     recipes_with_inline_control_flow: tuple[str, ...]
     direct_machine_access: tuple[str, ...]
     direct_concurrency: tuple[str, ...]
-    modules_bypassing_primitives: tuple[str, ...]
 
 class Exclusive(Strict):
     """Something only one step may hold at a time, and why.

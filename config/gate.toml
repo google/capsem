@@ -531,16 +531,6 @@ direct_machine_access = [
 # recipe body were.
 direct_concurrency = ["planrunner.py"]
 
-# Modules that still reach past the primitives, pending extraction onto them.
-# Work that goes around `actions`/`fileactions` is work the dry run cannot show
-# and the run log cannot time.
-#
-# A ratchet, not an exemption list: a module may leave it, nothing may join it,
-# and one that has been extracted must be struck so the list cannot describe a
-# past that is no longer true.
-modules_bypassing_primitives = [
-]
-
 # ---------------------------------------------------------------------------
 # What may not run beside what
 # ---------------------------------------------------------------------------

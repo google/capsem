@@ -46,7 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Awaiting both lanes stops being a module's promise and becomes the
   scheduler's rule: two steps with no edge between them both run, and a
   failure skips only what depends on it.
-- `modules_bypassing_primitives` is empty. `assets`, `assetlanes`, `doctor`
+- `modules_bypassing_primitives` is deleted, not emptied. `assets`, `assetlanes`, `doctor`
   and `versions` went through the filesystem primitives, `doctor`'s entry-point
   probe went through the runner -- it called `subprocess.run` directly, so a
   doctor could report on a machine the run log never saw it touch -- and the

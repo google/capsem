@@ -78,12 +78,15 @@ def _violations(module: Path) -> list[str]:
 
 @pytest.mark.parametrize("module", _modules(), ids=lambda p: p.name)
 def test_only_the_primitives_touch_the_machine(module: Path) -> None:
-    """Anything else is work the dry run cannot show and the log cannot time."""
-    allowed = set(BOUNDARY.direct_machine_access) | set(
-        BOUNDARY.modules_bypassing_primitives
-    )
-    if module.name in allowed:
-        pytest.skip("allowed to reach the machine directly, or on the ratchet")
+    """Anything else is work the dry run cannot show and the log cannot time.
+
+    There is no extraction ratchet any more. Every module that reached past
+    the primitives has been moved onto them, and an empty list describing no
+    outstanding work is a list that gets read as permission for some -- which
+    is the rule this file's sibling states about its own.
+    """
+    if module.name in set(BOUNDARY.direct_machine_access):
+        pytest.skip("the harness itself; the primitives are what it provides")
 
     found = _violations(module)
 
@@ -92,35 +95,6 @@ def test_only_the_primitives_touch_the_machine(module: Path) -> None:
         "capsem.gate.actions or capsem.gate.fileactions so the dry run can "
         "show it and the run log can time it:\n  " + "\n  ".join(found)
     )
-
-
-def test_the_extraction_ratchet_never_runs_backwards() -> None:
-    """A module that no longer bypasses the primitives must leave the list.
-
-    Otherwise the ratchet stops describing outstanding work and starts
-    describing policy, which is how a temporary exemption becomes permanent.
-    """
-    stale = sorted(
-        name
-        for name in BOUNDARY.modules_bypassing_primitives
-        if not _violations(GATE_PACKAGE / name)
-    )
-
-    assert not stale, (
-        "these no longer reach past the primitives -- strike them from "
-        "config/gate.toml's modules_bypassing_primitives so the outstanding "
-        f"work stays honest: {stale}"
-    )
-
-
-def test_every_ratchet_entry_still_exists() -> None:
-    missing = sorted(
-        name
-        for name in BOUNDARY.modules_bypassing_primitives
-        if not (GATE_PACKAGE / name).is_file()
-    )
-
-    assert not missing, f"these modules no longer exist: {missing}"
 
 
 def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
@@ -207,14 +181,13 @@ def test_only_the_plan_schedules_concurrent_work(module: Path) -> None:
     """Parallelism the graph cannot see is parallelism the exclusives cannot
     constrain -- which is exactly what seven bare `&` in one recipe body were.
 
-    `assetlanes` hand-rolled its own pool and is on the ratchet until it is
-    expressed as two independent steps that both contend for the daemon.
+    `assetlanes` hand-rolled its own pool, because the plan could express only
+    "one holder" and its two lanes must overlap. A claim carries a mode now,
+    so they are two steps holding the daemon shared -- and this guard has no
+    exceptions left beyond the scheduler itself.
     """
-    allowed = set(BOUNDARY.direct_concurrency) | set(
-        BOUNDARY.modules_bypassing_primitives
-    )
-    if module.name in allowed:
-        pytest.skip("the scheduler itself, or on the ratchet")
+    if module.name in set(BOUNDARY.direct_concurrency):
+        pytest.skip("the scheduler itself")
 
     found = _schedulers(module)
 
