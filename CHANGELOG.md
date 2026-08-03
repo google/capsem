@@ -43,8 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   script output survived only as terminal scrollback. Output is teed by the
   funnel now: filed against whichever step is running, streamed live so a long
   gate is still distinguishable from a hung one, and a failed command repeats a
-  configured tail of its own output in the error. The cost is deliberate --
-  output goes through a pipe, so children no longer see a TTY.
+  configured tail of its own output in the error. The log is line-buffered, so
+  a running step can be read while it runs and a hard-killed one keeps what it
+  had printed. The cost is deliberate -- output goes through a pipe, so
+  children no longer see a TTY.
 
 - A run records the invocation it was given. `RunStart` was reconstructed from
   the parsed namespace by looking for a field named `argv` that almost no

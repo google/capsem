@@ -18,6 +18,7 @@ child no longer sees a TTY. Evidence beats progress bars.
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 
 import pytest
@@ -163,3 +164,49 @@ def test_captured_output_is_still_returned_to_its_caller(tmp_path: Path) -> None
             answer = runner.capture([sys.executable, "-c", "print('the-answer')"])
 
     assert answer == "the-answer"
+
+
+def test_a_running_step_can_be_read_while_it_runs(tmp_path: Path) -> None:
+    """The property a block buffer quietly removed.
+
+    With the default 8KB buffering a killed run left a zero-byte step log --
+    everything it had printed was still in the process that died -- and
+    `tail -f` on a forty-minute step showed nothing until it ended. Both are
+    the same defect, and this is the half a test can reach: the bytes are on
+    disk before the command that wrote them has finished.
+    """
+    import sys
+    import threading
+
+    config = _checkout(tmp_path)
+    marker = "EARLY-MARKER"
+    seen = threading.Event()
+
+    with RunLog.open(config, "test") as log:
+        runner = GuardedRunner(Runner(config.root), journal=log)
+        written = log.step_log("slow")
+
+        # The window has to close well before the command does. A watcher that
+        # outlives it sees the flush that closing the file performs, which is
+        # exactly what a block buffer does -- so the first version of this test
+        # passed with the buffering it was written to catch.
+        def watch() -> None:
+            for _ in range(50):  # ~1s, against a child that sleeps 4
+                if written.is_file() and marker in written.read_text(encoding="utf-8"):
+                    seen.set()
+                    return
+                time.sleep(0.02)
+
+        watcher = threading.Thread(target=watch)
+        watcher.start()
+        with log.step(step("slow", Run(["true"]))):
+            runner.run(
+                [
+                    sys.executable,
+                    "-c",
+                    f"print('{marker}', flush=True); import time; time.sleep(4)",
+                ]
+            )
+        watcher.join()
+
+    assert seen.is_set(), "nothing reached the step log until the command exited"

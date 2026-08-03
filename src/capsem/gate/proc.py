@@ -102,7 +102,12 @@ class Runner:
         """
         log.parent.mkdir(parents=True, exist_ok=True)
         with (
-            log.open("a", encoding="utf-8") as sink,
+            # Line buffered. A step log exists to be read after something went
+            # wrong, and the default 8KB block buffer meant a hard-killed run
+            # left a zero-byte file -- 700 lines to the terminal, none to disk
+            # -- and that `tail -f` on a running step showed nothing until the
+            # step ended. One write syscall per line is the price of both.
+            log.open("a", encoding="utf-8", buffering=1) as sink,
             subprocess.Popen(
                 list(command.argv),
                 cwd=str(command.cwd) if command.cwd else str(self.root),
