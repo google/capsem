@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Ctrl-C stops the gate instead of scheduling a stop. The plan runner held its
+  thread pool through a `with` block, and that context manager's exit joins
+  every running future -- an interrupt fifty milliseconds into a 750ms action
+  returned after 756ms, and against a real copy or image assembly the operator
+  watches nothing happen for minutes. Returning immediately would be worse: the
+  machine lock, the workspace and the service are released on the way out, and
+  releasing them under a worker still writing turns an interrupt into
+  corruption. So it is cooperative: pending steps are cancelled, waiters are
+  woken, the long filesystem and hashing primitives give up at their next safe
+  boundary, and the run waits a bounded ten seconds before naming whatever is
+  still going.
+
 - A run directory now holds what its commands printed. `RunLog.step_log()`
   existed, the module documentation promised a log per step, and no production
   code called it -- a real recorded `release-binaries` run in this checkout had

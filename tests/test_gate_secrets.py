@@ -150,7 +150,7 @@ class _Journal:
 
     def step_output(self):
         """No step, so nowhere to file output -- which is not this test's claim."""
-        return None
+        return
 
 
 @pytest.mark.parametrize("failing", (False, True))

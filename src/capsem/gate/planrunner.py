@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from operator import attrgetter
 from typing import TYPE_CHECKING
 
+from .cancellation import cancellable, check, observing
 from .context import Context
 from .errors import GateError
 from .execution import Step
@@ -63,29 +64,80 @@ def execute(plan: Plan, context: Context) -> dict[str, Outcome]:
     }
     broken: set[str] = set()
 
-    with ThreadPoolExecutor(max_workers=max(len(plan.steps), 1)) as pool:
-        running: dict[Future[float], Step] = {}
-        while sorter.is_active():
-            for label in sorter.get_ready():
-                step = plan.step_named(label)
-                if plan.after_of(label) & broken:
-                    # Its inputs were never produced. Running it would report a
-                    # second failure that is really the first one.
-                    outcomes[label] = Outcome(label, SKIPPED)
-                    context.journal.skipped(label)
-                    broken.add(label)
-                    sorter.done(label)
-                    continue
-                running[pool.submit(_guarded, step, context, locks)] = step
+    pool = ThreadPoolExecutor(max_workers=max(len(plan.steps), 1))
+    running: dict[Future[float], Step] = {}
+    with cancellable() as abandoned:
+        try:
+            while sorter.is_active():
+                for label in sorter.get_ready():
+                    step = plan.step_named(label)
+                    if plan.after_of(label) & broken:
+                        # Its inputs were never produced. Running it would
+                        # report a second failure that is really the first one.
+                        outcomes[label] = Outcome(label, SKIPPED)
+                        context.journal.skipped(label)
+                        broken.add(label)
+                        sorter.done(label)
+                        continue
+                    running[pool.submit(_guarded, step, context, locks, abandoned)] = step
 
-            if not running:
-                continue
-            finished = next(iter(_completed(running)))
-            step = running.pop(finished)
-            _record(step, finished, outcomes, broken)
-            sorter.done(step.label)
+                if not running:
+                    continue
+                finished = next(iter(_completed(running)))
+                step = running.pop(finished)
+                _record(step, finished, outcomes, broken)
+                sorter.done(step.label)
+        except BaseException:
+            _abandon(pool, running, locks, abandoned, context)
+            raise
+        else:
+            pool.shutdown(wait=True)
 
     return outcomes
+
+
+#: How long an interrupted run waits for its workers before saying who is still
+#: going. Long enough for a primitive to reach its next boundary, short enough
+#: that Ctrl-C means something.
+GRACE_SECONDS = 10.0
+
+
+def _abandon(
+    pool: ThreadPoolExecutor,
+    running: dict[Future[float], Step],
+    locks: dict[str, _SharedLock],
+    abandoned: threading.Event,
+    context: Context,
+) -> None:
+    """Stop, in the order that makes stopping safe.
+
+    An interrupt used to mean "wait": the executor was held through a `with`,
+    whose exit joins every running future, so Ctrl-C fifty milliseconds into a
+    long action returned when that action finished. Returning immediately would
+    be worse -- the machine lock, the workspace and the service are released on
+    the way out of `execute`, and releasing them under a worker still writing is
+    how an interrupt becomes corruption.
+
+    So: ask, then wake anything asleep, then wait a bounded while, then say who
+    did not stop. The waiting is what makes the release below it safe; the bound
+    is what stops it being indefinite.
+    """
+    abandoned.set()
+    # Anything not started must not start. Anything asleep on a resource has to
+    # wake to notice the flag, or it waits for a holder that is also stopping.
+    for future in running:
+        future.cancel()
+    for lock in locks.values():
+        lock.wake()
+
+    pool.shutdown(wait=False, cancel_futures=True)
+    _done, pending = wait(running, timeout=GRACE_SECONDS)
+    if pending:
+        stubborn = sorted(running[future].label for future in pending)
+        context.journal.note(
+            f"interrupted; still running after {GRACE_SECONDS:.0f}s: "
+            f"{', '.join(stubborn)}"
+        )
 
 
 class _SharedLock:
@@ -119,12 +171,14 @@ class _SharedLock:
             if shared:
                 while self._writer or self._writers_waiting:
                     self._state.wait()
+                    check("waiting for a shared resource")
                 self._readers += 1
                 return
             self._writers_waiting += 1
             try:
                 while self._writer or self._readers:
                     self._state.wait()
+                    check("waiting for an exclusive resource")
             finally:
                 self._writers_waiting -= 1
             self._writer = True
@@ -137,11 +191,30 @@ class _SharedLock:
                 self._writer = False
             self._state.notify_all()
 
+    def wake(self) -> None:
+        """Wake every waiter without granting anything.
 
-def _guarded(step: Step, context: Context, locks: dict[str, _SharedLock]) -> float:
-    """Hold what the step contends for, run it, and report how long."""
+        For an interrupted run: a step asleep here is waiting on a holder that
+        is also stopping, so nobody would notify it. It wakes, re-checks its
+        condition, and its own cancellation check ends it.
+        """
+        with self._state:
+            self._state.notify_all()
+
+
+def _guarded(
+    step: Step,
+    context: Context,
+    locks: dict[str, _SharedLock],
+    abandoned: threading.Event,
+) -> float:
+    """Hold what the step contends for, run it, and report how long.
+
+    `abandoned` is passed rather than inherited: a pool worker starts with a
+    fresh context, so the run's cancellation switch has to be handed to it.
+    """
     started = time.monotonic()
-    with ExitStack() as stack:
+    with observing(abandoned), ExitStack() as stack:
         for resource in sorted(step.contends, key=attrgetter("name")):
             stack.enter_context(locks[resource.name].held(shared=resource.shared))
         with context.journal.step(step):

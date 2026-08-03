@@ -23,6 +23,7 @@ from pathlib import Path
 
 import blake3
 
+from . import cancellation
 from .errors import GateError
 
 #: Digest algorithms the gate can record, by the name configuration uses.
@@ -43,6 +44,10 @@ def digest_of(path: Path, *, algorithm: str) -> str:
 
     with path.open("rb") as source:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            # Between chunks is a safe place to abandon a hash: nothing has
+            # been written, and a multi-gigabyte rootfs is exactly the work an
+            # interrupted operator is waiting on.
+            cancellation.check(f"hashing {path.name}")
             hasher.update(chunk)
     return hasher.hexdigest()
 
@@ -73,7 +78,7 @@ def make_dir(path: Path) -> None:
 def copy_tree(source: Path, target: Path) -> None:
     """Copy a directory, replacing whatever was at the target."""
     remove(target)
-    shutil.copytree(source, target)
+    shutil.copytree(source, target, copy_function=_interruptible_copy)
 
 
 def merge_tree(source: Path, target: Path) -> None:
@@ -83,7 +88,17 @@ def merge_tree(source: Path, target: Path) -> None:
     does when several architectures land in one tree, and doing it by replacing
     would delete the sibling that arrived first.
     """
-    shutil.copytree(source, target, dirs_exist_ok=True)
+    shutil.copytree(source, target, dirs_exist_ok=True, copy_function=_interruptible_copy)
+
+
+def _interruptible_copy(source: str, target: str) -> object:
+    """One file, after asking whether the run is still wanted.
+
+    Between files, never inside one: a half-written file is worse than a
+    half-copied tree, which the caller's own cleanup can see and redo.
+    """
+    cancellation.check(f"copying into {Path(target).parent.name}")
+    return shutil.copy2(source, target)
 
 
 def link(path: Path, target: str) -> None:

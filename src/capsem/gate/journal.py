@@ -46,9 +46,10 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
 
 OK, FAILED, SKIPPED = "ok", "failed", "skipped"
 
-#: Which step the current thread is inside. `ThreadPoolExecutor` copies the
-#: calling context into each worker, so a step sets this once and everything it
-#: does inherits it.
+#: Which step the current thread is inside. `step()` runs inside the worker
+#: that owns it and sets this there, and each thread has its own context -- so
+#: everything that step does, on that thread, is attributed to it and to
+#: nothing else.
 _CURRENT: ContextVar[str] = ContextVar("capsem_gate_current_step", default="")
 
 
