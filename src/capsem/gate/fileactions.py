@@ -70,6 +70,8 @@ class MakeDir(Action, name="make-dir"):
         return f"mkdir -p {self._path}"
 
     def perform(self, context: Context) -> None:
+        if context.observing:
+            return
         self._path.mkdir(parents=True, exist_ok=True)
 
 
@@ -93,6 +95,8 @@ class Remove(Action, name="remove"):
         return f"rm -rf {self._path}"
 
     def perform(self, context: Context) -> None:
+        if context.observing:
+            return
         remove(self._path)
 
 
@@ -107,6 +111,8 @@ class Copy(Action, name="copy"):
         return f"cp -r {self._source} {self._target}"
 
     def perform(self, context: Context) -> None:
+        if context.observing:
+            return
         if not self._source.exists():
             raise GateError(f"nothing to copy: {self._source} does not exist")
         self._target.parent.mkdir(parents=True, exist_ok=True)
@@ -133,6 +139,8 @@ class Symlink(Action, name="symlink"):
         return f"ln -sfn {self._target} {self._link}"
 
     def perform(self, context: Context) -> None:
+        if context.observing:
+            return
         if self._link.exists() and not self._link.is_symlink():
             raise GateError(f"{self._link} is not a symlink; refusing to replace it")
         self._link.unlink(missing_ok=True)
@@ -160,6 +168,8 @@ class AtomicReplace(Action, name="atomic-replace"):
         return f"build {self._target}.tmp and mv it onto {self._target}"
 
     def perform(self, context: Context) -> None:
+        if context.observing:
+            return
         scratch = self._target.with_name(f"{self._target.name}.tmp.{os.getpid()}")
         self._target.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -186,6 +196,9 @@ class Hash(Action, name="hash"):
         return f"hash {self._path}"
 
     def perform(self, context: Context) -> None:
+        if context.observing:
+            # Nothing built it, because nothing ran.
+            return
         if not self._path.is_file():
             raise GateError(f"cannot hash {self._path}: it is not a file")
         algorithm = context.config.runlog.artifact_digest

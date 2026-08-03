@@ -219,9 +219,6 @@ class RecordingJournal:
     ) -> None:
         self.waits.append((label, dependency_ms, resource_ms, execution_ms))
 
-    def records(self) -> bool:
-        return True
-
     def step_output(self) -> Path | None:
         """Nothing: a recording journal keeps events, not bytes."""
         return None
@@ -322,7 +319,7 @@ def gate_issued(
     # A step that needs a machine fails here; what it issued before failing is
     # still the evidence.
     with suppress(Exception):
-        plan.run(Context(runner, gate_config.load(root)))
+        plan.run(Context(runner, gate_config.load(root), observing=True))
     return "\n".join([rendered, *runner.rendered, *runner.notes])
 
 

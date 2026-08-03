@@ -28,7 +28,7 @@ import json
 from pathlib import Path
 
 import pytest
-from helpers.gate import RecordingRunner
+from helpers.gate import RecordingJournal, RecordingRunner
 
 from capsem.gate import cli  # noqa: F401 - imported so every command registers
 from capsem.gate import config as gate_config
@@ -96,11 +96,10 @@ def _command(root: Path, **kwargs) -> CandidateCommand:
 
 
 def _context(root: Path, **kwargs) -> Context:
-    """A context for a gate that is *running*.
+    """A context for a gate that is really running.
 
-    The journal matters: recording the source state is something a run does,
-    so a context with nothing recording behind it declines to (see
-    `test_recording_the_source_state_needs_a_run_to_record_into`).
+    `observing` defaults false, which is the point: these tests are about what
+    a run does to the machine (see `test_an_observed_plan_touches_nothing`).
     """
     from helpers.gate import RecordingJournal
 
@@ -328,39 +327,62 @@ def test_a_macos_host_without_caffeinate_is_told_why_it_matters(
 # ---------------------------------------------------------------------------
 
 
-def test_recording_the_source_state_needs_a_run_to_record_into(tmp_path: Path) -> None:
+def test_an_observed_plan_touches_nothing(tmp_path: Path) -> None:
     """`tests/helpers/gate.py` runs the real candidate plan against a
     recording runner to read back the argv it would issue. That stubs
-    subprocesses -- it does not stub filesystem actions, so this step wrote
-    the gate's own `target/gate-source-state.json` with the recorder's empty
-    output, and the gate's `source.verify` then reported
+    subprocesses -- it does not stub filesystem actions, so `source.record`
+    wrote the gate's own `target/gate-source-state.json` with the recorder's
+    empty output, and the gate's `source.verify` then reported
 
         source HEAD changed while the gate was running:  -> <head>
 
-    for a tree nobody had touched. It only reached that far once the last
-    step in the plan started passing.
+    for a tree nobody had touched. It only reached that far once the last step
+    in the plan started passing.
 
-    A run's identity belongs to a run. With no journal recording one there is
-    nothing to identify, and writing anyway is how an observer corrupts the
-    thing it is observing.
+    Reading a plan is not running one, and the context says so rather than
+    each action deciding for itself -- the next action to write a file will not
+    remember either.
     """
-    from capsem.gate.context import Context, NullJournal
-
     root = _checkout(tmp_path)
-    recorded = gate_config.for_root(root).path(
-        gate_config.for_root(root).candidate.source_state_file
+    config = gate_config.for_root(root)
+    recorded = config.path(config.candidate.source_state_file)
+
+    RecordSourceState().perform(
+        Context(Running(root), config, journal=RecordingJournal(), observing=True)
+    )
+    assert not recorded.exists(), "an observed plan wrote to the checkout"
+
+    # And a run that is really running records exactly as before.
+    RecordSourceState().perform(_context(root))
+    assert json.loads(recorded.read_text(encoding="utf-8"))["head"] == HEAD
+
+
+def test_observation_reaches_past_a_step_that_claims_an_output(
+    tmp_path: Path,
+) -> None:
+    """Otherwise it stops at the first one and every later step goes unseen.
+
+    A step's declared artifacts are hashed after its actions run, and nothing
+    built them because nothing ran -- so `Hash` raised `cannot hash ...: it is
+    not a file` and the observation ended three steps in. Every contract that
+    reads back issued argv was reading a prefix.
+    """
+    from capsem.gate.execution import step
+    from capsem.gate.fileactions import MakeDir
+
+    absent = tmp_path / "never-built.bin"
+    journal = RecordingJournal()
+    context = Context(
+        Running(tmp_path),
+        gate_config.for_root(_checkout(tmp_path)),
+        journal=journal,
+        observing=True,
     )
 
-    RecordSourceState().perform(Context(Running(root), gate_config.for_root(root)))
-    assert not recorded.exists(), "an unrecorded run wrote a source state anyway"
+    step("claims", MakeDir(tmp_path / "made"), produces=(absent,)).run(context)
 
-    # And with a real run behind it, it records as before.
-    from capsem.gate.runlog import RunLog
-
-    with RunLog.open(gate_config.for_root(root), "candidate") as log:
-        RecordSourceState().perform(Context(Running(root), gate_config.for_root(root), journal=log))
-    assert json.loads(recorded.read_text(encoding="utf-8"))["head"] == HEAD
-    assert isinstance(NullJournal(), NullJournal)
+    assert not (tmp_path / "made").exists(), "an observed step created a directory"
+    assert journal.artifacts == [], "an observed step recorded bytes nobody produced"
 
 
 def test_interrogating_the_gate_plan_leaves_the_checkout_alone() -> None:

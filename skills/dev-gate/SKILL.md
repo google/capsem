@@ -200,13 +200,14 @@ repoint `latest` at the question.
 gate. Assert **edges**, not positions.
 
 `gate_issued()` reads back real argv by *running* the plan against a recording
-runner. That stubs subprocesses and nothing else -- an action that writes a
-file writes it, in the real checkout, while a gate may be running. An action
-whose meaning is tied to a run must therefore ask `context.journal.records()`
-and do nothing when the answer is no. `RecordSourceState` learned this the
-expensive way: it overwrote the running gate's own state file with the
-recorder's empty output, and `source.verify` -- the last step of a
-forty-minute run -- reported a HEAD change on a tree nobody had touched.
+runner. That stubs subprocesses and nothing else, so it passes
+`observing=True` and every primitive that touches the machine honours it. Any
+new primitive that writes, deletes, links or hashes must check
+`context.observing` first -- otherwise interrogating a plan mutates the
+checkout a gate may be holding. `RecordSourceState` learned this the expensive
+way: it overwrote the running gate's own state file with the recorder's empty
+output, and `source.verify` -- the last step of a forty-minute run -- reported
+a HEAD change on a tree nobody had touched.
 
 | | |
 |---|---|

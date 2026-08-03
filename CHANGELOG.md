@@ -67,19 +67,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A gate could fail its own last step because a test suite it was running had
-  overwritten the record of what it was qualifying. `tests/helpers/gate.py`
-  reads back the argv a command would issue by *running* its plan against a
-  recording runner, which stubs subprocesses and nothing else -- so the step
-  that writes down the HEAD and source digest under test wrote them, in the
-  real checkout, with the recorder's empty output. Forty minutes later
-  `source.verify` compared that against reality and reported
+- Reading a gate plan no longer runs it. `tests/helpers/gate.py` reads back the
+  argv a command would issue by *running* its plan against a recording runner,
+  which stubs subprocesses and nothing else -- so every filesystem action ran
+  for real, against the real checkout, while a gate might be holding it. The
+  step that writes down the HEAD and source digest under test wrote them with
+  the recorder's empty output, and forty minutes later `source.verify` compared
+  that against reality and reported
 
       source HEAD changed while the gate was running:  -> <head>
 
-  for a tree nobody had touched. A run's identity now belongs to a run: the
-  journal says whether it is recording one, and an action with no run behind
-  it does nothing rather than writing anyway.
+  for a tree nobody had touched. A context now says whether its plan is being
+  read or run, and every primitive that touches the machine asks -- rather than
+  each action deciding for itself, which the next one to write a file would not
+  remember to do.
+
+  That also makes an observation reach the whole plan. A step's declared
+  artifacts are hashed once its actions run, and nothing built them because
+  nothing ran, so `Hash` raised `cannot hash ...: it is not a file` and the
+  observation ended at the first step claiming an output. Every contract
+  reading back issued argv was reading a prefix of the plan.
 
 - The recipe suite no longer launches a recipe whose graph takes the machine
   lock from inside a run that is holding it. `just doctor` depends on

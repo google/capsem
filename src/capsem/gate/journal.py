@@ -92,10 +92,6 @@ class EventJournal:
         with self._writing, self._events.open("a", encoding="utf-8") as sink:
             sink.write(line + "\n")
 
-    def records(self) -> bool:
-        """Yes: an `EventJournal` exists because a run does."""
-        return True
-
     def shape(self, steps: tuple[str, ...], edges: tuple[tuple[str, str], ...]) -> None:
         """Record the graph, so this run can be explained after it is over."""
         self.emit(PlanShape(steps=steps, edges=edges))
