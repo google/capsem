@@ -1045,3 +1045,158 @@ fn cleanup_nonexistent_dir() {
     let removed = cleanup_unused_assets(Path::new("/nonexistent"), &m).unwrap();
     assert!(removed.is_empty());
 }
+
+#[test]
+fn copy_missing_local_assets_hydrates_every_profiles_images() {
+    // A channel's profiles own their images (`tmp/release-spec.md` §5
+    // invariant 7), and the release graph turns each into its own asset
+    // release -- `current` can name only one of them. Hydration resolved that
+    // one and copied its assets alone, so installing a channel whose profiles
+    // pin different kernels left the other profile's kernel absent. Readiness
+    // still reported every profile ready, and if the absent one sorted first
+    // it became the default: a fresh install that cannot boot a sandbox.
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    let install = dir.path().join("install");
+    let arch_dir = source.join("arm64");
+    std::fs::create_dir_all(&arch_dir).unwrap();
+
+    // Two profiles, distinct kernels, one shared rootfs -- the realistic shape.
+    let code_kernel = b"kernel-for-code";
+    let cowork_kernel = b"kernel-for-co-work";
+    let rootfs = b"rootfs-shared";
+    std::fs::write(arch_dir.join("vmlinuz"), code_kernel).unwrap();
+    std::fs::write(arch_dir.join("vmlinuz-co-work"), cowork_kernel).unwrap();
+    std::fs::write(arch_dir.join("rootfs.erofs"), rootfs).unwrap();
+
+    let entry = |bytes: &[u8]| {
+        format!(
+            r#"{{ "hash": "{}", "size": {} }}"#,
+            blake3::hash(bytes).to_hex(),
+            bytes.len()
+        )
+    };
+    let manifest = ManifestV2::from_json(&format!(
+        r#"{{
+            "format": 2,
+            "refresh_policy": "24h",
+            "assets": {{
+                "current": "2030.0101.1",
+                "releases": {{
+                    "2030.0101.1": {{
+                        "min_binary": "1.0.0",
+                        "arches": {{ "arm64": {{
+                            "vmlinuz": {},
+                            "rootfs.erofs": {}
+                        }} }}
+                    }},
+                    "2030.0101.1+co-work": {{
+                        "min_binary": "1.0.0",
+                        "arches": {{ "arm64": {{
+                            "vmlinuz-co-work": {},
+                            "rootfs.erofs": {}
+                        }} }}
+                    }}
+                }}
+            }},
+            "binaries": {{
+                "current": "9.9.9",
+                "releases": {{ "9.9.9": {{ "min_assets": "2030.0101.1" }} }}
+            }}
+        }}"#,
+        entry(code_kernel),
+        entry(rootfs),
+        entry(cowork_kernel),
+        entry(rootfs),
+    ))
+    .unwrap();
+
+    copy_missing_local_assets(&manifest, "9.9.9", "arm64", &source, &install, |_| {}).unwrap();
+
+    for (logical, bytes) in [
+        ("vmlinuz", code_kernel.as_slice()),
+        ("vmlinuz-co-work", cowork_kernel.as_slice()),
+        ("rootfs.erofs", rootfs.as_slice()),
+    ] {
+        let digest = blake3::hash(bytes).to_hex().to_string();
+        let target = install.join("arm64").join(hash_filename(logical, &digest));
+        assert!(
+            target.exists(),
+            "{logical} was never hydrated: a profile pinning it cannot boot"
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn materializing_keeps_both_profiles_images_when_they_share_a_logical_name() {
+    // Two profiles each ship a `vmlinuz`. They are different bytes, they land
+    // under different hash-named files, and both have to exist -- so the set
+    // of things to materialize is keyed by name *and* hash. Keyed by name
+    // alone this quietly keeps one, which is the missing-kernel install all
+    // over again, and no arch/name assertion would notice.
+    let code = b"kernel-for-code";
+    let cowork = b"kernel-for-co-work";
+    let entry = |bytes: &[u8]| {
+        format!(
+            r#"{{ "hash": "{}", "size": {} }}"#,
+            blake3::hash(bytes).to_hex(),
+            bytes.len()
+        )
+    };
+    let manifest = ManifestV2::from_json(&format!(
+        r#"{{
+            "format": 2,
+            "refresh_policy": "24h",
+            "assets": {{
+                "current": "2030.0101.1",
+                "releases": {{
+                    "2030.0101.1": {{ "arches": {{ "arm64": {{ "vmlinuz": {} }} }} }},
+                    "2030.0101.1+co-work": {{ "arches": {{ "arm64": {{ "vmlinuz": {} }} }} }}
+                }}
+            }},
+            "binaries": {{ "current": "9.9.9", "releases": {{ "9.9.9": {{}} }} }}
+        }}"#,
+        entry(code),
+        entry(cowork),
+    ))
+    .unwrap();
+
+    let wanted = arch_assets_to_materialize(&manifest, "9.9.9", "arm64").unwrap();
+    let hashes: Vec<&str> = wanted.iter().map(|(_, _, entry)| entry.hash.as_str()).collect();
+
+    assert_eq!(wanted.len(), 2, "one profile's kernel was dropped: {hashes:?}");
+    for bytes in [code.as_slice(), cowork.as_slice()] {
+        assert!(hashes.contains(&blake3::hash(bytes).to_hex().to_string().as_str()));
+    }
+    // Each carries the release it came from, because that is what names its URL.
+    let versions: Vec<&str> = wanted.iter().map(|(version, _, _)| *version).collect();
+    assert!(versions.contains(&"2030.0101.1") && versions.contains(&"2030.0101.1+co-work"));
+}
+
+#[test]
+fn materializing_refuses_an_arch_no_compatible_release_builds() {
+    // Skipping a release that lacks the arch must not become "nothing to do":
+    // an install that materializes zero assets and reports success is the
+    // failure mode this whole path exists to prevent.
+    let manifest = ManifestV2::from_json(
+        r#"{
+            "format": 2,
+            "refresh_policy": "24h",
+            "assets": {
+                "current": "2030.0101.1",
+                "releases": {
+                    "2030.0101.1": { "arches": { "arm64": { "vmlinuz": { "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "size": 1 } } } }
+                }
+            },
+            "binaries": { "current": "9.9.9", "releases": { "9.9.9": {} } }
+        }"#,
+    )
+    .unwrap();
+
+    let error = arch_assets_to_materialize(&manifest, "9.9.9", "x86_64").unwrap_err();
+    assert!(
+        error.to_string().contains("x86_64"),
+        "unhelpful error: {error}"
+    );
+}

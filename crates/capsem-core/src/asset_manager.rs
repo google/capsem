@@ -1229,21 +1229,12 @@ where
     use futures::StreamExt;
     use tokio::io::AsyncWriteExt;
 
-    // Pick and validate the same bootable asset release the service resolver
-    // will use. This rejects channel manifests missing kernel/initrd/rootfs
-    // before they can become the installed manifest.
-    let asset_version = manifest
-        .resolve(binary_version, arch, base_dir)?
-        .asset_version;
-    let release = manifest
-        .assets
-        .releases
-        .get(&asset_version)
-        .with_context(|| format!("asset version {asset_version} not found in manifest"))?;
-    let arch_assets = release
-        .arches
-        .get(arch)
-        .with_context(|| format!("arch {arch} not found in asset release {asset_version}"))?;
+    // Validate that the release the service resolver will boot is complete,
+    // rejecting a channel manifest missing kernel/initrd/rootfs before it can
+    // become the installed manifest -- then fetch what *every* compatible
+    // release needs, not only that one's.
+    manifest.resolve(binary_version, arch, base_dir)?;
+    let arch_assets = arch_assets_to_materialize(manifest, binary_version, arch)?;
 
     let asset_base_url = remote_asset_release_base_url(manifest, base_dir)?;
     let arch_dir = asset_storage_dir(base_dir, arch);
@@ -1257,12 +1248,8 @@ where
 
     let mut downloaded = Vec::new();
 
-    // Deterministic order for stable progress output.
-    let mut names: Vec<&String> = arch_assets.keys().collect();
-    names.sort();
-
-    for name in names {
-        let entry = &arch_assets[name];
+    // Sorted by (name, hash) for stable progress output.
+    for (asset_version, name, entry) in arch_assets {
         let hname = hash_filename(name, &entry.hash);
         let target = arch_dir.join(&hname);
 
@@ -1293,7 +1280,7 @@ where
             continue;
         }
 
-        let url = asset_download_url_with_base(&asset_base_url, &asset_version, arch, name);
+        let url = asset_download_url_with_base(&asset_base_url, asset_version, arch, name);
         info!(name = %name, url = %url, "downloading asset");
 
         let resp = client
@@ -1397,29 +1384,15 @@ pub fn copy_missing_local_assets<F>(
 where
     F: Fn(DownloadProgress),
 {
-    let asset_version = manifest
-        .resolve(binary_version, arch, base_dir)?
-        .asset_version;
-    let release = manifest
-        .assets
-        .releases
-        .get(&asset_version)
-        .with_context(|| format!("asset version {asset_version} not found in manifest"))?;
-    let arch_assets = release
-        .arches
-        .get(arch)
-        .with_context(|| format!("arch {arch} not found in asset release {asset_version}"))?;
+    let arch_assets = arch_assets_to_materialize(manifest, binary_version, arch)?;
 
     let arch_dir = asset_storage_dir(base_dir, arch);
     std::fs::create_dir_all(&arch_dir)
         .with_context(|| format!("cannot create {}", arch_dir.display()))?;
 
     let mut copied = Vec::new();
-    let mut names: Vec<&String> = arch_assets.keys().collect();
-    names.sort();
 
-    for name in names {
-        let entry = &arch_assets[name];
+    for (_asset_version, name, entry) in arch_assets {
         let hname = hash_filename(name, &entry.hash);
         let target = arch_dir.join(&hname);
 
@@ -1505,10 +1478,62 @@ where
     Ok(copied)
 }
 
-/// Pick the asset version that [`ManifestV2::resolve`] would pick for a
-/// given binary version. Extracted so `download_missing_assets` and the
-/// resolver stay in lock-step.
-fn pick_asset_version(manifest: &ManifestV2, binary_version: &str) -> Result<String> {
+/// Every asset this arch needs on disk, across every compatible release.
+///
+/// One rule, one function. The local-copy and download paths each resolved
+/// their own single release, and each therefore materialized one profile's
+/// images while the manifest promised several. A channel's profiles own their
+/// images, so the channel pointer names at most one of them -- the rest went
+/// missing on a fresh install, and the profile that sorted first became an
+/// unbootable default.
+fn arch_assets_to_materialize<'m>(
+    manifest: &'m ManifestV2,
+    binary_version: &str,
+    arch: &str,
+) -> Result<Vec<(&'m str, &'m String, &'m AssetEntry)>> {
+    let versions = compatible_asset_versions(manifest, binary_version)?;
+    // Keyed by what the bytes are called on disk -- logical name *and* hash.
+    // Two profiles legitimately ship a different `vmlinuz`, and keying by name
+    // alone silently keeps one of them: the same missing-kernel install this
+    // function exists to prevent.
+    let mut wanted: BTreeMap<(&str, &str), (&str, &String, &AssetEntry)> = BTreeMap::new();
+    for asset_version in &versions {
+        // A release that does not build for this arch is not this arch's
+        // problem; only every one of them missing is.
+        let Some(assets) = manifest.assets.releases[*asset_version].arches.get(arch) else {
+            continue;
+        };
+        for (name, entry) in assets {
+            wanted.insert(
+                (name.as_str(), entry.hash.as_str()),
+                (asset_version.as_str(), name, entry),
+            );
+        }
+    }
+    if wanted.is_empty() {
+        bail!(
+            "arch {arch} not found in any asset release compatible with binary \
+             {binary_version} (checked {})",
+            versions
+                .iter()
+                .map(|version| version.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    Ok(wanted.into_values().collect())
+}
+
+/// Every asset release this binary can boot, sorted for a stable answer.
+///
+/// One rule in one function: booting resolves a single release and hydration
+/// must materialize all of them, and the two disagreeing about which are
+/// compatible is how an install ends up missing exactly the assets it is about
+/// to ask for.
+fn compatible_asset_versions<'m>(
+    manifest: &'m ManifestV2,
+    binary_version: &str,
+) -> Result<Vec<&'m String>> {
     // Empty min_assets means "no compatibility constraint declared".
     let min_assets = manifest
         .binaries
@@ -1517,24 +1542,51 @@ fn pick_asset_version(manifest: &ManifestV2, binary_version: &str) -> Result<Str
         .map(|release| release.min_assets.as_str())
         .unwrap_or("");
 
-    let mut best: Option<&str> = None;
-    for (asset_version, release) in &manifest.assets.releases {
-        if release.deprecated {
-            continue;
-        }
-        if !version_at_least(asset_version, min_assets) {
-            continue;
-        }
-        if !release.min_binary.is_empty() && !version_at_least(binary_version, &release.min_binary)
-        {
-            continue;
-        }
+    let mut compatible: Vec<&String> = manifest
+        .assets
+        .releases
+        .iter()
+        .filter(|(asset_version, release)| {
+            !release.deprecated
+                && version_at_least(asset_version, min_assets)
+                && (release.min_binary.is_empty()
+                    || version_at_least(binary_version, &release.min_binary))
+        })
+        .map(|(asset_version, _)| asset_version)
+        .collect();
+    compatible.sort();
+
+    if compatible.is_empty() {
+        bail!(
+            "no compatible asset release for binary {binary_version} (min_assets: {})",
+            if min_assets.is_empty() {
+                "unspecified"
+            } else {
+                min_assets
+            }
+        );
+    }
+    Ok(compatible)
+}
+
+/// Pick the asset version that [`ManifestV2::resolve`] would pick for a
+/// given binary version -- the newest of the compatible set.
+fn pick_asset_version(manifest: &ManifestV2, binary_version: &str) -> Result<String> {
+    let mut best: Option<&String> = None;
+    for asset_version in compatible_asset_versions(manifest, binary_version)? {
         if best.is_none_or(|current| version_at_least(asset_version, current)) {
-            best = Some(asset_version.as_str());
+            best = Some(asset_version);
         }
     }
+    let best = best.cloned();
 
-    best.map(ToOwned::to_owned).ok_or_else(|| {
+    let min_assets = manifest
+        .binaries
+        .releases
+        .get(binary_version)
+        .map(|release| release.min_assets.as_str())
+        .unwrap_or("");
+    best.ok_or_else(|| {
         anyhow::anyhow!(
             "no compatible asset release for binary {binary_version} (min_assets: {})",
             if min_assets.is_empty() {

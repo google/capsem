@@ -67,6 +67,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A fresh install materialized one profile's images and reported success. A
+  channel's profiles own their images, so the release graph gives each its own
+  asset release and the channel pointer can name at most one of them -- but
+  both the local-copy and the download path resolved that single pointer and
+  fetched only its assets. Installing a channel whose profiles pin different
+  kernels left the others' absent, and the profile that sorted first became an
+  unbootable default. Once profile-suffixed release keys existed it got
+  sharper still: the resolver could pick a profile whose asset names differ
+  and fail the install outright.
+
+  Both paths now ask one function what this architecture needs, across every
+  compatible release. It keys by logical name *and* hash, because two profiles
+  legitimately ship a different `vmlinuz` and keying by name alone silently
+  keeps one of them -- the same missing-kernel install, reintroduced by the
+  fix for it.
+
 - Reading a gate plan no longer runs it. `tests/helpers/gate.py` reads back the
   argv a command would issue by *running* its plan against a recording runner,
   which stubs subprocesses and nothing else -- so every filesystem action ran
