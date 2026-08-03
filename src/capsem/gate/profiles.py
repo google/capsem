@@ -74,18 +74,45 @@ def declared(manifest: Path) -> list[str] | None:
 
 
 def selected(config: GateConfig) -> list[str]:
-    """The profile axis for a functional proof, base profile first."""
-    settings = config.suites.pytest
-    present = materialized(config.path(settings.materialized_profiles))
-    wanted = declared(config.path(settings.test_manifest))
+    """The profile axis for a functional proof, base profile first.
 
-    if wanted is None:
-        wanted = present
-    elif set(present) != set(wanted):
+    From `config/profiles/`, which is checked in -- **not** from what happens
+    to be materialized under `target/`. This is read while the plan is being
+    *built*, and plan construction cannot depend on build output: a step's
+    output does not exist yet, so the same commit produced one plan on a warm
+    tree and a different one on a fresh clone. `just release-profile` passed a
+    57-minute gate locally on leftovers, then failed in CI with 94 tests all
+    reporting `no materialized profiles found`.
+
+    Agreement between this axis, the materialized catalog and the manifest
+    under test is still required -- a materialized catalog that differs from
+    the manifest means the gate would prove a pairing nobody is shipping. That
+    is a run-time question, so `agree()` answers it from a step.
+    """
+    from . import imagebuild
+
+    base = config.suites.pytest.base_profile
+    return sorted(imagebuild.profiles(config), key=lambda identity: (identity != base, identity))
+
+
+def agree(config: GateConfig) -> None:
+    """Check the materialized catalog matches the source axis and the manifest.
+
+    The check `selected()` used to make inline, moved to where it can run: after
+    the step that materializes, rather than before any step has run at all.
+    """
+    settings = config.suites.pytest
+    source = sorted(selected(config))
+    present = sorted(materialized(config.path(settings.materialized_profiles)))
+    if source != present:
         raise GateError(
-            "the materialized profile catalog does not match the manifest under "
-            f"test: manifest={wanted}, materialized={present}"
+            "the materialized profile catalog does not match the checked-in "
+            f"profiles: config/profiles={source}, materialized={present}"
         )
 
-    base = settings.base_profile
-    return sorted(wanted, key=lambda identity: (identity != base, identity))
+    wanted = declared(config.path(settings.test_manifest))
+    if wanted is not None and sorted(wanted) != present:
+        raise GateError(
+            "the materialized profile catalog does not match the manifest under "
+            f"test: manifest={sorted(wanted)}, materialized={present}"
+        )

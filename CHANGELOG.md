@@ -67,6 +67,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A fresh clone now plans the same gate a warm tree does. The functional
+  module asked for its profile axis while the plan was being *built*, and that
+  read `target/config/profiles` -- build output -- so the same commit produced
+  one plan on a developer's machine and another on a clean checkout. A release
+  passed a 57-minute gate locally on leftovers, pushed, dispatched, and CI
+  failed with 94 tests all reporting `no materialized profiles found`. Neither
+  `source.record` nor `source.verify` could have caught it: they digest tracked
+  source, and this input was not tracked source. The axis comes from checked-in
+  `config/profiles/` now. The agreement it used to check inline -- materialized
+  against declared against source -- did not go away; it became a step, which
+  is where a question about build output can actually be asked.
+
 - A gate now reports what it did to the filesystem, as it does it. `contends`
   is a list an author typed and the overlap check compares two such lists to
   each other -- nothing in that loop had ever looked at a disk, so a step that

@@ -951,6 +951,8 @@ blocks_clippy = "frontend"
 # neither.
 source_contract = [
     "tests/test_gate_observation.py",
+    "tests/test_gate_plan_purity.py",
+    "tests/test_gate_git_worktree_mount.py",
     "tests/test_rust_filesystem_chokepoint.py",
     "tests/test_agent_skill_index.py",
     "tests/test_authoritative_values_are_not_restated.py",
