@@ -8,9 +8,11 @@ from . import (
     pytestsuite,
     vmproofs,
 )
+from .actions import Action
 from .command import GateCommand
 from .config import GateConfig
-from .execution import Step
+from .context import Context
+from .execution import Step, step
 from .plan import Plan
 from .qualification import Qualification
 from .testmodules import InWorkspace
@@ -42,6 +44,24 @@ class FunctionalModule(
         return plan
 
 
+class AxisAgrees(Action, name="axis-agrees"):
+    """Check the materialized profiles are the ones the plan was built for.
+
+    `selected()` reads checked-in `config/profiles/`; this reads what the
+    build actually materialized, and refuses when they differ. A materialized
+    catalog that does not match means the gate would prove a pairing nobody is
+    shipping -- which is why the check did not go away when the plan stopped
+    reading build output, it moved to where it can run.
+    """
+
+    def render(self) -> str:
+        return "check the materialized profiles match the checked-in axis"
+
+    def perform(self, context: Context) -> None:
+        profiles.agree(context.config)
+        context.journal.note(f"profile axis {', '.join(profiles.selected(context.config))}")
+
+
 def functional(
     plan: Plan,
     config: GateConfig,
@@ -51,14 +71,22 @@ def functional(
 ) -> Step:
     """Every VM-owned suite, for every profile the channel selects."""
     phase = plan.phase("functional")
+    # From checked-in `config/profiles/`, because this runs while the plan is
+    # being built and a plan may not depend on build output. See
+    # `profiles.selected`.
     axis = profiles.selected(config)
     base, rest = axis[0], axis[1:]
 
+    # That the materialized catalog agrees with the source axis and with the
+    # manifest under test is still required -- it is simply a run-time
+    # question now, asked once, before any profile lane runs against it.
+    agreed = phase.add(step("axis", AxisAgrees()), after=after)
+
     # A release lane was handed signed binaries; signing them again would
     # replace the bytes the manifest selected with locally built ones.
-    first: tuple = after
+    first: tuple = (agreed,)
     if not qualification.pulled:
-        first = (phase.add(hostpackage.sign_step(config), after=after),)
+        first = (phase.add(hostpackage.sign_step(config), after=(agreed,)),)
 
     previous = _profile_lane(phase, config, base, after=first, broad=True)
     for profile in rest:
