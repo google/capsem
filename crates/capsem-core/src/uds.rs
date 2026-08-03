@@ -55,15 +55,31 @@ pub fn instance_socket_path(run_dir: &Path, id: &str) -> PathBuf {
 pub fn terminal_socket_path(run_dir: &Path, id: &str) -> PathBuf {
     let preferred = run_dir.join("instances").join(format!("{id}-ws.sock"));
     if preferred.as_os_str().len() < SUN_PATH_MAX {
-        return preferred;
+        return ensured(preferred);
     }
     let mut digest = blake3::Hasher::new();
     digest.update(run_dir.as_os_str().as_encoded_bytes());
     digest.update(id.as_bytes());
     let short = &digest.finalize().to_hex()[..16];
-    let dir = PathBuf::from("/tmp/capsem");
-    let _ = std::fs::create_dir_all(&dir);
-    dir.join(format!("{short}-ws.sock"))
+    ensured(PathBuf::from("/tmp/capsem").join(format!("{short}-ws.sock")))
+}
+
+/// A path with a directory to bind in.
+///
+/// Only the fallback branch created its directory; the preferred branch
+/// returned `{run_dir}/instances/…` and trusted somebody else to have made it.
+/// That held for the service's own run tree and nowhere else, and the failure
+/// it produced was `bind: No such file or directory` from inside an async
+/// loop -- a VM that simply never became exec-ready.
+///
+/// A creation failure is left to `bind`, which reports the same condition
+/// with the path in it: a caller that cannot bind here is going to say so a
+/// line later, and better.
+fn ensured(path: PathBuf) -> PathBuf {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    path
 }
 
 #[cfg(test)]

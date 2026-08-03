@@ -1675,6 +1675,10 @@ impl ServiceState {
                 .arg(scratch_disk_size_gb.to_string())
                 .arg("--uds-path")
                 .arg(&uds_path)
+                // Explicitly, because `uds_path` may have been shortened out
+                // of the run tree and cannot be walked back up.
+                .arg("--run-dir")
+                .arg(&self.run_dir)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
                 .stderr(std::process::Stdio::from(process_log_file))
                 .spawn()
@@ -2054,6 +2058,10 @@ impl ServiceState {
                 .arg(scratch_disk_size_gb.to_string())
                 .arg("--uds-path")
                 .arg(&uds_path)
+                // Explicitly, because `uds_path` may have been shortened out
+                // of the run tree and cannot be walked back up.
+                .arg("--run-dir")
+                .arg(&self.run_dir)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
                 .stderr(std::process::Stdio::from(process_log_file))
                 .spawn()

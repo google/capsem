@@ -110,6 +110,17 @@ struct Args {
     scratch_disk_size_gb: u32,
     #[arg(long)]
     uds_path: PathBuf,
+    /// The service's run directory, so the terminal socket is derived from the
+    /// same place the gateway derives it from.
+    ///
+    /// Passed rather than walked up from `uds_path`. That worked while the IPC
+    /// socket was `{run_dir}/instances/{id}.sock` and broke the moment it was
+    /// shortened to `/tmp/capsem/<hash>.sock` -- which is precisely the long
+    /// run directory the shortening exists for. Two levels up from the short
+    /// form is `/tmp`, so the process bound `/tmp/instances/...` while the
+    /// gateway dialled `{run_dir}/instances/...`.
+    #[arg(long)]
+    run_dir: Option<PathBuf>,
     #[arg(long)]
     checkpoint_path: Option<PathBuf>,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
@@ -706,11 +717,16 @@ async fn run_async_main_loop(
     info!(socket = %uds_path.display(), "listening for IPC (mode 0600)");
 
     // Through `capsem_core::uds`, which owns the length rule -- the gateway
-    // derives this same path independently, so both must apply it identically.
-    let ws_run_dir = uds_path
+    // derives this same path independently, so both must apply it identically
+    // *and* start from the same run directory. The fallback keeps the old
+    // derivation for a caller that passes no run directory; it is only correct
+    // when the IPC path was not itself shortened, which is why the service
+    // passes one.
+    let walked_up = uds_path
         .parent()
         .and_then(|instances| instances.parent())
         .unwrap_or_else(|| std::path::Path::new("/tmp"));
+    let ws_run_dir = args.run_dir.as_deref().unwrap_or(walked_up);
     let ws_sock_path = capsem_core::uds::terminal_socket_path(ws_run_dir, &vm_id_ws);
     if ws_sock_path.exists() {
         std::fs::remove_file(&ws_sock_path)?;

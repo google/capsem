@@ -67,6 +67,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A VM on a long run directory boots again. `capsem-process` derived the run
+  directory for its terminal socket by walking two levels up from its own IPC
+  socket -- correct while that socket is `{run}/instances/{id}.sock`, and wrong
+  the moment it is shortened to `/tmp/capsem/<hash>.sock`, which is exactly the
+  long run directory the shortening exists for. Walking up gave `/tmp`, whose
+  `instances/` does not exist, so the bind failed with `No such file or
+  directory` inside the async loop and the VM never became exec-ready. The run
+  directory is passed explicitly now, and `terminal_socket_path` creates the
+  directory for whichever form it returns -- only the fallback branch did, and
+  the preferred one trusted somebody else to have made it.
+
 - A half-exported release environment no longer takes the diagnostics down
   with it. Parsing the release state in every command's constructor meant
   `runs last`, `logs`, `version` and `gc --dry-run` refused with the same
