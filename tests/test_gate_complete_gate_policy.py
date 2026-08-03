@@ -70,15 +70,18 @@ def test_the_wrapper_preserves_the_operators_exact_invocation(name, macos) -> No
     """
     replacement = list(_command(name, **COMPLETE_GATE[name]).reexec())
 
-    arguments = sys.argv[1:]
-    assert replacement[-len(arguments) :] == arguments
+    # The interpreter, the module, then whatever the operator passed. Built as
+    # one tail rather than sliced by `len(arguments)`: under `xdist` a worker's
+    # `sys.argv[1:]` is empty, and `replacement[-0:]` is the *whole list*, so
+    # the assertion compared everything to nothing and this failed only in the
+    # broad parallel suite.
+    tail = [sys.executable, "-m", candidate.MODULE, *sys.argv[1:]]
+    assert replacement[-len(tail) :] == tail
 
-    # Everything before the operator's own arguments: the keep-awake prefix,
-    # then this interpreter running this module. Checked as a slice rather
-    # than by scanning the whole line, because under pytest the arguments are
-    # themselves a list of `.py` paths.
-    wrapper = replacement[: -len(arguments)]
-    assert wrapper[-3:] == [sys.executable, "-m", candidate.MODULE]
+    # Everything before it is the keep-awake prefix. Checked as a slice rather
+    # than by scanning the whole line, because under pytest the operator's own
+    # arguments are themselves a list of `.py` paths.
+    wrapper = replacement[: -len(tail)]
     assert not any(part.endswith(".py") for part in wrapper), (
         f"a re-exec must name a program, not a source file: {wrapper}"
     )
