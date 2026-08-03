@@ -88,6 +88,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   observation ended at the first step claiming an output. Every contract
   reading back issued argv was reading a prefix of the plan.
 
+  The release fail-stop contract was the one actually corrupting the gate: it
+  runs real release plans against the real checkout to prove a failing gate
+  stops publication, and `source.record` sits ahead of the step it fails on.
+  It reads its plans now instead of running them, and `tests/conftest.py`
+  fails any test that rewrites the state file -- by name, in seconds, with the
+  file put back -- rather than letting a gate discover it forty minutes later
+  and blame git.
+
 - The recipe suite no longer launches a recipe whose graph takes the machine
   lock from inside a run that is holding it. `just doctor` depends on
   `_pnpm-install`, which dispatches to an exclusive command, so the child

@@ -79,10 +79,19 @@ def _release_order(command: str, *arguments: str) -> list[str]:
 
 
 def _context(runner):
+    """A context for *reading* a release plan, against the real checkout.
+
+    `observing` is the whole point. These tests run real plans -- built from
+    the real config, so the argv is real -- and a plan that runs does what its
+    actions say. `source.record` sits ahead of the step this file fails on, so
+    without this it wrote the recording runner's empty output over the state
+    file of whichever gate was running, and that gate died forty minutes later
+    in `source.verify` reporting a HEAD change on a tree nobody had touched.
+    """
     from capsem.gate import config as gate_config
     from capsem.gate.context import Context
 
-    return Context(runner, gate_config.load(ROOT))
+    return Context(runner, gate_config.load(ROOT), observing=True)
 
 
 def test_release_commands_are_two_single_purpose_recipes() -> None:

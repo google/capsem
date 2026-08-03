@@ -209,6 +209,11 @@ way: it overwrote the running gate's own state file with the recorder's empty
 output, and `source.verify` -- the last step of a forty-minute run -- reported
 a HEAD change on a tree nobody had touched.
 
+The same rule applies to any contract that builds a plan from the real config
+and runs it: pass `observing=True`. `tests/conftest.py` fails the test that
+rewrites `target/gate-source-state.json`, so the next one to forget finds out
+in seconds rather than at `source.verify`.
+
 | | |
 |---|---|
 | `RecordingRunner` | records what a plan would run, for a test that drives its own plan |

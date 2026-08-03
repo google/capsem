@@ -88,9 +88,7 @@ def _leak_log_path(filename: str, env: dict[str, str] | None = None) -> Path:
     path = (Path(output_root) if output_root else _TESTS_ROOT) / filename
     if not namespace:
         return path
-    return path.with_name(
-        f"{path.stem}-{_sanitize_leak_log_namespace(namespace)}{path.suffix}"
-    )
+    return path.with_name(f"{path.stem}-{_sanitize_leak_log_namespace(namespace)}{path.suffix}")
 
 
 LEAK_REPORT_LOG = _leak_log_path("leak-report.log")
@@ -117,8 +115,8 @@ def _snapshot_baseline_pids() -> set[int]:
     pids: set[int] = set()
     for proc in psutil.process_iter():
         try:
-            name = proc.name() or ''
-            if name.startswith('capsem-'):
+            name = proc.name() or ""
+            if name.startswith("capsem-"):
                 pids.add(proc.pid)
         except (psutil.Error, OSError, SystemError):
             continue
@@ -152,9 +150,7 @@ def _thread_exception_hook(args: threading.ExceptHookArgs) -> None:
         f"\n@@@ UNHANDLED THREAD EXCEPTION in {args.thread.name} @@@",
         file=sys.stderr,
     )
-    traceback.print_exception(
-        args.exc_type, args.exc_value, args.exc_traceback, file=sys.stderr
-    )
+    traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback, file=sys.stderr)
 
 
 # Install immediately at import. A session-scope autouse fixture would miss
@@ -215,12 +211,8 @@ def _required_artifacts_for_run(
             return Path(value)
         return _PROJECT_ROOT / "target" / "missing-release-environment" / variable
 
-    selected["verified release input report"] = (
-        Path(release_inputs) / "release-inputs.json"
-    )
-    selected["manifest-selected release package"] = release_path(
-        "CAPSEM_RELEASE_PACKAGE"
-    )
+    selected["verified release input report"] = Path(release_inputs) / "release-inputs.json"
+    selected["manifest-selected release package"] = release_path("CAPSEM_RELEASE_PACKAGE")
     selected["manifest-selected test binary"] = release_path("CAPSEM_TEST_BINARY")
     return selected
 
@@ -377,20 +369,20 @@ def get_capsem_processes() -> dict[int, dict]:
     procs: dict[int, dict] = {}
     for proc in psutil.process_iter():
         try:
-            name = proc.name() or ''
+            name = proc.name() or ""
         except (psutil.Error, OSError, SystemError):
             continue
-        if not name.startswith('capsem-'):
+        if not name.startswith("capsem-"):
             continue
         try:
-            cmdline = ' '.join(proc.cmdline() or [])
+            cmdline = " ".join(proc.cmdline() or [])
         except (psutil.Error, OSError, SystemError):
             # PermissionError (subclass of OSError) covers KERN_PROCARGS2 denials;
             # SystemError is the psutil C-extension wrapper around the same thing.
             # Either way we know this is a capsem-* proc, so record it with a
             # blank cmdline rather than drop it.
-            cmdline = ''
-        procs[proc.pid] = {'name': name, 'cmdline': cmdline}
+            cmdline = ""
+        procs[proc.pid] = {"name": name, "cmdline": cmdline}
     return procs
 
 
@@ -460,13 +452,15 @@ def check_leaks(request):
         if not _is_pytest_descendant(pid):
             continue
         _FIRST_SEEN[pid] = (nodeid, info)
-        new_records.append({
-            "pid": pid,
-            "nodeid": nodeid,
-            "worker": worker,
-            "name": info["name"],
-            "cmdline": info["cmdline"],
-        })
+        new_records.append(
+            {
+                "pid": pid,
+                "nodeid": nodeid,
+                "worker": worker,
+                "name": info["name"],
+                "cmdline": info["cmdline"],
+            }
+        )
     if new_records:
         # Append JSONL so workers coexist without locking. Individual line
         # writes are atomic up to PIPE_BUF (4 KiB on macOS/Linux); keep each
@@ -518,8 +512,7 @@ def pytest_sessionfinish(session, exitstatus):
         )
         for args in _CAUGHT_THREAD_EXCEPTIONS:
             print(
-                f"  {args.exc_type.__name__}: {args.exc_value} "
-                f"(thread={args.thread.name})",
+                f"  {args.exc_type.__name__}: {args.exc_value} (thread={args.thread.name})",
                 file=sys.stderr,
             )
         session.exitstatus = 1
@@ -527,7 +520,9 @@ def pytest_sessionfinish(session, exitstatus):
     if os.environ.get("PYTEST_XDIST_WORKER") is not None:
         return  # worker: attribution was flushed in check_leaks
 
-    suspects = {pid: info for pid, info in get_capsem_processes().items() if pid not in _BASELINE_PIDS}
+    suspects = {
+        pid: info for pid, info in get_capsem_processes().items() if pid not in _BASELINE_PIDS
+    }
     if not suspects:
         return
 
@@ -576,3 +571,42 @@ def pytest_sessionfinish(session, exitstatus):
     print(f"({len(lines)} leaked process(es); see {LEAK_REPORT_LOG})", file=sys.stderr)
 
     session.exitstatus = 1
+
+
+# ---------------------------------------------------------------------------
+# The gate's record of what it is qualifying belongs to the gate
+# ---------------------------------------------------------------------------
+
+_SOURCE_STATE = Path(__file__).resolve().parent.parent / "target/gate-source-state.json"
+
+
+@pytest.fixture(autouse=True)
+def _the_running_gate_keeps_its_own_source_state(request):
+    """Fail the test that writes it, by name, in seconds.
+
+    A suite runs inside `just test`, and several read a real plan by *running*
+    it against a recording runner. A plan that runs does what its actions say,
+    so one of them wrote the recorder's empty output over the state file
+    naming the HEAD the gate was qualifying. The gate then failed in
+    `source.verify`, its last step, after forty minutes, reporting
+
+        source HEAD changed while the gate was running:  -> <head>
+
+    -- pointing at git, at the working tree, at anything but the test that did
+    it. Whoever does this next finds out here instead, and the run survives:
+    the file is put back before the failure propagates.
+    """
+    before = _SOURCE_STATE.read_bytes() if _SOURCE_STATE.exists() else None
+    yield
+    after = _SOURCE_STATE.read_bytes() if _SOURCE_STATE.exists() else None
+    if after == before:
+        return
+    if before is None:
+        _SOURCE_STATE.unlink(missing_ok=True)
+    else:
+        _SOURCE_STATE.write_bytes(before)
+    raise AssertionError(
+        f"{request.node.nodeid} rewrote {_SOURCE_STATE.name}, which belongs to the "
+        f"gate running this suite. It wrote {after!r}. A test that runs a real "
+        "plan to read it must pass observing=True; see tests/helpers/gate.py."
+    )
