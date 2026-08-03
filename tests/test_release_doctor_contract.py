@@ -4949,6 +4949,9 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker() -> None:
     assert "run: just _gate-linux-rust" in linux_ci
     assert "cargo llvm-cov nextest" not in linux_ci
     assert "cargo llvm-cov nextest" in runner
+    linux_clippy = "cargo clippy --workspace --all-targets -- -D warnings"
+    assert linux_clippy in runner
+    assert runner.index(linux_clippy) < runner.index("cargo llvm-cov nextest")
     assert "capsem-service" in runner
     assert 'package_args+=( -p "$package" )' in runner
     assert "--profile ci" in runner
