@@ -135,3 +135,40 @@ def test_the_axis_agreement_is_a_step_and_runs_after_materialization() -> None:
     assert whole.index("prepare.materialize-config") < whole.index("functional.axis"), (
         "the axis is checked before anything materializes it"
     )
+
+
+@pytest.mark.parametrize("name", ["release-binaries", "release-profile"])
+def test_the_release_plan_is_byte_identical_without_build_output(name: str, tmp_path: Path) -> None:
+    """Stronger than "it builds": the plan must be the *same* plan.
+
+    A release lane that merely plans on a cold tree could still plan something
+    different -- fewer profiles, a skipped lane -- and publish on the strength
+    of a proof that never ran. Verified once by cloning to a directory with no
+    `target/` and diffing the dry run (zero lines); asserted here so it stays
+    true without a clone.
+    """
+    from helpers.gate import RecordingRunner
+
+    config = gate_config.load(PROJECT_ROOT)
+    materialized = config.path(config.suites.pytest.materialized_profiles)
+
+    def described() -> str:
+        command = GateCommand.registry[name](
+            RecordingRunner(PROJECT_ROOT),
+            argparse.Namespace(dry_run=False, graph=False, timing=False, **ARGUMENTS.get(name, {})),
+        )
+        return command._describe().describe()
+
+    warm = described()
+    stash = tmp_path / f"cold-{name}"
+    moved = materialized.exists()
+    if moved:
+        shutil.move(str(materialized), str(stash))
+    try:
+        cold = described()
+    finally:
+        if moved:
+            materialized.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(stash), str(materialized))
+
+    assert cold == warm, f"{name} plans a different release without build output"
