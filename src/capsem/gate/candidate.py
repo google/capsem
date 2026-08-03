@@ -170,6 +170,12 @@ def gate_resources(config, runner: Runner) -> tuple[Resource, ...]:
     )
 
 
+#: What `python -m` runs to become the gate again. Spelled once: `gatelaunch`
+#: uses the same target, and a re-exec that names a different one is a re-exec
+#: that runs different code.
+MODULE = "capsem.gate"
+
+
 class CompleteGate:
     """What a command that *contains* the whole gate owes the machine.
 
@@ -196,17 +202,24 @@ class CompleteGate:
         waited out the two-hour timeout. `keep_awake` returns None on the
         second pass, so this happens exactly once.
 
-        The replacement is the operator's own argv, not a recipe. Returning
-        the recipe dropped whatever flags they passed and sent an already-
-        dispatched command back through the dispatch chain -- a wrapper should
-        wrap the thing it was given, not substitute something that usually
-        arrives at the same place.
+        The replacement is the operator's own arguments, not a recipe.
+        Returning the recipe dropped whatever flags they passed and sent an
+        already-dispatched command back through the dispatch chain -- a wrapper
+        should wrap the thing it was given, not substitute something that
+        usually arrives at the same place.
+
+        The *program* is this interpreter running this module, not `sys.argv[0]`.
+        `capsem-gate` re-execs itself under an isolated bytecode cache with
+        `-m capsem.gate`, so from here `sys.argv[0]` is the path of
+        `__main__.py` -- a file that is not executable. Passing it to
+        `caffeinate` gave `env: __main__.py: Permission denied` and a gate that
+        stopped in three seconds.
         """
         prefix = keep_awake(self._runner)
         if prefix is None:
             return None
         self._runner.step("Holding macOS awake for the complete gate")
-        return (*prefix, *sys.argv)
+        return (*prefix, sys.executable, "-m", MODULE, *sys.argv[1:])
 
 
 class CandidateCommand(

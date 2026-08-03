@@ -332,16 +332,30 @@ def test_a_reexec_becomes_the_same_command_it_replaced(monkeypatch, tmp_path) ->
     monkeypatch.setattr(candidate.host, "on_macos", lambda: True)
     monkeypatch.setattr(candidate.shutil, "which", lambda _name: "/usr/bin/caffeinate")
     monkeypatch.delenv(marker, raising=False)
+    # The shape a real run has: `capsem-gate` re-execs itself under an
+    # isolated bytecode cache with `-m capsem.gate`, so argv[0] here is the
+    # path of `__main__.py`. This test used to set it to a plausible console
+    # script, which is why it stayed green while the real thing died with
+    # `env: __main__.py: Permission denied` three seconds into a gate.
     monkeypatch.setattr(
-        candidate.sys, "argv", ["/opt/bin/capsem-gate", "candidate", "--timing"]
+        candidate.sys,
+        "argv",
+        [str(Path(candidate.__file__).parent / "__main__.py"), "candidate", "--timing"],
     )
 
     replacement = _command(candidate.CandidateCommand, tmp_path).reexec()
 
     assert replacement is not None
     assert "just" not in replacement, "a re-exec must not go back through just"
-    assert replacement[-3:] == ("/opt/bin/capsem-gate", "candidate", "--timing"), (
-        f"the operator's own invocation was not preserved: {replacement}"
+    assert replacement[-5:] == (
+        candidate.sys.executable,
+        "-m",
+        candidate.MODULE,
+        "candidate",
+        "--timing",
+    ), f"the operator's own invocation was not preserved: {replacement}"
+    assert not any(part.endswith(".py") for part in replacement), (
+        f"a re-exec must name a program, not a source file: {replacement}"
     )
 
 

@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from helpers.gate import RecordingRunner
 
-from capsem.gate import cli  # noqa: F401 - importing registers every command
+from capsem.gate import candidate, cli  # noqa: F401 - importing registers every command
 from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
 
@@ -62,10 +62,28 @@ def test_every_complete_gate_command_keeps_the_host_awake(name, macos) -> None:
 
 @pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
 def test_the_wrapper_preserves_the_operators_exact_invocation(name, macos) -> None:
-    """A wrapper wraps what it was given. Substituting a recipe drops flags."""
-    replacement = _command(name, **COMPLETE_GATE[name]).reexec()
+    """A wrapper wraps what it was given. Substituting a recipe drops flags.
 
-    assert list(replacement)[-len(sys.argv) :] == list(sys.argv)
+    The *arguments*, not `sys.argv` whole. `capsem-gate` re-execs itself with
+    `-m capsem.gate` to get an isolated bytecode cache, so `sys.argv[0]` here
+    is the path of `__main__.py`. Asserting the tail equalled `sys.argv`
+    endorsed passing that to `caffeinate`, which cannot execute a `.py` file --
+    `env: __main__.py: Permission denied`, three seconds into a gate.
+    """
+    replacement = list(_command(name, **COMPLETE_GATE[name]).reexec())
+
+    arguments = sys.argv[1:]
+    assert replacement[-len(arguments) :] == arguments
+
+    # Everything before the operator's own arguments: the keep-awake prefix,
+    # then this interpreter running this module. Checked as a slice rather
+    # than by scanning the whole line, because under pytest the arguments are
+    # themselves a list of `.py` paths.
+    wrapper = replacement[: -len(arguments)]
+    assert wrapper[-3:] == [sys.executable, "-m", candidate.MODULE]
+    assert not any(part.endswith(".py") for part in wrapper), (
+        f"a re-exec must name a program, not a source file: {wrapper}"
+    )
 
 
 @pytest.mark.parametrize("name", sorted(COMPLETE_GATE))
