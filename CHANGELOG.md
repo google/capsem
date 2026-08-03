@@ -67,6 +67,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem-gate gc` no longer deletes the run it is writing. It reclaims
+  `target/gate-runs` and records into it, which were compatible only while
+  `gc` recorded nothing -- and a command that removes whole trees is exactly
+  the one whose evidence is worth keeping, so it was made to record. The next
+  journal write then failed with `FileNotFoundError` and the command could not
+  complete at all. The run history is bounded by its own retention policy;
+  `ensure_space` already excluded it, and this was the caller that did not.
+
 - The IronBank ledger fixture no longer asks a content classifier for an
   answer its own payload makes ambiguous. It uploaded `upload:<random hex>`
   into a `.txt` file and asserted `text/plain`; the listing's mime comes from

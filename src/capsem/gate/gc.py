@@ -121,7 +121,13 @@ def _measure(config) -> str:
 
 
 def _trees(context: Context) -> None:
-    recovered = reclaim(context.config)
+    # Not the run log: this step writes into it. `gc` reclaims
+    # `target/gate-runs` and records there, which were compatible only while
+    # `gc` recorded nothing -- and a reclaim that deletes whole trees is
+    # exactly the operation whose evidence is worth keeping. Retention bounds
+    # the run history; the blunt reclaimer has no business in it while a run
+    # is open. `ensure_space` already said so.
+    recovered = reclaim(context.config, keep=(context.config.runlog.root,))
     context.runner.note(
         f"reclaimed {recovered.gb_freed:.2f} GB from "
         f"{len(recovered.trees)} trees; {recovered.free_after_gb:.1f} GB free"

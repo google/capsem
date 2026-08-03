@@ -244,3 +244,45 @@ def test_footprint_measures_each_tree_separately(tmp_path: Path) -> None:
 
     assert measured["target/test-home"] >= 2048
     assert "target/image-workspace" not in measured, "absent trees are not zero rows"
+
+
+def test_a_reclaim_does_not_delete_the_run_it_is_writing(tmp_path: Path) -> None:
+    """`gc` reclaims `target/gate-runs`, and records into it.
+
+    Those were compatible only while `gc` recorded nothing. Making a real
+    reclaim leave durable evidence -- which it should, since it deletes whole
+    trees -- put a live run log inside the very tree the step removes, and the
+    next journal write failed with `FileNotFoundError`. The run log is bounded
+    by its own retention policy; the blunt reclaimer has no business in it
+    while a run is open.
+
+    `ensure_space` already passed `keep=(runlog.root,)`. This is the caller
+    that did not.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate.context import Context
+    from capsem.gate.gc import _trees
+    from capsem.gate.runlog import RunLog
+
+    from helpers.gate import RecordingRunner
+
+    (tmp_path / "config").mkdir(parents=True)
+    (tmp_path / "config" / "gate.toml").write_text(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    config = gate_config.load(tmp_path)
+
+    # Something reclaimable to remove, so the step does real work.
+    reclaimable = config.path(config.disk.reclaimable[0])
+    if reclaimable != config.path(config.runlog.root):
+        reclaimable.mkdir(parents=True, exist_ok=True)
+        (reclaimable / "junk").write_text("x", encoding="utf-8")
+
+    with RunLog.open(config, "gc") as log:
+        directory = log.directory
+        _trees(Context(RecordingRunner(tmp_path), config, journal=log))
+        # The write that used to raise.
+        log.note("still here")
+
+    assert directory.is_dir(), "the reclaim deleted the run it was writing"
+    assert (directory / config.runlog.summary).is_file()
