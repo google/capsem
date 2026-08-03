@@ -230,7 +230,11 @@ def test_asset_ci_uses_primitives_owned_by_just_test() -> None:
 
     assert 'just _build-kernel ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
     assert 'just _build-rootfs ${{ matrix.arch }} "${{ inputs.profile }}"' in workflow
-    assert "_build-image-template" in lanes
+    # The lanes reach the same builder invocation directly, each with its own
+    # output. Asserting they still *mention* the retired recipe was asserting
+    # on a comment; this is the claim underneath it.
+    assert "imagebuild.build_argv(" in lanes
+    assert "output=str(output)" in lanes
 
 
 def test_asset_ci_installs_pinned_pnpm_before_running_build_primitives() -> None:

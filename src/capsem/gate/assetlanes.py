@@ -71,9 +71,11 @@ class AssetLanes:
             self._runner.step(f"Ironbank asset build lane: {profile.name} ({arch.name})")
             for stage in self._config.imagebuild.lane_templates:
                 # Straight to the builder, with this lane's output. It used to
-                # go through `just _build-image-template`, which accepted an
-                # output argument and dropped it -- so every lane wrote into
-                # the one shared assets tree while checking a private one.
+                # go through a recipe that accepted an output argument and
+                # dropped it -- so every lane wrote into the one shared assets
+                # tree while checking a private one. That recipe is gone: it
+                # had no caller left once the lanes came here, and a parameter
+                # with no destination is a knob that lies.
                 self._runner.run(
                     imagebuild.build_argv(
                         self._config,

@@ -19,16 +19,6 @@
 # Underscore recipes are implementation detail. CI may call a private primitive
 # only when it is part of the canonical `test` graph.
 
-binary := "target/debug/capsem"
-cli_binary := "target/debug/capsem"
-service_binary := "target/debug/capsem-service"
-process_binary := "target/debug/capsem-process"
-mcp_binary := "target/debug/capsem-mcp"
-gateway_binary := "target/debug/capsem-gateway"
-admin_binary := "target/debug/capsem-admin"
-host_binaries := "target/debug/capsem target/debug/capsem-service target/debug/capsem-process target/debug/capsem-mcp target/debug/capsem-mcp-aggregator target/debug/capsem-mcp-builtin target/debug/capsem-gateway target/debug/capsem-tray target/debug/capsem-admin target/debug/capsem-tui target/debug/capsem-mock-server target/debug/capsem-bench-rs"
-assets_dir := "assets"
-entitlements := "entitlements.plist"
 host_crates := "-p capsem-service -p capsem-process -p capsem -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench"
 # Propagate Cargo.toml's version across the release cohort (capsem.gate.versions).
 _stamp-version:
@@ -47,11 +37,6 @@ release-profile channel profile:
 # Compile all host binaries
 _build-host:
     cargo build {{host_crates}}
-
-# Run the terminal control UI against the installed gateway, or with
-# `--fixture --snapshot` for deterministic render inspection.
-_dev-tui *ARGS:
-    cargo run -p capsem-tui -- {{ARGS}}
 
 # Codesign all host binaries (macOS only, needed for Virtualization.framework)
 _sign: _build-host
@@ -83,7 +68,7 @@ _dev-frontend: _pnpm-install _generate-settings
 #   just build          # debug binary at ./target/debug/capsem-app
 #   just build release  # release binary at ./target/release/capsem-app
 _build-ui profile="debug": _pnpm-install _generate-settings
-    uv run capsem-gate build-ui {{profile}}
+    uv run capsem-gate build-ui {{quote(profile)}}
 
 
 # Frontend release gate used by Sprinty and docs.
@@ -93,19 +78,19 @@ build-docs: _pnpm-install
     bash scripts/check-web-surface.sh site
 
 # Select one deliberate development surface.
-dev surface="ui" *ARGS: _ensure-dev-ready _pnpm-install
-    uv run capsem-gate dev {{quote(surface)}} {{ARGS}}
+dev surface="ui": _ensure-dev-ready _pnpm-install
+    uv run capsem-gate dev {{quote(surface)}}
 
 
 # Build the desktop application with its embedded frontend.
 build profile="debug":
-    just _build-ui "{{profile}}"
+    just _build-ui {{quote(profile)}}
 
 # Build every host binary plus the desktop and documentation surfaces.
 # VM/release assets remain profile-owned and are built by the canonical test
 # and release workflows, not hidden inside a routine source build.
 build-all profile="debug":
-    just build "{{profile}}"
+    just build {{quote(profile)}}
     just _build-host
     just build-docs
 
@@ -125,26 +110,19 @@ exec +CMD: run-service
 
 
 # Build kernel only for one profile/arch (CI-facing primitive).
-_build-kernel arch profile="" output=assets_dir:
-    uv run capsem-gate build-assets {{profile}} {{arch}} --template kernel
+_build-kernel arch profile="":
+    uv run capsem-gate build-assets {{quote(profile)}} {{quote(arch)}} --template kernel
 
 
 # Build rootfs only for one profile/arch (CI-facing primitive).
-_build-rootfs arch profile="" output=assets_dir:
-    uv run capsem-gate build-assets {{profile}} {{arch}} --template rootfs
-
-
-# Already-preflighted image-build primitive shared by public CI recipes and
-# the canonical all-profile matrix. Public recipes own tool/doctor setup;
-# test-assets owns that setup once through its _bootstrap dependencies.
-_build-image-template arch profile output template:
-    uv run capsem-gate build-assets {{profile}} {{arch}} --template {{template}}
+_build-rootfs arch profile="":
+    uv run capsem-gate build-assets {{quote(profile)}} {{quote(arch)}} --template rootfs
 
 
 # VM asset rebuild (kernel + rootfs). Profile is mandatory. Optional second arg
 # restricts to one arch.
-_build-assets profile="" arch="" output=assets_dir:
-    uv run capsem-gate build-assets {{profile}} {{arch}}
+_build-assets profile="" arch="":
+    uv run capsem-gate build-assets {{quote(profile)}} {{quote(arch)}}
 
 
 # Ironbank VM asset gate. This is the superset owner for the image-build work
@@ -162,7 +140,7 @@ _gate-assets: _bootstrap _install-tools _generate-settings _sign
 # still honored for multi-agent coordination but now lives inside the test
 # home, not the shared ~/.capsem/run.
 _bootstrap:
-    sh {{justfile_directory()}}/bootstrap.sh -y
+    sh {{quote(justfile_directory() / "bootstrap.sh")}} -y
 
 # Bind the complete gate to the exact source state present at invocation. A
 # developer may test deliberate uncommitted work; the gate must return every
@@ -261,7 +239,7 @@ _release-deferred-install-target:
 #   - Tauri signing keys: CI from secrets, local from private/tauri/
 #   - See: .github/workflows/release.yaml build-app-linux job
 _cross-compile arch="": _clean-stale _check-assets _generate-settings _materialize-config
-    @uv run capsem-gate cross-compile {{arch}}
+    @uv run capsem-gate cross-compile {{quote(arch)}}
 
 # Generate settings schema/UI metadata and frontend mock data.
 _generate-settings:
@@ -273,7 +251,7 @@ _generate-settings:
 # compares before/after content so an intentional already-generated worktree
 # change can still be tested before it is committed.
 _check-generated-settings:
-    bash scripts/check-generated-settings.sh {{justfile_directory()}}
+    bash scripts/check-generated-settings.sh {{quote(justfile_directory())}}
 
 
 # Focused developer feedback; never release qualification. It shares the exact

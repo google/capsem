@@ -24,6 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Every `just` recipe argument now crosses exactly one argv boundary. `just`
+  interpolates `{{value}}` into the recipe body as shell *source*, so
+  `just build 'debug; rm -rf ~'` ran the payload before any Python saw it. The
+  release selectors were quoted; `build`, `build-all`, `_build-ui`,
+  `_cross-compile` and the CI-facing asset primitives were not, and
+  `justfile_directory()` was unquoted in two places, so a checkout under a path
+  with a space was not portable. Manual double quotes are not a fix -- `$(...)`
+  and backticks still expand inside them -- which is why `build` and
+  `build-all` looked safe and were not. The boundary test now discovers every
+  parameter from `just --dump` instead of a hand-written list of five, and
+  asserts the argv a real shell builds rather than whether a quote appears
+  somewhere on the line. `just dev`'s variadic passthrough is gone: `just`
+  joins a variadic before interpolating it, so no spelling preserves argument
+  boundaries -- `uv run capsem-gate dev tui …` is the one that can.
+
 - A partial release environment can no longer build a hybrid proof. Three gate
   modules each decided independently whether they were in a release lane --
   the artifact module from `CAPSEM_RELEASE_INPUT_DIR`, the functional module
@@ -36,6 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   indivisible value with exactly three legal shapes -- local, binary release,
   profile release -- read once per run and passed down, and every partial
   combination is refused during plan construction with both sides named.
+
+### Removed
+
+- Ten `justfile` values nothing read (`binary`, `cli_binary`, `service_binary`,
+  `process_binary`, `mcp_binary`, `gateway_binary`, `admin_binary`,
+  `host_binaries`, `assets_dir`, `entitlements`), the `output` parameter the
+  four asset recipes accepted and never forwarded, the `_build-image-template`
+  recipe left with no caller, and `_dev-tui`, which duplicated
+  `capsem-gate dev tui` through a variadic that could not preserve its own
+  arguments.
 
 ### Changed
 

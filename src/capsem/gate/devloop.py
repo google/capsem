@@ -35,6 +35,13 @@ class DevCommand(GateCommand, name="dev", help="run one development surface"):
     The frontend surface stays a passthrough to `pnpm run dev`: it is an
     interactive server, and putting a Python process between the terminal and
     it costs signal handling and gains nothing.
+
+    `args` is reachable only here, not through `just dev`. `just` joins a
+    variadic into one string before interpolating it, so the recipe could
+    either quote it -- collapsing every argument into one -- or leave it as
+    shell source, which is what it did. Neither preserves the boundaries, so
+    the passthrough is spelled `uv run capsem-gate dev tui --fixture` instead
+    of pretending `just` can carry it.
     """
 
     @classmethod
