@@ -67,6 +67,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The IronBank ledger fixture no longer asks a content classifier for an
+  answer its own payload makes ambiguous. It uploaded `upload:<random hex>`
+  into a `.txt` file and asserted `text/plain`; the listing's mime comes from
+  Magika, which classifies by content and deliberately does not let the
+  extension vote, and a short `key: value` line is the shape of a CSS
+  declaration or a CSV record. So the answer depended on the nonce -- one
+  complete gate got `text/css` -- and the test was intermittent on a boundary
+  it was not written to test. The payload is prose now, and a reproduction
+  with a pinned nonce lives beside the detection it is about.
+
 - The complete local gate can finish on macOS. Its last step required the
   native Tart glow-up report -- correctly, since a macOS host cannot boot a
   guest inside the Linux install container, so that proof stands in for it --

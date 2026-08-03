@@ -163,3 +163,65 @@ fn identify_file_sync_uses_extension_and_utf8_fallback_for_small_text() {
         ("text".into(), "text/plain".into(), "text".into(), true)
     );
 }
+
+/// Magika classifies by content, and the extension is deliberately not a vote.
+///
+/// The ironbank ledger fixture uploaded `upload:<random hex>` into a `.txt`
+/// file, which is the shape of a CSS declaration -- `property: value` -- and
+/// Magika sometimes agreed, so a complete gate failed on one nonce in some
+/// runs and not others. `normalize_file_type` cannot help: it only rescues a
+/// file Magika gave up on, and Magika had not given up.
+///
+/// Recorded here rather than only fixed in the fixture, because the next
+/// person to assert an exact mime for a short generated payload needs to know
+/// what they are asking of a classifier.
+#[test]
+fn a_short_key_value_line_is_not_reliably_plain_text() {
+    let dir = tempfile::tempdir().unwrap();
+    let magika = std::sync::Mutex::new(magika::Session::new().unwrap());
+
+    // A nonce found by search, kept so this is a reproduction rather than a
+    // claim. The gate saw `text/css` on a different one; this one gives
+    // `text/csv`. Which wrong answer it is does not matter -- that the answer
+    // depends on the random part does.
+    let ambiguous = dir.path().join("ambiguous.txt");
+    std::fs::write(
+        &ambiguous,
+        b"upload:fps-0000000000000000b135823cc1684885\n",
+    )
+    .unwrap();
+    let (_, ambiguous_mime, _, _) = identify_file_sync(&magika, &ambiguous);
+    assert_ne!(
+        ambiguous_mime, "text/plain",
+        "a `key: value` line is what a classifier is entitled to read as \
+         structured data, whatever the extension says"
+    );
+
+    // The same nonce inside ordinary prose, and seven more, because one
+    // sample proves nothing about the next -- which is how the fixture
+    // reached a complete gate and failed there.
+    for nonce in [
+        "0000000000000000b135823cc1684885",
+        "1a2b3c4d5e6f708192a3b4c5d6e7f809",
+        "ffffffffffffffffffffffffffffffff",
+        "00112233445566778899aabbccddeeff",
+        "deadbeefdeadbeefdeadbeefdeadbeef",
+        "9f86d081884c7d659a2feaa0c55ad015",
+        "5e884898da28047151d0e56f8dc62927",
+        "6b86b273ff34fce19d6b804eff5a3f57",
+    ] {
+        let prose = dir.path().join(format!("{nonce}.txt"));
+        std::fs::write(
+            &prose,
+            format!(
+                "This is the ironbank upload fixture for the file, process and \
+                 snapshot ledger.\nCorrelation nonce fps-{nonce} identifies this \
+                 run so the ledger rows can be matched back to it.\n"
+            ),
+        )
+        .unwrap();
+        let (_, mime, _, is_text) = identify_file_sync(&magika, &prose);
+        assert_eq!(mime, "text/plain", "prose must classify as prose: {nonce}");
+        assert!(is_text);
+    }
+}

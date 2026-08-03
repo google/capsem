@@ -200,7 +200,17 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
     modify_path = f"ironbank-modified-{uuid.uuid4().hex[:8]}.txt"
     delete_path = f"ironbank-deleted-{uuid.uuid4().hex[:8]}.txt"
     script_path = f"ironbank-file-process-{uuid.uuid4().hex[:8]}.sh"
-    upload_body = f"upload:{nonce}\n".encode()
+    # Prose, not `key: value`. The listing's mime comes from Magika, which
+    # classifies by content and deliberately does not let the extension vote --
+    # so `upload:<random hex>` in a `.txt` file is a short line shaped exactly
+    # like a CSS or CSV record, and the answer depended on the nonce. One run
+    # of the complete gate got `text/css`; the reproduction lives in
+    # `capsem-service`'s `fs_utils` tests.
+    upload_body = (
+        "This is the ironbank upload fixture for the file, process and "
+        f"snapshot ledger.\nCorrelation nonce {nonce} identifies this run so "
+        "the ledger rows can be matched back to it.\n"
+    ).encode()
 
     try:
         service.start()
