@@ -16,64 +16,21 @@ that left them unchecked. Entries may leave the ratchet; nothing may join it.
 
 from __future__ import annotations
 
-from . import config as gate_config
-from .actions import Call, Why
+from . import sourcechecks
 from .command import GateCommand
-from .errors import GateError
-from .execution import step
 from .plan import Plan
-from .proc import Runner
-
-
-def check(runner: Runner) -> None:
-    """Run every Python source gate, reporting all failures rather than the first.
-
-    A lint run that stops at the first tool leaves the second one's findings
-    for the next push, which is how a gate takes three rounds to go green.
-    """
-    settings = gate_config.for_root(runner.root).lint
-    failures: list[str] = []
-
-    runner.step("ruff")
-    if runner.run(["uv", "run", "ruff", "check", "."], check=False) != 0:
-        failures.append("ruff")
-
-    present = [name for name in settings.python_roots if (runner.root / name).is_dir()]
-    strict = [name for name in present if name in settings.strict_roots]
-    relaxed = [name for name in present if name not in settings.strict_roots]
-
-    if strict:
-        runner.step(f"ty ({', '.join(strict)}, every rule)")
-        if runner.run(["uv", "run", "ty", "check", *settings.ty_flags, *strict], check=False) != 0:
-            failures.append(f"ty ({', '.join(strict)})")
-
-    if relaxed:
-        runner.step(f"ty ({', '.join(relaxed)})")
-        held_back = [flag for rule in settings.ty_ratchet for flag in ("--ignore", rule)]
-        if (
-            runner.run(
-                ["uv", "run", "ty", "check", *settings.ty_flags, *relaxed, *held_back],
-                check=False,
-            )
-            != 0
-        ):
-            failures.append(f"ty ({', '.join(relaxed)})")
-
-    if failures:
-        raise GateError(f"Python source gates failed: {', '.join(failures)}")
 
 
 class LintCommand(GateCommand, name="lint", help="ruff and ty over every first-party Python tree"):
+    """The same fragment the fast phase composes, on its own.
+
+    It was one opaque `Call` around a function that ran the tools in sequence
+    and gathered their failures into a list by hand -- which is what a plan
+    does for every other set of independent steps, done once, somewhere the
+    graph cannot see.
+    """
+
     def plan(self) -> Plan:
         plan = Plan(self.name)
-        plan.add(
-            step(
-                "lint",
-                Call(
-                    "ruff and ty over every Python tree",
-                    lambda ctx: check(ctx.runner),
-                    why=Why.DYNAMIC,
-                ),
-            )
-        )
+        sourcechecks.fragment(plan, self._config)
         return plan

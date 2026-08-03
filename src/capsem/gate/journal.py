@@ -38,6 +38,7 @@ from .runlogschema import (
     PlanShape,
     StepEnd,
     StepStart,
+    StepWaits,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
@@ -168,6 +169,19 @@ class EventJournal:
                 status=status,
                 duration_ms=(time.monotonic() - started) * 1000,
                 error=None if error is None else str(error),
+            )
+        )
+
+    def waited(
+        self, label: str, *, dependency_ms: float, resource_ms: float, execution_ms: float
+    ) -> None:
+        """Where one step's latency went, as the coordinator observed it."""
+        self.emit(
+            StepWaits(
+                step=label,
+                dependency_ms=dependency_ms,
+                resource_ms=resource_ms,
+                execution_ms=execution_ms,
             )
         )
 

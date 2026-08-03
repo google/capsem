@@ -26,6 +26,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from capsem.gatelaunch import PYCACHE
+
 from .config import GateConfig
 from .harnessschema import RunLogConfig
 from .journal import _CURRENT, FAILED, OK, EventJournal
@@ -40,6 +42,7 @@ from .runhistory import (
     tree_size,
 )
 from .runlogschema import RunEnd, RunStart
+from .sourcestate import gate_source
 from .summary import write_summary
 
 _GB = 1024**3
@@ -99,6 +102,9 @@ class RunLog(EventJournal):
                 machine=platform.machine(),
                 cores=os.cpu_count() or 0,
                 free_gb=free_gb(config.root),
+                # What ran, beside what it says it tested.
+                gate_source=str(gate_source()),
+                pycache=os.environ.get(PYCACHE, ""),
             )
         )
 

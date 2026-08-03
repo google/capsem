@@ -221,3 +221,47 @@ def test_the_recorded_duration_is_still_the_whole_step() -> None:
     outcome = execute(plan, _context())["only"]
 
     assert outcome.duration >= outcome.execution > 0
+
+
+def test_the_waits_reach_the_run_log_and_the_report(tmp_path: Path) -> None:
+    """In-memory outcomes die with the process.
+
+    The number worth having is the one an operator reads off a run directory
+    from another machine, so the coordinator writes it down: a step knows how
+    long its own work took and nothing about how long it queued for a resource
+    somebody else was holding.
+    """
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate.context import Context as RunContext
+    from capsem.gate.runhistory import read
+    from capsem.gate.runlog import RunLog
+    from capsem.gate.timing import measure, report
+
+    source = (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    (tmp_path / "config").mkdir(parents=True)
+    (tmp_path / "config" / "gate.toml").write_text(
+        source.replace("slow_action_seconds = 30", "slow_action_seconds = 0.05"),
+        encoding="utf-8",
+    )
+    config = gate_config.load(tmp_path)
+
+    plan = Plan("timed")
+    plan.add(step("holder", _Concurrent(_Tracker(), seconds=0.3), contends=(DOCKER,)))
+    plan.add(step("waiter", _Concurrent(_Tracker(), seconds=0.01), contends=(DOCKER,)))
+
+    with RunLog.open(config, "test") as log:
+        execute(plan, RunContext(RecordingRunner(tmp_path), config, journal=log), max_parallel=4)
+        directory = log.directory
+
+    events = read(directory, config.runlog)
+    waits = {e["step"]: e for e in events if e["event"] == "step.waits"}
+    assert set(waits) == {"holder", "waiter"}
+    assert waits["waiter"]["resource_ms"] > 100
+    assert waits["holder"]["resource_ms"] < 100
+
+    rendered = report(
+        measure(events), command="test", settings=config.runlog, run_id="x"
+    )
+    assert "longest resource waits" in rendered
+    assert "waiter" in rendered

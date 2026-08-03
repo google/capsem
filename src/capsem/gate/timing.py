@@ -42,6 +42,15 @@ class Timing:
     this there is nothing to print either.
     """
 
+    resource_waits: dict[str, float] = field(default_factory=dict)
+    """How long each step sat with its dependencies met and its claims held
+    by somebody else.
+
+    The number to look at before shortening anything: a plan whose critical
+    path is mostly waiting is a contention problem, and making the steps
+    themselves faster does not touch it.
+    """
+
     recorded_status: str = "ok"
     """What `run.end` said, as distinct from what the steps said.
 
@@ -86,6 +95,8 @@ def measure(events: list[dict]) -> Timing:
                 timing.failures[event["step"]] = event.get("error") or ""
             elif event["status"] == "skipped":
                 timing.skipped.append(event["step"])
+        elif kind == "step.waits":
+            timing.resource_waits[event["step"]] = event["resource_ms"]
         elif kind == "action":
             timing.actions.append((event["step"], event["render"], event["duration_ms"]))
         elif kind == "run.end":
@@ -139,6 +150,19 @@ def report(timing: Timing, *, command: str, settings: RunLogConfig, run_id: str)
             spent = timing.steps.get(label, 0.0)
             bar = "#" * max(1, round(24 * spent / longest))
             lines.append(f"  {label:<{widest}}  {_clock(spent):>9}  {bar}")
+        lines.append("")
+
+    queued = sorted(
+        (
+            (spent, label)
+            for label, spent in timing.resource_waits.items()
+            if spent >= settings.slow_action_seconds * 1000
+        ),
+        reverse=True,
+    )[:5]
+    if queued:
+        lines.append("longest resource waits")
+        lines += [f"  {_clock(spent):>9}  {label}" for spent, label in queued]
         lines.append("")
 
     slow = [

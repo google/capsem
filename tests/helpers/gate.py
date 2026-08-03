@@ -168,6 +168,7 @@ class RecordingJournal:
         self.execs: list[dict] = []
         self.launches: list[dict] = []
         self.skips: list[str] = []
+        self.waits: list[tuple[str, float, float, float]] = []
 
     def note(self, message: str) -> None:
         self.notes.append(message)
@@ -212,6 +213,11 @@ class RecordingJournal:
 
     def skipped(self, label: str) -> None:
         self.skips.append(label)
+
+    def waited(
+        self, label: str, *, dependency_ms: float, resource_ms: float, execution_ms: float
+    ) -> None:
+        self.waits.append((label, dependency_ms, resource_ms, execution_ms))
 
     def step_output(self) -> Path | None:
         """Nothing: a recording journal keeps events, not bytes."""
@@ -329,9 +335,9 @@ def gate_issues(name: str | None = None, root: Path | None = None) -> str:
     the name in its key was quietly denying.
     """
     from capsem.gate import config as gate_config
-    from capsem.gate.qualification import Qualification
+    from capsem.gate.qualification import from_environment
 
-    mode = Qualification.from_environment(gate_config.load(root or PROJECT_ROOT)).mode
+    mode = from_environment(gate_config.load(root or PROJECT_ROOT)).mode
     return _issues(name, root, mode)
 
 

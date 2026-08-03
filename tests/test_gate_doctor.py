@@ -27,7 +27,7 @@ def _checkout(tmp_path: Path, *, gate_toml: str | None = None) -> Path:
         (tmp_path / name).write_text(
             (PROJECT_ROOT / name).read_text(encoding="utf-8")
         )
-    (tmp_path / "config").mkdir()
+    (tmp_path / "config").mkdir(exist_ok=True)
     (tmp_path / "config" / "gate.toml").write_text(
         gate_toml or (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
     )
@@ -169,23 +169,40 @@ def test_the_justfile_dispatches_to_the_gate_rather_than_reimplementing_it() -> 
 # ---------------------------------------------------------------------------
 
 
-def test_lint_runs_ruff_and_both_ty_passes(tmp_path: Path) -> None:
-    """`ty` used to run on `src/capsem` alone, so `scripts/` -- release
-    machinery, not scratch -- had no type gate at all."""
-    from capsem.gate import lint
+def _lint_plan(tmp_path: Path):
+    """The `lint` command's plan, against a throwaway checkout.
+
+    Read from the plan rather than by calling a function that ran the tools in
+    sequence: they are three steps now, which is the point -- a graph can
+    schedule, time and name them apart, and it aggregates their failures
+    instead of a hand-written list doing it once out of sight.
+    """
+    import argparse
+
+    from capsem.gate.command import GateCommand
 
     root = _checkout(tmp_path)
     for name in gate_config.load(root).lint.python_roots:
         (root / name).mkdir(exist_ok=True)
-    runner = RecordingRunner(root)
+    return GateCommand.registry["lint"](
+        RecordingRunner(root),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+    )._describe()
 
-    lint.check(runner)
 
-    assert runner.matching(r"ruff check \.")
-    strict = runner.matching(r"ty check .*\bsrc\b")
-    relaxed = runner.matching(r"ty check .*--ignore")
-    assert strict and relaxed
-    assert "--ignore" not in strict[0], (
+def test_lint_runs_ruff_and_both_ty_passes(tmp_path: Path) -> None:
+    """`ty` used to run on `src/capsem` alone, so `scripts/` -- release
+    machinery, not scratch -- had no type gate at all."""
+    plan = _lint_plan(tmp_path)
+    described = plan.describe()
+
+    assert "ruff check ." in described
+    strict = " ".join(plan.step_named("python.ty.strict").render())
+    relaxed = " ".join(plan.step_named("python.ty.relaxed").render())
+
+    assert "src" in strict
+    assert "--ignore" in relaxed
+    assert "--ignore" not in strict, (
         "src/ passes every rule and must be checked with none held back"
     )
 
@@ -193,29 +210,34 @@ def test_lint_runs_ruff_and_both_ty_passes(tmp_path: Path) -> None:
 def test_lint_reports_every_failing_gate_not_just_the_first(tmp_path: Path) -> None:
     """Stopping at the first tool leaves the second's findings for the next
     push, which is how a gate takes three rounds to go green."""
-    from capsem.gate import lint
+    from helpers.gate import RecordingJournal
+
+    from capsem.gate.context import Context
 
     root = _checkout(tmp_path)
     for name in gate_config.load(root).lint.python_roots:
         (root / name).mkdir(exist_ok=True)
-    runner = RecordingRunner(root, failures=["ruff", "ty check"])
+    runner = RecordingRunner(root, failures=["ruff check", "ty check"])
 
     with pytest.raises(GateError) as failure:
-        lint.check(runner)
+        _lint_plan(tmp_path).run(
+            Context(runner, gate_config.load(root), journal=RecordingJournal())
+        )
 
-    assert "ruff" in str(failure.value)
-    assert "ty" in str(failure.value)
+    assert "python.ruff" in str(failure.value)
+    assert "python.ty" in str(failure.value)
 
 
 def test_lint_warnings_fail_the_gate(tmp_path: Path) -> None:
     """A ty warning exits zero, so a warning-level rule on the ratchet could
     never have been detected as fixed."""
-    from capsem.gate import lint
+    plan = _lint_plan(tmp_path)
 
-    root = _checkout(tmp_path)
-    (root / "src").mkdir(exist_ok=True)
-    runner = RecordingRunner(root)
-
-    lint.check(runner)
-
-    assert all("--error-on-warning" in line for line in runner.matching(r"ty check"))
+    checks = [
+        line
+        for label in plan.labels
+        if label.startswith("python.ty")
+        for line in plan.step_named(label).render()
+    ]
+    assert checks
+    assert all("--error-on-warning" in line for line in checks)

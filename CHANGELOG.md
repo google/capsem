@@ -24,6 +24,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Ruff, strict Ty and relaxed Ty are three graph steps rather than one opaque
+  call around a function that ran them in sequence and gathered their failures
+  into a list by hand. They are timed apart, a Ruff failure no longer hides
+  what Ty would have said, and the plan aggregates independent failures the way
+  it does everywhere else. Their policy is typed too: roots must be relative,
+  unique and inside the checkout, strict roots must be a subset of the checked
+  ones, and a ratchet entry must look like a `ty` rule -- `ty` ignores an
+  unknown `--ignore`, so a misspelt entry held nothing back and looked exactly
+  like a rule somebody had fixed.
+
 - The scheduler reserves a step's contention claims before submitting it,
   rather than submitting everything and having each worker block inside the
   resource lock. A worker was previously occupied purely by waiting, so the
@@ -34,6 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   waited for a resource, and how long its own work took. A step that took
   twenty minutes because it queued nineteen of them behind Docker used to look
   exactly like a step doing twenty minutes of work.
+
+- A run records what built it: where `capsem.gate` was imported from, and
+  which isolated bytecode cache the interpreter ran under. `HEAD` and the
+  source digest describe a checkout and say nothing about which code read
+  them. The three waits also reach `run.jsonl` and the timing report, so a
+  plan whose critical path is mostly queueing says so instead of looking slow.
 
 - Whether two steps can be in flight together is one predicate, used by the
   plan validator, the scheduler and their tests. It was implemented twice, and

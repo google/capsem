@@ -24,6 +24,7 @@ from . import (
     hostpackage,
     installimage,
     pytestsuite,
+    sourcechecks,
     storage,
     toolchain,
 )
@@ -92,7 +93,10 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Ste
 
     for check in audits.all_of(config):
         phase.add(check, after=(syntax,))
-    phase.add(audits.lint(config), after=(syntax,))
+    # The same fragment the `lint` command composes: Ruff and both Ty passes as
+    # independent steps, so a Ruff failure no longer hides what Ty would have
+    # said and each is timed under its own name.
+    sourcechecks.fragment(plan, config, after=(syntax,))
 
     surfaces = [phase.add(surface, after=(syntax, node)) for surface in audits.web_surfaces(config)]
     return phase.add(

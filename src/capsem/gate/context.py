@@ -93,6 +93,16 @@ class Journal(Protocol):
         output existed only in a terminal.
         """
 
+    def waited(
+        self, label: str, *, dependency_ms: float, resource_ms: float, execution_ms: float
+    ) -> None:
+        """Record where one step's latency went.
+
+        From the coordinator, which is the only thing that can see it: a step
+        knows how long its own work took and nothing about how long it queued
+        for the resource somebody else was holding.
+        """
+
     def skipped(self, label: str) -> None:
         """Record a step that never ran because its dependency failed.
 
@@ -150,6 +160,11 @@ class NullJournal:
     def step_output(self) -> Path | None:
         """Nowhere: a run that is not being recorded has no step to file under."""
         return None
+
+    def waited(
+        self, label: str, *, dependency_ms: float, resource_ms: float, execution_ms: float
+    ) -> None:
+        """Discarded."""
 
     def skipped(self, label: str) -> None:
         """Discarded."""

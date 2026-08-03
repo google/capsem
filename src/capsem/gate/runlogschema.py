@@ -35,6 +35,24 @@ class RunStart(Payload):
     cores: int
     free_gb: float
 
+    gate_source: str
+    """Where the code that built this plan was imported from.
+
+    `head` describes a checkout. Neither it nor the source digest says which
+    code read them, and a run that measured one tree while executing another
+    would look identical in every other field.
+    """
+
+    pycache: str
+    """The isolated bytecode cache this interpreter ran under, or empty.
+
+    Empty means the run was not started through `capsem-gate`, so its `.pyc`
+    files came from the ambient cache -- which CPython validates by mtime and
+    size, and therefore cannot distinguish from a same-length edit inside one
+    timestamp tick. The complete gate refuses in that case; smaller commands
+    record it and carry on.
+    """
+
 
 class PlanShape(Payload):
     """The graph, recorded so a finished run can still be explained.
@@ -134,6 +152,22 @@ class StepEnd(Payload):
     error: str | None = None
 
 
+class StepWaits(Payload):
+    """Where one step's latency went, as three numbers.
+
+    Separate from `step.end`, which is emitted inside the worker and knows only
+    its own execution. Waiting is something the coordinator observes: how long
+    the step sat dependency-ready, and how long after that its claims were
+    still held by somebody else.
+    """
+
+    event: Literal["step.waits"] = "step.waits"
+    step: str
+    dependency_ms: float
+    resource_ms: float
+    execution_ms: float
+
+
 class RunEnd(Payload):
     """The summary a person reads first."""
 
@@ -159,6 +193,7 @@ PAYLOADS: dict[str, type[Payload]] = {
         Artifact,
         Note,
         StepEnd,
+        StepWaits,
         RunEnd,
     )
 }

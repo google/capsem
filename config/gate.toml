@@ -468,8 +468,9 @@ python_roots = ["src", "scripts", "tests", "guest"]
 # Already passes every rule, and must keep doing so.
 strict_roots = ["src"]
 # A ty warning exits zero, so without this a warning-level rule on the ratchet
-# could never be detected as fixed.
-ty_flags = ["--error-on-warning"]
+# could never be detected as fixed. The option is policy; the flag that spells
+# it is the adapter's business.
+error_on_warning = true
 
 # Rules held back outside strict_roots. Roughly four hundred diagnostics,
 # dominated by inference over untyped fixture data: `json.load` returning
@@ -976,6 +977,7 @@ source_contract = [
     "tests/test_gate_qualification.py",
     "tests/test_gate_scheduling.py",
     "tests/test_gate_secrets.py",
+    "tests/test_gate_source_checks.py",
     "tests/test_gate_source_identity.py",
     "tests/test_gate_step_output.py",
     "tests/test_gate_runlog.py",

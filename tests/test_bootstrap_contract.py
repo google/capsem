@@ -105,7 +105,8 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     assert any(label.startswith("fast.") for label in labels)
     assert "prepare.bootstrap" in labels
     assert "prepare.storage-budget" in labels
-    assert "fast.lint" in labels
+    assert "python.ruff" in labels
+    assert "python.ty.strict" in labels
     for command in [
         "uv run capsem-builder validate-skills skills",
         "cargo clippy --workspace --all-targets -- -D warnings",

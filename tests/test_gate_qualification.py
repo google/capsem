@@ -340,8 +340,13 @@ def test_a_local_state_cannot_carry_release_inputs() -> None:
 
     from capsem.gate.qualification import LocalQualification
 
+    # Through a named mapping, so the type checker does not report the very
+    # error this asserts happens at *runtime*. It would be right -- that is
+    # the point -- and a literal splat is what ruff objects to instead.
+    local_with_release_input = {"bin_dir": "target/debug", "input_dir": VALUES[INPUT_DIR]}
+
     with pytest.raises((pydantic.ValidationError, TypeError)):
-        LocalQualification(bin_dir="target/debug", input_dir=VALUES[INPUT_DIR])
+        LocalQualification(**local_with_release_input)
 
 
 def test_a_binary_release_cannot_be_built_without_its_package() -> None:
@@ -349,8 +354,10 @@ def test_a_binary_release_cannot_be_built_without_its_package() -> None:
 
     from capsem.gate.qualification import BinaryQualification
 
+    without_package = {"input_dir": VALUES[INPUT_DIR], "bin_dir": "target/debug"}
+
     with pytest.raises(pydantic.ValidationError):
-        BinaryQualification(input_dir=VALUES[INPUT_DIR], bin_dir="target/debug")
+        BinaryQualification(**without_package)
 
 
 def test_a_release_path_may_not_be_empty_or_whitespace() -> None:

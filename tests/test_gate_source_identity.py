@@ -252,3 +252,30 @@ def test_the_complete_gate_checks_isolation_in_its_first_step() -> None:
     assert first == "source.record"
     (step,) = [s for s in plan.steps if s.label == first]
     assert "require-isolated-bytecode" in [action.name for action in step.actions]
+
+
+def test_a_run_records_what_built_its_plan(tmp_path: Path) -> None:
+    """Beside HEAD and the source digest, which describe a checkout.
+
+    Neither of those says which code read them. A run that measured one tree
+    while executing another would be identical in every other field, so the
+    two identities that answer it are written down: where the gate was
+    imported from, and which bytecode cache it ran under.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate.runhistory import read
+    from capsem.gate.runlog import RunLog
+    from capsem.gatelaunch import PYCACHE
+
+    (tmp_path / "config").mkdir(parents=True)
+    (tmp_path / "config" / "gate.toml").write_text(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    config = gate_config.load(tmp_path)
+
+    with RunLog.open(config, "test") as log:
+        directory = log.directory
+
+    (start,) = [e for e in read(directory, config.runlog) if e["event"] == "run.start"]
+    assert start["gate_source"] == str(PROJECT_ROOT / "src/capsem/gate")
+    assert start["pycache"] == os.environ.get(PYCACHE, "")

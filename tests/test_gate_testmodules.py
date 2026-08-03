@@ -84,7 +84,8 @@ def test_nothing_runs_before_the_source_parses() -> None:
     for label in (
         "fast.audit.cargo",
         "fast.audit.public-surface",
-        "fast.lint",
+        "python.ruff",
+        "python.ty.strict",
         "fast.clippy",
     ):
         assert _wave_of(FastModule, label) > syntax

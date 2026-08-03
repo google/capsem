@@ -121,7 +121,7 @@ def execute(
                 finished = next(iter(_completed(running)))
                 pending = running.pop(finished)
                 claims.release(pending.step)
-                _record(pending, finished, outcomes, broken, began)
+                _record(pending, finished, outcomes, broken, began, context)
                 sorter.done(pending.step.label)
         except BaseException:
             _abandon(pool, running, abandoned, context)
@@ -212,6 +212,7 @@ def _record(
     outcomes: dict[str, Outcome],
     broken: set[str],
     began: float,
+    context: Context,
 ) -> None:
     label = pending.step.label
     # Named rather than splatted: a `**dict[str, float]` is a dict as far as a
@@ -227,6 +228,12 @@ def _record(
             dependency_wait=dependency_wait,
             resource_wait=resource_wait,
             execution=future.result(),
+        )
+        context.journal.waited(
+            label,
+            dependency_ms=dependency_wait * 1000,
+            resource_ms=resource_wait * 1000,
+            execution_ms=future.result() * 1000,
         )
         return
     if not isinstance(error, Exception):

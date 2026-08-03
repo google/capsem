@@ -14,21 +14,78 @@ and not a silent default in either half.
 from __future__ import annotations
 
 from pathlib import PurePosixPath
+from typing import Annotated
 
-from pydantic import NonNegativeFloat, PositiveInt, field_validator, model_validator
+from pydantic import (
+    NonNegativeFloat,
+    PositiveInt,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from .configschema import Strict
 
+#: A first-party tree to check. Relative, normalized, and inside the checkout:
+#: an absolute or escaping root would check somebody else's code and report it
+#: as this repository's.
+PythonRoot = Annotated[str, StringConstraints(min_length=1, pattern=r"^[A-Za-z0-9_][\w./-]*$")]
+
+#: A `ty` diagnostic name. The grammar only -- third-party vocabularies change,
+#: so mirroring every rule in an enum dates the moment the tool is bumped.
+#: What matters is that a *typo* is refused: `ty` ignores an unknown
+#: `--ignore`, so a misspelt entry held nothing back and looked exactly like a
+#: rule somebody had fixed.
+TyRule = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$")]
+
 
 class LintConfig(Strict):
-    python_roots: tuple[str, ...]
-    strict_roots: tuple[str, ...]
-    ty_flags: tuple[str, ...]
-    ty_ratchet: tuple[str, ...]
+    """Which trees are checked, which strictly, and what is held back."""
+
+    python_roots: tuple[PythonRoot, ...]
+    strict_roots: tuple[PythonRoot, ...]
+
+    error_on_warning: bool = True
+    """A `ty` warning exits zero, so a warning-level rule on the ratchet could
+    never be observed as fixed. Semantic policy; how the pinned tool spells
+    the flag belongs to the adapter."""
+
+    ty_ratchet: tuple[TyRule, ...]
 
     @property
     def relaxed_roots(self) -> tuple[str, ...]:
         return tuple(name for name in self.python_roots if name not in self.strict_roots)
+
+    @field_validator("python_roots", "strict_roots", "ty_ratchet")
+    @classmethod
+    def _no_duplicates(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        """A repeated root checks a tree twice; a repeated rule holds back the
+        same diagnostic twice and hides that one of them could go."""
+        seen = [value for value in values if values.count(value) > 1]
+        if seen:
+            raise ValueError(f"duplicated: {', '.join(sorted(set(seen)))}")
+        return values
+
+    @field_validator("python_roots", "strict_roots")
+    @classmethod
+    def _stay_inside_the_checkout(cls, values: tuple[str, ...]) -> tuple[str, ...]:
+        for value in values:
+            parts = PurePosixPath(value)
+            if parts.is_absolute() or ".." in parts.parts:
+                raise ValueError(f"{value!r} must be relative and must not escape upwards")
+        return values
+
+    @model_validator(mode="after")
+    def _strict_roots_are_checked_at_all(self) -> LintConfig:
+        """A strict root nobody checks silently checks nothing, and reads as
+        passing."""
+        stray = set(self.strict_roots) - set(self.python_roots)
+        if stray:
+            raise ValueError(
+                f"strict_roots must be a subset of python_roots; {', '.join(sorted(stray))} "
+                "would be checked strictly and never checked at all"
+            )
+        return self
 
 
 class BoundaryConfig(Strict):
