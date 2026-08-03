@@ -68,20 +68,21 @@ def test_every_declared_artifact_is_owned_or_serialized() -> None:
         for path in step.produces:
             owners.setdefault(path, []).append(step)
 
+    # Through the predicate the validator and the scheduler both use. This
+    # reimplemented the rule, so the test agreed with the bug it was meant to
+    # catch: two producers holding one name *shared* overlap by design, and a
+    # name-only intersection called that serialized on both sides.
+    from capsem.gate.contention import can_overlap
+
     unguarded = {}
     for path, producers in owners.items():
-        if len(producers) < 2:
-            continue
-        # Exclusive claims only. This repeated the validator's name-only
-        # intersection, so the test agreed with the bug it was meant to catch:
-        # two producers both holding one name *shared* overlap by design.
-        serializing = set.intersection(
-            *(
-                {resource.name for resource in step.contends if not resource.shared}
-                for step in producers
-            )
-        )
-        if not serializing:
+        racing = [
+            (first, second)
+            for index, first in enumerate(producers)
+            for second in producers[index + 1 :]
+            if can_overlap(first, second)
+        ]
+        if racing:
             unguarded[path] = sorted(step.label for step in producers)
 
     assert not unguarded, f"these paths have racing producers: {unguarded}"
@@ -160,15 +161,18 @@ def test_two_shared_claims_do_not_serialize_their_writers() -> None:
         plan.validate(config)
 
 
-def test_one_shared_and_one_exclusive_claim_still_overlap() -> None:
-    """The shared holder is not excluded by the other's exclusivity alone --
-    it is the *writer* that waits, and two writers is the case here."""
-    from capsem.gate.errors import GateError
+def test_one_shared_and_one_exclusive_claim_do_serialize() -> None:
+    """Accepted, and deliberately.
 
+    An exclusive holder admits nobody, so a shared claimant of the same
+    resource cannot be in flight beside it -- and the scheduler enforces
+    exactly that, because it reserves claims from the same predicate this
+    validator uses. Rejecting the pair would be rejecting an arrangement that
+    provably cannot race.
+    """
     plan, config = _two_producers((True, False))
 
-    with pytest.raises(GateError):
-        plan.validate(config)
+    plan.validate(config)
 
 
 def test_two_exclusive_claims_on_one_name_are_accepted() -> None:

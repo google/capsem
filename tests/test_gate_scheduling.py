@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 from capsem.gate import config as gate_config
-from capsem.gate.actions import Action, Why
+from capsem.gate.actions import Action
 from capsem.gate.context import Context
 from capsem.gate.execution import step
 from capsem.gate.plan import Plan
@@ -188,7 +188,7 @@ def test_the_bound_comes_from_configuration() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_an_outcome_separates_dependency_wait_from_resource_wait(  # noqa: PLR0914
+def test_an_outcome_separates_dependency_wait_from_resource_wait(
 ) -> None:
     """Three numbers, because they have three different fixes.
 

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .config import GateConfig
+from .contention import can_overlap
 from .errors import GateError
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
@@ -74,29 +75,24 @@ def require_one_owner_per_artifact(plan: Plan) -> None:
             owners.setdefault(artifact, []).append(step)
 
     for artifact, producers in sorted(owners.items()):
-        if len(producers) < 2:
+        overlapping = [
+            (first, second)
+            for index, first in enumerate(producers)
+            for second in producers[index + 1 :]
+            if can_overlap(first, second)
+        ]
+        if not overlapping:
             continue
-        labels = ", ".join(sorted(step.label for step in producers))
-        serializing = set.intersection(
-            *(
-                {resource.name for resource in step.contends if not resource.shared}
-                for step in producers
+        pairs = ", ".join(
+            f"{first.label} + {second.label}" for first, second in sorted(
+                overlapping, key=lambda pair: (pair[0].label, pair[1].label)
             )
-        )
-        if serializing:
-            continue
-        overlapping = set.intersection(
-            *({resource.name for resource in step.contends} for step in producers)
         )
         raise GateError(
             f"{len(producers)} steps in the {plan.name} plan write {artifact} "
-            + (
-                f"and hold {', '.join(sorted(overlapping))} in a way that lets "
-                f"them overlap: {labels}. A shared claim is a readers-lock; "
-                f"every writer of one path has to hold something exclusively."
-                if overlapping
-                else f"and share no exclusive: {labels}. Give them one, or have "
-                f"each produce its own path -- an edge orders a consumer after "
-                f"its producer, not after every other."
-            )
+            f"and can be in flight together: {pairs}. Two writers of one path "
+            f"have to hold something that excludes each other -- a shared claim "
+            f"is a readers-lock and admits the other holder by design -- or "
+            f"each has to produce its own path. An edge orders a consumer after "
+            f"its producer, not after every other."
         )

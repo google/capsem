@@ -79,6 +79,13 @@ class Exclusive(Strict):
 class ExecutionConfig(Strict):
     exclusives: dict[str, Exclusive]
 
+    max_parallel_steps: PositiveInt
+    """How many steps may be in flight at once.
+
+    An operational limit, so it is configuration; what a claim means and when
+    one may be taken is scheduling semantics, so that is code.
+    """
+
     @model_validator(mode="after")
     def _name_exclusives(self) -> ExecutionConfig:
         for key, exclusive in self.exclusives.items():

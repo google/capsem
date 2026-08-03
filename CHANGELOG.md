@@ -22,6 +22,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   environment, through `str()`, the journal, or the exception a failure raises.
   The variable name is kept and the value becomes `<redacted>`.
 
+### Changed
+
+- The scheduler reserves a step's contention claims before submitting it,
+  rather than submitting everything and having each worker block inside the
+  resource lock. A worker was previously occupied purely by waiting, so the
+  pool had to be as large as the plan -- eighty-one threads for the candidate
+  gate -- for the one step that could actually run to have somewhere to go.
+  Parallelism is a configured bound now, and a step's outcome carries three
+  numbers instead of one: how long it waited for its dependencies, how long it
+  waited for a resource, and how long its own work took. A step that took
+  twenty minutes because it queued nineteen of them behind Docker used to look
+  exactly like a step doing twenty minutes of work.
+
+- Whether two steps can be in flight together is one predicate, used by the
+  plan validator, the scheduler and their tests. It was implemented twice, and
+  the copies agreed with each other about the wrong answer.
+
 ### Fixed
 
 - A half-exported release environment no longer takes the diagnostics down

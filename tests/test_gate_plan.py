@@ -545,7 +545,7 @@ def test_two_steps_writing_one_path_must_share_an_exclusive(
     plan.add(_producing("build-a", shared))
     plan.add(_producing("build-b", shared))
 
-    with pytest.raises(GateError, match="share no exclusive"):
+    with pytest.raises(GateError, match="can be in flight together"):
         plan.run(context)
 
 

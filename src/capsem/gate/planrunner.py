@@ -1,4 +1,4 @@
-"""Executing a plan: the scheduler, the locks, and what a failure means.
+"""Executing a plan: the scheduler, the claims, and what a failure means.
 
 Split from `plan` for the reason the whole package is split -- one
 responsibility each. `plan` holds the graph and the edges, `planchecks` says
@@ -11,24 +11,26 @@ exist for reading, not for running.
 
 Contention is the exception the graph cannot express: two steps may be
 genuinely independent and still unable to share the machine, because they both
-launch VMs or both drive the one service-scoped snapshot lock. Each exclusive
-gets a lock, and a step takes its own in sorted order -- sorted so that two
-steps claiming the same pair in opposite orders is unrepresentable rather than
-merely unlikely.
+launch VMs or both drive the one service-scoped snapshot lock. Those claims are
+reserved *here*, before a step is submitted. They were taken inside the worker,
+which meant a worker could be occupied purely by waiting -- so the pool had to
+be as large as the plan for the one step that could actually run to have
+somewhere to go, and a step's recorded duration was its queue time plus its
+work with no way to tell them apart.
 """
 
 from __future__ import annotations
 
 import threading
 import time
-from collections.abc import Iterator
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from contextlib import ExitStack, contextmanager
-from dataclasses import dataclass
+from contextlib import ExitStack
+from dataclasses import dataclass, field
 from operator import attrgetter
 from typing import TYPE_CHECKING
 
-from .cancellation import cancellable, check, observing
+from .cancellation import cancellable, observing
+from .contention import Claims
 from .context import Context
 from .errors import GateError
 from .execution import Step
@@ -41,27 +43,62 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
 #: report that conflates the two hides the blast radius of the real failure.
 OK, FAILED, SKIPPED = "ok", "failed", "skipped"
 
+#: How long an interrupted run waits for its workers before saying who is still
+#: going. Long enough for a primitive to reach its next boundary, short enough
+#: that Ctrl-C means something.
+GRACE_SECONDS = 10.0
+
 
 @dataclass
 class Outcome:
-    """What one step did, and how long it took."""
+    """What one step did, and where its latency went.
+
+    Three numbers rather than one. A step that took twenty minutes because it
+    queued nineteen of them behind Docker looked exactly like a step doing
+    twenty minutes of work, and those have different fixes.
+    """
 
     label: str
     status: str
     duration: float = 0.0
     error: BaseException | None = None
 
+    dependency_wait: float = 0.0
+    """From the start of the run until every step it waits on had finished."""
 
-def execute(plan: Plan, context: Context) -> dict[str, Outcome]:
+    resource_wait: float = 0.0
+    """From dependency-ready until its claims were free and it was submitted."""
+
+    execution: float = 0.0
+    """Its own work, holding everything it contends for."""
+
+
+@dataclass
+class _Pending:
+    """A dependency-ready step, and when it became one."""
+
+    step: Step
+    ready_at: float
+    submitted_at: float = 0.0
+    started: float = field(default=0.0)
+
+
+def execute(
+    plan: Plan, context: Context, *, max_parallel: int | None = None
+) -> dict[str, Outcome]:
     """Run every step the graph allows, and report what each one did."""
     sorter = plan.sorter()
     context.journal.shape(plan.labels, plan.edges)
     outcomes: dict[str, Outcome] = {}
-    locks = {resource.name: _SharedLock() for step in plan.steps for resource in step.contends}
     broken: set[str] = set()
+    claims = Claims()
+    limit = max_parallel or context.config.execution.max_parallel_steps
 
-    pool = ThreadPoolExecutor(max_workers=max(len(plan.steps), 1))
-    running: dict[Future[float], Step] = {}
+    began = time.monotonic()
+    pool = ThreadPoolExecutor(max_workers=max(limit, 1))
+    running: dict[Future[float], _Pending] = {}
+    ready: list[_Pending] = []
+
     with cancellable() as abandoned:
         try:
             while sorter.is_active():
@@ -75,16 +112,19 @@ def execute(plan: Plan, context: Context) -> dict[str, Outcome]:
                         broken.add(label)
                         sorter.done(label)
                         continue
-                    running[pool.submit(_guarded, step, context, locks, abandoned)] = step
+                    ready.append(_Pending(step, time.monotonic()))
+
+                _start_what_fits(pool, ready, running, claims, limit, context, abandoned)
 
                 if not running:
                     continue
                 finished = next(iter(_completed(running)))
-                step = running.pop(finished)
-                _record(step, finished, outcomes, broken)
-                sorter.done(step.label)
+                pending = running.pop(finished)
+                claims.release(pending.step)
+                _record(pending, finished, outcomes, broken, began)
+                sorter.done(pending.step.label)
         except BaseException:
-            _abandon(pool, running, locks, abandoned, context)
+            _abandon(pool, running, abandoned, context)
             raise
         else:
             pool.shutdown(wait=True)
@@ -92,16 +132,35 @@ def execute(plan: Plan, context: Context) -> dict[str, Outcome]:
     return outcomes
 
 
-#: How long an interrupted run waits for its workers before saying who is still
-#: going. Long enough for a primitive to reach its next boundary, short enough
-#: that Ctrl-C means something.
-GRACE_SECONDS = 10.0
+def _start_what_fits(
+    pool: ThreadPoolExecutor,
+    ready: list[_Pending],
+    running: dict[Future[float], _Pending],
+    claims: Claims,
+    limit: int,
+    context: Context,
+    abandoned: threading.Event,
+) -> None:
+    """Submit every ready step whose claims are free, up to the bound.
+
+    Reserved before submission, so a worker only ever holds what it already
+    owns. Deadlock is not reachable: with nothing running, no claim is held,
+    so the first ready step is always compatible.
+    """
+    for pending in list(ready):
+        if len(running) >= limit:
+            return
+        if not claims.compatible(pending.step):
+            continue
+        claims.reserve(pending.step)
+        ready.remove(pending)
+        pending.submitted_at = time.monotonic()
+        running[pool.submit(_guarded, pending, context, abandoned)] = pending
 
 
 def _abandon(
     pool: ThreadPoolExecutor,
-    running: dict[Future[float], Step],
-    locks: dict[str, _SharedLock],
+    running: dict[Future[float], _Pending],
     abandoned: threading.Event,
     context: Context,
 ) -> None:
@@ -114,118 +173,61 @@ def _abandon(
     the way out of `execute`, and releasing them under a worker still writing is
     how an interrupt becomes corruption.
 
-    So: ask, then wake anything asleep, then wait a bounded while, then say who
-    did not stop. The waiting is what makes the release below it safe; the bound
-    is what stops it being indefinite.
+    So: ask, then wait a bounded while, then say who did not stop. Nothing has
+    to be woken any more; a step waiting for a resource was never submitted, so
+    the only threads to reach are the ones genuinely working.
     """
     abandoned.set()
-    # Anything not started must not start. Anything asleep on a resource has to
-    # wake to notice the flag, or it waits for a holder that is also stopping.
     for future in running:
         future.cancel()
-    for lock in locks.values():
-        lock.wake()
 
     pool.shutdown(wait=False, cancel_futures=True)
     _done, pending = wait(running, timeout=GRACE_SECONDS)
     if pending:
-        stubborn = sorted(running[future].label for future in pending)
+        stubborn = sorted(running[future].step.label for future in pending)
         context.journal.note(
             f"interrupted; still running after {GRACE_SECONDS:.0f}s: {', '.join(stubborn)}"
         )
 
 
-class _SharedLock:
-    """One resource, two kinds of holder.
+def _guarded(pending: _Pending, context: Context, abandoned: threading.Event) -> float:
+    """Run the step, and report how long its own work took.
 
-    Shared holders admit each other; an exclusive holder admits nobody. A
-    readers-writer lock, because that is the shape the asset lanes always had:
-    two architectures that must overlap, against every other Docker step that
-    must not run beside them.
-
-    Writers are given the door as soon as one is waiting, so a steady stream
-    of lanes cannot starve the phase that follows them.
-    """
-
-    def __init__(self) -> None:
-        self._state = threading.Condition()
-        self._readers = 0
-        self._writer = False
-        self._writers_waiting = 0
-
-    @contextmanager
-    def held(self, *, shared: bool) -> Iterator[None]:
-        self._acquire(shared=shared)
-        try:
-            yield
-        finally:
-            self._release(shared=shared)
-
-    def _acquire(self, *, shared: bool) -> None:
-        with self._state:
-            if shared:
-                while self._writer or self._writers_waiting:
-                    self._state.wait()
-                    check("waiting for a shared resource")
-                self._readers += 1
-                return
-            self._writers_waiting += 1
-            try:
-                while self._writer or self._readers:
-                    self._state.wait()
-                    check("waiting for an exclusive resource")
-            finally:
-                self._writers_waiting -= 1
-            self._writer = True
-
-    def _release(self, *, shared: bool) -> None:
-        with self._state:
-            if shared:
-                self._readers -= 1
-            else:
-                self._writer = False
-            self._state.notify_all()
-
-    def wake(self) -> None:
-        """Wake every waiter without granting anything.
-
-        For an interrupted run: a step asleep here is waiting on a holder that
-        is also stopping, so nobody would notify it. It wakes, re-checks its
-        condition, and its own cancellation check ends it.
-        """
-        with self._state:
-            self._state.notify_all()
-
-
-def _guarded(
-    step: Step,
-    context: Context,
-    locks: dict[str, _SharedLock],
-    abandoned: threading.Event,
-) -> float:
-    """Hold what the step contends for, run it, and report how long.
+    Its claims are already reserved, so there is nothing to acquire here. What
+    remains of the old `ExitStack` is the journal bracket.
 
     `abandoned` is passed rather than inherited: a pool worker starts with a
     fresh context, so the run's cancellation switch has to be handed to it.
     """
-    started = time.monotonic()
+    pending.started = time.monotonic()
     with observing(abandoned), ExitStack() as stack:
-        for resource in sorted(step.contends, key=attrgetter("name")):
-            stack.enter_context(locks[resource.name].held(shared=resource.shared))
-        with context.journal.step(step):
-            step.run(context)
-    return time.monotonic() - started
+        stack.enter_context(context.journal.step(pending.step))
+        pending.step.run(context)
+    return time.monotonic() - pending.started
 
 
 def _record(
-    step: Step,
+    pending: _Pending,
     future: Future[float],
     outcomes: dict[str, Outcome],
     broken: set[str],
+    began: float,
 ) -> None:
+    label = pending.step.label
+    # Named rather than splatted: a `**dict[str, float]` is a dict as far as a
+    # type checker is concerned, so it has to assume it might land on `error`.
+    dependency_wait = pending.ready_at - began
+    resource_wait = pending.submitted_at - pending.ready_at
     error = future.exception()
     if error is None:
-        outcomes[step.label] = Outcome(step.label, OK, future.result())
+        outcomes[label] = Outcome(
+            label,
+            OK,
+            duration=time.monotonic() - pending.ready_at,
+            dependency_wait=dependency_wait,
+            resource_wait=resource_wait,
+            execution=future.result(),
+        )
         return
     if not isinstance(error, Exception):
         # An interrupt is not a step that failed, and recording it as one would
@@ -233,8 +235,14 @@ def _record(
         # in another form, where `$?` inside EXIT read 0 on abort and reported
         # an interrupted run as a pass.
         raise error
-    outcomes[step.label] = Outcome(step.label, FAILED, 0.0, error)
-    broken.add(step.label)
+    outcomes[label] = Outcome(
+        label,
+        FAILED,
+        error=error,
+        dependency_wait=dependency_wait,
+        resource_wait=resource_wait,
+    )
+    broken.add(label)
 
 
 def raise_for_failures(name: str, outcomes: dict[str, Outcome]) -> None:
@@ -255,7 +263,7 @@ def raise_for_failures(name: str, outcomes: dict[str, Outcome]) -> None:
     raise GateError(message)
 
 
-def _completed(running: dict[Future[float], Step]) -> list[Future[float]]:
+def _completed(running: dict[Future[float], _Pending]) -> list[Future[float]]:
     """Block until at least one future is done, then return those that are.
 
     A plain `as_completed` would need rebuilding every time a wave adds work;

@@ -580,6 +580,14 @@ direct_concurrency = ["planrunner.py"]
 # claimants of one entry can never overlap, and claimants of different entries
 # still do.
 
+[execution]
+# How many steps may be in flight at once. A bound rather than "as many as the
+# plan has": claims are reserved before submission now, so a worker is never
+# occupied purely by waiting, and eighty-one threads bought nothing. Chosen
+# from measurement rather than from cores -- a gate step is rarely one process,
+# and eight steps each starting four pytest workers is not eight-way anything.
+max_parallel_steps = 8
+
 [execution.exclusives.apple_vz]
 reason = "two benchmark files launching VMs at once measure each other, not Capsem"
 
@@ -966,6 +974,7 @@ source_contract = [
     "tests/test_gate_proc.py",
     "tests/test_gate_cancellation.py",
     "tests/test_gate_qualification.py",
+    "tests/test_gate_scheduling.py",
     "tests/test_gate_secrets.py",
     "tests/test_gate_source_identity.py",
     "tests/test_gate_step_output.py",
