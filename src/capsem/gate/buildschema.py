@@ -86,6 +86,7 @@ class HostImageConfig(Strict):
     alpine: str
     tmpfs: str
     nextest_mount: str
+    writable_source_mounts: tuple[NamedVolume, ...]
     cached_volumes: tuple[NamedVolume, ...]
     environment: dict[str, str]
 

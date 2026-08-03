@@ -177,6 +177,24 @@ def test_the_cargo_caches_are_shared_and_the_target_dir_is_per_architecture(
     assert f"-v capsem-host-target-{TARGET.name}:/cargo-target" in build
 
 
+def test_package_build_mounts_linked_worktree_git_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    metadata = "/git/common"
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    monkeypatch.setattr(
+        "capsem.gate.packagerail.docker_git_metadata_mount",
+        lambda _runner: ("-v", f"{metadata}:{metadata}:ro"),
+    )
+    runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
+
+    _run_lane(_rail(runner))
+
+    build = runner.matching(r"docker run --rm")[0]
+    assert f"-v {metadata}:{metadata}:ro" in build
+
+
 def test_the_builder_image_is_rebuilt_before_every_package() -> None:
     """Always rebuilt, and always before the package that runs inside it.
 

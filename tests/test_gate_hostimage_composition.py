@@ -29,6 +29,7 @@ from capsem.gate import (
 )
 from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
+from capsem.gate.context import Context
 from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +85,74 @@ def test_two_lanes_in_one_plan_build_the_builder_once() -> None:
     hostimage.fragment(plan, CONFIG)
 
     assert list(plan.labels).count(hostimage.STEP) == 1
+
+
+def test_foreign_uid_probe_mounts_linked_worktree_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = "/git/common"
+    monkeypatch.setattr(
+        hostimage,
+        "docker_git_metadata_mount",
+        lambda _runner: ("-v", f"{metadata}:{metadata}:ro"),
+    )
+    runner = RecordingRunner(
+        PROJECT_ROOT,
+        replies={"git rev-parse --short HEAD": "abc123"},
+    )
+
+    hostimage._ForeignUidProbe().perform(Context(runner, CONFIG))
+
+    probe = runner.rendered[-1]
+    assert f"-v {metadata}:{metadata}:ro" in probe
+    assert "--user 4242:4242" in probe
+
+
+def test_linux_rust_suite_mounts_linked_worktree_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    metadata = "/git/common"
+    monkeypatch.setattr(
+        hostimage,
+        "docker_git_metadata_mount",
+        lambda _runner: ("-v", f"{metadata}:{metadata}:ro"),
+    )
+    monkeypatch.setattr(hostimage.host, "user", lambda: (501, 20))
+    runner = RecordingRunner(PROJECT_ROOT)
+
+    hostimage._LinuxRustSuite(
+        tmp_path,
+        source=CONFIG.root,
+        mount=CONFIG.hostimage.mount,
+        script=CONFIG.hostimage.script,
+    ).perform(Context(runner, CONFIG))
+
+    suite = runner.rendered[-1]
+    assert f"-v {metadata}:{metadata}:ro" in suite
+    assert "--user 501:20" in suite
+    assert CONFIG.hostimage.script in suite
+
+    for volume in CONFIG.hostimage.writable_source_mounts:
+        source = CONFIG.path(volume.source)
+        target = f"{CONFIG.hostimage.mount}/{volume.target}"
+        assert f"-v {source}:{target}" in suite
+
+
+def test_linux_rust_materializes_nested_mountpoints_before_read_only_source() -> None:
+    plan = _plan("linux-rust")
+    order = list(plan.labels)
+
+    assert order.index("linux-rust-mountpoints") < order.index("linux-rust")
+    mountpoints = next(step for step in plan.steps if step.label == "linux-rust-mountpoints")
+    rendered = "\n".join(action.render() for action in mountpoints.actions)
+    assert str(CONFIG.path(CONFIG.hostimage.nextest_mount)) in rendered
+    assert str(
+        CONFIG.path(CONFIG.hostimage.output_dir) / CONFIG.hostimage.nextest_dir
+    ) in rendered
+    for volume in CONFIG.hostimage.writable_source_mounts:
+        assert str(CONFIG.path(volume.source)) in rendered
+        assert str(CONFIG.path(volume.target)) in rendered
 
 
 def test_chained_lanes_do_not_make_the_builder_depend_on_them() -> None:
