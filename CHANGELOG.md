@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Containers now declare their network, and a mount of the working tree is
+  refused. Nothing in the gate passed `--network` at all, so every container
+  had outbound access by omission and several fetched dependencies mid-run --
+  the difference between proving a build reproduces and proving it reproduces
+  today. `Mount` refuses a source inside the checkout, because
+  `-v <repo_root>:/src` let a host step churning hardlinks and a container
+  reading the same inodes over virtiofs share a filesystem neither declared,
+  which killed a release run with an intermittent `Permission denied` on a
+  file that was `0644` before and after. The two privileged install
+  containers still need both and say so through `Mount.unmigrated`, which a
+  test enumerates so the count can only shrink.
+
 - Every `Call` answers, in a form a machine can read, why it is not an ordinary
   declared action and what it can affect. It carried a required kind before;
   now it carries a closed kind, a reason its author wrote, and a declared

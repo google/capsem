@@ -72,6 +72,7 @@ def test_mounts_render_in_docker_order(tmp_path: Path) -> None:
         name="box",
         image="capsem-install-test",
         command=["/usr/lib/systemd/systemd"],
+        network="bridge",
         options=["--privileged"],
         mounts=[
             Mount("/sys/fs/cgroup", "/sys/fs/cgroup", "rw"),
@@ -80,7 +81,7 @@ def test_mounts_render_in_docker_order(tmp_path: Path) -> None:
     )
 
     assert runner.rendered[0] == (
-        f"docker run -d --name box --privileged "
+        f"docker run -d --name box --network bridge --privileged "
         f"-v /sys/fs/cgroup:/sys/fs/cgroup:rw -v {tmp_path}:/src "
         f"capsem-install-test /usr/lib/systemd/systemd"
     )

@@ -20,11 +20,58 @@ from .proc import Runner
 
 @dataclass(frozen=True)
 class Mount:
-    """A bind mount or named volume, in `-v` order."""
+    """A bind mount or named volume, in `-v` order.
+
+    Refuses the checkout. `-v <repo_root>:/src` let a host step churning
+    hardlinks and a container reading the same inodes over virtiofs share a
+    filesystem neither declared, which killed a release run with an
+    intermittent `Permission denied` on a file that was `0644` before and
+    after. Containers get their source copied into an image instead, so there
+    is no mount to police.
+    """
 
     source: str
     target: str
     options: str = ""
+
+    #: Set only by `unmigrated`. A mount of the checkout is a defect; until the
+    #: four modules that still do it are converted to `COPY`, each one says so
+    #: at its call site rather than the guard being switched off globally.
+    legacy: bool = False
+
+    @classmethod
+    def unmigrated(cls, source: str, target: str, options: str = "") -> Mount:
+        """A checkout mount that has not been converted to an image copy yet.
+
+        Deliberately ugly and deliberately greppable. `tests/
+        test_gate_docker_boundary.py` counts these and refuses a new one, so
+        the list can only shrink.
+        """
+        return cls(source=source, target=target, options=options, legacy=True)
+
+    def __post_init__(self) -> None:
+        if self.legacy:
+            return
+        # The checkout this package was imported from -- the same derivation
+        # `sourcestate.gate_source()` uses, because a `Mount` is constructed
+        # before any config is in hand and asking for one would put the check
+        # back at the call sites it exists to remove.
+        root = Path(__file__).resolve().parents[3]
+        # Docker's own rule: a source with no separator is a *named volume*,
+        # not a path. Resolving one relative to the cwd puts it inside the
+        # checkout and refuses every legitimate cache volume.
+        if "/" not in self.source:
+            return
+        try:
+            candidate = Path(self.source).resolve()
+        except (OSError, ValueError):
+            return
+        if candidate == root or root in candidate.parents:
+            raise GateError(
+                f"{self.source} is inside the checkout: a container that mounts the "
+                "working tree shares inodes with every host step, which is a race "
+                "no declaration can constrain. COPY the source into the image."
+            )
 
     def __str__(self) -> str:
         return f"{self.source}:{self.target}" + (f":{self.options}" if self.options else "")
@@ -53,14 +100,71 @@ class Docker:
         name: str,
         image: str,
         command: list[str],
+        network: str,
         options: list[str] | None = None,
         mounts: list[Mount] | None = None,
     ) -> None:
-        argv = ["docker", "run", "-d", "--name", name, *(options or [])]
+        """Start a container in the background.
+
+        `network` has no default on purpose. Nothing in the gate passed
+        `--network` at all, so every container had outbound access and several
+        fetched mid-run -- which is the difference between a gate that proves
+        a build reproduces and one that proves it reproduces today.
+        """
+        argv = ["docker", "run", "-d", "--name", name, "--network", network, *(options or [])]
         for mount in mounts or []:
             argv += ["-v", str(mount)]
         argv += [image, *command]
         self._runner.run(argv)
+
+    def run_once(
+        self,
+        *,
+        image: str,
+        command: list[str],
+        network: str,
+        options: list[str] | None = None,
+        mounts: list[Mount] | None = None,
+        check: bool = True,
+    ) -> None:
+        """Run a container to completion and remove it."""
+        argv = ["docker", "run", "--rm", "--network", network, *(options or [])]
+        for mount in mounts or []:
+            argv += ["-v", str(mount)]
+        argv += [image, *command]
+        self._runner.run(argv, check=check)
+
+    # -- images ------------------------------------------------------------
+
+    def build(
+        self, *, tag: str, dockerfile: str, context: str, args: list[str] | None = None
+    ) -> None:
+        """Build an image. The context streams from the CLI, so it does not
+        have to be visible inside the Lima VM the way a bind mount does."""
+        argv = ["docker", "build", "-t", tag, "-f", dockerfile]
+        for value in args or []:
+            argv += ["--build-arg", value]
+        argv.append(context)
+        self._runner.run(argv)
+
+    def image_exists(self, tag: str) -> bool:
+        return self._runner.succeeds(["docker", "image", "inspect", tag])
+
+    # -- extraction --------------------------------------------------------
+
+    def create(self, *, name: str, image: str, command: list[str]) -> None:
+        """Create a container without starting it, so `copy_out` has something
+        to read. `--rm` and `docker cp` are mutually exclusive: a removed
+        container has nothing left to copy from, which is why extraction
+        cannot reuse `run_once`."""
+        self._runner.run(["docker", "create", "--name", name, image, *command])
+
+    def start(self, container: str) -> None:
+        self._runner.run(["docker", "start", "-a", container])
+
+    def copy_out(self, container: str, source: str, destination: str) -> None:
+        """Take bytes out of a container without a writable mount."""
+        self._runner.run(["docker", "cp", f"{container}:{source}", destination])
 
     # -- exec --------------------------------------------------------------
 

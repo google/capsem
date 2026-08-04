@@ -88,6 +88,11 @@ proc_stat_template = "/proc/{pid}/stat"
 # ---------------------------------------------------------------------------
 
 [install]
+# Explicit, because nothing in the gate passed `--network` at all and every
+# container therefore had outbound access by omission. This lane genuinely
+# needs it -- `dpkg -i || apt-get install -f`, and a pnpm install -- so it
+# says so until those inputs are baked into the image.
+network = "bridge"
 container = "capsem-install-test"
 image = "capsem-install-test"
 dockerfile = "docker/Dockerfile.install-test"
@@ -952,6 +957,7 @@ blocks_clippy = "frontend"
 source_contract = [
     "tests/test_gate_observation.py",
     "tests/test_gate_plan_purity.py",
+    "tests/test_gate_docker_boundary.py",
     "tests/test_gate_git_worktree_mount.py",
     "tests/test_rust_filesystem_chokepoint.py",
     "tests/test_agent_skill_index.py",
