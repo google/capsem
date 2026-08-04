@@ -124,6 +124,7 @@ class DebProof:
         tmpfs = [f for path in self._install.tmpfs_paths for f in ("--tmpfs", path)]
         self._docker.remove(self._proof.container)
         self._docker.run_detached(
+            network=self._install.network,
             name=self._proof.container,
             image=self._install.image,
             command=[self._install.systemd_command],
@@ -139,7 +140,7 @@ class DebProof:
                 Mount(cgroup, cgroup, "rw"),
                 # Read-only: this proof must not be able to influence the tree
                 # it is proving.
-                Mount(str(self.root), self._install.mount, "ro"),
+                Mount.unmigrated(str(self.root), self._install.mount, "ro"),
             ],
         )
         await_systemd(

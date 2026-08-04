@@ -78,6 +78,9 @@ class InstallConfig(Strict):
     dockerfile: str
     venv: str
     mount: str
+    #: Declared rather than defaulted: every container had outbound access by
+    #: omission, and this lane is the one that genuinely still needs it.
+    network: str
     channel: str
     manifest_version: str
     systemd_ready_attempts: int

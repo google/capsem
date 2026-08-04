@@ -96,13 +96,14 @@ class InstallContainer:
         # a Colima OOM, for instance.
         self._docker.remove(self.name)
         self._docker.run_detached(
+            network=self._settings.network,
             name=self.name,
             image=self._settings.image,
             command=[self._settings.systemd_command],
             options=["--privileged", "--cgroupns=host", *options, *self._tmpfs()],
             mounts=[
                 Mount(cgroup, cgroup, "rw"),
-                Mount(str(self._config.root), self._settings.mount),
+                Mount.unmigrated(str(self._config.root), self._settings.mount),
                 *(Mount(v.source, v.target) for v in self._settings.volumes),
             ],
         )
