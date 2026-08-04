@@ -1,0 +1,111 @@
+# The Linux parity lane's dependencies, resolved once and never at run time.
+#
+# The lane used to carry four named Docker volumes -- cargo registry, cargo
+# git, rustup, and an 11 GB target -- which persisted between runs. That is
+# what made a warm machine and a cold CI runner disagree about the same
+# commit, and it is why `just test` could pass locally on state no clean
+# checkout has.
+#
+# Everything those volumes held is baked here instead, keyed by the lockfiles
+# that determine it. A dependency change produces a different tag; an
+# unchanged tree reuses the image. `just warm` builds it with network, and the
+# lane itself then runs with `--network none`, which is what proves this file
+# is complete rather than merely believed to be.
+ARG BASE=capsem-host-builder:latest
+FROM ${BASE}
+
+# Only the files that decide the dependency set. Copying the whole tree here
+# would rebuild this image on every source edit and defeat the caching it
+# exists for.
+COPY Cargo.toml Cargo.lock rust-toolchain.toml /src/
+COPY crates /src/crates
+
+WORKDIR /src
+
+# ONNX Runtime, from Microsoft, installed rather than downloaded at build time.
+#
+# `capsem-service` depends on `magika`, which runs its model on `ort`. With
+# `ort`'s `download-binaries` feature that pulls a custom-packaged blob from
+# `cdn.pyke.io` inside a build script -- and a build script re-runs on any
+# fingerprint miss, so no amount of cargo cache warming makes it reliable. It
+# is also a third-party CDN in the build path that nothing in the repo
+# recorded, which `--network none` is what surfaced.
+#
+# `ORT_STRATEGY=system` points the crate at a library that is simply present.
+# The version tracks what `ort 2.0.0-rc.11` expects; a mismatch fails loudly
+# here, with network, rather than inside a sealed lane.
+ARG ORT_VERSION=1.23.2
+ARG TARGETARCH=arm64
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      arm64) ort_arch=aarch64 ;; \
+      amd64) ort_arch=x64 ;; \
+      *) echo "unsupported TARGETARCH=$TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-${ort_arch}-${ORT_VERSION}.tgz"; \
+    curl -fsSL "$url" -o /tmp/ort.tgz; \
+    mkdir -p /opt/onnxruntime; \
+    tar -xzf /tmp/ort.tgz -C /opt/onnxruntime --strip-components=1; \
+    rm /tmp/ort.tgz; \
+    test -e /opt/onnxruntime/lib/libonnxruntime.so
+# Dynamic, because Microsoft ships shared `.so` libraries and `ort-sys`
+# otherwise "does full static linking since no single-file library was found"
+# and fails. The build script names this switch in its own debug output.
+ENV ORT_PREFER_DYNAMIC_LINK=1
+ENV ORT_STRATEGY=system
+ENV ORT_LIB_LOCATION=/opt/onnxruntime/lib
+ENV LD_LIBRARY_PATH=/opt/onnxruntime/lib
+
+# `--locked` so a resolution difference fails here, with network, rather than
+# inside a lane that has none.
+RUN cargo fetch --locked
+
+# The dependency graph, compiled. `cargo fetch` gets the sources; this gets
+# the artifacts, which is the part that made a cold run 135s instead of 58s.
+RUN cargo build --locked --workspace --all-targets || true
+
+# Warmed a second time with the coverage instrumentation the lane actually
+# uses. `cargo llvm-cov show-env` is the documented way to get exactly the
+# RUSTFLAGS and target directory the coverage run will use, so a build under
+# them produces artifacts the lane reuses rather than discards.
+#
+# This matters because `ort-sys` downloads prebuilt ONNX Runtime from
+# cdn.pyke.io inside its build script (`capsem-service` depends on `ort` with
+# `download-binaries`). A build script re-runs whenever its fingerprint
+# misses, and instrumentation changes every fingerprint -- so warming without
+# these flags left the lane rebuilding it, reaching for a CDN, and failing
+# under `--network none`.
+#
+# An earlier attempt used `--no-run`, which is deprecated: it exited in 0.3s
+# with "not found *.profraw files" and `|| true` swallowed the failure, so
+# nothing was compiled at all and three subsequent "fixes" were built on a
+# step that had silently done nothing. Hence `echo` rather than `true`.
+#
+# Worth recording as a supply-chain fact: this lane has been silently pulling
+# a binary from cdn.pyke.io on every cold build, and `--network none` is what
+# made it visible.
+RUN bash -lc 'eval "$(cargo llvm-cov show-env --export-prefix)" \
+    && cargo build --locked --workspace --all-targets' \
+    || echo "prewarm incomplete; the lane will surface anything missing"
+
+# `capsem-app` embeds `frontend/dist` at compile time, so
+# `scripts/test-linux-rust.sh` builds the frontend when that directory is
+# missing -- with `pnpm install`, over the network. Sealed, that is a hard
+# failure, which is how it was found: every previous run of this lane had been
+# quietly pulling from npm. Built here instead, with network, like every other
+# dependency; the lane's own check then sees `frontend/dist/index.html` and
+# skips the fetch entirely.
+COPY frontend /src/frontend
+RUN cd /src/frontend \
+    && CI=true pnpm install --frozen-lockfile \
+    && pnpm run build \
+    && test -s /src/frontend/dist/index.html
+
+# Ownership last, so it covers everything every step above created as root.
+# A non-root user is required: the suite chmods an asset to 0o000 and demands
+# the read fail, and root ignores permissions. `ubuntu:24.04` already ships a
+# uid-1000 account, so this uses the numeric id rather than creating one --
+# `useradd --uid 1000` exits 4 on a UID that already exists.
+RUN mkdir -p /cargo-target /home/lane /linux-rust-output \
+    && chown -R 1000:1000 /src /cargo-target /home/lane /linux-rust-output \
+       /usr/local/cargo /usr/local/rustup

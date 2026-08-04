@@ -73,6 +73,16 @@ class NamedVolume(Strict):
 
 
 class HostImageConfig(Strict):
+    base_dockerfile: str
+    lane_dockerfile: str
+    base_tag_template: str
+    lane_tag: str
+    lockfile_inputs: tuple[str, ...]
+    network: str
+    container_output_dir: str
+    container_output_contents: str
+    extract_to: str
+    lane_container: str
     tag: str
     dockerfile: str
     context: str

@@ -1,0 +1,143 @@
+"""The Linux parity lane holds its own bytes.
+
+It carried every defect this work exists for: it bind-mounted the live
+checkout read-only, grafted two writable mounts through that to get output
+back, depended on four named volumes that persist between runs, and ran with
+outbound network because nothing ever passed `--network`. A release died in
+this lane with `Permission denied` on a file that was `0644` before and after,
+because `rust-coverage` was churning hardlinks in the tree it was reading.
+
+Copying the source into an image removes all four at once. There is no mount
+to race over, no volume to inherit, and the dependencies live in a base image
+keyed by the lockfiles that determine them.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _issued() -> str:
+    import sys
+
+    sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_issued
+
+    return gate_issued("linux-rust")
+
+
+def test_the_lane_mounts_nothing() -> None:
+    """No `-v` at all. Not a rewritten mount -- none."""
+    issued = _issued()
+    docker_lines = [line for line in issued.splitlines() if line.startswith("docker ")]
+    assert docker_lines, f"no docker command was issued:\n{issued}"
+    mounted = [line for line in docker_lines if " -v " in line]
+    assert not mounted, "the lane still mounts something:\n  " + "\n  ".join(mounted)
+
+
+def test_the_lane_runs_with_no_network() -> None:
+    """It compiles and runs tests. Fetching mid-run is what the base image is
+    for, and denying it is what proves the base image is complete."""
+    issued = _issued()
+    # `docker create` rather than `docker run`: the container has to outlive
+    # its own exit so the coverage can be copied out of it.
+    created = [line for line in issued.splitlines() if line.startswith("docker create")]
+    assert created, f"the lane does not create a container:\n{issued}"
+    for line in created:
+        assert "--network none" in line, f"the lane can still reach the network: {line}"
+
+
+def test_the_base_image_is_keyed_by_the_lockfiles() -> None:
+    """A dependency change must produce a different tag, or a stale base image
+    silently qualifies the wrong dependency set."""
+    from capsem.gate import config as gate_config
+    from capsem.gate import linuxrust
+
+    config = gate_config.load(PROJECT_ROOT)
+    first = linuxrust.base_tag(config)
+    assert ":" in first, first
+
+    # The digest covers the files that determine the dependencies.
+    inputs = [config.path(name) for name in config.hostimage.lockfile_inputs]
+    assert inputs, "no lockfile inputs are configured"
+    assert all(path.is_file() for path in inputs), [str(p) for p in inputs if not p.is_file()]
+
+
+def test_the_ownership_steps_are_gone() -> None:
+    """`cache-ownership` and `output-ownership` existed only because root-owned
+    volumes and bind mounts left files the host could not read. Without either,
+    they are ceremony -- and a ratchet keeps them from coming back."""
+    from helpers.gate import gate_labels
+
+    labels = set(gate_labels("test-static")) | set(gate_labels("linux-rust"))
+    assert "cache-ownership" not in labels, sorted(labels)
+    assert "output-ownership" not in labels, sorted(labels)
+
+
+def test_the_coverage_output_is_copied_out_before_the_container_is_removed() -> None:
+    """`--rm` and `docker cp` are mutually exclusive: a removed container has
+    nothing left to copy from. The edge is the assertion."""
+    issued = _issued()
+    lines = issued.splitlines()
+
+    def last_index_of(fragment: str) -> int:
+        for position in reversed(range(len(lines))):
+            if fragment in lines[position]:
+                return position
+        raise AssertionError(f"{fragment!r} was never issued:\n{issued}")
+
+    # The *last* removal: the lane also removes a predecessor before creating
+    # its own, and comparing against that one would pass while the teardown
+    # still destroyed the evidence.
+    assert last_index_of("docker cp") < last_index_of("docker rm"), issued
+
+
+def test_the_build_context_is_bounded() -> None:
+    """The image copies the source, so `.dockerignore` decides what "source" is.
+
+    A bare `target` pattern matches only the repository root. This checkout
+    carries agent worktrees under `.claude/` -- 55 GB of them, each with its
+    own `target/` -- so the first build swept them in and died with `no space
+    left on device` after nineteen minutes. Every exclusion is `**`-prefixed
+    now, and this asserts the outcome rather than the patterns: a new cache
+    directory nobody thought to exclude fails here in a second instead of
+    filling the Docker disk.
+    """
+    import fnmatch
+
+    patterns = [
+        line.strip()
+        for line in (PROJECT_ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+
+    def ignored(relative: str) -> bool:
+        parts = relative.split("/")
+        for pattern in patterns:
+            bare = pattern.removeprefix("**/")
+            if pattern.startswith("**/"):
+                if any(fnmatch.fnmatch(segment, bare) for segment in parts):
+                    return True
+            elif fnmatch.fnmatch(parts[0], bare):
+                return True
+        return False
+
+    total = 0
+    for path in PROJECT_ROOT.rglob("*"):
+        relative = str(path.relative_to(PROJECT_ROOT))
+        if ignored(relative):
+            continue
+        try:
+            if path.is_file():
+                total += path.stat().st_size
+        except OSError:
+            continue
+
+    megabytes = total / 1048576
+    assert megabytes < 400, (
+        f"the docker build context is {megabytes:.0f} MB. Something large is no "
+        "longer excluded; a build with this context fills the Docker disk "
+        "rather than failing fast."
+    )

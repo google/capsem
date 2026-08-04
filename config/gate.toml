@@ -827,6 +827,28 @@ ready_interval_seconds = 0.5
 log_level = "capsem=debug"
 
 [hostimage]
+# The Linux parity lane's dependencies, resolved once with network and then
+# never again. These four named volumes used to hold them and persisted
+# between runs, which is what made a warm machine and a clean checkout
+# disagree about the same commit.
+base_dockerfile = "docker/Dockerfile.linux-rust-base"
+lane_dockerfile = "docker/Dockerfile.linux-rust"
+base_tag_template = "capsem-linux-rust-base:{digest}"
+lane_tag = "capsem-linux-rust:latest"
+# What decides the dependency set, and therefore the base image's identity.
+lockfile_inputs = ["Cargo.lock", "rust-toolchain.toml", "frontend/pnpm-lock.yaml"]
+# Denied, which is what proves the base image is complete rather than believed
+# to be complete.
+network = "none"
+# Copied out with `docker cp`, because `--rm` and `docker cp` are mutually
+# exclusive and a writable bind mount is the thing being removed.
+container_output_dir = "/linux-rust-output"
+# The `docker cp` source. The trailing `/.` copies the directory's *contents*;
+# without it the coverage nests at `<dest>/linux-rust-output/` where nothing
+# looks for it.
+container_output_contents = "/linux-rust-output/."
+extract_to = "target/linux-rust-coverage"
+lane_container = "capsem-linux-rust-run"
 # The Linux builder image, and the Linux-Rust parity lane that runs inside it.
 tag = "capsem-host-builder:latest"
 dockerfile = "docker/Dockerfile.host-builder"
@@ -958,6 +980,7 @@ source_contract = [
     "tests/test_gate_observation.py",
     "tests/test_gate_plan_purity.py",
     "tests/test_gate_docker_boundary.py",
+    "tests/test_gate_linuxrust_hermetic.py",
     "tests/test_gate_git_worktree_mount.py",
     "tests/test_rust_filesystem_chokepoint.py",
     "tests/test_agent_skill_index.py",
