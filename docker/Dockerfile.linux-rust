@@ -1,0 +1,13 @@
+# The lane's source, copied rather than mounted.
+#
+# `-v <repo_root>:/src` let a host step churning hardlinks and this container
+# reading the same inodes over virtiofs share a filesystem neither declared,
+# and a release run died on the resulting intermittent `Permission denied`.
+# A copy cannot be raced: the container holds its own bytes.
+ARG BASE
+FROM ${BASE}
+
+COPY --chown=1000:1000 . /src
+WORKDIR /src
+USER 1000:1000
+ENV HOME=/home/lane

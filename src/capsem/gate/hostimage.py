@@ -15,17 +15,15 @@ foreign UID reproduces it here, and works on macOS too because git compares
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-from . import host
+from . import host, linuxrust
 from .actions import Action, Run
 from .command import GateCommand
 from .config import GateConfig
 from .context import Context
 from .errors import GateError
 from .execution import Step, step
-from .fileactions import MakeDir
 from .gitmetadata import docker_git_metadata_mount
 from .plan import Plan
 
@@ -129,7 +127,6 @@ class _LinuxRust:
 
     def build(self, after: tuple[Step, ...]) -> Step:
         config = self._config
-        settings = config.hostimage
         plan = self._plan
 
         if host.on_linux():
@@ -137,97 +134,20 @@ class _LinuxRust:
                 step(
                     "linux-rust",
                     Run(
-                        ["bash", settings.script],
+                        ["bash", config.hostimage.script],
                         env={config.environment.linux_rust.output_dir: str(config.root)},
                     ),
                 ),
                 after=after,
             )
 
-        if not host.on_macos():
-            raise GateError("Linux Rust parity runs natively on Linux or in Docker on macOS")
-
-        built = fragment(plan, config, after=after)
-        output = config.path(settings.output_dir)
-        uid, gid = os.getuid(), os.getgid()
-        docker = config.exclusive("docker_daemon")
-
-        # The cached volumes belong to root until they are handed over; the
-        # suite then runs as the host user, because running it as container
-        # root makes chmod-based permission regressions impossible to observe.
-        owned = plan.add(
-            step(
-                "cache-ownership",
-                Run(
-                    [
-                        "docker",
-                        "run",
-                        "--rm",
-                        *_volumes(config),
-                        settings.tag,
-                        "sh",
-                        "-c",
-                        f"chown -R {uid}:{gid} "
-                        + " ".join(v.target for v in settings.cached_volumes),
-                    ],
-                ),
-                contends=(docker,),
-            ),
-            after=(built,),
-        )
-
-        mountpoints = plan.add(
-            step(
-                "linux-rust-mountpoints",
-                MakeDir(config.path(settings.nextest_mount)),
-                MakeDir(output / settings.nextest_dir),
-                *(
-                    action
-                    for volume in settings.writable_source_mounts
-                    for action in (
-                        MakeDir(config.path(volume.source)),
-                        MakeDir(config.path(volume.target)),
-                    )
-                ),
-            ),
-            after=(owned,),
-        )
-
-        suite = plan.add(
-            step(
-                "linux-rust",
-                _LinuxRustSuite(
-                    output,
-                    source=config.root,
-                    mount=settings.mount,
-                    script=settings.script,
-                ),
-                contends=(docker,),
-            ),
-            after=(mountpoints,),
-        )
-
-        return plan.add(
-            step(
-                "output-ownership",
-                Run(
-                    [
-                        "docker",
-                        "run",
-                        "--rm",
-                        "-v",
-                        f"{output}:{settings.container_output}",
-                        settings.alpine,
-                        "chown",
-                        "-R",
-                        f"{uid}:{gid}",
-                        settings.container_output,
-                    ]
-                ),
-                contends=(docker,),
-            ),
-            after=(suite,),
-        )
+        # macOS: the same checked-in script, in a container that holds its own
+        # copy of the source. `cache-ownership`, `linux-rust-mountpoints` and
+        # `output-ownership` are gone with the mounts and volumes that
+        # required them -- they existed only to repair what root-owned shared
+        # state left behind.
+        built = plan.shared(image(config), after=after)
+        return linuxrust.lane(plan, config, after=(built,))
 
 
 class _LinuxRustSuite(Action, name="linux-rust-suite"):
@@ -271,8 +191,7 @@ class _LinuxRustSuite(Action, name="linux-rust-suite"):
                     for volume in settings.writable_source_mounts
                     for flag in (
                         "-v",
-                        f"{context.config.path(volume.source)}:"
-                        f"{settings.mount}/{volume.target}",
+                        f"{context.config.path(volume.source)}:{settings.mount}/{volume.target}",
                     )
                 ],
                 *_volumes(context.config),
@@ -283,6 +202,7 @@ class _LinuxRustSuite(Action, name="linux-rust-suite"):
                 f"{settings.mount}/{settings.script}",
             ]
         )
+
 
 class LinuxRustCommand(
     GateCommand,

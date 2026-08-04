@@ -24,6 +24,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The Linux parity lane holds its own bytes. It bind-mounted the live checkout,
+  grafted two writable mounts back through it to retrieve coverage, inherited
+  four named volumes that survive between runs, and ran with outbound network
+  because nothing ever passed `--network`. It now builds its source into an
+  image, runs with `--network none`, and returns coverage through `docker cp`.
+  Dependencies live in a base image keyed by `Cargo.lock`,
+  `rust-toolchain.toml` and `frontend/pnpm-lock.yaml`; a lockfile change makes
+  a new tag and the gate refuses to start rather than rebuilding multiple
+  gigabytes at minute four.
+
+  Sealing it surfaced two fetches nobody had recorded. The lane built the
+  frontend with `pnpm install` mid-run whenever `frontend/dist` was absent, and
+  `ort` -- ONNX Runtime, under `magika` -- downloaded a binary from
+  `cdn.pyke.io` inside a build script on every cold build. Both now come from
+  the image: the frontend is built there, and ONNX Runtime is Microsoft's
+  official release with `ORT_STRATEGY=system` and `ORT_PREFER_DYNAMIC_LINK`.
+
 - Containers now declare their network, and a mount of the working tree is
   refused. Nothing in the gate passed `--network` at all, so every container
   had outbound access by omission and several fetched dependencies mid-run --

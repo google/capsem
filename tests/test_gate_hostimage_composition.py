@@ -139,20 +139,34 @@ def test_linux_rust_suite_mounts_linked_worktree_metadata(
         assert f"-v {source}:{target}" in suite
 
 
-def test_linux_rust_materializes_nested_mountpoints_before_read_only_source() -> None:
-    plan = _plan("linux-rust")
-    order = list(plan.labels)
+def test_the_lane_has_somewhere_to_put_its_output_before_it_runs() -> None:
+    """Reimplemented, not deleted. The claim survives; its mechanism does not.
 
-    assert order.index("linux-rust-mountpoints") < order.index("linux-rust")
-    mountpoints = next(step for step in plan.steps if step.label == "linux-rust-mountpoints")
-    rendered = "\n".join(action.render() for action in mountpoints.actions)
-    assert str(CONFIG.path(CONFIG.hostimage.nextest_mount)) in rendered
-    assert str(
-        CONFIG.path(CONFIG.hostimage.output_dir) / CONFIG.hostimage.nextest_dir
-    ) in rendered
-    for volume in CONFIG.hostimage.writable_source_mounts:
-        assert str(CONFIG.path(volume.source)) in rendered
-        assert str(CONFIG.path(volume.target)) in rendered
+    This asserted that nested mountpoints were materialized before the
+    read-only source mount, because grafting a writable path through a `:ro`
+    mount fails if the directory underneath does not already exist. There are
+    no mounts now -- the lane copies its source into an image and copies its
+    coverage back out -- so the equivalent claim is that the destination
+    exists before `docker cp` writes into it, and that the copy happens on the
+    failure path too, since a lane that failed is exactly when its coverage is
+    worth having.
+    """
+    from capsem.gate import linuxrust
+
+    source = (PROJECT_ROOT / "src/capsem/gate/linuxrust.py").read_text(encoding="utf-8")
+    body = source[source.index("def perform") :]
+
+    assert body.index("make_dir(destination)") < body.index("copy_out("), (
+        "the coverage destination is created after the copy that writes to it"
+    )
+    assert "finally:" in body and body.index("finally:") < body.index("copy_out("), (
+        "the extraction is not on the failure path, so a failed lane loses the "
+        "coverage that explains it"
+    )
+    assert body.index("copy_out(") < body.rindex("remove("), (
+        "the container is removed before its output is copied out"
+    )
+    assert linuxrust.RunLane().render()
 
 
 def test_chained_lanes_do_not_make_the_builder_depend_on_them() -> None:

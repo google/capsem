@@ -152,12 +152,24 @@ class Docker:
 
     # -- extraction --------------------------------------------------------
 
-    def create(self, *, name: str, image: str, command: list[str]) -> None:
+    def create(
+        self,
+        *,
+        name: str,
+        image: str,
+        command: list[str],
+        network: str,
+        env: dict[str, str] | None = None,
+    ) -> None:
         """Create a container without starting it, so `copy_out` has something
         to read. `--rm` and `docker cp` are mutually exclusive: a removed
         container has nothing left to copy from, which is why extraction
         cannot reuse `run_once`."""
-        self._runner.run(["docker", "create", "--name", name, image, *command])
+        argv = ["docker", "create", "--name", name, "--network", network]
+        for key, value in (env or {}).items():
+            argv += ["-e", f"{key}={value}"]
+        argv += [image, *command]
+        self._runner.run(argv)
 
     def start(self, container: str) -> None:
         self._runner.run(["docker", "start", "-a", container])
