@@ -372,3 +372,90 @@ def test_bootstrap_and_doctor_share_the_recommended_disk_policy() -> None:
     assert "minimum_docker_disk_gib" in doctor
     assert "Colima Docker disk:" in doctor
     assert "--disk ${recommended_disk_gib}" in doctor
+
+
+def test_the_evidence_bundle_says_what_it_could_not_collect(tmp_path: Path) -> None:
+    """Silence is the one answer a post-mortem cannot use.
+
+    `copy_small_file` returns quietly for three different outcomes -- the file
+    was absent, it was over the size cap, or it could not be read -- and the
+    IronBank globs yield nothing at all on a tree where those builds never
+    ran. So a preserved bundle gave no way to tell "there were no IronBank
+    logs" from "the collector never looked" from "the copy failed", and the
+    gap only became visible during the post-mortem that needed it.
+
+    The bundle now carries a manifest of every source attempted and what
+    happened to it.
+    """
+    policy_text = POLICY_PATH.read_text().replace(
+        'root = "test-artifacts"', f'root = "{tmp_path.as_posix()}"'
+    )
+    policy_path = tmp_path / "policy.toml"
+    policy_path.write_text(policy_text)
+
+    subprocess.run(
+        [
+            sys.executable,
+            str(POLICY_SCRIPT),
+            "--policy",
+            str(policy_path),
+            "capture-failure",
+            "--rail",
+            "assets",
+            "--label",
+            "gap",
+            "--offline",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    capture_dir = next(tmp_path.glob("*-storage-gap"))
+
+    collected = json.loads((capture_dir / "collected.json").read_text())
+    by_source = {entry["source"]: entry for entry in collected["files"]}
+
+    # Every optional source is accounted for by name, present or not.
+    assert any("ironbank" in source for source in by_source), sorted(by_source)
+    assert {entry["outcome"] for entry in collected["files"]} <= {
+        "copied",
+        "absent",
+        "truncated",
+        "unreadable",
+    }, collected["files"]
+    # Specifically the globs. Asserting merely that *something* was absent
+    # passes on `build.log` alone, which is not the gap being closed -- a glob
+    # that matches nothing is the case that produced no record at all.
+    ironbank_absent = {
+        entry["source"]
+        for entry in collected["files"]
+        if entry["outcome"] == "absent" and "ironbank" in entry["source"]
+    }
+    assert any(source.endswith("build-*.log") for source in ironbank_absent), (
+        f"an empty IronBank build-log glob left no record: {sorted(ironbank_absent)}"
+    )
+    assert any(source.endswith("run-failure") for source in ironbank_absent), (
+        f"an empty IronBank run-failure glob left no record: {sorted(ironbank_absent)}"
+    )
+
+
+def test_an_oversized_log_is_tailed_rather_than_dropped(tmp_path: Path) -> None:
+    """Because the end of a build log is where the failure is.
+
+    The first bundle written with a collection manifest reported both
+    `build.log` and `docker-storage.jsonl` as over the cap -- so every bundle
+    before it had silently omitted the two files a post-mortem reaches for
+    first, and precisely on the long runs that needed them most.
+    """
+    module = load_policy_module()
+    source = tmp_path / "build.log"
+    source.write_bytes(b"discard\n" * 1000 + b"THE ACTUAL FAILURE\n")
+    destination = tmp_path / "out" / "build.log"
+
+    outcome = module.copy_small_file(source, destination, 256)
+
+    assert outcome == "truncated", outcome
+    kept = destination.read_bytes()
+    assert len(kept) <= 256
+    assert b"THE ACTUAL FAILURE" in kept, "the tail -- the part that matters -- was lost"

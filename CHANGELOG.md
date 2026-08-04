@@ -67,6 +67,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Failure-evidence bundles were quietly incomplete. `copy_small_file` returned
+  the same silence for three different outcomes -- the file was absent, over
+  the size cap, or unreadable -- and the IronBank globs matched nothing at all
+  on a tree where those builds never ran, so a bundle could not distinguish
+  "there was nothing to collect" from "the collector failed". Every bundle now
+  carries a `collected.json` naming each source attempted and what became of
+  it, globs included when they match nothing.
+
+  The first bundle written with that manifest reported `build.log` and
+  `docker-storage.jsonl` as over the cap -- meaning every previous bundle had
+  silently omitted the two files a post-mortem reaches for first, and did so
+  precisely on the long runs that needed them. Oversized files are now tailed
+  rather than dropped, because the end of a build log is where the failure is.
+
 - A fresh clone now plans the same gate a warm tree does. The functional
   module asked for its profile axis while the plan was being *built*, and that
   read `target/config/profiles` -- build output -- so the same commit produced
