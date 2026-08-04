@@ -1085,14 +1085,36 @@ def command_clean(args: argparse.Namespace, policy: dict[str, Any]) -> int:
     return 0 if report["after"]["available"] else 1
 
 
-def copy_small_file(source: Path, destination: Path, maximum_bytes: int) -> None:
+def copy_small_file(source: Path, destination: Path, maximum_bytes: int) -> str:
+    """Copy if it is there and small enough, and say which of those it was.
+
+    Returning `None` for three different outcomes -- absent, over the cap,
+    unreadable -- is what made a preserved bundle unable to distinguish "there
+    was nothing to collect" from "the collector failed". The caller records
+    the answer, so the gap is visible in the bundle rather than in the
+    post-mortem that needed it.
+
+    Oversized files are tailed, not dropped. The first bundle written with
+    this manifest showed `build.log` and `docker-storage.jsonl` as
+    `too-large`, meaning every previous bundle had silently omitted both.
+    """
     try:
-        if not source.is_file() or source.stat().st_size > maximum_bytes:
-            return
+        if not source.is_file():
+            return "absent"
         destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.stat().st_size > maximum_bytes:
+            # Keep the tail rather than nothing. A build log that overran the
+            # cap was silently discarded, which removed the most useful file
+            # in the bundle exactly when the run was long enough to need it --
+            # and the end of a log is where the failure is.
+            with source.open("rb") as handle:
+                handle.seek(-maximum_bytes, os.SEEK_END)
+                destination.write_bytes(handle.read())
+            return "truncated"
         shutil.copy2(source, destination)
     except OSError:
-        return
+        return "unreadable"
+    return "copied"
 
 
 def artifact_tree_size(path: Path) -> int:
@@ -1116,9 +1138,7 @@ def rotate_debug_artifacts(root: Path, debug: dict[str, Any]) -> None:
         return
     minimum = int(debug["minimum_runs"])
     maximum = int(debug["maximum_runs"])
-    cutoff = datetime.now(UTC).timestamp() - (
-        int(debug["maximum_age_days"]) * 24 * 60 * 60
-    )
+    cutoff = datetime.now(UTC).timestamp() - (int(debug["maximum_age_days"]) * 24 * 60 * 60)
     protected = set(directories[-minimum:]) if minimum > 0 else set()
     stale = list(directories[:-maximum] if maximum > 0 else directories)
     stale.extend(
@@ -1169,25 +1189,39 @@ def command_capture_failure(args: argparse.Namespace, policy: dict[str, Any]) ->
     )
 
     maximum_bytes = int(debug["maximum_file_mib"]) * 1024 * 1024
-    copy_small_file(ROOT / "target" / "build.log", destination / "build.log", maximum_bytes)
-    copy_small_file(
-        report_path(policy),
-        destination / "docker-storage.jsonl",
-        maximum_bytes,
-    )
-    copy_small_file(
-        ROOT / "target" / "storage" / "host-cleanup.jsonl",
-        destination / "host-cleanup.jsonl",
-        maximum_bytes,
-    )
+    collected: list[dict[str, str]] = []
+
+    def collect(source: Path, target: Path) -> None:
+        outcome = copy_small_file(source, target, maximum_bytes)
+        collected.append({"source": str(source), "outcome": outcome})
+
+    collect(ROOT / "target" / "build.log", destination / "build.log")
+    collect(report_path(policy), destination / "docker-storage.jsonl")
+    collect(ROOT / "target" / "storage" / "host-cleanup.jsonl", destination / "host-cleanup.jsonl")
+
     ironbank = ROOT / "target" / "ironbank-assets"
-    for source in ironbank.glob("build-*.log"):
-        copy_small_file(source, destination / "ironbank" / source.name, maximum_bytes)
-    for source in ironbank.glob("*/run-failure/**/*"):
-        if source.name in set(debug["skip_names"]):
-            continue
-        relative = source.relative_to(ironbank)
-        copy_small_file(source, destination / "ironbank" / relative, maximum_bytes)
+    # Named even when the glob is empty. A build that never ran and a
+    # collector that never looked produce the same silence otherwise, and the
+    # difference is the whole point of preserving evidence.
+    build_logs = sorted(ironbank.glob("build-*.log"))
+    if not build_logs:
+        collected.append({"source": str(ironbank / "build-*.log"), "outcome": "absent"})
+    for source in build_logs:
+        collect(source, destination / "ironbank" / source.name)
+
+    failures = [
+        source
+        for source in sorted(ironbank.glob("*/run-failure/**/*"))
+        if source.name not in set(debug["skip_names"])
+    ]
+    if not failures:
+        collected.append({"source": str(ironbank / "*/run-failure"), "outcome": "absent"})
+    for source in failures:
+        collect(source, destination / "ironbank" / source.relative_to(ironbank))
+
+    (destination / "collected.json").write_text(
+        json.dumps({"files": collected}, indent=2, sort_keys=True) + "\n"
+    )
 
     rotate_debug_artifacts(root, debug)
     print(f"ARTIFACT: preserved release-gate storage evidence at {destination}")
