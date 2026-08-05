@@ -837,6 +837,11 @@ base_tag_template = "capsem-linux-rust-base:{digest}"
 lane_tag = "capsem-linux-rust:latest"
 # What decides the dependency set, and therefore the base image's identity.
 lockfile_inputs = ["Cargo.lock", "rust-toolchain.toml", "frontend/pnpm-lock.yaml"]
+# Named here so the lane's refusal and the recipe that answers it cannot drift
+# apart. `test_every_recipe_the_gate_tells_an_operator_to_run_exists` checks
+# this resolves to a real recipe -- the last time a message named one that did
+# not exist, it stopped a release and handed back a command that fails.
+warm_recipe = "_warm-linux-rust-base"
 # Denied, which is what proves the base image is complete rather than believed
 # to be complete.
 network = "none"

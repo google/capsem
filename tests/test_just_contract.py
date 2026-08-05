@@ -5,6 +5,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+
 def _gate_issues(name: str | None = None) -> str:
     """Everything the gate would issue, with real argv. See `helpers.gate`."""
     import sys as _sys
@@ -13,7 +14,6 @@ def _gate_issues(name: str | None = None) -> str:
     from helpers.gate import gate_issues
 
     return gate_issues(name)
-
 
 
 def test_justfile_does_not_expose_legacy_guest_dir_knob() -> None:
@@ -47,7 +47,7 @@ def test_justfile_routes_assets_through_profile_admin_rail() -> None:
     assert "scripts/materialize-config.sh" in justfile
     assert "cargo run -p capsem-admin -- profile materialize" in materialize_config
     assert 'profile_paths=("$CONFIG_ROOT"/profiles/*/profile.toml)' in materialize_config
-    assert "--config-root \"$CONFIG_ROOT\"" in materialize_config
+    assert '--config-root "$CONFIG_ROOT"' in materialize_config
 
 
 def test_justfile_and_scripts_do_not_reintroduce_retired_escape_paths() -> None:
@@ -90,14 +90,11 @@ def test_active_docs_and_skills_do_not_teach_retired_just_run() -> None:
                 continue
             for line_no, line in enumerate(path.read_text().splitlines(), start=1):
                 if retired.search(line):
-                    failures.append(
-                        f"{path.relative_to(PROJECT_ROOT)}:{line_no}: {line.strip()}"
-                    )
+                    failures.append(f"{path.relative_to(PROJECT_ROOT)}:{line_no}: {line.strip()}")
 
     assert not failures, (
         "active docs/skills still teach retired `just run`; use `just exec` for "
-        "one-shot commands and `just shell` for interactive VMs:\n"
-        + "\n".join(failures)
+        "one-shot commands and `just shell` for interactive VMs:\n" + "\n".join(failures)
     )
 
 
@@ -110,3 +107,58 @@ def test_justfile_exposes_one_docs_build() -> None:
     )[0]
     assert "bash scripts/check-web-surface.sh docs" in docs_block
     assert "bash scripts/check-web-surface.sh site" in docs_block
+
+
+def test_every_recipe_the_gate_tells_an_operator_to_run_exists() -> None:
+    """A remediation naming a recipe nobody wrote is a dead end at the worst moment.
+
+    `hostimage.py`'s own docstring records the last time this happened:
+    `install-image` and `cross-compile` both dispatched `just _build-host-image`,
+    a recipe that has never existed, so both were broken at runtime and no test
+    noticed -- each stopped at the recipe boundary instead of crossing it.
+
+    It happened again. Sealing the Linux parity lane added a refusal that reads
+
+        no Linux parity base image for capsem-linux-rust-base:<digest>. Its
+        dependencies changed; run `just warm` to build it with network before
+        the gate runs without.
+
+    and `just warm` did not exist. The release stopped there, correctly, and
+    handed the operator a command that fails. Bumping `frontend/pnpm-lock.yaml`
+    for a security advisory is what re-keyed the image and found it.
+
+    So: every ``just <recipe>`` the gate names in prose must be a recipe the
+    justfile actually defines.
+    """
+    import ast
+
+    justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
+    defined = set(re.findall(r"^([a-z_][\w-]*)\s*[\w\"=]*.*:", justfile, re.MULTILINE))
+
+    gate = PROJECT_ROOT / "src" / "capsem" / "gate"
+    named: dict[str, str] = {}
+    for module in sorted(gate.glob("*.py")):
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        # Docstrings are excluded deliberately. `hostimage.py` describes the
+        # earlier `_build-host-image` incident in prose, and a note about a
+        # recipe that never existed is the point of that note -- what must not
+        # exist is a *message handed to an operator* naming a dead command.
+        docstrings = {
+            ast.get_docstring(node, clean=False)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                continue
+            if node.value in docstrings:
+                continue
+            # Backticked, which is how these messages name a command. Without
+            # it, ordinary prose ("just wrote the manifest") reads as a recipe.
+            for recipe in re.findall(r"`just ([a-z_][\w-]*)", node.value):
+                named.setdefault(recipe, module.name)
+
+    missing = {name: where for name, where in named.items() if name not in defined}
+    assert not missing, (
+        f"the gate tells an operator to run recipes that do not exist (recipe -> module): {missing}"
+    )

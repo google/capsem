@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `just _warm-linux-rust-base` builds the Linux parity base image, with
+  network, before a sealed run needs it. The lane deliberately refuses to build
+  it mid-run -- its tag is keyed by `Cargo.lock`, `rust-toolchain.toml` and
+  `frontend/pnpm-lock.yaml`, so a dependency bump re-keys it, and resolving
+  that inside the run would turn a `--network none` lane into a multi-gigabyte
+  network build at minute four -- and its refusal named `just warm`, which did
+  not exist. Bumping `fast-uri` for a security advisory re-keyed the image and
+  found it: the release stopped correctly and handed back a command that fails.
+
+  A contract now checks that every recipe the gate names in an operator-facing
+  message is a recipe the justfile defines. `hostimage.py` already carried a
+  note about the last time this happened -- `just _build-host-image`, dispatched
+  by two lanes, never written -- so it is a class, not an incident.
+
+### Fixed
+
+- `capsem-gate doctor` no longer reads a justfile comment as a dispatch. It
+  scanned every line containing `capsem-gate `, so prose naming a subcommand
+  was parsed as a call to ``linux-rust` `` -- trailing backtick included -- and
+  reported as unknown. Three doctor checks went red on a comment.
+
 ### Security
 
 - `fast-uri` is bounded past GHSA-7p8r-x3mc-p8w7 (host confusion via a
