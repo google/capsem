@@ -15,8 +15,6 @@ foreign UID reproduces it here, and works on macOS too because git compares
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from . import host, linuxrust
 from .actions import Action, Run
 from .command import GateCommand
@@ -26,15 +24,6 @@ from .errors import GateError
 from .execution import Step, step
 from .gitmetadata import docker_git_metadata_mount
 from .plan import Plan
-
-
-def _volumes(config: GateConfig) -> list[str]:
-    return [
-        flag
-        for volume in config.hostimage.cached_volumes
-        for flag in ("-v", f"{volume.source}:{volume.target}")
-    ]
-
 
 #: One name, so every lane that needs the builder depends on the same step
 #: rather than each spelling its own label.
@@ -141,6 +130,12 @@ class _LinuxRust:
                 after=after,
             )
 
+        # Named, not inferred from "not Linux". Without this a third platform
+        # falls through to the Docker path and fails somewhere inside a
+        # container instead of saying which host it will not run on.
+        if not host.on_macos():
+            raise GateError("Linux Rust parity runs natively on Linux or in Docker on macOS")
+
         # macOS: the same checked-in script, in a container that holds its own
         # copy of the source. `cache-ownership`, `linux-rust-mountpoints` and
         # `output-ownership` are gone with the mounts and volumes that
@@ -148,60 +143,6 @@ class _LinuxRust:
         # state left behind.
         built = plan.shared(image(config), after=after)
         return linuxrust.lane(plan, config, after=(built,))
-
-
-class _LinuxRustSuite(Action, name="linux-rust-suite"):
-    """Run the Linux parity script with runtime-resolved worktree metadata."""
-
-    def __init__(self, output: Path, *, source: Path, mount: str, script: str) -> None:
-        self._output = output
-        self._source = source
-        self._mount = mount
-        self._script = script
-
-    def render(self) -> str:
-        return (
-            f"docker run --user <host> -v {self._source}:{self._mount}:ro "
-            f"... bash {self._mount}/{self._script}"
-        )
-
-    def perform(self, context: Context) -> None:
-        settings = context.config.hostimage
-        output = self._output
-        uid, gid = host.user()
-        context.runner.run(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "--user",
-                f"{uid}:{gid}",
-                *[f for k, v in settings.environment.items() for f in ("-e", f"{k}={v}")],
-                "--tmpfs",
-                settings.tmpfs,
-                "-v",
-                f"{context.root}:{settings.mount}:ro",
-                *docker_git_metadata_mount(context.runner),
-                "-v",
-                f"{output}:{settings.container_output}",
-                "-v",
-                f"{output / settings.nextest_dir}:{settings.mount}/{settings.nextest_mount}",
-                *[
-                    flag
-                    for volume in settings.writable_source_mounts
-                    for flag in (
-                        "-v",
-                        f"{context.config.path(volume.source)}:{settings.mount}/{volume.target}",
-                    )
-                ],
-                *_volumes(context.config),
-                "-w",
-                settings.mount,
-                settings.tag,
-                "bash",
-                f"{settings.mount}/{settings.script}",
-            ]
-        )
 
 
 class LinuxRustCommand(

@@ -854,37 +854,21 @@ tag = "capsem-host-builder:latest"
 dockerfile = "docker/Dockerfile.host-builder"
 context = "docker/"
 script = "scripts/test-linux-rust.sh"
-output_dir = "target/linux-rust-coverage"
-nextest_dir = "nextest"
 mount = "/src"
-container_output = "/linux-rust-output"
-container_home = "/tmp/capsem-home"
 # A foreign UID reproduces the case Linux CI actually hits: the checkout's
 # owner is not the image's user, git rejects /src as "dubious ownership", and
 # build.rs answers by embedding "unknown" rather than failing -- which is how a
 # binary with no source identity reaches the provenance check. Checked on macOS
 # too, because git compares st_uid to euid in userspace.
 probe_user = "4242:4242"
-alpine = "alpine"
-# A writable, executable /tmp: the suite compiles and runs test binaries there,
-# and the default read-only overlay makes every one of them fail to exec.
-tmpfs = "/tmp:rw,exec,mode=1777"
-# nextest writes its own state under the target dir; bound out so the results
-# survive the container.
-nextest_mount = "target/nextest"
-# Tauri's build script regenerates ACL schemas inside the application crate.
-# Keep the checkout read-only and give only that generated directory a
-# writable backing store under the lane's owned output tree.
-writable_source_mounts = [
-    { source = "target/linux-rust-coverage/tauri-gen", target = "crates/capsem-app/gen" },
-]
-cached_volumes = [
-    { source = "capsem-linux-rust-cargo-registry", target = "/usr/local/cargo/registry" },
-    { source = "capsem-linux-rust-cargo-git", target = "/usr/local/cargo/git" },
-    { source = "capsem-linux-rust-rustup", target = "/usr/local/rustup" },
-    { source = "capsem-linux-rust-target", target = "/cargo-target" },
-]
-environment = { HOME = "/tmp/capsem-home", CAPSEM_SKIP_KVM_TESTS = "1", CAPSEM_LINUX_RUST_OUTPUT_DIR = "/linux-rust-output" }
+# `alpine`, `tmpfs`, `container_home`, `nextest_dir`, `nextest_mount`,
+# `output_dir`, `container_output`, `writable_source_mounts` and
+# `cached_volumes` are gone with the bind mount that needed them. A writable
+# /tmp, a hand-placed HOME, a bound-out nextest directory, a writable graft for
+# Tauri's generated ACLs and four cross-run volumes were all repairs for
+# sharing the developer's checkout and cache with a root-owned container. The
+# lane copies its source into an image and its dependencies live in the base,
+# so there is nothing to repair.
 
 [sbom]
 script = "scripts/generate-host-binary-sbom.py"

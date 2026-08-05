@@ -24,6 +24,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Sealing the Linux parity lane left its old machinery behind, and the release
+  gate caught it. `_LinuxRustSuite` -- the action that assembled the read-only
+  source mount, the writable grafts and the four named volumes -- was still in
+  `hostimage.py` with nothing constructing it, along with nine `[hostimage]`
+  settings that existed only to repair what sharing a checkout with a
+  root-owned container broke: a writable `/tmp`, a hand-placed `HOME`, a
+  bound-out nextest directory, a writable graft for Tauri's generated ACLs, and
+  the volumes themselves. All are gone.
+
+  Restored in the same pass: the lane raised a named error on a host that is
+  neither Linux nor macOS, and sealing it dropped that guard, so a third
+  platform fell through to the Docker path and would have failed somewhere
+  inside a container instead of saying which host it will not run on.
+
+  The two contract tests that pinned the old mechanism are reimplemented rather
+  than deleted, and two of their claims are now stronger: `/src:ro` said the
+  container could not write the checkout, where the assertion is now that
+  nothing is mounted at all; and the lane's `--network none` is asserted, which
+  no earlier test could claim because it was not true.
+
 - The Linux parity lane holds its own bytes. It bind-mounted the live checkout,
   grafted two writable mounts back through it to retrieve coverage, inherited
   four named volumes that survive between runs, and ran with outbound network
