@@ -226,6 +226,12 @@ assets_dir = "CAPSEM_ASSETS_DIR"
 profiles_dir = "CAPSEM_PROFILES_DIR"
 benchmark_root = "CAPSEM_BENCHMARK_OUTPUT_ROOT"
 coverage_file = "COVERAGE_FILE"
+# Set by the parent that built a private checkout, and read by the child that
+# runs inside it. This is what stops the re-exec recursing: a process that
+# already sees it is already in a prefix and builds no second one. It carries
+# the *source* checkout's path, because a run in a prefix still has to be able
+# to name the tree it is qualifying.
+source_checkout = "CAPSEM_GATE_SOURCE_CHECKOUT"
 
 # What the builder container is told about the target it is building for.
 # `HOST_UID` and `HOST_GID` stay literal: they are the standard convention for

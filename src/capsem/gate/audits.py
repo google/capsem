@@ -41,6 +41,27 @@ def source_syntax(config: GateConfig) -> Step:
     return step("audit.source-syntax", Script(config.audits.source_syntax))
 
 
+def generated_settings(config: GateConfig) -> Step:
+    """Produce the settings schema, defaults and mock the web surfaces import.
+
+    `frontend/src/lib/mock-settings.generated.ts` is gitignored, so it is not
+    part of the source the gate copies or digests -- it has to be *made*. It
+    was not: the fast and static modules ran `_check-generated-settings`, which
+    only asserts the committed schema and the generated output agree, and the
+    file itself arrived from whatever earlier build happened to leave it.
+
+    On a warm machine that is invisible. On a fresh clone, in CI, or in a
+    private copy of the checkout, `svelte-check` stops at `Cannot find module
+    './mock-settings.generated'` -- which is how this was found, on the first
+    real run from a prefix.
+
+    Before the surfaces and after the Rust toolchain, because the script needs
+    `cargo run -p capsem-core --bin mcp_export`. That cost is not new work in
+    this lane: clippy builds the same workspace a few steps later.
+    """
+    return step("audit.generated-settings", Run(["bash", config.devloop.generate_settings]))
+
+
 def web_surfaces(config: GateConfig) -> list[Step]:
     """One step per surface, so a failure says which one.
 

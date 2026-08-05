@@ -33,7 +33,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against `.agents/skills` and would silently duplicate a tree anywhere it
   succeeded.
 
-  Not yet wired into `reexec()` -- the runs still happen in the checkout.
+  The test modules now run from one. `capsem-gate test-fast` completes green
+  from `~/.cg/<8hex>` in 89s with no `target/`, and the copy is reclaimed on
+  the success and failure paths alike -- with the run log, step logs, summary
+  and fault log exported back to the checkout first, so a failed run's evidence
+  does not die with the tree that produced it. Inspection (`--dry-run`,
+  `--graph`) builds no copy: it answers before the hook, as it already did for
+  the keep-awake re-exec.
+
+- `require-source-unchanged` gained the half a private copy would otherwise
+  swallow. A prefix is frozen when it is made, so its own `HEAD` and digest
+  cannot change from outside, and comparing only those would pass
+  unconditionally while a commit landed on the branch being qualified. The
+  recorded state now carries the source checkout's `HEAD` as well. Unprefixed
+  it is the same comparison twice and costs nothing; prefixed it is the only
+  one that can still see the real branch move.
+
+### Fixed
+
+- `test-fast` and `test-static` depended on a generated file that nothing in
+  their lane generated. The web surfaces import
+  `frontend/src/lib/mock-settings.generated.ts`, which is gitignored, and both
+  modules only ran `_check-generated-settings` -- which asserts the committed
+  schema and the generated output agree, not that the output exists. On a warm
+  machine it arrived from an earlier build; on a clean one `svelte-check`
+  stopped at `Cannot find module './mock-settings.generated'`.
+
+  Found on the first real run from a private checkout, which is the point of
+  having one: this is the same class as the CI failure where 94 tests reported
+  `no materialized profiles found`, and the same class the plan calls
+  cross-run leftovers being load-bearing. The fast phase now generates the
+  settings before the surfaces that import them, after the Rust toolchain
+  because the generator needs `cargo run -p capsem-core --bin mcp_export` --
+  work this lane already pays for when clippy builds the same workspace.
 
 ### Fixed
 

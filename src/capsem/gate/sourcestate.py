@@ -44,9 +44,32 @@ def gate_source() -> Path:
     return Path(_module.__file__).resolve().parent
 
 
+def _source_head(context: Context) -> str:
+    """`HEAD` of the checkout this run was copied from.
+
+    Identical to the run's own `HEAD` when there is no copy, which is what
+    makes this safe to record unconditionally. Under a prefix they are two
+    different repositories, and only this one can move: the private copy is
+    frozen the moment it is made, so digesting it proves the gate did not edit
+    its own tree and proves *nothing* about the branch being qualified.
+
+    That is the vacuum this closes. Without it, a commit landing on `main`
+    mid-run leaves the prefix's `HEAD` unchanged, `require-source-unchanged`
+    passes, and the gate publishes a qualification for a revision it never
+    tested -- a release guard lost with no test going red.
+    """
+    from . import prefix
+
+    source = prefix.source_checkout(context.config)
+    if source is None:
+        return context.runner.capture(["git", "rev-parse", "HEAD"])
+    return context.runner.capture(["git", "-C", str(source), "rev-parse", "HEAD"])
+
+
 def _measure(context: Context) -> dict[str, str]:
     return {
         "head": context.runner.capture(["git", "rev-parse", "HEAD"]),
+        "source_head": _source_head(context),
         "digest": context.runner.capture(
             [
                 "uv",
@@ -128,6 +151,14 @@ class RequireSourceUnchanged(Action, name="require-source-unchanged"):
             raise GateError(
                 f"source HEAD changed while the gate was running: "
                 f"{before['head']} -> {after['head']}"
+            )
+        # The half a private copy would otherwise swallow. Unprefixed this is
+        # the same comparison again and costs nothing; prefixed it is the only
+        # one that can still see the branch under qualification move.
+        if before.get("source_head") != after.get("source_head"):
+            raise GateError(
+                "the checkout this run was copied from moved while the gate was "
+                f"running: {before.get('source_head')} -> {after.get('source_head')}"
             )
         if before["digest"] != after["digest"]:
             context.journal.note(f"before={before['digest']} after={after['digest']}")

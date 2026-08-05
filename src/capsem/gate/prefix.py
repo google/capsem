@@ -27,6 +27,7 @@ Two things are easy to get wrong here and both are expensive:
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 import subprocess
 from collections import defaultdict
@@ -184,6 +185,46 @@ def export(prefix: Path, destination: Path, config: GateConfig) -> None:
             shutil.copytree(origin, target, dirs_exist_ok=True)
         else:
             shutil.copy2(origin, target)
+
+
+def source_checkout(config: GateConfig) -> Path | None:
+    """The real checkout, when this process is already running inside a prefix.
+
+    Absent means this is the outer process and it should build one. Present
+    means it must not, or the re-exec recurses forever -- and it also answers
+    the question a prefixed run still has to be able to answer, which is which
+    tree it was copied from.
+    """
+    value = os.environ.get(config.environment.source_checkout)
+    return Path(value) if value else None
+
+
+def run_from_private_copy(runner, config: GateConfig, arguments: list[str]) -> int:
+    """Copy the checkout, run the same command inside the copy, bring back what
+    it produced, and give the copy back.
+
+    Through `uv run` in the prefix rather than this interpreter, deliberately.
+    Re-execing `sys.executable -m capsem.gate` would keep the *parent's*
+    `sys.path`, so the child would run the outer checkout's code while sitting
+    in the copy -- measuring one tree and qualifying another, which is the
+    exact confusion `sourcestate.gate_source()` exists to catch.
+
+    The export is in a `finally` and runs before the reclaim on every path.
+    A run that failed is precisely when its run log is worth having, and
+    without this the evidence dies with the copy that produced it.
+    """
+    path = allocate(config, secrets.token_hex(config.prefix.name_length))
+    try:
+        populate(config.root, path, config)
+        return runner.run(
+            ["uv", "run", "capsem-gate", *arguments],
+            cwd=path,
+            env={config.environment.source_checkout: str(config.root)},
+            check=False,
+        )
+    finally:
+        export(path, config.root, config)
+        reclaim(config, path)
 
 
 def reclaim(config: GateConfig, path: Path) -> None:

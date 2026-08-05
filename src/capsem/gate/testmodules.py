@@ -49,6 +49,13 @@ class InWorkspace:
 
     exclusive = True
 
+    # And against an isolated *checkout*. These are the modules long enough
+    # that someone edits the tree while they run -- which has killed four
+    # release runs, the last after 61 minutes. An isolated home was never
+    # enough on its own: it protects the developer's `~/.capsem` from the gate,
+    # and does nothing to protect the gate from the developer.
+    private_checkout = True
+
     _config: GateConfig
     """Supplied by `GateCommand`, declared here so the mixin type-checks."""
 
@@ -98,7 +105,16 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Ste
     # said and each is timed under its own name.
     sourcechecks.fragment(plan, config, after=(syntax,))
 
-    surfaces = [phase.add(surface, after=(syntax, node)) for surface in audits.web_surfaces(config)]
+    # The web surfaces import `frontend/src/lib/mock-settings.generated.ts`,
+    # which is gitignored and therefore never part of the source a run is
+    # given. This lane only ever *checked* it, so on a warm machine it arrived
+    # from an earlier build and on a clean one the frontend check stopped at
+    # `Cannot find module './mock-settings.generated'`.
+    settings = phase.add(audits.generated_settings(config), after=(python, rust))
+    surfaces = [
+        phase.add(surface, after=(syntax, node, settings))
+        for surface in audits.web_surfaces(config)
+    ]
     return phase.add(
         audits.clippy(config),
         after=(audits.blocking_surface(config, surfaces), rust),

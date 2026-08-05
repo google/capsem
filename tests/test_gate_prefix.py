@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from test_gate_socket_length import GATEWAY_SUFFIX, SUN_LEN
@@ -75,6 +76,13 @@ def source(tmp_path: Path) -> Path:
     _git(root, "init", "-q")
     _git(root, "config", "user.email", "gate@example.com")
     _git(root, "config", "user.name", "Gate")
+    # Never the developer's signing setup. This repository's global config
+    # signs through 1Password, and when that agent is locked `git commit`
+    # fails with `agent returned an error` and `failed to write commit
+    # object` -- a fixture going red for a reason that has nothing to do with
+    # what it tests, on the machine of whoever happens to have it configured.
+    _git(root, "config", "commit.gpgsign", "false")
+    _git(root, "config", "tag.gpgsign", "false")
     _git(root, "add", ".gitignore", "tracked.txt", "crates/capsem-core/lib.rs", ".agents/skills")
     _git(root, "commit", "-qm", "initial")
     # Uncommitted work, which the gate explicitly supports and the digest
@@ -280,6 +288,73 @@ def test_reclaim_refuses_anything_that_is_not_a_prefix(tmp_path: Path) -> None:
     with pytest.raises(GateError, match="refusing to reclaim"):
         prefix.reclaim(config, tmp_path)
     assert tmp_path.is_dir()
+
+
+def test_a_process_already_inside_a_prefix_builds_no_second_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The recursion guard, and the only thing that stops it.
+
+    The parent runs `capsem-gate` again inside the copy, so without a marker
+    the child copies the copy, forever. `source_checkout` returning non-`None`
+    is what the command hook tests, and it doubles as the answer to "which tree
+    was this copied from" that `require-source-unchanged` needs.
+    """
+    from capsem.gate import prefix
+
+    config = _config()
+    monkeypatch.delenv(config.environment.source_checkout, raising=False)
+    assert prefix.source_checkout(config) is None
+
+    monkeypatch.setenv(config.environment.source_checkout, "/Users/someone/git/capsem")
+    assert prefix.source_checkout(config) == Path("/Users/someone/git/capsem")
+
+
+def test_the_release_guard_still_sees_the_real_branch_move(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`require-source-unchanged` must not go vacuous against a private copy.
+
+    This is the guard the plan warned would be lost with no test going red. A
+    prefix is frozen when it is made, so its own `HEAD` and digest can never
+    change from outside -- comparing only those would pass unconditionally
+    while a commit landed on the branch being qualified, and the gate would
+    publish a qualification for a revision it never tested.
+
+    So the recorded state carries the *source* checkout's `HEAD` too, and this
+    asserts the comparison actually fires on it. Mutation: drop the
+    `source_head` branch from `RequireSourceUnchanged` and this goes green
+    again, which is exactly the silence being prevented.
+    """
+    import json
+
+    from capsem.gate import config as gate_config
+    from capsem.gate.errors import GateError
+    from capsem.gate.sourcestate import RequireSourceUnchanged
+
+    config = gate_config.load(PROJECT_ROOT)
+    record = tmp_path / "source-state.json"
+    record.write_text(
+        json.dumps(
+            {
+                "head": "frozen",
+                "source_head": "before",
+                "digest": "same",
+                "gate_source": "x",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    # Everything a prefix can see is unchanged; only the tree it was copied
+    # from moved.
+    measured = {"head": "frozen", "source_head": "after", "digest": "same", "gate_source": "x"}
+    monkeypatch.setattr("capsem.gate.sourcestate._measure", lambda context: measured)
+    monkeypatch.setattr("capsem.gate.sourcestate._record_file", lambda context: record)
+
+    context = SimpleNamespace(config=config, runner=None, journal=None)
+    with pytest.raises(GateError, match="copied from moved"):
+        RequireSourceUnchanged().perform(context)  # ty: ignore[invalid-argument-type]
 
 
 def test_the_export_list_covers_what_a_release_publishes() -> None:

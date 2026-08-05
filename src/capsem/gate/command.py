@@ -17,10 +17,12 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from . import config as gate_config
+from . import prefix
 from .context import Context
 from .errors import GateError
 from .funnel import GuardedRunner
@@ -48,6 +50,20 @@ class GateCommand(Recorded, ABC):
     starts a service -- which is to say every gate proper. False for the ones
     that only read, so a developer can ask `runs show` a question while a gate
     is running.
+    """
+
+    private_checkout: ClassVar[bool] = False
+    """Whether this runs from a private copy of the checkout instead of it.
+
+    True for anything long enough that someone will edit the tree while it
+    runs, which in practice is every gate proper. Four release runs have died
+    to exactly that, the last after 61 minutes -- and the observer had already
+    named the intruding file 23 minutes before the run noticed, which is what
+    settles that detection is not the fix.
+
+    Declared per command rather than inferred, because the copy is not free:
+    the run starts with no `target/`, so a command too short to be raced pays
+    a cold build to avoid a race it was never going to lose.
     """
 
     uses_qualification: ClassVar[bool] = False
@@ -186,6 +202,14 @@ class GateCommand(Recorded, ABC):
         # the lock its own grandparent held, and the run stayed alive-looking
         # for the full two hours.
         self._refuse_inside_a_run()
+
+        # Before the re-exec and before any resource, for the same reason both
+        # of those are here: the child takes the machine lock, so a parent
+        # holding it would wait out its own timeout. The copy is built by this
+        # process and reclaimed by it after the child returns, which is what
+        # gives the export somewhere to run even when the run failed.
+        if self.private_checkout and prefix.source_checkout(self._config) is None:
+            raise SystemExit(prefix.run_from_private_copy(self._runner, self._config, sys.argv[1:]))
 
         # Before any resource, and outside the lock: a re-exec inside the held
         # resources deadlocks, because the child asks for the lock its own

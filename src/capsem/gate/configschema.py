@@ -102,6 +102,7 @@ class EnvironmentConfig(Strict):
     profiles_dir: str
     benchmark_root: str
     coverage_file: str
+    source_checkout: str
     package: PackageEnvironment
     release_site: ReleaseSiteEnvironment
     install_proof: InstallProofEnvironment
