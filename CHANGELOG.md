@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- `fast-uri` is bounded past GHSA-7p8r-x3mc-p8w7 (host confusion via a
+  backslash authority introducer). The frontend's override read `>=3.1.2`,
+  which resolved to 4.1.1 -- inside the advisory's `>=4.0.0 <4.1.2` -- so the
+  bound admitted the very version it was there to exclude. Now `>=4.1.2`. It
+  arrives through `@astrojs/check`, so it is dev-only tooling, but the audit is
+  a release gate and blocked one.
+
 ### Fixed
 
 - The filesystem observer reported 42 phantom source mutations on every release
