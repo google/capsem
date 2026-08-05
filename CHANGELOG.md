@@ -44,6 +44,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged: cross-process rotation safety is the point, and it is the
   stricter start method.
 
+- The gate's ordering contracts run from a linked git worktree again.
+  `docker_git_metadata_mount` skips its probe entirely when `.git` is a
+  directory, so an ordinary checkout never asks; a worktree carries a `.git`
+  file instead, asks `git rev-parse --git-common-dir`, and got "" back from a
+  recording runner that answers nothing by default. An unresolvable common dir
+  is a build the gate rightly refuses, so the recorded plan died at
+  `package.<arch>.build` and every contract about a command issued at or after
+  that point failed for want of a git answer rather than for anything it was
+  about -- on worktrees only, which is why it stayed invisible. The recorder
+  now answers that one probe from the real repository, truthfully, because a
+  wrong path here becomes a `-v` mount those same contracts assert against.
+
 ### Security
 
 - `fast-uri` is bounded past GHSA-7p8r-x3mc-p8w7 (host confusion via a

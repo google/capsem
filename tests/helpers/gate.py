@@ -25,6 +25,34 @@ from capsem.gate.proc import Runner
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+#: The one probe whose *answer* decides which commands the plan goes on to
+#: issue, rather than being recorded and never read.
+#:
+#: `docker_git_metadata_mount` skips this entirely when `.git` is a directory,
+#: so an ordinary checkout never asks. A linked worktree carries a `.git` file
+#: instead, asks, and gets "" back from a recorder that answers nothing -- an
+#: unresolvable common dir, which the gate correctly refuses to build against.
+#: The plan then dies at `package.<arch>.build`, and every ordering contract
+#: about a command issued at or after that point fails for want of a git
+#: answer rather than for anything the contract is about.
+#:
+#: Answered truthfully, from the real repository, because a wrong path here
+#: would be a `-v` mount these contracts then assert against.
+GIT_COMMON_DIR_PROBE = "--git-common-dir"
+
+
+@cache
+def _git_common_dir(root: Path) -> str:
+    """What the probe would really have answered in this checkout."""
+    found = subprocess.run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return found.stdout.strip()
+
 
 class RecordingRunner(Runner):
     """Records every command; answers with canned output.
@@ -59,6 +87,9 @@ class RecordingRunner(Runner):
             if marker in rendered:
                 stdout = reply
                 break
+        else:
+            if GIT_COMMON_DIR_PROBE in rendered:
+                stdout = _git_common_dir(self.root)
         return subprocess.CompletedProcess(
             args=list(command.argv), returncode=status, stdout=stdout, stderr=""
         )
