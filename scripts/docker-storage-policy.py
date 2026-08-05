@@ -81,12 +81,23 @@ def load_policy(path: Path) -> dict[str, Any]:
     for name, resource in resources.items():
         if resource.get("kind") not in {"volume", "image"}:
             raise ValueError(f"resource {name!r} requires kind volume or image")
-        if resource.get("retention") not in {"cache", "working", "obsolete"}:
+        if resource.get("retention") not in {"cache", "working", "obsolete", "generational"}:
             raise ValueError(f"resource {name!r} requires a declared retention")
         if resource["retention"] == "working" and not (
             resource.get("release_boundary") or resource.get("release_boundaries")
         ):
             raise ValueError(f"working resource {name!r} requires a release boundary")
+        if resource["retention"] == "generational":
+            # A repository whose tags are minted per content digest, so its
+            # docker_name resolves to no single image and `keep_previous`
+            # rather than a boundary decides what survives.
+            if resource["kind"] != "image":
+                raise ValueError(f"generational resource {name!r} must be an image repository")
+            keep = resource.get("keep_previous")
+            if not isinstance(keep, int) or isinstance(keep, bool) or keep < 0:
+                raise ValueError(
+                    f"generational resource {name!r} requires an integer keep_previous >= 0"
+                )
         if not resource.get("reason"):
             raise ValueError(f"resource {name!r} requires a retention reason")
     return policy
@@ -183,11 +194,80 @@ def resource_decision(resource: dict[str, Any]) -> str:
         return "retain-cache"
     if retention == "obsolete":
         return "delete-obsolete"
+    if retention == "generational":
+        return f"retain-current-and-{int(resource['keep_previous'])}-previous"
     boundary = resource.get("release_boundary")
     if boundary:
         return f"release-{boundary}"
     boundaries = resource.get("release_boundaries", [])
     return "release-" + ",".join(str(value) for value in boundaries)
+
+
+def image_generations(repository: str) -> list[dict[str, Any]]:
+    """Every tag of a repository, newest first, with exact bytes.
+
+    Inspected one tag at a time rather than in one batched call: a tag that
+    disappears between the listing and the inspection shifts a batched
+    `--format` result by a line, and the pairing is then silently wrong about
+    which image is which. The count here is two or three.
+    """
+    listed = run_command(
+        [
+            "docker",
+            "image",
+            "ls",
+            "--filter",
+            f"reference={repository}:*",
+            "--format",
+            "{{.Repository}}:{{.Tag}}",
+        ]
+    )
+    if listed.returncode != 0:
+        return []
+    generations: list[dict[str, Any]] = []
+    for reference in sorted({line.strip() for line in listed.stdout.splitlines() if line.strip()}):
+        inspect = run_command(
+            [
+                "docker",
+                "image",
+                "inspect",
+                reference,
+                "--format",
+                "{{.Id}}\t{{.Created}}\t{{.Size}}",
+            ]
+        )
+        if inspect.returncode != 0:
+            continue
+        image_id, created, size = [*inspect.stdout.split("\t"), "", "", ""][:3]
+        generations.append(
+            {
+                "ref": reference,
+                "tag": reference.rsplit(":", 1)[-1],
+                "id": image_id,
+                "created": created,
+                # Docker's own number, which double-counts layers shared with
+                # another generation. The report's free-space delta is the
+                # honest measure of what a removal actually returned.
+                "size_bytes": int(size) if size.isdigit() else 0,
+            }
+        )
+    return sorted(generations, key=lambda row: (row["created"], row["ref"]), reverse=True)
+
+
+def superseded_generations(
+    generations: list[dict[str, Any]], *, keep: str, keep_previous: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split a repository's tags into what survives and what is retired.
+
+    Newest first among the superseded, so `keep_previous` retains the most
+    recent generations rather than whatever order Docker happened to list.
+    """
+    superseded = sorted(
+        (row for row in generations if row["ref"] != keep),
+        key=lambda row: (row["created"], row["ref"]),
+        reverse=True,
+    )
+    return superseded[:keep_previous], superseded[keep_previous:]
 
 
 def docker_capacity() -> dict[str, Any]:
@@ -227,6 +307,7 @@ def docker_runtime_snapshot(policy: dict[str, Any], *, offline: bool) -> dict[st
                 "size_bytes": None,
                 "decision": resource_decision(resource),
                 "reason": resource["reason"],
+                "generations": None,
             }
             for name, resource in sorted(resources.items())
         }
@@ -258,7 +339,18 @@ def docker_runtime_snapshot(policy: dict[str, Any], *, offline: bool) -> dict[st
     managed: dict[str, dict[str, Any]] = {}
     for name, resource in sorted(resources.items()):
         docker_name = str(resource.get("docker_name", name))
-        if resource["kind"] == "volume":
+        generations: list[dict[str, Any]] = []
+        active: bool | None
+        if resource["retention"] == "generational":
+            generations = image_generations(docker_name)
+            present = bool(generations)
+            # Left undetermined rather than guessed. Answering it means one
+            # `docker ps` per tag on every snapshot, and snapshots bracket
+            # every operation; the removal path asks Docker per tag, which is
+            # the only place the answer decides anything.
+            active = None
+            size_bytes = sum(row["size_bytes"] for row in generations)
+        elif resource["kind"] == "volume":
             volume = volumes.get(docker_name)
             present = volume is not None
             active = bool(volume and volume["links"])
@@ -283,6 +375,7 @@ def docker_runtime_snapshot(policy: dict[str, Any], *, offline: bool) -> dict[st
             "size_bytes": size_bytes,
             "decision": resource_decision(resource),
             "reason": resource["reason"],
+            "generations": generations,
         }
 
     declared_volumes = {
@@ -699,6 +792,23 @@ def remove_resource(name: str, resource: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def remove_generations(generations: list[dict[str, Any]], *, reason: str) -> list[dict[str, Any]]:
+    """Retire tags one at a time, through the guard every other removal uses."""
+    actions = []
+    for row in generations:
+        action = remove_resource(row["ref"], {"kind": "image", "docker_name": row["ref"]})
+        action["reason"] = reason
+        # Kept apart from `before_bytes`, which `finish_operation` fills from
+        # the managed-resource snapshot -- that is keyed by policy name and
+        # knows nothing about one tag of a repository.
+        action["image_size_bytes"] = row["size_bytes"]
+        # `remove_resource` seeds a placeholder zero meaning "not measured".
+        # Left in the ledger beside a real deletion it is simply false.
+        action.pop("reclaimed_bytes", None)
+        actions.append(action)
+    return actions
+
+
 def trim_colima() -> dict[str, Any]:
     if shutil.which("colima") is None:
         return {"status": "skipped", "reason": "colima unavailable"}
@@ -758,6 +868,30 @@ def operation_report(
     }
 
 
+def action_bytes(action: dict[str, Any]) -> str:
+    """What an action moved, in the terms that action actually measured.
+
+    A generation removal knows the image's own size and nothing about the
+    resource-level before/after, which is keyed by policy name -- so it printed
+    `unknown -> unknown; reclaimed 0 B` for a deletion that had just freed
+    gigabytes, which reads as a no-op.
+    """
+    nominal = action.get("image_size_bytes")
+    if isinstance(nominal, int):
+        # Docker's per-image number, which double-counts layers shared with a
+        # surviving generation. The run's free-space delta above is the real
+        # figure; this says how big the thing removed was.
+        return f" [image {human_bytes(nominal)}]"
+    reclaimed = action.get("reclaimed_bytes")
+    if isinstance(reclaimed, int):
+        return (
+            f" [{human_bytes(action.get('before_bytes'))} -> "
+            f"{human_bytes(action.get('after_bytes'))}; "
+            f"reclaimed {human_bytes(reclaimed)}]"
+        )
+    return ""
+
+
 def print_operation(report: dict[str, Any]) -> None:
     before = report["before"]["filesystem"]
     after = report["after"]["filesystem"]
@@ -769,17 +903,10 @@ def print_operation(report: dict[str, Any]) -> None:
             f"(delta {human_bytes(report['reclaimed_bytes'])})"
         )
     for action in report["actions"]:
-        reclaimed = action.get("reclaimed_bytes")
         print(
             f"  {action['status']}: {action.get('target', action.get('operation'))}"
             + (f" — {action['reason']}" if action.get("reason") else "")
-            + (
-                f" [{human_bytes(action.get('before_bytes'))} -> "
-                f"{human_bytes(action.get('after_bytes'))}; "
-                f"reclaimed {human_bytes(reclaimed)}]"
-                if isinstance(reclaimed, int)
-                else ""
-            )
+            + action_bytes(action)
         )
     trim = report["fstrim"]
     print(
@@ -884,6 +1011,80 @@ def command_release(args: argparse.Namespace, policy: dict[str, Any]) -> int:
     )
     if any(action["status"] in {"error", "retained-active"} for action in actions):
         return 1
+    return 0 if report["after"]["available"] else 1
+
+
+def command_reclaim(args: argparse.Namespace, policy: dict[str, Any]) -> int:
+    """Retire the generations of a content-keyed repository that nothing wants.
+
+    The tag to keep is passed in rather than derived here. `capsem.gate.
+    linuxrust.base_tag` computes it from the lockfiles that decide the image's
+    contents, and recomputing that hash in this script would be a second source
+    of truth for which image the lane is about to run -- the two could disagree,
+    and the one holding the delete button would win.
+    """
+    resources = policy["resources"]
+    if args.resource not in resources:
+        raise ValueError(f"unknown Docker storage resource: {args.resource!r}")
+    resource = resources[args.resource]
+    if resource["retention"] != "generational":
+        raise ValueError(
+            f"resource {args.resource!r} is {resource['retention']!r}, not generational: "
+            "only a repository whose tags are minted per content digest is reclaimed this way"
+        )
+    repository = str(resource.get("docker_name", args.resource))
+    if args.keep.rsplit(":", 1)[0] != repository:
+        raise ValueError(f"{args.keep!r} is not a tag of {repository!r}")
+
+    generations = image_generations(repository)
+    if not any(row["ref"] == args.keep for row in generations):
+        # The one outcome that is never right. The caller has just built or
+        # confirmed this tag, so its absence means something else removed it --
+        # most likely a concurrent worktree, whose run is about to need it.
+        print(
+            f"ERROR: {args.keep} is not present, so there is no anchor to reclaim "
+            f"around; refusing to retire every generation of {repository}.",
+            file=sys.stderr,
+        )
+        return 1
+
+    before = snapshot_report(
+        policy, args.rail, label=f"reclaim-{args.resource}-before", event="snapshot", offline=False
+    )
+    retained, removable = superseded_generations(
+        generations, keep=args.keep, keep_previous=int(resource["keep_previous"])
+    )
+    actions: list[dict[str, Any]] = [
+        {
+            "target": row["ref"],
+            "kind": "image",
+            "status": "retained-generation",
+            "reason": "kept as a previous generation, so a revert does not rebuild",
+            "image_size_bytes": row["size_bytes"],
+            "reclaimed_bytes": 0,
+        }
+        for row in retained
+    ]
+    actions += remove_generations(
+        removable,
+        reason=f"superseded by {args.keep}, which is what the current lockfiles resolve to",
+    )
+    report = finish_operation(
+        policy,
+        args.rail,
+        event="reclaim",
+        label=args.resource,
+        before=before,
+        actions=actions,
+        do_trim=any(action["status"] == "deleted" for action in actions),
+    )
+    # A refusal is a byte not returned, not a broken gate, so unlike `release`
+    # this does not fail on one. Gate locks live in `target/` and are therefore
+    # per-checkout: a second worktree can legitimately be holding a generation
+    # that Docker will not let go of, and failing the warm command over it
+    # would make warming flaky for the reason warming exists to avoid. What
+    # was and was not returned is in the ledger, and `enforce` is the step that
+    # fails when the disk floor is actually breached.
     return 0 if report["after"]["available"] else 1
 
 
@@ -1059,6 +1260,15 @@ def command_clean(args: argparse.Namespace, policy: dict[str, Any]) -> int:
     actions = []
     for name, resource in sorted(policy["resources"].items()):
         if args.scope == "working" and resource["retention"] == "cache":
+            continue
+        if resource["retention"] == "generational":
+            # Every generation, including the current one: a clean is a cold
+            # rebuild, and `remove_resource` would look for a `:latest` tag
+            # this repository never has and report the whole thing absent.
+            actions += remove_generations(
+                image_generations(str(resource.get("docker_name", name))),
+                reason=f"explicit clean scope={args.scope}; {resource['reason']}",
+            )
             continue
         action = remove_resource(name, resource)
         action["reason"] = f"explicit clean scope={args.scope}; {resource['reason']}"
@@ -1267,6 +1477,11 @@ def build_parser() -> argparse.ArgumentParser:
     release.add_argument("--rail", default="default")
     release.add_argument("--boundary", required=True)
 
+    reclaim = subparsers.add_parser("reclaim")
+    reclaim.add_argument("--rail", default="default")
+    reclaim.add_argument("--resource", required=True)
+    reclaim.add_argument("--keep", required=True)
+
     gc = subparsers.add_parser("gc")
     gc.add_argument("--rail", default="default")
 
@@ -1294,6 +1509,7 @@ def main() -> int:
             "tart-clean": command_tart_clean,
             "enforce": command_enforce,
             "release": command_release,
+            "reclaim": command_reclaim,
             "gc": command_gc,
             "clean": command_clean,
             "capture-failure": command_capture_failure,

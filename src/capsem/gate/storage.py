@@ -49,6 +49,18 @@ class Storage:
             check=not best_effort,
         )
 
+    def reclaim(self, resource: str, *, keep: str) -> None:
+        """Retire the superseded tags of a repository keyed by content.
+
+        `keep` is passed in rather than derived downstream: the caller is what
+        knows which tag the current inputs resolve to, and a second derivation
+        inside the policy script could disagree with it while holding the
+        delete button.
+        """
+        self._runner.script(
+            self._config.policy_script, "reclaim", "--resource", resource, "--keep", keep
+        )
+
     def gc(self, *, rail: str | None = None, best_effort: bool = False) -> None:
         args = ["gc"] + (["--rail", rail] if rail else [])
         self._runner.script(self._config.policy_script, *args, check=not best_effort)

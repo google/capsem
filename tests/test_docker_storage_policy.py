@@ -459,3 +459,209 @@ def test_an_oversized_log_is_tailed_rather_than_dropped(tmp_path: Path) -> None:
     kept = destination.read_bytes()
     assert len(kept) <= 256
     assert b"THE ACTUAL FAILURE" in kept, "the tail -- the part that matters -- was lost"
+
+
+# ---------------------------------------------------------------------------
+# Generational images
+# ---------------------------------------------------------------------------
+#
+# `capsem-linux-rust-base` is the one managed image whose Docker name is a
+# repository rather than a tag: `base_tag()` keys it by a blake2b of the three
+# lockfiles that decide its dependencies, so every bump mints a new ~25 GiB tag
+# and nothing retired the old one. Three coexisting tags were observed after a
+# single security bump, on a VM with 54.7 GiB free.
+
+
+class _FakeDockerDaemon:
+    """A daemon holding a declared set of tags, remembering what was removed.
+
+    Fakes Docker, not the policy: `command_reclaim` runs unmodified, and what
+    the test reads back is the `docker image rm` it really issued.
+    """
+
+    def __init__(self, module, tags: dict[str, tuple[str, int]]) -> None:
+        self._module = module
+        self.tags = dict(tags)
+        self.removed: list[str] = []
+
+    def _result(self, command: list[str], stdout: str = "", code: int = 0):
+        return self._module.CommandResult(command, code, stdout, "")
+
+    def __call__(self, command: list[str], *, timeout: int = 120):
+        head = command[:3]
+        if head == ["docker", "run", "--rm"]:
+            return self._result(command, "209715200 104857600 104857600")
+        if head == ["docker", "system", "df"]:
+            if "-v" in command:
+                return self._result(
+                    command, "Local Volumes space usage:\nVOLUME NAME  LINKS  SIZE\n"
+                )
+            return self._result(
+                command,
+                '{"Type":"Images","TotalCount":"3","Active":"0",'
+                '"Size":"40GB","Reclaimable":"20GB (50%)"}',
+            )
+        if head == ["docker", "image", "ls"]:
+            reference = next(part for part in command if part.startswith("reference="))
+            repository = reference.removeprefix("reference=").removesuffix(":*")
+            matching = [ref for ref in self.tags if ref.rsplit(":", 1)[0] == repository]
+            return self._result(command, "\n".join(sorted(matching)))
+        if head == ["docker", "image", "inspect"]:
+            reference = command[3]
+            if reference not in self.tags:
+                return self._result(command, "", 1)
+            created, size = self.tags[reference]
+            if "{{.Size}}" in command:
+                return self._result(command, str(size))
+            return self._result(command, f"sha256:{reference}\t{created}\t{size}")
+        if head == ["docker", "image", "rm"]:
+            reference = command[3]
+            self.removed.append(reference)
+            self.tags.pop(reference, None)
+            return self._result(command)
+        if command[:2] == ["docker", "ps"]:
+            return self._result(command)
+        if head == ["docker", "volume", "inspect"]:
+            return self._result(command, "", 1)
+        return self._result(command)
+
+
+def _reclaim(module, daemon, monkeypatch, tmp_path: Path, *, keep: str, resource: str):
+    import argparse
+    import shutil as _shutil
+
+    monkeypatch.setattr(module, "run_command", daemon)
+    # No fstrim: the fake daemon has no Colima behind it, and a real one would
+    # make this test depend on the developer's machine.
+    monkeypatch.setattr(_shutil, "which", lambda _name: None)
+    monkeypatch.setenv("CAPSEM_STORAGE_REPORT_PATH", str(tmp_path / "docker-storage.jsonl"))
+    return module.command_reclaim(
+        argparse.Namespace(resource=resource, keep=keep, rail="default"),
+        load_policy(),
+    )
+
+
+def test_the_base_image_is_declared_generational_and_keeps_only_the_current_tag() -> None:
+    resource = load_policy()["resources"]["capsem-linux-rust-base"]
+
+    assert resource["kind"] == "image"
+    assert resource["retention"] == "generational"
+    assert resource["docker_name"] == "capsem-linux-rust-base", (
+        "a repository, not a tag: the tag is minted per lockfile digest"
+    )
+    # Zero rather than one. Deleting a tag leaves the BuildKit layer cache
+    # untouched, and that cache is what makes a rebuild fast -- re-tagging a
+    # generation whose layers are still cached is sub-second and needs no
+    # network. Raising this to 1 costs a permanent ~25 GiB against a 40 GiB
+    # floor to shorten a rebuild that is already short.
+    assert resource["keep_previous"] == 0
+
+
+def test_a_superseded_base_tag_is_removed_while_the_current_one_survives(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """The whole point: no run can want a tag the lockfiles no longer resolve to."""
+    module = load_policy_module()
+    repository = "capsem-linux-rust-base"
+    current = f"{repository}:03ebe122079926b2"
+    daemon = _FakeDockerDaemon(
+        module,
+        {
+            f"{repository}:b4ebbb254e6ef534": ("2026-07-02T09:00:00Z", 25_400_000_000),
+            f"{repository}:40c7d9f3e85f1091": ("2026-08-01T09:00:00Z", 13_700_000_000),
+            current: ("2026-08-05T09:00:00Z", 25_400_000_000),
+        },
+    )
+
+    status = _reclaim(module, daemon, monkeypatch, tmp_path, keep=current, resource=repository)
+
+    assert status == 0
+    assert daemon.removed == [
+        f"{repository}:40c7d9f3e85f1091",
+        f"{repository}:b4ebbb254e6ef534",
+    ], "the superseded generations were not both retired"
+    assert current in daemon.tags, "the tag the lane is about to run was deleted"
+
+
+def test_reclaim_refuses_when_the_tag_it_was_told_to_keep_is_absent(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Deleting every generation is the one outcome that is never right.
+
+    A missing keep-tag means something removed it between the build and the
+    reclaim -- most likely a second worktree. Proceeding would retire the
+    generation that process is about to run.
+    """
+    module = load_policy_module()
+    repository = "capsem-linux-rust-base"
+    daemon = _FakeDockerDaemon(
+        module, {f"{repository}:b4ebbb254e6ef534": ("2026-07-02T09:00:00Z", 25_400_000_000)}
+    )
+
+    status = _reclaim(
+        module,
+        daemon,
+        monkeypatch,
+        tmp_path,
+        keep=f"{repository}:03ebe122079926b2",
+        resource=repository,
+    )
+
+    assert status != 0
+    assert daemon.removed == [], "a reclaim that could not find its anchor deleted anyway"
+
+
+def test_generations_are_retired_oldest_first_so_keep_previous_keeps_the_newest() -> None:
+    module = load_policy_module()
+    generations = [
+        {"ref": "repo:oldest", "created": "2026-06-01T00:00:00Z"},
+        {"ref": "repo:current", "created": "2026-08-05T00:00:00Z"},
+        {"ref": "repo:newest-superseded", "created": "2026-08-04T00:00:00Z"},
+    ]
+
+    retained, removable = module.superseded_generations(
+        generations, keep="repo:current", keep_previous=1
+    )
+
+    assert [row["ref"] for row in retained] == ["repo:newest-superseded"]
+    assert [row["ref"] for row in removable] == ["repo:oldest"]
+
+
+def test_warming_the_base_image_is_what_retires_the_superseded_tags() -> None:
+    """The one command that can: it holds the tag every other one is measured against.
+
+    Nothing else may. `test_automatic_docker_gc_never_prunes_tagged_images`
+    forbids the automatic GC from pruning tagged images -- correctly, so a
+    running gate cannot lose the image it is about to use -- which leaves the
+    superseded generations with no collector at all until here.
+    """
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "tests"))
+    from helpers.gate import gate_issued
+
+    from capsem.gate import config as gate_config
+    from capsem.gate.linuxrust import base_repository, base_tag
+
+    config = gate_config.load(ROOT)
+    repository = base_repository(config)
+    issued = gate_issued("warm-linux-rust-base")
+
+    assert f"reclaim --resource {repository} --keep {base_tag(config)}" in " ".join(
+        issued.split()
+    ), f"warm-linux-rust-base does not retire superseded {repository} tags:\n{issued}"
+
+
+def test_the_repository_the_gate_reclaims_is_the_one_the_policy_declares() -> None:
+    """Two files, one name. A drift here deletes nothing and says nothing."""
+    from capsem.gate import config as gate_config
+    from capsem.gate.linuxrust import base_repository
+
+    repository = base_repository(gate_config.load(ROOT))
+    declared = load_policy()["resources"].get(repository)
+
+    assert declared is not None, (
+        f"the gate reclaims {repository!r}, which config/storage-policy.toml "
+        "does not declare -- `reclaim` would refuse and the tags would accumulate"
+    )
+    assert declared["retention"] == "generational"

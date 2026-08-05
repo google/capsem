@@ -43,6 +43,35 @@ minimum_free_gib = 40
 buildkit_keep_gib = 80
 linked_keep_gib = 4
 
+[resources.capsem-linux-rust-base]
+kind = "image"
+# A repository, not a tag -- the only managed resource of which that is true.
+# `base_tag()` keys this image by a blake2b of Cargo.lock, rust-toolchain.toml
+# and frontend/pnpm-lock.yaml, so every bump of any of the three mints a new
+# ~25 GiB tag. Nothing retired the old ones: a single fast-uri security bump
+# left three coexisting on a VM with 54.7 GiB free, which reaches disk-full
+# somewhere in the middle of a two-hour release run rather than at a point
+# where it is cheap.
+docker_name = "capsem-linux-rust-base"
+retention = "generational"
+owner = "linux-rust"
+# Keep only the tag the current lockfiles resolve to. Nothing can want another
+# by construction: the lane derives its tag the same way and refuses to start
+# when it is missing, naming the warm recipe -- the cheapest failure this gate
+# has, and a deliberate one.
+#
+# Zero rather than one, because a spare generation does not buy what it looks
+# like it buys. Removing a tag does not touch the BuildKit layer cache, and
+# that cache -- 80 GiB of it, held for 72h by this same policy -- is what makes
+# a rebuild fast: re-tagging a generation whose layers are still cached is
+# sub-second and needs no network (measured at 0.68s for the 25.4 GiB base). A
+# kept tag only pays once those layers have aged out too, and then it is a full
+# network rebuild either way. So one previous generation costs a permanent
+# ~25 GiB against a 40 GiB free-space floor to shorten a rebuild that is
+# already short. Raise it to 1 if a revert ever costs more than that.
+keep_previous = 0
+reason = "Only the tag the current lockfiles resolve to has a possible consumer."
+
 [resources.capsem-linux-rust-target]
 kind = "volume"
 retention = "working"

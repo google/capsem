@@ -9,6 +9,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `capsem-linux-rust-base` is declared `generational` in
+  `config/storage-policy.toml`, and warming it now retires the tags it
+  supersedes. The image is tagged by a blake2b of `Cargo.lock`,
+  `rust-toolchain.toml` and `frontend/pnpm-lock.yaml`, so every bump of any of
+  the three mints a new ~25 GiB tag -- and nothing retired the old ones. A
+  single `fast-uri` security bump left three coexisting on a VM with 54.7 GiB
+  free; left alone that reaches disk-full in the middle of a two-hour release
+  rather than at a point where it is cheap.
+
+  Not by relaxing the rule that automatic GC never prunes tagged images -- that
+  rule is what stops a running gate losing the image it is about to use.
+  Instead `docker-storage-policy.py reclaim` retires the *superseded* tags of
+  one repository, anchored on a tag the caller names: once
+  `warm-linux-rust-base` holds the tag the current lockfiles resolve to, no run
+  can want another, because the lane derives its tag the same way and refuses
+  to start when it is missing. It runs on the already-present path too, so a
+  machine that is already warm with stale tags beside it is cleared before the
+  next bump adds a fourth, rather than after.
+
+  `keep_previous = 0`: one previous generation is not the cheap revert it looks
+  like. Removing a tag leaves the BuildKit layer cache untouched, and that
+  cache is what makes a rebuild fast -- re-tagging a generation whose layers
+  are still cached is sub-second and needs no network. A kept tag only pays
+  once those layers have aged out too, and then it is a full network rebuild
+  either way.
+
 - `just _warm-linux-rust-base` builds the Linux parity base image, with
   network, before a sealed run needs it. The lane deliberately refuses to build
   it mid-run -- its tag is keyed by `Cargo.lock`, `rust-toolchain.toml` and

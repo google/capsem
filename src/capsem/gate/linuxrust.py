@@ -32,6 +32,7 @@ from .errors import GateError
 from .execution import Step, step
 from .filesystem import make_dir
 from .plan import Plan
+from .storage import Storage
 
 
 def base_tag(config: GateConfig) -> str:
@@ -49,6 +50,17 @@ def base_tag(config: GateConfig) -> str:
             raise GateError(f"lockfile input {name} is missing, so the base image has no identity")
         digest.update(path.read_bytes())
     return settings.base_tag_template.format(digest=digest.hexdigest())
+
+
+def base_repository(config: GateConfig) -> str:
+    """The repository the digest-keyed tags live in.
+
+    Read off the same template the tags are minted from, so the name exists
+    once. `config/storage-policy.toml` declares this repository's retention
+    under exactly this string, and a second spelling would be a second thing
+    to keep in step.
+    """
+    return config.hostimage.base_tag_template.split(":", 1)[0]
 
 
 def require_base(config: GateConfig, docker: Docker) -> str:
@@ -75,10 +87,17 @@ class WarmBase(Action, name="linux-rust-warm-base"):
     a `Cargo.lock` or `pnpm-lock.yaml` bump re-keys the tag, and resolving that
     inside the run would turn a sealed lane into a multi-gigabyte network build
     at minute four. So the refusal names a command, and this is that command.
+
+    It is also where the superseded tags go. Nothing else can retire them:
+    every bump of one of the three lockfiles mints a new ~25 GiB tag, and the
+    automatic GC is forbidden from pruning tagged images -- correctly, so a
+    running gate cannot lose the image it is about to use. Once this holds the
+    current tag, no run can want any other one in the repository, because the
+    lane derives its tag the same way and refuses to start when it is missing.
     """
 
     def render(self) -> str:
-        return "build the Linux parity base image with network"
+        return "build the Linux parity base image with network, retiring superseded tags"
 
     def perform(self, context: Context) -> None:
         config = context.config
@@ -87,13 +106,19 @@ class WarmBase(Action, name="linux-rust-warm-base"):
         tag = base_tag(config)
         if docker.image_exists(tag):
             context.journal.note(f"Linux parity base image {tag} is already present")
-            return
-        docker.build(
-            tag=tag,
-            dockerfile=config.path(settings.base_dockerfile).as_posix(),
-            context=str(config.root),
-            args=[f"BASE={settings.tag}"],
-        )
+        else:
+            docker.build(
+                tag=tag,
+                dockerfile=config.path(settings.base_dockerfile).as_posix(),
+                context=str(config.root),
+                args=[f"BASE={settings.tag}"],
+            )
+        # On the already-present path too, not only after a build. A machine
+        # sitting at the current tag with stale ones beside it is exactly the
+        # state this exists to clear, and reclaiming only after a build would
+        # leave it there until the next bump -- which retires them one image
+        # too late, after the disk has already carried the peak.
+        Storage(context.runner).reclaim(base_repository(config), keep=tag)
 
 
 class RunLane(Action, name="linux-rust-lane"):
