@@ -76,7 +76,7 @@ class HostImageConfig(Strict):
     lane_dockerfile: str
     base_tag_template: str
     lane_tag: str
-    lockfile_inputs: tuple[str, ...]
+    identity_inputs: tuple[str, ...]
     network: str
     container_output_dir: str
     container_output_contents: str

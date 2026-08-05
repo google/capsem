@@ -99,6 +99,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- The Linux parity base image is now keyed by everything that defines it, not
+  by three lockfiles. `warm-linux-rust-base` skips the build whenever the tag
+  exists, so an input missing from the key is an environment change the sealed
+  lane silently never sees -- and two were missing: the Dockerfile, which
+  carries the ONNX Runtime version and every build argument's default, and the
+  mutable `capsem-host-builder:latest` the image is `FROM`. A rebuilt parent
+  left the lane testing against the toolchain, packages and CA bundle of an
+  image that no longer existed under that name. The tag now includes the
+  Dockerfile's bytes and the parent's image id, so the first `just test` after
+  this rebuilds the base image once.
+
 - A private copy is now checked against the checkout it was made from instead
   of assumed faithful. Copying 2500 files takes 2.2 seconds, and an edit
   landing inside that window produced a tree holding some files from before it

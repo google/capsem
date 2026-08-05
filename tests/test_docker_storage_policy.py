@@ -675,18 +675,24 @@ def test_warming_the_base_image_is_what_retires_the_superseded_tags() -> None:
     import sys as _sys
 
     _sys.path.insert(0, str(ROOT / "tests"))
-    from helpers.gate import gate_issued
+    from helpers.gate import RecordingRunner, gate_issued
 
     from capsem.gate import config as gate_config
+    from capsem.gate.docker import Docker
     from capsem.gate.linuxrust import base_repository, base_tag
 
     config = gate_config.load(ROOT)
     repository = base_repository(config)
     issued = gate_issued("warm-linux-rust-base")
 
-    assert f"reclaim --resource {repository} --keep {base_tag(config)}" in " ".join(
-        issued.split()
-    ), f"warm-linux-rust-base does not retire superseded {repository} tags:\n{issued}"
+    # Through the same recorder the run used, because the tag now includes the
+    # id of the mutable parent image and a second source for that answer is a
+    # second tag.
+    expected = base_tag(config, Docker(RecordingRunner(ROOT)))
+
+    assert f"reclaim --resource {repository} --keep {expected}" in " ".join(issued.split()), (
+        f"warm-linux-rust-base does not retire superseded {repository} tags:\n{issued}"
+    )
 
 
 def test_the_repository_the_gate_reclaims_is_the_one_the_policy_declares() -> None:

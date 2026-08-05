@@ -40,6 +40,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 #: would be a `-v` mount these contracts then assert against.
 GIT_COMMON_DIR_PROBE = "--git-common-dir"
 
+#: The other probe whose answer decides what follows. `base_tag` hashes the
+#: current id of `capsem-host-builder:latest` into the Linux parity base
+#: image's identity, because `:latest` is a pointer and a rebuilt parent is a
+#: different image under the same name. Unanswered, the lane refuses before it
+#: issues anything, and every contract about what it issues fails for want of a
+#: docker answer rather than for what the contract is about.
+#:
+#: Canned rather than read from the daemon: a recorder must not need Docker
+#: running, and the id only shifts the digest -- what these contracts assert is
+#: the shape of what gets issued. A test that needs the resulting tag composes
+#: it from the same recorder.
+IMAGE_ID_PROBE = "{{.Id}}"
+RECORDED_IMAGE_ID = "sha256:" + "0" * 64
+
 
 @cache
 def _git_common_dir(root: Path) -> str:
@@ -90,6 +104,8 @@ class RecordingRunner(Runner):
         else:
             if GIT_COMMON_DIR_PROBE in rendered:
                 stdout = _git_common_dir(self.root)
+            elif IMAGE_ID_PROBE in rendered:
+                stdout = RECORDED_IMAGE_ID
         return subprocess.CompletedProcess(
             args=list(command.argv), returncode=status, stdout=stdout, stderr=""
         )

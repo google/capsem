@@ -46,8 +46,9 @@ linked_keep_gib = 4
 [resources.capsem-linux-rust-base]
 kind = "image"
 # A repository, not a tag -- the only managed resource of which that is true.
-# `base_tag()` keys this image by a blake2b of Cargo.lock, rust-toolchain.toml
-# and frontend/pnpm-lock.yaml, so every bump of any of the three mints a new
+# `base_tag()` keys this image by a blake2b of everything that defines it --
+# the lockfiles in `[hostimage] identity_inputs`, its Dockerfile, and the
+# current id of the parent image -- so every change to any of them mints a new
 # ~25 GiB tag. Nothing retired the old ones: a single fast-uri security bump
 # left three coexisting on a VM with 54.7 GiB free, which reaches disk-full
 # somewhere in the middle of a two-hour release run rather than at a point

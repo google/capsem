@@ -150,6 +150,21 @@ class Docker:
     def image_exists(self, tag: str) -> bool:
         return self._runner.succeeds(["docker", "image", "inspect", tag])
 
+    def image_id(self, tag: str) -> str:
+        """The exact image a mutable tag currently names.
+
+        `:latest` is a pointer, so "the same tag" is a different image after
+        every rebuild. Anything that keys a cache off a parent image has to key
+        it off this, or it reuses work built against an image that no longer
+        exists under that name.
+        """
+        found = self._runner.capture(
+            ["docker", "image", "inspect", "--format", "{{.Id}}", tag]
+        ).strip()
+        if not found:
+            raise GateError(f"docker has no image tagged {tag}, so nothing can be keyed by it")
+        return found
+
     # -- extraction --------------------------------------------------------
 
     def create(

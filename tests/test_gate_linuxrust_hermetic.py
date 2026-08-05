@@ -9,7 +9,7 @@ because `rust-coverage` was churning hardlinks in the tree it was reading.
 
 Copying the source into an image removes all four at once. There is no mount
 to race over, no volume to inherit, and the dependencies live in a base image
-keyed by the lockfiles that determine them.
+keyed by everything that defines it.
 """
 
 from __future__ import annotations
@@ -49,20 +49,85 @@ def test_the_lane_runs_with_no_network() -> None:
         assert "--network none" in line, f"the lane can still reach the network: {line}"
 
 
-def test_the_base_image_is_keyed_by_the_lockfiles() -> None:
-    """A dependency change must produce a different tag, or a stale base image
-    silently qualifies the wrong dependency set."""
+PARENT = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+
+
+def _staged(tmp_path: Path):
+    """A checkout holding only what the base image's identity is made of.
+
+    Small enough to mutate file by file, and real enough that `base_tag` reads
+    it exactly as it reads the checkout.
+    """
     from capsem.gate import config as gate_config
-    from capsem.gate import linuxrust
 
     config = gate_config.load(PROJECT_ROOT)
-    first = linuxrust.base_tag(config)
-    assert ":" in first, first
+    for name in _identity_files(config):
+        source, target = config.path(name), tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+    return config.model_copy(update={"root": tmp_path})
 
-    # The digest covers the files that determine the dependencies.
-    inputs = [config.path(name) for name in config.hostimage.lockfile_inputs]
-    assert inputs, "no lockfile inputs are configured"
-    assert all(path.is_file() for path in inputs), [str(p) for p in inputs if not p.is_file()]
+
+def _identity_files(config) -> tuple[str, ...]:
+    return (config.hostimage.base_dockerfile, *config.hostimage.identity_inputs)
+
+
+def _docker(root: Path, parent: str):
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate.docker import Docker
+
+    return Docker(RecordingRunner(root, replies={"{{.Id}}": parent}))
+
+
+def test_every_input_that_defines_the_base_image_changes_its_tag(tmp_path: Path) -> None:
+    """`WarmBase` skips the build whenever the tag already exists, so anything
+    missing from the key is an environment change the sealed lane never sees.
+
+    The old version of this test only checked the configured lockfiles were
+    present on disk, which is true of an incomplete key as well as a complete
+    one. This mutates each defining input in turn and requires the tag to move
+    -- including the two that were missing: the Dockerfile, which carries the
+    ONNX Runtime version and every build argument's default, and the mutable
+    `capsem-host-builder:latest` the image is `FROM`.
+    """
+    from capsem.gate import linuxrust
+
+    config = _staged(tmp_path)
+    docker = _docker(tmp_path, PARENT)
+    baseline = linuxrust.base_tag(config, docker)
+    assert ":" in baseline, baseline
+
+    for name in _identity_files(config):
+        path = config.path(name)
+        original = path.read_bytes()
+        path.write_bytes(original + b"\n# changed\n")
+        try:
+            assert linuxrust.base_tag(config, docker) != baseline, (
+                f"{name} defines the base image and does not key it, so a "
+                "change to it reuses the image built before it"
+            )
+        finally:
+            path.write_bytes(original)
+
+    assert linuxrust.base_tag(config, docker) == baseline, "the mutations did not restore"
+
+
+def test_rebuilding_the_parent_image_changes_the_tag(tmp_path: Path) -> None:
+    """`capsem-host-builder:latest` is a mutable tag, so the same name is a
+    different image after `just warm` rebuilds it.
+
+    Keyed by name alone, a rebuilt parent leaves the sealed lane testing
+    against the toolchain, system packages and CA bundle of whatever the parent
+    used to be -- the exact class of drift the base image exists to remove.
+    """
+    from capsem.gate import linuxrust
+
+    config = _staged(tmp_path)
+    before = linuxrust.base_tag(config, _docker(tmp_path, PARENT))
+    after = linuxrust.base_tag(config, _docker(tmp_path, PARENT.replace("1", "2")))
+
+    assert before != after
 
 
 def test_the_ownership_steps_are_gone() -> None:

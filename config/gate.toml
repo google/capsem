@@ -849,8 +849,16 @@ base_dockerfile = "docker/Dockerfile.linux-rust-base"
 lane_dockerfile = "docker/Dockerfile.linux-rust"
 base_tag_template = "capsem-linux-rust-base:{digest}"
 lane_tag = "capsem-linux-rust:latest"
-# What decides the dependency set, and therefore the base image's identity.
-lockfile_inputs = ["Cargo.lock", "rust-toolchain.toml", "frontend/pnpm-lock.yaml"]
+# The files that decide what the base image contains, and therefore its
+# identity. `base_dockerfile` is hashed alongside these without being listed
+# again -- it carries the ONNX Runtime version, the build arguments' defaults
+# and every `RUN` -- and so is the current image id of `tag`, because `:latest`
+# is a pointer and a rebuilt parent is a different image under the same name.
+#
+# Not the workspace manifests: `cargo fetch --locked` fetches everything the
+# lock resolves regardless of features, so a manifest edit that leaves
+# `Cargo.lock` alone leaves the sealed lane with every source it needs.
+identity_inputs = ["Cargo.lock", "rust-toolchain.toml", "frontend/pnpm-lock.yaml"]
 # Named here so the lane's refusal and the recipe that answers it cannot drift
 # apart. `test_every_recipe_the_gate_tells_an_operator_to_run_exists` checks
 # this resolves to a real recipe -- the last time a message named one that did

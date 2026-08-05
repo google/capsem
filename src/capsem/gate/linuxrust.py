@@ -12,8 +12,8 @@ commit, and the mount is what raced a host step churning hardlinks in the same
 tree -- a release died here on an intermittent `Permission denied` reading a
 file that was `0644` before and after.
 
-Now: dependencies live in a base image keyed by the lockfiles that determine
-them, the source is copied into a thin image on top, the container runs with
+Now: dependencies live in a base image keyed by everything that defines it, the
+source is copied into a thin image on top, the container runs with
 `--network none`, and the coverage comes back through `docker cp`. Nothing is
 shared, so nothing can be raced, and nothing is inherited, so a cold machine
 and a warm one run the same thing.
@@ -35,20 +35,35 @@ from .plan import Plan
 from .storage import Storage
 
 
-def base_tag(config: GateConfig) -> str:
-    """The base image's identity: its dependency inputs, hashed.
+def base_tag(config: GateConfig, docker: Docker) -> str:
+    """The base image's identity: everything that defines it, hashed.
 
-    Keyed by content rather than by channel or date, so a dependency change
-    cannot reuse a stale image and an unchanged tree cannot be forced to
-    rebuild one.
+    Keyed by content rather than by channel or date, so a change cannot reuse a
+    stale image and an unchanged tree cannot be forced to rebuild one.
+
+    "Everything that defines it" is the load-bearing part, and the first
+    version got it wrong: it hashed the three lockfiles alone. `WarmBase` skips
+    the build whenever the tag already exists, so anything missing from this
+    key is an environment change the sealed lane silently never sees. Two were
+    missing --
+
+      the Dockerfile itself, which carries the ONNX Runtime version, the build
+      arguments' defaults and every `RUN` that shapes the image
+
+      `capsem-host-builder:latest`, which the image is `FROM`. A mutable tag is
+      a different image after each rebuild, so its *identity* is hashed rather
+      than its name -- otherwise a rebuilt parent leaves the lane testing
+      against the toolchain, packages and CA bundle of whatever the parent used
+      to be, which is the drift this base image exists to remove.
     """
     settings = config.hostimage
     digest = hashlib.blake2b(digest_size=8)
-    for name in settings.lockfile_inputs:
+    for name in (settings.base_dockerfile, *settings.identity_inputs):
         path = config.path(name)
         if not path.is_file():
-            raise GateError(f"lockfile input {name} is missing, so the base image has no identity")
+            raise GateError(f"{name} is missing, so the base image has no identity")
         digest.update(path.read_bytes())
+    digest.update(docker.image_id(settings.tag).encode())
     return settings.base_tag_template.format(digest=digest.hexdigest())
 
 
@@ -70,7 +85,7 @@ def require_base(config: GateConfig, docker: Docker) -> str:
     five-minute fetch into a forty-minute surprise at minute four, with
     network, inside a lane that is supposed to have none.
     """
-    tag = base_tag(config)
+    tag = base_tag(config, docker)
     if not docker.image_exists(tag):
         raise GateError(
             f"no Linux parity base image for {tag}. Its dependencies changed; "
@@ -89,8 +104,8 @@ class WarmBase(Action, name="linux-rust-warm-base"):
     at minute four. So the refusal names a command, and this is that command.
 
     It is also where the superseded tags go. Nothing else can retire them:
-    every bump of one of the three lockfiles mints a new ~25 GiB tag, and the
-    automatic GC is forbidden from pruning tagged images -- correctly, so a
+    every change to one of the image's defining inputs mints a new ~25 GiB tag,
+    and the automatic GC is forbidden from pruning tagged images -- so a
     running gate cannot lose the image it is about to use. Once this holds the
     current tag, no run can want any other one in the repository, because the
     lane derives its tag the same way and refuses to start when it is missing.
@@ -103,7 +118,7 @@ class WarmBase(Action, name="linux-rust-warm-base"):
         config = context.config
         settings = config.hostimage
         docker = Docker(context.runner)
-        tag = base_tag(config)
+        tag = base_tag(config, docker)
         if docker.image_exists(tag):
             context.journal.note(f"Linux parity base image {tag} is already present")
         else:
