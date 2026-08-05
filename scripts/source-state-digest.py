@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import stat
 import subprocess
@@ -45,4 +46,15 @@ def source_state_digest(root: Path = ROOT) -> str:
 
 
 if __name__ == "__main__":
-    print(source_state_digest())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=ROOT,
+        help=(
+            "the tree to hash; defaults to the checkout this script lives in. "
+            "A run working from a private copy has to be able to hash the "
+            "checkout it was copied from, which is a different tree."
+        ),
+    )
+    print(source_state_digest(parser.parse_args().root.resolve()))

@@ -99,6 +99,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- A private copy is now checked against the checkout it was made from instead
+  of assumed faithful. Copying 2500 files takes 2.2 seconds, and an edit
+  landing inside that window produced a tree holding some files from before it
+  and some from after -- a combination that existed at no instant in the
+  checkout, and which then became the frozen subject of the whole run and
+  passed `source.verify` an hour later. Both trees are hashed with the same
+  script `source.record` uses, and a mismatch is refused with the checkout
+  named. Resume gets the same check, where it also proves the pass that removes
+  files the source no longer has actually ran.
+
+- `source.verify` now compares the originating checkout's *digest*, not only
+  its `HEAD`. The gate deliberately supports uncommitted work, so an ordinary
+  save during a forty-minute run changes the tree being released without moving
+  `HEAD` at all -- and against a private copy every other comparison is frozen
+  by construction, so nothing saw it. `scripts/source-state-digest.py` takes
+  `--root` for this: a run inside a copy has to be able to hash the tree it was
+  copied from.
+
 - A failed run's prefix is now reclaimed by the next one. Keeping it for
   `--prefix` was deliberate, but nothing ever removed it: `[disk] reclaimable`
   only accepts paths inside the checkout, so `gc` never reached `~/.cg`. One

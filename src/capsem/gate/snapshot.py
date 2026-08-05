@@ -16,6 +16,14 @@ holds the signing keys; `.git` is not a file at all. Both are declared in
 key during a release rather than here.
 
 And a linked worktree cannot be copied at all -- see `_require_own_repository`.
+
+Copying takes time, so the copy is checked rather than assumed: `digest`
+measures both trees the way `source.record` does, and a copy that does not
+match the checkout it came from is refused. Without that, an edit landing
+during the 2.2 seconds produces a tree holding some files from before it and
+some from after -- a combination that never existed at any instant in the
+checkout, and which then becomes the stable subject the run records and
+`source.verify` cheerfully re-asserts an hour later.
 """
 
 from __future__ import annotations
@@ -99,6 +107,53 @@ def _copy_files(source: Path, target: Path, relatives: list[Path]) -> None:
         destination.symlink_to(os.readlink(source / relative))
 
 
+def digest(tree: Path, config: GateConfig) -> str:
+    """Hash a tree the way `source.record` hashes the one under test.
+
+    Through the checked-in script rather than a second implementation here.
+    Two ways to hash a tree is two answers to "did it change", and the point of
+    this measurement is that it is the *same* question `source.verify` asks an
+    hour later -- a copy that satisfies a private definition and fails the
+    shared one has proved nothing.
+
+    Always the script belonging to the tree this process is running in, aimed
+    at whichever tree is being asked about, so both answers come from one
+    implementation and one environment.
+    """
+    return subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            str(config.path(config.candidate.source_digest_script)),
+            "--root",
+            str(tree),
+        ],
+        cwd=config.root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _require_faithful(source: Path, target: Path, config: GateConfig) -> None:
+    """The copy has to be the checkout, not a blend of two of its moments.
+
+    Measured after the copy in both trees rather than before and after in the
+    source alone, because that is the property actually wanted: not "the source
+    held still" but "this copy is that source". An edit that lands and is
+    reverted during the window changes neither, and rightly so.
+    """
+    if digest(target, config) != digest(source, config):
+        raise GateError(
+            f"{source} changed while its private copy was being made, so "
+            f"{target} holds files from more than one state of it. Nothing "
+            "later can detect this -- the copy is frozen, so the gate would "
+            "spend the whole run qualifying a tree that never existed. Run it "
+            "again with the checkout left alone."
+        )
+
+
 def _require_own_repository(source: Path) -> None:
     """Refuse a linked worktree, whose `.git` is a pointer rather than a repo.
 
@@ -148,6 +203,7 @@ def populate(source: Path, target: Path, config: GateConfig) -> None:
     target.mkdir(parents=True, exist_ok=True)
     _copy_files(source, target, _subject(source))
     _copy_carried(source, target, config)
+    _require_faithful(source, target, config)
 
 
 def refresh(source: Path, target: Path, config: GateConfig) -> None:
@@ -173,10 +229,13 @@ def refresh(source: Path, target: Path, config: GateConfig) -> None:
     keep |= {target / relative for relative in config.prefix.carried}
     protected = keep | {target / export for export in config.prefix.exports}
     for existing in _tracked_copies(target, config):
-        if existing not in keep and not any(
-            existing.is_relative_to(guard) for guard in protected
-        ):
+        if existing not in keep and not any(existing.is_relative_to(guard) for guard in protected):
             existing.unlink(missing_ok=True)
+
+    # The same check as a fresh copy, and a sharper one here: a refresh has to
+    # remove what the source no longer names, and a deletion pass that stops
+    # working leaves a resumed run compiling a tree the operator does not have.
+    _require_faithful(source, target, config)
 
 
 def _tracked_copies(target: Path, config: GateConfig) -> list[Path]:

@@ -44,40 +44,48 @@ def gate_source() -> Path:
     return Path(_module.__file__).resolve().parent
 
 
-def _source_head(context: Context) -> str:
-    """`HEAD` of the checkout this run was copied from.
+def _digest(context: Context, tree: Path | None = None) -> str:
+    """The source digest of a tree; this run's own when none is named."""
+    argv = ["uv", "run", "python", str(context.path(context.config.candidate.source_digest_script))]
+    if tree is not None:
+        argv += ["--root", str(tree)]
+    return context.runner.capture(argv)
 
-    Identical to the run's own `HEAD` when there is no copy, which is what
-    makes this safe to record unconditionally. Under a prefix they are two
-    different repositories, and only this one can move: the private copy is
-    frozen the moment it is made, so digesting it proves the gate did not edit
-    its own tree and proves *nothing* about the branch being qualified.
 
-    That is the vacuum this closes. Without it, a commit landing on `main`
-    mid-run leaves the prefix's `HEAD` unchanged, `require-source-unchanged`
-    passes, and the gate publishes a qualification for a revision it never
-    tested -- a release guard lost with no test going red.
+def _measure(context: Context) -> dict[str, str]:
+    """The state of both trees this run is about.
+
+    Under a prefix there are two: the copy the gate reads, and the checkout it
+    was copied from. Only the second can move -- the copy is frozen the moment
+    it is made -- so measuring the copy alone proves the gate did not edit its
+    own tree and proves *nothing* about the branch being qualified. Without the
+    source half, a commit landing on `main` mid-run leaves every comparison
+    passing and the gate publishes a qualification for a revision it never
+    tested.
+
+    Both granularities on both trees, because a checkout can be edited without
+    `HEAD` moving at all. That is not an exotic case: the gate deliberately
+    supports uncommitted work, so an ordinary save during a forty-minute run
+    changes the digest and nothing else.
+
+    Absent a prefix the two trees are one, so each pair is measured once and
+    reported twice rather than hashing 2500 files a second time to reach the
+    same answer.
     """
     from . import prefix
 
     source = prefix.source_checkout(context.config)
-    if source is None:
-        return context.runner.capture(["git", "rev-parse", "HEAD"])
-    return context.runner.capture(["git", "-C", str(source), "rev-parse", "HEAD"])
-
-
-def _measure(context: Context) -> dict[str, str]:
+    head = context.runner.capture(["git", "rev-parse", "HEAD"])
+    digest = _digest(context)
     return {
-        "head": context.runner.capture(["git", "rev-parse", "HEAD"]),
-        "source_head": _source_head(context),
-        "digest": context.runner.capture(
-            [
-                "uv",
-                "run",
-                "python",
-                str(context.path(context.config.candidate.source_digest_script)),
-            ]
+        "head": head,
+        "source_head": (
+            head
+            if source is None
+            else context.runner.capture(["git", "-C", str(source), "rev-parse", "HEAD"])
         ),
+        "digest": digest,
+        "source_digest": digest if source is None else _digest(context, source),
         "gate_source": str(gate_source()),
     }
 
@@ -152,17 +160,27 @@ class RequireSourceUnchanged(Action, name="require-source-unchanged"):
                 f"source HEAD changed while the gate was running: "
                 f"{before['head']} -> {after['head']}"
             )
-        # The half a private copy would otherwise swallow. Unprefixed this is
-        # the same comparison again and costs nothing; prefixed it is the only
-        # one that can still see the branch under qualification move.
+        # The half a private copy would otherwise swallow. Unprefixed these are
+        # the same comparisons again and cost nothing; prefixed they are the
+        # only ones that can still see the tree under qualification move.
         if before.get("source_head") != after.get("source_head"):
             raise GateError(
                 "the checkout this run was copied from moved while the gate was "
                 f"running: {before.get('source_head')} -> {after.get('source_head')}"
             )
+        # This one first, and the source's after it. Unprefixed the two are the
+        # same measurement, and whichever is checked first writes the message
+        # an operator reads -- "the gate changed the source working tree" is
+        # the accurate one when there is no copy to have been edited from
+        # outside.
         if before["digest"] != after["digest"]:
             context.journal.note(f"before={before['digest']} after={after['digest']}")
             context.runner.run(["git", "status", "--short"], check=False)
             raise GateError("the gate changed the source working tree")
+        if before.get("source_digest") != after.get("source_digest"):
+            raise GateError(
+                "the checkout this run was copied from was edited while the gate "
+                f"was running: {before.get('source_digest')} -> {after.get('source_digest')}"
+            )
 
         context.journal.note(f"verified source state {after['digest']}")

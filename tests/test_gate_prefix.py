@@ -251,6 +251,70 @@ def test_the_prefix_reports_the_same_revision_as_its_source(source: Path) -> Non
     assert _git(target, "rev-parse", "HEAD") == _git(source, "rev-parse", "HEAD")
 
 
+def test_the_copy_is_the_source_at_one_instant(source: Path) -> None:
+    """A faithful copy digests identically to the tree it came from.
+
+    Not a restatement of the tests above. Those check named paths; this checks
+    the *set*, its contents and its modes all at once, using the same measure
+    `source.record` writes down and `source.verify` re-asserts an hour later.
+    An edit landing during the copy would otherwise produce a mixed tree --
+    some files from before it and some from after -- which becomes the stable
+    subject of the whole run and passes `source.verify` happily, even though
+    that combination of bytes never existed at any instant in the checkout.
+    """
+    from capsem.gate import snapshot
+
+    target = source.parent / "prefix"
+    snapshot.populate(source, target, _config())
+
+    config = _config()
+    assert snapshot.digest(target, config) == snapshot.digest(source, config)
+
+
+def test_a_copy_taken_while_the_source_moved_is_refused(source: Path, monkeypatch) -> None:
+    """The race, injected at a real seam rather than described.
+
+    The window is small -- 2.2s for this repository -- and it is not zero, so
+    the copy has to be checked rather than assumed. Refused loudly: retrying
+    costs seconds, and a torn subject costs the hour it takes to qualify it.
+    """
+    from capsem.gate import snapshot
+    from capsem.gate.errors import GateError
+
+    faithful = snapshot._copy_files
+
+    def edit_the_source_midway(origin: Path, into: Path, relatives: list[Path]) -> None:
+        faithful(origin, into, relatives)
+        (origin / "tracked.txt").write_text("landed during the copy\n", encoding="utf-8")
+
+    monkeypatch.setattr(snapshot, "_copy_files", edit_the_source_midway)
+
+    with pytest.raises(GateError, match="while its private copy was being made"):
+        snapshot.populate(source, source.parent / "prefix", _config())
+
+
+def test_a_refresh_that_did_not_converge_is_refused(source: Path, monkeypatch) -> None:
+    """Resume gets the same check, for a sharper reason.
+
+    `refresh` has more ways to be wrong than `populate`: it overwrites, and it
+    has to *remove* what the source no longer names. A file it failed to delete
+    leaves a resumed run compiling a tree the operator no longer has, which is
+    exactly the defect the deletion pass was added for -- and nothing but this
+    would notice the pass regressing.
+    """
+    from capsem.gate import snapshot
+    from capsem.gate.errors import GateError
+
+    target = source.parent / "prefix"
+    snapshot.populate(source, target, _config())
+
+    (source / "untracked.txt").unlink()
+    monkeypatch.setattr(snapshot, "_tracked_copies", lambda *_: [])
+
+    with pytest.raises(GateError, match="while its private copy was being made"):
+        snapshot.refresh(source, target, _config())
+
+
 def test_the_copy_is_independent_of_the_tree_it_came_from(source: Path) -> None:
     """The whole point, as an assertion.
 
@@ -385,6 +449,38 @@ def test_the_release_guard_still_sees_the_real_branch_move(
 
     context = SimpleNamespace(config=config, runner=None, journal=None)
     with pytest.raises(GateError, match="copied from moved"):
+        RequireSourceUnchanged().perform(context)  # ty: ignore[invalid-argument-type]
+
+
+def test_the_release_guard_still_sees_the_real_tree_edited(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`HEAD` is not the whole subject, and dirty-tree qualification is why.
+
+    The gate deliberately supports uncommitted work, so a checkout can be
+    edited without `HEAD` moving at all -- which is the ordinary case, not an
+    exotic one. Against a prefix, the run's own digest is frozen and the
+    source's `HEAD` is unchanged, so both other comparisons pass while the tree
+    being released is edited underneath. Only the originating checkout's digest
+    can see it.
+    """
+    import json
+
+    from capsem.gate import config as gate_config
+    from capsem.gate.errors import GateError
+    from capsem.gate.sourcestate import RequireSourceUnchanged
+
+    config = gate_config.load(PROJECT_ROOT)
+    record = tmp_path / "source-state.json"
+    frozen = {"head": "frozen", "source_head": "still", "digest": "same", "gate_source": "x"}
+    record.write_text(json.dumps({**frozen, "source_digest": "before"}), encoding="utf-8")
+
+    measured = {**frozen, "source_digest": "after"}
+    monkeypatch.setattr("capsem.gate.sourcestate._measure", lambda context: measured)
+    monkeypatch.setattr("capsem.gate.sourcestate._record_file", lambda context: record)
+
+    context = SimpleNamespace(config=config, runner=None, journal=None)
+    with pytest.raises(GateError, match="copied from was edited"):
         RequireSourceUnchanged().perform(context)  # ty: ignore[invalid-argument-type]
 
 
