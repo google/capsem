@@ -105,6 +105,13 @@ def _dispatched_subcommands(config: gate_config.GateConfig, runner: Runner) -> l
         marker = "capsem-gate "
         if marker not in line:
             continue
+        # A comment calls nothing. Naming a subcommand in prose -- "`capsem-gate
+        # linux-rust` names this recipe when the image is missing" -- was read
+        # as a dispatch of ``linux-rust` ``, trailing backtick included, and
+        # reported as an unknown subcommand. The check is about what the
+        # justfile *runs*.
+        if line.lstrip().startswith("#"):
+            continue
         called = line.split(marker, 1)[1].split()
         if called and called[0] not in known:
             findings.append(

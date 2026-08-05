@@ -24,6 +24,7 @@ from __future__ import annotations
 import hashlib
 
 from .actions import Action
+from .command import GateCommand
 from .config import GateConfig
 from .context import Context
 from .docker import Docker
@@ -61,10 +62,38 @@ def require_base(config: GateConfig, docker: Docker) -> str:
     if not docker.image_exists(tag):
         raise GateError(
             f"no Linux parity base image for {tag}. Its dependencies changed; "
-            f"run `just warm` to build it with network before the gate runs "
-            "without."
+            f"run `just {config.hostimage.warm_recipe}` to build it with "
+            "network before the gate runs without."
         )
     return tag
+
+
+class WarmBase(Action, name="linux-rust-warm-base"):
+    """Build the base image, with network, before a gate that has none.
+
+    Separate from the lane on purpose. The lane refuses to build this itself --
+    a `Cargo.lock` or `pnpm-lock.yaml` bump re-keys the tag, and resolving that
+    inside the run would turn a sealed lane into a multi-gigabyte network build
+    at minute four. So the refusal names a command, and this is that command.
+    """
+
+    def render(self) -> str:
+        return "build the Linux parity base image with network"
+
+    def perform(self, context: Context) -> None:
+        config = context.config
+        settings = config.hostimage
+        docker = Docker(context.runner)
+        tag = base_tag(config)
+        if docker.image_exists(tag):
+            context.journal.note(f"Linux parity base image {tag} is already present")
+            return
+        docker.build(
+            tag=tag,
+            dockerfile=config.path(settings.base_dockerfile).as_posix(),
+            context=str(config.root),
+            args=[f"BASE={settings.tag}"],
+        )
 
 
 class RunLane(Action, name="linux-rust-lane"):
@@ -122,3 +151,27 @@ def lane(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Ste
         step("linux-rust", RunLane(), contends=(config.exclusive("docker_daemon"),)),
         after=after,
     )
+
+
+class WarmCommand(
+    GateCommand,
+    name="warm-linux-rust-base",
+    help="build the Linux parity base image, with network, before a sealed run",
+):
+    exclusive = True
+
+    def plan(self) -> Plan:
+        from . import hostimage
+
+        plan = Plan(self.name)
+        # After the builder image, which this one is `FROM`.
+        built = plan.shared(hostimage.image(self._config))
+        plan.add(
+            step(
+                "warm-base",
+                WarmBase(),
+                contends=(self._config.exclusive("docker_daemon"),),
+            ),
+            after=(built,),
+        )
+        return plan

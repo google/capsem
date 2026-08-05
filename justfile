@@ -194,6 +194,16 @@ _gate-linux-rust:
     uv run capsem-gate linux-rust
 
 
+# Build the Linux parity base image, with network, before a sealed run needs it.
+# The lane refuses to build this itself: its tag is keyed by Cargo.lock,
+# rust-toolchain.toml and frontend/pnpm-lock.yaml, so a dependency bump re-keys
+# it, and resolving that inside the run would turn a `--network none` lane into
+# a multi-gigabyte network build at minute four. `capsem-gate linux-rust` names
+# this recipe when the image is missing.
+_warm-linux-rust-base:
+    uv run capsem-gate warm-linux-rust-base
+
+
 # Run the production release SBOM generator over the exact current-version
 # packages built by the canonical gate. Mac runs cover one .pkg plus both .deb
 # architectures; native Linux qualification covers both .deb architectures.

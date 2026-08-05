@@ -239,3 +239,31 @@ def test_lint_warnings_fail_the_gate(tmp_path: Path) -> None:
     ]
     assert checks
     assert all("--error-on-warning" in line for line in checks)
+
+
+def test_a_subcommand_named_in_a_comment_is_not_a_dispatch(tmp_path: Path) -> None:
+    """Prose about a command is not a call to it.
+
+    The check reads every line containing `capsem-gate `, and a justfile
+    comment explaining which command names a recipe --
+
+        # `capsem-gate linux-rust` names this recipe when the image is missing.
+
+    -- was parsed as a dispatch of ``linux-rust` ``, trailing backtick and all,
+    then reported as an unknown subcommand. Three doctor tests went red on a
+    comment.
+
+    A commented-out dispatch is also not a dispatch, so skipping the line loses
+    nothing the check was protecting.
+    """
+    root = _checkout(tmp_path)
+    justfile = root / "justfile"
+    justfile.write_text(
+        justfile.read_text(encoding="utf-8")
+        + "\n# `capsem-gate not-a-real-subcommand` is only mentioned here.\n"
+        + "#     uv run capsem-gate also-not-real\n",
+        encoding="utf-8",
+    )
+
+    findings = doctor.check(RecordingRunner(root))
+    assert [f for f in findings if "dispatch" in f.check] == [], findings

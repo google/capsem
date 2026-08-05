@@ -78,6 +78,8 @@ class HostImageConfig(Strict):
     container_output_contents: str
     extract_to: str
     lane_container: str
+    #: The recipe the lane's refusal names when the base image is missing.
+    warm_recipe: str
     tag: str
     dockerfile: str
     context: str
