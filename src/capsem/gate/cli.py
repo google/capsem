@@ -91,6 +91,19 @@ def _inspection() -> argparse.ArgumentParser:
         help="print the step graph as a mermaid diagram",
     )
     shared.add_argument(
+        "--prefix",
+        default=None,
+        metavar="PATH",
+        help="work in this existing private checkout instead of making one",
+    )
+    shared.add_argument(
+        "--from",
+        dest="resume_from",
+        default=None,
+        metavar="STEP",
+        help="carry every step before STEP and start there (never in a release)",
+    )
+    shared.add_argument(
         "--timing",
         action="store_true",
         help="print where the time went, by critical path",

@@ -29,6 +29,10 @@ from typing import TYPE_CHECKING
 
 from .harnessschema import RunLogConfig
 from .runlogschema import (
+    CARRIED,
+    FAILED,
+    OK,
+    SKIPPED,
     ActionRun,
     Artifact,
     Exec,
@@ -45,7 +49,6 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from .actions import Action
     from .execution import Step
 
-OK, FAILED, SKIPPED = "ok", "failed", "skipped"
 
 #: Which step the current thread is inside. `step()` runs inside the worker
 #: that owns it and sets this there, and each thread has its own context -- so
@@ -137,6 +140,15 @@ class EventJournal:
         )
 
     # -- boundaries --------------------------------------------------------
+
+    def carried(self, label: str) -> None:
+        """A step a previous run proved, which `--resume` did not repeat.
+
+        Distinct from `ok` on purpose. A resumed run is not a clean proof of
+        the whole graph, and the log is the only place that distinction can
+        survive to whoever reads the result.
+        """
+        self.emit(StepEnd(step=label, status=CARRIED, duration_ms=0.0))
 
     @contextmanager
     def step(self, step: Step):

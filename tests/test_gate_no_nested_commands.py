@@ -45,8 +45,7 @@ def _recipes() -> dict[str, str]:
     recipes = json.loads(dump.stdout)["recipes"]
     return {
         name: " ".join(
-            "".join(part for part in line if isinstance(part, str))
-            for line in body["body"]
+            "".join(part for part in line if isinstance(part, str)) for line in body["body"]
         )
         for name, body in recipes.items()
     }
@@ -219,8 +218,7 @@ def test_every_gate_subcommand_a_recipe_dispatches_to_is_registered() -> None:
     unknown = sorted(
         f"{recipe} -> capsem-gate {subcommand}"
         for recipe in RECIPES
-        if (subcommand := _subcommand_of(recipe))
-        and subcommand not in GateCommand.registry
+        if (subcommand := _subcommand_of(recipe)) and subcommand not in GateCommand.registry
     )
 
     assert not unknown, "these dispatch nowhere:\n  " + "\n  ".join(unknown)

@@ -117,6 +117,20 @@ Qualification = Annotated[
 _QUALIFICATION = TypeAdapter(Qualification)
 
 
+def is_release(
+    state: LocalQualification | BinaryQualification | ProfileQualification | None,
+) -> bool:
+    """Whether this run is proving a release rather than a checkout.
+
+    Here rather than at the call site, because the interesting distinction is
+    not "did a command parse a qualification" -- `candidate` always does, and a
+    plain `just test` parses `LOCAL`. It is whether the artifacts came from a
+    manifest, which is what the two release modes mean and what anything
+    offering a shortcut has to refuse.
+    """
+    return state is not None and state.mode is not Mode.LOCAL
+
+
 def from_environment(
     config: GateConfig, environ: Mapping[str, str] | None = None
 ) -> LocalQualification | BinaryQualification | ProfileQualification:

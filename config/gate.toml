@@ -998,6 +998,7 @@ source_contract = [
     "tests/test_gate_docker_boundary.py",
     "tests/test_gate_linuxrust_hermetic.py",
     "tests/test_gate_prefix.py",
+    "tests/test_gate_resume.py",
     "tests/test_gate_git_worktree_mount.py",
     "tests/test_rust_filesystem_chokepoint.py",
     "tests/test_agent_skill_index.py",

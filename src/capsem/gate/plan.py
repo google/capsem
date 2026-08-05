@@ -163,9 +163,9 @@ class Plan:
             ) from None
         return sorter
 
-    def describe(self) -> str:
+    def describe(self, *, carried: frozenset[str] = frozenset()) -> str:
         """The dry run: what would run, in what order, and what it invokes."""
-        return planreport.describe(self)
+        return planreport.describe(self, carried=carried)
 
     def mermaid(self) -> str:
         """The graph, for a bug report or the documentation site."""

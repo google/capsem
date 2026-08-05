@@ -14,8 +14,12 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from .plan import Plan
 
 
-def describe(plan: Plan) -> str:
-    """The dry run: what would run, in what order, and what it invokes."""
+def describe(plan: Plan, *, carried: frozenset[str] = frozenset()) -> str:
+    """The dry run: what would run, in what order, and what it invokes.
+
+    `carried` marks the steps a `--from` run would skip, so `--dry-run --from
+    <step>` answers "what will this actually do" before anything is built.
+    """
     waves = plan.order()
     actions = sum(len(step.actions) for step in plan._steps)
     lines = [
@@ -33,8 +37,19 @@ def describe(plan: Plan) -> str:
             # runs at the same time, and repeating the number says the
             # opposite to anyone skimming.
             marker = f"{position:>3}" if offset == 0 else "   "
+            if step.label in carried:
+                # Named but not expanded: what a carried step *would* invoke is
+                # not what this run does, and printing it invites reading the
+                # dry run as a plan of work.
+                lines.append(f"  {marker}  {step.label}{held}  (carried)")
+                continue
             lines.append(f"  {marker}  {step.label}{held}")
             lines += [f"          {rendering}" for rendering in step.render()]
+    if carried:
+        lines += [
+            "",
+            f"{len(carried)} steps carried from an earlier run, {len(plan._steps) - len(carried)} to run",
+        ]
     lines += ["", "nothing was executed (--dry-run)"]
     return "\n".join(lines)
 

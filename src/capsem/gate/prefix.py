@@ -199,7 +199,9 @@ def source_checkout(config: GateConfig) -> Path | None:
     return Path(value) if value else None
 
 
-def run_from_private_copy(runner, config: GateConfig, arguments: list[str]) -> int:
+def run_from_private_copy(
+    runner, config: GateConfig, arguments: list[str], *, reuse: Path | None = None
+) -> int:
     """Copy the checkout, run the same command inside the copy, bring back what
     it produced, and give the copy back.
 
@@ -213,18 +215,31 @@ def run_from_private_copy(runner, config: GateConfig, arguments: list[str]) -> i
     A run that failed is precisely when its run log is worth having, and
     without this the evidence dies with the copy that produced it.
     """
-    path = allocate(config, secrets.token_hex(config.prefix.name_length))
-    try:
+    path = reuse or allocate(config, secrets.token_hex(config.prefix.name_length))
+    if reuse is None:
         populate(config.root, path, config)
-        return runner.run(
-            ["uv", "run", "capsem-gate", *arguments],
-            cwd=path,
-            env={config.environment.source_checkout: str(config.root)},
-            check=False,
-        )
-    finally:
-        export(path, config.root, config)
+    else:
+        # Refreshed, not rebuilt. The source has to become what the checkout
+        # says now -- that is the point of resuming after a fix -- while
+        # `target/` and everything else the last run built stays put, which is
+        # what makes the next attempt cheap.
+        _copy_files(config.root, path, _subject(config.root))
+    status = runner.run(
+        ["uv", "run", "capsem-gate", *arguments],
+        cwd=path,
+        env={config.environment.source_checkout: str(config.root)},
+        check=False,
+    )
+    export(path, config.root, config)
+    if status == 0:
         reclaim(config, path)
+    else:
+        # Kept on purpose. Its build output is what a `--prefix ... --from ...`
+        # run reuses, and re-earning it costs the twenty minutes resuming
+        # exists to save. `allocate` never collides -- the name is random --
+        # and `gc` reclaims what accumulates.
+        runner.note(f"prefix kept for resuming: {path}")
+    return status
 
 
 def reclaim(config: GateConfig, path: Path) -> None:

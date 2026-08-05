@@ -18,6 +18,16 @@ from pydantic import Field
 
 from .configschema import Strict
 
+#: What a step's `step.end` may say it did. Here rather than in `journal` or
+#: `planrunner`, which each had their own copy: `journal` cannot import
+#: `planrunner` (it would close journal -> planrunner -> context -> journal),
+#: so the shared vocabulary belongs in the schema they both already depend on.
+#:
+#: `carried` is a step a previous run proved and `--resume` did not repeat. It
+#: is not `ok`, deliberately -- a resumed run must not read back as a clean
+#: proof of the whole graph.
+OK, FAILED, SKIPPED, CARRIED = "ok", "failed", "skipped", "carried"
+
 
 class Payload(Strict):
     """One event's own fields."""

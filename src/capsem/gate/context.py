@@ -118,6 +118,14 @@ class Journal(Protocol):
         for the resource somebody else was holding.
         """
 
+    def carried(self, label: str) -> None:
+        """Record a step a previous run proved, which `--resume` did not repeat.
+
+        Its own event rather than `ok`, because a resumed run is not a clean
+        proof of the whole graph and the log is the only place that survives to
+        whoever reads the result.
+        """
+
     def skipped(self, label: str) -> None:
         """Record a step that never ran because its dependency failed.
 
@@ -181,6 +189,9 @@ class NullJournal:
     ) -> None:
         """Discarded."""
 
+    def carried(self, label: str) -> None:
+        """Discarded."""
+
     def skipped(self, label: str) -> None:
         """Discarded."""
 
@@ -224,6 +235,15 @@ class Context:
     observation reach the *whole* plan: `Hash` fails on an artifact no build
     has produced, so observation used to stop at the first step that claimed
     an output and every later step went unseen.
+    """
+
+    carried: frozenset[str] = frozenset()
+    """Steps a previous run already proved, which this one may skip.
+
+    Only ever populated by `--resume`, and only for a run that is not
+    qualifying a release. A carried step is recorded as `carried`, never `ok`:
+    the evidence has to say which steps this process ran and which it took on
+    trust, or a resumed run reads back as a clean one.
     """
 
     env: Mapping[str, str] = field(default_factory=dict)

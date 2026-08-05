@@ -223,8 +223,7 @@ def test_only_the_plan_schedules_concurrent_work(module: Path) -> None:
 
     assert not found, (
         f"{module.name} schedules its own concurrency; declare the work as "
-        "independent steps in a Plan, and name what they contend for:\n  "
-        + "\n  ".join(found)
+        "independent steps in a Plan, and name what they contend for:\n  " + "\n  ".join(found)
     )
 
 

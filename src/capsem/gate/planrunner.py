@@ -41,7 +41,7 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
 #: What a step's outcome was. `skipped` is deliberately distinct from `failed`:
 #: a step that never ran because its dependency broke did not fail, and a
 #: report that conflates the two hides the blast radius of the real failure.
-OK, FAILED, SKIPPED = "ok", "failed", "skipped"
+from .runlogschema import CARRIED, FAILED, OK, SKIPPED
 
 #: How long an interrupted run waits for its workers before saying who is still
 #: going. Long enough for a primitive to reach its next boundary, short enough
@@ -102,6 +102,14 @@ def execute(plan: Plan, context: Context, *, max_parallel: int | None = None) ->
             while sorter.is_active():
                 for label in sorter.get_ready():
                     step = plan.step_named(label)
+                    if label in context.carried:
+                        # Proved by the run being resumed, and its outputs are
+                        # still in the prefix this one reuses. Not `broken`:
+                        # everything downstream may proceed.
+                        outcomes[label] = Outcome(label, CARRIED)
+                        context.journal.carried(label)
+                        sorter.done(label)
+                        continue
                     if plan.after_of(label) & broken:
                         # Its inputs were never produced. Running it would
                         # report a second failure that is really the first one.

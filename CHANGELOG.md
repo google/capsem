@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--prefix <tree> --from <step>` continues a failed gate instead of replaying
+  it. The tree is a private checkout an earlier run kept, so its `target/` is
+  still warm; the step is where to start, and everything the graph puts before
+  it is carried.
+
+      capsem-gate candidate --prefix ~/.cg/a025fce7 --from artifacts.build-chain
+
+  What gets carried comes from the graph, not from a previous run's log, so the
+  answer is the same every time and checkable before anything executes --
+  `--dry-run --from <step>` prints which steps would be skipped and how many
+  would run. A misspelled step name costs a suggestion rather than twenty
+  minutes and a held machine lock.
+
+  A failed run now keeps its prefix for exactly this reason, and says where it
+  is; a successful one still reclaims it. This closes a cost the private
+  checkout introduced: a fresh copy per run starts with no `target/`, so every
+  replay was cold, and six consecutive `just test` runs were spent re-proving
+  the same twenty minutes to reach a failure one step further on.
+
+  **It is an iteration tool and never a qualification.** `AGENTS.md` and
+  `release-process` forbid a reduced gate, a skip flag and an environment
+  bypass on the release path, and a resumed run is all three if it is allowed
+  to stand in for a clean one. So it is refused outright when the run is
+  proving a release, and a carried step is recorded as `carried` rather than
+  `ok` -- the run log has to say which steps this process actually ran, or a
+  resumed run reads back as a complete proof of the whole graph.
+
+
 - `capsem.gate.prefix` builds a private per-run copy of the checkout, so a gate
   reads a tree nobody else has a path to. Every other isolation the gate has is
   a declaration checked against another declaration; this is the grant itself.

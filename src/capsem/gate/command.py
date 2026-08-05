@@ -22,7 +22,7 @@ from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from . import config as gate_config
-from . import prefix
+from . import prefix, resume
 from .context import Context
 from .errors import GateError
 from .funnel import GuardedRunner
@@ -34,6 +34,7 @@ from .planseal import sealed
 from .proc import Runner
 from .qualification import Qualification
 from .qualification import from_environment as qualification_for
+from .qualification import is_release as qualification_is_release
 from .recording import Recorded
 
 
@@ -56,14 +57,10 @@ class GateCommand(Recorded, ABC):
     """Whether this runs from a private copy of the checkout instead of it.
 
     True for anything long enough that someone will edit the tree while it
-    runs, which in practice is every gate proper. Four release runs have died
-    to exactly that, the last after 61 minutes -- and the observer had already
-    named the intruding file 23 minutes before the run noticed, which is what
-    settles that detection is not the fix.
-
-    Declared per command rather than inferred, because the copy is not free:
-    the run starts with no `target/`, so a command too short to be raced pays
-    a cold build to avoid a race it was never going to lose.
+    runs -- see `prefix` for the four release runs that establish it. Declared
+    per command rather than inferred, because the copy is not free: it starts
+    with no `target/`, so a command too short to be raced would pay a cold
+    build to avoid a race it was never going to lose.
     """
 
     uses_qualification: ClassVar[bool] = False
@@ -186,6 +183,15 @@ class GateCommand(Recorded, ABC):
         plan = self._describe()
         plan.validate(self._config)
 
+        # Before the inspection returns, so `--dry-run --from <step>` checks a
+        # step name cheaply. See `resume` for what refuses it on a release.
+        carried, reuse = resume.resolve(
+            plan,
+            self._config,
+            self._args,
+            qualifying=qualification_is_release(self._qualification),
+        )
+
         # Inspection before re-exec. The other way round, `candidate --dry-run`
         # re-execed into a real `just test`: an inert question starting a
         # forty-minute destructive gate.
@@ -193,8 +199,11 @@ class GateCommand(Recorded, ABC):
             print(plan.mermaid())
             return
         if self._args.dry_run:
-            print(plan.describe())
+            print(plan.describe(carried=carried))
             return
+
+        if carried:
+            self._runner.note(f"carrying {len(carried)} steps before {self._args.resume_from}")
 
         # The same deadlock, reached from inside Python rather than through a
         # subprocess. `GuardedRunner` cannot see it: nothing is spawned. A
@@ -209,7 +218,9 @@ class GateCommand(Recorded, ABC):
         # process and reclaimed by it after the child returns, which is what
         # gives the export somewhere to run even when the run failed.
         if self.private_checkout and prefix.source_checkout(self._config) is None:
-            raise SystemExit(prefix.run_from_private_copy(self._runner, self._config, sys.argv[1:]))
+            raise SystemExit(
+                prefix.run_from_private_copy(self._runner, self._config, sys.argv[1:], reuse=reuse)
+            )
 
         # Before any resource, and outside the lock: a re-exec inside the held
         # resources deadlocks, because the child asks for the lock its own
@@ -234,6 +245,7 @@ class GateCommand(Recorded, ABC):
                         journal=log,
                         env=environment_of(acquired),
                         watch=watch,
+                        carried=carried,
                     )
                 )
         # Outside the run log's own context, so `run.end` is on disk before

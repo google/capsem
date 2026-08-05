@@ -30,6 +30,7 @@ from capsem.gate.workspace import Workspace
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
+
 #: `resources()` takes the runner it should build with; these tests ask
 #: *what* is held, so any runner will do.
 def _resource_runner():
@@ -84,16 +85,12 @@ def test_an_ambient_home_cannot_redirect_the_service(monkeypatch) -> None:
     assert "somebody-elses" not in str(service.run_dir)
 
 
-def test_acquiring_the_service_starts_it_and_waits_for_its_socket(
-    tmp_path, monkeypatch
-) -> None:
+def test_acquiring_the_service_starts_it_and_waits_for_its_socket(tmp_path, monkeypatch) -> None:
     """A pidfile says a process exists; the socket says it is listening."""
     runner = RecordingRunner(PROJECT_ROOT)
     workspace = Workspace(CONFIG)
     service = Service(CONFIG, workspace, runner)
-    monkeypatch.setattr(
-        "capsem.gate.service._WaitForSocket.perform", lambda self, context: None
-    )
+    monkeypatch.setattr("capsem.gate.service._WaitForSocket.perform", lambda self, context: None)
     # `acquire` copies the materialized profiles into the workspace, and a
     # `RecordingRunner` only stubs subprocesses -- filesystem actions still
     # run. This test is about starting a daemon and waiting for its socket, so
@@ -146,9 +143,7 @@ def test_the_service_is_released_before_its_run_directory_is_removed(
         "capsem.gate.pidfiles.stop_gate_service",
         lambda directory, settings: order.append("stop service"),
     )
-    monkeypatch.setattr(
-        type(workspace), "release", lambda self: order.append("remove run dir")
-    )
+    monkeypatch.setattr(type(workspace), "release", lambda self: order.append("remove run dir"))
     monkeypatch.setattr(type(workspace), "acquire", lambda self: None)
     monkeypatch.setattr(type(service), "acquire", lambda self: None)
 
@@ -169,9 +164,7 @@ def test_a_failure_preserves_evidence_before_anything_is_released(
     monkeypatch.setattr(type(workspace), "acquire", lambda self: None)
     monkeypatch.setattr(type(service), "acquire", lambda self: None)
     monkeypatch.setattr(type(service), "release", lambda self: order.append("release"))
-    monkeypatch.setattr(
-        type(workspace), "preserve", lambda self, error: order.append("preserve")
-    )
+    monkeypatch.setattr(type(workspace), "preserve", lambda self, error: order.append("preserve"))
     monkeypatch.setattr(type(workspace), "release", lambda self: order.append("release"))
 
     with pytest.raises(GateError), held(workspace, service):
