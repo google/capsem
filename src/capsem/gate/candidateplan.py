@@ -167,7 +167,12 @@ def _runtime(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
         step("materialize-config", Run(["bash", settings.materialize_script])),
         after=(packed,),
     )
-    return phase.add(hostpackage.sign_step(config), after=(materialised,))
+    # Built, then signed. `sign_step` codesigns `target/debug/*` and nothing
+    # in this plan ever produced them -- it worked because a developer machine
+    # had run `just build` at some point, and failed with `No such file or
+    # directory` the first time a run got a checkout of its own.
+    built = phase.add(hostpackage.build_step(config), after=(materialised,))
+    return phase.add(hostpackage.sign_step(config), after=(built,))
 
 
 def _ensure_space(config: GateConfig):

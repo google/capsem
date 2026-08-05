@@ -10,6 +10,7 @@ failure went.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from . import host
 from .actions import Action, Run, Script
@@ -19,6 +20,31 @@ from .context import Context
 from .errors import GateError
 from .execution import step
 from .plan import Plan
+
+
+def build_step(config: GateConfig, *, label: str = "build-binaries"):
+    """Build the binaries `sign_step` is about to sign.
+
+    They had no producer. Signing has always been `codesign ... --force
+    target/debug/capsem` against whatever an earlier `just build` left in the
+    tree, which works on a machine that has built before and fails with
+    `target/debug/capsem: No such file or directory` on one that has not --
+    including, now, every run that gets a checkout of its own.
+
+    The bin names come off `[signing] binaries` rather than a second list, so
+    the set built and the set signed cannot drift apart. `--bins` for exactly
+    those, not `--workspace`: the guest crates target musl and have no business
+    being built for the host here.
+    """
+    settings = config.signing
+    names = [Path(binary).name for binary in settings.binaries]
+    selected = [flag for name in names for flag in ("--bin", name)]
+    return step(
+        label,
+        Run(["cargo", "build", *selected]),
+        contends=(config.exclusive("workspace_binaries"),),
+        produces=tuple(config.path(binary) for binary in settings.binaries),
+    )
 
 
 def sign_step(config: GateConfig, *, label: str = "sign"):
