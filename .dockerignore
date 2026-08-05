@@ -15,3 +15,16 @@
 .git
 **/.pnpm-store
 **/test-artifacts
+
+# Release credentials. Never in a build context.
+#
+# `COPY . /src` replaced this lane's read-only bind mount, which turned a
+# runtime exposure into persistent duplication: `capsem-linux-rust:latest` is
+# tagged and retained between runs, so the Tauri signing key, the Apple
+# certificates and the minisign manifest key were sitting in Docker storage
+# after every gate. The lane compiles and runs Rust tests; it signs nothing and
+# needs none of them.
+#
+# `security/keys/capsem-ca.key` is deliberately absent from this list: that one
+# is the MITM CA, committed and public by design, and the guest needs it.
+**/private

@@ -14,7 +14,7 @@ keyed by the lockfiles that determine them.
 
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -140,4 +140,35 @@ def test_the_build_context_is_bounded() -> None:
         f"the docker build context is {megabytes:.0f} MB. Something large is no "
         "longer excluded; a build with this context fills the Docker disk "
         "rather than failing fast."
+    )
+
+
+def test_the_lane_image_carries_no_release_credentials() -> None:
+    """`COPY . /src` puts the build context into a tagged, retained image.
+
+    Sealing the lane replaced a read-only bind mount with a copy, which is
+    stronger for isolation and strictly worse for secrets: the mount exposed
+    the checkout only while a container ran, whereas
+    `capsem-linux-rust:latest` is tagged and kept between runs. The Tauri
+    signing key, the Apple certificates and the minisign manifest key were
+    therefore sitting in Docker storage after every gate.
+
+    The lane compiles and runs Rust tests. It signs nothing.
+
+    Derived from `[package.signing] directory` rather than a literal path, so
+    moving the signing material cannot silently leave this guard checking
+    somewhere nobody keeps keys. `security/keys/capsem-ca.key` is deliberately
+    not covered: that is the MITM CA, committed and public by design, and the
+    guest needs it.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    ignored = (PROJECT_ROOT / ".dockerignore").read_text(encoding="utf-8").split()
+    secrets = PurePosixPath(config.package.signing.directory).parts[0]
+
+    assert f"**/{secrets}" in ignored or secrets in ignored, (
+        f"{secrets}/ is not excluded from the Docker build context, so "
+        f"`COPY . /src` bakes the release signing material into "
+        f"{config.hostimage.lane_tag} -- which is tagged and outlives the run"
     )
