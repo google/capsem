@@ -105,6 +105,8 @@ class SigningConfig(Strict):
     entitlements: str
     binaries: tuple[str, ...]
     built: tuple[str, ...]
+    built_elsewhere: tuple[str, ...]
+    guest_crate: str
     release_binary: str
 
     @model_validator(mode="after")

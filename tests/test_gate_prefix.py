@@ -187,6 +187,29 @@ def test_a_tracked_symlink_stays_a_symlink(source: Path) -> None:
     assert Path(os.readlink(link)) == Path(os.readlink(source / ".agents" / "skills"))
 
 
+def test_refreshing_an_existing_prefix_is_idempotent(source: Path) -> None:
+    """What `--prefix` does on every resume: copy the source in again.
+
+    The tree already has last run's files, so every write is an overwrite.
+    `cp` handles that for regular files and `os.symlink` does not -- it raises
+    `FileExistsError`, which killed the first real resume in under a second
+    against `.agents/skills`.
+
+    Copying twice is the whole test: the second pass must land the same tree as
+    the first, because that is exactly what resuming does.
+    """
+    from capsem.gate import prefix
+
+    target = source.parent / "prefix"
+    prefix.populate(source, target, _config())
+
+    (source / "tracked.txt").write_text("fixed\n", encoding="utf-8")
+    prefix.populate(source, target, _config())
+
+    assert (target / "tracked.txt").read_text(encoding="utf-8") == "fixed\n"
+    assert (target / ".agents" / "skills").is_symlink()
+
+
 def test_the_prefix_carries_the_gitignored_paths_a_release_signs_with(source: Path) -> None:
     """`private/` is gitignored, so the digest cannot see it -- and the Tauri
     signing keys live there.
@@ -370,3 +393,51 @@ def test_the_export_list_covers_what_a_release_publishes() -> None:
     assert any(export.startswith("target/gate-runs") for export in exports), (
         "the run log is the evidence a failure is argued from, and it is written inside the prefix"
     )
+
+
+def test_the_built_binaries_are_every_host_binary() -> None:
+    """A new crate with a binary joins the build list, or this fails.
+
+    Three consecutive runs from a clean checkout each died on one missing
+    binary -- `capsem` at `codesign`, then `capsem-mcp-aggregator` at the VM
+    boot, then `capsem-tray` in the build-chain suite. Each fix added the one
+    name the last failure happened to reach, and each cost a twenty-minute run
+    to find the next.
+
+    So the list is checked against `cargo metadata` instead of against
+    yesterday's failure. The two exclusions are declared rather than implied:
+    `capsem-app` embeds `frontend/dist` and belongs to `build-ui`, which builds
+    the bundle first, and the guest crate's binaries are musl and belong to
+    `initrd.guest-agents`.
+    """
+    import json
+    import subprocess
+
+    config = _config()
+    settings = config.signing
+
+    metadata = json.loads(
+        subprocess.run(
+            ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+    )
+    host = {
+        target["name"]
+        for package in metadata["packages"]
+        for target in package["targets"]
+        if "bin" in target["kind"] and package["name"] != settings.guest_crate
+    }
+
+    expected = host - set(settings.built_elsewhere)
+    missing = sorted(expected - set(settings.built))
+    assert not missing, (
+        "these host binaries are built by nothing, so a run that does not "
+        f"inherit a warm checkout will fail on the first one it needs: {missing}"
+    )
+
+    stale = sorted(set(settings.built) - host)
+    assert not stale, f"these are in the build list but no longer exist: {stale}"

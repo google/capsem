@@ -79,6 +79,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The host binary list is derived from `cargo metadata` instead of from
+  yesterday's failure. Three runs from a clean checkout each died on one
+  missing binary -- `capsem` at `codesign`, `capsem-mcp-aggregator` at the VM
+  boot, `capsem-tray` in the build-chain suite -- and each fix added the single
+  name that failure happened to reach, at twenty-odd minutes per discovery.
+  `[signing] built` is now the whole host cohort, and
+  `test_the_built_binaries_are_every_host_binary` fails when a workspace binary
+  is missing from it or when a name in it no longer exists. The two exclusions
+  are declared rather than implied: `capsem-app` embeds `frontend/dist` and
+  belongs to `build-ui`, and the guest crate's musl binaries belong to
+  `initrd.guest-agents`.
+
+- Reusing a prefix died on `FileExistsError` before any step ran. Refreshing
+  the source into an existing tree is an overwrite, which `cp` does for regular
+  files and `os.symlink` refuses -- so the first real `--prefix` run stopped in
+  under a second on `.agents/skills`.
+
 - Four more inputs the gate inherited from history rather than producing, all
   surfaced by the first complete run from a private checkout and all invisible
   on a warm machine:

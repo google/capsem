@@ -138,6 +138,10 @@ def _copy_files(source: Path, target: Path, relatives: list[Path]) -> None:
     for relative in links:
         destination = target / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
+        # Cleared first, because this runs a second time on every resume: `cp`
+        # overwrites a regular file and `os.symlink` refuses an existing one,
+        # so a reused prefix died on `FileExistsError` before any step ran.
+        destination.unlink(missing_ok=True)
         destination.symlink_to(os.readlink(source / relative))
 
 

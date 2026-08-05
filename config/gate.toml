@@ -905,20 +905,37 @@ binaries = [
     "target/debug/capsem-gateway", "target/debug/capsem-mcp", "target/debug/capsem-admin",
 ]
 # Every host binary a run needs on disk, as bin names. A superset of the signed
-# list, and validated to be one: `binaries` is the subset that calls
-# Virtualization.framework and therefore needs the entitlement, while the
-# aggregator and the builtin server are spawned by `capsem-process` at boot and
-# need only to exist.
+# list, validated to be one: `binaries` is the subset that calls
+# Virtualization.framework and therefore needs the entitlement, while the rest
+# only have to exist -- `capsem-process` spawns the MCP pair at boot, and the
+# build-chain suite executes the tray and the TUI.
 #
 # It exists because nothing built any of them. Signing was `codesign --force`
-# against whatever an earlier `just build` had left, and the first run that did
-# not inherit a warm tree died twice: once at `codesign: target/debug/capsem: No
-# such file or directory`, and again at `required MCP aggregator binary
-# capsem-mcp-aggregator is missing` when the VM tried to boot.
+# against whatever an earlier `just build` had left, and a run that did not
+# inherit a warm tree failed three times in a row, one binary at a time:
+# `codesign: target/debug/capsem: No such file or directory`, then `required
+# MCP aggregator binary capsem-mcp-aggregator is missing`, then `Binary not
+# found: target/debug/capsem-tray`.
+#
+# So it is the whole host cohort now, and
+# `test_the_built_binaries_are_every_host_binary` holds it against `cargo
+# metadata` -- a new crate with a binary joins this list or fails that test,
+# rather than being discovered by a gate twenty minutes in.
+#
+# Two exclusions, both with an owner elsewhere. `capsem-app` embeds
+# `frontend/dist` at compile time and belongs to `build-ui`, which builds the
+# bundle first; `capsem-agent`'s five bins are musl guest binaries that
+# `initrd.guest-agents` cross-compiles.
 built = [
-    "capsem", "capsem-service", "capsem-process", "capsem-gateway", "capsem-mcp",
-    "capsem-admin", "capsem-mcp-aggregator", "capsem-mcp-builtin",
+    "capsem", "capsem-admin", "capsem-bench-rs", "capsem-gateway", "capsem-mcp",
+    "capsem-mcp-aggregator", "capsem-mcp-builtin", "capsem-mock-server", "capsem-process",
+    "capsem-service", "capsem-tray", "capsem-tui", "mcp_export",
 ]
+# Host binaries this list deliberately omits, each built by a step that owns
+# its prerequisites. Named so the guard can tell an exclusion from an omission.
+built_elsewhere = ["capsem-app"]
+guest_crate = "capsem-agent"
+
 release_binary = "target/debug/capsem"
 
 [frontend]
