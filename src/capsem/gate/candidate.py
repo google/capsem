@@ -191,6 +191,25 @@ class CompleteGate:
     _config: gate_config.GateConfig
     _runner: Runner
 
+    private_checkout = True
+    """The complete gate reads a copy of the checkout, never the checkout.
+
+    Here rather than on `candidate`, because this mixin *is* the set of
+    commands that spend the forty-minute proof -- which is the same set long
+    enough for someone to edit the tree while it runs. Declared on one and not
+    the others, the two commands whose mistakes are public and irreversible
+    were the only ones without it.
+
+    It is not free: a private copy starts with no `target/`, and `test-fast`
+    measures 89s from a prefix against 28s in a warm checkout. That ratio is
+    the price of a qualification whose subject cannot move while it runs, and
+    only a command that already costs an hour should pay it.
+
+    Publication is unaffected. `release.py` aims every step that pushes, tags,
+    stamps or dispatches at the checkout the copy was made from, so what a
+    release authors lands in the repository a human still has.
+    """
+
     def resources(self, runner: Runner) -> tuple[Resource, ...]:
         return gate_resources(self._config, runner)
 
@@ -235,17 +254,8 @@ class CandidateCommand(
     # and it composes the modules' plan *fragments* in-process rather than
     # invoking their commands -- so declaring `private_checkout` on the modules
     # protects `capsem-gate test-fast` typed by hand and does nothing for the
-    # hour-long qualification, which is the one that has died four times.
-    #
-    # It is not free: a private copy starts with no `target/`, and `test-fast`
-    # measures 89s from a prefix against 28s in a warm checkout. That ratio is
-    # the price of a qualification whose subject cannot move while it runs.
-    #
-    # Deliberately not on `CompleteGate`, which the two release commands also
-    # mix in. Those push and dispatch from the tree they run in, and moving
-    # that into a copy is Phase 6's split -- fetch and publish stay in the
-    # checkout, only the gate between them becomes private.
-    private_checkout = True
+    # hour-long qualification, which is the one that has died four times. It
+    # arrives here from `CompleteGate`, alongside the two release commands.
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

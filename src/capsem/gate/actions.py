@@ -121,28 +121,48 @@ class Script(Action, name="script"):
         self,
         relative: str,
         *args: object,
+        root: Path | None = None,
         env: dict[str, str] | None = None,
         check: bool = True,
     ) -> None:
         self._relative = relative
         self._args = tuple(str(arg) for arg in args)
+        self._root = root
         self._env = dict(env or {})
         self._check = check
 
     def render(self) -> str:
-        """The relative path, because the checkout it sits in is implied."""
-        return str(
+        """The relative path, because the checkout it sits in is implied.
+
+        Unless it is not the one this run is executing from -- a release
+        publishes from the checkout its private copy was made from, and a
+        reader who cannot see which of the two a step reaches cannot check the
+        one property that separates them.
+        """
+        rendered = str(
             Command(
                 argv=("uv", "run", "python", self._relative, *self._args),
                 env=self._env,
             )
         )
+        if self._root is None:
+            return rendered
+        return f"(in {self._root.name}) {rendered}"
 
     def perform(self, context: Context) -> None:
-        context.runner.script(
-            self._relative,
-            *self._args,
-            env={**context.env, **self._env},
+        env = {**context.env, **self._env}
+        if self._root is None:
+            context.runner.script(self._relative, *self._args, env=env, check=self._check)
+            return
+        # Not `runner.script`, which resolves against the tree this process is
+        # running in. Both the script and the working directory come from the
+        # named checkout: these scripts take their repository from their own
+        # `__file__`, so running this tree's copy elsewhere would still stamp,
+        # commit and push here.
+        context.runner.run(
+            ["uv", "run", "python", str(self._root / self._relative), *self._args],
+            cwd=self._root,
+            env=env,
             check=self._check,
         )
 

@@ -18,13 +18,18 @@ down when it runs; `ConfirmHead` reads what it wrote. The order between them is
 the safety property: capture, qualify, re-assert. If the tree moves during a
 forty-minute gate, the confirmation refuses rather than publishing a revision
 nothing tested.
+
+Both take the checkout they are about explicitly, because under a private copy
+there are two repositories and only one of them is the one being released. The
+copy's `HEAD` cannot move -- it is frozen the moment it is made -- so recording
+it would make the re-assertion vacuous exactly where it matters most.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from .actions import Action
+from .actions import Action, Script
 from .config import GateConfig
 from .context import Context
 from .errors import GateError
@@ -39,11 +44,12 @@ def head_file(config: GateConfig) -> Path:
 class RecordHead(Action, name="record-head"):
     """Write down the revision the gate is about to qualify."""
 
-    def __init__(self, target: Path) -> None:
+    def __init__(self, target: Path, checkout: Path) -> None:
         self._target = target
+        self._checkout = checkout
 
     def render(self) -> str:
-        return f"record the revision under test in {self._target.name}"
+        return f"(in {self._checkout.name}) record the revision under test in {self._target.name}"
 
     def perform(self, context: Context) -> None:
         if context.observing:
@@ -53,7 +59,7 @@ class RecordHead(Action, name="record-head"):
             # capture, and `confirm-head` -- one step before publishing, an
             # hour later -- refuses to publish a revision nothing recorded.
             return
-        head = context.runner.capture(["git", "rev-parse", "HEAD"])
+        head = context.runner.capture(["git", "-C", str(self._checkout), "rev-parse", "HEAD"])
         write_text(self._target, head)
         context.journal.note(f"qualifying {head}")
 
@@ -66,12 +72,16 @@ class ConfirmHead(Action, name="confirm-head"):
     is the defect this pair exists to remove.
     """
 
-    def __init__(self, script: str, source: Path) -> None:
+    def __init__(self, script: str, source: Path, checkout: Path) -> None:
         self._script = script
         self._source = source
+        self._checkout = checkout
 
     def render(self) -> str:
-        return f"uv run python {self._script} --expected-head $(cat {self._source.name})"
+        return (
+            f"(in {self._checkout.name}) uv run python {self._script} "
+            f"--expected-head $(cat {self._source.name})"
+        )
 
     def perform(self, context: Context) -> None:
         if not self._source.is_file():
@@ -84,4 +94,8 @@ class ConfirmHead(Action, name="confirm-head"):
             raise GateError(
                 f"{self._source} is empty; refusing to publish a revision nothing recorded"
             )
-        context.runner.script(self._script, "--expected-head", head)
+        # Composed rather than invoked, so "run a checked-in script against a
+        # named checkout" has one spelling. This one fast-forward-pushes, and a
+        # push issued from the private copy would reach a `.git` reclaimed
+        # minutes later.
+        Script(self._script, "--expected-head", head, root=self._checkout).perform(context)

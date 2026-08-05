@@ -79,6 +79,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Both release commands now run the complete gate from a private copy of the
+  checkout, and publish from the checkout itself. Only `candidate` had the
+  copy, so the two commands whose mistakes are public and irreversible were the
+  ones still qualifying a tree anybody could edit mid-run -- the exact failure
+  that killed a release at `source.verify` after 61 minutes.
+
+  Composed inside the existing release contract rather than around it. The
+  first design split the release into three sibling processes bound by a
+  receipt, which `AGENTS.md` rules out twice over: one process, one machine
+  lock, one workspace and one plan, and no parallel release ledger or result
+  file. It stays one plan; inside it the gate reads the copy and every step
+  that prechecks, stamps, commits, tags, pushes or dispatches is aimed at the
+  originating checkout. A push issued from the copy would reach a `.git`
+  reclaimed minutes later -- a release reporting success and publishing
+  nothing anyone could see.
+
+  `record-head` now records that checkout's revision rather than the copy's
+  frozen one, so `confirm-head` re-asserts something that can actually have
+  moved.
+
 - A failed run's prefix is now reclaimed by the next one. Keeping it for
   `--prefix` was deliberate, but nothing ever removed it: `[disk] reclaimable`
   only accepts paths inside the checkout, so `gc` never reached `~/.cg`. One
