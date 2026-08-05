@@ -111,11 +111,21 @@ def _prepare(plan: Plan, config: GateConfig, *, after: tuple[Step, ...]) -> Step
     settings = config.candidate
     phase = plan.phase("prepare")
 
+    # Both doctor passes run with the checks that would fail on the very thing
+    # this gate is about to build turned off -- the same pair `imagebuild`
+    # already passes for the same reason. `assets/` and the guest binaries are
+    # build output, so a run that does not inherit a warm checkout has neither,
+    # and doctor was reporting `manifest.json missing` about a manifest
+    # `assets.assemble` produces sixty steps later.
+    #
+    # Skipping the *check* rather than letting the fix run: the fix is
+    # `just _build-assets`, which takes the machine lock this run is holding.
+    doctor_env = dict(config.imagebuild.doctor_skips)
     bootstrapped = phase.add(
         step(
             "bootstrap",
-            Run(["sh", str(config.path(settings.bootstrap_script)), "-y"]),
-            Run(["bash", config.doctor.common_script]),
+            Run(["sh", str(config.path(settings.bootstrap_script)), "-y"], env=doctor_env),
+            Run(["bash", config.doctor.common_script], env=doctor_env),
         ),
         after=after,
     )
