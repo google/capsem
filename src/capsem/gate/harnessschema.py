@@ -181,6 +181,9 @@ class RunLogConfig(Strict):
     latest_link: str
     #: Trees each run watches for filesystem faults, relative to the checkout.
     observed_roots: tuple[str, ...]
+    #: How Linux names the path behind a file descriptor, so a `dir_fd`-relative
+    #: call can be anchored instead of resolved against the working directory.
+    fd_path_template: str
     #: Where those faults are written the instant they are found, per run.
     error_log: str
     #: Size cap and generations kept, so faults cannot fill the disk.

@@ -22,6 +22,7 @@ import functools
 import os
 import shutil
 import stat
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Protocol
@@ -67,8 +68,9 @@ class Instrument:
     #: creates `dst`, and `dst` is what now shares an inode it should not.
     DESTINATION_IS_SECOND = frozenset({"link", "copy", "rename"})
 
-    def __init__(self, observer: Observer) -> None:
+    def __init__(self, observer: Observer, *, fd_path_template: str) -> None:
         self._observer = observer
+        self._fd_path_template = fd_path_template
         self._saved: list[tuple[object, str, object]] = []
 
     def __enter__(self) -> Instrument:
@@ -85,14 +87,16 @@ class Instrument:
 
     def _wrap(self, original: Callable[..., object], kind: str) -> Callable[..., object]:
         observer = self._observer
+        template = self._fd_path_template
 
         @functools.wraps(original)
         def proxy(*args: object, **kwargs: object) -> object:
             subject = _subject(kind, args)
             before = _mode_of(subject) if kind == "chmod" else None
             result = original(*args, **kwargs)
-            if subject is not None:
-                observer.observed(kind, Path(str(subject)), before=before)
+            located = _locate(subject, kwargs, template)
+            if located is not None:
+                observer.observed(kind, located, before=before)
             return result
 
         return proxy
@@ -102,6 +106,60 @@ def _subject(kind: str, args: tuple[object, ...]) -> object | None:
     if kind in Instrument.DESTINATION_IS_SECOND and len(args) > 1:
         return args[1]
     return args[0] if args else None
+
+
+#: macOS `fcntl` command for "give me this descriptor's path". A number in the
+#: platform's ABI, not a path, so it stays here; Linux answers the same
+#: question by reading a symlink whose template comes from config.
+_F_GETPATH = 50
+
+#: Enough for `PATH_MAX` on both platforms.
+_PATH_BUFFER = 1024
+
+
+def _path_of_fd(handle: int, template: str) -> Path | None:
+    """The path behind an open descriptor, or `None` if it cannot be had."""
+    try:
+        if sys.platform == "darwin":
+            import fcntl
+
+            answer = fcntl.fcntl(handle, _F_GETPATH, bytes(_PATH_BUFFER))
+            return Path(os.fsdecode(answer.rstrip(b"\0")))
+        return Path(os.readlink(template.format(handle=handle)))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+
+
+def _locate(subject: object, kwargs: dict[str, object], template: str) -> Path | None:
+    """Where the call actually acted, not what the caller happened to spell.
+
+    `shutil.rmtree` deletes through a directory descriptor -- `os.unlink(
+    'profile.toml', dir_fd=5)` -- and recording the bare entry name left the
+    path to be resolved against the current working directory, which for the
+    gate is the checkout root. One release run logged 42 faults that way, each
+    naming a tracked file nothing had touched.
+
+    Returns `None` when the path cannot be established, and the judge then
+    declines to call it a source mutation: a fault nobody can locate is not
+    evidence, and inventing one is worse than missing it.
+    """
+    if isinstance(subject, int):
+        # An integer subject is a descriptor, as in `os.truncate(fd, n)`.
+        return _path_of_fd(subject, template)
+    if not isinstance(subject, str | os.PathLike):
+        return None
+    # `str`, not `os.fsdecode`, for the same reason `_mode_of` does it: the
+    # union leaves `PathLike[object]`, which the checker will not accept.
+    path = Path(str(subject))
+    if path.is_absolute():
+        return path
+    handle = kwargs.get("dir_fd")
+    if handle is None:
+        return Path.cwd() / path
+    if not isinstance(handle, int):
+        return None
+    anchor = _path_of_fd(handle, template)
+    return anchor / path if anchor is not None else None
 
 
 def _mode_of(path: object) -> int | None:

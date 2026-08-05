@@ -15,7 +15,13 @@ from pathlib import Path
 #: Directories under the checkout a run may write. Everything else is input:
 #: the gate reads it, and changing it mid-run means the thing being qualified
 #: is not the thing that was measured.
-BUILD_OUTPUT = frozenset({"target", ".git", "node_modules", ".venv"})
+#:
+#: `dist`, `packages` and `assets` are here because they are gitignored build
+#: roots the gate rewrites every run -- `assets/current` is resynced per
+#: architecture, and stale `.deb`s are removed before each package build. With
+#: only `target` excluded, ordinary steps read as the gate mutating the tree it
+#: is qualifying.
+BUILD_OUTPUT = frozenset({"target", "dist", "packages", "assets", ".git", "node_modules", ".venv"})
 
 #: Hash files up to this size. Digests answer "are these the same bytes under
 #: two names", which matters for seeds and manifests; a multi-gigabyte rootfs

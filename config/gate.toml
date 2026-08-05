@@ -1236,6 +1236,13 @@ summary = "summary.txt"
 # staged release channel, because a hardlink *to* checked-in source lands in
 # build output and leaves the source directory untouched.
 observed_roots = ["config", "crates", "scripts", "guest", "src", "target/web-parity"]
+# How Linux answers "what path is this descriptor". `shutil.rmtree` deletes
+# through a directory descriptor, so the observer receives a bare entry name
+# and has to anchor it -- without this it resolved against the working
+# directory, which is the checkout root, and reported tracked files nothing had
+# touched. macOS answers the same question through `fcntl(F_GETPATH)`, which
+# takes no path to name here.
+fd_path_template = "/proc/self/fd/{handle}"
 error_log = "errors.log"
 # Bounded, because a run that trips one rule per file trips it thousands of
 # times and an unbounded fault log on a machine that gates daily is a
