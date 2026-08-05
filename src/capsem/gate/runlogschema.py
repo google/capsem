@@ -203,18 +203,12 @@ class RunEnd(Payload):
 
 #: Every payload, by the value of its `event` field. Used to read a log back
 #: and to prove, in a test, that nothing writes a line no model describes.
+#:
+#: Derived from the models rather than listed beside them. Listed, it was a
+#: second place for one fact and it drifted: `Launch` was defined, emitted by
+#: `EventJournal.launch`, and absent here -- so every detached process the gate
+#: started wrote a line the reader had no model for, while the test asserting
+#: that cannot happen stayed green because it never launched anything.
 PAYLOADS: dict[str, type[Payload]] = {
-    model.model_fields["event"].default: model
-    for model in (
-        RunStart,
-        PlanShape,
-        StepStart,
-        ActionRun,
-        Exec,
-        Artifact,
-        Note,
-        StepEnd,
-        StepWaits,
-        RunEnd,
-    )
+    model.model_fields["event"].default: model for model in Payload.__subclasses__()
 }

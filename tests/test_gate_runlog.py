@@ -58,13 +58,24 @@ def test_every_emitted_line_validates_against_a_model(tmp_path: Path) -> None:
 
     A log with one unvalidated writer is a log whose reader needs a fallback,
     and the fallback is where the field you wanted turns out to be missing.
+
+    Every registered event is emitted here, and the last assertion is what
+    makes that binding. The earlier version wrote five of the eleven and passed
+    -- including while `Launch` was emitted by production and registered
+    nowhere, because nothing in this file ever launched anything. A model this
+    test does not exercise is a model nothing checks.
     """
     config = _checkout(tmp_path)
     with RunLog.open(config, "test", argv=("just", "test")) as log:
+        log.shape(("build",), (("build", "test"),))
         with log.step(step("build", Run(["cargo", "build"]))):
             log.note("something worth reading back")
             log.artifact(tmp_path / "vmlinuz", digest="cafe", size=7)
             log.exec(("cargo", "build"), cwd="/src", env={}, exit=0, duration_ms=1.0)
+            log.launch(("capsem-service",), cwd="/src", env={}, pid=4242, duration_ms=1.0)
+            with log.action(Run(["cargo", "build"])):
+                pass
+        log.waited("build", dependency_ms=1.0, resource_ms=2.0, execution_ms=3.0)
         log.skipped("never-ran")
 
     recorded = _events(log)
@@ -74,6 +85,11 @@ def test_every_emitted_line_validates_against_a_model(tmp_path: Path) -> None:
         payload = {k: v for k, v in entry.items() if k not in {"schema", "ts", "run_id"}}
         model = PAYLOADS[entry["event"]]
         model(**payload)
+
+    assert {entry["event"] for entry in recorded} == set(PAYLOADS), (
+        "a registered payload nothing here emits is a payload this test cannot "
+        "validate; emit it, or take it out of the registry"
+    )
 
 
 def test_every_line_carries_the_same_envelope(tmp_path: Path) -> None:

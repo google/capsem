@@ -99,6 +99,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- Detached processes are back inside the run-log schema. `Launch` was defined
+  and emitted, and missing from the payload registry -- so every daemon the
+  gate started wrote a line no reader had a model for, which is the one thing
+  the registry exists to make impossible. The list is derived from the models
+  now instead of maintained beside them, and the test that validates every
+  emitted line has to emit one of each: it wrote five of eleven and passed,
+  never having launched anything.
+
 - The Linux parity base image is now keyed by everything that defines it, not
   by three lockfiles. `warm-linux-rust-base` skips the build whenever the tag
   exists, so an input missing from the key is an environment change the sealed
