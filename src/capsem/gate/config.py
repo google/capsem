@@ -58,6 +58,7 @@ from .harnessschema import (
     ExecutionConfig,
     LintConfig,
     LocksConfig,
+    PrefixConfig,
     RunLogConfig,
     WorkspaceConfig,
 )
@@ -95,6 +96,7 @@ class GateConfig(Strict):
     locks: LocksConfig
     runlog: RunLogConfig
     disk: DiskConfig
+    prefix: PrefixConfig
     workspace: WorkspaceConfig
     service: ServiceConfig
     smoke: SmokeConfig

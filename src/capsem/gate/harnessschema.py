@@ -220,6 +220,30 @@ class DiskConfig(Strict):
         return paths
 
 
+class PrefixConfig(Strict):
+    """Where a run's private copy of the checkout lives, and what it carries."""
+
+    parent: str
+    name_length: int
+    carried: tuple[str, ...]
+    exports: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def _paths_stay_inside(self) -> PrefixConfig:
+        """`carried` and `exports` name places inside a checkout.
+
+        An absolute entry would copy something the run does not own; a `..`
+        entry would write outside the prefix on export, which is the one
+        direction a private copy must never reach.
+        """
+        for group in (self.carried, self.exports):
+            for path in group:
+                parts = PurePosixPath(path)
+                if parts.is_absolute() or ".." in parts.parts:
+                    raise ValueError(f"{path!r} must be relative and must not escape upwards")
+        return self
+
+
 class WorkspaceConfig(Strict):
     home: str
     run_dir: str

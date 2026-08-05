@@ -126,6 +126,14 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
     before and `0644` after, because nothing in the gate was in the path of
     the call that changed it.
 
+    `prefix` is the newest, and it is here for a third reason again: it is not
+    that it owns machine state or watches it, but that it runs *before the
+    run*. The private copy of the checkout has to exist before the process
+    that works in it, so it is built from `reexec()` -- above every resource,
+    outside the machine lock, with no journal yet to record into. An action
+    would have to be a plan step that creates the directory the plan is
+    already executing from.
+
     The through-line is that these are the harness, and the harness is what
     gate work is expressed *in*. A capability or a command appearing here
     would mean work that the dry run cannot show and the log cannot time.
@@ -147,6 +155,12 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
         "faultlog.py",
         "interception.py",
         "observation.py",
+        # And the one that runs before there is a run. `prefix` builds the tree
+        # the gate executes *from*, consulted by `reexec()` above every
+        # resource and outside the machine lock -- so there is no journal for
+        # an action to report into, and a plan expressing it would have to
+        # create the directory it is already running in.
+        "prefix.py",
     }
 
 

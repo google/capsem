@@ -577,6 +577,13 @@ direct_machine_access = [
     # that nothing reaches `os` without passing through it.
     "interception.py",
     "observation.py",
+    # `prefix.py` builds the tree the run happens *in*, which is necessarily
+    # before there is a run to record it against: it is consulted by
+    # `reexec()`, above every resource and outside the machine lock, so there
+    # is no journal to write an action into and no dry run that could show one.
+    # Composing it from actions would mean a plan whose first step creates the
+    # directory the plan is already executing from.
+    "prefix.py",
 ]
 
 # Only the plan schedules concurrent work. A module that reaches for its own
@@ -969,6 +976,7 @@ source_contract = [
     "tests/test_gate_plan_purity.py",
     "tests/test_gate_docker_boundary.py",
     "tests/test_gate_linuxrust_hermetic.py",
+    "tests/test_gate_prefix.py",
     "tests/test_gate_git_worktree_mount.py",
     "tests/test_rust_filesystem_chokepoint.py",
     "tests/test_agent_skill_index.py",
@@ -1198,6 +1206,32 @@ channel_switch_cleared = [
 # ---------------------------------------------------------------------------
 # The isolated home a gate run works in
 # ---------------------------------------------------------------------------
+
+[prefix]
+# A private copy of the checkout, one per run, so what the gate reads cannot be
+# edited by anyone while it runs. Clonefiled on APFS: 2074 tracked files plus
+# `.git` measured 2.2s and 186 MB, against 84s and 164 GB for a copy that also
+# took `target/` -- which is why the seed the first draft of this design wanted
+# is not here.
+#
+# `parent` is deliberately tiny. `tests/test_gate_prefix.py` checks the
+# arithmetic, but the budget is `SUN_LEN` 104 minus the gateway's 64-byte
+# `instances/<uuid>-ws.sock` suffix; `/tmp/capsem-gate-<32hex>` is 41
+# characters and reproduced a 12,024-error socket failure. `~/.cg/<8hex>` is 24.
+parent = "~/.cg"
+name_length = 8
+
+# Copied wholesale despite being invisible to `git ls-files`, which is what the
+# source digest counts. `.git` because build provenance goes through `build.rs`
+# and every source-state action shells out to git; `private` because it is
+# gitignored (`.gitignore:47`) and holds the Tauri signing keys -- a prefix
+# built from the digest set alone loses them, and the package lane finds out
+# during a release rather than here.
+carried = [".git", "private"]
+
+# What must come back out before the prefix is reclaimed. A release publishes
+# from these, and without the export they die with the copy that made them.
+exports = ["dist", "packages", "assets", "target/gate-runs"]
 
 [workspace]
 # Everything the gate does happens against this home, never the developer's.

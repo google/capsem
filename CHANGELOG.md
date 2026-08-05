@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `capsem.gate.prefix` builds a private per-run copy of the checkout, so a gate
+  reads a tree nobody else has a path to. Every other isolation the gate has is
+  a declaration checked against another declaration; this is the grant itself.
+  Detection was never going to be enough -- on the run that died at
+  `source.verify` after 61 minutes, the observer had already flagged the first
+  intruding write at 22:15:56 and named the file at 22:21:27, 23 minutes before
+  the run stopped, and the hour was lost anyway because the tree under the gate
+  had moved.
+
+  Measured against the real checkout: `~/.cg/<8hex>` is 25 characters, the copy
+  takes 1.6s and 98 MB, and it produces a source digest *byte-identical* to the
+  tree it came from. Editing the checkout afterwards moved the checkout's digest
+  and left the copy's unchanged, which is the proof the phase exists for.
+
+  Two things `git ls-files` cannot see are declared in `[prefix] carried`
+  rather than discovered during a release. `.git`, because build provenance
+  goes through `build.rs` and every source-state action shells out to git; and
+  `private/`, which is gitignored and holds the Tauri signing keys -- a copy
+  built from the digest set alone loses them and the package lane finds out
+  mid-release. Tracked symlinks are recreated as symlinks: `git ls-files` lists
+  them like files, and `cp` without `-R` follows them, which fails outright
+  against `.agents/skills` and would silently duplicate a tree anywhere it
+  succeeded.
+
+  Not yet wired into `reexec()` -- the runs still happen in the checkout.
+
 ### Fixed
 
 - The hand-built-`docker`-argv ratchet had stopped being one. `UNMIGRATED` in
