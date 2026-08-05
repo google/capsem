@@ -4935,12 +4935,54 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker() -> None:
     assert "test-linux-rust.sh" in canonical_gate
     assert "test-linux-rust.sh" in linux_rust_gate
     assert "capsem-host-builder:latest" in linux_rust_gate
-    assert "docker run --rm" in linux_rust_gate
-    assert "--user" in linux_rust_gate
-    assert "/src:ro" in linux_rust_gate
-    assert "nextest" in linux_rust_gate
-    assert "capsem-linux-rust-cargo-registry" in linux_rust_gate
-    assert "capsem-linux-rust-rustup" in linux_rust_gate
+
+    # Reimplemented, not deleted. Six assertions here pinned the mechanism --
+    # `docker run --rm`, `--user`, `/src:ro`, and two named volumes -- and the
+    # lane no longer has any of them: it copies its source into an image,
+    # resolves dependencies from a base image keyed by the lockfiles, and runs
+    # sealed. The property each one protected still holds, expressed against
+    # what the lane does now, and two of them are strictly stronger.
+    #
+    # `--rm` could not coexist with `docker cp`, so the container is created,
+    # started, copied from, and removed -- removal on the failure path too,
+    # which `--rm` could never give while still yielding the coverage of a lane
+    # that failed.
+    assert "docker create" in linux_rust_gate
+    assert "docker start" in linux_rust_gate
+    assert "docker cp" in linux_rust_gate
+    assert linux_rust_gate.index("docker cp") < linux_rust_gate.rindex("docker rm"), (
+        "the container is removed before its coverage is copied out"
+    )
+
+    # `/src:ro` said the container could not write the checkout. Nothing is
+    # mounted at all now, which is the stronger claim and the one that ends the
+    # race with the host steps that share those inodes.
+    assert "/src:ro" not in linux_rust_gate
+    for flag in (" -v ", " --volume "):
+        assert flag not in linux_rust_gate, f"the parity lane grew a{flag}mount"
+
+    # The named volumes carried the cargo registry, the rustup toolchain and an
+    # 11 GB target between runs -- the cross-run state that let a warm machine
+    # and a clean checkout disagree about one commit. They live in a base image
+    # keyed by the lockfiles that determine them.
+    for volume in ("capsem-linux-rust-cargo-registry", "capsem-linux-rust-rustup"):
+        assert volume not in linux_rust_gate, f"{volume} came back"
+    assert "capsem-linux-rust-base:" in linux_rust_gate
+
+    # `--user` kept the container off root, because the suite chmods an asset
+    # to 0o000 and demands the read fail. That is now baked into the image.
+    lane_dockerfile = _source_text("docker/Dockerfile.linux-rust")
+    assert "USER 1000:1000" in lane_dockerfile
+
+    # And the property none of the originals asserted, because it was not true:
+    # the lane runs with no outbound network, which is what proved the mid-run
+    # `pnpm install` and the `cdn.pyke.io` fetch inside `ort`'s build script
+    # were there at all.
+    assert "--network none" in linux_rust_gate
+
+    # `nextest` moved out of the argv with the mount that bound its state; the
+    # script the container runs is still the checked-in one, asserted below.
+    assert "test-linux-rust.sh" in linux_rust_gate
     # Native on Linux, Docker on macOS -- the branch is `host.on_linux()` in
     # `hostimage.py` rather than a `uname` test in a recipe.
     hostimage = _source_text("src/capsem/gate/hostimage.py")

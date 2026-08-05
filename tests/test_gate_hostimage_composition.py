@@ -108,35 +108,47 @@ def test_foreign_uid_probe_mounts_linked_worktree_metadata(
     assert "--user 4242:4242" in probe
 
 
-def test_linux_rust_suite_mounts_linked_worktree_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    metadata = "/git/common"
-    monkeypatch.setattr(
-        hostimage,
-        "docker_git_metadata_mount",
-        lambda _runner: ("-v", f"{metadata}:{metadata}:ro"),
+def test_only_the_lane_that_needs_git_provenance_still_carries_it() -> None:
+    """Reimplemented, not deleted. The claim survives; its subject moved.
+
+    This asserted that the parity lane mounted a linked worktree's git
+    metadata, ran as the host user, and grafted a writable directory for
+    Tauri's generated ACLs through the read-only source mount. All three were
+    properties of the bind mount, and the lane has none.
+
+    What must not be lost is *why* the metadata mount existed: `build.rs`
+    embeds `git rev-parse --short HEAD` and falls back to the string `unknown`
+    rather than failing, so a container that cannot read git history produces a
+    binary with no source identity -- silently. That matters exactly where a
+    shipped artifact is built, and not at all where coverage is measured.
+
+    So the claim is now a distinction, asserted in both directions: the package
+    rail, which builds the artifact a release publishes, still carries git
+    metadata into its container; the parity lane, which only measures which
+    Linux branches execute, deliberately does not and takes the `unknown`
+    fallback. Asserting only the first half would let the mount quietly come
+    back; asserting only the second would let provenance quietly leave.
+    """
+    from capsem.gate import linuxrust
+
+    rail = (PROJECT_ROOT / "src/capsem/gate/packagerail.py").read_text(encoding="utf-8")
+    assert "docker_git_metadata_mount" in rail, (
+        "the package rail stopped carrying git metadata, so a published binary "
+        "would embed an 'unknown' build hash without anything failing"
     )
-    monkeypatch.setattr(hostimage.host, "user", lambda: (501, 20))
-    runner = RecordingRunner(PROJECT_ROOT)
 
-    hostimage._LinuxRustSuite(
-        tmp_path,
-        source=CONFIG.root,
-        mount=CONFIG.hostimage.mount,
-        script=CONFIG.hostimage.script,
-    ).perform(Context(runner, CONFIG))
+    lane = (PROJECT_ROOT / "src/capsem/gate/linuxrust.py").read_text(encoding="utf-8")
+    assert "docker_git_metadata_mount" not in lane
+    for flag in ("-v", "--volume", "--user"):
+        assert flag not in lane, f"the parity lane grew a {flag}, so it shares state again"
 
-    suite = runner.rendered[-1]
-    assert f"-v {metadata}:{metadata}:ro" in suite
-    assert "--user 501:20" in suite
-    assert CONFIG.hostimage.script in suite
-
-    for volume in CONFIG.hostimage.writable_source_mounts:
-        source = CONFIG.path(volume.source)
-        target = f"{CONFIG.hostimage.mount}/{volume.target}"
-        assert f"-v {source}:{target}" in suite
+    # And the probe that proves the builder can read a checkout it does not own
+    # is still wired, because that is what makes the package rail's mount
+    # sufficient rather than merely present.
+    assert "_ForeignUidProbe" in (PROJECT_ROOT / "src/capsem/gate/hostimage.py").read_text(
+        encoding="utf-8"
+    )
+    assert linuxrust.RunLane is not None
 
 
 def test_the_lane_has_somewhere_to_put_its_output_before_it_runs() -> None:

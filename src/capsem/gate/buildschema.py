@@ -67,11 +67,6 @@ class FunctionalConfig(Strict):
     assets_dir_variable: str
 
 
-class NamedVolume(Strict):
-    source: str
-    target: str
-
-
 class HostImageConfig(Strict):
     base_dockerfile: str
     lane_dockerfile: str
@@ -87,18 +82,8 @@ class HostImageConfig(Strict):
     dockerfile: str
     context: str
     script: str
-    output_dir: str
-    nextest_dir: str
     mount: str
-    container_output: str
-    container_home: str
     probe_user: str
-    alpine: str
-    tmpfs: str
-    nextest_mount: str
-    writable_source_mounts: tuple[NamedVolume, ...]
-    cached_volumes: tuple[NamedVolume, ...]
-    environment: dict[str, str]
 
 
 class SbomConfig(Strict):
