@@ -590,6 +590,8 @@ direct_machine_access = [
     # Composing it from actions would mean a plan whose first step creates the
     # directory the plan is already executing from.
     "prefix.py",
+    # Same reason: `snapshot` is the copying half, split out at the ceiling.
+    "snapshot.py",
 ]
 
 # Only the plan schedules concurrent work. A module that reaches for its own
@@ -1259,6 +1261,16 @@ channel_switch_cleared = [
 # characters and reproduced a 12,024-error socket failure. `~/.cg/<8hex>` is 24.
 parent = "~/.cg"
 name_length = 8
+
+# How many prefixes survive a sweep. A failed run keeps its tree so it can be
+# resumed into, and the *next* run is the one that no longer needs the one
+# before -- the same shape as `[workspace] home`, which is wiped on entry
+# rather than on exit so a crash leaves something to inspect.
+#
+# Bounded because they are not small: one retained prefix on this machine was
+# 22 GiB, and it carried the copied signing material with it. Nothing else
+# reclaims them -- `[disk] reclaimable` only accepts paths inside the checkout.
+keep = 1
 
 # Copied wholesale despite being invisible to `git ls-files`, which is what the
 # source digest counts. `.git` because build provenance goes through `build.rs`

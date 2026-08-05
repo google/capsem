@@ -225,6 +225,7 @@ class PrefixConfig(Strict):
 
     parent: str
     name_length: int
+    keep: int
     carried: tuple[str, ...]
     exports: tuple[str, ...]
 

@@ -79,6 +79,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A failed run's prefix is now reclaimed by the next one. Keeping it for
+  `--prefix` was deliberate, but nothing ever removed it: `[disk] reclaimable`
+  only accepts paths inside the checkout, so `gc` never reached `~/.cg`. One
+  retained tree on this machine was 22 GiB and carried the copied signing
+  material with it. Swept on entry rather than on exit, the same shape as the
+  workspace home, so a crash still leaves something to inspect and the run
+  after it is the one that cleans up. `reclaim` also stopped reporting success
+  on a tree it failed to remove.
+
+- A linked worktree is refused instead of half-isolated. Its `.git` is a file
+  holding an absolute pointer into another repository, so copying it left the
+  prefix following the original's `HEAD` -- a commit over there moved the
+  supposedly private tree, and the isolation quietly became the detection it
+  was built to replace. This repository really uses linked worktrees, so the
+  case was reachable.
+
+- Resuming refreshes the copy instead of layering onto it. It only ever copied
+  the current source *over* the old, so a file deleted from the checkout
+  survived into the resumed tree -- the run then compiled and tested something
+  the operator no longer had, while its run log described the tree they thought
+  they retried. The carried paths are refreshed too, since `.git` moves
+  whenever someone commits between attempts. The test that claimed to cover
+  this called `populate()` twice while production called a different branch; it
+  exercises the production path now.
+
 - The host binary list is derived from `cargo metadata` instead of from
   yesterday's failure. Three runs from a clean checkout each died on one
   missing binary -- `capsem` at `codesign`, `capsem-mcp-aggregator` at the VM

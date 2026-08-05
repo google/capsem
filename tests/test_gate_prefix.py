@@ -157,10 +157,10 @@ def test_the_prefix_carries_the_working_tree_and_not_build_output(source: Path) 
     and untracked non-ignored files are part of the subject. A prefix built
     from `HEAD` would qualify a different tree than the one being measured.
     """
-    from capsem.gate import prefix
+    from capsem.gate import snapshot
 
     target = source.parent / "prefix"
-    prefix.populate(source, target, _config())
+    snapshot.populate(source, target, _config())
 
     assert (target / "tracked.txt").read_text(encoding="utf-8") == "edited\n"
     assert (target / "untracked.txt").is_file()
@@ -177,37 +177,45 @@ def test_a_tracked_symlink_stays_a_symlink(source: Path) -> None:
     silently duplicates a tree and produces a prefix whose digest can never
     match its source.
     """
-    from capsem.gate import prefix
+    from capsem.gate import snapshot
 
     target = source.parent / "prefix"
-    prefix.populate(source, target, _config())
+    snapshot.populate(source, target, _config())
 
     link = target / ".agents" / "skills"
     assert link.is_symlink(), f"{link} was resolved instead of copied as a link"
     assert Path(os.readlink(link)) == Path(os.readlink(source / ".agents" / "skills"))
 
 
-def test_refreshing_an_existing_prefix_is_idempotent(source: Path) -> None:
-    """What `--prefix` does on every resume: copy the source in again.
+def test_refreshing_an_existing_prefix_matches_the_source(source: Path) -> None:
+    """The production resume path, not a second `populate`.
 
-    The tree already has last run's files, so every write is an overwrite.
-    `cp` handles that for regular files and `os.symlink` does not -- it raises
-    `FileExistsError`, which killed the first real resume in under a second
-    against `.agents/skills`.
+    An earlier version of this test called `populate()` twice while resuming
+    actually called a different branch, so it proved a path nothing ran. It
+    calls `refresh` now, which is what `--prefix` uses.
 
-    Copying twice is the whole test: the second pass must land the same tree as
-    the first, because that is exactly what resuming does.
+    Three things must hold. An overwrite must work at all -- `cp` handles it
+    for regular files and `os.symlink` refuses an existing link, which killed
+    the first real resume in under a second on `.agents/skills`. An edit must
+    land. And a file *deleted* from the source must not survive: it did, so a
+    resumed run compiled a tree the operator no longer had while its run log
+    described the tree they thought they retried.
     """
-    from capsem.gate import prefix
+    from capsem.gate import snapshot
 
     target = source.parent / "prefix"
-    prefix.populate(source, target, _config())
+    snapshot.populate(source, target, _config())
+    assert (target / "untracked.txt").is_file()
 
     (source / "tracked.txt").write_text("fixed\n", encoding="utf-8")
-    prefix.populate(source, target, _config())
+    (source / "untracked.txt").unlink()
+    snapshot.refresh(source, target, _config())
 
     assert (target / "tracked.txt").read_text(encoding="utf-8") == "fixed\n"
     assert (target / ".agents" / "skills").is_symlink()
+    assert not (target / "untracked.txt").exists(), (
+        "a file deleted from the source survived into the resumed tree"
+    )
 
 
 def test_the_prefix_carries_the_gitignored_paths_a_release_signs_with(source: Path) -> None:
@@ -218,10 +226,10 @@ def test_the_prefix_carries_the_gitignored_paths_a_release_signs_with(source: Pa
     first thing that notices is the package lane during a release. Declared in
     `[prefix] carried` for exactly this reason, alongside `.git`.
     """
-    from capsem.gate import prefix
+    from capsem.gate import snapshot
 
     target = source.parent / "prefix"
-    prefix.populate(source, target, _config())
+    snapshot.populate(source, target, _config())
 
     assert (target / "private" / "tauri" / "key.pem").read_text(encoding="utf-8") == "SECRET\n"
 
@@ -234,10 +242,10 @@ def test_the_prefix_reports_the_same_revision_as_its_source(source: Path) -> Non
     it the copy is not a checkout, and the gate qualifies a revision it cannot
     name.
     """
-    from capsem.gate import prefix
+    from capsem.gate import snapshot
 
     target = source.parent / "prefix"
-    prefix.populate(source, target, _config())
+    snapshot.populate(source, target, _config())
 
     assert (target / ".git").is_dir()
     assert _git(target, "rev-parse", "HEAD") == _git(source, "rev-parse", "HEAD")
@@ -251,10 +259,10 @@ def test_the_copy_is_independent_of_the_tree_it_came_from(source: Path) -> None:
     this file and still lets an outside edit reach into a running gate, which
     is the exact failure the prefix exists to make impossible.
     """
-    from capsem.gate import prefix
+    from capsem.gate import snapshot
 
     target = source.parent / "prefix"
-    prefix.populate(source, target, _config())
+    snapshot.populate(source, target, _config())
 
     (source / "tracked.txt").write_text("edited by someone else\n", encoding="utf-8")
     assert (target / "tracked.txt").read_text(encoding="utf-8") == "edited\n"
@@ -272,13 +280,13 @@ def test_a_finished_run_leaves_no_prefix(tmp_path: Path, source: Path) -> None:
     in the middle of the next release rather than at a point where it is cheap.
     """
     from capsem.gate import config as gate_config
-    from capsem.gate import prefix
+    from capsem.gate import prefix, snapshot
 
     config = gate_config.load(PROJECT_ROOT).model_copy(
         update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path)})}
     )
     target = tmp_path / "abcd1234"
-    prefix.populate(source, target, config)
+    snapshot.populate(source, target, config)
     assert target.is_dir()
 
     prefix.reclaim(config, target)
@@ -441,3 +449,81 @@ def test_the_built_binaries_are_every_host_binary() -> None:
 
     stale = sorted(set(settings.built) - host)
     assert not stale, f"these are in the build list but no longer exist: {stale}"
+
+
+def test_a_sweep_keeps_the_newest_and_reclaims_the_rest(tmp_path: Path) -> None:
+    """Bounded growth, on the way in.
+
+    A failed run keeps its tree so it can be resumed into, which means nothing
+    on the failure path deletes it -- and `[disk] reclaimable` only accepts
+    paths inside the checkout, so `gc` never reached these. One retained prefix
+    on this machine was 22 GiB and carried the copied signing material with it.
+
+    Swept on entry rather than on exit, the same shape as `[workspace] home`:
+    the run *after* a failure is the one that no longer needs its tree.
+    """
+    import time
+
+    from capsem.gate import config as gate_config
+    from capsem.gate import prefix
+
+    config = gate_config.load(PROJECT_ROOT).model_copy(
+        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+    )
+    older, newer = tmp_path / "aaaaaaaa", tmp_path / "bbbbbbbb"
+    for path in (older, newer):
+        path.mkdir()
+        (path / "bulk").write_text("x", encoding="utf-8")
+        time.sleep(0.01)
+
+    reclaimed = prefix.sweep(config)
+
+    assert reclaimed == [older]
+    assert not older.exists()
+    assert newer.is_dir(), "the newest survives, so a failed run can still be resumed"
+
+
+def test_reclaim_does_not_report_success_on_a_tree_it_left_behind(tmp_path: Path) -> None:
+    """`ignore_errors=True` is right for a chmodded tree and wrong as the last
+    word: a successful run that silently kept its copy is how the disk fills
+    with nothing reporting it."""
+    from capsem.gate import config as gate_config
+    from capsem.gate import prefix
+    from capsem.gate.errors import GateError
+
+    config = gate_config.load(PROJECT_ROOT).model_copy(
+        update={"prefix": _config().prefix.model_copy(update={"parent": str(tmp_path), "keep": 1})}
+    )
+    stubborn = tmp_path / "cccccccc"
+    stubborn.mkdir()
+
+    original = prefix.shutil.rmtree
+    prefix.shutil.rmtree = lambda *a, **k: None  # ty: ignore[invalid-assignment]
+    try:
+        with pytest.raises(GateError, match="could not reclaim"):
+            prefix.reclaim(config, stubborn)
+    finally:
+        prefix.shutil.rmtree = original  # ty: ignore[invalid-assignment]
+
+
+def test_a_linked_worktree_is_refused_rather_than_half_isolated(tmp_path: Path) -> None:
+    """`.git` is a file in a worktree, and copying it copies a pointer.
+
+    The copy then follows the *original* repository: a commit over there moves
+    the supposedly private prefix's `HEAD`, and the isolation silently becomes
+    the detection it was built to replace. This repository really uses linked
+    worktrees, under `.claude/worktrees/`, so the case is reachable.
+
+    Refused rather than repaired -- making the copy self-contained means
+    reproducing the common object store, and a loud message naming the main
+    checkout beats a private tree that quietly is not one.
+    """
+    from capsem.gate import snapshot
+    from capsem.gate.errors import GateError
+
+    worktree = tmp_path / "linked"
+    worktree.mkdir()
+    (worktree / ".git").write_text(f"gitdir: {tmp_path}/main/.git/worktrees/linked\n")
+
+    with pytest.raises(GateError, match="linked worktree"):
+        snapshot.populate(worktree, tmp_path / "prefix", _config())

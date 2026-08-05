@@ -29,11 +29,9 @@ from __future__ import annotations
 import os
 import secrets
 import shutil
-import subprocess
-from collections import defaultdict
 from pathlib import Path
 
-from . import host
+from . import snapshot
 from .config import GateConfig
 from .errors import GateError
 
@@ -79,6 +77,27 @@ def socket_root(config: GateConfig) -> Path:
     return Path(config.assets.run_dir_template).parent
 
 
+def sweep(config: GateConfig) -> list[Path]:
+    """Reclaim all but the newest `keep` prefixes, and say which went.
+
+    On the way in rather than on the way out, for the reason `Workspace` wipes
+    its home on entry: a run that failed leaves its tree so it can be inspected
+    or resumed into, and the run *after* it is the one that no longer needs it.
+
+    Nothing else does this. `[disk] reclaimable` only accepts paths inside the
+    checkout, so before this a failed gate left its copy indefinitely -- 22 GiB
+    on this machine, carrying the copied signing material with it.
+    """
+    root = parent_dir(config)
+    if not root.is_dir():
+        return []
+    kept = sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime)
+    stale = kept[: max(len(kept) - config.prefix.keep, 0)]
+    for path in stale:
+        reclaim(config, path)
+    return stale
+
+
 def allocate(config: GateConfig, identity: str) -> Path:
     """Reserve a named prefix, failing if something already holds the name."""
     root = parent_dir(config)
@@ -87,88 +106,6 @@ def allocate(config: GateConfig, identity: str) -> Path:
     if path.exists():
         raise GateError(f"prefix {path} already exists, so this run has no private tree")
     return path
-
-
-def _subject(source: Path) -> list[Path]:
-    """Exactly what the source digest counts.
-
-    The same command as `scripts/source-state-digest.py`, deliberately: a
-    prefix built from a different set is a prefix whose digest cannot match
-    the tree it came from.
-    """
-    listing = subprocess.run(
-        ["git", "ls-files", "-co", "--exclude-standard", "-z"],
-        cwd=source,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    return [Path(name) for name in listing.split("\0") if name]
-
-
-def _copy_files(source: Path, target: Path, relatives: list[Path]) -> None:
-    """Regular files in batches, symlinks one at a time as links.
-
-    The split is not an optimisation. `git ls-files` lists a symlink like any
-    other entry, and `cp` without `-R` follows it -- which fails outright when
-    it points at a directory (`.agents/skills` in this repository, pointing at
-    the one checked-in skill library) and silently duplicates a tree when it
-    does not. Recreated with `os.symlink`, the copy keeps the same link and
-    therefore the same digest as the tree it came from.
-    """
-    grouped: dict[Path, list[Path]] = defaultdict(list)
-    links: list[Path] = []
-    for relative in relatives:
-        if (source / relative).is_symlink():
-            links.append(relative)
-        else:
-            grouped[relative.parent].append(relative)
-
-    flags = _CLONE if host.on_macos() else ()
-    for parent, group in grouped.items():
-        destination = target / parent
-        destination.mkdir(parents=True, exist_ok=True)
-        for index in range(0, len(group), _BATCH):
-            batch = group[index : index + _BATCH]
-            subprocess.run(
-                ["cp", *flags, *[str(source / name) for name in batch], str(destination)],
-                check=True,
-            )
-
-    for relative in links:
-        destination = target / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        # Cleared first, because this runs a second time on every resume: `cp`
-        # overwrites a regular file and `os.symlink` refuses an existing one,
-        # so a reused prefix died on `FileExistsError` before any step ran.
-        destination.unlink(missing_ok=True)
-        destination.symlink_to(os.readlink(source / relative))
-
-
-def _copy_carried(source: Path, target: Path, config: GateConfig) -> None:
-    flags = ("-R", *_CLONE) if host.on_macos() else ("-R",)
-    for relative in config.prefix.carried:
-        origin = source / relative
-        if not origin.exists():
-            # Absent is legitimate: a fresh clone has no `private/`, and a
-            # release only needs it once it signs. Refusing here would make
-            # the prefix unusable for every command that never signs anything.
-            continue
-        destination = target / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["cp", *flags, str(origin), str(destination)], check=True)
-
-
-def populate(source: Path, target: Path, config: GateConfig) -> None:
-    """Copy the subject of the run into `target`.
-
-    The working tree the digest counts, plus the paths `git ls-files` cannot
-    see. Nothing else -- `target/` is 164 GB logical and is what makes the
-    difference between a 2.2s copy and an 84s one.
-    """
-    target.mkdir(parents=True, exist_ok=True)
-    _copy_files(source, target, _subject(source))
-    _copy_carried(source, target, config)
 
 
 def export(prefix: Path, destination: Path, config: GateConfig) -> None:
@@ -219,15 +156,18 @@ def run_from_private_copy(
     A run that failed is precisely when its run log is worth having, and
     without this the evidence dies with the copy that produced it.
     """
+    if reuse is None:
+        for stale in sweep(config):
+            runner.note(f"reclaimed stale prefix {stale}")
     path = reuse or allocate(config, secrets.token_hex(config.prefix.name_length))
     if reuse is None:
-        populate(config.root, path, config)
+        snapshot.populate(config.root, path, config)
     else:
         # Refreshed, not rebuilt. The source has to become what the checkout
         # says now -- that is the point of resuming after a fix -- while
         # `target/` and everything else the last run built stays put, which is
         # what makes the next attempt cheap.
-        _copy_files(config.root, path, _subject(config.root))
+        snapshot.refresh(config.root, path, config)
     status = runner.run(
         ["uv", "run", "capsem-gate", *arguments],
         cwd=path,
@@ -240,8 +180,8 @@ def run_from_private_copy(
     else:
         # Kept on purpose. Its build output is what a `--prefix ... --from ...`
         # run reuses, and re-earning it costs the twenty minutes resuming
-        # exists to save. `allocate` never collides -- the name is random --
-        # and `gc` reclaims what accumulates.
+        # exists to save. `sweep` on the next run is what bounds the
+        # accumulation -- not `gc`, which only reaches inside the checkout.
         runner.note(f"prefix kept for resuming: {path}")
     return status
 
@@ -262,5 +202,9 @@ def reclaim(config: GateConfig, path: Path) -> None:
             f"refusing to reclaim {resolved}: a prefix is a direct child of {root}, "
             "and this is not one"
         )
+    shutil.rmtree(resolved, ignore_errors=True)
     if resolved.exists():
-        shutil.rmtree(resolved, ignore_errors=True)
+        # `ignore_errors` is right for a tree the gate may have chmodded, and
+        # wrong as the last word: a successful run that silently kept its copy
+        # is how the disk fills without anything reporting it.
+        raise GateError(f"could not reclaim {resolved}; it is still on disk")
