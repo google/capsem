@@ -33,12 +33,41 @@ FIX_NEEDED=()
 _reg() { FIX_IDS+=("$1"); FIX_CMDS+=("$2"); FIX_DESCS+=("$3"); FIX_NEEDED+=(0); }
 
 _doctor_build_assets_all_profiles() {
+    # Never from inside a gate. `just _build-assets` is `capsem-gate
+    # build-assets`, which takes the machine lock -- and a gate run is already
+    # holding it, so the child waits out its full timeout for a lock that
+    # cannot be released until the child returns. The Python side refuses this
+    # explicitly; reaching it through a shell auto-fix is the same deadlock by
+    # a route that guard cannot see.
+    #
+    # It is also unnecessary. A run that gets here has `assets.build.<arch>`
+    # further down its own plan, ordered against everything that needs the
+    # result. Self-healing here would build them twice at best.
+    #
+    # Only visible once a run stopped inheriting a warm checkout: `assets/` is
+    # build output, so a private copy has none, doctor found them missing and
+    # tried to fix it mid-gate.
+    if [ -n "${CAPSEM_GATE_RUN:-}" ]; then
+        printf "  [SKIP] asset build (inside %s; its plan builds them)\n" "$CAPSEM_GATE_RUN"
+        return 0
+    fi
     local arch
     arch="$(uname -m | sed 's/aarch64/arm64/;s/arm64/arm64/;s/x86_64/x86_64/')"
     local profile
     for profile in config/profiles/*/profile.toml; do
         just _build-assets "$(basename "$(dirname "$profile")")" "$arch"
     done
+}
+
+_doctor_pack_initrd() {
+    # Same deadlock, same reason: `just _pack-initrd` is `capsem-gate
+    # pack-initrd`, and a gate run holds the lock it would ask for. The plan
+    # that got here owns `initrd.repack`, ordered against what needs it.
+    if [ -n "${CAPSEM_GATE_RUN:-}" ]; then
+        printf "  [SKIP] initrd repack (inside %s; its plan does this)\n" "$CAPSEM_GATE_RUN"
+        return 0
+    fi
+    just _pack-initrd
 }
 
 # Order matters: tools before builds, builds before assets
@@ -68,7 +97,7 @@ _reg pnpm-install     "cd frontend && pnpm install --frozen-lockfile" \
                       "Install frontend deps"
 _reg build-assets     "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 _doctor_build_assets_all_profiles" \
                       "Build VM assets (kernel + rootfs)"
-_reg pack-initrd      "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 just _pack-initrd" \
+_reg pack-initrd      "touch .dev-setup && CAPSEM_SKIP_ASSET_CHECK=1 _doctor_pack_initrd" \
                       "Cross-compile guest binaries + repack initrd"
 
 need_fix() {
