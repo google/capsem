@@ -22,20 +22,11 @@ import json
 import multiprocessing
 from pathlib import Path
 
+from helpers.runlog_worker import open_and_hold
+
 from capsem.gate import config as gate_config
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-
-
-def _open_and_hold(root: str, name: str, ready, go) -> None:
-    """Open a run log, announce it, and hold it open until told to finish."""
-    from capsem.gate import config as inner_config
-    from capsem.gate.runlog import RunLog
-
-    settings = inner_config.load(Path(root))
-    with RunLog.open(settings, name) as log:
-        ready.put(log.directory.name)
-        go.get(timeout=60)
 
 
 def _checkout(tmp_path: Path, *, keep_runs: int) -> Path:
@@ -61,7 +52,7 @@ def test_a_live_run_is_never_rotated_away_by_another(tmp_path: Path) -> None:
 
     live = []
     for name in ("candidate", "smoke"):
-        worker = context.Process(target=_open_and_hold, args=(str(root), name, ready, go))
+        worker = context.Process(target=open_and_hold, args=(str(root), name, ready, go))
         worker.start()
         live.append((worker, ready.get(timeout=60)))
 
@@ -69,7 +60,7 @@ def test_a_live_run_is_never_rotated_away_by_another(tmp_path: Path) -> None:
     directory = root / settings.runlog.root
     try:
         # The third one rotates while both of those are still being written.
-        third = context.Process(target=_open_and_hold, args=(str(root), "lint", ready, go))
+        third = context.Process(target=open_and_hold, args=(str(root), "lint", ready, go))
         third.start()
         newest = ready.get(timeout=60)
         live.append((third, newest))

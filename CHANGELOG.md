@@ -30,6 +30,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   was parsed as a call to ``linux-rust` `` -- trailing backtick included -- and
   reported as unknown. Three doctor checks went red on a comment.
 
+- `test_a_live_run_is_never_rotated_away_by_another` no longer answers
+  differently depending on how pytest was started. A spawned child re-imports
+  its target's module with nothing but a copy of the parent's `sys.path`, and
+  `--import-mode=importlib` names test modules `tests.<basename>` without ever
+  putting the repository root on that path -- so the name resolved under
+  `python -m pytest`, which contributes the working directory and is how the
+  gate invokes every suite, and not under the `pytest` console script. Run the
+  file on its own and the child died on `ModuleNotFoundError: No module named
+  'tests'` while the parent sat out a sixty-second queue timeout. The worker
+  moved to `tests/helpers/`, which the root conftest puts on `sys.path` before
+  collection under every invocation and in every xdist worker. Spawn is
+  unchanged: cross-process rotation safety is the point, and it is the
+  stricter start method.
+
 ### Security
 
 - `fast-uri` is bounded past GHSA-7p8r-x3mc-p8w7 (host confusion via a
