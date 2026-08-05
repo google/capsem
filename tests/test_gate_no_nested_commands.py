@@ -126,6 +126,21 @@ def _modules() -> list[Path]:
 # ---------------------------------------------------------------------------
 
 
+#: The one module that re-enters the gate on purpose, and may.
+#:
+#: The rule here is about *plan actions*: a step that shells out to the gate
+#: starts a second one that waits out its timeout for the lock the first is
+#: holding. `prefix` is not a step. It runs from `reexec()`, above every
+#: resource and before the machine lock exists, and the process it starts is
+#: the one that goes on to take that lock -- exactly once, because the child
+#: inherits a marker that stops it building a copy of its own.
+#:
+#: Narrow on purpose: the exemption is the module, and the reason it is safe is
+#: *where* it runs. If any of this moves inside a plan, the deadlock it
+#: prevents is real, so the guard must go back to covering it.
+RE_EXEC_BEFORE_THE_LOCK = {"prefix.py"}
+
+
 @pytest.mark.parametrize("module", _modules(), ids=lambda p: p.name)
 def test_no_plan_action_re_enters_the_gate(module: Path) -> None:
     """Composition happens in one process, or the machine lock deadlocks it.
@@ -134,6 +149,9 @@ def test_no_plan_action_re_enters_the_gate(module: Path) -> None:
     "_sign"])` reads like naming a step. What it does is start a second gate
     that waits out its timeout for the lock this one is holding.
     """
+    if module.name in RE_EXEC_BEFORE_THE_LOCK:
+        pytest.skip(f"{module.name} re-execs before the lock is taken, not from a plan")
+
     offences = [
         f"{module.name}:{line}: {' '.join(argv)}"
         for line, argv in _invocations(module)
@@ -143,6 +161,34 @@ def test_no_plan_action_re_enters_the_gate(module: Path) -> None:
     assert not offences, (
         "a plan action may not invoke just or capsem-gate; compose the other "
         "command's fragment into this plan instead:\n  " + "\n  ".join(offences)
+    )
+
+
+def test_the_re_exec_exemption_is_not_reachable_from_a_plan() -> None:
+    """What `RE_EXEC_BEFORE_THE_LOCK` costs, paid back.
+
+    Skipping the argv scan for `prefix.py` is only safe while its re-exec
+    genuinely cannot happen inside a plan. So this asserts the thing the skip
+    assumes: nothing that builds or runs steps reaches it. `command.py` is the
+    single caller, from `execute` before any resource is acquired.
+
+    Without this, the exemption is a hole shaped exactly like the deadlock the
+    guard exists to prevent -- a step calling into `prefix` would start a gate
+    that waits out its timeout for the lock its own parent holds, and the scan
+    that would have caught it has been told not to look.
+    """
+    # The entry point that spawns a gate, not the module. `sourcestate` calls
+    # `prefix.source_checkout` from inside a plan action and always will --
+    # that one reads an environment variable and starts nothing.
+    callers = sorted(
+        module.name
+        for module in _modules()
+        if module.name not in {"prefix.py", "command.py"}
+        and "run_from_private_copy" in module.read_text(encoding="utf-8")
+    )
+    assert not callers, (
+        "these reach the prefix re-exec, which is exempt from the recursion "
+        f"scan only because `command.py` is its one caller: {callers}"
     )
 
 
