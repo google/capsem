@@ -71,8 +71,6 @@ def test_policy_declares_last_consumers_before_release_boundaries() -> None:
     # gate died at `docker build` with `pull access denied`.
     assert resources["capsem-host-builder"]["last_consumer"] == "install"
     assert resources["capsem-host-builder"]["release_boundary"] == "after-install"
-    assert resources["capsem-linux-rust-target"]["last_consumer"] == "linux-rust"
-    assert resources["capsem-linux-rust-target"]["release_boundary"] == "after-linux-rust"
     assert resources["capsem-agent-target-arm64"]["last_consumer"] == "assets"
     assert resources["capsem-agent-target-arm64"]["release_boundary"] == "after-assets"
     assert resources["capsem-host-target-arm64"]["release_boundary"] == "after-package-arm64"
@@ -83,6 +81,45 @@ def test_policy_declares_last_consumers_before_release_boundaries() -> None:
     assert resources["capsem-install-frontend-node-modules"]["retention"] == "cache"
     assert resources["capsem-install-release-site-node-modules"]["retention"] == "cache"
     assert resources["capsem-linux-python-venv"]["retention"] == "obsolete"
+
+
+#: The four the sealed parity lane stopped mounting. `capsem-linux-rust-base`
+#: is deliberately absent -- it is the image that replaced them, and it is the
+#: one managed resource keyed by a repository rather than a tag.
+RETIRED_BY_THE_SEALED_LANE = (
+    "capsem-linux-rust-target",
+    "capsem-linux-rust-cargo-registry",
+    "capsem-linux-rust-cargo-git",
+    "capsem-linux-rust-rustup",
+)
+
+
+def test_the_sealed_parity_lane_declares_no_volumes_to_hand_back() -> None:
+    """What replaced `capsem-linux-rust-target`'s consumer and boundary.
+
+    Those two assertions said the lane's build tree is released after the lane.
+    The lane now mounts nothing at all, so the honest form of the same property
+    is that none of the four can name a consumer or a boundary -- a volume with
+    no producer must not have a step existing to give it back.
+
+    Strictly stronger than what it replaces: the old pair constrained one
+    volume's ordering, this constrains all four out of the graph entirely.
+    """
+    resources = load_policy()["resources"]
+
+    for name in RETIRED_BY_THE_SEALED_LANE:
+        resource = resources[name]
+        assert resource["retention"] == "obsolete", (
+            f"{name} is mounted by nothing since the parity lane was sealed"
+        )
+        assert resource["owner"] == "none", f"{name} has no owner left to claim it"
+        assert "last_consumer" not in resource, (
+            f"{name} names a consumer, but the sealed lane does not mount it"
+        )
+        assert "release_boundary" not in resource, (
+            f"{name} keeps a release boundary, so a step still exists to hand "
+            "back a volume nothing takes"
+        )
 
 
 def test_policy_cli_reports_resolved_rail_without_docker() -> None:

@@ -176,14 +176,12 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
         # Native Linux runs exercise these cfg branches directly. A Mac host
         # has to run the same checked-in Linux runner in Docker, or Linux-only
         # regressions stay out of the local gate entirely.
-        linux = hostimage.linux_rust(plan, config, after=after)
-        # The lane's *build tree*, handed back before the assets need room --
-        # `capsem-linux-rust-target`'s last consumer is this lane. Not the
-        # builder image: both package builds still run that, so it is freed at
-        # `after-packages` and nothing earlier may touch it.
-        leaves.append(
-            phase.add(storagerelease(config, "completed-linux-rust-target"), after=(linux,))
-        )
+        #
+        # No storage release follows it any more. The lane used to leave an
+        # 11 GiB `capsem-linux-rust-target` behind and a step existed to hand it
+        # back before the assets needed the room; sealing the lane removed the
+        # mount, so the volume, its boundary and that step all went with it.
+        leaves.append(hostimage.linux_rust(plan, config, after=after))
 
     coverage = phase.add(
         step(

@@ -1090,20 +1090,32 @@ def test_package_boundary_releases_only_completed_docker_rail_volumes() -> None:
     assert resources["capsem-rustup-x86_64"]["retention"] == "cache"
 
 
-def test_linux_rust_target_is_released_before_asset_capacity_preflight() -> None:
-    """The parity lane's build tree is handed back before the assets need room."""
+def test_the_parity_lane_holds_no_build_tree_for_the_assets_to_wait_on() -> None:
+    """The parity lane's build tree is gone, so nothing has to hand it back.
+
+    This asserted an ordering -- lane, then `storage.completed-linux-rust-target`,
+    then `assets.preflight` -- because an 11 GiB `capsem-linux-rust-target`
+    volume survived the lane and the assets ran with its space still held
+    unless a step gave it back first. Sealing the lane deleted the mount, so
+    the volume, its `after-linux-rust` boundary and the releasing step went too.
+
+    The property is now unconditional rather than ordering-dependent: the
+    assets cannot be starved by a tree the lane never holds. Asserting the old
+    sequence would only prove the ceremony came back.
+    """
     order = _gate_order()
 
-    assert _boundary("completed-linux-rust-target") == "after-linux-rust"
-    # The build tree, which is what this is about. It used to assert on
-    # `storage.linux-rust-builder` -- the builder *image*, a different resource
-    # whose last consumer is `package-x86_64` -- so the tree itself was never
-    # released at all and the assets ran with its space still held.
-    assert (
-        _at(order, "linux-rust")
-        < _at(order, "storage.completed-linux-rust-target")
-        < _at(order, "assets.preflight")
+    assert _at(order, "linux-rust") < _at(order, "assets.preflight")
+    assert not [name for name in order if "completed-linux-rust-target" in name], (
+        "a step exists to release a volume the sealed lane never mounts"
     )
+
+    from capsem.gate import config as gate_config
+
+    boundaries = {
+        phase.boundary for phase in gate_config.load(PROJECT_ROOT).storage.phases.values()
+    }
+    assert "after-linux-rust" not in boundaries
 
 
 def test_install_boundary_releases_only_completed_package_targets() -> None:

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- The four `capsem-linux-rust-*` volumes are retired, along with the step that
+  existed to hand one of them back. Sealing the Linux parity lane stopped it
+  mounting anything -- it `COPY`s its source into a thin image on a
+  lockfile-keyed base and runs with no mounts and no network -- but the policy
+  still declared `capsem-linux-rust-target` as `working` with a
+  `release_boundary`, and the three caches as `cache`. So an 11 GiB volume with
+  no producer kept a whole `after-linux-rust` boundary and a
+  `completed-linux-rust-target` step alive to release space nothing was
+  holding.
+
+  The pins that described the old arrangement were reimplemented rather than
+  deleted, and both are stronger for it. `test_docker_storage_policy.py`
+  asserted one volume's consumer and boundary; it now asserts all four name
+  neither, which keeps a producerless volume out of the graph entirely.
+  `test_install_asset_payload.py` asserted the release happened between the
+  lane and `assets.preflight`; the assets can no longer be starved by a tree
+  the lane never holds, so it asserts the releasing step and its boundary do
+  not exist. `test_every_release_boundary_reclaims_something` is what caught
+  the leftover phase, exactly as its docstring said it would.
+
 ### Added
 
 - `capsem-linux-rust-base` is declared `generational` in

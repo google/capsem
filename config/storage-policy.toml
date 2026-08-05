@@ -74,11 +74,15 @@ reason = "Only the tag the current lockfiles resolve to has a possible consumer.
 
 [resources.capsem-linux-rust-target]
 kind = "volume"
-retention = "working"
-owner = "linux-rust"
-last_consumer = "linux-rust"
-release_boundary = "after-linux-rust"
-reason = "Linux coverage compiler output has no later consumer."
+retention = "obsolete"
+owner = "none"
+# Sealing the parity lane retired this. The lane `COPY`s its source into a thin
+# image on a lockfile-keyed base and runs with no mounts at all, so the 11 GiB
+# of compiler output that used to survive between runs -- and let a warm
+# machine and a clean checkout disagree about one commit -- has nowhere to
+# live. It kept a `release_boundary` too, which meant a whole step existed to
+# hand back a volume nobody took.
+reason = "The sealed Linux parity lane mounts nothing; this has no producer."
 
 [resources.capsem-agent-target-arm64]
 kind = "volume"
@@ -182,23 +186,29 @@ retention = "cache"
 owner = "packages"
 reason = "Pinned Rust toolchains and targets are reused by both package architectures."
 
+# The three caches the parity lane used to carry between runs. The base image
+# resolves all three now -- `cargo fetch` against `Cargo.lock` and the rustup
+# toolchain are baked in at a tag keyed by the lockfiles that determine them --
+# so a cold machine and a warm one get the same bytes instead of whatever the
+# last run happened to leave. `test_release_doctor_contract.py` asserts two of
+# these names never reappear in the lane's argv.
 [resources.capsem-linux-rust-cargo-registry]
 kind = "volume"
-retention = "cache"
-owner = "linux-rust"
-reason = "Downloaded Cargo registry content is reused by the next Linux parity run."
+retention = "obsolete"
+owner = "none"
+reason = "The lockfile-keyed base image carries the registry; nothing mounts this."
 
 [resources.capsem-linux-rust-cargo-git]
 kind = "volume"
-retention = "cache"
-owner = "linux-rust"
-reason = "Downloaded Cargo git sources are reused by the next Linux parity run."
+retention = "obsolete"
+owner = "none"
+reason = "The lockfile-keyed base image carries the git sources; nothing mounts this."
 
 [resources.capsem-linux-rust-rustup]
 kind = "volume"
-retention = "cache"
-owner = "linux-rust"
-reason = "Pinned Linux Rust toolchain is reused by the next Linux parity run."
+retention = "obsolete"
+owner = "none"
+reason = "The lockfile-keyed base image carries the toolchain; nothing mounts this."
 
 [resources.capsem-install-cargo]
 kind = "volume"
