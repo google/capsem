@@ -56,7 +56,7 @@ def observing(config: GateConfig, log: object, plan: Plan) -> Iterator[Watch | N
     roots = [config.path(name) for name in settings.observed_roots]
     try:
         with Watch(roots, source_root=config.root, declared=declared, on_fault=report) as watch:
-            with Instrument(watch):
+            with Instrument(watch, fd_path_template=settings.fd_path_template):
                 yield watch
             watch.sweep()
     finally:

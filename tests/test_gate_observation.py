@@ -27,11 +27,17 @@ import shutil
 import time
 from pathlib import Path
 
+from capsem.gate import config as gate_config
 from capsem.gate.faultlog import FaultLog
 from capsem.gate.faults import Event, Facts, Fault
 from capsem.gate.observation import Watch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+#: From config, not spelled here: `test_gate_has_no_literal_data` holds the
+#: gate's modules to one copy of every path, and a test that hardcodes its own
+#: would be asserting against a value production no longer uses.
+FD_PATH_TEMPLATE = gate_config.load(PROJECT_ROOT).runlog.fd_path_template
 
 
 def _settle(watch: Watch, count: int, timeout: float = 5.0) -> None:
@@ -226,6 +232,102 @@ def test_build_output_is_not_the_checked_in_tree() -> None:
     assert watch.faults == []
 
 
+def test_every_build_root_is_build_output_not_only_target() -> None:
+    """`dist/`, `packages/` and `assets/` are gitignored and rewritten per run.
+
+    Only `target` was excluded, so deleting a stale `.deb` or resyncing
+    `assets/current` -- both ordinary steps -- read as the gate mutating the
+    tree it is qualifying.
+    """
+    watch = Watch([], source_root=Path("/repo"))
+    for directory in ("target", "dist", "packages", "assets", ".git", "node_modules", ".venv"):
+        watch._judge(
+            Event(at=1.0, kind="unlink", path=Path(f"/repo/{directory}/x"), steps=("build",))
+        )
+    assert watch.faults == [], [fault.render() for fault in watch.faults]
+
+
+def test_a_relative_path_is_never_judged_against_the_working_directory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The release run of 2026-08-04 logged 42 of these, every one false.
+
+    `shutil.rmtree` deletes through a directory descriptor --
+    `os.unlink('profile.toml', dir_fd=5)` -- so a bare entry name reaches the
+    observer. Resolving it against the current working directory, which is the
+    checkout root, named a tracked file the run never touched:
+
+        [source-tree] profile.toml: unlink during the run
+
+    A guard that reports 42 phantom source mutations per run is a guard nobody
+    reads, and this is the guard that exists to catch the `config/profiles`
+    race that killed a release run. Judged only on absolute paths, so no
+    caller's spelling can be misattributed -- not just the one that was found.
+    """
+    # cwd *is* the source root here. Anything less and this passes because
+    # `Path.resolve()` happened to land outside the tree, which is the test
+    # passing by coincidence rather than by the rule.
+    watch = Watch([], source_root=tmp_path)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "profile.toml").write_text("x")
+
+    watch._judge(Event(at=1.0, kind="unlink", path=Path("config/profile.toml"), steps=()))
+    assert watch.faults == [], [fault.render() for fault in watch.faults]
+
+
+def test_rmtree_of_build_output_is_not_reported_as_a_source_mutation(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The production shape end to end, through the real interception."""
+    from capsem.gate.interception import Instrument
+
+    root = tmp_path / "checkout"
+    (root / "target" / "config" / "profiles" / "code").mkdir(parents=True)
+    (root / "config" / "profiles").mkdir(parents=True)
+    (root / "target" / "config" / "profiles" / "code" / "profile.toml").write_text("x")
+    (root / "target" / "config" / "profiles" / "code" / "asset-status.json").write_text("y")
+
+    # cwd at the checkout root is what made a bare entry name resolve into the
+    # source tree in the first place.
+    monkeypatch.chdir(root)
+    watch = Watch(roots=(root,), source_root=root)
+    with Instrument(watch, fd_path_template=FD_PATH_TEMPLATE):
+        shutil.rmtree(root / "target" / "config")
+
+    offenders = [fault for fault in watch.faults if fault.reason == "source-tree"]
+    assert not offenders, [fault.render() for fault in offenders]
+
+
+def test_an_intercepted_fault_names_an_absolute_path(tmp_path: Path, monkeypatch) -> None:
+    """A fault nobody can locate is not evidence.
+
+    Separate from the rule above, because a fix that only widened the
+    build-output set would silence the false positives and leave every real
+    fault still reported as a bare basename.
+    """
+    from capsem.gate.interception import Instrument
+
+    root = tmp_path / "checkout"
+    (root / "config" / "profiles").mkdir(parents=True)
+    victim = root / "config" / "profiles" / "profile.toml"
+    victim.write_text("x")
+
+    monkeypatch.chdir(root)
+    watch = Watch(roots=(root,), source_root=root)
+    with Instrument(watch, fd_path_template=FD_PATH_TEMPLATE):
+        handle = os.open(str(root / "config" / "profiles"), os.O_RDONLY)
+        try:
+            os.unlink("profile.toml", dir_fd=handle)
+        finally:
+            os.close(handle)
+
+    assert watch.faults, "a real tracked-source unlink went unreported"
+    fault = watch.faults[0]
+    assert fault.path.is_absolute(), f"fault names a bare path: {fault.render()}"
+    assert fault.path == victim.resolve(), fault.render()
+
+
 def test_an_empty_artifact_is_only_decidable_at_the_end(tmp_path: Path) -> None:
     """Mid-run it is a file being written; at the end it is a build that
     reported success and produced nothing."""
@@ -279,7 +381,7 @@ def test_interception_sees_a_hardlink_with_no_watcher_at_all(tmp_path: Path) -> 
     watch = Watch([], source_root=tmp_path)
     token = CURRENT_STEP.set("contracts.release")
     try:
-        with Instrument(watch):
+        with Instrument(watch, fd_path_template=FD_PATH_TEMPLATE):
             (tmp_path / "target").mkdir()
             os.link(seed, tmp_path / "target" / "staged-payload")
     finally:
@@ -309,7 +411,7 @@ def test_interception_catches_the_mode_that_a_watcher_arrives_too_late_for(
     target.chmod(0o644)
 
     watch = Watch([], source_root=tmp_path)
-    with Instrument(watch):
+    with Instrument(watch, fd_path_template=FD_PATH_TEMPLATE):
         os.chmod(target, 0o000)
         os.chmod(target, 0o644)
 
@@ -357,7 +459,7 @@ def test_the_primitives_are_restored_afterwards() -> None:
     from capsem.gate.interception import Instrument
 
     before = (os.link, os.chmod, shutil.copytree)
-    with Instrument(Watch([], source_root=Path("/repo"))):
+    with Instrument(Watch([], source_root=Path("/repo")), fd_path_template=FD_PATH_TEMPLATE):
         assert os.link is not before[0], "not actually patched"
     assert (os.link, os.chmod, shutil.copytree) == before
 

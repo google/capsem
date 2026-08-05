@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The filesystem observer reported 42 phantom source mutations on every release
+  run, and each named a file nothing had touched. `shutil.rmtree` deletes
+  through a directory descriptor -- `os.unlink('profile.toml', dir_fd=5)` -- so
+  a bare entry name reached the observer, which resolved it against the current
+  working directory. That directory is the checkout root, so removing
+  `target/config/profiles/code/profile.toml`, an ordinary step, was reported as
+
+      [source-tree] profile.toml: unlink during the run
+
+  naming the tracked `config/profiles` file of the same basename. A guard that
+  cries wolf 42 times a run is a guard nobody reads, and this is the guard that
+  exists to catch the `config/profiles` race that killed a release run.
+
+  Fixed in three places, because one of them alone would have hidden the
+  others. Interception now resolves a subject against its `dir_fd` (and
+  resolves an integer descriptor subject, as in `os.truncate(fd, n)`), so the
+  fault names where the call acted. The judge refuses to classify any path that
+  is not absolute, so no caller's loose spelling can be misattributed again --
+  not merely the one that was found. And `dist`, `packages` and `assets` join
+  `target` as build output: all are gitignored roots the gate rewrites every
+  run, and with only `target` excluded, resyncing `assets/current` or clearing
+  a stale `.deb` read as mutating the tree being qualified.
+
+  When a path genuinely cannot be established the event is not judged at all: a
+  fault nobody can locate is not evidence, and inventing one is worse than
+  missing it.
+
 ### Security
 
 - The local Tauri signing key and its password no longer reach anything that

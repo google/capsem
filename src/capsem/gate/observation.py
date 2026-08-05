@@ -199,6 +199,15 @@ class Watch:
     def is_source(self, path: Path) -> bool:
         from .faults import BUILD_OUTPUT
 
+        # Absolute only. `Path.resolve()` anchors a relative path to the
+        # current working directory, which for the gate is the checkout root --
+        # so a bare `profile.toml` from a `dir_fd` caller resolved into the
+        # source tree and was reported as a mutation of a file the run never
+        # touched. Refusing to judge what was not located keeps that class out
+        # regardless of which caller spells a path loosely; `interception`
+        # resolves the ones it can.
+        if not path.is_absolute():
+            return False
         try:
             relative = path.resolve().relative_to(self._source_root)
         except (ValueError, OSError):
