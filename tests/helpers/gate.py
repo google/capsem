@@ -278,6 +278,19 @@ def _built(root: Path, name: str, args: tuple[tuple[str, object], ...], qualific
     )
 
 
+def built_command(
+    root: Path, name: str, args: tuple[tuple[str, object], ...] = (), qualification=None
+):
+    """One command against a recording runner, for a test that drives it itself.
+
+    Public because a test that needs to run a plan against a *modified* config
+    -- pointing an output somewhere private so it does not collide with the
+    gate running the suite -- cannot go through `gate_issued`, which builds its
+    own `Context` from the real one.
+    """
+    return _built(root, name, args, qualification)
+
+
 def gate_plan(name: str = "candidate", root: Path | None = None, qualification=None):
     """A command's plan, built but not run -- for asserting on its edges.
 
