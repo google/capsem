@@ -31,7 +31,6 @@ from . import (
 from .actions import Run
 from .command import GateCommand
 from .config import GateConfig
-from .errors import GateError
 from .execution import Step, step
 from .fileactions import RequireFile
 from .lifecycle import Resource
@@ -209,72 +208,6 @@ def static(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> t
     )
     leaves.append(phase.add(hostpackage.sign_step(config), after=(coverage,)))
     return tuple(leaves)
-
-
-class ReleaseContractsModule(
-    GateCommand,
-    name="test-release-contracts",
-    help="the release and composition contracts, without artifacts",
-):
-    """Cheap, and deliberately excludes what needs a built tree.
-
-    The build-chain suites that require artifacts are the artifacts module's
-    job. Running them here would either fail on a fresh checkout or pass
-    vacuously, and both are worse than not running them.
-
-    Deliberately **not** exclusive, unlike every other module -- and the one
-    place the "anything that writes takes the machine lock" rule is wrong.
-    This command runs the source-contract suite, which contains the gate's own
-    tests: holding the machine lock while running tests that exercise the gate
-    stalls the command outright. Measured at 27 minutes wall for 27 seconds of
-    CPU, against 4 minutes 41 for the identical selection run directly.
-
-    Its real contention is `astro_build` and `node_modules`, declared on the
-    step where the graph can act on them. A command that *runs tests* is not a
-    command that mutates shared artifacts, whatever the general rule says.
-    """
-
-    def plan(self) -> Plan:
-        plan = Plan(self.name)
-        release_contracts(plan, self._config)
-        return plan
-
-
-def release_contracts(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
-    """The release and composition contracts, without artifacts."""
-    phase = plan.phase("contracts")
-    settings = config.modules
-
-    # The glob is expanded here. `bash` expanded it before pytest ever saw it;
-    # pytest does not expand path arguments itself, so passing the pattern
-    # through collects nothing and the module passes vacuously.
-    contracts = sorted(
-        str(path.relative_to(config.root)) for path in config.root.glob(settings.contract_glob)
-    )
-    if not contracts:
-        raise GateError(f"no contract tests matched {settings.contract_glob}")
-
-    return phase.add(
-        pytestsuite.Suite(
-            label="release",
-            paths=(
-                *settings.release_suites,
-                *contracts,
-                *config.suites.source_contract,
-            ),
-            ignores=settings.build_chain_artifact_tests,
-            stop_at_first_failure=False,
-            require_artifacts=False,
-            # It builds release-site fixtures at fixed paths and installs the
-            # workspace's node modules. As its own command a machine lock made
-            # that safe by accident; in a shared plan it has to be declared.
-            contends=(
-                config.exclusive("astro_build"),
-                config.exclusive("node_modules"),
-            ),
-        ).as_step(config),
-        after=after,
-    )
 
 
 def _guest_binaries_present(config: GateConfig):

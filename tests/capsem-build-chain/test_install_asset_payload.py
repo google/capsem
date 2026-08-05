@@ -71,6 +71,48 @@ def _redact(text: str) -> str:
     )
 
 
+@pytest.fixture(autouse=True, scope="module")
+def _resolvable_package():
+    """The built package these contracts plan *around*, made rather than found.
+
+    `_planned` runs the plan against a recording runner to capture real argv,
+    so every runtime precondition has to hold or the plan stops at the step
+    that needs one. `install` resolves `dist/Capsem_<version>_<arch>.deb` and
+    refuses without it, which meant these contracts silently asserted against
+    a two-step transcript -- `contextlib.suppress` swallows the refusal, and
+    the failure surfaces later as `'chown -R' not in <almost nothing>`.
+
+    On a developer's machine an earlier `just _cross-compile` had left one, so
+    this passed for reasons unrelated to what it tests. It failed the moment a
+    run got a checkout of its own, which is the same leftover-dependency class
+    as the CI run where 94 tests reported no materialized profiles.
+
+    Created only when genuinely absent, and removed again, so a real package is
+    never touched and an empty placeholder never outlives the test that needed
+    it -- an empty `.deb` left in `dist/` is something a later lane would try
+    to install.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate.versions import workspace_version
+
+    config = gate_config.load(PROJECT_ROOT)
+    package = (
+        PROJECT_ROOT
+        / "dist"
+        / f"Capsem_{workspace_version(PROJECT_ROOT)}_{config.host_arch().dpkg}.deb"
+    )
+    if package.exists() and package.stat().st_size:
+        yield
+        return
+
+    package.parent.mkdir(parents=True, exist_ok=True)
+    package.write_bytes(b"placeholder: planned, never installed\n")
+    try:
+        yield
+    finally:
+        package.unlink(missing_ok=True)
+
+
 def _planned(command: str, **args) -> str:
     return _planned_cached(command, tuple(sorted(args.items())))
 

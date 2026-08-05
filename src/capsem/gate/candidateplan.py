@@ -19,7 +19,15 @@ failed is skipped -- which is exactly wrong for cleanup.
 
 from __future__ import annotations
 
-from . import hostpackage, imagebuild, initrd, storage, testmodules, vmmodules
+from . import (
+    hostpackage,
+    imagebuild,
+    initrd,
+    module_contracts,
+    storage,
+    testmodules,
+    vmmodules,
+)
 from .actions import Call, Run, Script
 from .config import GateConfig
 from .execution import Step, step
@@ -62,7 +70,7 @@ def compose(
         after=after,
     )
 
-    contracts = testmodules.release_contracts(plan, config, after=(recorded,))
+    contracts = module_contracts.release_contracts(plan, config, after=(recorded,))
     fast = testmodules.fast(plan, config, after=(contracts,))
     modules = compose_modules(plan, config, qualification=qualification, after=(fast,))
 

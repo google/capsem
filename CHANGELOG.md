@@ -51,6 +51,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Four more inputs the gate inherited from history rather than producing, all
+  surfaced by the first complete run from a private checkout and all invisible
+  on a warm machine:
+
+  `test-release-contracts` ran `pnpm --dir release-site run build:channel`
+  without installing `node_modules`, which is gitignored -- so on a clean tree
+  the suite died with `sh: astro: command not found`. It now installs the Node
+  workspaces itself, which AGENTS.md requires of every module and this one did
+  not do.
+
+  The install contracts planned around `dist/Capsem_<version>_<arch>.deb`.
+  Their helper runs the plan against a recording runner to capture real argv,
+  and `install` refuses without that package, so `contextlib.suppress` swallowed
+  the refusal and five contracts asserted against a two-step transcript. They
+  now create the package when it is genuinely absent and remove it again,
+  rather than depending on an earlier `just _cross-compile`.
+
+  `test_acquiring_the_service_starts_it_and_waits_for_its_socket` copied
+  `target/config/profiles` into its workspace -- build output from
+  `prepare.materialize-config`. It makes that input now.
+
+  Two assertions in the release doctor contract only ever saw
+  `generate-host-binary-sbom.py` because a warm tree let the recorded plan run
+  reach it; the SBOM steps are `Call`s that describe themselves in prose. They
+  now assert the named step and the config it is built from, which is the same
+  claim without the dependency on machine state.
+
 - `test-fast` and `test-static` depended on a generated file that nothing in
   their lane generated. The web surfaces import
   `frontend/src/lib/mock-settings.generated.ts`, which is gitignored, and both

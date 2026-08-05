@@ -5012,12 +5012,29 @@ def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     assert "package.arm64" in canonical_gate
     assert "package.x86_64" in canonical_gate
     assert "test-macos-install:" not in _source_text("justfile")
-    assert "generate-host-binary-sbom.py" in canonical_gate
+    # The step, not the script's argv. `_recipe_block` *runs* the plan against
+    # a recording runner to capture real arguments, and `glowup.host-sbom` is a
+    # `Call` that renders as prose -- so the script name only ever appeared
+    # because a warm tree let the recorded run get that deep. On a checkout
+    # with no built assets the run stops at the asset lanes and the name is
+    # simply absent, which made this assert a fact about the machine rather
+    # than about the gate.
+    #
+    # Named step plus the config it is built from is the same claim without
+    # that dependency, and it is checked against the production script below
+    # in `host_sbom` as well.
+    assert "glowup.host-sbom" in canonical_gate
     assert "tests/capsem-recipes/" in canonical_gate
     assert "scripts/build-test-macos-package.sh" in mac_glowup
     assert "scripts/macos_tart_glowup.py" in mac_glowup
     assert "scripts/prove-macos-package-boot.sh" in mac_glowup
-    assert "generate-host-binary-sbom.py" in host_sbom
+    # Same reason as `glowup.host-sbom` above: the recipe dispatches to the
+    # gate, and the command's work is a `Call` that describes itself in prose.
+    # The script name reached this string only when a warm tree let the
+    # recorded run reach the argv. The dispatch is the part this block can
+    # honestly assert; `sbom.script` below is what it dispatches into.
+    assert "capsem-gate host-sbom" in host_sbom
+    assert "SBOM" in host_sbom
     # Exactly the current version's packages, so an older `.deb` still in
     # `dist/` cannot be described by a cohort nobody ships.
     from capsem.gate import config as gate_config
@@ -5025,6 +5042,10 @@ def test_just_test_builds_real_host_packages_and_runs_production_sbom() -> None:
     sbom = gate_config.load(PROJECT_ROOT).sbom
     assert "{version}" in sbom.dist_glob
     assert sbom.expected_debs == 2
+    # What `glowup.host-sbom` above is built from, so naming the step is still
+    # a claim about running the production generator rather than about a step
+    # label that could be wired to anything.
+    assert sbom.script == "scripts/generate-host-binary-sbom.py"
     assert "scripts/build-pkg.sh" in release
     assert "scripts/generate-host-binary-sbom.py" in release
 
