@@ -25,10 +25,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
-from helpers.gate import RecordingJournal, RecordingRunner
+from helpers.gate import RecordingJournal, RecordingRunner, built_command
 
 from capsem.gate import cli  # noqa: F401 - imported so every command registers
 from capsem.gate import config as gate_config
@@ -390,29 +392,52 @@ def test_interrogating_the_gate_plan_leaves_the_checkout_alone() -> None:
 
     Guarded here rather than in the helper, because the helper is not the only
     thing that will ever run a plan to look at it.
+
+    The sentinel is this test's own baseline. Reading whatever happens to be on
+    disk would compare the observer's output against the observer's output the
+    moment a previous run left one there -- and pass. It matters most during a
+    real gate, when the file already holds the true HEAD: a broken `observing`
+    would then rewrite identical bytes and go unnoticed.
+
+    It is written to a *private* path, and that is not incidental. Planting the
+    sentinel in the real `target/gate-source-state.json` made this test the one
+    thing in the suite that deliberately writes a file the whole suite shares.
+    Under `pytest -n 4 --dist=loadfile` that raced: this test wrote the
+    sentinel, a test in another worker had snapshotted the file before that
+    write, and `conftest._the_running_gate_keeps_its_own_source_state` blamed
+    *that* test for the change and restored the file underneath this one. Both
+    failed, in `functional.pytest.broad.code`, and neither was at fault. With
+    the sentinel private, the guard's invariant -- nothing in the suite writes
+    these paths -- is true again, so a future writer is correctly blamed.
     """
-    import sys as _sys
-
-    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
-    from helpers.gate import gate_issued
-
     config = gate_config.load(PROJECT_ROOT)
-    recorded = config.path(config.candidate.source_state_file)
-    saved = recorded.read_bytes() if recorded.exists() else None
+    # Inside `target/`, so it is build output rather than tracked source, and
+    # per-process, so four xdist workers cannot collide on it either.
+    probe = f"{config.candidate.source_state_file}.probe-{os.getpid()}"
+    observed = config.model_copy(
+        update={"candidate": config.candidate.model_copy(update={"source_state_file": probe})}
+    )
+    recorded = config.path(probe)
+    shared = config.path(config.candidate.source_state_file)
+    shared_before = shared.read_bytes() if shared.exists() else None
 
-    # A baseline of this test's own making. Reading whatever happens to be on
-    # disk would compare the observer's output against the observer's output
-    # the moment a previous run left one there -- and pass.
     sentinel = json.dumps({"head": "sentinel", "digest": "sentinel"}).encode()
     recorded.parent.mkdir(parents=True, exist_ok=True)
     recorded.write_bytes(sentinel)
     try:
-        gate_issued("candidate")
+        command = built_command(PROJECT_ROOT, "candidate")
+        plan = command._describe()
+        # A step that needs a machine fails here; what it did before failing is
+        # still what this asserts on.
+        with suppress(Exception):
+            plan.run(Context(command._runner, observed, observing=True))
+
         assert recorded.read_bytes() == sentinel, (
             "reading the plan rewrote the gate's own source state"
         )
+        assert (shared.read_bytes() if shared.exists() else None) == shared_before, (
+            "reading the plan touched the state file belonging to the gate "
+            "running this suite, which is the file every other test shares"
+        )
     finally:
-        if saved is None:
-            recorded.unlink(missing_ok=True)
-        else:
-            recorded.write_bytes(saved)
+        recorded.unlink(missing_ok=True)
