@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The hand-built-`docker`-argv ratchet had stopped being one. `UNMIGRATED` in
+  `tests/test_gate_docker_boundary.py` still carried the original nine sites
+  while the real count was six, so `hostimage.py` was allowed 5 against an
+  actual 2 -- three new hand-built `docker` argv could have been added to it
+  with every guard staying green, in the module the packaging work is about to
+  rewrite. The counts are now exact, and `test_the_ratchet_carries_no_slack`
+  fails when an allowance exceeds its debt, so paying the debt down without
+  lowering the number is no longer invisible.
+
 ### Removed
 
 - The four `capsem-linux-rust-*` volumes are retired, along with the step that

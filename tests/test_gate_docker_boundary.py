@@ -56,9 +56,14 @@ def _docker_argv_literals(tree: ast.AST) -> list[ast.List]:
 #: `xfail`: an `xfail` says "this is broken" and hides how broken, whereas
 #: this refuses a tenth site while the nine are migrated. Each removal here is
 #: a module that can no longer choose its own mount or network mode.
+#:
+#: These are exact counts, not ceilings -- see
+#: `test_the_ratchet_carries_no_slack`. Started at nine; `hostimage.py` sat at
+#: 5 against an actual 2 for long enough that the guard would have permitted
+#: three new hand-built sites in the module Phase 5 was about to touch.
 UNMIGRATED = {
     "crossexec.py": 1,
-    "hostimage.py": 5,
+    "hostimage.py": 2,
     "installimage.py": 2,
     "packagerail.py": 1,
 }
@@ -91,6 +96,35 @@ def test_no_new_module_builds_docker_argv_by_hand() -> None:
 
     # And the debt only shrinks: a migrated module leaves the list.
     assert set(counted) <= set(UNMIGRATED), sorted(set(counted) - set(UNMIGRATED))
+
+
+def test_the_ratchet_carries_no_slack() -> None:
+    """`UNMIGRATED` records what is there, not what would be tolerated.
+
+    Without this, paying the debt down and leaving the number alone is
+    invisible, and the gap silently becomes an allowance for new sites. That
+    is not hypothetical: the table said `hostimage.py: 5` against an actual 2,
+    so three hand-built `docker` argv could have been added to the module Phase
+    5 is about to rewrite, and every guard here would have stayed green.
+
+    The cost is one line per migration -- lower the count in the same commit --
+    and the benefit is that the ratchet cannot quietly stop being one.
+    """
+    counted: dict[str, int] = {}
+    for path in _modules():
+        found = _docker_argv_literals(ast.parse(path.read_text(encoding="utf-8")))
+        if found:
+            counted[path.name] = len(found)
+
+    slack = {
+        name: (allowed, counted.get(name, 0))
+        for name, allowed in UNMIGRATED.items()
+        if allowed > counted.get(name, 0)
+    }
+    assert not slack, (
+        "these carry more allowance than debt (allowed, actual) -- lower them "
+        f"to the actual count, or drop the entry entirely at zero: {slack}"
+    )
 
 
 def test_a_mount_cannot_point_at_the_checkout() -> None:
