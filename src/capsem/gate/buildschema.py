@@ -8,6 +8,10 @@ own source.
 
 from __future__ import annotations
 
+from pathlib import PurePosixPath
+
+from pydantic import model_validator
+
 from .configschema import Strict
 
 
@@ -100,7 +104,21 @@ class SbomConfig(Strict):
 class SigningConfig(Strict):
     entitlements: str
     binaries: tuple[str, ...]
+    built: tuple[str, ...]
     release_binary: str
+
+    @model_validator(mode="after")
+    def _every_signed_binary_is_built(self) -> SigningConfig:
+        """The signed set is a subset of the built set, or signing has no input.
+
+        Two lists that must agree, so the disagreement is a load error naming
+        the binary rather than a `codesign: No such file or directory` twenty
+        minutes into a run.
+        """
+        missing = sorted({PurePosixPath(path).name for path in self.binaries} - set(self.built))
+        if missing:
+            raise ValueError(f"signed but never built: {missing}")
+        return self
 
 
 class FrontendConfig(Strict):

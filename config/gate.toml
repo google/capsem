@@ -904,6 +904,21 @@ binaries = [
     "target/debug/capsem", "target/debug/capsem-service", "target/debug/capsem-process",
     "target/debug/capsem-gateway", "target/debug/capsem-mcp", "target/debug/capsem-admin",
 ]
+# Every host binary a run needs on disk, as bin names. A superset of the signed
+# list, and validated to be one: `binaries` is the subset that calls
+# Virtualization.framework and therefore needs the entitlement, while the
+# aggregator and the builtin server are spawned by `capsem-process` at boot and
+# need only to exist.
+#
+# It exists because nothing built any of them. Signing was `codesign --force`
+# against whatever an earlier `just build` had left, and the first run that did
+# not inherit a warm tree died twice: once at `codesign: target/debug/capsem: No
+# such file or directory`, and again at `required MCP aggregator binary
+# capsem-mcp-aggregator is missing` when the VM tried to boot.
+built = [
+    "capsem", "capsem-service", "capsem-process", "capsem-gateway", "capsem-mcp",
+    "capsem-admin", "capsem-mcp-aggregator", "capsem-mcp-builtin",
+]
 release_binary = "target/debug/capsem"
 
 [frontend]

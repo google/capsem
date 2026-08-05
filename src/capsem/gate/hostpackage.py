@@ -10,7 +10,6 @@ failure went.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from . import host
 from .actions import Action, Run, Script
@@ -37,8 +36,7 @@ def build_step(config: GateConfig, *, label: str = "build-binaries"):
     being built for the host here.
     """
     settings = config.signing
-    names = [Path(binary).name for binary in settings.binaries]
-    selected = [flag for name in names for flag in ("--bin", name)]
+    selected = [flag for name in settings.built for flag in ("--bin", name)]
     return step(
         label,
         Run(["cargo", "build", *selected]),
