@@ -228,6 +228,7 @@ class RecordingJournal:
         env: dict[str, str],
         exit: int,
         duration_ms: float,
+        output: object = None,
     ) -> None:
         self.execs.append(
             {
@@ -236,6 +237,7 @@ class RecordingJournal:
                 "env": env,
                 "exit": exit,
                 "duration_ms": duration_ms,
+                "output": output,
             }
         )
 

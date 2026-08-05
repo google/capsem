@@ -99,6 +99,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- Each `exec` event now carries the byte range its command wrote in the step
+  log. A step's log is one file and a step runs many commands, so ten
+  commands' output interleaved with no boundaries was a file you could read
+  and not navigate -- the question is always "what did *that* one print", and
+  the answer was "somewhere in here". A pointer, not a copy: duplicating the
+  bytes would double the largest thing a run produces and put the same output
+  in two places that can disagree.
+
 - Detached processes are back inside the run-log schema. `Launch` was defined
   and emitted, and missing from the payload registry -- so every daemon the
   gate started wrote a line no reader had a model for, which is the one thing

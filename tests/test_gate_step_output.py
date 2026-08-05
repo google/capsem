@@ -71,6 +71,42 @@ def test_a_step_keeps_what_its_commands_printed(tmp_path: Path) -> None:
     assert "ERR-MARKER" in body, "stderr is where compilers put the part you need"
 
 
+def test_each_command_can_be_read_back_on_its_own(tmp_path: Path) -> None:
+    """A step's log is one file, and a step runs many commands.
+
+    Ten commands' output interleaved with no boundaries is a file you can read
+    and cannot navigate: the question an operator has is "what did *that* one
+    print", and the answer was "somewhere in here". Each `exec` event carries
+    the byte range its command wrote, so the answer is a slice.
+
+    A pointer rather than a copy, deliberately. Duplicating the bytes into the
+    event stream doubles a log that is already the largest thing a run
+    produces, and puts the same output in two places that can disagree.
+    """
+    import sys
+
+    from capsem.gate.runhistory import read
+
+    config = _checkout(tmp_path)
+    with RunLog.open(config, "test") as log:
+        runner = GuardedRunner(Runner(config.root), journal=log)
+        with log.step(step("build", Run([sys.executable, "-c", "pass"]))):
+            runner.run([sys.executable, "-c", "print('FIRST')"])
+            runner.run([sys.executable, "-c", "print('SECOND')"])
+        written = log.step_log("build")
+
+    body = written.read_bytes()
+    spans = [entry["output"] for entry in read(log.directory, log.settings) if "output" in entry]
+
+    assert len(spans) == 2, f"one span per command, got {spans}"
+    for span, expected in zip(spans, ("FIRST", "SECOND"), strict=True):
+        assert span["file"] == written.name
+        sliced = body[span["offset"] : span["offset"] + span["length"]].decode()
+        assert sliced.strip() == expected, (
+            f"the recorded range holds {sliced!r} rather than {expected!r}"
+        )
+
+
 def test_the_operator_still_sees_it_happen(
     tmp_path: Path, capfd: pytest.CaptureFixture[str]
 ) -> None:

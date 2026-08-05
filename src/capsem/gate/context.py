@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from .config import GateConfig
 from .proc import Runner
+from .runlogschema import OutputSpan
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from contextlib import AbstractContextManager
@@ -74,6 +75,7 @@ class Journal(Protocol):
         env: dict[str, str],
         exit: int,
         duration_ms: float,
+        output: OutputSpan | None = None,
     ) -> None:
         """Record one subprocess.
 
@@ -81,6 +83,10 @@ class Journal(Protocol):
         that no call site can be the one that forgets. `env` is the delta the
         command added, never the ambient environment -- this record is attached
         to bug reports and a release machine's environment holds tokens.
+
+        `output` points at the bytes this command wrote in its step's log, so
+        one command's output can be read back out of a file every command in
+        the step shares.
         """
 
     def launch(
@@ -166,6 +172,7 @@ class NullJournal:
         env: dict[str, str],
         exit: int,
         duration_ms: float,
+        output: OutputSpan | None = None,
     ) -> None:
         """Discarded."""
 

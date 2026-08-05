@@ -140,7 +140,7 @@ class _Journal:
         self.execs: list[dict] = []
         self.launches: list[dict] = []
 
-    def exec(self, argv, *, cwd, env, exit, duration_ms) -> None:
+    def exec(self, argv, *, cwd, env, exit, duration_ms, output=None) -> None:
         self.execs.append({"argv": argv, "cwd": cwd, "env": env, "exit": exit})
 
     def launch(self, argv, *, cwd, env, pid, duration_ms) -> None:

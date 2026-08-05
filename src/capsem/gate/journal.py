@@ -38,6 +38,7 @@ from .runlogschema import (
     Exec,
     Launch,
     Note,
+    OutputSpan,
     Payload,
     PlanShape,
     StepEnd,
@@ -106,7 +107,14 @@ class EventJournal:
         self.emit(Artifact(step=_CURRENT.get(), path=str(path), size=size, digest=digest))
 
     def exec(
-        self, argv: tuple[str, ...], *, cwd: str, env: dict[str, str], exit: int, duration_ms: float
+        self,
+        argv: tuple[str, ...],
+        *,
+        cwd: str,
+        env: dict[str, str],
+        exit: int,
+        duration_ms: float,
+        output: OutputSpan | None = None,
     ) -> None:
         self.emit(
             Exec(
@@ -116,6 +124,7 @@ class EventJournal:
                 env=env,
                 exit=exit,
                 duration_ms=duration_ms,
+                output=output,
             )
         )
 

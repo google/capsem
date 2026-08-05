@@ -32,6 +32,25 @@ from .context import Journal
 from .errors import GateError
 from .invocation import Command
 from .proc import Completed, Runner
+from .runlogschema import OutputSpan
+
+
+def _written(log: Path | None) -> int:
+    """How much a step's log already holds. Zero when there is no log yet."""
+    return log.stat().st_size if log is not None and log.is_file() else 0
+
+
+def _span(log: Path | None, offset: int) -> OutputSpan | None:
+    """The byte range one command contributed to its step's log.
+
+    Absent when nothing filed the output: a captured command is data its caller
+    parses rather than narration, and a command issued outside any step has no
+    step log to sit in.
+    """
+    if log is None or not log.is_file():
+        return None
+    return OutputSpan(file=log.name, offset=offset, length=log.stat().st_size - offset)
+
 
 #: Programs that start a gate. Invoking one from inside a plan is the deadlock
 #: the composition model exists to make unrepresentable.
@@ -117,6 +136,12 @@ class GuardedRunner(Runner):
 
     def execute(self, command: Command) -> Completed:
         _refuse_reentry(command.argv)
+        # Where this command's output will start. Read before it runs, because
+        # afterwards the only thing the file can say is how much is in it
+        # altogether -- and a step's log is shared by every command the step
+        # issues. Safe without a lock: a step runs its actions in order, and
+        # concurrent steps each own a different file.
+        started_at = _written(command.log)
         started = time.monotonic()
         completed = self._inner.execute(command)
         self._journal.exec(
@@ -129,6 +154,7 @@ class GuardedRunner(Runner):
             env=command.evidence_env,
             exit=completed.returncode,
             duration_ms=(time.monotonic() - started) * 1000,
+            output=_span(command.log, started_at),
         )
         return completed
 

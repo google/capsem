@@ -131,6 +131,26 @@ class Launch(Payload):
     duration_ms: float
 
 
+class OutputSpan(Strict):
+    """Where one command's output sits inside its step's log.
+
+    A pointer, not a copy. A step's log is one file and a step runs many
+    commands, so ten commands' lines interleave with nothing separating them --
+    the question is always "what did *that* one print", and without this the
+    answer is "somewhere in here". Duplicating the bytes into the event stream
+    would double the largest thing a run produces and put the same output in
+    two places that can disagree.
+
+    Not a `Payload`: it is part of one, and the registry is every payload.
+    """
+
+    file: str
+    """The step log's name, so a reader does not have to re-derive the path."""
+
+    offset: int
+    length: int
+
+
 class Exec(Payload):
     """One subprocess, recorded at the funnel every invocation passes through."""
 
@@ -147,6 +167,11 @@ class Exec(Payload):
 
     exit: int
     duration_ms: float
+
+    output: OutputSpan | None = None
+    """Absent when there was no step log to write into -- a captured command,
+    whose output is data its caller parses rather than narration, or one issued
+    outside any step."""
 
 
 class Artifact(Payload):
