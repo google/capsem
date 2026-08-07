@@ -179,7 +179,7 @@ def test_a_verification_with_nothing_recorded_refuses(tmp_path: Path) -> None:
 
 
 def _accounting(root: Path, **kwargs):
-    from capsem.gate.candidate import OrphanAccounting
+    from capsem.gate.gateresources import OrphanAccounting
 
     runner = Running(root, **kwargs)
     return OrphanAccounting(gate_config.for_root(root), runner), runner
@@ -246,7 +246,7 @@ def test_failure_evidence_is_captured_and_labelled_with_the_head(
 ) -> None:
     """`preserve` runs only on failure and before release, because release is
     what destroys the evidence."""
-    from capsem.gate.candidate import FailureEvidence
+    from capsem.gate.gateresources import FailureEvidence
 
     root = _checkout(tmp_path)
     RecordSourceState().perform(_context(root))
@@ -262,7 +262,7 @@ def test_failure_evidence_is_captured_and_labelled_with_the_head(
 
 
 def test_a_passing_run_captures_no_failure_evidence(tmp_path: Path) -> None:
-    from capsem.gate.candidate import FailureEvidence
+    from capsem.gate.gateresources import FailureEvidence
 
     root = _checkout(tmp_path)
     runner = Running(root)

@@ -64,7 +64,7 @@ def _accounting():
     from helpers.gate import RecordingRunner
 
     from capsem.gate import config as gate_config
-    from capsem.gate.candidate import OrphanAccounting, gate_resources
+    from capsem.gate.gateresources import OrphanAccounting, gate_resources
 
     runner = RecordingRunner(ROOT)
     config = gate_config.load(ROOT)

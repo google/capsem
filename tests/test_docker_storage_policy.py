@@ -329,7 +329,7 @@ def test_candidate_failure_captures_storage_and_asset_logs_before_next_cleanup()
     from helpers.gate import RecordingRunner
 
     from capsem.gate import config as gate_config
-    from capsem.gate.candidate import FailureEvidence
+    from capsem.gate.gateresources import FailureEvidence
     from capsem.gate.lifecycle import held
 
     # It is a resource now, so the ordering is the lifecycle's guarantee rather

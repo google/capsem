@@ -37,6 +37,11 @@ from .config import GateConfig
 #: whoever reads it out of a failed run's directory.
 _COMMENT = ";;"
 
+#: The three modes, spelled once. `off` is the default because the profile
+#: denies the network and most commands are short reads that gain nothing from
+#: it; `report` measures without refusing; `enforce` refuses.
+OFF, REPORT, ENFORCE = "off", "report", "enforce"
+
 
 def profile(config: GateConfig, *, report: bool) -> str:
     """The profile text for this run.
@@ -78,6 +83,29 @@ def _sockets(config: GateConfig) -> tuple[str, ...]:
     return tuple(str(Path(path).expanduser()) for path in config.sandbox.sockets)
 
 
+def mode(command_default: str, requested: str | None) -> str:
+    """What this run uses: what was asked for, else what the command declares.
+
+    A flag rather than only a declaration because report mode is a
+    *measurement* -- the point is to run the ordinary gate and collect what it
+    reached for, without editing the command to do it.
+    """
+    return requested or command_default
+
+
+def written_to(config: GateConfig, directory: Path, *, report: bool) -> Path:
+    """Render the profile into `directory` and return where it landed.
+
+    Into the run's own directory, so a failed run's evidence includes the exact
+    profile it was refused by. A profile reconstructed afterwards from config
+    is a profile that may not be the one that ran.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / config.sandbox.profile_name
+    target.write_text(profile(config, report=report), encoding="utf-8")
+    return target
+
+
 def wrap(config: GateConfig, written: Path, argv: tuple[str, ...]) -> tuple[str, ...]:
     """The same command, under the profile at `written`.
 
@@ -88,3 +116,28 @@ def wrap(config: GateConfig, written: Path, argv: tuple[str, ...]) -> tuple[str,
     held, or the child waits out its own parent's machine lock.
     """
     return (config.sandbox.command, "-f", str(written), *argv)
+
+
+def applied(
+    config: GateConfig,
+    runner,
+    *,
+    default: str,
+    requested: str | None,
+    argv: tuple[str, ...],
+) -> tuple[str, ...]:
+    """`argv`, wrapped in this run's profile, or unchanged when off.
+
+    The whole decision in one place: which mode, where the profile is written,
+    and whether to wrap at all. It lives here rather than on the command
+    because the command's only job is to say *whether* it wants a sandbox --
+    everything about what one is belongs to this module.
+    """
+    chosen = mode(default, requested)
+    if chosen == OFF:
+        return argv
+    written = written_to(
+        config, config.path(config.runlog.root), report=chosen == REPORT
+    )
+    runner.step(f"Running under the {chosen} sandbox profile at {written}")
+    return wrap(config, written, argv)

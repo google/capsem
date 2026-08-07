@@ -104,6 +104,16 @@ def _inspection() -> argparse.ArgumentParser:
         help="carry every step before STEP and start there (never in a release)",
     )
     shared.add_argument(
+        "--sandbox",
+        choices=("off", "report", "enforce"),
+        default=None,
+        metavar="MODE",
+        help=(
+            "run under the macOS sandbox: `report` permits and logs every rule, "
+            "`enforce` denies. Defaults to what the command declares."
+        ),
+    )
+    shared.add_argument(
         "--timing",
         action="store_true",
         help="print where the time went, by critical path",

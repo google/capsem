@@ -27,20 +27,18 @@ interrupt propagates through `held` unless something explicitly swallows it, and
 
 from __future__ import annotations
 
-import json
+import argparse
 import os
 import shutil
 import sys
 
-from . import candidateplan, host
+from . import candidateplan, host, sandbox
 from . import config as gate_config
 from .command import GateCommand
 from .errors import GateError
-from .lifecycle import Resource
+from .gateresources import Resource, gate_resources
 from .plan import Plan
 from .proc import Runner
-from .storage import Storage
-from .workspace import Workspace
 
 
 def keep_awake(runner: Runner) -> list[str] | None:
@@ -63,113 +61,6 @@ def keep_awake(runner: Runner) -> list[str] | None:
     return [*settings.keep_awake_command, "env", f"{settings.keep_awake_marker}=1"]
 
 
-class OrphanAccounting(Resource, name="orphan-accounting"):
-    """Count the capsem processes this gate leaves behind.
-
-    Acquired first, so the baseline is taken before anything can spawn a
-    process and a developer's own dev daemon is never blamed on this run.
-    Released last, after the workspace has stopped its service, so what is
-    still alive at that point really is a leak.
-    """
-
-    def __init__(self, config, runner: Runner) -> None:
-        self._settings = config.candidate
-        self._runner = runner
-
-    def _orphan(self, action: str, *, check: bool = True) -> int:
-        return self._runner.script(self._settings.orphan_script, action, check=check)
-
-    def acquire(self) -> None:
-        self._orphan("baseline")
-
-    def release(self) -> None:
-        if self._orphan("check", check=False) != 0:
-            raise GateError("capsem processes from this checkout outlived the gate; see above")
-
-
-class FailureEvidence(Resource, name="failure-evidence"):
-    """Keep what a failed gate leaves behind, labelled with what it was testing.
-
-    `preserve` runs only on failure and only before release, which is the whole
-    reason it is a separate phase: release is what destroys the evidence.
-
-    The label comes from the recorded source state rather than from a value
-    captured while the plan was built, so it names the revision the run
-    actually qualified.
-    """
-
-    def __init__(self, config, runner: Runner) -> None:
-        self._config = config
-        self._runner = runner
-
-    def acquire(self) -> None:
-        """Nothing to take: this exists for what it does on the way out."""
-
-    def release(self) -> None:
-        """Nothing to give back either."""
-
-    def preserve(self, error: BaseException) -> None:
-        Storage(self._runner).capture_failure(
-            rail=self._config.candidate.failure_rail, label=self._label()
-        )
-
-    def _label(self) -> str:
-        recorded = self._config.path(self._config.candidate.source_state_file)
-        if not recorded.is_file():
-            return self._config.candidate.unknown_head
-        return json.loads(recorded.read_text(encoding="utf-8"))["head"][:12]
-
-
-class Colima(Resource, name="colima"):
-    """Leave Colima as the developer had it.
-
-    If it was already running, the gate leaves it alone; if bootstrap started
-    it, this stops it -- on success and on failure alike. That was a shell trap
-    around the expensive half of the gate, which is to say it was correct only
-    for the commands that happened to sit inside the wrapper.
-    """
-
-    def __init__(self, config, runner: Runner) -> None:
-        self._settings = config.candidate
-        self._runner = runner
-        self._was_running = False
-
-    def _available(self) -> bool:
-        return shutil.which(self._settings.colima) is not None
-
-    def _running(self) -> bool:
-        return self._available() and self._runner.succeeds([self._settings.colima, "status"])
-
-    def acquire(self) -> None:
-        self._was_running = self._running()
-
-    def release(self) -> None:
-        if self._was_running or not self._running():
-            return
-        self._runner.step("Stopping gate-owned Colima VM")
-        if self._runner.run([self._settings.colima, "stop"], check=False) != 0:
-            self._runner.note("WARNING: failed to stop Colima started by this gate")
-
-
-def gate_resources(config, runner: Runner) -> tuple[Resource, ...]:
-    """What anything running the complete gate must hold.
-
-    Order is the guarantee: acquired left to right, released in reverse. The
-    orphan baseline is first taken and last compared, and the workspace stops
-    its service before that comparison happens -- so what is still alive by
-    then really is a leak.
-
-    Shared with the release commands, which run the gate in-process now rather
-    than launching it, and therefore hold exactly what it holds.
-    """
-    return (
-        OrphanAccounting(config, runner),
-        FailureEvidence(config, runner),
-        Workspace(config),
-        Colima(config, runner),
-    )
-
-
 #: What `python -m` runs to become the gate again. Spelled once: `gatelaunch`
 #: uses the same target, and a re-exec that names a different one is a re-exec
 #: that runs different code.
@@ -190,6 +81,9 @@ class CompleteGate:
 
     _config: gate_config.GateConfig
     _runner: Runner
+    _args: argparse.Namespace
+    sandboxed: str
+    """Provided by `GateCommand`; declared so the mixin type-checks alone."""
 
     private_checkout = True
     """The complete gate reads a copy of the checkout, never the checkout.
@@ -234,11 +128,21 @@ class CompleteGate:
         `caffeinate` gave `env: __main__.py: Permission denied` and a gate that
         stopped in three seconds.
         """
-        prefix = keep_awake(self._runner)
-        if prefix is None:
+        wrapper = keep_awake(self._runner)
+        if wrapper is None:
             return None
         self._runner.step("Holding macOS awake for the complete gate")
-        return (*prefix, sys.executable, "-m", MODULE, *sys.argv[1:])
+        replacement = (*wrapper, sys.executable, "-m", MODULE, *sys.argv[1:])
+        # Under the sandbox too, when this run asked for one -- here rather
+        # than anywhere later, because a profile is inherited by every child
+        # and cannot be dropped. See `sandbox.applied`.
+        return sandbox.applied(
+            self._config,
+            self._runner,
+            default=self.sandboxed,
+            requested=getattr(self._args, "sandbox", None),
+            argv=replacement,
+        )
 
 
 class CandidateCommand(

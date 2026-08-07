@@ -22,8 +22,8 @@ from pathlib import Path
 import pytest
 
 from capsem.gate import config as gate_config
-from capsem.gate.candidate import Colima
 from capsem.gate.errors import GateError
+from capsem.gate.gateresources import Colima
 from capsem.gate.lifecycle import held
 from capsem.gate.proc import Runner
 

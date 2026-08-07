@@ -646,6 +646,7 @@ direct_machine_access = [
     "prefix.py",
     # Same reason: `snapshot` is the copying half, split out at the ceiling.
     "snapshot.py",
+    "sandbox.py",
 ]
 
 # Only the plan schedules concurrent work. A module that reaches for its own

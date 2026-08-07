@@ -141,3 +141,87 @@ def test_docker_still_answers_through_its_unix_socket(tmp_path: Path) -> None:
         f"UNIX socket looks like: {answered.stderr.strip()}"
     )
     assert answered.stdout.strip(), "the daemon answered with nothing"
+
+
+def test_the_sandbox_is_applied_before_any_resource_is_held() -> None:
+    """A profile is inherited and cannot be dropped, so where it is applied is
+    the whole design.
+
+    Applied in-process it would sandbox the parent that still has to reclaim
+    the private copy and write the summary. Applied *after* the machine lock,
+    the sandboxed child asks for the lock its own parent holds and waits out
+    the full 7200-second timeout -- the same deadlock the private copy and the
+    keep-awake wrapper are placed to avoid, which is why all three live at the
+    one seam `execute` calls before `held`.
+
+    Asserted on the source order rather than by running a gate, because the
+    failure is a two-hour hang: a test that reproduced it would take longer
+    than the run it protects.
+    """
+    import ast
+
+    source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "command.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    execute = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "execute"
+    )
+
+    def line_of(fragment: str) -> int:
+        # The *first* line, by source position. `ast.walk` is breadth-first,
+        # so taking whichever node it yields first compares arbitrary lines --
+        # which is how the first version of this guard passed a mutation that
+        # moved the re-exec inside the block it is supposed to precede.
+        found = [
+            node.lineno
+            for node in ast.walk(execute)
+            if isinstance(node, ast.Call) and fragment in ast.unparse(node)
+        ]
+        assert found, f"{fragment!r} is not called in execute()"
+        return min(found)
+
+    reexec_at = line_of("self.reexec")
+    held_at = line_of("held")
+    assert reexec_at < held_at, (
+        "the re-exec that applies the sandbox happens after resources are "
+        "held, so the sandboxed child waits out its own parent's machine lock"
+    )
+
+    # And outside the `with` entirely, not merely on an earlier line than it.
+    # A re-exec nested inside the recording or holding block still leaves the
+    # parent holding what the child is about to ask for.
+    for node in ast.walk(execute):
+        if not isinstance(node, ast.With):
+            continue
+        nested = [
+            inner.lineno
+            for inner in ast.walk(node)
+            if isinstance(inner, ast.Call) and "self.reexec" in ast.unparse(inner)
+        ]
+        assert not nested, (
+            f"the re-exec is inside a `with` block opened at line {node.lineno}; "
+            "it must run before anything is acquired at all"
+        )
+
+
+def test_off_is_the_default_so_a_short_command_keeps_its_network() -> None:
+    """The profile denies the network, and most commands are short reads.
+
+    Declared per command rather than globally, because turning it on for
+    everything means rediscovering which socket each one needed -- at the cost
+    of a run each time.
+    """
+    from helpers.gate import built_command
+
+    from capsem.gate.command import GateCommand
+
+    # Through the helper, which is the one place that knows importing `cli` is
+    # what fills the registry -- spelling that import here needs a suppression
+    # for a name nothing reads.
+    assert built_command(PROJECT_ROOT, "runs", (("limit", None),)).sandboxed == sandbox.OFF
+    assert GateCommand.sandboxed == sandbox.OFF
+    assert sandbox.mode(sandbox.OFF, None) == sandbox.OFF
+    # And an explicit request wins over the declaration, which is what makes
+    # report mode a measurement rather than an edit.
+    assert sandbox.mode(sandbox.OFF, sandbox.REPORT) == sandbox.REPORT

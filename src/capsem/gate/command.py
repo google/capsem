@@ -16,18 +16,16 @@ do without doing it.
 from __future__ import annotations
 
 import argparse
-import os
 import sys
 from abc import ABC, abstractmethod
 from typing import ClassVar
 
 from . import config as gate_config
-from . import prefix, resume
+from . import prefix, preflight, resume
 from .context import Context
 from .errors import GateError
 from .funnel import GuardedRunner
 from .lifecycle import Resource, environment_of, held
-from .locks import ExclusiveLock
 from .observing import observing
 from .plan import Plan
 from .planseal import sealed
@@ -53,14 +51,20 @@ class GateCommand(Recorded, ABC):
     is running.
     """
 
+    sandboxed: ClassVar[str] = "off"
+    """Whether this command runs under the macOS sandbox, and how.
+
+    Off by default and overridable with `--sandbox`; see `capsem.gate.sandbox`
+    for what a mode means and why `reexec` is where one is applied.
+    """
+
     private_checkout: ClassVar[bool] = False
     """Whether this runs from a private copy of the checkout instead of it.
 
-    True for anything long enough that someone will edit the tree while it
-    runs -- see `prefix` for the four release runs that establish it. Declared
-    per command rather than inferred, because the copy is not free: it starts
-    with no `target/`, so a command too short to be raced would pay a cold
-    build to avoid a race it was never going to lose.
+    Declared per command rather than inferred: the copy starts with no
+    `target/`, so a command too short to be raced would pay a cold build to
+    avoid a race it was never going to lose. See `capsem.gate.prefix` for the
+    four release runs that establish why the long ones need it.
     """
 
     uses_qualification: ClassVar[bool] = False
@@ -210,7 +214,7 @@ class GateCommand(Recorded, ABC):
         # pytest step calling `cli.main(["storage", ...])` simply blocked on
         # the lock its own grandparent held, and the run stayed alive-looking
         # for the full two hours.
-        self._refuse_inside_a_run()
+        preflight.refuse_inside_a_run(self._config, self.name, exclusive=self.exclusive)
 
         # Before the re-exec and before any resource, for the same reason both
         # of those are here: the child takes the machine lock, so a parent
@@ -237,7 +241,13 @@ class GateCommand(Recorded, ABC):
                 journal=log,
                 tail_lines=self._config.runlog.failure_tail_lines,
             )
-            with held(*self._holdings(runner)) as acquired:
+            acquiring = preflight.holdings(
+                self._config,
+                self.name,
+                exclusive=self.exclusive,
+                declared=self.resources(runner),
+            )
+            with held(*acquiring) as acquired:
                 plan.run(
                     Context(
                         runner,
@@ -253,26 +263,6 @@ class GateCommand(Recorded, ABC):
         # that had not finished and reported `total_ms == 0`.
         self._summarize(log)
 
-    def _refuse_inside_a_run(self) -> None:
-        """Refuse to take a lock this process tree is already holding.
-
-        Only for commands that take it. A read-only command is exactly what
-        someone wants from inside a running gate -- `runs last` while it works
-        is the point of `runs last`.
-        """
-        if not self.exclusive:
-            return
-        holder = os.environ.get(self._config.locks.gate.run_marker)
-        if holder is None:
-            return
-        raise GateError(
-            f"{self.name} takes the machine lock, and this process is already "
-            f"inside the gate run holding it ({holder}). It would wait out its "
-            "full timeout for a lock that cannot be released until it returns. "
-            "Compose this command's fragment into that plan, or drive its plan "
-            "directly if this is a test."
-        )
-
     def _describe(self) -> Plan:
         """Build the plan with the machine sealed off.
 
@@ -283,18 +273,3 @@ class GateCommand(Recorded, ABC):
         with sealed():
             return self.plan()
 
-    def _holdings(self, runner: Runner) -> tuple[Resource, ...]:
-        """The machine lock first, then whatever the command declared.
-
-        First because it is released last, and because the resources a command
-        declares are the ones that wipe trees -- taking the lock after one of
-        those has started is taking it too late.
-        """
-        if not self.exclusive:
-            return self.resources(runner)
-        lock = ExclusiveLock.for_gate(self._config, purpose=self._purpose())
-        return (lock, *self.resources(runner))
-
-    def _purpose(self) -> str:
-        """What contention should call this, for whoever arrives next."""
-        return f"capsem-gate {self.name}"

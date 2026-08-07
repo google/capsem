@@ -99,6 +99,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- `--sandbox off|report|enforce` runs a command under that profile, applied at
+  the same seam as the private copy and the keep-awake wrapper — before any
+  resource is held. A Seatbelt profile is inherited by every child and cannot
+  be dropped, so applying it in-process would sandbox the parent that still
+  has to reclaim the prefix, and applying it after the machine lock would
+  leave the sandboxed child waiting out its own parent's 7200-second timeout.
+  Off by default: the profile denies the network, and most commands are short
+  reads that would only rediscover which socket they needed.
+
+  The profile is written into the run's own directory, so a refused run's
+  evidence includes the exact rules it was refused by rather than ones
+  reconstructed afterwards.
+
 - `capsem.gate.sandbox` generates the macOS Seatbelt profile a run executes
   under, from `[sandbox]` in `config/gate.toml`. `(allow default)` narrowed by
   targeted denials rather than `(deny default)` widened by enumerated allows —

@@ -162,6 +162,13 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
         # create the directory it is already running in.
         "prefix.py",
         "snapshot.py",
+        # And the one that writes the rules the run is refused by. Same reason
+        # as `prefix`: the profile has to exist before the process that
+        # executes under it, so it is rendered from `reexec()` -- above every
+        # resource, outside the machine lock, with no journal to record into.
+        # An action expressing it would have to be a plan step that creates
+        # the sandbox the plan is already running inside.
+        "sandbox.py",
     }
 
 
