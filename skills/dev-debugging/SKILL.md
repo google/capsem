@@ -1,6 +1,6 @@
 ---
 name: dev-debugging
-description: Debugging methodology for Capsem. Use when investigating bugs, test failures, unexpected behavior, or any issue that needs diagnosis. Enforces the correct workflow -- reproduce with a test first, diagnose the root cause, then offer a comprehensive fix. Never jump to fixing code without understanding why it broke.
+description: Debugging methodology for Capsem, including Python gate/release failures and diagnostic continuation of expensive candidate runs. Use for bugs, test failures, unexpected behavior, CI/local parity failures, or any issue needing diagnosis. Reproduce first, identify the root cause, then fix the whole pattern; never treat a diagnostic run as qualification.
 ---
 
 # Debugging
@@ -8,6 +8,55 @@ description: Debugging methodology for Capsem. Use when investigating bugs, test
 ## The rule
 
 Never fix code before you understand why it broke. The temptation to "just make the test pass" or "just patch the symptom" leads to fragile fixes that hide deeper problems. Follow the three-step workflow below every time.
+
+## Choose the cheapest truthful feedback loop
+
+Capsem now has two distinct execution surfaces:
+
+- Just exposes the small public product interface.
+- Python under `src/capsem/gate/` owns build/test/release plans, graph edges,
+  locking, resources, evidence, and cleanup.
+
+For a gate failure, debug the Python step and action that failed; do not infer
+the implementation from the Just recipe or recreate it with shell commands.
+Start with:
+
+```bash
+uv run capsem-gate runs last --failed
+uv run capsem-gate <command> --dry-run
+uv run capsem-gate <command> --graph
+```
+
+Use the smallest focused pytest, cargo, pnpm, or script command for red/green
+work. Use `just smoke` for focused integration feedback. Use a clean
+`just test` only when the forward fix is ready for complete qualification.
+
+### Diagnostic continuation for a late gate failure
+
+When a clean candidate fails after expensive predecessors have succeeded, use
+**diagnostic continuation** to reuse that retained state and reach the frontier
+quickly. The current CLI retains legacy flag names:
+
+```bash
+uv run capsem-gate runs last --failed
+uv run capsem-gate candidate --prefix <retained-prefix> --from <failed-step>
+```
+
+The `--from` step runs; graph predecessors are reported as `carried`. Before
+using it, match the prefix and failed step to the origin run, confirm the
+required predecessor really completed there, and record the origin run ID in
+the diagnosis. Prefer a fresh focused test when the edit invalidates the
+expensive producer itself.
+
+Call the result `diagnostic-passed` or `diagnostic-failed`, even if the current
+implementation still summarizes a zero exit as `ok`. It combines earlier
+outputs with current source and therefore answers only whether the new segment
+can proceed. It does not prove the complete current tree.
+
+Never use diagnostic continuation with `release-binaries` or
+`release-profile`, and never let it authorize stamping, pushing, dispatch,
+publication, or activation. After the fix, run a clean `just test` or the
+public release command, which contains that same complete Python plan.
 
 ## Step 1: Reproduce with a test
 
@@ -81,10 +130,23 @@ python3 scripts/check_session.py   # Check net_events for domain, decision, stat
 
 **Build pipeline issues**: Check `target/build.log` -- all build infrastructure (runner, code signing, generation scripts) logs here. The runner (`scripts/run_signed.sh`) and `_generate-settings` recipe both append to this file. Never write diagnostics to stdout from build scripts (it contaminates binary output like `mcp-export`).
 
+For a Python gate or release failure, inspect the recorded run first. Step
+labels, argv, timing, captured output, resource events, and the first failed
+action live under `target/gate-runs/`; `capsem-gate runs last --failed` is the
+supported reader. `target/build.log` is supporting build evidence, not the
+gate's execution ledger.
+
+Do not retry a release by calling `scripts/release-binaries.py`,
+`capsem-admin release`, or a GitHub workflow directly. The public release
+command is one Python plan containing prechecks, the complete gate, source
+reconfirmation, and publication. A direct terminal script or workflow skips
+the edges that make a release safe.
+
 **Telemetry pipeline issues**: The canonical session ledgers (net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, security_rule_events) each have their own boundary. If a table is empty or has wrong data:
 - Check if the guest daemon started (boot logs)
 - Check if the vsock connection was accepted (host logs)
-- Check timing -- did the VM shut down before the debouncer flushed? (add `sleep 1`)
+- Check timing -- did the VM shut down before the DB-owned buffer flushed? Use
+  the DB flush barrier or shutdown/reopen proof; do not add a sleep or poll.
 
 For route latency or stale stats, do not add service-owned logged-data
 projections. Logged-data hot state belongs inside the logger DB object as
@@ -141,6 +203,9 @@ After the fix, run the full validation:
 1. `just test` -- unit + cross-compile + frontend
 2. `just exec "capsem-doctor"` -- VM smoke test
 3. If the bug touched telemetry: `python3 scripts/check_session.py` after a real session
+
+A diagnostic continuation may shorten investigation before this validation;
+it never replaces any item in the final proof.
 
 ## Local/CI execution parity
 

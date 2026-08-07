@@ -1,6 +1,6 @@
 ---
 name: release-process
-description: Capsem release process, orthogonal binary/profile CI, Apple code signing, notarization, channel deployment, and post-release verification.
+description: Capsem's Python-owned release process, orthogonal binary/profile CI, Apple code signing, notarization, channel deployment, diagnostic-continuation boundary, and post-release verification. Use for release commands, release failures, manifests, publication workflows, or any change that could affect what qualifies or ships.
 ---
 
 # Release Process
@@ -20,6 +20,28 @@ Read `tmp/release-spec.md` before changing release commands, manifests,
 workflows, test composition, artifact publication, or update behavior. It is
 the normative contract when older repository text disagrees.
 
+## Python owns release orchestration
+
+The Justfile is only the public command and argv boundary: each release recipe
+dispatches its arguments once to the matching `uv run capsem-gate` subcommand.
+
+Python under `src/capsem/gate/` owns the release graph:
+
+- `release.py` declares commands/publication edges; `candidateplan.py` composes
+  the complete test fragments.
+- `qualification.py` parses one legal local/binary/profile state.
+- `command.py` validates, inspects, locks, holds, records, and executes.
+- Actions perform work, resources own lifecycle/evidence, and
+  `config/gate.toml` owns values.
+
+The release command does **not** launch `just test`, Just, or another
+`capsem-gate`. It composes the exact candidate plan under one process, lock,
+workspace, and run log. A nested gate deadlocks on its parent's lock; a split
+design needs the parallel receipt authority the manifest contract forbids.
+
+Read `/dev-gate` before changing this Python composition and `/dev-just` before changing its
+public dispatch. Do not move orchestration into recipes, workflow YAML, or a release script.
+
 ## One command owns the complete release
 
 Capsem has exactly two release-facing Just commands:
@@ -31,20 +53,26 @@ just release-profile <channel> <profile>
 
 These are the sole release entrypoints for humans and checked-in automation.
 Do not ask an operator to run a preparation command or a separate `just test`
-first. Each release command itself has this non-negotiable order:
+first. Each Python release plan contains the complete plan used by `just test`
+and has this non-negotiable order:
 
 ```text
 just release-binaries <channel>
   1. validate release notes and fetch the fresh serialized channel source
      manifest read-only; fail immediately if the manifest has no staged
      channel/profile authority
-  2. just test
+  2. compose and execute the complete `just test` candidate plan in-process
   3. only after success: run the binary release script and dispatch binary CI
 
 just release-profile <channel> <profile>
-  1. just test
+  1. compose and execute the complete `just test` candidate plan in-process
   2. only after success: invoke capsem-admin release for that channel/profile
 ```
+
+The complete gate runs from a private source generation. Prechecks, source-head
+capture/reconfirmation, and publication target the originating checkout because
+work authored only in the disposable copy would disappear. The source guard
+stops publication if the checkout no longer has the recorded HEAD and bytes.
 
 `just smoke` remains useful public developer feedback. It invokes the exact
 private `_test-fast` module used by `just test` and release CI, including YAML
@@ -379,6 +407,25 @@ uv run python scripts/check-release-site-contract.py \
   a tested cross-filesystem copy fallback and constrained-disk regression.
 - Keep the clean-environment bootstrap proof before expensive work, while
   retaining the full installer E2E later.
+
+### Diagnostic continuation is not release continuation
+
+Use **diagnostic continuation** only to reach a late failure after a failed
+non-release candidate. It may combine earlier outputs with current source:
+zero means the segment passed, not that current source completed `just test`.
+The transitional CLI spells this:
+
+```bash
+uv run capsem-gate runs last --failed
+uv run capsem-gate candidate --prefix <retained-prefix> --from <failed-step>
+```
+
+Call it diagnostic continuation despite those legacy names. The named step
+runs; predecessors are carried. Match prefix/frontier to the preceding failed
+run, preserve its ID, and read `carried` as reused evidence, not a new `ok`.
+Both release commands must reject these flags. Never use the result to stamp,
+tag, push, dispatch, activate, or qualify. After the fix, rerun the public
+release command from the beginning; only its clean complete plan may publish.
 
 Read `references/ci-invariants.md` before editing release workflows. It carries
 the platform, toolchain, scanner, disk, Docker, package, and runner lessons

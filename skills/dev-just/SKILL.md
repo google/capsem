@@ -1,6 +1,6 @@
 ---
 name: dev-just
-description: Capsem's deliberately small Just command surface. Use when choosing, changing, documenting, or reviewing a Just recipe.
+description: Capsem's deliberately small Just command surface and its boundary with the Python capsem-gate system. Use when choosing, changing, documenting, or reviewing a Just recipe, or when deciding whether build/test/release logic belongs in Just, a Python plan, an action, a resource, or gate configuration.
 ---
 
 # Capsem Just discipline
@@ -26,10 +26,44 @@ allowlist update in the same change.
 | `just doctor [fix]` | Validate host tools, Docker/Colima, Tart cache/boot/SSH, signing, and assets. |
 | `just smoke` | Focused developer integration feedback; never release qualification. |
 | `just test` | Complete local all-artifact construction and test proof. |
-| `just release-binaries <channel>` | Run complete `just test`, then build and release only packages for one channel against pulled profiles. |
-| `just release-profile <channel> <profile>` | Run complete `just test`, then call `capsem-admin release` for one profile against the pulled package. |
+| `just release-binaries <channel>` | Dispatch one Python release plan that contains the complete test graph, then releases only packages for one channel against pulled profiles. |
+| `just release-profile <channel> <profile>` | Dispatch one Python release plan that contains the complete test graph, then calls `capsem-admin release` for one profile against the pulled package. |
 
 `just --summary` must print only those 13 names.
+
+## The Python system replaced shell orchestration
+
+Treat the Justfile as a stable user interface, not as the implementation of a
+command. For `test`, `release-binaries`, and `release-profile`, one recipe line
+crosses one exact argv boundary into `capsem-gate`. From there:
+
+| Concern | Owner |
+|---|---|
+| Public command name, defaults, and exact argv dispatch | `justfile` plus `config/public-surface.toml` |
+| Command shape and plan graph | `src/capsem/gate/<domain>.py` |
+| Shared work | a composable `fragment(...)`, deduplicated with `plan.shared(...)` when necessary |
+| Ordering | explicit graph edges passed through `after=` |
+| Subprocess or filesystem work | `actions.py`, `fileactions.py`, and their typed domain actions |
+| Always-run setup, teardown, and failure preservation | `Resource` implementations held by the command |
+| Paths, filenames, environment names, channels, architecture values | `config/gate.toml` |
+| Release mode and manifest-selected artifact paths | one `Qualification` value parsed by the command |
+| Evidence and timing | the gate run log written by the execution funnel |
+
+The old system expressed orchestration through shell bodies, Just dependencies,
+textual order, nested recipes, ambient environment reads, and ad hoc cleanup.
+Do not use remaining private recipes as templates for new logic. Move each
+decision into the Python graph, where dry-run, graph inspection, run logging,
+locking, teardown, and contract tests see it.
+
+A plan action must never invoke `just` or another `capsem-gate` command. Compose
+the other command's fragment instead. The machine lock is not reentrant, so a
+nested gate waits for the lock held by its own parent. Likewise, do not split a
+release into fetch/gate/publish processes joined by a receipt: each public
+release command contains the complete candidate plan in one process, one lock,
+one workspace, and one plan.
+
+Read `/dev-gate` before changing Python orchestration and `/release-process`
+before changing either release plan.
 
 ## What a recipe may contain
 
@@ -40,10 +74,11 @@ rather than advised:
 - at most five executable lines
 - no `if`, `for`, `while`, `case`, `until` or `trap`
 
-The justfile carried roughly 2070 lines of inline `bash` across thirty-five
+The old justfile carried roughly 2070 lines of inline `bash` across thirty-five
 recipes, none of it reachable by a test, so every defect in it was found by
-running the forty-minute gate. It is 73 body lines now. Logic lives in
-`src/capsem/gate/`; see `/dev-gate` for how to add or change a command.
+running the forty-minute gate. The ratchet is what matters: do not add shell
+orchestration back. Logic lives in `src/capsem/gate/`; see `/dev-gate` for how
+to add or change a command.
 
 The one exception is a single command with no branching -- `cargo build`,
 `cd frontend && pnpm run dev` -- where routing through Python would add a `uv`
@@ -63,6 +98,10 @@ exchange for no decision made.
 - No separate UI aliases. Use `just dev <surface>` or `just build`.
 - No public build primitives for kernel, rootfs, Docker images, architectures,
   or package rails.
+- No public diagnostic-continuation recipe. It is an internal developer mode
+  of `capsem-gate candidate`, is never qualification, and must be refused by
+  both release commands. See `/dev-debugging` for the transitional CLI and
+  authority boundary.
 
 Private underscore recipes may exist only as dependencies of the approved
 commands or as narrow CI primitives. Specialized skills and workflows may
