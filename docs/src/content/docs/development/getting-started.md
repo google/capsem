@@ -75,7 +75,7 @@ if you need to retune Colima resources.
 The build is profile-derived. `code` is the default coding-agent profile, and
 the runtime profile for the current local build is generated under
 `target/config/` by `capsem-admin profile materialize` during `just shell`,
-`just exec`, `just smoke`, `just test`, and release packaging.
+`just exec`, `just fast-test`, `just test`, and release packaging.
 
 ## Verify
 

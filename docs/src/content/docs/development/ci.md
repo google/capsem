@@ -163,7 +163,7 @@ named below.
 
 | `just test` stage | PR CI proof | Difference |
 |-------------------|-------------|------------|
-| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test` and `just smoke`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |
+| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test` and run alone by `just fast-test`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |
 | Cross-compile agent (both arches) | `test` job: musl target check for `capsem-agent`; `test-linux` covers Linux host crates | Hosted PR substitution for Docker release cross-compile |
 | Rust workspace coverage | `test` and `test-linux` jobs run `cargo llvm-cov nextest` on macOS and Linux crate sets | Same coverage rail with runner-specific package sets |
 | Host binary signing prerequisites | `test` job builds and ad-hoc signs host binaries before non-VM integration suites | Same PR prerequisite for artifact-dependent Python suites |
@@ -292,7 +292,7 @@ that exact file into a disposable Tart Mac, installs it, verifies the receipt,
 app bundle, binary cohort, and service/gateway status. Tart macOS guests cannot
 expose nested virtualization, so the recipe then extracts the same package on
 the physical Mac and boots a real Capsem guest from its exact binary/profile
-payload to a shell marker. Tart stays out of `just smoke`, which is developer
+payload to a shell marker. Tart stays out of `just vm-smoke`, which is developer
 feedback rather than release qualification.
 
 Release packaging materializes runtime profiles through the same profile-derived build rail as
@@ -457,8 +457,8 @@ Before pushing a PR, run the same checks CI will:
 # Full test suite (what CI runs)
 just test
 
-# Focused developer feedback; never release qualification
-just smoke
+# The fast gate alone; never release qualification
+just fast-test
 ```
 
 ### Debugging CI failures

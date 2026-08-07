@@ -30,7 +30,12 @@ allowlist update in the same change.
 | `just release-binaries <channel>` | Dispatch one Python release plan that contains the complete test graph, then releases only packages for one channel against pulled profiles. |
 | `just release-profile <channel> <profile>` | Dispatch one Python release plan that contains the complete test graph, then calls `capsem-admin release` for one profile against the pulled package. |
 
-`just --summary` must print only those 13 names.
+`just --summary` must print exactly the names in `[just].approved` and nothing
+else. The count is not repeated here on purpose: this line used to say "those
+13 names", which was wrong the moment the surface legitimately grew, and a
+number restated away from its source is a number that goes stale silently.
+`config/public-surface.toml` is the authority; the contract test compares the
+live recipe list against it.
 
 ## The Python system replaced shell orchestration
 
@@ -88,8 +93,14 @@ exchange for no decision made.
 
 ## What does not belong in Just
 
-- `smoke` is the one public focused developer gate. It is never sufficient for
-  release; both release commands must call complete `test`, not `smoke`.
+- Nothing may bundle the fast gate with other work again. `fast-test` is
+  exactly `_test-fast` and `vm-smoke` is exactly the VM round-trip, because
+  the single `smoke` recipe that ran both described neither: it made the gate
+  look like optional developer feedback and the VM loop look like a
+  release-adjacent proof. A recipe that runs two different jobs cannot be
+  named honestly, so it does not get to exist.
+- Neither is ever sufficient for release. Both release commands must call
+  complete `test` -- not `fast-test`, not `vm-smoke`.
 - No generic or combined release recipe. The two approved release commands
   each run `just test` before delegating to one checked-in implementation, and
   the two workflows share the per-channel lock.
