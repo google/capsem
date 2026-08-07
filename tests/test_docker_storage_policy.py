@@ -77,9 +77,9 @@ def test_policy_declares_last_consumers_before_release_boundaries() -> None:
     # the image, so nothing declares them and nothing can mount them.
     assert resources["capsem-install-target"]["retention"] == "obsolete"
     assert resources["capsem-install-frontend-node-modules"]["retention"] == "obsolete"
-    # Obsolete: the base image resolves the dependency graph, and the volume
-    # that used to carry it mounted over `/usr/local/cargo` -- shadowing the
-    # toolchain, the cross-targets and the tools the image installs there.
+    # Obsolete: this mounted over `/usr/local/cargo`, shadowing the toolchain,
+    # the cross-targets and the tools the image installs there -- so the image
+    # carried them and the container saw the volume instead.
     assert resources["capsem-cargo-registry"]["retention"] == "obsolete"
     # Obsolete too: the install image bakes the release-site dependencies, so
     # nothing mounts this. It was a cache for a bind-mounted checkout that no

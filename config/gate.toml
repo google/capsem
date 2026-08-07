@@ -427,8 +427,8 @@ status_requires = [
 # `-rustup` mounted over `/usr/local/cargo` and `/usr/local/rustup`, which is
 # exactly where `Dockerfile.host-builder` installs the toolchain, the
 # cross-targets, tauri-cli and cargo-auditable -- so the image carried all of
-# it and the container saw the volume instead. The base image resolves the
-# dependency graph now and nothing is mounted over it.
+# it and the container saw the volume instead. Nothing is mounted over them
+# now, so a container sees what the image actually carries.
 
 # ---------------------------------------------------------------------------
 # The VM asset build and boot gate
@@ -974,9 +974,7 @@ lane_container = "capsem-linux-rust-run"
 # The Linux builder image, and the Linux-Rust parity lane that runs inside it.
 tag = "capsem-host-builder:latest"
 dockerfile = "docker/Dockerfile.host-builder"
-# The checkout, so the lockfile is reachable: the base image resolves the
-# workspace dependency graph rather than a volume carrying it between runs.
-context = "."
+context = "docker/"
 script = "scripts/test-linux-rust.sh"
 mount = "/src"
 # `probe_user` and `probe_network` are gone with the probe they configured.

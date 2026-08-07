@@ -186,7 +186,7 @@ def test_the_lane_shares_no_named_volume_with_any_other_run(
     # They mounted over `/usr/local/cargo` and `/usr/local/rustup`, which is
     # where `Dockerfile.host-builder` installs the toolchain, the cross-targets
     # and its tools -- so the image carried all of it and the container saw a
-    # volume instead. The base image resolves the dependency graph now.
+    # volume instead.
     #
     # The build directory is still off the host filesystem; it is simply
     # anonymous, so Docker allocates one per container and reclaims it with

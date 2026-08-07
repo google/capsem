@@ -86,12 +86,17 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
         x86_64-unknown-linux-musl \
     && rustup component add llvm-tools
 
-# The workspace dependency graph, resolved here instead of in a named volume
-# mounted over `/usr/local/cargo`. That volume shadowed everything the layers
-# above install -- the toolchain, the targets, tauri-cli -- so the image
-# carried them and the container could not see them.
-COPY Cargo.toml Cargo.lock rust-toolchain.toml /workspace/
-RUN cd /workspace && CARGO_NET_RETRY=10 cargo fetch --locked
+# No `cargo fetch` here, deliberately. Baking the dependency graph needs the
+# whole crate tree -- the workspace manifest lists members, and `--locked`
+# fails with `No such file or directory` without them -- and copying the
+# checkout into this image to save a fetch is the wrong trade.
+#
+# The named volumes that used to carry it are still gone, and for a better
+# reason than caching: `capsem-cargo-registry`, `-cargo-git` and `-rustup`
+# mounted over `/usr/local/cargo` and `/usr/local/rustup`, which is exactly
+# where the layers above install the toolchain, the cross-targets, tauri-cli
+# and cargo-auditable. The image carried all of it and every container saw the
+# volume instead.
 
 RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install tauri-cli --locked && exit 0; sleep $((attempt * 5)); done; exit 1
 RUN for attempt in 1 2 3; do CARGO_NET_RETRY=10 cargo install cargo-auditable --locked && exit 0; sleep $((attempt * 5)); done; exit 1
