@@ -66,7 +66,16 @@ class Instrument:
 
     #: Calls whose *destination* is the interesting path: `link(src, dst)`
     #: creates `dst`, and `dst` is what now shares an inode it should not.
-    DESTINATION_IS_SECOND = frozenset({"link", "copy", "rename"})
+    #:
+    #: `symlink` belongs here and was missing. `os.symlink(src, dst)` creates
+    #: `dst` like the rest, so recording the first argument recorded the link's
+    #: *target* -- and `Path.symlink_to("arm64")` passes a bare relative name,
+    #: which `resolve()` then anchored to the checkout root. The result was a
+    #: report that `<root>/arm64` had been written: a path no step touched, not
+    #: gitignored, and therefore classified as source. Harmless as a log line
+    #: for as long as faults were only logged; the moment a source-tree fault
+    #: began aborting releases it stopped a release at `assets.assemble`.
+    DESTINATION_IS_SECOND = frozenset({"link", "copy", "rename", "symlink"})
 
     def __init__(self, observer: Observer, *, fd_path_template: str) -> None:
         self._observer = observer

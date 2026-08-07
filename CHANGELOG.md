@@ -171,6 +171,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The observer records a symlink where it was created, not where it points.
+  `symlink` was missing from the set of calls whose destination is the second
+  argument, so `Path.symlink_to("arm64")` recorded the bare target, which
+  `resolve()` then anchored to the checkout root -- reporting a write to
+  `<root>/arm64`, a path no step touched and nothing gitignores, and therefore
+  judged to be source. Harmless while faults were only logged; the moment a
+  source-tree fault began aborting releases it stopped one at
+  `assets.assemble`.
+
 - Report mode writes its allow-list. The streamer starts in `reexec()`, before
   the run directory exists, so `latest` still pointed at the *previous* run;
   the resource resolved the same expression afterwards and got the current one.

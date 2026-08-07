@@ -545,3 +545,35 @@ def test_a_nested_ignored_tree_is_not_reported_as_source(tmp_path: Path) -> None
     # The hand-written names stay too: a fixture is not always a repository,
     # and git answers nothing outside one.
     assert not watch.is_source(root / "target" / "debug" / "x.bin")
+
+
+def test_a_symlink_is_recorded_where_it_was_created(tmp_path: Path) -> None:
+    """The link's own path, not the string it points at.
+
+    `os.symlink(src, dst)` creates `dst`, like `link` and `copy` -- but
+    `symlink` was missing from `DESTINATION_IS_SECOND`, so the *target* was
+    recorded as though it were the created path. `Path.symlink_to("arm64")`
+    passes a bare relative name, and `resolve()` anchored it to the checkout
+    root, producing a report that `<root>/arm64` had been written: a path no
+    step touched, not gitignored, and therefore judged to be source.
+
+    Harmless while faults were only logged. Once a source-tree fault began
+    aborting releases, it stopped one at `assets.assemble`.
+    """
+    from capsem.gate.interception import Instrument
+
+    output = tmp_path / "target" / "assets"
+    output.mkdir(parents=True)
+    (output / "arm64").mkdir()
+
+    with _watch(tmp_path) as watch, Instrument(watch, fd_path_template="/proc/self/fd/{fd}"):
+        (output / "current").symlink_to("arm64")
+
+    recorded = {event.path for event in watch.events}
+    assert output / "current" in recorded, (
+        f"the link's own path was not recorded; saw {sorted(map(str, recorded))}"
+    )
+    assert tmp_path / "arm64" not in recorded, (
+        "the link target was resolved against the checkout root and recorded "
+        "as a write to a path nothing touched"
+    )
