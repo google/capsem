@@ -186,10 +186,32 @@ class RunLane(Action, name="linux-rust-lane"):
 
 
 def lane(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
-    """Compose the parity lane into a plan."""
+    """Compose the parity lane into a plan, with the image it needs first.
+
+    The lane refuses to build its own base image, and that refusal is right:
+    it runs sealed, and a multi-gigabyte fetch inside it is exactly what
+    sealing exists to prevent. But refusing was the *whole* answer, and the
+    answer it gave was a recipe name -- twenty-five minutes into the gate, on
+    the machine that had already spent them. `AGENTS.md` requires a module to
+    own its prerequisites and to be runnable in a clean local environment; a
+    base image warmed out of band by an operator who knew to is neither.
+
+    So it is a step, before the lane, with network -- and the refusal stays,
+    unreachable in practice and still the last word if this is ever skipped.
+    Cheap when it is a no-op: `WarmBase` checks the tag exists and returns.
+
+    Both hold `docker_daemon`, so they cannot overlap each other or anything
+    else on the daemon. When the sandbox lands this is the step that has to be
+    hoisted above it, for the same reason the prefix and the keep-awake re-exec
+    already run before any resource is held.
+    """
+    warmed = plan.add(
+        step("warm-base", WarmBase(), contends=(config.exclusive("docker_daemon"),)),
+        after=after,
+    )
     return plan.add(
         step("linux-rust", RunLane(), contends=(config.exclusive("docker_daemon"),)),
-        after=after,
+        after=(warmed,),
     )
 
 

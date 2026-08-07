@@ -99,6 +99,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- The Linux parity lane now builds its own base image instead of naming a
+  recipe for the operator to run. The lane still refuses to build it *inside*
+  the sealed run -- a multi-gigabyte fetch there is what sealing prevents --
+  but that refusal was the whole answer, and it arrived twenty-five minutes
+  into the gate on the machine that had already spent them. Warming is a step
+  before the lane now, with network, and costs a tag check when the image is
+  already there. `just test` is self-sufficient on a clean machine, which is
+  what `AGENTS.md` asks of every module.
+
 - Python static-analysis debt is now an exact per-rule count that can only
   shrink, not a list of rules held back wholesale. `ty_ratchet` names how many
   of each diagnostic the relaxed trees may carry, and a suppression budget

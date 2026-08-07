@@ -130,6 +130,31 @@ def test_rebuilding_the_parent_image_changes_the_tag(tmp_path: Path) -> None:
     assert before != after
 
 
+def test_the_lane_owns_its_base_image_instead_of_asking_the_operator() -> None:
+    """A module owns its prerequisites, or `just test` is not self-sufficient.
+
+    The lane refuses to build the base image inside itself -- correctly, since
+    it runs sealed and a multi-gigabyte fetch mid-run is the thing sealing
+    prevents. But refusing was the whole answer: the base image was warmed by a
+    separate recipe the operator had to know to run, and `linux-rust` sits
+    twenty-five minutes into the gate. A clean machine therefore spent
+    twenty-five minutes to be handed a command it could have run first.
+
+    Composed as a step before the lane, the refusal becomes unreachable in
+    practice and the gate is what `AGENTS.md` says it is: every prerequisite
+    owned, runnable in a clean local environment.
+    """
+    from helpers.gate import gate_labels
+
+    labels = list(gate_labels("candidate"))
+
+    assert "warm-base" in labels, (
+        "nothing in the gate builds the parity base image, so a clean machine "
+        "reaches the lane and is told to run a recipe by hand"
+    )
+    assert labels.index("warm-base") < labels.index("linux-rust")
+
+
 def test_the_ownership_steps_are_gone() -> None:
     """`cache-ownership` and `output-ownership` existed only because root-owned
     volumes and bind mounts left files the host could not read. Without either,
