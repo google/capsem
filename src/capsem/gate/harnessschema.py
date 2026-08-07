@@ -18,6 +18,7 @@ from typing import Annotated
 
 from pydantic import (
     NonNegativeFloat,
+    NonNegativeInt,
     PositiveInt,
     StringConstraints,
     field_validator,
@@ -39,6 +40,17 @@ PythonRoot = Annotated[str, StringConstraints(min_length=1, pattern=r"^[A-Za-z0-
 TyRule = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$")]
 
 
+class SuppressionBudget(Strict):
+    """Exact Python-analysis debt that may only shrink deliberately."""
+
+    noqa: NonNegativeInt
+    type_ignore: NonNegativeInt
+    ty_ignore: NonNegativeInt
+    ruff_global_ignore: NonNegativeInt
+    ruff_per_file_ignore: NonNegativeInt
+    justification: Annotated[str, StringConstraints(min_length=20)]
+
+
 class LintConfig(Strict):
     """Which trees are checked, which strictly, and what is held back."""
 
@@ -50,17 +62,19 @@ class LintConfig(Strict):
     never be observed as fixed. Semantic policy; how the pinned tool spells
     the flag belongs to the adapter."""
 
-    ty_ratchet: tuple[TyRule, ...]
+    ty_ratchet: dict[TyRule, PositiveInt]
+    """Exact relaxed-tree diagnostic counts, keyed by Ty rule."""
+
+    suppression_budget: SuppressionBudget
 
     @property
     def relaxed_roots(self) -> tuple[str, ...]:
         return tuple(name for name in self.python_roots if name not in self.strict_roots)
 
-    @field_validator("python_roots", "strict_roots", "ty_ratchet")
+    @field_validator("python_roots", "strict_roots")
     @classmethod
     def _no_duplicates(cls, values: tuple[str, ...]) -> tuple[str, ...]:
-        """A repeated root checks a tree twice; a repeated rule holds back the
-        same diagnostic twice and hides that one of them could go."""
+        """A repeated root checks a tree twice and obscures its ownership."""
         seen = [value for value in values if values.count(value) > 1]
         if seen:
             raise ValueError(f"duplicated: {', '.join(sorted(set(seen)))}")

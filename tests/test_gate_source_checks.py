@@ -14,6 +14,11 @@ vocabulary is closed and uses enums elsewhere.
 
 from __future__ import annotations
 
+import re
+import subprocess
+import tokenize
+import tomllib
+from collections import Counter
 from pathlib import Path
 
 import pydantic
@@ -31,9 +36,17 @@ def _policy(**overrides: object) -> LintConfig:
         "python_roots": ("src", "scripts"),
         "strict_roots": ("src",),
         "error_on_warning": True,
-        "ty_ratchet": ("invalid-assignment",),
+        "ty_ratchet": {"invalid-assignment": 1},
+        "suppression_budget": {
+            "noqa": 1,
+            "type_ignore": 1,
+            "ty_ignore": 1,
+            "ruff_global_ignore": 1,
+            "ruff_per_file_ignore": 1,
+            "justification": "Existing test debt that may only shrink.",
+        },
     }
-    return LintConfig(**{**base, **overrides})
+    return LintConfig.model_validate({**base, **overrides})
 
 
 # ---------------------------------------------------------------------------
@@ -71,12 +84,12 @@ def test_a_ratchet_entry_that_is_not_a_rule_name_is_refused(rule: str) -> None:
     """`ty` ignores an unknown `--ignore`, so a typo held nothing back and
     looked exactly like a rule that had been fixed."""
     with pytest.raises(pydantic.ValidationError):
-        _policy(ty_ratchet=(rule,))
+        _policy(ty_ratchet={rule: 1})
 
 
-def test_a_duplicated_ratchet_entry_is_refused() -> None:
+def test_a_nonpositive_ratchet_count_is_refused() -> None:
     with pytest.raises(pydantic.ValidationError):
-        _policy(ty_ratchet=("invalid-assignment", "invalid-assignment"))
+        _policy(ty_ratchet={"invalid-assignment": 0})
 
 
 def test_the_semantic_option_is_configuration_and_the_flag_is_code() -> None:
@@ -150,6 +163,55 @@ def test_the_relaxed_step_holds_back_each_ratchet_rule_exactly_once() -> None:
     assert "src" not in relaxed.split("--ignore")[0].split()[4:], (
         "a strict root must not be re-checked with rules held back"
     )
+
+
+def test_the_type_ratchet_records_every_diagnostic_count_exactly() -> None:
+    """Debt may shrink deliberately, but it may never grow invisibly."""
+    from capsem.gate.sourcechecks import ty_inventory_argv
+
+    result = subprocess.run(
+        ty_inventory_argv(CONFIG.lint.relaxed_roots),
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    counts = Counter(re.findall(r"(?:error|warning)\[([a-z][a-z0-9-]+)\]", result.stdout))
+
+    assert counts == Counter(CONFIG.lint.ty_ratchet), (
+        "Ty debt changed. Fix new diagnostics; for reductions, lower the exact "
+        "count or remove the family from config/gate.toml.\n"
+        f"expected: {dict(CONFIG.lint.ty_ratchet)}\nactual: {dict(sorted(counts.items()))}"
+    )
+
+
+def test_python_suppressions_and_exclusions_cannot_grow_unnoticed() -> None:
+    """A local ignore is debt too, even when the aggregate Ty count is flat."""
+    comments = (
+        token.string
+        for root in CONFIG.lint.python_roots
+        for path in sorted((PROJECT_ROOT / root).rglob("*.py"))
+        for token in tokenize.generate_tokens(
+            iter(path.read_text(encoding="utf-8").splitlines(keepends=True)).__next__
+        )
+        if token.type == tokenize.COMMENT
+    )
+    sources = "\n".join(comments)
+    project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    ruff = project["tool"]["ruff"]
+    ruff_lint = ruff["lint"]
+    ty = project["tool"].get("ty", {})
+    budget = CONFIG.lint.suppression_budget
+
+    assert len(re.findall(r"#\s*noqa\b", sources)) == budget.noqa
+    assert len(re.findall(r"#\s*type:\s*ignore\b", sources)) == budget.type_ignore
+    assert len(re.findall(r"#\s*ty:\s*ignore\b", sources)) == budget.ty_ignore
+    assert len(ruff_lint.get("ignore", ())) == budget.ruff_global_ignore
+    assert sum(len(rules) for rules in ruff_lint.get("per-file-ignores", {}).values()) == (
+        budget.ruff_per_file_ignore
+    )
+    assert "exclude" not in ruff and "extend-exclude" not in ruff
+    assert "exclude" not in ty
 
 
 def test_two_failing_tools_both_report() -> None:

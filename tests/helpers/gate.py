@@ -22,6 +22,7 @@ from typing import TextIO
 
 from capsem.gate.invocation import Command
 from capsem.gate.proc import Runner
+from capsem.gate.runlogschema import OutputSpan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -215,6 +216,7 @@ class RecordingJournal:
         self.execs: list[dict] = []
         self.launches: list[dict] = []
         self.skips: list[str] = []
+        self.carries: list[str] = []
         self.waits: list[tuple[str, float, float, float]] = []
 
     def note(self, message: str) -> None:
@@ -228,7 +230,7 @@ class RecordingJournal:
         env: dict[str, str],
         exit: int,
         duration_ms: float,
-        output: object = None,
+        output: OutputSpan | None = None,
     ) -> None:
         self.execs.append(
             {
@@ -262,6 +264,16 @@ class RecordingJournal:
 
     def skipped(self, label: str) -> None:
         self.skips.append(label)
+
+    def carried(self, label: str) -> None:
+        """Separately from `skips`, because they are separate claims.
+
+        A skipped step never ran because something before it failed; a carried
+        step was proved by an earlier run and deliberately not repeated. A
+        double that folded them together would let a test assert "not skipped"
+        about a run that carried half its graph.
+        """
+        self.carries.append(label)
 
     def waited(
         self, label: str, *, dependency_ms: float, resource_ms: float, execution_ms: float

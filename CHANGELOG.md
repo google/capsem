@@ -99,6 +99,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- Python static-analysis debt is now an exact per-rule count that can only
+  shrink, not a list of rules held back wholesale. `ty_ratchet` names how many
+  of each diagnostic the relaxed trees may carry, and a suppression budget
+  pins the exact number of `noqa`, `type: ignore`, `ty: ignore` and Ruff
+  ignores — so a new one is a deliberate decision rather than an invisible
+  addition to a family already forgiven.
+
+  Introducing it surfaced eleven diagnostics and three suppressions added
+  since the ratchet was written, all of which are fixed rather than recorded:
+  the shared `RecordingJournal` had silently stopped satisfying the `Journal`
+  protocol when `carried` was added for resume, so nine call sites were passing
+  a double that no longer matched; two `SimpleNamespace` stand-ins that needed
+  type suppressions to be passed at all are real `Context` objects; a `rmtree`
+  stub is `monkeypatch.setattr`; one `ty: ignore` was doing nothing; and two
+  registration imports go through the test helper that already owns them.
+
 - Every `serial`-marked test now has an execution rail, and a guard says so.
   The broad suite deselects `serial`, so such a test runs only if some rail
   claims it by path — and `tests/ironbank/test_route_latency.py` was claimed by

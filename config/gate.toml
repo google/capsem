@@ -494,26 +494,36 @@ error_on_warning = true
 # those trees today, which is four hundred more than when ty ran on
 # src/capsem alone.
 #
-# A ratchet: entries may leave, nothing may join. tests/test_gate_boundary.py
-# fails when a rule listed here no longer fires.
-ty_ratchet = [
-    "call-top-callable",
-    "invalid-argument-type",
-    "invalid-assignment",
-    "invalid-attribute-override",
-    "invalid-method-override",
-    "invalid-return-type",
-    "no-matching-overload",
-    "not-iterable",
-    "not-subscriptable",
-    "possibly-missing-submodule",
-    "unknown-argument",
-    "unresolved-attribute",
-    "unresolved-import",
-    "unsupported-operator",
-    "unused-ignore-comment",
-    "unused-type-ignore-comment",
-]
+# A ratchet in two dimensions: no family may join and no count may grow.
+# Reductions must lower the count immediately, so stale exemptions fail too.
+[lint.ty_ratchet]
+call-top-callable = 3
+invalid-argument-type = 139
+invalid-assignment = 18
+invalid-attribute-override = 1
+invalid-method-override = 4
+invalid-return-type = 6
+no-matching-overload = 9
+not-iterable = 2
+not-subscriptable = 177
+possibly-missing-submodule = 2
+unknown-argument = 4
+unresolved-attribute = 94
+unresolved-import = 26
+unsupported-operator = 5
+unused-ignore-comment = 4
+unused-type-ignore-comment = 3
+
+# Exact counts make every new inline or configured suppression a reviewed
+# policy change. This is historical debt, not capacity: every value may shrink
+# and no value may grow.
+[lint.suppression_budget]
+noqa = 72
+type_ignore = 23
+ty_ignore = 6
+ruff_global_ignore = 1
+ruff_per_file_ignore = 2
+justification = "Existing repository-wide debt baseline; additions are forbidden and removals must ratchet these counts down."
 
 # ---------------------------------------------------------------------------
 # The justfile/package boundary

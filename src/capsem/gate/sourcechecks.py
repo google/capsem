@@ -44,7 +44,9 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
         # would be the ratchet quietly growing a second home.
         steps.append(phase.add(_ty("strict", config, strict, ()), after=after))
     if relaxed:
-        steps.append(phase.add(_ty("relaxed", config, relaxed, settings.ty_ratchet), after=after))
+        steps.append(
+            phase.add(_ty("relaxed", config, relaxed, tuple(settings.ty_ratchet)), after=after)
+        )
     return tuple(steps)
 
 
@@ -65,6 +67,28 @@ def ty_argv(
     flags = ["--error-on-warning"] if config.lint.error_on_warning else []
     ignores = [flag for rule in held_back for flag in ("--ignore", rule)]
     return ["uv", "run", "ty", "check", *flags, *roots, *ignores]
+
+
+def ty_inventory_argv(roots: tuple[str, ...] | list[str]) -> list[str]:
+    """Emit every relaxed-tree diagnostic in a stable, countable format.
+
+    ``--exit-zero`` is intentional: the contract compares the complete output
+    against the typed debt baseline instead of treating known diagnostics as a
+    process failure. Ty forbids combining it with ``--error-on-warning``;
+    warnings are still printed and therefore counted.
+    """
+    return [
+        "uv",
+        "run",
+        "ty",
+        "check",
+        "--exit-zero",
+        "--output-format",
+        "concise",
+        "--color",
+        "never",
+        *roots,
+    ]
 
 
 def _ruff():

@@ -30,13 +30,11 @@ the two territories are provably the same bytes or the release stops.
 
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 import pytest
-from helpers.gate import RecordingRunner
+from helpers.gate import built_command
 
-from capsem.gate import cli  # noqa: F401 - imported so every command registers
 from capsem.gate import config as gate_config
 from capsem.gate.candidate import CompleteGate
 from capsem.gate.command import GateCommand
@@ -55,11 +53,7 @@ PUBLICATION = ("precheck", "record-head", "confirm-head", "release")
 
 
 def _plan(name: str, **args):
-    command = GateCommand.registry[name](
-        RecordingRunner(PROJECT_ROOT),
-        argparse.Namespace(dry_run=False, graph=False, timing=False, **args),
-    )
-    return command._describe()
+    return built_command(PROJECT_ROOT, name, tuple(args.items()))._describe()
 
 
 @pytest.fixture

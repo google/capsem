@@ -19,9 +19,9 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
+from helpers.gate import RecordingRunner
 from test_gate_socket_length import GATEWAY_SUFFIX, SUN_LEN
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +31,19 @@ def _config():
     from capsem.gate import config as gate_config
 
     return gate_config.load(PROJECT_ROOT)
+
+
+def _context(config):
+    """A real `Context`, so the guard is exercised through its own signature.
+
+    A `SimpleNamespace` stood in here and needed a type suppression to be
+    passed at all -- which is the shape of a test that has drifted from what it
+    claims to exercise. These two cases raise before anything reaches the
+    runner; a recorder is there so that stops being true silently.
+    """
+    from capsem.gate.context import Context
+
+    return Context(RecordingRunner(PROJECT_ROOT), config)
 
 
 def _git(cwd: Path, *args: str) -> str:
@@ -447,9 +460,8 @@ def test_the_release_guard_still_sees_the_real_branch_move(
     monkeypatch.setattr("capsem.gate.sourcestate._measure", lambda context: measured)
     monkeypatch.setattr("capsem.gate.sourcestate._record_file", lambda context: record)
 
-    context = SimpleNamespace(config=config, runner=None, journal=None)
     with pytest.raises(GateError, match="copied from moved"):
-        RequireSourceUnchanged().perform(context)  # ty: ignore[invalid-argument-type]
+        RequireSourceUnchanged().perform(_context(config))
 
 
 def test_the_release_guard_still_sees_the_real_tree_edited(
@@ -479,9 +491,8 @@ def test_the_release_guard_still_sees_the_real_tree_edited(
     monkeypatch.setattr("capsem.gate.sourcestate._measure", lambda context: measured)
     monkeypatch.setattr("capsem.gate.sourcestate._record_file", lambda context: record)
 
-    context = SimpleNamespace(config=config, runner=None, journal=None)
     with pytest.raises(GateError, match="copied from was edited"):
-        RequireSourceUnchanged().perform(context)  # ty: ignore[invalid-argument-type]
+        RequireSourceUnchanged().perform(_context(config))
 
 
 def test_the_export_list_covers_what_a_release_publishes() -> None:
@@ -579,7 +590,9 @@ def test_a_sweep_keeps_the_newest_and_reclaims_the_rest(tmp_path: Path) -> None:
     assert newer.is_dir(), "the newest survives, so a failed run can still be resumed"
 
 
-def test_reclaim_does_not_report_success_on_a_tree_it_left_behind(tmp_path: Path) -> None:
+def test_reclaim_does_not_report_success_on_a_tree_it_left_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`ignore_errors=True` is right for a chmodded tree and wrong as the last
     word: a successful run that silently kept its copy is how the disk fills
     with nothing reporting it."""
@@ -593,13 +606,9 @@ def test_reclaim_does_not_report_success_on_a_tree_it_left_behind(tmp_path: Path
     stubborn = tmp_path / "cccccccc"
     stubborn.mkdir()
 
-    original = prefix.shutil.rmtree
-    prefix.shutil.rmtree = lambda *a, **k: None  # ty: ignore[invalid-assignment]
-    try:
-        with pytest.raises(GateError, match="could not reclaim"):
-            prefix.reclaim(config, stubborn)
-    finally:
-        prefix.shutil.rmtree = original  # ty: ignore[invalid-assignment]
+    monkeypatch.setattr(prefix.shutil, "rmtree", lambda *a, **k: None)
+    with pytest.raises(GateError, match="could not reclaim"):
+        prefix.reclaim(config, stubborn)
 
 
 def test_a_linked_worktree_is_refused_rather_than_half_isolated(tmp_path: Path) -> None:

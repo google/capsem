@@ -215,36 +215,6 @@ def test_the_strict_python_tree_needs_no_rules_held_back() -> None:
     assert strict.returncode == 0, strict.stdout + strict.stderr
 
 
-def test_the_type_ratchet_only_shrinks() -> None:
-    """A rule that no longer fires must leave the list.
-
-    Otherwise the ratchet stops describing outstanding work and starts
-    describing policy, which is how a temporary exemption becomes permanent.
-    """
-    settings = CONFIG.lint
-    held_back = list(settings.ty_ratchet)
-    assert held_back, "an empty ratchet means the list should be deleted, not kept"
-
-    from capsem.gate.sourcechecks import ty_argv
-
-    relaxed = list(settings.relaxed_roots)
-    still_firing = set()
-    for rule in held_back:
-        result = subprocess.run(
-            ty_argv(CONFIG, relaxed, held_back=tuple(o for o in held_back if o != rule)),
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            still_firing.add(rule)
-
-    assert set(held_back) == still_firing, (
-        "these rules are held back but no longer fire; remove them from "
-        f"config/gate.toml's ty_ratchet: {sorted(set(held_back) - still_firing)}"
-    )
-
-
 # ---------------------------------------------------------------------------
 # What is still opaque, and why
 # ---------------------------------------------------------------------------

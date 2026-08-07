@@ -13,7 +13,6 @@ carried step is never recorded as one this process ran.
 
 from __future__ import annotations
 
-import argparse
 import re
 from pathlib import Path
 
@@ -29,14 +28,17 @@ def _config():
 
 
 def _candidate_plan():
-    from capsem.gate import cli  # noqa: F401  -- registers every command
-    from capsem.gate.command import GateCommand
-    from capsem.gate.proc import Runner
+    # Through the helper, which is the one place that knows importing `cli` is
+    # what fills the registry. Spelling that import here needed a suppression
+    # for a name nothing reads.
+    from helpers.gate import built_command
+
     from capsem.gate.qualification import from_environment
 
-    command = GateCommand.registry["candidate"](
-        Runner(PROJECT_ROOT),
-        argparse.Namespace(dry_run=True, graph=False, timing=False, prefix=None, resume_from=None),
+    command = built_command(
+        PROJECT_ROOT,
+        "candidate",
+        (("prefix", None), ("resume_from", None)),
         qualification=from_environment(_config(), environ={}),
     )
     return command.plan()
