@@ -138,6 +138,16 @@ class DebProof:
             ],
             mounts=[
                 Mount(cgroup, cgroup, "rw"),
+                # The package this proves is written by an earlier step, after
+                # the image was built, so the image cannot carry it. Read-only:
+                # a proof that can write into what it is proving proves nothing,
+                # which is the point the module docstring already makes about
+                # anything writing back into /src.
+                *(
+                    Mount.generated(str(self.root / name), f"{self._install.mount}/{name}")
+                    for name in self._install.generated_inputs
+                    if (self.root / name).exists()
+                ),
             ],
         )
         await_systemd(

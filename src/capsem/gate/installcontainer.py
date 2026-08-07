@@ -103,6 +103,17 @@ class InstallContainer:
             options=["--privileged", "--cgroupns=host", *options, *self._tmpfs()],
             mounts=[
                 Mount(cgroup, cgroup, "rw"),
+                # What the image could not carry: the package this proof
+                # installs is written by an earlier step, long after the image
+                # was built. Read-only, so the proof cannot alter the artifact
+                # it exists to verify.
+                *(
+                    Mount.generated(
+                        str(self._config.root / name), f"{self._settings.mount}/{name}"
+                    )
+                    for name in self._settings.generated_inputs
+                    if (self._config.root / name).exists()
+                ),
                 *(Mount(v.source, v.target) for v in self._settings.volumes),
             ],
         )

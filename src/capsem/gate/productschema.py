@@ -74,6 +74,7 @@ class InstallSuite(Strict):
 
 class InstallConfig(Strict):
     container: str
+    generated_inputs: tuple[str, ...]
     image: str
     dockerfile: str
     context: str

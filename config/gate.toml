@@ -112,6 +112,12 @@ mount = "/src"
 channel = "local"
 manifest_version = "1.0.0"
 
+# Build output the install proof reads, which the image cannot carry because
+# it is produced *after* the image is built: the package rail writes
+# `dist/*.deb` and the asset rail fills `assets/`, and `.dockerignore` excludes
+# both from any build context. Mounted read-only -- an install proof that could
+# rewrite the package it is proving would be proving nothing.
+generated_inputs = ["dist", "assets", "target/config"]
 systemd_ready_attempts = 30
 systemd_ready_interval_seconds = 0.5
 serve_ready_file = "/tmp/capsem-install-release.json"

@@ -140,6 +140,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The install proof and the deb proof can see the package they verify again.
+  Sealing those lanes removed the mount they read `dist/*.deb` through, and the
+  package is written after the image is built so no `COPY` can carry it --
+  `dpkg-deb: failed to read archive '/src/dist/Capsem_0.6.0_arm64.deb'`. Both
+  now declare `dist`, `assets` and `target/config` as read-only generated
+  inputs; a proof that could write into what it proves would prove nothing.
+
 - A resumed gate no longer measures its tree against a stale index. Refreshing
   a prefix copied `.git` *into* the existing `.git` -- `cp -R a b` nests when
   `b` exists -- so the prefix's real repository was never updated. Deleting a
