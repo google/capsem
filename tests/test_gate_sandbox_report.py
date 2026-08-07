@@ -14,8 +14,10 @@ The three below came from `/usr/bin/log stream --predicate 'sender ==
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import sandbox, sandboxreport
@@ -65,6 +67,7 @@ class _Settings:
     report_style = "ndjson"
     report_log_name = "sandbox-report.ndjson"
     report_summary_suffix = ".allowlist.txt"
+    report_pid_suffix = ".pid"
     report_stop_timeout = 5.0
 
 
@@ -94,24 +97,35 @@ def test_report_mode_captures_and_summarizes(tmp_path: Path) -> None:
     """The real thing, against the real `log` binary.
 
     Not mocked: the failure being prevented is that the command does not run
-    or writes nowhere, and a fake streamer proves neither. This asserts the
-    capture file exists and the summary is derived from it -- the streamer
-    may legitimately observe no sandbox traffic during the test.
+    or writes nowhere, and a fake streamer proves neither.
+
+    Started through `start_outside_the_sandbox` rather than through the
+    resource, because that is where it has to happen -- `log` refuses to run
+    inside a sandbox, and the resource only exists on the far side of the
+    re-exec that applies one.
     """
     runner = RecordingRunner(PROJECT_ROOT)
     config = _Config(tmp_path)
-    resource = sandboxreport.SandboxReport(config, runner, mode=sandbox.REPORT)
 
-    resource.acquire()
-    assert resource._stream is not None, "report mode started no streamer"
-    assert resource._stream.poll() is None, "the streamer exited immediately"
-    resource.release()
-
+    sandboxreport.start_outside_the_sandbox(config, runner)
     capture = tmp_path / "runs" / _Settings.report_log_name
+    pidfile = capture.with_suffix(_Settings.report_pid_suffix)
+    assert pidfile.is_file(), "no streamer pid was recorded for the sandbox to stop"
+    pid = int(pidfile.read_text(encoding="utf-8").strip())
+
+    sandboxreport.SandboxReport(config, runner, mode=sandbox.REPORT).release()
+
     assert capture.is_file(), "report mode left no capture"
-    summary = capture.with_suffix(_Settings.report_summary_suffix)
-    assert summary.is_file(), "release wrote no allow-list"
-    assert resource._stream is None, "the streamer outlived the run"
+    assert capture.with_suffix(_Settings.report_summary_suffix).is_file(), (
+        "release wrote no allow-list"
+    )
+    assert not pidfile.exists(), "the pidfile outlived the run"
+    # Release reaps the child it killed, so the pid is genuinely gone rather
+    # than a zombie that `kill(pid, 0)` would still report as present. In the
+    # gate the collector reparents to init and init reaps it; in one process
+    # the resource has to do it, or Python complains from `Popen.__del__`.
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
 
 
 def test_the_collector_is_part_of_the_complete_gate() -> None:
@@ -132,11 +146,10 @@ def test_the_capture_lands_in_this_runs_directory(tmp_path: Path) -> None:
     current.mkdir(parents=True)
     (tmp_path / "runs" / "latest").symlink_to(current.name)
 
-    resource = sandboxreport.SandboxReport(
-        _Config(tmp_path), RecordingRunner(PROJECT_ROOT), mode=sandbox.REPORT
-    )
-    resource.acquire()
-    resource.release()
+    config = _Config(tmp_path)
+    runner = RecordingRunner(PROJECT_ROOT)
+    sandboxreport.start_outside_the_sandbox(config, runner)
+    sandboxreport.SandboxReport(config, runner, mode=sandbox.REPORT).release()
 
     assert (current / _Settings.report_log_name).is_file(), "capture missed the run directory"
     assert not (tmp_path / "runs" / _Settings.report_log_name).exists(), "capture went to the root"

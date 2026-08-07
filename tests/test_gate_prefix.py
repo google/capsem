@@ -254,7 +254,7 @@ def test_the_prefix_reports_the_same_revision_as_its_source(source: Path) -> Non
     """Dropping `.git` is the failure this catches.
 
     Build provenance goes through `build.rs`, and `RecordHead`,
-    `RecordSourceState` and `_ForeignUidProbe` all shell out to git. Without
+    `RecordSourceState` and the provenance step all shell out to git. Without
     it the copy is not a checkout, and the gate qualifies a revision it cannot
     name.
     """

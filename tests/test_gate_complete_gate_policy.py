@@ -53,8 +53,18 @@ def test_every_complete_gate_command_keeps_the_host_awake(name, macos) -> None:
     replacement = _command(name, **COMPLETE_GATE[name]).reexec()
 
     assert replacement is not None, f"{name} runs the complete gate but lets macOS sleep through it"
-    assert list(replacement[: len(CONFIG.candidate.keep_awake_command)]) == list(
-        CONFIG.candidate.keep_awake_command
+    # Present, not first. `candidate` now declares an enforcing sandbox, so
+    # `sandbox.applied` wraps the keep-awake argv rather than the other way
+    # round -- a profile is inherited and irrevocable, so it has to be the
+    # outermost thing or the process that adopts it is not the one that runs
+    # the gate. What matters is that the machine still cannot sleep through an
+    # unattended run, which is the argv containing the command, wherever it is.
+    assert list(CONFIG.candidate.keep_awake_command) == [
+        part
+        for part in replacement
+        if part in set(CONFIG.candidate.keep_awake_command)
+    ][: len(CONFIG.candidate.keep_awake_command)], (
+        f"{name} lost its keep-awake wrapper: {replacement}"
     )
 
 

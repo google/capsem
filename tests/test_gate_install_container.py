@@ -166,7 +166,7 @@ def test_a_predecessor_is_removed_before_the_container_starts(
     runner.assert_order(r"docker rm -f", r"docker run -d")
 
 
-def test_the_checkout_and_cgroups_are_mounted(
+def test_only_cgroups_are_mounted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _on(monkeypatch, "Darwin")
@@ -176,7 +176,10 @@ def test_the_checkout_and_cgroups_are_mounted(
 
     started = runner.matching(r"docker run -d")[0]
     assert "-v /sys/fs/cgroup:/sys/fs/cgroup:rw" in started
-    assert f"-v {PROJECT_ROOT}:/src" in started
+    # And not the checkout. The install image carries its source now, so a
+    # mount of the working tree here would put the container back on the same
+    # inodes as every concurrent host step.
+    assert f"-v {PROJECT_ROOT}:" not in started, f"the checkout is mounted again: {started}"
     assert "--privileged --cgroupns=host" in started
 
 

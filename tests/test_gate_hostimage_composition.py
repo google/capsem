@@ -29,8 +29,6 @@ from capsem.gate import (
 )
 from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
-from capsem.gate.context import Context
-from capsem.gate.dockermount import Mount
 from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -88,25 +86,21 @@ def test_two_lanes_in_one_plan_build_the_builder_once() -> None:
     assert list(plan.labels).count(hostimage.STEP) == 1
 
 
-def test_foreign_uid_probe_mounts_linked_worktree_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    metadata = "/git/common"
-    monkeypatch.setattr(
-        hostimage,
-        "docker_git_metadata_mount",
-        lambda _runner: Mount.unmigrated(metadata, metadata, "ro"),
-    )
-    runner = RecordingRunner(
-        PROJECT_ROOT,
-        replies={"git rev-parse --short HEAD": "abc123"},
-    )
+def test_the_builder_needs_no_repository_to_identify_a_build() -> None:
+    """Reimplemented from a test of the foreign-UID probe.
 
-    hostimage._ForeignUidProbe().perform(Context(runner, CONFIG))
+    That probe mounted a linked worktree's Git directory and read a revision
+    out of it as a user who did not own the checkout, because `build.rs`
+    answered an unreadable repository by embedding "unknown". Both halves are
+    gone: no lane mounts the checkout, and the revision is passed in.
 
-    probe = runner.rendered[-1]
-    assert f"-v {metadata}:{metadata}:ro" in probe
-    assert "--user 4242:4242" in probe
+    The outcome it protected is unchanged and is asserted here -- a package
+    still cannot be built without an exact revision, because
+    `check-build-provenance.sh` refuses a binary that does not embed the one
+    it was given.
+    """
+    assert CONFIG.environment.package.build_revision == "CAPSEM_BUILD_REVISION"
+    assert not (PROJECT_ROOT / "src/capsem/gate/gitmetadata.py").exists()
 
 
 def test_only_the_lane_that_needs_git_provenance_still_carries_it() -> None:
@@ -132,23 +126,24 @@ def test_only_the_lane_that_needs_git_provenance_still_carries_it() -> None:
     """
     from capsem.gate import linuxrust
 
+    # Asserted against behaviour, not against the rail's source text. The
+    # previous version required the string `docker_git_metadata_mount` to
+    # appear -- which pinned a mechanism, so replacing the mount with a passed
+    # revision broke a contract that should not have noticed.
     rail = (PROJECT_ROOT / "src/capsem/gate/packagerail.py").read_text(encoding="utf-8")
-    assert "docker_git_metadata_mount" in rail, (
-        "the package rail stopped carrying git metadata, so a published binary "
+    assert "revision=" in rail, (
+        "the package rail stopped supplying a revision, so a published binary "
         "would embed an 'unknown' build hash without anything failing"
     )
 
     lane = (PROJECT_ROOT / "src/capsem/gate/linuxrust.py").read_text(encoding="utf-8")
-    assert "docker_git_metadata_mount" not in lane
+    assert "revision=" not in lane
     for flag in ("-v", "--volume", "--user"):
         assert flag not in lane, f"the parity lane grew a {flag}, so it shares state again"
 
-    # And the probe that proves the builder can read a checkout it does not own
-    # is still wired, because that is what makes the package rail's mount
-    # sufficient rather than merely present.
-    assert "_ForeignUidProbe" in (PROJECT_ROOT / "src/capsem/gate/hostimage.py").read_text(
-        encoding="utf-8"
-    )
+    # The probe that proved the builder could read a checkout it did not own
+    # is gone with the mount it validated. What makes the package rail
+    # sufficient now is that it is told the revision rather than reading one.
     assert linuxrust.RunLane is not None
 
 

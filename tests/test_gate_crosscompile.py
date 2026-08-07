@@ -14,7 +14,6 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
-from capsem.gate.dockermount import Mount
 from capsem.gate.errors import GateError
 from capsem.gate.packageinputs import pinned_toolchain, resolve_channel
 from capsem.gate.packagerail import PackageRail
@@ -185,22 +184,26 @@ def test_the_cargo_caches_are_shared_and_the_target_dir_is_per_architecture(
     assert f"-v capsem-host-target-{TARGET.name}:/cargo-target" in build
 
 
-def test_package_build_mounts_linked_worktree_git_metadata(
+def test_the_package_lane_mounts_no_git_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    metadata = "/git/common"
+    """Reimplemented: this asserted the opposite, and correctly so at the time.
+
+    A linked worktree's `.git` is a file pointing into another repository, so
+    the common directory had to be mounted at its absolute host path for a
+    container to read a revision from it. Nothing reads a repository inside a
+    container now -- `.dockerignore` excludes `.git` and the gate passes
+    `CAPSEM_BUILD_REVISION` -- so a mount of the host's Git directory would be
+    a mount of the checkout by another name.
+    """
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
-    monkeypatch.setattr(
-        "capsem.gate.packagerail.docker_git_metadata_mount",
-        lambda _runner: Mount.unmigrated(metadata, metadata, "ro"),
-    )
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
 
     _run_lane(_rail(runner))
 
     build = runner.matching(r"docker create")[0]
-    assert f"-v {metadata}:{metadata}:ro" in build
+    assert "/.git" not in build, f"the lane mounted a Git directory: {build}"
 
 
 def test_the_builds_own_outputs_stay_container_local(

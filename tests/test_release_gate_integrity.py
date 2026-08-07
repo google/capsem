@@ -276,11 +276,16 @@ def test_host_builder_trusts_the_bind_mounted_source_checkout() -> None:
     root = Path(__file__).resolve().parents[1]
     config = gate_config.load(root)
     builder = _read(config.hostimage.dockerfile)
-    hostimage_source = _read("src/capsem/gate/hostimage.py")
 
     assert f"git config --system --add safe.directory {config.hostimage.mount}" in builder
-    assert "_ForeignUidProbe" in hostimage_source
-    assert "probe_user" in hostimage_source
+    # Was two asserts on another module's *source text*. Those break on every
+    # behaviour-preserving refactor and pass on behaviour-changing ones, which
+    # is the wrong way round -- six of them broke at once earlier in this work.
+    # The probe they named existed so a container reading a bind-mounted
+    # checkout would not embed an "unknown" build hash; no lane mounts the
+    # checkout now, so the property is that the revision arrives as a declared
+    # input, asserted against the value rather than the text.
+    assert config.environment.package.build_revision == "CAPSEM_BUILD_REVISION"
     assert config.hostimage.mount == "/src"
 
 

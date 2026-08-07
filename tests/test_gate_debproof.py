@@ -117,7 +117,7 @@ def test_a_host_without_kvm_refuses_rather_than_proving_less(
 # ---------------------------------------------------------------------------
 
 
-def test_the_checkout_is_mounted_read_only(
+def test_the_checkout_is_not_mounted_at_all(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A package that only works because it wrote back into /src is not a
@@ -127,7 +127,11 @@ def test_the_checkout_is_mounted_read_only(
     proof.run()
 
     started = runner.matching(r"docker run -d")[0]
-    assert f"-v {proof.root}:/src:ro" in started
+    # Was `-v {root}:/src:ro`. Read-only was never the protection it looked
+    # like: the container and every concurrent host step still shared inodes
+    # over virtiofs, which is what killed a release run. The image carries the
+    # source now, so there is nothing to share.
+    assert f"-v {proof.root}:" not in started, f"the checkout is mounted again: {started}"
 
 
 def test_every_shipped_binary_must_report_the_package_version(

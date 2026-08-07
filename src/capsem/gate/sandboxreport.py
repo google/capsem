@@ -36,6 +36,7 @@ reclaims it with everything else that run produced.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import signal
@@ -112,6 +113,7 @@ class SandboxReport(Resource, name="sandbox-report"):
                     except ProcessLookupError:
                         break
             pidfile.unlink(missing_ok=True)
+            _reap(pid)
         self._summarize()
 
     def _summarize(self) -> None:
@@ -131,6 +133,22 @@ class SandboxReport(Resource, name="sandbox-report"):
             encoding="utf-8",
         )
         self._runner.step(f"{len(lines)} distinct sandbox operation(s) recorded in {summary}")
+
+
+def _reap(pid: int) -> None:
+    """Wait for the streamer if it was ours, so it does not linger as a zombie.
+
+    In the gate it is not ours -- the process that started it was replaced by
+    `exec`, so it reparents to init and init reaps it. In a test, and in any
+    run where the two happen in one process, the killed child stays a zombie
+    until someone waits, and Python complains from `Popen.__del__` about a
+    subprocess still running.
+    """
+    global _STREAM
+    stream, _STREAM = _STREAM, None
+    if stream is not None and stream.pid == pid:
+        with contextlib.suppress(OSError):
+            stream.wait(timeout=5)
 
 
 def observed(captured: str) -> list[tuple[tuple[str, str], int]]:
@@ -156,6 +174,16 @@ def capture_path(config) -> Path:
     return (current if current.is_dir() else history) / config.sandbox.report_log_name
 
 
+#: The streamer, kept referenced for as long as this process lives.
+#:
+#: Deliberately outliving the call that starts it is the whole design, and
+#: Python reads an abandoned `Popen` as a mistake: dropping the handle emits
+#: `ResourceWarning: subprocess N is still running` from the deallocator. In
+#: the gate that warning goes nowhere, and under pytest it becomes an error --
+#: so the intent is spelled with a reference rather than argued about.
+_STREAM: subprocess.Popen | None = None
+
+
 def start_outside_the_sandbox(config, runner) -> None:
     """Begin streaming before this process becomes a sandboxed one.
 
@@ -168,6 +196,7 @@ def start_outside_the_sandbox(config, runner) -> None:
     target = capture_path(config)
     target.parent.mkdir(parents=True, exist_ok=True)
     handle = target.open("w", encoding="utf-8")
+    global _STREAM
     stream = subprocess.Popen(
         [
             settings.log_command,
@@ -181,5 +210,11 @@ def start_outside_the_sandbox(config, runner) -> None:
         stderr=subprocess.STDOUT,
         start_new_session=True,
     )
+    # The child has its own descriptor now, so this one is ours to close. An
+    # abandoned handle is the same mistake as an abandoned `Popen`: harmless
+    # in the gate, an error under pytest, and in both cases a claim that
+    # something is still in use when it is not.
+    handle.close()
+    _STREAM = stream
     target.with_suffix(settings.report_pid_suffix).write_text(str(stream.pid), encoding="utf-8")
     runner.step(f"Collecting sandbox report entries into {target}")

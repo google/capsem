@@ -175,43 +175,35 @@ def test_every_container_declares_its_network() -> None:
         )
 
 
-def test_the_checkout_mounts_are_enumerated_and_shrinking() -> None:
-    """Six mounts of the working tree remain, and all six say so.
+def test_no_module_mounts_the_checkout() -> None:
+    """Zero, and it stays zero.
 
-    `Mount.unmigrated` is deliberately ugly and deliberately greppable. The
-    alternative was switching the guard off globally while the modules are
-    converted, which is how a temporary exemption becomes the behaviour.
+    This counted six, then five, and now none: every lane copies its source
+    into its image, and `Mount.unmigrated` is deleted with its last caller. The
+    guard is an absolute rather than a shrinking budget -- the constructor that
+    permitted a checkout mount no longer exists to be called.
 
-    `gitmetadata.py` and `packagerail.py` joined this list without any new
-    mount being created -- both were bare `-v` argv where no guard could see
-    them. The count went up while the truth stayed the same, which is the one
-    reason a ratchet may move this way, and it belongs here rather than in a
-    commit message nobody reads.
-
-    `packagerail.py` is the one with a way out. It mounts the checkout writable
-    because the builder runs `pnpm install && pnpm build` inside
-    `/src/frontend`; baking the frontend into the builder image is what lets
-    that mount go, exactly as it did for the parity lane. A
-    linked worktree's common directory lives under the primary checkout, and
-    that mount was assembled as bare `-v` argv where no guard could see it. It
-    is declared now, so the count went up while the truth stayed the same --
-    which is the direction a ratchet is allowed to move only for this reason,
-    and the reason belongs here rather than in a commit message nobody reads.
+    What remains is `Mount.generated`, which is not the same thing and must not
+    become it. It addresses build *output* a container reads: `assets/` is
+    3.0 GB and changes every run, so copying it would put a multi-gigabyte
+    layer in Docker storage per gate. Those inputs are produced by an earlier
+    step and mounted read-only, while the race that killed a release run was a
+    *source* path hardlink-churned by a concurrent host step.
     """
-    remaining: dict[str, int] = {}
-    for path in _modules():
-        count = path.read_text(encoding="utf-8").count("Mount.unmigrated(")
-        if count:
-            remaining[path.name] = count
-
-    assert remaining == {
-        "debproof.py": 1,
-        "gitmetadata.py": 1,
-        "hostimage.py": 1,
-        "installcontainer.py": 1,
-        "installimage.py": 1,
-    }, (
-        f"the checkout-mount debt changed: {remaining}. It may shrink -- update "
-        "this expectation when a module moves to COPY -- but a new one is the "
-        "race that killed a release run coming back."
+    offenders = {
+        path.name: path.read_text(encoding="utf-8").count("Mount.unmigrated(")
+        for path in _modules()
+        if "Mount.unmigrated(" in path.read_text(encoding="utf-8")
+    }
+    assert offenders == {}, (
+        f"a checkout mount is back: {offenders}. The constructor was deleted; a "
+        "lane needing the working tree should COPY it, and one needing build "
+        "output should say so with Mount.generated."
     )
+
+
+def test_generated_mounts_are_read_only() -> None:
+    """A lane that can write its inputs can change the next lane's inputs."""
+    from capsem.gate.dockermount import Mount
+
+    assert Mount.generated("/x/assets", "/src/assets").options == "ro"
