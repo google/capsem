@@ -88,6 +88,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `dompurify` is pinned above GHSA-55q2-fjhq-7xh7 in the docs site, a moderate
+  XSS where an `IN_PLACE` hook removal leaves a detached subtree executable
+  (affects <= 3.4.12). Verified by rebuilding the site as well as re-running
+  the audit: a version override that satisfies the advisory and breaks the
+  build is not a fix, which a `js-yaml` bump to 5.x demonstrated earlier.
+
 - `js-yaml` is pinned to `^4.3.1` across all four pnpm workspaces, closing
   CVE-2026-59870 (quadratic CPU consumption in `!!omap` resolution, high). It
   is a transitive dependency everywhere, so the fix is a `pnpm.overrides`
