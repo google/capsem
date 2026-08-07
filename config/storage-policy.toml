@@ -144,21 +144,21 @@ reason = "The exact x86_64 package is copied to dist before this compiler output
 
 [resources.capsem-install-target]
 kind = "volume"
-retention = "working"
+retention = "obsolete"
 owner = "install"
 last_consumer = "install"
 release_boundary = "after-install"
 release_boundaries = ["before-packages", "after-install"]
 maximum_gib = 25
-reason = "Install compiler output is one-shot; the installed package and logs are the evidence."
+reason = "The install lanes copy their source into the image; nothing declares this, so it has no producer."
 
 [resources.capsem-install-frontend-dist]
 kind = "volume"
-retention = "working"
+retention = "obsolete"
 owner = "install"
 last_consumer = "install"
 release_boundary = "after-install"
-reason = "Generated frontend output is rebuilt and is not a dependency cache."
+reason = "The install lanes copy their source into the image; nothing declares this, so it has no producer."
 
 [resources.capsem-install-test]
 kind = "image"
@@ -213,21 +213,21 @@ reason = "The lockfile-keyed base image carries the toolchain; nothing mounts th
 
 [resources.capsem-install-cargo]
 kind = "volume"
-retention = "cache"
+retention = "obsolete"
 owner = "install"
-reason = "Downloaded Cargo registry content is reused by install builds."
+reason = "The install lanes copy their source into the image; nothing declares this, so it has no producer."
 
 [resources.capsem-install-rustup]
 kind = "volume"
-retention = "cache"
+retention = "obsolete"
 owner = "install"
-reason = "Pinned Rust toolchain is reused by install builds."
+reason = "The install lanes copy their source into the image; nothing declares this, so it has no producer."
 
 [resources.capsem-install-frontend-node-modules]
 kind = "volume"
-retention = "cache"
+retention = "obsolete"
 owner = "install"
-reason = "Resolved pnpm dependencies are reused; generated dist is tracked separately."
+reason = "The install lanes copy their source into the image; nothing declares this, so it has no producer."
 
 [resources.capsem-install-release-site-node-modules]
 kind = "volume"

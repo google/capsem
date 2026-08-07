@@ -95,6 +95,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Five named volumes are retired: `capsem-install-target`,
+  `-frontend-dist`, `-cargo`, `-rustup` and `-frontend-node-modules`. The
+  install lanes copy their source into the image now, so nothing declares
+  them. The ten that remain are kept deliberately -- they are container-local
+  caches with real producers (`builder/docker.py` for the agent and rustup
+  pairs, the package rail for the cargo target dirs), and retiring one without
+  first baking its contents into that lane's base image would not clean
+  anything up, it would only make every run cold.
+
 - No gate lane mounts the checkout any more. The install image, the install
   proof container, the deb proof and the package lane all copy their source in,
   `Mount.unmigrated` is deleted along with the last caller, and the foreign-UID
