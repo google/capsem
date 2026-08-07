@@ -121,6 +121,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `'platform,' in crossexec.py`, `.index()` of argv fragments the Docker
   wrapper migration rewrote. They are reimplemented, not deleted.
 
+- The tray-singleton test asks `pidfiles.running` instead of shelling `ps`. It
+  kept its own copy of a question production already answers, so the fix below
+  never reached it — and `/bin/ps` is setuid root, which macOS forbids a
+  sandboxed process from exec'ing whatever the profile permits. It therefore
+  failed in two consecutive gate runs while passing every way it could be run
+  by hand, which is the signature of an environment-specific defect rather
+  than a flaky test.
+
 - Process liveness no longer shells out to `ps`, which a sandboxed gate cannot
   execute at all. `/bin/ps` is setuid root and the macOS sandbox forbids
   exec'ing a setuid binary — `(allow default)` does not override that — so the

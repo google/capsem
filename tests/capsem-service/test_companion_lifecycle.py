@@ -915,17 +915,24 @@ def _pid_alive(pid: int) -> bool:
     `os.kill(pid, 0)` would also return True for zombies (SIGKILL'd but not
     yet reaped). Zombies are "dead" for our purposes -- a zombie tray has
     already exited, so we must not count it as alive.
+
+    Through `pidfiles.running`, which is the production answer to this exact
+    question. This shelled `ps` instead, and `/bin/ps` is setuid root: macOS
+    forbids a sandboxed process from exec'ing one, whatever its profile
+    permits. So this passed everywhere except inside the gate, where it failed
+    with `PermissionError: Operation not permitted: 'ps'` -- and it failed the
+    same way in two consecutive runs while passing every way it could be run
+    by hand.
+
+    The gate had already stopped using `ps` for this; the test kept its own
+    copy, so the fix never reached it. A second implementation of a question
+    production already answers is a second thing to get wrong.
     """
-    try:
-        out = subprocess.check_output(
-            ["ps", "-p", str(pid), "-o", "state="],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-    except subprocess.CalledProcessError:
-        return False
-    state = out.strip()
-    return bool(state) and not state.startswith("Z")
+    from capsem.gate import config as gate_config
+    from capsem.gate import pidfiles
+
+    root = Path(__file__).resolve().parents[2]
+    return pidfiles.running(pid, gate_config.load(root).pidfiles)
 
 
 class TestServiceTrayStaysOffTheMenuBar:
