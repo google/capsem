@@ -1163,7 +1163,11 @@ host_snapshot_serial = [
 
 # Timing probes. They run alone so their numbers measure Capsem rather than
 # another benchmark file competing for the same Apple VZ launch budget.
-serial_paths = ["tests/capsem-serial/", "tests/ironbank/test_route_health.py"]
+serial_paths = [
+    "tests/capsem-serial/",
+    "tests/ironbank/test_route_health.py",
+    "tests/ironbank/test_route_latency.py",
+]
 benchmark_baseline = "tests/capsem-serial/test_capsem_bench_baseline.py"
 benchmark_deselect = "not test_capsem_bench_baseline"
 

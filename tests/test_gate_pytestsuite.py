@@ -12,6 +12,7 @@ declared, and the plan honours it however the steps are written.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from capsem.gate import config as gate_config
@@ -190,6 +191,63 @@ def test_collection_is_cache_free_strict_and_artifact_independent() -> None:
     assert CONFIG.suites.pytest.require_artifacts not in rendered
     assert "--cov" not in rendered
     assert "-n" not in rendered
+
+
+def test_every_serial_node_has_a_non_broad_execution_rail() -> None:
+    """Broad excludes ``serial``; every such node needs another owner."""
+    settings = CONFIG.suites.pytest
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "python",
+            "-m",
+            "pytest",
+            settings.root,
+            *settings.collection_flags,
+            "-q",
+            "-m",
+            "serial",
+        ],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    node_paths = {
+        line.split("::", 1)[0].split(": ", 1)[0]
+        for line in result.stdout.splitlines()
+        if line.startswith(settings.root)
+    }
+    release_contracts = {
+        str(path.relative_to(PROJECT_ROOT))
+        for path in PROJECT_ROOT.glob(CONFIG.modules.contract_glob)
+    }
+    file_owners = {
+        *CONFIG.suites.source_contract,
+        *CONFIG.modules.build_chain_artifact_tests,
+        *release_contracts,
+    }
+    directory_owners = (
+        *settings.serial_paths,
+        *CONFIG.modules.release_suites,
+        CONFIG.install.suite.path,
+        *(part for part in CONFIG.candidate.recipe_suite if part.startswith(settings.root)),
+    )
+    unowned = sorted(
+        path
+        for path in node_paths
+        if path not in file_owners
+        and not any(
+            path == owner.rstrip("/") or path.startswith(owner.rstrip("/") + "/")
+            for owner in directory_owners
+        )
+    )
+
+    assert not unowned, (
+        "serial nodes are excluded from the broad suite and have no configured "
+        f"execution rail: {unowned}"
+    )
 
 
 def test_every_suite_is_labelled_by_what_it_proves_and_for_which_profile() -> None:

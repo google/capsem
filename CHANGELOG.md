@@ -99,6 +99,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- Every `serial`-marked test now has an execution rail, and a guard says so.
+  The broad suite deselects `serial`, so such a test runs only if some rail
+  claims it by path — and `tests/ironbank/test_route_latency.py` was claimed by
+  none, so the gate had never once run it while reporting success. The route
+  latency probes are on the serial rail now, beside route health.
+
 - The fast phase strictly collects every Python test. `--collect-only` with
   `--strict-config --strict-markers` and no cache writes, so a suite that
   cannot be imported, a typo'd marker or an unknown config key fails in
