@@ -210,7 +210,6 @@ def test_the_checkout_mounts_are_enumerated_and_shrinking() -> None:
         "hostimage.py": 1,
         "installcontainer.py": 1,
         "installimage.py": 1,
-        "packagerail.py": 1,
     }, (
         f"the checkout-mount debt changed: {remaining}. It may shrink -- update "
         "this expectation when a module moves to COPY -- but a new one is the "

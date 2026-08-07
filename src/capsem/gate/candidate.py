@@ -105,7 +105,11 @@ class CompleteGate:
     """
 
     def resources(self, runner: Runner) -> tuple[Resource, ...]:
-        return gate_resources(self._config, runner)
+        return gate_resources(
+            self._config,
+            runner,
+            mode=sandbox.mode(self.sandboxed, getattr(self._args, "sandbox", None)),
+        )
 
     def reexec(self) -> tuple[str, ...] | None:
         """Become *this* command under a keep-awake wrapper, once.
@@ -183,7 +187,11 @@ class CandidateModulesCommand(
     uses_qualification = True
 
     def resources(self, runner: Runner) -> tuple[Resource, ...]:
-        return gate_resources(self._config, runner)
+        return gate_resources(
+            self._config,
+            runner,
+            mode=sandbox.mode(self.sandboxed, getattr(self._args, "sandbox", None)),
+        )
 
     def plan(self) -> Plan:
         plan = Plan(self.name)

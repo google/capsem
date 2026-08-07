@@ -20,6 +20,7 @@ import shutil
 from .errors import GateError
 from .lifecycle import Resource
 from .proc import Runner
+from .sandboxreport import SandboxReport
 from .storage import Storage
 from .workspace import Workspace
 
@@ -112,7 +113,7 @@ class Colima(Resource, name="colima"):
             self._runner.note("WARNING: failed to stop Colima started by this gate")
 
 
-def gate_resources(config, runner: Runner) -> tuple[Resource, ...]:
+def gate_resources(config, runner: Runner, *, mode: str) -> tuple[Resource, ...]:
     """What anything running the complete gate must hold.
 
     Order is the guarantee: acquired left to right, released in reverse. The
@@ -125,6 +126,11 @@ def gate_resources(config, runner: Runner) -> tuple[Resource, ...]:
     """
     return (
         OrphanAccounting(config, runner),
+        # Second, so it is acquired before any step and released after the
+        # workspace and Colima have finished theirs: what the sandbox was
+        # asked for during teardown is as much a part of the allow-list as
+        # what it was asked for during the run.
+        SandboxReport(config, runner, mode=mode),
         FailureEvidence(config, runner),
         Workspace(config),
         Colima(config, runner),

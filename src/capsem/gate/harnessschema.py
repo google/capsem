@@ -275,6 +275,12 @@ class SandboxConfig(Strict):
     sockets: tuple[str, ...]
     local_socket_prefixes: tuple[str, ...]
     loopback: tuple[str, ...]
+    log_command: str
+    report_predicate: str
+    report_style: str
+    report_log_name: str
+    report_summary_suffix: str
+    report_stop_timeout: float
 
 
 class WorkspaceConfig(Strict):

@@ -662,6 +662,13 @@ direct_machine_access = [
     # Same reason: `snapshot` is the copying half, split out at the ceiling.
     "snapshot.py",
     "sandbox.py",
+    # `sandboxreport.py` holds a `log stream` open for the entire run, which is
+    # the one thing an action cannot express: actions are commands that finish
+    # and are recorded once, and this is a process that must outlive the call
+    # starting it and be terminated on the way out. A `Resource` is exactly
+    # that lifetime, and it needs `Popen` rather than the runner's exec
+    # accounting to get it.
+    "sandboxreport.py",
 ]
 
 # Only the plan schedules concurrent work. A module that reaches for its own
@@ -1105,6 +1112,7 @@ source_contract = [
     "tests/test_gate_resume.py",
     "tests/test_gate_release_isolation.py",
     "tests/test_gate_sandbox.py",
+    "tests/test_gate_sandbox_report.py",
     "tests/test_gate_git_worktree_mount.py",
     "tests/test_rust_filesystem_chokepoint.py",
     "tests/test_rust_process_enumeration.py",
@@ -1408,6 +1416,21 @@ local_socket_prefixes = ["/tmp/capsem-", "/private/tmp/capsem-"]
 # `sandbox-exec: host must be * or localhost in network address` -- so
 # `127.0.0.1:*` is a profile that will not load rather than a narrower rule.
 loopback = ["localhost:*"]
+
+# Report mode's collector. `(with report)` permits an operation and writes it
+# to the unified log; without something reading that log, report mode measures
+# nothing -- which is exactly what a full report-mode gate run produced before
+# this existed: an errors.log with zero sandbox entries.
+#
+# The absolute path is deliberate. `log` is a zsh builtin, so a bare name here
+# resolves to the shell's own and fails with `too many arguments`.
+log_command = "/usr/bin/log"
+report_predicate = 'sender == "Sandbox"'
+report_style = "ndjson"
+report_log_name = "sandbox-report.ndjson"
+# The deduplicated allow-list, written beside the raw capture on release.
+report_summary_suffix = ".allowlist.txt"
+report_stop_timeout = 10.0
 
 [workspace]
 # Everything the gate does happens against this home, never the developer's.

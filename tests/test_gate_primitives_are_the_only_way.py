@@ -169,6 +169,13 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
         # An action expressing it would have to be a plan step that creates
         # the sandbox the plan is already running inside.
         "sandbox.py",
+        # And the one that reads back what that profile permitted. A different
+        # reason from the two above: this one is inside the run, but it holds a
+        # `log stream` open for the whole of it. Actions are commands that
+        # finish and are journalled once; a process that must outlive the call
+        # that starts it and be killed on the way out is a `Resource`, and a
+        # resource needs `Popen` rather than the runner's exec accounting.
+        "sandboxreport.py",
     }
 
 

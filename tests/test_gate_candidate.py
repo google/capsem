@@ -277,7 +277,13 @@ def test_the_gate_holds_everything_that_must_be_given_back() -> None:
     """The set, so a later change cannot quietly drop one."""
     names = {resource.name for resource in _command(PROJECT_ROOT).resources(RUNNER_FOR_RESOURCES)}
 
-    assert names == {"orphan-accounting", "workspace", "colima", "failure-evidence"}
+    assert names == {
+        "orphan-accounting",
+        "sandbox-report",
+        "workspace",
+        "colima",
+        "failure-evidence",
+    }
 
 
 # ---------------------------------------------------------------------------

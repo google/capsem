@@ -95,6 +95,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Report mode now records what the sandbox permitted. The profile was being
+  generated and applied, but nothing read the unified log that `(with report)`
+  writes to, so a complete report-mode gate run produced zero sandbox entries
+  and the allow-list an enforcing profile needs could never be built. A
+  `log stream` collector runs for the life of the run and writes both the raw
+  capture and a deduplicated allow-list into the run directory.
 - The Linux package lane no longer mounts the checkout. Its source is copied
   into a lane image, so a host step and the container can no longer race the
   same inodes. The mount it replaces could not be made read-only: the frontend
