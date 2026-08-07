@@ -99,6 +99,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- `capsem.gate.sandbox` generates the macOS Seatbelt profile a run executes
+  under, from `[sandbox]` in `config/gate.toml`. `(allow default)` narrowed by
+  targeted denials rather than `(deny default)` widened by enumerated allows —
+  the second was measured and abandoned, because every read list produced a
+  silent `SIGABRT` and the kernel's denial log needs sudo to read.
+
+  Proven against the kernel rather than asserted: under the generated profile
+  `docker version` answers `29.2.1` over its UNIX socket, `curl https://1.1.1.1`
+  is refused in 0 ms, and loopback to the gateway is open. Two facts it
+  encodes that cost a day each to learn the hard way — `(deny network*)`
+  denies AF_UNIX too, so an unallowed Docker socket looks exactly like a
+  stopped daemon; and SBPL accepts only `*` or `localhost` as a host, so
+  `127.0.0.1:*` is not a narrower rule but a profile that will not load.
+
 - The asset build no longer touches `crates/capsem-app/build.rs` to force a
   rebuild. The comment said it was "so cargo re-runs build.rs and picks up the
   new manifest hashes", and that crate's `build.rs` reads nothing — it

@@ -259,6 +259,24 @@ class PrefixConfig(Strict):
         return self
 
 
+class SandboxConfig(Strict):
+    """What the generated Seatbelt profile is allowed to say.
+
+    Every rule the profile emits comes from here. `test_gate_has_no_literal_data`
+    enforces that for free and strictly, which matters more here than anywhere
+    else: a literal path in a security profile is a rule nobody can find when
+    it turns out to be wrong.
+    """
+
+    command: str
+    profile_name: str
+    network_reason: str
+    socket_reason: str
+    sockets: tuple[str, ...]
+    local_socket_prefixes: tuple[str, ...]
+    loopback: tuple[str, ...]
+
+
 class WorkspaceConfig(Strict):
     home: str
     run_dir: str

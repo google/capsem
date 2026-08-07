@@ -60,6 +60,7 @@ from .harnessschema import (
     LocksConfig,
     PrefixConfig,
     RunLogConfig,
+    SandboxConfig,
     WorkspaceConfig,
 )
 from .productschema import (
@@ -97,6 +98,7 @@ class GateConfig(Strict):
     runlog: RunLogConfig
     disk: DiskConfig
     prefix: PrefixConfig
+    sandbox: SandboxConfig
     workspace: WorkspaceConfig
     service: ServiceConfig
     smoke: SmokeConfig

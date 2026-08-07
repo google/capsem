@@ -1081,6 +1081,7 @@ source_contract = [
     "tests/test_gate_prefix.py",
     "tests/test_gate_resume.py",
     "tests/test_gate_release_isolation.py",
+    "tests/test_gate_sandbox.py",
     "tests/test_gate_git_worktree_mount.py",
     "tests/test_rust_filesystem_chokepoint.py",
     "tests/test_agent_skill_index.py",
@@ -1353,6 +1354,36 @@ carried = [".git", "private"]
 # What must come back out before the prefix is reclaimed. A release publishes
 # from these, and without the export they die with the copy that made them.
 exports = ["dist", "packages", "assets", "target/gate-runs"]
+
+# ---------------------------------------------------------------------------
+# The macOS sandbox
+# ---------------------------------------------------------------------------
+# `(allow default)` narrowed by targeted denials, not `(deny default)` widened
+# by enumerated allows. The second was measured and abandoned: every read list
+# tried produced a silent SIGABRT with no stdout, no stderr and a kernel denial
+# log that needs sudo to read, so each iteration cost a rebuild to learn
+# nothing. Denying writes and the network is where the value is anyway.
+[sandbox]
+command = "sandbox-exec"
+profile_name = "gate.sb"
+
+network_reason = "No mid-run fetch. This is the rule the whole profile exists for."
+socket_reason = "`(deny network*)` covers AF_UNIX too, so these come back explicitly."
+
+# Absolute or `~`-relative. Denying the Docker socket makes a running daemon
+# look absent -- `permission denied ... docker.sock` -- which is how the first
+# sandboxed run is misdiagnosed.
+sockets = ["~/.colima/default/docker.sock"]
+
+# The gate's own sockets are created per run under paths it does not know
+# ahead of time, so they are matched by prefix rather than listed.
+local_socket_prefixes = ["/tmp/capsem-", "/private/tmp/capsem-"]
+
+# The service, the gateway and the mock upstream all talk over loopback.
+# `localhost` only: SBPL refuses any other host in a network address --
+# `sandbox-exec: host must be * or localhost in network address` -- so
+# `127.0.0.1:*` is a profile that will not load rather than a narrower rule.
+loopback = ["localhost:*"]
 
 [workspace]
 # Everything the gate does happens against this home, never the developer's.
