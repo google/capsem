@@ -61,9 +61,12 @@ def _docker_argv_literals(tree: ast.AST) -> list[ast.List]:
 #: `test_the_ratchet_carries_no_slack`. Started at nine; `hostimage.py` sat at
 #: 5 against an actual 2 for long enough that the guard would have permitted
 #: three new hand-built sites in the module Phase 5 was about to touch.
-UNMIGRATED = {
-    "hostimage.py": 2,
-}
+#: Empty. Every module asks the wrapper now, so the mount, the network mode and
+#: the removal policy are decided in one place -- which is what the ratchet was
+#: for. Kept as a table rather than deleted with the guard, because the guard
+#: is what keeps it empty: a new module building `docker` argv fails
+#: `test_no_new_module_builds_docker_argv_by_hand` outright.
+UNMIGRATED: dict[str, int] = {}
 
 
 def test_no_new_module_builds_docker_argv_by_hand() -> None:
@@ -173,7 +176,7 @@ def test_every_container_declares_its_network() -> None:
 
 
 def test_the_checkout_mounts_are_enumerated_and_shrinking() -> None:
-    """Five mounts of the working tree remain, and all five say so.
+    """Six mounts of the working tree remain, and all six say so.
 
     `Mount.unmigrated` is deliberately ugly and deliberately greppable. The
     alternative was switching the guard off globally while the modules are
@@ -204,6 +207,7 @@ def test_the_checkout_mounts_are_enumerated_and_shrinking() -> None:
     assert remaining == {
         "debproof.py": 1,
         "gitmetadata.py": 1,
+        "hostimage.py": 1,
         "installcontainer.py": 1,
         "installimage.py": 1,
         "packagerail.py": 1,

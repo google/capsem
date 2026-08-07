@@ -99,6 +99,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- **Phase 3 is complete: `docker.py` is the only place that spells `docker`.**
+  The builder image's build and its foreign-UID probe were the last two
+  hand-built argv, and the probe wanted a third thing the wrapper could not
+  do — not "run this" or "did it work" but "what did it say". `Docker.read`
+  answers that. Every container in the gate now declares its network mode
+  because the wrapper requires it, rather than getting outbound access because
+  nobody passed a flag.
+
+  Six checkout mounts remain, all declared and counted. None is new: every one
+  was an inline `-v` that no guard could see, and the list can only shrink now.
+
 - The install-test image build and its smoke check go through the Docker
   wrapper too, so both declare their network. One module is left building
   `docker` argv by hand, down from four at the start of this work.

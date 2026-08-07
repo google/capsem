@@ -43,6 +43,31 @@ class ImageOperations:
         argv.append(context)
         self._runner.run(argv)
 
+    def read(
+        self,
+        *,
+        image: str,
+        command: list[str],
+        network: str,
+        options: tuple[str, ...] = (),
+        mounts: tuple[object, ...] = (),
+        workdir: str | None = None,
+        check: bool = True,
+    ) -> str:
+        """Run a container to completion and return what it printed.
+
+        The third thing a call site can want from a container, after "do it"
+        and "did it work": the answer itself. `_ForeignUidProbe` asks an image
+        to read the checkout's revision as a stranger, and without this it had
+        to assemble its own `docker run` -- and pick its own network mode.
+        """
+        argv = ["docker", "run", "--rm", "--network", network, *options]
+        argv += [part for mount in mounts for part in ("-v", str(mount))]
+        if workdir is not None:
+            argv += ["-w", workdir]
+        argv += [image, *command]
+        return self._runner.capture(argv, check=check)
+
     def image_exists(self, tag: str) -> bool:
         return self._runner.succeeds(["docker", "image", "inspect", tag])
 

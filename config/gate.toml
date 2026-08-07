@@ -942,6 +942,8 @@ mount = "/src"
 # binary with no source identity reaches the provenance check. Checked on macOS
 # too, because git compares st_uid to euid in userspace.
 probe_user = "4242:4242"
+# It reads a revision from a mounted checkout and needs nothing else.
+probe_network = "none"
 # `alpine`, `tmpfs`, `container_home`, `nextest_dir`, `nextest_mount`,
 # `output_dir`, `container_output`, `writable_source_mounts` and
 # `cached_volumes` are gone with the bind mount that needed them. A writable

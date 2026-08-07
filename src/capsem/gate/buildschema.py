@@ -90,6 +90,7 @@ class HostImageConfig(Strict):
     script: str
     mount: str
     probe_user: str
+    probe_network: str
 
 
 class SbomConfig(Strict):

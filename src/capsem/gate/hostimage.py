@@ -20,6 +20,7 @@ from .actions import Action, Run
 from .command import GateCommand
 from .config import GateConfig
 from .context import Context
+from .docker import Docker
 from .dockermount import Mount
 from .errors import GateError
 from .execution import Step, step
@@ -31,25 +32,27 @@ from .plan import Plan
 STEP = "host-image"
 
 
-def _metadata_argv(mount: Mount | None) -> tuple[str, ...]:
-    """The worktree metadata mount as argv, for the sites still hand-building it.
-
-    `docker_git_metadata_mount` answers with a `Mount` so the boundary guard can
-    count it. This module is one of the two that still assembles `docker` argv
-    by hand; when Phase 3 finishes routing it, this goes with it.
-    """
-    return ("-v", str(mount)) if mount is not None else ()
-
-
 def image(config: GateConfig) -> Step:
     """Build the builder, then prove it can read the checkout as a stranger."""
-    settings = config.hostimage
     return step(
         STEP,
-        Run(["docker", "build", "-t", settings.tag, "-f", settings.dockerfile, settings.context]),
+        _Build(),
         _ForeignUidProbe(),
         contends=(config.exclusive("docker_daemon"),),
     )
+
+
+class _Build(Action, name="host-image-build"):
+    """Build the builder, through the wrapper like every other image."""
+
+    def render(self) -> str:
+        return "docker build the Linux host builder image"
+
+    def perform(self, context: Context) -> None:
+        settings = context.config.hostimage
+        Docker(context.runner).build(
+            tag=settings.tag, dockerfile=settings.dockerfile, context=settings.context
+        )
 
 
 def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
@@ -78,24 +81,20 @@ class _ForeignUidProbe(Action, name="foreign-uid-probe"):
         if not expected:
             return
 
-        actual = context.runner.capture(
-            [
-                "docker",
-                "run",
-                "--rm",
-                "-v",
-                f"{context.root}:{settings.mount}",
-                *_metadata_argv(docker_git_metadata_mount(context.runner)),
-                "-w",
-                settings.mount,
-                "--user",
-                settings.probe_user,
-                settings.tag,
-                "git",
-                "rev-parse",
-                "--short",
-                "HEAD",
-            ],
+        metadata = docker_git_metadata_mount(context.runner)
+        actual = Docker(context.runner).read(
+            image=settings.tag,
+            command=["git", "rev-parse", "--short", "HEAD"],
+            # It reads a revision out of a checkout. Declared rather than
+            # omitted, which is how every container in the gate used to have
+            # outbound access without anyone choosing it.
+            network=settings.probe_network,
+            options=("--user", settings.probe_user),
+            mounts=(
+                Mount.unmigrated(str(context.root), settings.mount, "ro"),
+                *((metadata,) if metadata is not None else ()),
+            ),
+            workdir=settings.mount,
             check=False,
         )
         if actual != expected:
