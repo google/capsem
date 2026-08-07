@@ -11,12 +11,13 @@ The disk budget those containers consume is `storage.py`.
 
 from __future__ import annotations
 
+from .dockerimage import ImageOperations
 from .dockermount import Mount
 from .errors import GateError
 from .proc import Runner
 
 
-class Docker:
+class Docker(ImageOperations):
     """Container operations, with the flag choices made once."""
 
     def __init__(self, runner: Runner) -> None:
@@ -84,6 +85,9 @@ class Docker:
         command: list[str],
         network: str,
         options: tuple[str, ...] = (),
+        user: str | None = None,
+        env: dict[str, str] | None = None,
+        mounts: tuple[Mount, ...] = (),
     ) -> bool:
         """Run a container to completion and report whether it worked.
 
@@ -92,39 +96,14 @@ class Docker:
         that wants the answer had to build its own argv to get it, which is how
         the last hand-built `docker run` in the gate outlived the wrapper.
         """
-        argv = ["docker", "run", "--rm", "--network", network, *options, image, *command]
+        argv = ["docker", "run", "--rm", "--network", network, *options]
+        if user is not None:
+            argv += ["-u", user]
+        for key, value in (env or {}).items():
+            argv += ["-e", f"{key}={value}"]
+        argv += [part for mount in mounts for part in ("-v", str(mount))]
+        argv += [image, *command]
         return self._runner.succeeds(argv)
-
-    # -- images ------------------------------------------------------------
-
-    def build(
-        self, *, tag: str, dockerfile: str, context: str, args: list[str] | None = None
-    ) -> None:
-        """Build an image. The context streams from the CLI, so it does not
-        have to be visible inside the Lima VM the way a bind mount does."""
-        argv = ["docker", "build", "-t", tag, "-f", dockerfile]
-        for value in args or []:
-            argv += ["--build-arg", value]
-        argv.append(context)
-        self._runner.run(argv)
-
-    def image_exists(self, tag: str) -> bool:
-        return self._runner.succeeds(["docker", "image", "inspect", tag])
-
-    def image_id(self, tag: str) -> str:
-        """The exact image a mutable tag currently names.
-
-        `:latest` is a pointer, so "the same tag" is a different image after
-        every rebuild. Anything that keys a cache off a parent image has to key
-        it off this, or it reuses work built against an image that no longer
-        exists under that name.
-        """
-        found = self._runner.capture(
-            ["docker", "image", "inspect", "--format", "{{.Id}}", tag]
-        ).strip()
-        if not found:
-            raise GateError(f"docker has no image tagged {tag}, so nothing can be keyed by it")
-        return found
 
     # -- extraction --------------------------------------------------------
 

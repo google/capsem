@@ -76,6 +76,8 @@ class InstallConfig(Strict):
     container: str
     image: str
     dockerfile: str
+    context: str
+    smoke_network: str
     venv: str
     mount: str
     #: Declared rather than defaulted: every container had outbound access by

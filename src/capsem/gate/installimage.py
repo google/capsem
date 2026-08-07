@@ -18,6 +18,8 @@ from . import hostimage
 from .actions import Call
 from .command import GateCommand
 from .config import GateConfig
+from .docker import Docker
+from .dockermount import Mount
 from .errors import GateError
 from .execution import Step, step
 from .opacity import CallJustification, OpaqueKind
@@ -36,24 +38,26 @@ SMOKE = (
 
 
 def _smoke_passes(runner: Runner, settings: gate_config.InstallConfig) -> bool:
-    return runner.succeeds(
-        [
-            "docker",
-            "run",
-            "--rm",
-            "-u",
-            "capsem",
-            "-e",
-            f"UV_PROJECT_ENVIRONMENT={settings.venv}",
-            "-e",
-            f"CAPSEM_TEST_OUTPUT_ROOT={settings.test_output_root}",
-            "-v",
-            f"{runner.root}:{settings.mount}:ro",
-            settings.image,
-            "bash",
-            "-lc",
-            SMOKE,
-        ]
+    """Can the freshly built image run the install gate's own tools?
+
+    A question, so it goes through `probe` rather than `run_once`: the answer
+    is the exit status, and a failure here is the trigger for a cacheless
+    rebuild rather than the end of the run.
+    """
+    names = gate_config.for_root(runner.root).environment.install
+    return Docker(runner).probe(
+        image=settings.image,
+        command=["bash", "-lc", SMOKE],
+        # It installs nothing; the image is already built. Declared rather
+        # than omitted, which is how every other container in the gate had
+        # outbound access without anyone deciding it should.
+        network=settings.smoke_network,
+        user=settings.guest_user.name,
+        env={
+            names.project_environment: settings.venv,
+            names.test_output_root: settings.test_output_root,
+        },
+        mounts=(Mount.unmigrated(str(runner.root), settings.mount, "ro"),),
     )
 
 
@@ -67,13 +71,18 @@ def prepare(runner: Runner) -> None:
     see it.
     """
     settings = gate_config.for_root(runner.root).install
-    build = ["docker", "build", "-t", settings.image, "-f", settings.dockerfile, "."]
+    docker = Docker(runner)
 
-    runner.run(build)
+    docker.build(tag=settings.image, dockerfile=settings.dockerfile, context=settings.context)
 
     if not _smoke_passes(runner, settings):
         runner.note("Install-test image smoke check failed; rebuilding without Docker cache...")
-        runner.run([*build[:2], "--no-cache", *build[2:]])
+        docker.build(
+            tag=settings.image,
+            dockerfile=settings.dockerfile,
+            context=settings.context,
+            no_cache=True,
+        )
         if not _smoke_passes(runner, settings):
             raise GateError(
                 f"{settings.dockerfile} produces an image that cannot run the install "

@@ -95,6 +95,11 @@ network = "bridge"
 container = "capsem-install-test"
 image = "capsem-install-test"
 dockerfile = "docker/Dockerfile.install-test"
+# The build context. `.` -- the checkout root -- because the Dockerfile copies
+# from it; named here so the wrapper is told rather than assuming.
+context = "."
+# The post-build smoke check only runs tools the image already has.
+smoke_network = "none"
 venv = "/home/capsem/.venv-install-test"
 mount = "/src"
 channel = "local"
@@ -232,6 +237,13 @@ coverage_file = "COVERAGE_FILE"
 # the *source* checkout's path, because a run in a prefix still has to be able
 # to name the tree it is qualifying.
 source_checkout = "CAPSEM_GATE_SOURCE_CHECKOUT"
+
+# What the install-test image's smoke check is told. `UV_PROJECT_ENVIRONMENT`
+# is uv's own convention rather than a Capsem rail, but it is named here for
+# the same reason as the rest: a rename should be one edit, not a search.
+[environment.install]
+test_output_root = "CAPSEM_TEST_OUTPUT_ROOT"
+project_environment = "UV_PROJECT_ENVIRONMENT"
 
 # What the builder container is told about the target it is building for.
 # `HOST_UID` and `HOST_GID` stay literal: they are the standard convention for

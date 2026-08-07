@@ -63,7 +63,6 @@ def _docker_argv_literals(tree: ast.AST) -> list[ast.List]:
 #: three new hand-built sites in the module Phase 5 was about to touch.
 UNMIGRATED = {
     "hostimage.py": 2,
-    "installimage.py": 2,
 }
 
 
@@ -174,7 +173,7 @@ def test_every_container_declares_its_network() -> None:
 
 
 def test_the_checkout_mounts_are_enumerated_and_shrinking() -> None:
-    """Four mounts of the working tree remain, and all four say so.
+    """Five mounts of the working tree remain, and all five say so.
 
     `Mount.unmigrated` is deliberately ugly and deliberately greppable. The
     alternative was switching the guard off globally while the modules are
@@ -206,6 +205,7 @@ def test_the_checkout_mounts_are_enumerated_and_shrinking() -> None:
         "debproof.py": 1,
         "gitmetadata.py": 1,
         "installcontainer.py": 1,
+        "installimage.py": 1,
         "packagerail.py": 1,
     }, (
         f"the checkout-mount debt changed: {remaining}. It may shrink -- update "

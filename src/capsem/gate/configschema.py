@@ -59,6 +59,13 @@ class PidfileConfig(Strict):
     proc_stat_template: str
 
 
+class InstallEnvironment(Strict):
+    """What the install-test image's smoke check is told."""
+
+    test_output_root: str
+    project_environment: str
+
+
 class PackageEnvironment(Strict):
     """What the builder container is told about its target."""
 
@@ -104,6 +111,7 @@ class EnvironmentConfig(Strict):
     benchmark_root: str
     coverage_file: str
     source_checkout: str
+    install: InstallEnvironment
     package: PackageEnvironment
     release_site: ReleaseSiteEnvironment
     install_proof: InstallProofEnvironment

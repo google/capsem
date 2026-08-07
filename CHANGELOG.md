@@ -99,6 +99,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- The install-test image build and its smoke check go through the Docker
+  wrapper too, so both declare their network. One module is left building
+  `docker` argv by hand, down from four at the start of this work.
+
+  `docker.py` crossed the module ceiling again; image operations — build,
+  identity, existence — are `dockerimage.py`, mixed in so no call site has to
+  know which half of `Docker` it is reaching for. They change on a different
+  rhythm from containers: a base image outlives hundreds of runs, a container
+  outlives one step.
+
 - The cross-architecture execution preflight goes through the Docker wrapper,
   so it declares `--network none` like every other container. It had built its
   own `docker run` because the wrapper had no way to *ask* a question --
