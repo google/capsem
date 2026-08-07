@@ -23,6 +23,37 @@ from pathlib import Path
 #: is qualifying.
 BUILD_OUTPUT = frozenset({"target", "dist", "packages", "assets", ".git", "node_modules", ".venv"})
 
+
+def ignored_trees(root: Path) -> tuple[Path, ...]:
+    """Everything git ignores, asked once.
+
+    Per run rather than per event: `is_source` is consulted for every
+    filesystem operation the gate makes, and a subprocess each time would cost
+    more than the observation is worth.
+
+    Directories as well as files, and deliberately *without*
+    `--no-empty-directory`: an ignored directory that happens to be empty right
+    now is exactly the state a tree is in before the run creates anything under
+    it, which is the case being classified.
+
+    A root that is not a directory answers nothing rather than raising --
+    `subprocess` refuses a missing cwd, and an observer that cannot be built is
+    worse than one that classifies conservatively.
+    """
+    import subprocess
+
+    if not root.is_dir():
+        return ()
+    listed = subprocess.run(
+        ["git", "ls-files", "-o", "--directory", "--exclude-standard", "--ignored", "-z"],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    ).stdout
+    return tuple(Path(name) for name in listed.split("\0") if name)
+
+
 #: Hash files up to this size. Digests answer "are these the same bytes under
 #: two names", which matters for seeds and manifests; a multi-gigabyte rootfs
 #: is answered by inode and size at a fraction of the cost.

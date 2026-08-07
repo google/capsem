@@ -29,7 +29,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING
 
-from .faults import Event, Fault, facts_of, source_inodes
+from .faults import Event, Fault, facts_of, ignored_trees, source_inodes
 from .interception import CURRENT_STEP
 
 if TYPE_CHECKING:  # pragma: no cover - imported for typing only
@@ -49,6 +49,7 @@ class Watch:
     ) -> None:
         self._roots = [root for root in roots if root.exists()]
         self._source_root = source_root.resolve()
+        self._ignored = ignored_trees(self._source_root)
         self._source_inodes = source_inodes(self._source_root)
         self._declared = dict(declared or {})
         self._on_fault = on_fault
@@ -212,7 +213,20 @@ class Watch:
             relative = path.resolve().relative_to(self._source_root)
         except (ValueError, OSError):
             return False
-        return bool(relative.parts) and relative.parts[0] not in BUILD_OUTPUT
+        if not relative.parts or relative.parts[0] in BUILD_OUTPUT:
+            return False
+        # And then git, which knows what a hand-written set cannot. The names
+        # above stay: a fixture is not always a repository, and git answers
+        # nothing outside one -- which would make every path "source" and turn
+        # nine of this file's own tests red. So the two are a union, not a
+        # replacement.
+        #
+        # Without this, nothing nested could ever be recognised, because only
+        # the first component was compared. `crates/capsem-app/gen/` is
+        # gitignored Tauri output and was reported as a source-tree fault on
+        # every run; widening the set is whack-a-mole, since the next generated
+        # directory lands somewhere else again.
+        return not any(relative.is_relative_to(ignored) for ignored in self._ignored)
 
     # -- state, not moments -------------------------------------------------
 

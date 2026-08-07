@@ -482,3 +482,41 @@ def test_the_fault_log_is_bounded(tmp_path: Path) -> None:
     total = sum(path.stat().st_size for path in generations)
     assert total <= 512 * 3, f"{total} bytes across {generations}"
     assert "/repo/target/399" in log_path.read_text(encoding="utf-8"), "newest fault was dropped"
+
+
+def test_a_nested_ignored_tree_is_not_reported_as_source(tmp_path: Path) -> None:
+    """`crates/capsem-app/gen/` is gitignored Tauri output, reported every run.
+
+    The classifier compared `relative.parts[0]` against a hand-written set of
+    build-output names, so nothing nested could ever match -- the first
+    component is `crates`, and four faults per run named files the gate is
+    right to create. Widening the set is whack-a-mole: the next generated
+    directory lands somewhere else again.
+
+    Git knows, and is asked once per `Watch`. Directories as well as files, so
+    a path *created* under an ignored tree during the run is recognised too --
+    which is precisely the case being reported, and one a snapshot of existing
+    paths would miss.
+    """
+    import subprocess
+
+    from capsem.gate.observation import Watch
+
+    root = tmp_path / "checkout"
+    (root / "crates" / "app" / "gen").mkdir(parents=True)
+    (root / "src").mkdir()
+    (root / ".gitignore").write_text("crates/app/gen/\ntarget/\n", encoding="utf-8")
+    (root / "src" / "real.py").write_text("x = 1\n", encoding="utf-8")
+    for argv in (("init", "-q"), ("add", ".gitignore", "src/real.py")):
+        subprocess.run(["git", *argv], cwd=root, check=True, capture_output=True)
+
+    watch = Watch([root], source_root=root)
+
+    generated = root / "crates" / "app" / "gen" / "schemas" / "acl.json"
+    assert not watch.is_source(generated), (
+        "gitignored build output was classified as the source under test"
+    )
+    assert watch.is_source(root / "src" / "real.py"), "and real source still counts"
+    # The hand-written names stay too: a fixture is not always a repository,
+    # and git answers nothing outside one.
+    assert not watch.is_source(root / "target" / "debug" / "x.bin")

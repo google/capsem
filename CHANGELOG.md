@@ -185,6 +185,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Six checkout mounts remain, all declared and counted. None is new: every one
   was an inline `-v` that no guard could see, and the list can only shrink now.
 
+- The observer stops reporting gitignored build output as source. It compared
+  only the *first* path component against a hand-written set of build-output
+  names, so nothing nested could ever match: `crates/capsem-app/gen/` is
+  gitignored Tauri output and was reported as a source-tree fault on every
+  run. Git is asked instead — once per run, directories included, so a path
+  created under an ignored tree during the run is recognised too.
+
+  The names stay alongside it rather than being replaced: a test fixture is
+  not always a git repository, and git answers nothing outside one, which
+  would make every path "source".
+
 - `fast.audit.generated-settings` writes its tracked outputs to scratch. The
   step exists to produce the *gitignored* frontend mock the web surfaces
   import; rewriting `config/settings/*.generated.json` in the checkout it is
