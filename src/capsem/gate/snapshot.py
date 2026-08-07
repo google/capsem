@@ -225,31 +225,20 @@ def refresh(source: Path, target: Path, config: GateConfig) -> None:
     _copy_files(source, target, wanted)
     _copy_carried(source, target, config)
 
-    keep = {target / relative for relative in wanted}
-    keep |= {target / relative for relative in config.prefix.carried}
-    protected = keep | {target / export for export in config.prefix.exports}
-    for existing in _tracked_copies(target, config):
-        if existing not in keep and not any(existing.is_relative_to(guard) for guard in protected):
-            existing.unlink(missing_ok=True)
+    # Only what a previous copy of the *subject* put here and the source no
+    # longer names, asked with the command that defines the subject -- so an
+    # ignored path is never even a candidate.
+    #
+    # The first version walked the whole tree and spared a hand-written list of
+    # exports and carried paths. That deleted `.venv`: gitignored, therefore
+    # never in the subject, therefore never "kept". The resumed run died before
+    # its first step with "no Python executable was found". Everything an
+    # earlier run built is in that category -- `target/`, `node_modules`, the
+    # venv -- and deleting it deletes the entire reason to reuse the tree.
+    for relative in set(_subject(target)) - set(wanted):
+        (target / relative).unlink(missing_ok=True)
 
     # The same check as a fresh copy, and a sharper one here: a refresh has to
     # remove what the source no longer names, and a deletion pass that stops
     # working leaves a resumed run compiling a tree the operator does not have.
     _require_faithful(source, target, config)
-
-
-def _tracked_copies(target: Path, config: GateConfig) -> list[Path]:
-    """Files in the copy that a refresh is entitled to remove.
-
-    Only what a previous copy put there. Build output is skipped wholesale --
-    it is the reason the tree is being reused, and walking it would be walking
-    tens of gigabytes to decide to keep all of it.
-    """
-    skip = {target / export for export in config.prefix.exports}
-    skip |= {target / relative for relative in config.prefix.carried}
-    found: list[Path] = []
-    for path in target.rglob("*"):
-        if path.is_dir() or any(path.is_relative_to(guard) for guard in skip):
-            continue
-        found.append(path)
-    return found

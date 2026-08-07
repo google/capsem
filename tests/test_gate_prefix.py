@@ -69,7 +69,10 @@ def source(tmp_path: Path) -> Path:
     (root / "private" / "tauri").mkdir(parents=True)
     (root / "target" / "debug").mkdir(parents=True)
 
-    (root / ".gitignore").write_text("target/\nprivate/\n", encoding="utf-8")
+    # `.venv/` too, as the real checkout does: it is where an earlier run's
+    # interpreter lives, and whether it is ignored decides whether a refresh
+    # may delete it.
+    (root / ".gitignore").write_text("target/\nprivate/\n.venv/\n", encoding="utf-8")
     (root / "tracked.txt").write_text("committed\n", encoding="utf-8")
     (root / "crates" / "capsem-core" / "lib.rs").write_text("fn main() {}\n", encoding="utf-8")
     # Gitignored, invisible to the digest, and load-bearing: this is the shape
@@ -306,6 +309,42 @@ def test_a_copy_taken_while_the_source_moved_is_refused(source: Path, monkeypatc
         snapshot.populate(source, source.parent / "prefix", _config())
 
 
+def test_a_refresh_keeps_what_the_earlier_run_built(source: Path) -> None:
+    """The whole reason to reuse a tree, and the first version deleted it.
+
+    `refresh` removes what the source no longer names, so a file deleted from
+    the checkout cannot survive into a resumed run. The first implementation
+    walked the whole tree and spared a hand-written list of exports and carried
+    paths -- which meant everything *else* gitignored was fair game, including
+    `.venv`. A real resume died before its first step: "Project virtual
+    environment ... no Python executable was found".
+
+    Asked with the command that defines the subject instead, an ignored path is
+    never a candidate. That is one definition of "what this tree is", used by
+    the digest, by the copy and now by the deletion pass.
+    """
+    from capsem.gate import snapshot
+
+    target = source.parent / "prefix"
+    snapshot.populate(source, target, _config())
+
+    # What an earlier run would have built: all ignored, none in the subject.
+    (target / ".venv" / "bin").mkdir(parents=True)
+    (target / ".venv" / "bin" / "python").write_text("#!/bin/sh\n", encoding="utf-8")
+    (target / "target" / "debug").mkdir(parents=True, exist_ok=True)
+    (target / "target" / "debug" / "built.bin").write_text("artifact\n", encoding="utf-8")
+
+    (source / "untracked.txt").unlink()
+    snapshot.refresh(source, target, _config())
+
+    assert (target / ".venv" / "bin" / "python").is_file(), (
+        "the venv an earlier run built was deleted, so the resumed run has no "
+        "interpreter -- which is the entire cost the prefix exists to avoid"
+    )
+    assert (target / "target" / "debug" / "built.bin").is_file()
+    assert not (target / "untracked.txt").exists(), "and the deletion pass still works"
+
+
 def test_a_refresh_that_did_not_converge_is_refused(source: Path, monkeypatch) -> None:
     """Resume gets the same check, for a sharper reason.
 
@@ -322,7 +361,9 @@ def test_a_refresh_that_did_not_converge_is_refused(source: Path, monkeypatch) -
     snapshot.populate(source, target, _config())
 
     (source / "untracked.txt").unlink()
-    monkeypatch.setattr(snapshot, "_tracked_copies", lambda *_: [])
+    # A deletion pass that stops removing anything: the copy then keeps a file
+    # the source no longer has, and the digests diverge.
+    monkeypatch.setattr(snapshot, "_subject", lambda tree: [])
 
     with pytest.raises(GateError, match="while its private copy was being made"):
         snapshot.refresh(source, target, _config())

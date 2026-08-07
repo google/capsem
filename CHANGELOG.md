@@ -185,6 +185,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Six checkout mounts remain, all declared and counted. None is new: every one
   was an inline `-v` that no guard could see, and the list can only shrink now.
 
+- Resuming into a kept prefix no longer deletes what the earlier run built.
+  `refresh` removes what the source no longer names, and the first version
+  walked the whole tree sparing a hand-written list of exports and carried
+  paths — so everything *else* gitignored was fair game, including `.venv`.
+  The first real resume died before its first step with "Project virtual
+  environment … no Python executable was found", which is the entire cost the
+  prefix exists to avoid. It now asks the command that defines the subject, so
+  an ignored path is never a candidate: one definition of what the tree is,
+  shared by the digest, the copy and the deletion pass.
+
 - The install-test image's smoke check declares `bridge`, not `none`. It shells
   `uv run`, which syncs the project environment inside the container rather
   than merely invoking a tool the image already has — 51 packages, measured.
