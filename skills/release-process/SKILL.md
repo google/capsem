@@ -74,7 +74,7 @@ capture/reconfirmation, and publication target the originating checkout because
 work authored only in the disposable copy would disappear. The source guard
 stops publication if the checkout no longer has the recorded HEAD and bytes.
 
-`just smoke` remains useful public developer feedback. It invokes the exact
+`just fast-test` remains useful public developer feedback. It *is* the exact
 private `_test-fast` module used by `just test` and release CI, including YAML
 and source syntax, every source/release contract, Clippy, Python lint/type
 checks, JavaScript checks/builds, and blocking Rust/Python/JavaScript

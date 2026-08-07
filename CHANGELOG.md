@@ -93,8 +93,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pollutions, a CSS injection, and two denial-of-service paths. The dependency
   already allowed the fixed version; the lockfile was holding 11.16.0.
 
+### Changed
+
+- `just smoke` is replaced by `just fast-test` and `just vm-smoke`. It ran the
+  fast gate *and* a VM loop under a name that described neither, so the gate
+  looked like optional developer feedback and the VM loop looked like a
+  release-adjacent proof. `fast-test` is now the fast gate itself -- the same
+  `_test-fast` module `test` and both release lanes run, so it cannot drift
+  from them -- and `vm-smoke` is a short VM round-trip that answers runtime
+  liveness only. This is a deliberate public-surface change.
+
 ### Fixed
 
+- The public-surface count-drift guard mutated `count = 13` to `14` to prove
+  drift fails closed. When the surface legitimately reached 14 the mutation
+  became a no-op that rewrote the file to what it already said -- a guard
+  passing because it had stopped changing anything. It now derives the count.
 - A flaky observation test no longer fails the gate at random. It waited on
   `watch.events` while asserting about `watch.faults`, and `Watch.observed`
   appends the event before judging it -- both on the watchdog thread -- so the

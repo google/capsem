@@ -23,15 +23,27 @@ def test_public_surfaces_match_the_approved_exact_allowlists() -> None:
     _load_checker().check_policy()
 
 
-def test_smoke_is_developer_feedback_not_a_release_shortcut() -> None:
+def test_the_fast_gate_is_public_and_is_not_a_release_shortcut() -> None:
+    """`fast-test` is the fast gate; `vm-smoke` is a runtime liveness check.
+
+    Reimplemented from a version that asserted on `smoke`, a single recipe
+    which ran *both* -- so its name undersold the gate and oversold the loop,
+    and neither half could be reasoned about on its own. The property being
+    protected is unchanged: a developer-facing recipe must never become the
+    thing a release lane leans on.
+    """
     checker = _load_checker()
     public_just = set(checker.current_surfaces()["just"])
     policy = tomllib.loads(
         (ROOT / "config" / "public-surface.toml").read_text(encoding="utf-8")
     )["just"]
     assert "test" in public_just
-    assert "smoke" in public_just
-    assert "smoke" in policy["approved"]
+    for recipe in ("fast-test", "vm-smoke"):
+        assert recipe in public_just, f"{recipe} is not a public recipe"
+        assert recipe in policy["approved"], f"{recipe} is not approved"
+    assert "smoke" not in public_just, (
+        "the old bundled recipe is back; it named neither of the two jobs it ran"
+    )
 
     # Each release command runs the complete gate before it publishes, and
     # never the reduced developer feedback. The evidence moved from `just test`
@@ -83,10 +95,18 @@ def test_surface_extractors_do_not_silently_return_empty_sets() -> None:
 def test_declared_count_drift_fails_closed(tmp_path: Path) -> None:
     checker = _load_checker()
     policy = (ROOT / "config" / "public-surface.toml").read_text()
-    broken = tmp_path / "public-surface.toml"
-    broken.write_text(policy.replace("[just]\ncount = 13", "[just]\ncount = 14"))
 
-    with pytest.raises(checker.SurfaceError, match="policy count=14"):
+    # Derived, not hardcoded. This read `count = 13` -> `count = 14`, and the
+    # day the surface legitimately grew to 14 the mutation became a no-op that
+    # rewrote the file to what it already said -- a guard that passes because
+    # it stopped changing anything.
+    declared = tomllib.loads(policy)["just"]["count"]
+    broken = tmp_path / "public-surface.toml"
+    broken.write_text(
+        policy.replace(f"[just]\ncount = {declared}", f"[just]\ncount = {declared + 1}")
+    )
+
+    with pytest.raises(checker.SurfaceError, match=f"policy count={declared + 1}"):
         checker.check_policy(broken)
 
 

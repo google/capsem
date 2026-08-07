@@ -13,9 +13,10 @@ belongs under `tests/fixtures/`, not root `config/`.
 | Command | What | VM? |
 |---------|------|-----|
 | `just test` | Everything: unit/coverage, cross-compile, frontend, Python/VM integration, injection, benchmarks, Linux install, and exact-package clean-Tart macOS install/glow-up | Yes |
-| `just smoke` | Focused developer feedback: repack, sign, boot, doctor, MCP, and service integration | Yes |
+| `just fast-test` | The fast gate itself; identical module to `test` and the release lanes | Yes |
+| `just vm-smoke` | Repack, sign, boot, doctor, MCP, and service integration in a real VM | Yes |
 
-`just test` is the single release source of truth. `just smoke` is useful
+`just test` is the single release source of truth. `just fast-test` is useful
 developer feedback, but it never qualifies or releases anything. During TDD
 run the smallest native pytest, cargo, pnpm, or script command directly;
 release commands must execute full `just test`.
@@ -77,13 +78,13 @@ load Developer ID material or create a signing keychain. The tagged publication
 workflow alone signs, notarizes, staples, and installs the final publishable
 package.
 Tart macOS guests do not support nested virtualization, so these are two
-explicit halves of one script rather than a claimed nested proof. `just smoke`
+explicit halves of one script rather than a claimed nested proof. `just fast-test`
 deliberately excludes Tart and therefore cannot be used for release.
 
 Rust is pinned to `1.97.1` across the workspace file, workflow steps,
 host-builder, and bootstrap. Change all pin surfaces together in a deliberate
 toolchain-bump PR. RustSec and JavaScript bulk advisories are blocking in
-`just smoke`, local `just test`, ordinary CI, and both release lanes,
+`just fast-test`, local `just test`, ordinary CI, and both release lanes,
 as well as the scheduled/manual audit. A new advisory fails the candidate
 until it is remediated or explicitly reviewed in checked-in scanner policy.
 
@@ -96,7 +97,7 @@ the x86_64 runner additionally owns the guest-shell marker.
 
 Expensive harnesses need a cheap clean-environment bootstrap proof at the
 start of `just test`, before Docker/Colima or artifact preparation. The one
-private `_test-fast` module is also called by `just smoke`, ordinary CI, and
+private `_test-fast` module is also called by `just fast-test`, ordinary CI, and
 both release lanes. It owns YAML/workflow and source syntax, source contracts,
 dependency audits, Clippy, Python lint/type checks, and JavaScript/frontend
 checks; no caller may reproduce a subset inline. Only a green fast gate may
@@ -430,7 +431,7 @@ All Python integration tests live under `tests/capsem-*/` and use pytest markers
 | Session exhaustive | `capsem-session-exhaustive/` | `session_exhaustive` | Yes | Per-table data validation, cross-table FK integrity |
 | Install | `capsem-install/` | `install` | No | Native package installer: layout, auto-launch, service install, manifest placement, update, uninstall, lifecycle, reinstall, error paths |
 
-`just test` is the only public complete/release gate and `just smoke` is the
+`just test` is the only public complete/release gate and `just fast-test` is the
 only public focused composite. Suite-specific and install/package rails are
 private implementation details; run an individual pytest/cargo/pnpm command
 directly for focused diagnosis instead of adding another public composite.

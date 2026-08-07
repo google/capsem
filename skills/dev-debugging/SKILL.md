@@ -28,7 +28,8 @@ uv run capsem-gate <command> --graph
 ```
 
 Use the smallest focused pytest, cargo, pnpm, or script command for red/green
-work. Use `just smoke` for focused integration feedback. Use a clean
+work. Use `just vm-smoke` for focused integration feedback, and
+`just fast-test` for the fast gate itself. Use a clean
 `just test` only when the forward fix is ready for complete qualification.
 
 ### Diagnostic continuation for a late gate failure

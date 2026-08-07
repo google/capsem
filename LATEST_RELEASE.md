@@ -114,7 +114,7 @@ version: 1.6.1785421421
   inline `#[cfg(test)] mod tests { ... }` block, a `tests.rs` that no parent
   module declares (which silently never compiles or runs), a crate shipping no
   Rust tests at all, and any Rust source a `.gitignore` rule would drop.
-  `just test`, `just smoke`, ordinary CI and both release lanes all reach it
+  `just test`, `just fast-test`, ordinary CI and both release lanes all reach it
   through `_test-fast`.
 
 ### Changed

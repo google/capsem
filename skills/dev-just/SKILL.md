@@ -24,7 +24,8 @@ allowlist update in the same change.
 | `just run-service` | Materialize assets/config and start the local daemon idempotently. |
 | `just logs [sandbox-id\|failure]` | Tail service logs, show a sandbox log, or list the latest preserved failure evidence. |
 | `just doctor [fix]` | Validate host tools, Docker/Colima, Tart cache/boot/SSH, signing, and assets. |
-| `just smoke` | Focused developer integration feedback; never release qualification. |
+| `just fast-test` | The fast gate itself -- the same `_test-fast` module `test` and both release lanes run, so it cannot drift from them. |
+| `just vm-smoke` | Short VM round-trip: boot, exercise, tear down. Runtime liveness, never release qualification. |
 | `just test` | Complete local all-artifact construction and test proof. |
 | `just release-binaries <channel>` | Dispatch one Python release plan that contains the complete test graph, then releases only packages for one channel against pulled profiles. |
 | `just release-profile <channel> <profile>` | Dispatch one Python release plan that contains the complete test graph, then calls `capsem-admin release` for one profile against the pulled package. |
@@ -127,7 +128,7 @@ branching, reporting, cleanup, or resource ownership.
 Release CI calls the checked-in `_test-fast`, `_test-static`,
 `_test-artifacts`, `_test-functional`, `_test-glowup`, and
 `_test-release-contracts` modules. `_test-fast` is also the first phase of
-`just test` and `just smoke`; it owns YAML/source syntax, source contracts,
+`just test` and `just fast-test`; it owns YAML/source syntax, source contracts,
 Clippy, Python and JavaScript checks, and every locked-ecosystem vulnerability
 audit. Callers must reuse it whole rather than duplicating a subset.
 Binary CI builds packages and pulls profiles; profile CI builds one profile and

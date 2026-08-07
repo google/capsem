@@ -3,7 +3,7 @@
 # drive-by addition, deletion, rename, or stale count fails closed.
 
 [just]
-count = 13
+count = 14
 approved = [
   "build",
   "build-all",
@@ -11,13 +11,14 @@ approved = [
   "dev",
   "doctor",
   "exec",
+  "fast-test",
   "logs",
   "release-binaries",
   "release-profile",
   "run-service",
   "shell",
-  "smoke",
   "test",
+  "vm-smoke",
 ]
 
 [capsem_cli]

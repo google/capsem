@@ -30,7 +30,7 @@ just release-profile <channel> <profile>
   injection, integration, benchmarks, full `capsem-doctor`, native install,
   and glow-up.
 - The private `_test-fast` module runs before Docker/Colima or artifact work
-  and is reused whole by `just smoke`, `just test`, ordinary CI, and both
+  and is reused whole by `just fast-test`, `just test`, ordinary CI, and both
   release lanes. It owns YAML/source syntax, source contracts, Clippy,
   Python/JavaScript checks, web builds, and all dependency audits.
 - Release CI calls the same checked-in private test modules but builds only the

@@ -71,7 +71,7 @@ not exist". Provision generously; cache only where the store is observed.
 The independently executable `_test-fast` module is the first local and CI
 gate. It owns YAML/workflow and source syntax, source contracts, Clippy,
 Python lint/type checks, JavaScript checks/builds, and the blocking Rust,
-Python, and JavaScript vulnerability audits. `just smoke`, local `just test`,
+Python, and JavaScript vulnerability audits. `just fast-test`, local `just test`,
 ordinary CI, and both release lanes call that exact module; workflows must not
 reimplement or trim it. The scheduled/manual `security-audit.yaml` retains its
 dedicated scanner schedule. A newly published advisory is a real red gate:

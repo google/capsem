@@ -11,7 +11,8 @@
 #   run-service            idempotent local daemon
 #   logs [sandbox|failure] service, VM, or failure evidence
 #   doctor                 host, Docker/Colima, Tart, and asset readiness
-#   smoke                  focused local integration feedback
+#   fast-test              the fast gate, same module the release lanes run
+#   vm-smoke               short VM round-trip; runtime liveness only
 #   test                   complete local all-artifact proof
 #   release-binaries       publish packages for one channel
 #   release-profile        publish one channel/profile
@@ -46,7 +47,7 @@ _sign: _build-host
 # Ensure capsem-service daemon is running with the current binary.
 # Kills any existing dev-owned instance (via pidfile -- never pkill-by-name)
 # and relaunches fresh. Honors CAPSEM_HOME / CAPSEM_RUN_DIR env vars so
-# `just test` and `just smoke` run against an isolated test home
+# `just test` and `just vm-smoke` run against an isolated test home
 # without ever touching the user's locally installed capsem.
 _ensure-service: _sign
     uv run capsem-gate ensure-service
@@ -264,11 +265,21 @@ _check-generated-settings:
     bash scripts/check-generated-settings.sh {{quote(justfile_directory())}}
 
 
-# Focused developer feedback; never release qualification. It shares the exact
-# fail-fast source gate with `test` and release CI, then runs a smaller VM loop.
-smoke:
+# The fast gate, and nothing else. This is the *same* `_test-fast` module that
+# `test` and both release lanes run -- not a reduced developer variant of it --
+# so a green here means exactly what it means there and the two cannot drift.
+#
+# It was called `smoke`, which described neither half of what it did: it ran
+# this gate *and* a VM loop, so the name undersold the gate and oversold the
+# loop. The VM loop is now `vm-smoke`, which is what a smoke test actually is.
+fast-test:
     just _test-fast
-    just _prepared-runtime
+
+
+# A short VM round-trip: boot, exercise, tear down. Genuinely a smoke test --
+# it answers "is the runtime alive", not "is this releasable". Never release
+# qualification, and no substitute for `fast-test` before pushing.
+vm-smoke: _prepared-runtime
     uv run capsem-gate smoke
 
 
@@ -355,6 +366,6 @@ _materialize-config:
 
 # One bootable local runtime: verified assets, the initrd repacked around the
 # current guest binaries, and a materialized profile catalog. `test` and
-# `smoke` both need exactly this before they can run anything against a VM, so
-# they name it once instead of repeating the sequence.
+# `vm-smoke` both need exactly this before they can run anything against a VM,
+# so they name it once instead of repeating the sequence.
 _prepared-runtime: _check-assets _pack-initrd _materialize-config
