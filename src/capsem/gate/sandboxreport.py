@@ -73,15 +73,15 @@ class SandboxReport(Resource, name="sandbox-report"):
         self._settings = config.sandbox
         self._runner = runner
         self._mode = mode
-        # Into *this run's* directory, not the history root. `_recording()`
-        # allocates it and repoints `latest` before any resource is acquired,
-        # so by the time this runs the link is live. The root would have meant
-        # each run overwriting the last capture, and -- worse for a file that
-        # grows -- one that `runhistory` rotation never reclaims, because
-        # rotation removes run directories and this would not be in one.
+        # The same path the streamer was given, from the same function --
+        # the two cannot pass a value across the exec between them.
+        self._target = capture_path(config)
+        # And where it belongs afterwards: inside the run it describes, so
+        # `runhistory` rotation reclaims it rather than leaving a file that
+        # grows for a whole gate sitting in the root forever.
         history = config.path(config.runlog.root)
         current = history / config.runlog.latest_link
-        self._target = (current if current.is_dir() else history) / self._settings.report_log_name
+        self._home = current if current.is_dir() else history
 
     def acquire(self) -> None:
         """Nothing to start: it is already running, and had to be.
@@ -116,6 +116,19 @@ class SandboxReport(Resource, name="sandbox-report"):
             pidfile.unlink(missing_ok=True)
             _reap(pid)
         self._summarize()
+        self._file_under_its_run()
+
+    def _file_under_its_run(self) -> None:
+        """Move the capture and its allow-list into the run they describe."""
+        if self._home == self._target.parent:
+            return
+        self._home.mkdir(parents=True, exist_ok=True)
+        for source in (
+            self._target,
+            self._target.with_suffix(self._settings.report_summary_suffix),
+        ):
+            if source.is_file():
+                source.replace(self._home / source.name)
 
     def _summarize(self) -> None:
         """Write the deduplicated allow-list beside the raw capture.
@@ -191,10 +204,21 @@ def observed(captured: str) -> list[tuple[tuple[str, str], int]]:
 
 
 def capture_path(config) -> Path:
-    """Where a report-mode run leaves its capture, resolved to the live run."""
-    history = config.path(config.runlog.root)
-    current = history / config.runlog.latest_link
-    return (current if current.is_dir() else history) / config.sandbox.report_log_name
+    """Where the streamer writes, fixed and not resolved through `latest`.
+
+    The two halves of this run on opposite sides of an `exec` and cannot share
+    a variable, so they have to agree on a path by construction. They did not:
+    the streamer starts in `reexec()`, *before* the run directory exists, so
+    `latest` still pointed at the **previous** run; the resource resolved it
+    afterwards and got the current one. Each used a real path and they were
+    different ones, so every capture landed in an older run's directory and
+    `_summarize` found nothing to summarize -- which is why 35 MB of collected
+    events produced no allow-list at all.
+
+    The history root has no such ordering problem. `release` moves both files
+    into the run they describe once that directory exists.
+    """
+    return config.path(config.runlog.root) / config.sandbox.report_log_name
 
 
 #: The streamer, kept referenced for as long as this process lives.

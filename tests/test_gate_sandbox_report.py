@@ -153,3 +153,44 @@ def test_the_capture_lands_in_this_runs_directory(tmp_path: Path) -> None:
 
     assert (current / _Settings.report_log_name).is_file(), "capture missed the run directory"
     assert not (tmp_path / "runs" / _Settings.report_log_name).exists(), "capture went to the root"
+
+
+def test_the_capture_survives_being_started_before_the_run_exists(tmp_path: Path) -> None:
+    """The exact ordering the collector really runs in.
+
+    The streamer starts in `reexec()`, before the recording allocates a run
+    directory -- so at that moment `latest` still points at the *previous* run,
+    or at nothing. Resolving the path on each side of the exec independently
+    gave two different real paths: the capture landed in an older run's
+    directory and the resource summarized a file that was not there. 35 MB of
+    collected events produced no allow-list at all, and nothing failed.
+
+    Here the earlier run exists and `latest` points at it when the streamer
+    starts, exactly as it would in a resumed gate.
+    """
+    runs = tmp_path / "runs"
+    earlier = runs / "20260101-000000-aaaaaa-candidate"
+    earlier.mkdir(parents=True)
+    (runs / "latest").symlink_to(earlier.name)
+
+    config = _Config(tmp_path)
+    runner = RecordingRunner(PROJECT_ROOT)
+    sandboxreport.start_outside_the_sandbox(config, runner)
+
+    # Now the run this gate is actually recording appears, and `latest` moves.
+    current = runs / "20260101-010000-bbbbbb-candidate"
+    current.mkdir(parents=True)
+    (runs / "latest").unlink()
+    (runs / "latest").symlink_to(current.name)
+
+    sandboxreport.SandboxReport(config, runner, mode=sandbox.REPORT).release()
+
+    assert (current / _Settings.report_log_name).is_file(), (
+        "the capture did not reach the run it describes"
+    )
+    assert (
+        current / Path(_Settings.report_log_name).with_suffix(_Settings.report_summary_suffix).name
+    ).is_file(), "no allow-list was written beside the capture"
+    assert not (earlier / _Settings.report_log_name).exists(), (
+        "the capture landed in the previous run's directory"
+    )

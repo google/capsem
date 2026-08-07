@@ -140,6 +140,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Report mode writes its allow-list. The streamer starts in `reexec()`, before
+  the run directory exists, so `latest` still pointed at the *previous* run;
+  the resource resolved the same expression afterwards and got the current one.
+  Both sides used a real path and they were different ones, so every capture
+  landed in an older run's directory and the summary step found nothing --
+  35 MB of collected events and no allow-list, with nothing failing. The path
+  is fixed on both sides now and moved into the run it describes at release.
+
 - The enforcing sandbox profile carries the sockets the gate actually opens.
   One report-mode run named them, and three classes were missing: the per-user
   `$TMPDIR` under `/private/var/folders` (which is why a rule naming
