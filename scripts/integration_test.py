@@ -11,8 +11,8 @@ Exercises:
   6. main.db      -- rollup counters match session.db actuals
 
 Usage:
-    python3 scripts/integration_test.py              # uses target/debug/capsem
-    python3 scripts/integration_test.py --binary ./capsem --assets ./assets
+    uv run python scripts/integration_test.py              # uses target/debug/capsem
+    uv run python scripts/integration_test.py --binary ./capsem --assets ./assets
 
 Ironbank note: this is black-box product proof. Do not close a release gate
 with status-only replay, row-exists checks, skipped/slow cases, public
@@ -20,13 +20,15 @@ services, or expectations copied from Rust internals. The ledger contract is
 client result + parsed facts + security rows + protocol rows + logs + routes.
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import os
 import re
-import signal
-import shutil
 import shlex
+import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -38,7 +40,9 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from mock_server import local_fixture_env, start_mock_server, stop_process  # noqa: E402
+import contextlib
+
+from mock_server import local_fixture_env, start_mock_server, stop_process
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -119,17 +123,33 @@ def _profile_env() -> dict[str, str]:
     return {"CAPSEM_PROFILES_DIR": default_materialized_profiles_dir()}
 
 
+def _profile_run_prefix(
+    binary: str, profile: str, *, timeout: int | None = None
+) -> list[str]:
+    command = [binary, "run"]
+    if timeout is not None:
+        command.extend(["--timeout", str(timeout)])
+    command.extend(["--profile", profile])
+    return command
+
+
 def _test_isolation_env() -> dict[str, str]:
     """Environment that keeps black-box integration tests hermetic.
 
     The credential broker must not touch the developer's native keychain.
     Tests use an isolated JSON store inside CAPSEM_HOME so captured credentials
     can be asserted without host prompts or hidden state.
+
+    The tray runs headless for the same reason: a service started here spawns
+    one (the spawn falls back to the sibling binary when --tray-binary is
+    omitted), and a smoke run should not put an icon in the developer's menu
+    bar. The companion still starts, so its lifecycle stays exercised.
     """
     return {
         "CAPSEM_CREDENTIAL_STORE_PATH": str(
             INTEGRATION_HOME / "run" / "credential-store.json"
-        )
+        ),
+        "CAPSEM_TRAY_HEADLESS": "1",
     }
 
 
@@ -244,14 +264,10 @@ def _kill_dev_service() -> None:
             # Force-kill if still alive.
             subprocess.run(["kill", "-9", str(pid)], check=False,
                            capture_output=True)
-    try:
+    with contextlib.suppress(FileNotFoundError):
         SERVICE_PIDFILE.unlink()
-    except FileNotFoundError:
-        pass
-    try:
+    with contextlib.suppress(FileNotFoundError):
         SERVICE_SOCKET.unlink()
-    except FileNotFoundError:
-        pass
 
 
 def _wait_for_service_ready(
@@ -338,7 +354,7 @@ def _start_service_with_test_config(
 
     log_path = project_root / "target/integration-test-service.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_file = open(log_path, "w")
+    log_file = open(log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
 
     try:
         proc = subprocess.Popen(
@@ -350,6 +366,14 @@ def _start_service_with_test_config(
                 str(process_bin),
                 "--uds-path",
                 str(SERVICE_SOCKET),
+                # Bound this service to the harness that owns it. The teardown
+                # below runs from a `finally`, which SIGKILL and an aborted
+                # gate never reach; without a parent to watch, the service
+                # survives as an orphan under launchd holding its gateway and
+                # tray. Real users never pass this -- their daemon must outlive
+                # the CLI that spawned it.
+                "--parent-pid",
+                str(os.getpid()),
                 "--foreground",
             ],
             env=env,
@@ -364,7 +388,7 @@ def _start_service_with_test_config(
     return proc
 
 
-def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
+def run_vm(binary: str, assets_dir: str, profile: str) -> tuple[str, int]:
     """Boot a temp VM via `capsem run`, return (session_id, exit_code).
 
     The service preserves the session dir after `run` completes, so we
@@ -397,7 +421,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
     )
 
     # Snapshot session dirs before so we can find the new one after.
-    existing = set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
+    existing = {p.name for p in SESSIONS_DIR.iterdir()} if SESSIONS_DIR.exists() else set()
 
     try:
         mock_proc, ready = start_mock_server()
@@ -407,7 +431,7 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
         # Pass deterministic local fixture settings via --env so they reach the
         # VM through the service. Do not inject proxy variables: guest traffic
         # must prove the iptables-nft redirect rail.
-        cmd = [binary, "run", "--timeout", "300"]
+        cmd = _profile_run_prefix(binary, profile, timeout=300)
         for key, value in local_fixture_env(
             mock_base_url,
             ready.get("https_base_url"),
@@ -430,10 +454,8 @@ def run_vm(binary: str, assets_dir: str) -> tuple[str, int]:
             service_proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             service_proc.kill()
-        try:
+        with contextlib.suppress(FileNotFoundError):
             SERVICE_PIDFILE.unlink()
-        except FileNotFoundError:
-            pass
     exit_code = proc.returncode
     if proc.stdout.strip():
         print(proc.stdout.strip())
@@ -1027,7 +1049,7 @@ PERSISTENCE_CHECK_CMD = (
 )
 
 
-def check_persistence(binary: str, assets_dir: str) -> bool:
+def check_persistence(binary: str, assets_dir: str, profile: str) -> bool:
     """Boot two consecutive VMs; verify a file written in the first is gone in the second."""
     print(f"\n{BOLD}=== Ephemeral model check ==={RESET}")
     env = {
@@ -1048,7 +1070,7 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
     try:
         print("  Invocation 1: writing sentinel file...")
         proc1 = subprocess.run(
-            [binary, "run", PERSISTENCE_WRITE_CMD],
+            [*_profile_run_prefix(binary, profile), PERSISTENCE_WRITE_CMD],
             env=env, capture_output=True, text=True, timeout=120,
         )
         output1 = proc1.stdout + "\n" + proc1.stderr
@@ -1060,7 +1082,7 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
 
         print("  Invocation 2: checking sentinel is absent...")
         proc2 = subprocess.run(
-            [binary, "run", PERSISTENCE_CHECK_CMD],
+            [*_profile_run_prefix(binary, profile), PERSISTENCE_CHECK_CMD],
             env=env, capture_output=True, text=True, timeout=120,
         )
         output2 = proc2.stdout + "\n" + proc2.stderr
@@ -1080,10 +1102,8 @@ def check_persistence(binary: str, assets_dir: str) -> bool:
             service_proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             service_proc.kill()
-        try:
+        with contextlib.suppress(FileNotFoundError):
             SERVICE_PIDFILE.unlink()
-        except FileNotFoundError:
-            pass
 
 
 def main():
@@ -1100,16 +1120,21 @@ def main():
         default="assets",
         help="Path to VM assets directory (default: assets)",
     )
+    parser.add_argument(
+        "--profile",
+        default=os.environ.get("CAPSEM_TEST_PROFILE", "code"),
+        help="Manifest profile to exercise (default: CAPSEM_TEST_PROFILE or code)",
+    )
     args = parser.parse_args()
 
-    session_id, exit_code = run_vm(args.binary, args.assets)
+    session_id, exit_code = run_vm(args.binary, args.assets, args.profile)
 
     if exit_code != 0:
         print(f"{RED}FAIL: VM integration workload exited with code {exit_code}{RESET}")
         sys.exit(1)
 
     telemetry_ok = verify_session(session_id)
-    ephemeral_ok = check_persistence(args.binary, args.assets)
+    ephemeral_ok = check_persistence(args.binary, args.assets, args.profile)
     sys.exit(0 if (telemetry_ok and ephemeral_ok) else 1)
 
 

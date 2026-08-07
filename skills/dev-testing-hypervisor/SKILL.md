@@ -65,7 +65,7 @@ The x86_64 KVM backend boots bzImage kernels in 64-bit long mode. Key invariants
 | Change | Tests to run |
 |--------|-------------|
 | VirtioFS FUSE ops | `cargo test virtio_fs` + `just exec "capsem-doctor -k virtiofs"` |
-| VM config / boot | `cargo test -p capsem-core` + `just run` (verify boot succeeds) |
+| VM config / boot | `cargo test -p capsem-core` + `just exec` (verify boot succeeds) |
 | Vsock / serial | `cargo test -p capsem-core` + `just exec "echo ok"` (verify I/O works) |
 | KVM device model | `cargo test -p capsem-core` (Linux CI validates) |
 | KVM x86_64 boot | `cargo test -p capsem-core boot_x86_64` (struct tests run on macOS; full boot needs x86_64 Linux CI) |

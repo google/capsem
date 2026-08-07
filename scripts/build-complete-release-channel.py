@@ -13,16 +13,17 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import url2pathname, urlopen
-
+from urllib.request import Request, url2pathname, urlopen
 
 REQUIRED_CHANNELS = ("stable", "nightly")
+RELEASE_HTTP_USER_AGENT = "capsem-release-client/1"
 
 
 def read_json_source(source: str) -> dict[str, Any]:
     parsed = urlparse(source)
     if parsed.scheme in {"http", "https"}:
-        with urlopen(source, timeout=60) as response:
+        request = Request(source, headers={"User-Agent": RELEASE_HTTP_USER_AGENT})
+        with urlopen(request, timeout=60) as response:
             payload = response.read()
     elif parsed.scheme == "file":
         payload = Path(url2pathname(parsed.path)).read_bytes()
@@ -114,6 +115,23 @@ def resolve_channel_sources(
     return sources, documents
 
 
+def manifest_version_for_channel(
+    *,
+    channel: str,
+    primary_channel: str,
+    document: dict[str, Any],
+    primary_version: str,
+) -> str:
+    if channel == primary_channel or not is_release_graph(document):
+        return primary_version
+    version = document.get("version")
+    if not isinstance(version, str) or not version:
+        raise ValueError(
+            f"untouched {channel} graph has no manifest version to preserve"
+        )
+    return version
+
+
 def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
     print("+", " ".join(command))
     subprocess.run(command, check=True, env=env)
@@ -139,6 +157,12 @@ def build_complete_dist(args: argparse.Namespace) -> None:
     build_order.append(args.primary_channel)
     graph_channels: list[str] = []
     for channel in build_order:
+        manifest_version = manifest_version_for_channel(
+            channel=channel,
+            primary_channel=args.primary_channel,
+            document=documents[channel],
+            primary_version=args.manifest_version,
+        )
         command = [
             "cargo",
             "run",
@@ -157,7 +181,7 @@ def build_complete_dist(args: argparse.Namespace) -> None:
             "--channel",
             channel,
             "--manifest-version",
-            args.manifest_version,
+            manifest_version,
             "--generated-at",
             generated_at,
             "--out-dir",
@@ -170,6 +194,10 @@ def build_complete_dist(args: argparse.Namespace) -> None:
             graph_channels.append(channel)
 
     env = dict(os.environ)
+    # The graph to render, and the directory to overlay the render onto. The
+    # same path here, and deliberately two names: they are an input and an
+    # output, and callers that pass a graph fixture set only the first.
+    env["CAPSEM_RELEASE_GRAPH"] = str(out_dir)
     env["CAPSEM_RELEASE_CHANNEL_DIST"] = str(out_dir)
     run(["bash", "scripts/check-web-surface.sh", "release-site-build"], env=env)
     for channel in graph_channels:
@@ -183,8 +211,17 @@ def build_complete_dist(args: argparse.Namespace) -> None:
             "--channel",
             channel,
         ]
-        if args.profile_source_ref:
+        source = urlparse(sources[channel])
+        is_public_mirror = (
+            channel != args.primary_channel
+            and source.scheme in {"http", "https"}
+        )
+        if is_public_mirror:
+            command.extend(["--public-base", args.release_site])
+        elif args.profile_source_ref:
             command.extend(["--source-ref", args.profile_source_ref])
+        elif args.profile_source_root:
+            command.extend(["--source-root", str(args.profile_source_root)])
         run(command)
     for channel in REQUIRED_CHANNELS:
         run(
@@ -217,9 +254,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", type=Path, required=True)
     parser.add_argument("--release-site", default="https://release.capsem.org")
     parser.add_argument("--allow-mirror-missing", action="store_true")
-    parser.add_argument(
+    profile_source = parser.add_mutually_exclusive_group()
+    profile_source.add_argument(
         "--profile-source-ref",
-        help="Override graph profile config source ref (for hermetic local fixtures).",
+        help="Override graph profile config source ref.",
+    )
+    profile_source.add_argument(
+        "--profile-source-root",
+        type=Path,
+        help="Read graph profile config from this local candidate worktree.",
     )
     return parser.parse_args()
 

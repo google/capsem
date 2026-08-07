@@ -1,16 +1,53 @@
 import importlib.util
 import os
+import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 
 def load_integration_script():
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "integration_test.py"
+    script_path = PROJECT_ROOT / "scripts" / "integration_test.py"
     spec = importlib.util.spec_from_file_location("capsem_integration_test", script_path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def _just_python_entrypoints() -> list[Path]:
+    justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
+    referenced = {
+        PROJECT_ROOT / relative
+        for relative in re.findall(r"scripts/[A-Za-z0-9_.-]+\.py", justfile)
+    }
+    referenced.add(PROJECT_ROOT / "scripts" / "doctor_session_test.py")
+    return sorted(
+        path
+        for path in referenced
+        if "ArgumentParser" in path.read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.parametrize(
+    "script_path",
+    _just_python_entrypoints(),
+    ids=lambda path: path.name,
+)
+def test_just_python_entrypoints_load_under_the_host_python(script_path):
+    result = subprocess.run(
+        ["python3", str(script_path), "--help"],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout.lower()
 
 
 def test_integration_script_uses_materialized_profiles_dir():
@@ -20,12 +57,33 @@ def test_integration_script_uses_materialized_profiles_dir():
     assert module._profile_env()["CAPSEM_PROFILES_DIR"] == module.default_materialized_profiles_dir()
 
 
+def test_integration_script_pins_every_cli_run_to_the_selected_profile():
+    module = load_integration_script()
+
+    assert module._profile_run_prefix(
+        "target/debug/capsem", "experimental", timeout=300
+    ) == [
+        "target/debug/capsem",
+        "run",
+        "--timeout",
+        "300",
+        "--profile",
+        "experimental",
+    ]
+    assert module._profile_run_prefix("target/debug/capsem", "co-work") == [
+        "target/debug/capsem",
+        "run",
+        "--profile",
+        "co-work",
+    ]
+
+
 def test_integration_script_service_paths_use_process_scoped_isolated_home():
     module = load_integration_script()
 
-    assert module.INTEGRATION_HOME == (
+    assert (
         module.PROJECT_ROOT / "target" / f"integration-capsem-home-{os.getpid()}"
-    )
+    ) == module.INTEGRATION_HOME
     assert module.CAPSEM_HOME == module.INTEGRATION_HOME
     assert module.INTEGRATION_RUNTIME_ROOT.name == f"capsem-integration-{os.getuid()}-{os.getpid()}"
     assert module.INTEGRATION_RUN_DIR == module.INTEGRATION_RUNTIME_ROOT / "run"
@@ -41,8 +99,8 @@ def test_integration_script_honors_explicit_home_override(tmp_path, monkeypatch)
 
     module = load_integration_script()
 
-    assert module.INTEGRATION_HOME == tmp_path / "integration-home"
-    assert module.INTEGRATION_RUNTIME_ROOT == tmp_path / "runtime-root"
+    assert tmp_path / "integration-home" == module.INTEGRATION_HOME
+    assert tmp_path / "runtime-root" == module.INTEGRATION_RUNTIME_ROOT
     assert module.SERVICE_SOCKET == module.INTEGRATION_RUN_DIR / "service.sock"
 
 

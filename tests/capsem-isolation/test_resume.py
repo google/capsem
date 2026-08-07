@@ -1,9 +1,9 @@
 """VM-A survives deletion of VM-B: files persist, exec still works."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -57,8 +57,6 @@ def test_resume_after_neighbor_delete():
 
     finally:
         for vm in (locals().get("vm_a_id", vm_a), locals().get("vm_b_id", vm_b)):
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{vm}/delete")
-            except Exception:
-                pass
         svc.stop()

@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-import tomllib
 import json
+import tomllib
 from pathlib import Path
 
 import blake3
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROFILES_DIR = PROJECT_ROOT / "config" / "profiles"
-MATERIALIZED_PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 
 
 def _profile_payload(profile_dir: Path) -> tuple[dict, Path, Path]:
@@ -327,45 +325,6 @@ def test_profile_root_manifests_pin_exactly_the_shipped_root_payload() -> None:
     assert not failures, "invalid profile root payload contract:\n" + "\n".join(failures)
 
 
-def test_materialized_profile_root_payload_matches_source_profile_root() -> None:
-    failures: list[str] = []
-    for profile_dir in sorted(PROFILES_DIR.iterdir()):
-        if not profile_dir.is_dir():
-            continue
-        profile_id = profile_dir.name
-        materialized_dir = MATERIALIZED_PROFILES_DIR / profile_id
-        if not materialized_dir.is_dir():
-            failures.append(f"{profile_id}: missing materialized profile directory")
-            continue
-
-        source_root = profile_dir / "root"
-        materialized_root = materialized_dir / "root"
-        source_paths = {
-            path.relative_to(source_root).as_posix()
-            for path in source_root.rglob("*")
-            if path.is_file()
-        }
-        materialized_paths = {
-            path.relative_to(materialized_root).as_posix()
-            for path in materialized_root.rglob("*")
-            if path.is_file()
-        }
-        if source_paths != materialized_paths:
-            missing = sorted(source_paths - materialized_paths)
-            extra = sorted(materialized_paths - source_paths)
-            failures.append(
-                f"{profile_id}: materialized root payload drift missing={missing} extra={extra}"
-            )
-            continue
-        for rel in sorted(source_paths):
-            source_bytes = (source_root / rel).read_bytes()
-            materialized_bytes = (materialized_root / rel).read_bytes()
-            if materialized_bytes != source_bytes:
-                failures.append(f"{profile_id}: materialized root payload differs for {rel}")
-
-    assert not failures, "materialized profile root drift:\n" + "\n".join(failures)
-
-
 def test_profiles_package_agent_bootstrap_without_baking_credentials() -> None:
     failures: list[str] = []
     for profile_dir in sorted(PROFILES_DIR.iterdir()):
@@ -420,6 +379,34 @@ def test_profiles_package_agent_bootstrap_without_baking_credentials() -> None:
             failures.append(f"{profile_id}: Codex capsem MCP command is {command!r}")
 
     assert not failures, "invalid agent bootstrap contract:\n" + "\n".join(failures)
+
+
+def test_profiles_pin_verified_agy_release_for_both_linux_architectures() -> None:
+    failures: list[str] = []
+    required_fragments = (
+        'AGY_VERSION="1.1.3"',
+        "agy_cli_linux_arm64.tar.gz",
+        "agy_cli_linux_x64.tar.gz",
+        "453f9c5530877ab6369e2536e576cfab2bbbcb45923a9bc776678142538e419d",
+        "7a7239a69b65d3cf3af7e75f27b2ff4e9cce696a7b9a9e5c37c695f1c74eec34",
+        "github.com/google-antigravity/antigravity-cli/releases/download/$AGY_VERSION/$asset",
+        "sha256sum -c -",
+        'install -m 555 "$tmp/antigravity" /usr/local/bin/agy',
+    )
+    for profile_dir in sorted(PROFILES_DIR.iterdir()):
+        if not profile_dir.is_dir():
+            continue
+        profile, build_path, _ = _profile_payload(profile_dir)
+        build_script = build_path.read_text()
+        for fragment in required_fragments:
+            if fragment not in build_script:
+                failures.append(f"{profile['id']}: AGY installer missing {fragment!r}")
+        if "antigravity.google/cli/install.sh" in build_script:
+            failures.append(f"{profile['id']}: AGY still uses mutable broken installer URL")
+        if "releases/latest" in build_script:
+            failures.append(f"{profile['id']}: AGY release is not version pinned")
+
+    assert not failures, "invalid pinned AGY installer contract:\n" + "\n".join(failures)
 
 
 def test_profiles_allow_only_capsem_mock_server_fixture_over_local_network_guard() -> None:

@@ -5,22 +5,23 @@
 # them to the user's ~/.capsem/ directory, codesigns for Virtualization.framework,
 # registers the LaunchAgent, and waits for service readiness.
 #
-# macOS Installer.app runs postinstall as root with $USER set to the
-# installing user. When called via `sudo installer -pkg`, $USER may be
-# root -- fall back to SUDO_USER, then the console owner.
+# PackageKit runs postinstall as root. Headless callers provide a secure
+# install-user request; interactive installs fall back to SUDO_USER, USER,
+# then the console owner.
 set -euo pipefail
 source "$(dirname "$0")/install-diagnostics"
+source "$(dirname "$0")/install-user"
+source "$(dirname "$0")/install-manifest"
 
-if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
-    USER="$SUDO_USER"
-fi
-if [ "$USER" = "root" ] || [ -z "${USER:-}" ]; then
-    USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "")
-    if [ -z "$USER" ] || [ "$USER" = "root" ]; then
-        echo "capsem: could not determine installing user, skipping per-user install" >&2
-        exit 0
-    fi
-fi
+USER=$(capsem_resolve_install_user "/var/run/capsem/install-user")
+CAPSEM_INSTALL_MANIFEST_REQUEST="/var/run/capsem/install-manifest"
+# Cleared on success, at the bottom -- not from an EXIT trap. A failing
+# postinst that consumed the request left the immediately following
+# `apt-get install -f` with none, so the retry of the *same* install silently
+# hydrated from the public channel: the error then named production while the
+# real failure was local, and a retry that happened to succeed would have
+# installed something nobody asked for. The writer clears it too, on every
+# path, so leaving it here cannot strand one.
 
 PKG_SHARE="/usr/local/share/capsem"
 USER_HOME=$(eval echo "~$USER")
@@ -68,7 +69,7 @@ echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=layout_ready caps
 
 # Copy companion binaries from pkg payload
 CAPSEM_INSTALL_PHASE="copy_binaries"
-for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
     src="$PKG_SHARE/bin/$bin"
     if [ ! -f "$src" ]; then
         echo "capsem: packaged binary missing: $src" >&2
@@ -92,33 +93,47 @@ codesign_identifier_for_bin() {
         capsem-gateway) echo "org.capsem.gateway" ;;
         capsem-tray) echo "org.capsem.tray" ;;
         capsem-admin) echo "org.capsem.admin" ;;
+        capsem-mock-server) echo "org.capsem.mock-server" ;;
+        capsem-bench-rs) echo "org.capsem.bench" ;;
         *) return 1 ;;
     esac
 }
 
-# Codesign all binaries with virtualization entitlements
+# Preserve production Developer ID signatures. Development packages may carry
+# unsigned binaries; sign those ad hoc with the same virtualization
+# entitlements instead of hiding a failed signing attempt.
 CAPSEM_INSTALL_PHASE="codesign_binaries"
 if [ -f "$PKG_SHARE/entitlements.plist" ]; then
     for bin in "$CAPSEM_DIR/bin"/capsem*; do
         identifier=$(codesign_identifier_for_bin "$bin" || true)
         if [ -n "$identifier" ]; then
-            codesign --sign - --identifier "$identifier" --entitlements "$PKG_SHARE/entitlements.plist" --force "$bin" 2>/dev/null || true
+            if codesign --verify --strict "$bin" 2>/dev/null; then
+                echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binary_signature_preserved bin=$(basename "$bin")"
+            else
+                codesign --sign - --identifier "$identifier" --entitlements "$PKG_SHARE/entitlements.plist" --force "$bin"
+                echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binary_signed_ad_hoc bin=$(basename "$bin")"
+            fi
         fi
     done
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binaries_codesigned identity_prefix=org.capsem"
+    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=binary_signatures_ready identity_prefix=org.capsem"
 fi
 
-MANIFEST_SOURCE="https://release.capsem.org/assets/stable/manifest.json"
 CAPSEM_INSTALL_PHASE="install_manifest_provenance"
-if [ -f "$PKG_SHARE/assets/manifest-metadata.json" ]; then
-    install -m 0644 "$PKG_SHARE/assets/manifest-metadata.json" "$CAPSEM_DIR/assets/manifest-metadata.json"
-    MANIFEST_METADATA=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-metadata.json")
-    echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_metadata $MANIFEST_METADATA"
-    METADATA_MANIFEST_URL=$(sed -n 's/.*"manifest_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CAPSEM_DIR/assets/manifest-metadata.json" | head -n 1)
-    if [ -n "$METADATA_MANIFEST_URL" ]; then
-        MANIFEST_SOURCE="$METADATA_MANIFEST_URL"
-    fi
+if [ ! -f "$PKG_SHARE/assets/manifest-metadata.json" ]; then
+    echo "capsem: packaged manifest-metadata.json missing" >&2
+    exit 1
 fi
+install -m 0644 "$PKG_SHARE/assets/manifest-metadata.json" "$CAPSEM_DIR/assets/manifest-metadata.json"
+MANIFEST_METADATA=$(tr '\n' ' ' < "$CAPSEM_DIR/assets/manifest-metadata.json")
+echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_metadata $MANIFEST_METADATA"
+MANIFEST_SOURCE=$(sed -n 's/.*"manifest_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CAPSEM_DIR/assets/manifest-metadata.json" | head -n 1)
+if [ -z "$MANIFEST_SOURCE" ]; then
+    echo "capsem: packaged manifest-metadata.json has no manifest_url" >&2
+    exit 1
+fi
+MANIFEST_SOURCE=$(capsem_resolve_install_manifest \
+    "$MANIFEST_SOURCE" \
+    "$CAPSEM_INSTALL_MANIFEST_REQUEST")
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=manifest_source source=$MANIFEST_SOURCE"
 
 # Copy the materialized profile catalog and its rule files. Profiles pin the
@@ -148,7 +163,7 @@ fi
 case "$MANIFEST_SOURCE" in
     http://*|https://*)
         CAPSEM_INSTALL_PHASE="refresh_update_status"
-        if ! su "$USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" CAPSEM_RELEASE_MANIFEST_URL=\"$MANIFEST_SOURCE\" \"$CAPSEM_DIR/bin/capsem\" update --check"; then
+        if ! su "$USER" -c "CAPSEM_HOME=\"$CAPSEM_DIR\" CAPSEM_RUN_DIR=\"$CAPSEM_DIR/run\" \"$CAPSEM_DIR/bin/capsem\" update --check"; then
             echo "capsem: update status refresh failed" >&2
             echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=update_status_refresh_failed source=$MANIFEST_SOURCE"
             exit 1
@@ -239,4 +254,5 @@ fi
 
 echo "$(date -u '+%Y-%m-%dT%H:%M:%SZ') phase=postinstall event=complete"
 CAPSEM_INSTALL_PHASE="complete"
+rm -f "$CAPSEM_INSTALL_MANIFEST_REQUEST"
 exit 0

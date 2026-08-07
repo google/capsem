@@ -390,3 +390,6 @@ async fn handle_request(
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

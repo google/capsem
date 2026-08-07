@@ -1,4 +1,9 @@
-from tests.ironbank.test_route_health import RouteTiming, _assert_timing_budget
+from tests.ironbank.test_route_health import (
+    RouteTiming,
+    _assert_hot_route_budget,
+    _assert_timing_budget,
+    _hot_route_budget,
+)
 
 
 def test_route_health_budget_can_gate_p99_without_single_tail_outlier() -> None:
@@ -48,3 +53,40 @@ def test_route_health_budget_rejects_cpu_regression() -> None:
         return
 
     raise AssertionError("service CPU regression was not rejected")
+
+
+def test_hot_route_budget_ignores_one_host_scheduler_outlier() -> None:
+    timing = RouteTiming(
+        label="service /profiles/code/mcp/servers/local/tools/list",
+        samples_ms=[0.2] * 63 + [9.6],
+        service_cpu_s=0.01,
+        gateway_cpu_s=None,
+    )
+
+    _assert_hot_route_budget(timing, path="/profiles/code/mcp/servers/local/tools/list")
+
+
+def test_hot_route_budget_rejects_two_tail_regressions() -> None:
+    timing = RouteTiming(
+        label="service /profiles/code/mcp/servers/local/tools/list",
+        samples_ms=[0.2] * 62 + [9.5, 9.6],
+        service_cpu_s=0.01,
+        gateway_cpu_s=None,
+    )
+
+    try:
+        _assert_hot_route_budget(timing, path="/profiles/code/mcp/servers/local/tools/list")
+    except AssertionError:
+        return
+
+    raise AssertionError("repeated hot-route tail regression was not rejected")
+
+
+def test_gateway_status_budget_accounts_for_composite_service_work() -> None:
+    """Gateway status aggregates several service-owned readiness projections."""
+    direct_status_cpu_s = _hot_route_budget("/status")[2]
+    gateway_status_cpu_s = _hot_route_budget("/status", gateway=True)[2]
+    gateway_vm_list_cpu_s = _hot_route_budget("/vms/list", gateway=True)[2]
+
+    assert gateway_status_cpu_s > direct_status_cpu_s
+    assert gateway_status_cpu_s == gateway_vm_list_cpu_s

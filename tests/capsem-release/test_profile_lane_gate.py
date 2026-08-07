@@ -8,6 +8,7 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
+from rust_sources import sibling_tests
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
@@ -35,7 +36,9 @@ def test_profile_json_has_min_capsem_not_current_binary() -> None:
     assert "pub struct ProfileConfigRef" in source
     assert "pub struct ProfileArchitectureImages" in source
     assert "pub struct ProfileImageArtifactRef" in source
-    assert "profile_json_ownership_rejects_current_binary_and_assets" in source
+    assert "profile_json_ownership_rejects_current_binary_and_assets" in sibling_tests(
+        RELEASE_GRAPH
+    )
 
 
 def test_add_profile_image_version_does_not_deprecate_previous() -> None:
@@ -43,8 +46,10 @@ def test_add_profile_image_version_does_not_deprecate_previous() -> None:
 
     assert "pub struct ProfileVersionHistory" in source
     assert "pub fn append_version" in source
-    assert "profile_image_versions_append_without_deprecating_previous" in source
-    assert "new profile image version appends" in source
+
+    tests = sibling_tests(RELEASE_GRAPH)
+    assert "profile_image_versions_append_without_deprecating_previous" in tests
+    assert "new profile image version appends" in tests
 
 
 def test_removed_profile_image_is_absent_not_status_removed() -> None:
@@ -52,26 +57,38 @@ def test_removed_profile_image_is_absent_not_status_removed() -> None:
 
     assert "pub fn diff_profile_image_artifacts" in source
     assert "pub removed: Vec<ProfileImageArtifactKey>" in source
-    assert "profile_image_versions_removed_image_is_absent_not_status_removed" in source
-    assert "removed is represented by absence, not by a status enum" in source
+
+    tests = sibling_tests(RELEASE_GRAPH)
+    assert "profile_image_versions_removed_image_is_absent_not_status_removed" in tests
+    assert "removed is represented by absence, not by a status enum" in tests
 
 
-def test_admin_profile_publish_report_is_lane_scoped() -> None:
+def test_admin_profile_release_is_one_lane_scoped_command() -> None:
     admin_source = (PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs").read_text(
         encoding="utf-8"
     )
 
-    assert "ProfileReleaseSubcommand" in admin_source
-    assert "Publish(ProfileReleaseTargetArgs)" in admin_source
-    assert "Deprecate(ProfileReleaseTargetArgs)" in admin_source
-    assert "Revoke(ProfileReleaseTargetArgs)" in admin_source
+    assert "Validate(ReleaseValidateArgs)" in admin_source
+    assert "Release(ReleaseArgs)" in admin_source
+    assert "ProfileReleaseSubcommand" not in admin_source
+    assert "Publish(ProfileReleaseTargetArgs)" not in admin_source
+    assert "Deprecate(ProfileReleaseTargetArgs)" not in admin_source
+    assert "Revoke(ProfileReleaseTargetArgs)" not in admin_source
     assert "ProfileReleaseStatusArg" in admin_source
     assert "changed_channels: Vec<String>" in admin_source
     assert "changed_manifests: Vec<String>" in admin_source
     assert "changed_profiles: Vec<String>" in admin_source
-    assert "profile_release_commands_publish_report_is_lane_scoped" in admin_source
-    assert 'vec!["nightly"]' in admin_source
-    assert "publishing nightly co-work must not mutate stable" in admin_source
+    assert "compatible_with_current_binary: bool" in admin_source
+
+    admin_tests = sibling_tests(PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs")
+    assert "release_command_has_one_operator_shape" in admin_tests
+    assert (
+        "profile_release_merges_only_selected_profile_and_reports_compatibility"
+        in admin_tests
+    )
+    assert "profile_release_commands_publish_report_is_lane_scoped" in admin_tests
+    assert 'vec!["nightly"]' in admin_tests
+    assert "publishing nightly co-work must not mutate stable" in admin_tests
 
 
 def test_co_work_nightly_update_does_not_touch_stable_or_binaries(tmp_path: Path) -> None:
@@ -81,7 +98,7 @@ def test_co_work_nightly_update_does_not_touch_stable_or_binaries(tmp_path: Path
     profile = nightly["profiles"]["co-work"]
 
     new["channels"]["nightly"]["manifests"][0]["digest"]["sha256"] = "f" * 64
-    profile["revision"] = "2026.07.02.2-nightly"
+    profile["revision"] = "1.1.1-nightly"
     profile["architectures"][0]["config"][0]["digest"]["sha256"] = "f" * 64
     profile["architectures"][0]["images"][0]["digest"]["sha256"] = "e" * 64
     profile["architectures"][0]["evidence"][0]["digest"]["blake3"] = "d" * 64
@@ -139,7 +156,7 @@ def test_profile_lane_rejects_other_profile_change(tmp_path: Path) -> None:
     new = deepcopy(old)
     new["manifests"]["nightly"]["1.0.2"]["profiles"]["code"][
         "revision"
-    ] = "2026.07.02.2-nightly"
+    ] = "1.1.1-nightly"
 
     summary = tmp_path / "profile-lane-summary.json"
     result = _run_policy(
@@ -180,6 +197,5 @@ def _run_policy(
         [sys.executable, str(DIFF_SCRIPT), "--old", str(old_path), "--new", str(new_path), *args],
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )

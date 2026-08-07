@@ -76,6 +76,12 @@ return 404; do not add compatibility aliases or generic gateway forwarding. The 
 contract lives in `docs/src/content/docs/architecture/service-api.md`; the
 common session routes are:
 
+Every method/path pair is also locked in `config/public-surface.toml`.
+`tests/test_public_surface_contract.py` derives the Axum route table and fails
+on any unapproved addition, removal, rename, method change, or count drift.
+Do not update that ledger merely to make a test green; changing the HTTP
+surface requires explicit product/API approval.
+
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/vms/create` | Create a session from a profile |

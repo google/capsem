@@ -29,7 +29,6 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.gateway import GatewayInstance, TcpHttpClient
 
@@ -189,8 +188,8 @@ class MockServiceHandler(BaseHTTPRequestHandler):
                     "validation_status": "valid",
                     "stale": False,
                     "binary": {
-                        "current": "1.3.1782582155",
-                        "latest": "1.3.1782600000",
+                        "current": "1.3.1",
+                        "latest": "1.3.2",
                         "update_available": True,
                         "state": "update_available",
                         "compatibility": "compatible",
@@ -316,9 +315,7 @@ class MockServiceHandler(BaseHTTPRequestHandler):
             self._send_error(404, f"unknown endpoint: {self.clean_path}")
 
     def do_DELETE(self):
-        if self.clean_path.startswith("/vms/") and self.clean_path.endswith("/delete"):
-            self._send_json({"ok": True})
-        elif self.clean_path.startswith("/images/"):
+        if (self.clean_path.startswith("/vms/") and self.clean_path.endswith("/delete")) or self.clean_path.startswith("/images/"):
             self._send_json({"ok": True})
         else:
             self._send_error(404, f"unknown endpoint: {self.clean_path}")

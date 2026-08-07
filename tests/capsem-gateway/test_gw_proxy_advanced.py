@@ -4,12 +4,11 @@ Tests binary responses, large bodies, endpoint coverage, and edge cases
 through the real gateway binary against the mock UDS service.
 """
 
+import os
 import subprocess
 import tempfile
-import os
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID
 
 pytestmark = pytest.mark.gateway
@@ -135,10 +134,17 @@ class TestProxyEdgeCases:
 
     def test_double_slash_in_path(self, gw_client):
         """Double slashes in path are handled gracefully."""
-        # axum normalizes // to /, so this should work or 404
-        resp = gw_client.get("//vms/list")
-        # Should not crash the gateway
-        assert resp is not None or True  # 404 is acceptable
+        # axum normalizes `//` to `/`, so this either answers or 404s. Any
+        # answer is acceptable; the point is that the gateway answered rather
+        # than dying.
+        #
+        # Asked through `get_raw`, which reports the status code. `get` parses
+        # a JSON body and returns None when there is none, so `is not None`
+        # asked whether the gateway happened to send JSON -- and a 404, the
+        # most likely correct answer here, does not.
+        status = gw_client.get_raw("//vms/list")
+        assert status != 0, "the gateway did not answer at all"
+        assert status < 500
 
     def test_very_long_query_string(self, gw_client):
         """Long query strings are forwarded without truncation."""

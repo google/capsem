@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
 
 import pytest
 
 from .conftest import (
+    BINARIES,
     CAPSEM_DIR,
     INSTALL_DIR,
-    BINARIES,
     run_capsem,
 )
 
@@ -47,10 +48,8 @@ class TestUninstall:
             for root, dirs, _files in os.walk(CAPSEM_DIR):
                 for d in dirs:
                     p = Path(root) / d
-                    try:
+                    with contextlib.suppress(OSError):
                         p.chmod(_stat.S_IRWXU)
-                    except OSError:
-                        pass
             shutil.rmtree(CAPSEM_DIR)
 
         # We need the binary to exist somewhere to run it

@@ -12,7 +12,6 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-
 DOCTOR_LEDGER = Path(__file__).with_name("test_doctor_ledger.py")
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DIAGNOSTICS_DIR = PROJECT_ROOT / "guest" / "artifacts" / "diagnostics"

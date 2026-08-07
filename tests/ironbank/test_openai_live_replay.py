@@ -12,6 +12,7 @@ from ironbank.model_client_config import (
     LIVE_OPENAI_IMAGE_MODEL,
     LIVE_OPENAI_RESPONSES_MODEL,
 )
+
 from tests.live_provider.test_live_provider_canaries import LIVE_PROVIDER_CANARIES
 
 

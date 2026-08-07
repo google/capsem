@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
 import sys
+from collections.abc import Iterator
+from pathlib import Path
 from types import ModuleType
-from typing import Iterator
 
 import pytest
 

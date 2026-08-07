@@ -136,10 +136,10 @@ def run_doctor(binary: str, assets_dir: str, mock_base_url: str) -> tuple[str, P
     env = _cli_env(assets_dir)
 
     existing_persistent = (
-        set(p.name for p in PERSISTENT_DIR.iterdir()) if PERSISTENT_DIR.exists() else set()
+        {p.name for p in PERSISTENT_DIR.iterdir()} if PERSISTENT_DIR.exists() else set()
     )
     existing_sessions = (
-        set(p.name for p in SESSIONS_DIR.iterdir()) if SESSIONS_DIR.exists() else set()
+        {p.name for p in SESSIONS_DIR.iterdir()} if SESSIONS_DIR.exists() else set()
     )
 
     session_name = f"doctor-ledger-{os.getpid()}-{int(time.time())}"

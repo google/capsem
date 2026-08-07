@@ -466,6 +466,74 @@ pub async fn emit_explicit_file_security_write_and_rules(
     Some(event_id)
 }
 
+/// Write a boundary's primary ledger row, run the plugin stages over its
+/// security event, evaluate the rule set, and hand back the decision the caller
+/// must honor before letting the operation proceed.
+///
+/// Every enforcing boundary goes through here so the file rail and the process
+/// rail cannot drift into different notions of what `block` means. Returning
+/// `SecurityRuleEmission` rather than a row count is deliberate: a caller cannot
+/// use this and accidentally not enforce.
+async fn emit_security_boundary_with_plugins(
+    db: &DbWriter,
+    rules: &SecurityRuleSet,
+    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    primary: WriteOp,
+    event_type: RuntimeSecurityEventType,
+    security_event: SecurityEvent,
+    boundary: &str,
+) -> Result<Option<SecurityRuleEmission>, String> {
+    let Some(event_id) = emit_security_write(db, primary).await else {
+        return Ok(None);
+    };
+    let security_event = prepare_event_for_security_rule_ledger(plugin_policy, security_event)?;
+    let plugin_decision = security_event.decision.effective;
+    let mut emission = emit_matching_security_rules_with_decision(
+        db,
+        event_id,
+        event_type,
+        rules,
+        &security_event,
+        current_unix_ms(),
+    )
+    .await?;
+    apply_plugin_decision_to_emission_labelled(plugin_decision, boundary, &mut emission);
+    Ok(Some(emission))
+}
+
+/// Raise an emission's enforcement to the decision the plugin stages produced.
+///
+/// Rules and plugins share the escalate-only decision rail, so this can only
+/// tighten: a plugin never talks a blocking rule down. The label names the
+/// boundary in the reason the user eventually reads.
+fn apply_plugin_decision_to_emission_labelled(
+    plugin_decision: SecurityDecisionKind,
+    boundary: &str,
+    emission: &mut SecurityRuleEmission,
+) {
+    match plugin_decision {
+        SecurityDecisionKind::Allow => {}
+        SecurityDecisionKind::Ask => {
+            if emission.enforcement.is_allowed() {
+                emission.enforcement.action = SecurityEnforcementAction::Ask;
+                emission.enforcement.reason = Some(format!("{boundary} requires plugin approval"));
+            }
+        }
+        SecurityDecisionKind::Block => {
+            emission.enforcement.action = SecurityEnforcementAction::Block;
+            emission.enforcement.reason = Some(format!("{boundary} blocked by plugin"));
+        }
+    }
+}
+
+fn apply_plugin_decision_to_emission(
+    plugin_decision: SecurityDecisionKind,
+    emission: &mut SecurityRuleEmission,
+) {
+    let boundary = emission.event.event_type.as_str().to_string();
+    apply_plugin_decision_to_emission_labelled(plugin_decision, &boundary, emission);
+}
+
 pub async fn emit_explicit_file_security_write_and_rules_with_plugins(
     db: &DbWriter,
     rules: &SecurityRuleSet,
@@ -483,35 +551,44 @@ pub async fn emit_explicit_file_security_write_and_rules_with_plugins(
     };
     let security_event = security_event_from_explicit_file_event(&event);
     let event_type = runtime_file_event_type(event.action);
-    let Some(event_id) = emit_security_write(db, WriteOp::FileEvent(primary)).await else {
-        return Ok(None);
-    };
-    let security_event = prepare_event_for_security_rule_ledger(plugin_policy, security_event)?;
-    let plugin_decision = security_event.decision.effective;
-    let mut emission = emit_matching_security_rules_with_decision(
+    emit_security_boundary_with_plugins(
         db,
-        event_id,
-        event_type,
         rules,
-        &security_event,
-        current_unix_ms(),
+        plugin_policy,
+        WriteOp::FileEvent(primary),
+        event_type,
+        security_event,
+        "file boundary",
     )
-    .await?;
-    match plugin_decision {
-        SecurityDecisionKind::Allow => {}
-        SecurityDecisionKind::Ask => {
-            if emission.enforcement.is_allowed() {
-                emission.enforcement.action = SecurityEnforcementAction::Ask;
-                emission.enforcement.reason =
-                    Some("file boundary requires plugin approval".to_string());
-            }
-        }
-        SecurityDecisionKind::Block => {
-            emission.enforcement.action = SecurityEnforcementAction::Block;
-            emission.enforcement.reason = Some("file boundary blocked by plugin".to_string());
-        }
-    }
-    Ok(Some(emission))
+    .await
+}
+
+/// The process-exec counterpart of the file boundary.
+///
+/// Host-initiated exec is decided *before* the command reaches the guest, so it
+/// enforces on the same terms as the network and file rails: the caller must
+/// honor `emission.enforcement` and refuse to dispatch on anything but `Allow`.
+///
+/// Its sibling `emit_process_audit_security_write_and_rules_blocking` stays
+/// detection-only by nature -- an audit record describes an `execve` the guest
+/// already performed, so there is nothing left to withhold.
+pub async fn emit_process_exec_security_boundary(
+    db: &DbWriter,
+    rules: &SecurityRuleSet,
+    plugin_policy: BTreeMap<String, SecurityPluginConfig>,
+    event: ExecEvent,
+) -> Result<Option<SecurityRuleEmission>, String> {
+    let security_event = security_event_from_exec_event(&event);
+    emit_security_boundary_with_plugins(
+        db,
+        rules,
+        plugin_policy,
+        WriteOp::ExecEvent(event),
+        RuntimeSecurityEventType::ProcessExec,
+        security_event,
+        "process exec",
+    )
+    .await
 }
 
 pub fn emit_file_security_write_and_rules_blocking(
@@ -647,33 +724,15 @@ pub fn security_event_from_explicit_file_event(event: &ExplicitFileSecurityEvent
             file.export_content = content;
         }
     }
-    let security_event = SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
-    match event.trace_id.clone() {
-        Some(trace_id) => security_event.with_trace_id(trace_id),
-        None => security_event,
+    let mut security_event =
+        SecurityEvent::new(runtime_file_event_type(event.action)).with_file(file);
+    if let Some(trace_id) = event.trace_id.clone() {
+        security_event = security_event.with_trace_id(trace_id);
     }
-}
-
-pub async fn emit_process_exec_security_write_and_rules(
-    db: &DbWriter,
-    rules: &SecurityRuleSet,
-    event: ExecEvent,
-) -> Option<SecurityEventId> {
-    let security_event = security_event_from_exec_event(&event);
-    let event_id = emit_security_write(db, WriteOp::ExecEvent(event)).await?;
-    if let Err(error) = emit_matching_security_rules(
-        db,
-        event_id.clone(),
-        RuntimeSecurityEventType::ProcessExec,
-        rules,
-        &security_event,
-        current_unix_ms(),
-    )
-    .await
-    {
-        tracing::warn!(error = %error, "failed to emit process exec security rule ledger rows");
+    if let Some(credential_ref) = event.credential_ref.clone() {
+        security_event = security_event.with_credential_ref(credential_ref);
     }
-    Some(event_id)
+    security_event
 }
 
 pub async fn emit_process_complete_security_write_and_rules(
@@ -854,6 +913,13 @@ pub async fn emit_matching_security_rules(
     .map(|emission| emission.emitted)
 }
 
+/// Run the plugin stages over an event, evaluate the rule set, write the ledger
+/// rows, and return the decision the caller must honor.
+///
+/// This is the entry point a boundary reaches for when it already owns its
+/// primary event id. It returns `SecurityRuleEmission` rather than a row count
+/// on purpose: a plugin verdict that never reaches the caller is a plugin that
+/// does not enforce, and the count-returning shape made that the easy default.
 pub async fn emit_matching_security_rules_with_plugins(
     db: &DbWriter,
     event_id: SecurityEventId,
@@ -862,11 +928,24 @@ pub async fn emit_matching_security_rules_with_plugins(
     plugin_policy: BTreeMap<String, SecurityPluginConfig>,
     event: SecurityEvent,
     timestamp_unix_ms: i64,
-) -> Result<usize, String> {
+) -> Result<SecurityRuleEmission, String> {
     let event = prepare_event_for_security_rule_ledger(plugin_policy, event)?;
-    emit_matching_security_rules(db, event_id, event_type, rules, &event, timestamp_unix_ms).await
+    let plugin_decision = event.decision.effective;
+    let mut emission = emit_matching_security_rules_with_decision(
+        db,
+        event_id,
+        event_type,
+        rules,
+        &event,
+        timestamp_unix_ms,
+    )
+    .await?;
+    apply_plugin_decision_to_emission(plugin_decision, &mut emission);
+    Ok(emission)
 }
 
+/// Blocking twin of [`emit_matching_security_rules_with_plugins`], for callers
+/// on a synchronous thread. Same contract: the decision comes back to you.
 pub fn emit_matching_security_rules_with_plugins_blocking(
     db: &DbWriter,
     event_id: SecurityEventId,
@@ -875,16 +954,19 @@ pub fn emit_matching_security_rules_with_plugins_blocking(
     plugin_policy: BTreeMap<String, SecurityPluginConfig>,
     event: SecurityEvent,
     timestamp_unix_ms: i64,
-) -> Result<usize, String> {
+) -> Result<SecurityRuleEmission, String> {
     let event = prepare_event_for_security_rule_ledger(plugin_policy, event)?;
-    emit_matching_security_rules_blocking(
+    let plugin_decision = event.decision.effective;
+    let mut emission = emit_matching_security_rules_with_decision_blocking(
         db,
         event_id,
         event_type,
         rules,
         &event,
         timestamp_unix_ms,
-    )
+    )?;
+    apply_plugin_decision_to_emission(plugin_decision, &mut emission);
+    Ok(emission)
 }
 
 pub fn emit_matching_security_rules_for_evaluated_event_blocking(
@@ -980,6 +1062,9 @@ fn prepare_evaluated_event_for_security_rule_ledger(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityRuleEmission {
+    /// The primary ledger row this emission hangs off. Callers correlate their
+    /// own follow-up rows (an exec completion, say) against it.
+    pub event_id: SecurityEventId,
     pub emitted: usize,
     pub enforcement: SecurityEnforcementDecision,
     pub event: SecurityEvent,
@@ -1118,6 +1203,7 @@ pub async fn emit_matching_security_rules_with_decision(
         enforcement.ask_id = Some(ask_id);
     }
     Ok(SecurityRuleEmission {
+        event_id,
         emitted,
         enforcement,
         event: enriched_event,
@@ -1198,6 +1284,7 @@ pub fn emit_matching_security_rules_with_decision_blocking(
         enforcement.ask_id = Some(ask_id);
     }
     Ok(SecurityRuleEmission {
+        event_id,
         emitted,
         enforcement,
         event: enriched_event,
@@ -1345,6 +1432,27 @@ fn decision_transition_rules<'a>(
     }
 }
 
+/// Escalate an enforcement decision to match the event's merged decision state.
+///
+/// Plugins request decisions on the same rail as rules, so a plugin running in
+/// `ask` or `block` mode has to be able to raise an allowing rule verdict. The
+/// merge behind `decision.effective` is escalate-only, so this can only ever
+/// tighten the decision -- a plugin cannot talk a blocking rule down to allow.
+fn apply_event_decision_to_enforcement(
+    event: &SecurityEvent,
+    enforcement: &mut SecurityEnforcementDecision,
+) {
+    match event.decision.effective {
+        SecurityDecisionKind::Block => enforcement.action = SecurityEnforcementAction::Block,
+        SecurityDecisionKind::Ask => {
+            if matches!(enforcement.action, SecurityEnforcementAction::Allow) {
+                enforcement.action = SecurityEnforcementAction::Ask;
+            }
+        }
+        SecurityDecisionKind::Allow => {}
+    }
+}
+
 fn security_enforcement_decision(
     rule: Option<&CompiledSecurityRule>,
 ) -> SecurityEnforcementDecision {
@@ -1387,18 +1495,10 @@ pub fn evaluate_security_boundary(
         event.request_decision(requested_decision_for_rule(rule.action));
     }
     let mut enforcement = security_enforcement_decision(selected_rule);
-    if matches!(event.decision.effective, SecurityDecisionKind::Block) {
-        enforcement.action = SecurityEnforcementAction::Block;
-    } else if matches!(event.decision.effective, SecurityDecisionKind::Ask)
-        && matches!(enforcement.action, SecurityEnforcementAction::Allow)
-    {
-        enforcement.action = SecurityEnforcementAction::Ask;
-    }
+    apply_event_decision_to_enforcement(&event, &mut enforcement);
 
     event = action_registry.apply_security_plugins(SecurityPluginStage::Postprocess, event)?;
-    if matches!(event.decision.effective, SecurityDecisionKind::Block) {
-        enforcement.action = SecurityEnforcementAction::Block;
-    }
+    apply_event_decision_to_enforcement(&event, &mut enforcement);
 
     Ok(SecurityBoundaryEvaluation {
         event,
@@ -2068,6 +2168,107 @@ impl SecurityEvent {
         SerializableSecurityEvent::from(self)
     }
 }
+
+/// Every CEL field the security-event subject can resolve, fully qualified and
+/// sorted.
+///
+/// This is the rule-authoring contract. `validate_security_event_field` rejects
+/// anything absent from this list, so a misspelled leaf (`file.wrte.path`) or a
+/// bare family root (`has(http)`) fails rule compilation instead of compiling
+/// into a rule that silently never matches. Every arm of the `get` methods below
+/// needs an entry here; `security_event_cel_fields_all_resolve` guards the
+/// pairing.
+pub const SECURITY_EVENT_CEL_FIELDS: &[&str] = &[
+    "dns.qname",
+    "dns.qtype",
+    "dns.valid",
+    "file.content",
+    "file.create.content",
+    "file.create.ext",
+    "file.create.mime_type",
+    "file.create.name",
+    "file.create.path",
+    "file.create.valid",
+    "file.delete.content",
+    "file.delete.ext",
+    "file.delete.mime_type",
+    "file.delete.name",
+    "file.delete.path",
+    "file.delete.valid",
+    "file.export.content",
+    "file.export.ext",
+    "file.export.mime_type",
+    "file.export.name",
+    "file.export.path",
+    "file.export.valid",
+    "file.import.content",
+    "file.import.ext",
+    "file.import.mime_type",
+    "file.import.name",
+    "file.import.path",
+    "file.import.valid",
+    "file.read.content",
+    "file.read.ext",
+    "file.read.mime_type",
+    "file.read.name",
+    "file.read.path",
+    "file.read.valid",
+    "file.valid",
+    "file.write.content",
+    "file.write.ext",
+    "file.write.mime_type",
+    "file.write.name",
+    "file.write.path",
+    "file.write.valid",
+    "http.body",
+    "http.host",
+    "http.method",
+    "http.path",
+    "http.query",
+    "http.status",
+    "http.valid",
+    "ip.valid",
+    "ip.value",
+    "ip.version",
+    "mcp.event.valid",
+    "mcp.method",
+    "mcp.request.arguments",
+    "mcp.request.id",
+    "mcp.request.method",
+    "mcp.request.valid",
+    "mcp.response.content",
+    "mcp.response.valid",
+    "mcp.server.name",
+    "mcp.server.valid",
+    "mcp.tool_call.name",
+    "mcp.tool_call.valid",
+    "mcp.tool_list",
+    "mcp.tool_list.valid",
+    "mcp.valid",
+    "model.name",
+    "model.provider",
+    "model.request.body",
+    "model.request.tool_calls",
+    "model.request.valid",
+    "model.response.body",
+    "model.response.valid",
+    "model.tool_call.valid",
+    "model.valid",
+    "process.audit.valid",
+    "process.command",
+    "process.exec.exit_code",
+    "process.exec.id",
+    "process.exec.path",
+    "process.exec.stderr",
+    "process.exec.stdout",
+    "process.exec.valid",
+    "process.name",
+    "process.valid",
+    "tcp.port",
+    "tcp.valid",
+    "udp.port",
+    "udp.valid",
+];
 
 impl PolicySubject for SecurityEvent {
     fn get_policy_field(&self, field: &str) -> Option<PolicySubjectValue<'_>> {

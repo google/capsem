@@ -45,7 +45,7 @@ Provides actionable patterns for responsive, accessible UIs with Tailwind CSS v4
   <!-- Items -->
 </div>
 
-<!-- Card (use Preline semantic tokens) -->
+<!-- Card (use Capsem-owned semantic tokens) -->
 <div class="bg-card border border-card-line rounded-xl shadow-2xs p-6">
   <h3 class="text-xl font-bold text-foreground">Title</h3>
   <p class="text-muted-foreground-1">Description</p>
@@ -63,7 +63,7 @@ Provides actionable patterns for responsive, accessible UIs with Tailwind CSS v4
 
 ## Examples
 
-### Responsive Card (Preline tokens)
+### Responsive Card (Capsem-owned tokens)
 
 ```html
 <div class="bg-card border border-card-line rounded-xl shadow-2xs overflow-hidden sm:flex">
@@ -79,7 +79,9 @@ Provides actionable patterns for responsive, accessible UIs with Tailwind CSS v4
 
 ### Dark Mode
 
-Preline handles dark mode via `.dark` class on `<html>`. All semantic tokens flip automatically -- no manual `dark:` prefixes needed for token-based styles.
+Capsem's checked-in semantic theme handles dark mode via the `.dark` class on
+`<html>`. All semantic tokens flip automatically, with no component-library
+runtime or manual `dark:` prefixes required for token-based styles.
 
 ```html
 <!-- Tokens auto-adapt to dark mode -->

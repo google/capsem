@@ -20,6 +20,7 @@ leak trays/gateways that interfere with subsequent runs.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import signal
@@ -30,11 +31,10 @@ import time
 import uuid
 from pathlib import Path
 
+import psutil
 import pytest
-
-from helpers.sign import sign_binary
 from helpers.service import ServiceInstance
-
+from helpers.sign import sign_binary
 
 pytestmark = pytest.mark.integration
 
@@ -288,10 +288,8 @@ class TestCompanionSingleton:
                 for p in parents:
                     p.kill()
                 for p in parents:
-                    try:
+                    with contextlib.suppress(subprocess.TimeoutExpired):
                         p.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        pass
 
     def test_gateway_second_spawn_exits(self):
         _sign()
@@ -367,14 +365,10 @@ class TestCompanionDiesWithParent:
                     "SIGKILL -- orphan regression"
                 )
             finally:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     parent.kill()
-                except ProcessLookupError:
-                    pass
-                try:
+                with contextlib.suppress(subprocess.TimeoutExpired):
                     parent.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    pass
 
     def test_gateway_exits_when_parent_sigkilled(self):
         _sign()
@@ -402,14 +396,10 @@ class TestCompanionDiesWithParent:
                     f"gateway {child_pid} must exit after parent SIGKILL"
                 )
             finally:
-                try:
+                with contextlib.suppress(ProcessLookupError):
                     parent.kill()
-                except ProcessLookupError:
-                    pass
-                try:
+                with contextlib.suppress(subprocess.TimeoutExpired):
                     parent.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    pass
 
 
 class TestServiceSigkillReapsAllCompanions:
@@ -804,11 +794,11 @@ def _spawn_service_on_fixed_port(
     filterwarnings=error promotes the leaked fd to a hard failure.
     """
     from helpers.service import (
-        SERVICE_BINARY,
-        PROCESS_BINARY,
-        GATEWAY_BINARY,
-        TRAY_BINARY,
         ASSETS_DIR,
+        GATEWAY_BINARY,
+        PROCESS_BINARY,
+        SERVICE_BINARY,
+        TRAY_BINARY,
         materialize_test_profiles,
     )
 
@@ -823,7 +813,7 @@ def _spawn_service_on_fixed_port(
     env["CAPSEM_PROFILES_DIR"] = str(materialize_test_profiles(tmp_dir))
     env["HOME"] = str(tmp_dir)
     env["CAPSEM_TRAY_HEADLESS"] = "1"
-    log_file = open(log_path, "w")
+    log_file = open(log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
     proc = subprocess.Popen(
         [
             str(SERVICE_BINARY),
@@ -906,7 +896,7 @@ def _port_is_listening(port: int) -> bool:
         try:
             s.connect(("127.0.0.1", port))
             return True
-        except (ConnectionRefusedError, socket.timeout):
+        except (TimeoutError, ConnectionRefusedError):
             return False
 
 
@@ -936,3 +926,51 @@ def _pid_alive(pid: int) -> bool:
         return False
     state = out.strip()
     return bool(state) and not state.startswith("Z")
+
+
+class TestServiceTrayStaysOffTheMenuBar:
+    """A suite run must not put icons in the developer's menu bar.
+
+    Omitting --tray-binary does not prevent the tray: the service falls back
+    to `find_sibling_binary("capsem-tray")`, a fallback the CLI's own
+    auto-start depends on because it passes no companion paths at all. And the
+    tray's singleton lock lives at `$CAPSEM_RUN_DIR/tray.lock`, which every
+    ServiceInstance points at its own temp dir, so the locks never dedupe --
+    one live tray per service, each building a real NSStatusItem.
+
+    CAPSEM_TRAY_HEADLESS is what actually keeps the menu bar quiet. It drops
+    only the icon: the companion still starts, holds its guard and lock, and
+    is reaped with the service, so the coverage above stays intact.
+    """
+
+    def test_suite_env_runs_trays_headless(self):
+        assert os.environ.get("CAPSEM_TRAY_HEADLESS"), (
+            "tests/conftest.py must mark the whole suite headless before any "
+            "service starts; without it every ServiceInstance adds a menu bar "
+            "icon on macOS"
+        )
+
+    def test_service_passes_headless_through_to_its_tray(self):
+        """The setting is useless if it does not reach the spawned companion."""
+        svc = ServiceInstance()
+        svc.start()
+        try:
+            time.sleep(1.0)
+            if sys.platform != "darwin":
+                pytest.skip("the tray is macOS-only")
+            trays = [
+                psutil.Process(pid)
+                for pid in _list_direct_children(svc.proc.pid)
+                if "capsem-tray" in " ".join(psutil.Process(pid).cmdline())
+            ]
+            assert trays, (
+                "expected the service to spawn a tray via sibling fallback; if "
+                "this stops being true the headless rail is guarding nothing"
+            )
+            for tray in trays:
+                assert "CAPSEM_TRAY_HEADLESS" in tray.environ(), (
+                    f"tray {tray.pid} did not inherit CAPSEM_TRAY_HEADLESS, so "
+                    "it built a real menu bar icon"
+                )
+        finally:
+            svc.stop()

@@ -8,7 +8,6 @@ Codex CLI proof discoverable as a release item.
 from __future__ import annotations
 
 import pytest
-
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_config import HERMETIC_OPENAI_COMPAT_MODEL
 from ironbank.model_client_scripts import codex_cli_script, codex_ollama_launch_script

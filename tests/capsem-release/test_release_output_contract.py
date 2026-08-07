@@ -18,7 +18,6 @@ from typing import Any
 import blake3
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL = "stable"
 FIXTURE_GRAPH = (
@@ -104,14 +103,14 @@ def test_manifest_uses_package_owned_binary_graph(
     packages = manifest["packages"]
     assert isinstance(packages, list)
     assert packages
-    assert REQUIRED_PACKAGE_KINDS <= {package.get("kind") for package in packages}
+    assert {package.get("kind") for package in packages} >= REQUIRED_PACKAGE_KINDS
 
     binary_names = {
         binary.get("name")
         for package in packages
         for binary in package.get("binaries", [])
     }
-    assert REQUIRED_BINARY_NAMES <= binary_names
+    assert binary_names >= REQUIRED_BINARY_NAMES
 
     for index, package in enumerate(packages):
         context = f"packages[{index}]"
@@ -285,8 +284,10 @@ def test_profile_software_inventory_is_complete_and_hashed(
                 assert isinstance(package["source"], str), context
                 assert package["architecture"] == arch, context
                 assert isinstance(package["evidence"], str), context
-                assert package["evidence"].startswith("/assets/releases/"), context
-                assert package["evidence"].endswith("-software-inventory.json"), context
+                assert package["evidence"].startswith(
+                    f"/profiles/releases/{CHANNEL}/{profile_id}/"
+                ), context
+                assert package["evidence"].endswith("/software-inventory.json"), context
                 assert set(package["digest"]) == {"sha256", "blake3"}, context
                 _assert_no_hmac(package, context)
                 for digest_name, digest_value in package["digest"].items():
@@ -543,13 +544,13 @@ def _check_package_digests_real(dist: Path) -> None:
 
 def _check_packages_own_binaries(dist: Path) -> None:
     packages = _selected_manifest(dist)["packages"]
-    assert REQUIRED_PACKAGE_KINDS <= {package.get("kind") for package in packages}
+    assert {package.get("kind") for package in packages} >= REQUIRED_PACKAGE_KINDS
     binary_names = {
         binary.get("name")
         for package in packages
         for binary in package.get("binaries", [])
     }
-    assert REQUIRED_BINARY_NAMES <= binary_names
+    assert binary_names >= REQUIRED_BINARY_NAMES
     for package in packages:
         binaries = package.get("binaries")
         assert isinstance(binaries, list), package
@@ -591,7 +592,7 @@ def _check_profile_config_complete(dist: Path) -> None:
     for profile_id, profile in _selected_manifest(dist)["profiles"].items():
         expected = _expected_profile_config_files(profile_id)
         actual = {
-            Path(item["path"]).name
+            item["path"]
             for architecture in _profile_architectures(profile).values()
             for item in architecture["config"]
         }
@@ -609,7 +610,7 @@ def _check_profile_images_complete(dist: Path) -> None:
     for profile_id, profile in _selected_manifest(dist)["profiles"].items():
         for arch, image in _profile_images(profile).items():
             kinds = {artifact["kind"] for artifact in image["artifacts"]}
-            assert REQUIRED_IMAGE_ARTIFACT_KINDS <= kinds, (
+            assert kinds >= REQUIRED_IMAGE_ARTIFACT_KINDS, (
                 f"{profile_id}/{arch} missing "
                 f"{sorted(REQUIRED_IMAGE_ARTIFACT_KINDS - kinds)}"
             )
@@ -709,17 +710,28 @@ def _expected_profile_config_files(profile_id: str) -> set[str]:
     profile_dir = PROFILE_CONFIG_ROOT / profile_id
     profile_toml = tomllib.loads((profile_dir / "profile.toml").read_text(encoding="utf-8"))
     declared = {
-        Path(value).name
+        value["path"]
         for value in profile_toml.get("files", {}).values()
-        if isinstance(value, str)
+        if isinstance(value, dict) and isinstance(value.get("path"), str)
     }
     rule_files = {
-        Path(value).name
-        for value in profile_toml.get("rules", {}).get("files", [])
+        value
+        for value in profile_toml.get("rule_files", {}).values()
         if isinstance(value, str)
     }
-    existing_required = {name for name in REQUIRED_PROFILE_CONFIG_FILES if (profile_dir / name).is_file()}
-    return existing_required | declared | rule_files
+    existing_required = {
+        f"profiles/{profile_id}/{name}"
+        for name in REQUIRED_PROFILE_CONFIG_FILES
+        if (profile_dir / name).is_file()
+    }
+    root_manifest = json.loads(
+        (profile_dir / "root.manifest.json").read_text(encoding="utf-8")
+    )
+    root_payloads = {
+        f"profiles/{profile_id}/root/{entry['path']}"
+        for entry in root_manifest["files"]
+    }
+    return existing_required | declared | rule_files | root_payloads
 
 
 def _profile_images(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:

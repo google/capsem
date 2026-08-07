@@ -6,11 +6,12 @@ just another persistent VM. These tests exercise capsem_fork end to end
 paths that used to live under capsem_image_*.
 """
 
+import contextlib
 import uuid
 
 import pytest
-
-from helpers.mcp import content_text, parse_content, wait_exec_ready as _wait_exec_ready
+from helpers.mcp import content_text, parse_content
+from helpers.mcp import wait_exec_ready as _wait_exec_ready
 
 pytestmark = pytest.mark.mcp
 
@@ -106,10 +107,8 @@ def test_full_lifecycle(mcp_session):
         assert "mcp-fork-marker" in content_text(res)
     finally:
         for vm in [child_vm, fork_name, vm_name]:
-            try:
+            with contextlib.suppress(Exception):
                 mcp_session.call_tool("capsem_delete", {"id": vm})
-            except Exception:
-                pass
 
 
 def test_fork_with_file_io(mcp_session):
@@ -157,10 +156,8 @@ def test_fork_with_file_io(mcp_session):
         assert "file-io-marker" in content_text(res)
     finally:
         for vm in [child_vm, fork_name, vm_name]:
-            try:
+            with contextlib.suppress(Exception):
                 mcp_session.call_tool("capsem_delete", {"id": vm})
-            except Exception:
-                pass
 
 
 def test_fork_of_fork(mcp_session):
@@ -206,10 +203,8 @@ def test_fork_of_fork(mcp_session):
         assert "second-layer" in content_text(res)
     finally:
         for vm in [vm3, vm2, vm1, fork2, fork1]:
-            try:
+            with contextlib.suppress(Exception):
                 mcp_session.call_tool("capsem_delete", {"id": vm})
-            except Exception:
-                pass
 
 
 def test_delete_parent_fork_child_still_boots(mcp_session):
@@ -249,10 +244,8 @@ def test_delete_parent_fork_child_still_boots(mcp_session):
         assert fork1 not in names
     finally:
         for vm in [vm2, vm1, fork1]:
-            try:
+            with contextlib.suppress(Exception):
                 mcp_session.call_tool("capsem_delete", {"id": vm})
-            except Exception:
-                pass
 
 
 # ---------------------------------------------------------------------------
@@ -289,10 +282,8 @@ def test_fork_duplicate_name(mcp_session):
         assert result.get("isError") is True or "error" in resp
     finally:
         for vm in [vm_name, fork_name]:
-            try:
+            with contextlib.suppress(Exception):
                 mcp_session.call_tool("capsem_delete", {"id": vm})
-            except Exception:
-                pass
 
 
 def test_create_from_nonexistent_fork(mcp_session):

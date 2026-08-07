@@ -1,0 +1,94 @@
+name: Fetch manifest-selected release inputs
+description: Restore, fetch, verify, and retain immutable manifest-addressed blobs.
+
+inputs:
+  manifest-url:
+    description: Fresh mutable manifest URL that selects the artifact set.
+    required: true
+  kind:
+    description: Manifest artifact family.
+    required: true
+  architecture:
+    description: Optional profile architecture selection.
+    required: false
+    default: ""
+  output:
+    description: Verified release-input output directory.
+    required: true
+  bootstrap-manifest-url:
+    description: Optional manifest used only for an absent first-party channel.
+    required: false
+    default: ""
+  allow-empty-profiles:
+    description: Permit an explicitly empty bootstrap profile set.
+    required: false
+    default: "false"
+  allow-empty-packages:
+    description: Permit an explicitly empty bootstrap package cohort.
+    required: false
+    default: "false"
+  local-publication-base:
+    description: Optional immutable publication URL prefix staged by the current workflow.
+    required: false
+    default: ""
+  local-publication-dir:
+    description: Optional local directory containing the staged immutable publication.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Restore manifest-addressed blob cache
+      uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684
+      with:
+        path: target/release-input-cache
+        key: capsem-release-blobs-v1-${{ runner.os }}-${{ inputs.architecture || inputs.kind }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}
+        restore-keys: |
+          capsem-release-blobs-v1-${{ runner.os }}-${{ inputs.architecture || inputs.kind }}-
+
+    - name: Fetch and verify manifest-selected inputs
+      id: fetch
+      shell: bash
+      run: |
+        set -euo pipefail
+        args=(
+          --manifest-url "${{ inputs.manifest-url }}"
+          --kind "${{ inputs.kind }}"
+          --output "${{ inputs.output }}"
+          --cache-dir target/release-input-cache
+        )
+        if [[ -n "${{ inputs.architecture }}" ]]; then
+          args+=(--architecture "${{ inputs.architecture }}")
+        fi
+        if [[ -n "${{ inputs.bootstrap-manifest-url }}" ]]; then
+          args+=(--bootstrap-manifest-url "${{ inputs.bootstrap-manifest-url }}")
+        fi
+        if [[ "${{ inputs.allow-empty-profiles }}" == "true" ]]; then
+          args+=(--allow-empty-profiles)
+        fi
+        if [[ "${{ inputs.allow-empty-packages }}" == "true" ]]; then
+          args+=(--allow-empty-packages)
+        fi
+        if [[ -n "${{ inputs.local-publication-base }}" || -n "${{ inputs.local-publication-dir }}" ]]; then
+          test -n "${{ inputs.local-publication-base }}"
+          test -n "${{ inputs.local-publication-dir }}"
+          args+=(
+            --local-publication-base "${{ inputs.local-publication-base }}"
+            --local-publication-dir "${{ inputs.local-publication-dir }}"
+          )
+        fi
+        uv run python scripts/fetch-release-artifacts.py "${args[@]}"
+        uv run python scripts/verify-release-inputs.py \
+          --input-dir "${{ inputs.output }}"
+        cache_misses="$(uv run python -c \
+          'import json,sys; print(json.load(open(sys.argv[1]))["cache"]["misses"])' \
+          "${{ inputs.output }}/release-inputs.json")"
+        echo "cache-misses=$cache_misses" >> "$GITHUB_OUTPUT"
+
+    - name: Save updated manifest-addressed blob cache
+      if: steps.fetch.outputs.cache-misses != '0'
+      uses: actions/cache/save@5a3ec84eff668545956fd18022155c47e93e2684
+      with:
+        path: target/release-input-cache
+        key: capsem-release-blobs-v1-${{ runner.os }}-${{ inputs.architecture || inputs.kind }}-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.job }}

@@ -1,7 +1,6 @@
 """capsem_service_logs: read the last ~100KB of service.log with grep/tail."""
 
 import pytest
-
 from helpers.mcp import content_text
 
 pytestmark = pytest.mark.mcp

@@ -33,7 +33,7 @@ use serde_json::json;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path as StdPath, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use tokio::net::UnixListener;
 use tokio::process::Command;
 use tokio_unix_ipc::{channel_from_std, Receiver, Sender};
@@ -42,19 +42,69 @@ use tracing::{error, info, warn, Instrument};
 
 mod startup;
 
+/// Ceiling on a session log tail returned over the API. `serial.log` is guest
+/// console output written through `CappedLogWriter`, so its size is the guest's
+/// choice, not ours; every reader takes a bounded tail.
+const SESSION_LOG_TAIL_MAX_BYTES: usize = 5 * 1024 * 1024;
+
 const RESUME_CHECKPOINT_NAME: &str = "checkpoint.vzsave";
-const RESUME_CHECKPOINT_COMPLETE_NAME: &str = "checkpoint.vzsave.complete";
 const SUSPEND_CONFIRM_TIMEOUT_SECS: u64 = 45;
 const UPDATE_CACHE_TTL_SECS: u64 = 24 * 3600;
+const AUTOMATIC_UPDATE_INITIAL_DELAY_SECS: u64 = 60;
+const AUTOMATIC_UPDATE_POLL_SECS: u64 = 60 * 60;
+const AUTOMATIC_UPDATE_BUSY_RETRY_SECS: u64 = 5 * 60;
+const AUTOMATIC_UPDATE_MAX_BACKOFF_SECS: u64 = 24 * 60 * 60;
+const AUTOMATIC_UPDATE_INITIAL_DELAY_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_INITIAL_DELAY_SECS";
+const AUTOMATIC_UPDATE_POLL_ENV: &str = "CAPSEM_AUTOMATIC_UPDATE_POLL_SECS";
 
-fn checkpoint_complete_path(checkpoint_path: &StdPath) -> PathBuf {
-    let marker_name = checkpoint_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| format!("{name}.complete"))
-        .unwrap_or_else(|| RESUME_CHECKPOINT_COMPLETE_NAME.to_string());
-    checkpoint_path.with_file_name(marker_name)
+use capsem_core::paths::checkpoint_complete_path;
+
+/// Owns `$run_dir/service.pid` -- the only handle a harness has on a detached
+/// service. Written when this process takes the socket, removed on clean
+/// shutdown so a stale pid cannot make a dead service look alive to whatever
+/// is waiting to reap it.
+///
+/// Removal is ownership-checked. A pidfile that no longer records our pid
+/// belongs to a successor that claimed the run directory while we were shutting
+/// down, and erasing it strands that successor exactly as this guard exists to
+/// prevent: `stop_gate_pidfile` on a missing file is indistinguishable from a
+/// successful reap.
+struct ServicePidfile {
+    path: std::path::PathBuf,
+    pid: u32,
 }
+
+impl ServicePidfile {
+    /// Claim the pidfile for this process.
+    ///
+    /// Call only once we own the service socket. A starter that claims before
+    /// the startup race resolves and then loses it -- the "compatible
+    /// capsem-service already running; exiting 0" path -- drops this guard on
+    /// the way out and takes the winner's pid with it.
+    fn claim(path: std::path::PathBuf) -> Self {
+        let pid = std::process::id();
+        if let Err(error) = std::fs::write(&path, pid.to_string()) {
+            warn!(path = %path.display(), %error, "failed to write service pidfile");
+        }
+        Self { path, pid }
+    }
+
+    fn records_us(&self) -> bool {
+        std::fs::read_to_string(&self.path)
+            .ok()
+            .and_then(|raw| raw.trim().parse::<u32>().ok())
+            .is_some_and(|recorded| recorded == self.pid)
+    }
+}
+
+impl Drop for ServicePidfile {
+    fn drop(&mut self) {
+        if self.records_us() {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
 
 #[cfg(test)]
 thread_local! {
@@ -157,7 +207,7 @@ struct ServiceState {
     run_dir: PathBuf,
     job_counter: AtomicU64,
     /// v2 manifest (None in dev mode where assets use logical names)
-    manifest: Option<Arc<capsem_core::asset_manager::ManifestV2>>,
+    manifest: RwLock<Option<Arc<capsem_core::asset_manager::ManifestV2>>>,
     current_version: String,
     /// In-memory asset reconciliation progress. Service startup and explicit
     /// /profiles/{profile_id}/assets/ensure shares this single rail with
@@ -260,6 +310,15 @@ struct ServiceState {
     /// sufficient because production runs exactly one capsem-service per
     /// user-host.
     shutdown_lock: tokio::sync::Mutex<()>,
+    /// Serializes every explicit and automatic update command. The update
+    /// transaction owns binaries, profiles, assets, and the selected manifest
+    /// together, so the service must never launch split or overlapping
+    /// mutations.
+    update_lock: tokio::sync::Mutex<()>,
+    /// Requests a managed service shutdown after a package update selects a
+    /// different binary. LaunchAgent/systemd then starts the newly installed
+    /// service instead of leaving the old process attached to the new graph.
+    update_restart: tokio::sync::Notify,
     /// Keeps the unique filesystem root alive for helpers that return only a
     /// service state. Test constructors that return their TempDir separately
     /// leave this empty.
@@ -750,16 +809,12 @@ fn prewarm_vm_asset_hash_cache(
     }
 }
 
-/// Maximum number of `-failed-*` session dirs preserved across crashes /
-/// wait_for_vm_ready timeouts / dead-process cleanup -- and now also for
-/// every clean DELETE, so post-mortem of Python-side test assertions that
-/// fire after /exec but before the test's `finally: delete()` works (the
-/// previous unlink-on-delete left only service.log, which doesn't show
-/// what the per-VM process or guest were doing). The preserved dirs hold
-/// the only host-side post-mortem signal we have (process.log,
-/// mcp-aggregator.stderr.log, serial.log, session.db). 32 is enough to
-/// span a 10-iteration stress suite that creates 1-3 VMs per iteration
-/// without losing earlier failures to the cull.
+/// Maximum number of `-failed-*` session dirs preserved across crashes,
+/// wait_for_vm_ready timeouts, and dead-process cleanup. The preserved dirs
+/// hold the host-side post-mortem signal for genuinely failed sessions
+/// (process.log, mcp-aggregator.stderr.log, serial.log, and session.db).
+/// Clean DELETE is deliberately excluded: its public contract is to destroy
+/// all retained state.
 const MAX_FAILED_SESSIONS: usize = 32;
 
 impl ServiceState {
@@ -1154,6 +1209,7 @@ impl ServiceState {
                 if !entry.defunct {
                     warn!(
                         name,
+                        cause = capsem_core::session::boot_failure_summary(&tail),
                         "marking persistent VM defunct from preserved boot logs"
                     );
                     entry.defunct = true;
@@ -1267,6 +1323,131 @@ impl ServiceState {
             }
         }
         Ok(())
+    }
+
+    /// Permanently remove one service-owned session directory.
+    ///
+    /// Persistent registry data is user-writable state, so never pass its
+    /// `session_dir` directly to `remove_dir_all`. Restrict deletion to a
+    /// real, direct child of this service's sessions/ or persistent/ roots
+    /// and reject symlinks before performing the recursive removal.
+    fn delete_session_dir(&self, session_dir: &StdPath) -> Result<()> {
+        let parent = session_dir.parent().ok_or_else(|| {
+            anyhow!(
+                "refusing to delete session path without a parent: {}",
+                session_dir.display()
+            )
+        })?;
+        let allowed_parents = [
+            self.run_dir.join("sessions"),
+            self.run_dir.join("persistent"),
+        ];
+
+        let canonical_run_dir = self.run_dir.canonicalize().with_context(|| {
+            format!(
+                "canonicalize service run directory before delete: {}",
+                self.run_dir.display()
+            )
+        })?;
+        let canonical_requested_parent = parent.canonicalize().with_context(|| {
+            format!(
+                "canonicalize requested session root before delete: {}",
+                parent.display()
+            )
+        })?;
+        let mut canonical_parent = None;
+        for allowed_parent in &allowed_parents {
+            let parent_metadata = match std::fs::symlink_metadata(allowed_parent) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!(
+                            "inspect service session root before delete: {}",
+                            allowed_parent.display()
+                        )
+                    });
+                }
+            };
+            if parent_metadata.file_type().is_symlink() || !parent_metadata.is_dir() {
+                if parent == allowed_parent.as_path() {
+                    return Err(anyhow!(
+                        "refusing to delete through non-directory service session root: {}",
+                        allowed_parent.display()
+                    ));
+                }
+                continue;
+            }
+
+            let candidate = allowed_parent.canonicalize().with_context(|| {
+                format!(
+                    "canonicalize service session root before delete: {}",
+                    allowed_parent.display()
+                )
+            })?;
+            if candidate.parent() != Some(canonical_run_dir.as_path()) {
+                if canonical_requested_parent == candidate {
+                    return Err(anyhow!(
+                        "refusing to delete through session root outside canonical run directory: {}",
+                        allowed_parent.display()
+                    ));
+                }
+                continue;
+            }
+            if canonical_requested_parent == candidate {
+                canonical_parent = Some(candidate);
+                break;
+            }
+        }
+        let canonical_parent = canonical_parent.ok_or_else(|| {
+            anyhow!(
+                "refusing to delete session path outside service roots: {}",
+                session_dir.display()
+            )
+        })?;
+
+        let metadata = match std::fs::symlink_metadata(session_dir) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "inspect session path before delete: {}",
+                        session_dir.display()
+                    )
+                });
+            }
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(anyhow!(
+                "refusing to recursively delete non-directory session path: {}",
+                session_dir.display()
+            ));
+        }
+
+        let canonical_session = session_dir.canonicalize().with_context(|| {
+            format!(
+                "canonicalize service session path before delete: {}",
+                session_dir.display()
+            )
+        })?;
+        if canonical_session.parent() != Some(canonical_parent.as_path()) {
+            return Err(anyhow!(
+                "refusing to delete session path outside canonical service root: {}",
+                session_dir.display()
+            ));
+        }
+
+        // Remove the already verified canonical child, not a registry-provided
+        // alias. This keeps a legitimate macOS /var -> /private/var spelling
+        // difference working without giving a mutable alias another path
+        // resolution opportunity at the destructive operation.
+        std::fs::remove_dir_all(&canonical_session).with_context(|| {
+            format!(
+                "delete canonical session directory: {}",
+                canonical_session.display()
+            )
+        })
     }
 
     fn provision_sandbox(self: &Arc<Self>, options: ProvisionOptions) -> Result<()> {
@@ -1474,6 +1655,14 @@ impl ServiceState {
                 .arg(&resolved.kernel)
                 .arg("--initrd")
                 .arg(&resolved.initrd)
+                // The profile's own pins. Boot verifies against these, never
+                // against a channel-wide pointer that can only name one profile.
+                .arg("--expected-kernel-hash")
+                .arg(&asset_pins.kernel.hash)
+                .arg("--expected-initrd-hash")
+                .arg(&asset_pins.initrd.hash)
+                .arg("--expected-rootfs-hash")
+                .arg(&asset_pins.rootfs.hash)
                 .arg("--session-dir")
                 .arg(&session_dir)
                 .arg("--active-profile")
@@ -1486,6 +1675,10 @@ impl ServiceState {
                 .arg(scratch_disk_size_gb.to_string())
                 .arg("--uds-path")
                 .arg(&uds_path)
+                // Explicitly, because `uds_path` may have been shortened out
+                // of the run tree and cannot be walked back up.
+                .arg("--run-dir")
+                .arg(&self.run_dir)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
                 .stderr(std::process::Stdio::from(process_log_file))
                 .spawn()
@@ -1581,7 +1774,13 @@ impl ServiceState {
                         entry.checkpoint_path = None;
                         if unexpected_exit {
                             entry.defunct = true;
-                            entry.last_error = Some(read_process_log_tail(&session_dir_clone, 20));
+                            let tail = read_process_log_tail(&session_dir_clone, 20);
+                            warn!(
+                                id_clone,
+                                cause = capsem_core::session::boot_failure_summary(&tail),
+                                "persistent VM marked defunct after unexpected exit"
+                            );
+                            entry.last_error = Some(tail);
                         } else {
                             // Graceful stop / delete path -- not a crash.
                             entry.defunct = false;
@@ -1589,7 +1788,7 @@ impl ServiceState {
                         }
                     }
                     if let Err(e) = registry.save() {
-                        error!(id_clone, "failed to save persistent registry: {e}");
+                        error!(id_clone, error = %e, "failed to save persistent registry");
                     }
                 }
             }
@@ -1839,6 +2038,14 @@ impl ServiceState {
                 .arg(&resolved.kernel)
                 .arg("--initrd")
                 .arg(&resolved.initrd)
+                // The profile's own pins. Boot verifies against these, never
+                // against a channel-wide pointer that can only name one profile.
+                .arg("--expected-kernel-hash")
+                .arg(&entry.asset_pins.kernel.hash)
+                .arg("--expected-initrd-hash")
+                .arg(&entry.asset_pins.initrd.hash)
+                .arg("--expected-rootfs-hash")
+                .arg(&entry.asset_pins.rootfs.hash)
                 .arg("--session-dir")
                 .arg(&entry.session_dir)
                 .arg("--active-profile")
@@ -1851,6 +2058,10 @@ impl ServiceState {
                 .arg(scratch_disk_size_gb.to_string())
                 .arg("--uds-path")
                 .arg(&uds_path)
+                // Explicitly, because `uds_path` may have been shortened out
+                // of the run tree and cannot be walked back up.
+                .arg("--run-dir")
+                .arg(&self.run_dir)
                 .stdout(std::process::Stdio::from(process_log_file.try_clone()?))
                 .stderr(std::process::Stdio::from(process_log_file))
                 .spawn()
@@ -1997,7 +2208,7 @@ impl ServiceState {
             entry.defunct = false;
             entry.last_error = None;
             if let Err(e) = registry.save() {
-                error!(id, "failed to save persistent registry after resume: {e}");
+                error!(id, error = %e, "failed to save persistent registry after resume");
             }
         }
     }
@@ -2016,7 +2227,7 @@ impl ServiceState {
 
         // Resolve from v2 manifest (works for both dev and installed --
         // dev creates hash-named symlinks, installed has hash-named files)
-        if let Some(ref manifest) = self.manifest {
+        if let Some(manifest) = self.manifest.read().unwrap().as_ref().cloned() {
             return manifest.resolve(&self.current_version, arch, &self.assets_dir);
         }
 
@@ -2590,20 +2801,31 @@ fn is_boot_fatal_log_tail(tail: &str) -> bool {
         || tail.contains("Kernel panic")
 }
 
-fn read_log_tail(session_dir: &std::path::Path, file_name: &str, n: usize) -> Option<String> {
-    let content = std::fs::read_to_string(session_dir.join(file_name)).ok()?;
+/// Last `n` lines of a session log stream.
+///
+/// Named for what it does rather than shadowing `telemetry::read_log_tail`,
+/// which it now delegates to. The old local copy read the bare file name and
+/// carried the same name as the shared reader, so it both lost rotated content
+/// and made the crate look like it already used the shared one. `serial.log`
+/// is written through `CappedLogWriter` and rotates, so the bare name holds
+/// only the newest slice.
+fn read_session_log_lines(
+    session_dir: &std::path::Path,
+    file_name: &str,
+    n: usize,
+) -> Option<String> {
+    let content = capsem_core::telemetry::read_log_tail(
+        &session_dir.join(file_name),
+        SESSION_LOG_TAIL_MAX_BYTES,
+    )?;
     let lines: Vec<&str> = content.lines().collect();
-    let tail = if lines.len() > n {
-        &lines[lines.len() - n..]
-    } else {
-        &lines[..]
-    };
-    Some(tail.join("\n"))
+    let start = lines.len().saturating_sub(n);
+    Some(lines[start..].join("\n"))
 }
 
 fn read_boot_failure_tail(session_dir: &std::path::Path) -> Option<String> {
     for file_name in ["serial.log", "process.log"] {
-        let Some(tail) = read_log_tail(session_dir, file_name, 80) else {
+        let Some(tail) = read_session_log_lines(session_dir, file_name, 80) else {
             continue;
         };
         if is_boot_fatal_log_tail(&tail) {
@@ -3226,7 +3448,7 @@ async fn handle_fork(
         )
         .await
         {
-            tracing::warn!("pre-fork guest sync failed (non-fatal): {e}");
+            tracing::warn!(error = %e, "pre-fork guest sync failed (non-fatal)");
         }
     }
 
@@ -3479,10 +3701,17 @@ async fn handle_provision(
             // BootCrash/ProvisionError still produce a user-facing error
             // body via classify_attempt_decision; these logs are for
             // operators reading service.log.
-            if matches!(&outcome, ProvisionAttemptOutcome::BootCrash { .. }) {
-                error!(id, "capsem-process exited before reaching ready");
+            if let ProvisionAttemptOutcome::BootCrash { ref tail } = outcome {
+                // The tail goes to the caller in the 500 body; without it here
+                // service.log records that a boot died but never why, and the
+                // reason survives only inside the session's process.log.
+                error!(
+                    id,
+                    cause = capsem_core::session::boot_failure_summary(tail),
+                    "capsem-process exited before reaching ready"
+                );
             } else if let ProvisionAttemptOutcome::ProvisionError(ref e) = outcome {
-                error!(id, "provision failed: {e}");
+                error!(id, error = %e, "provision failed");
             }
             match classify_attempt_decision(outcome, &id) {
                 AttemptDecision::Succeed(uds_path) => Some(Ok(uds_path)),
@@ -4178,9 +4407,19 @@ async fn handle_logs(
     let serial_log_path = session_dir.join("serial.log");
     let process_log_path = session_dir.join("process.log");
 
+    // Bounded and rotation-aware. `serial.log` is guest-controlled console
+    // output written through `CappedLogWriter`, so it both rotates and can be
+    // arbitrarily large -- reading the whole bare file lost the rotated slice
+    // and let the guest choose the allocation.
     let (serial_logs, process_logs) = tokio::task::spawn_blocking(move || {
-        let serial = std::fs::read_to_string(&serial_log_path).ok();
-        let process = std::fs::read_to_string(&process_log_path).ok();
+        let serial = capsem_core::telemetry::read_log_tail(
+            &serial_log_path,
+            SESSION_LOG_TAIL_MAX_BYTES,
+        );
+        let process = capsem_core::telemetry::read_log_tail(
+            &process_log_path,
+            SESSION_LOG_TAIL_MAX_BYTES,
+        );
         (serial, process)
     })
     .await
@@ -4486,22 +4725,13 @@ async fn handle_host_logs(
             .ok_or_else(|| AppError(StatusCode::BAD_REQUEST, format!("unknown log name: {name}")))?
     };
     let max_bytes = params.max_bytes.unwrap_or(100 * 1024).min(5 * 1024 * 1024);
-    let text = tokio::task::spawn_blocking(move || -> Result<String, String> {
-        use std::io::{Read, Seek, SeekFrom};
-        let mut file = std::fs::File::open(&path).map_err(|e| e.to_string())?;
-        let len = file.metadata().map_err(|e| e.to_string())?.len();
-        if len > max_bytes {
-            file.seek(SeekFrom::End(-(max_bytes as i64)))
-                .map_err(|e| e.to_string())?;
-        }
-        let mut buf = String::new();
-        file.read_to_string(&mut buf).map_err(|e| e.to_string())?;
-        if len > max_bytes {
-            if let Some(pos) = buf.find('\n') {
-                buf = buf[pos + 1..].to_string();
-            }
-        }
-        Ok(buf)
+    // `service.log` names a daily-rotated stream, so opening that exact name
+    // returns nothing the moment it has rotated -- this endpoint reported an
+    // empty log for a service that was writing normally. Reading through the
+    // stream reader also removes the fourth hand-rolled copy of seek-from-end
+    // and trim-the-partial-line in this crate.
+    let text = tokio::task::spawn_blocking(move || {
+        capsem_core::telemetry::read_log_tail(&path, max_bytes as usize).unwrap_or_default()
     })
     .await
     .map_err(|e| {
@@ -4509,8 +4739,7 @@ async fn handle_host_logs(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("log read failed: {e}"),
         )
-    })?
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+    })?;
 
     // Apply grep + tail post-filters here so the wire surface to the
     // capsem_host_logs MCP tool can avoid two round-trips.
@@ -4541,24 +4770,10 @@ async fn handle_service_logs(State(state): State<Arc<ServiceState>>) -> Result<S
     let log_path = state.run_dir.join("service.log");
 
     let text = tokio::task::spawn_blocking(move || -> Result<String, String> {
-        use std::io::{Read, Seek, SeekFrom};
-        let mut file = std::fs::File::open(&log_path).map_err(|e| e.to_string())?;
-        let len = file.metadata().map_err(|e| e.to_string())?.len();
-        // Read last 100KB
-        let max = 100 * 1024u64;
-        if len > max {
-            file.seek(SeekFrom::End(-(max as i64)))
-                .map_err(|e| e.to_string())?;
-        }
-        let mut buf = String::new();
-        file.read_to_string(&mut buf).map_err(|e| e.to_string())?;
-        // If we seeked into the middle, skip the first partial line
-        if len > max {
-            if let Some(pos) = buf.find('\n') {
-                buf = buf[pos + 1..].to_string();
-            }
-        }
-        Ok(buf)
+        // `service.log` names a daily-rotated stream, not a file. Resolution
+        // and tailing live in one place so every consumer sees the same log.
+        capsem_core::telemetry::read_log_tail(&log_path, 100 * 1024)
+            .ok_or_else(|| format!("no log files in stream {}", log_path.display()))
     })
     .await
     .map_err(|e| {
@@ -4748,6 +4963,7 @@ async fn handle_exec(
             stdout,
             stderr,
             exit_code,
+            truncated,
             ..
         } => Ok(Json(ExecResponse {
             stdout: String::from_utf8(stdout)
@@ -4755,6 +4971,7 @@ async fn handle_exec(
             stderr: String::from_utf8(stderr)
                 .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
             exit_code,
+            truncated,
         })),
         _ => Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -5201,9 +5418,10 @@ fn asset_manifest_status_value(state: &ServiceState) -> serde_json::Value {
             obj.insert("packaged_at".to_string(), json!(packaged_at));
         }
     }
+    let installed_manifest = state.manifest.read().unwrap();
     let manifest = manifest_validation.manifest.as_ref().or_else(|| {
         if manifest_validation.status == "missing" {
-            state.manifest.as_deref()
+            installed_manifest.as_deref()
         } else {
             None
         }
@@ -5476,6 +5694,11 @@ fn read_update_check_cache(
 
 fn current_asset_version_from_manifest(assets_dir: &StdPath) -> Option<String> {
     let content = std::fs::read_to_string(assets_dir.join("manifest.json")).ok()?;
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
+        if let Ok(state) = capsem_core::asset_manager::release_graph_profile_state(&value) {
+            return Some(state.images_revision);
+        }
+    }
     capsem_core::asset_manager::ManifestV2::from_json(&content)
         .ok()
         .map(|manifest| manifest.assets.current)
@@ -5735,7 +5958,7 @@ async fn ensure_assets_for_state(state: Arc<ServiceState>) -> Result<usize, Stri
     }
 
     let result: Result<usize, String> = async {
-        let Some(manifest) = state.manifest.as_ref().cloned() else {
+        let Some(manifest) = state.manifest.read().unwrap().as_ref().cloned() else {
             return Ok(0);
         };
         update_asset_reconcile_state(&state, |status| {
@@ -11542,7 +11765,7 @@ async fn handle_suspend(
                 entry.suspended = true;
                 entry.checkpoint_path = Some(RESUME_CHECKPOINT_NAME.to_string());
                 if let Err(e) = registry.save() {
-                    error!(id, "failed to save persistent registry: {e}");
+                    error!(id, error = %e, "failed to save persistent registry");
                 }
             }
         }
@@ -11596,31 +11819,41 @@ async fn handle_delete(
             }
         };
 
-    // Unregister from persistent registry if applicable
-    {
-        if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
-            let mut registry = state.persistent_registry.lock().unwrap();
-            if registry.contains(&key) {
-                let _ = registry.unregister(&key);
-            }
+    // DELETE is a destructive contract. Validate registry-derived paths,
+    // perform the blocking removal off the async runtime, and do not report
+    // success until the directory is actually gone. Failed VM exits use the
+    // separate `preserve_failed_session_dir` path; a clean delete must never
+    // be relabelled as a failure.
+    let state_clone = Arc::clone(&state);
+    tokio::task::spawn_blocking(move || state_clone.delete_session_dir(&session_dir))
+        .await
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("delete session task failed: {error}"),
+            )
+        })?
+        .map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("delete session state failed: {error:#}"),
+            )
+        })?;
+
+    // Unregister from persistent registry only after filesystem deletion
+    // succeeds. An unsafe or failed delete therefore remains discoverable
+    // and can be retried after the underlying problem is repaired.
+    if let Some(key) = persistent_registry_key_for_route_id(&state, &id) {
+        let mut registry = state.persistent_registry.lock().unwrap();
+        if registry.contains(&key) {
+            registry.unregister(&key).map_err(|error| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("unregister deleted session failed: {error:#}"),
+                )
+            })?;
         }
     }
-
-    // Preserve the session dir under sessions/<id>-failed-<rand>/ instead
-    // of unlinking it outright. preserve_failed_session_dir renames + culls
-    // down to MAX_FAILED_SESSIONS so disk stays bounded, but each delete
-    // still leaves a fresh process.log / serial.log / session.db window for
-    // post-mortem (e.g. when a Python-side test assertion fails after
-    // /exec but before the test's `finally: delete()` -- the existing
-    // failure-path preservation only fires on host-side error routes,
-    // never on a clean DELETE, so without this the only artifact left is
-    // service.log, which doesn't show what the per-VM process or guest
-    // were doing). The cull keeps the most recent N around.
-    let state_clone = Arc::clone(&state);
-    let id_clone = id.clone();
-    tokio::task::spawn_blocking(move || {
-        state_clone.preserve_failed_session_dir(&session_dir, &id_clone);
-    });
 
     Ok(Json(json!({ "success": true })))
 }
@@ -11643,7 +11876,7 @@ async fn handle_resume(
             let uds_path = state.instance_socket_path(&resumed_id);
             if let Err(e) = wait_for_vm_ready(&uds_path, 30, Some(&state), Some(&resumed_id)).await
             {
-                error!(id, "resume ready-wait failed: {e}");
+                error!(id, error = %e, "resume ready-wait failed");
                 if attempted_checkpoint {
                     warn!(
                         id,
@@ -11697,7 +11930,7 @@ async fn handle_resume(
             provision_response_for_running(&state, resumed_id, uds_path).map(Json)
         }
         Err(e) => {
-            error!(id, "resume failed: {e}");
+            error!(id, error = %e, "resume failed");
             Err(AppError(
                 StatusCode::NOT_FOUND,
                 format!("resume failed: {e}"),
@@ -12082,6 +12315,7 @@ async fn handle_run(
             stdout,
             stderr,
             exit_code,
+            truncated,
             ..
         }) => Ok(Json(ExecResponse {
             stdout: String::from_utf8(stdout)
@@ -12089,6 +12323,7 @@ async fn handle_run(
             stderr: String::from_utf8(stderr)
                 .unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()),
             exit_code,
+            truncated,
         })),
         Ok(_) => Err(AppError(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -12408,23 +12643,21 @@ fn read_manifest_metadata_status_document(path: &StdPath) -> Result<serde_json::
 }
 
 async fn handle_update_check(
+    State(state): State<Arc<ServiceState>>,
     Json(request): Json<api::UpdateCheckRequest>,
 ) -> Result<Json<api::UpdateActionResponse>, AppError> {
     let plan = update_command_plan(UpdateCommandKind::Check);
     if request.dry_run {
         return Ok(Json(planned_update_response(plan)));
     }
-    execute_update_command(plan).await.map(Json)
+    execute_update_command(&state, plan).await.map(Json)
 }
 
 async fn handle_update_apply(
+    State(state): State<Arc<ServiceState>>,
     Json(request): Json<api::UpdateApplyRequest>,
 ) -> Result<Json<api::UpdateActionResponse>, AppError> {
-    let kind = match request.action {
-        api::UpdateApplyAction::BinaryProfiles => UpdateCommandKind::BinaryProfiles,
-        api::UpdateApplyAction::Assets => UpdateCommandKind::Assets,
-    };
-    let plan = update_command_plan(kind);
+    let plan = update_command_plan(UpdateCommandKind::Apply);
     if request.dry_run {
         return Ok(Json(planned_update_response(plan)));
     }
@@ -12434,21 +12667,19 @@ async fn handle_update_apply(
             "update apply requires confirmed=true or dry_run=true".to_string(),
         ));
     }
-    execute_update_command(plan).await.map(Json)
+    execute_update_apply(&state, plan).await.map(Json)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum UpdateCommandKind {
     Check,
-    BinaryProfiles,
-    Assets,
+    Apply,
 }
 
 fn update_command_plan(kind: UpdateCommandKind) -> api::UpdateCommandPlan {
     let args = match kind {
         UpdateCommandKind::Check => vec!["update".to_string(), "--check".to_string()],
-        UpdateCommandKind::BinaryProfiles => vec!["update".to_string(), "--yes".to_string()],
-        UpdateCommandKind::Assets => vec!["update".to_string(), "--assets".to_string()],
+        UpdateCommandKind::Apply => vec!["update".to_string(), "--yes".to_string()],
     };
     api::UpdateCommandPlan {
         program: capsem_cli_program(),
@@ -12482,6 +12713,26 @@ fn planned_update_response(plan: api::UpdateCommandPlan) -> api::UpdateActionRes
 }
 
 async fn execute_update_command(
+    state: &ServiceState,
+    plan: api::UpdateCommandPlan,
+) -> Result<api::UpdateActionResponse, AppError> {
+    let _update_guard = state.update_lock.lock().await;
+    execute_update_command_unlocked(plan).await
+}
+
+async fn execute_update_apply(
+    state: &ServiceState,
+    plan: api::UpdateCommandPlan,
+) -> Result<api::UpdateActionResponse, AppError> {
+    let _update_guard = state.update_lock.lock().await;
+    let response = execute_update_command_unlocked(plan).await?;
+    if response.status == "succeeded" {
+        reload_activated_update_runtime(state)?;
+    }
+    Ok(response)
+}
+
+async fn execute_update_command_unlocked(
     plan: api::UpdateCommandPlan,
 ) -> Result<api::UpdateActionResponse, AppError> {
     let output = Command::new(&plan.program)
@@ -12506,6 +12757,192 @@ async fn execute_update_command(
         stdout: Some(String::from_utf8_lossy(&output.stdout).to_string()),
         stderr: Some(String::from_utf8_lossy(&output.stderr).to_string()),
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UpdateRuntimeDisposition {
+    Reloaded,
+    RestartRequested,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AutomaticUpdateOutcome {
+    Disabled,
+    Busy,
+    Succeeded(UpdateRuntimeDisposition),
+    Failed(String),
+}
+
+fn automatic_updates_enabled() -> bool {
+    let (user, corp) = capsem_core::net::policy_config::load_settings_and_corp_files();
+    let resolved = capsem_core::net::policy_config::resolve_settings(&user, &corp);
+    automatic_updates_enabled_from_resolved(&resolved)
+}
+
+fn automatic_updates_enabled_from_resolved(
+    settings: &[capsem_core::net::policy_config::ResolvedSetting],
+) -> bool {
+    settings
+        .iter()
+        .find(|setting| setting.id == "app.auto_update")
+        .and_then(|setting| setting.effective_value.as_bool())
+        .unwrap_or(true)
+}
+
+fn automatic_update_failure_backoff(consecutive_failures: u32) -> std::time::Duration {
+    let exponent = consecutive_failures.saturating_sub(1).min(8);
+    let seconds = AUTOMATIC_UPDATE_POLL_SECS
+        .saturating_mul(1_u64 << exponent)
+        .min(AUTOMATIC_UPDATE_MAX_BACKOFF_SECS);
+    std::time::Duration::from_secs(seconds)
+}
+
+fn automatic_update_delay_from_value(
+    value: Option<&std::ffi::OsStr>,
+    default_seconds: u64,
+) -> std::time::Duration {
+    let seconds = value
+        .and_then(std::ffi::OsStr::to_str)
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(default_seconds);
+    std::time::Duration::from_secs(seconds)
+}
+
+fn automatic_update_delay(environment_name: &str, default_seconds: u64) -> std::time::Duration {
+    let value = std::env::var_os(environment_name);
+    automatic_update_delay_from_value(value.as_deref(), default_seconds)
+}
+
+async fn run_automatic_update_once(state: &ServiceState) -> AutomaticUpdateOutcome {
+    if !automatic_updates_enabled() {
+        return AutomaticUpdateOutcome::Disabled;
+    }
+    let Ok(_update_guard) = state.update_lock.try_lock() else {
+        return AutomaticUpdateOutcome::Busy;
+    };
+    let plan = update_command_plan(UpdateCommandKind::Apply);
+    let response = match execute_update_command_unlocked(plan).await {
+        Ok(response) => response,
+        Err(error) => return AutomaticUpdateOutcome::Failed(error.1),
+    };
+    if response.status != "succeeded" {
+        let detail = response
+            .stderr
+            .as_deref()
+            .map(str::trim)
+            .filter(|detail| !detail.is_empty())
+            .unwrap_or("update command returned a non-zero exit status");
+        return AutomaticUpdateOutcome::Failed(format!("exit {:?}: {detail}", response.exit_code));
+    }
+    match reload_activated_update_runtime(state) {
+        Ok(disposition) => AutomaticUpdateOutcome::Succeeded(disposition),
+        Err(error) => AutomaticUpdateOutcome::Failed(error.1),
+    }
+}
+
+async fn run_automatic_update_loop(state: Arc<ServiceState>) {
+    let mut delay = automatic_update_delay(
+        AUTOMATIC_UPDATE_INITIAL_DELAY_ENV,
+        AUTOMATIC_UPDATE_INITIAL_DELAY_SECS,
+    );
+    let poll_delay = automatic_update_delay(AUTOMATIC_UPDATE_POLL_ENV, AUTOMATIC_UPDATE_POLL_SECS);
+    let mut consecutive_failures = 0_u32;
+    loop {
+        tokio::time::sleep(delay).await;
+        match run_automatic_update_once(&state).await {
+            AutomaticUpdateOutcome::Disabled => {
+                consecutive_failures = 0;
+                delay = poll_delay;
+                info!("automatic release polling is disabled by app.auto_update");
+            }
+            AutomaticUpdateOutcome::Busy => {
+                delay = std::time::Duration::from_secs(AUTOMATIC_UPDATE_BUSY_RETRY_SECS);
+                info!("automatic release polling skipped because an explicit update owns the lock");
+            }
+            AutomaticUpdateOutcome::Succeeded(disposition) => {
+                consecutive_failures = 0;
+                delay = poll_delay;
+                info!(
+                    ?disposition,
+                    next_poll_secs = poll_delay.as_secs(),
+                    "automatic release update completed"
+                );
+            }
+            AutomaticUpdateOutcome::Failed(error) => {
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                delay = automatic_update_failure_backoff(consecutive_failures);
+                warn!(
+                    error = %error,
+                    consecutive_failures,
+                    retry_secs = delay.as_secs(),
+                    "automatic release update failed"
+                );
+            }
+        }
+    }
+}
+
+fn should_start_automatic_update_loop(parent_pid: Option<u32>) -> bool {
+    // `--parent-pid` is the explicit bounded-test harness rail. Production
+    // services never receive it, while long VM suites must not gain an
+    // unrelated network/package mutation one minute into a test process.
+    parent_pid.is_none()
+}
+
+fn reload_activated_update_runtime(
+    state: &ServiceState,
+) -> Result<UpdateRuntimeDisposition, AppError> {
+    let path = state.assets_dir.join("manifest.json");
+    let content = std::fs::read_to_string(&path).map_err(|error| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("read activated update manifest {}: {error}", path.display()),
+        )
+    })?;
+    let manifest =
+        capsem_core::asset_manager::ManifestV2::from_json(&content).map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!(
+                    "validate activated update manifest {}: {error:#}",
+                    path.display()
+                ),
+            )
+        })?;
+    let selected_binary = manifest.binaries.current.clone();
+    let previous_manifest = {
+        let mut installed = state.manifest.write().map_err(|error| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("installed manifest lock poisoned: {error}"),
+            )
+        })?;
+        installed.replace(Arc::new(manifest))
+    };
+
+    if let Err(error) = refresh_profile_route_caches(state) {
+        if let Ok(mut installed) = state.manifest.write() {
+            *installed = previous_manifest;
+        }
+        return Err(error);
+    }
+
+    if selected_binary != state.current_version {
+        info!(
+            running = %state.current_version,
+            selected = %selected_binary,
+            "activated binary differs from the running service; requesting managed restart"
+        );
+        state.update_restart.notify_one();
+        Ok(UpdateRuntimeDisposition::RestartRequested)
+    } else {
+        info!(
+            selected = %selected_binary,
+            "reloaded activated manifest and profile caches in the running service"
+        );
+        Ok(UpdateRuntimeDisposition::Reloaded)
+    }
 }
 
 async fn handle_service_status(
@@ -12544,6 +12981,7 @@ async fn main() -> Result<()> {
         },
         default_filter: "info",
     })?;
+    capsem_core::telemetry::install_panic_logger("capsem-service");
     let service_launch_span = tracing::info_span!(
         target: "capsem.launch",
         capsem_core::telemetry::LAUNCH_SERVICE_SPAN,
@@ -12560,7 +12998,7 @@ async fn main() -> Result<()> {
         match capsem_guard::watch_parent_or_exit(Some(ppid)) {
             Ok(()) => {}
             Err(e) => {
-                info!(parent_pid = ppid, "parent watch not armed: {e}; exiting 0");
+                info!(parent_pid = ppid, error = %e, "parent watch not armed; exiting 0");
                 return Ok(());
             }
         }
@@ -12791,7 +13229,7 @@ async fn main() -> Result<()> {
         assets_dir: assets_base_dir,
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        manifest,
+        manifest: RwLock::new(manifest),
         current_version,
         asset_reconcile: Mutex::new(asset_reconcile),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -12819,6 +13257,8 @@ async fn main() -> Result<()> {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        update_lock: tokio::sync::Mutex::new(()),
+        update_restart: tokio::sync::Notify::new(),
         #[cfg(test)]
         _test_tempdir: None,
     });
@@ -12893,9 +13333,28 @@ async fn main() -> Result<()> {
             return Err(error);
         }
     };
+    // We hold the socket, so we are the service a reaper should kill. Claim the
+    // pidfile before releasing the startup lock: from the moment a peer can
+    // fast-probe us and exit 0, `$run_dir/service.pid` must already name us and
+    // not the peer, whose guard would otherwise erase our pid on its way out.
+    //
+    // Without a pidfile, every cleanup targeting `$run_dir/service.pid` no-ops
+    // silently -- indistinguishable from success -- and the asset gate left a
+    // service (and its tray) behind on every run.
+    let _pidfile_guard = ServicePidfile::claim(run_dir.join("service.pid"));
+
     // Socket is bound; release the startup lock so any peer starter still in
     // its flock wait can fast-probe us and exit 0.
     drop(startup_lock_guard);
+
+    if should_start_automatic_update_loop(args.parent_pid) {
+        let state_for_updates = Arc::clone(&state);
+        tokio::spawn(async move {
+            run_automatic_update_loop(state_for_updates).await;
+        });
+    } else {
+        info!("automatic release polling is disabled for the bounded test service");
+    }
 
     // Spawn companion processes (gateway + tray) in the background so the UDS
     // starts accepting immediately. The previous .await here delayed accept()
@@ -12938,7 +13397,12 @@ async fn main() -> Result<()> {
     let companions_for_shutdown = Arc::clone(&companions);
     axum::serve(uds, app)
         .with_graceful_shutdown(async move {
-            shutdown_signal().await;
+            tokio::select! {
+                _ = shutdown_signal() => {}
+                _ = shutdown_state.update_restart.notified() => {
+                    info!("service restart requested after binary update");
+                }
+            }
             info!("service shutting down, killing companions and VM processes");
             // Companions FIRST. kill_all_vm_processes has an unconditional
             // 500ms SIGTERM grace sleep; if companion-kill ran after it, a
@@ -13328,14 +13792,14 @@ async fn spawn_companions(
                         children.push(child);
                     }
                     Err(e) => {
-                        tracing::warn!("failed to spawn capsem-tray: {e} (non-fatal)");
+                        tracing::warn!(error = %e, "failed to spawn capsem-tray (non-fatal)");
                     }
                 }
             }
         }
         Err(e) => {
             gateway_span.record("status", "error");
-            tracing::warn!("failed to spawn capsem-gateway: {e} (non-fatal)");
+            tracing::warn!(error = %e, "failed to spawn capsem-gateway (non-fatal)");
         }
     }
 

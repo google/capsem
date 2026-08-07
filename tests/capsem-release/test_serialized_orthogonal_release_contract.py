@@ -1,0 +1,629 @@
+"""Contracts for serialized binary/profile release ownership.
+
+These tests intentionally inspect only public commands and workflow orchestration.
+Artifact correctness remains covered by the executable lane and glow-up suites.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+WORKFLOWS = ROOT / ".github" / "workflows"
+CHANNEL_GROUP = "group: capsem-release-${{ inputs.channel }}"
+
+
+def _read(path: str | Path) -> str:
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def _workflow(name: str) -> str:
+    return (WORKFLOWS / name).read_text(encoding="utf-8")
+
+
+def _recipe_block(justfile: str, recipe: str) -> str:
+    marker = f"\n{recipe} "
+    start = justfile.index(marker)
+    rest = justfile[start + 1 :]
+    next_recipe = rest.find("\n\n")
+    return rest if next_recipe < 0 else rest[:next_recipe]
+
+
+def _job_block(workflow: str, job: str) -> str:
+    lines = workflow.splitlines()
+    start = lines.index(f"  {job}:")
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line.startswith("  ") and not line.startswith("    ") and line.endswith(":"):
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
+def _release_plan(command: str, *arguments: str):
+    """The plan a release command would run, without running any of it."""
+    import argparse
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+    from capsem.gate.proc import Runner
+
+    names = ("channel", "profile")
+    parsed = argparse.Namespace(
+        dry_run=False,
+        graph=False,
+        timing=False,
+        **dict(zip(names, arguments, strict=False)),
+    )
+    return GateCommand.registry[command](Runner(ROOT), parsed).plan()
+
+
+def _publishing(plan) -> str:
+    """What the steps after the gate would run.
+
+    "This lane does not rebuild the other's artifacts" is a claim about the
+    publishing tail, not about the plan -- which contains the complete gate and
+    therefore builds both families before publishing either.
+    """
+    labels = list(plan.labels)
+    after = labels[labels.index("confirm-head") :]
+    return "\n".join(line for label in after for line in plan.step_named(label).render())
+
+
+def _release_order(command: str, *arguments: str) -> list[str]:
+    """Every step, in an order the graph permits."""
+    return list(_release_plan(command, *arguments).labels)
+
+
+def _context(runner):
+    """A context for *reading* a release plan, against the real checkout.
+
+    `observing` is the whole point. These tests run real plans -- built from
+    the real config, so the argv is real -- and a plan that runs does what its
+    actions say. `source.record` sits ahead of the step this file fails on, so
+    without this it wrote the recording runner's empty output over the state
+    file of whichever gate was running, and that gate died forty minutes later
+    in `source.verify` reporting a HEAD change on a tree nobody had touched.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate.context import Context
+
+    return Context(runner, gate_config.load(ROOT), observing=True)
+
+
+def test_release_commands_are_two_single_purpose_recipes() -> None:
+    """Each owns one artifact family, and neither rebuilds the other's.
+
+    The recipes dispatch, so this asks the plans. That is the stronger
+    question: a recipe body could stop *containing* `just test` while still
+    running it, and could contain it while running it too late.
+    """
+    justfile = "\n" + _read("justfile")
+
+    binary_plan = _release_plan("release-binaries", "nightly")
+    profile_plan = _release_plan("release-profile", "nightly", "code")
+    binary = _publishing(binary_plan)
+    profile = _publishing(profile_plan)
+
+    # Each lane owns one artifact family, and neither rebuilds the other's.
+    # Read from the *publishing* steps rather than the whole plan: both plans
+    # now contain the complete gate, which legitimately builds everything.
+    assert "scripts/release-binaries.py" in binary
+    assert "capsem-admin" not in binary
+
+    assert "capsem-admin -- release" in profile
+    assert "scripts/release-binaries.py" not in profile
+
+    retired_commands = (
+        "release",
+        "prepare-release",
+        "qualify-" + "release",
+        "cut-" + "release",
+    )
+    for retired in retired_commands:
+        assert f"\n{retired}:" not in justfile
+        assert f"\n{retired} " not in justfile
+
+
+@pytest.mark.parametrize(
+    "command, arguments, publication",
+    [
+        ("release-binaries", ("nightly",), "release"),
+        ("release-profile", ("nightly", "code"), "release"),
+    ],
+)
+def test_nothing_is_published_before_the_complete_gate_passes(
+    command: str, arguments: tuple[str, ...], publication: str
+) -> None:
+    """The order that is the entire reason these are commands.
+
+    Nothing may stamp a version, mutate a tracked file, push, tag, or dispatch
+    a workflow before the complete local gate has passed against the exact
+    HEAD being published. As graph edges that ordering cannot be lost by
+    moving a line.
+    """
+    order = _release_order(command, *arguments)
+
+    # There is no single `gate` step: the release plan *contains* the complete
+    # gate rather than launching `just test`, so what has to sit between the
+    # precheck and the confirmation is every phase of it. A step named `gate`
+    # could have run a reduced proof; these cannot.
+    phases = [
+        next(i for i, label in enumerate(order) if label.startswith(prefix))
+        for prefix in ("fast.", "static.", "artifacts.", "functional.", "glowup.")
+    ]
+    assert order.index("precheck") < min(phases)
+    assert max(phases) < order.index("confirm-head")
+    assert order.index("confirm-head") < order.index(publication)
+
+
+@pytest.mark.parametrize(
+    ("recipe", "arguments", "release_trace"),
+    (
+        (
+            "release-binaries",
+            ("nightly",),
+            r"scripts/release-binaries\.py nightly",
+        ),
+        (
+            "release-profile",
+            ("nightly", "code"),
+            r"capsem-admin -- release --channel nightly --profile code",
+        ),
+    ),
+)
+def test_public_release_command_executes_read_only_preflight_then_full_test_before_mutation(
+    tmp_path: Path,
+    recipe: str,
+    arguments: tuple[str, ...],
+    release_trace: str,
+) -> None:
+    """Read-only preflight, then the complete gate, then mutation.
+
+    The preflight steps are driven for real against a recording runner -- they
+    are cheap and their argv is the claim. The gate itself is read from the
+    graph rather than executed: it is the whole 69-step gate now, and running
+    it here would mean building an initrd against a runner that records.
+    """
+    from helpers.gate import RecordingRunner
+
+    runner = RecordingRunner(ROOT)
+    plan = _release_plan(recipe, *arguments)
+    order = list(plan.labels)
+
+    # The read-only preconditions, actually issued. A dirty tree or the wrong
+    # branch invalidates everything after, and learning that costs seconds
+    # rather than a complete gate.
+    for label in order[: order.index("record-head") + 1]:
+        plan.step_named(label).run(_context(runner))
+
+    issued = runner.rendered
+    assert "publish-tested-main.py --precheck" in issued[0]
+    if recipe == "release-binaries":
+        assert any("extract-release-notes.py --check" in line for line in issued)
+        assert any("fetch-channel-source-manifest.py" in line for line in issued)
+
+    # Then the gate, then the confirmation, then the mutation. Every phase of
+    # the gate, not a step named after it.
+    phases = [
+        next(i for i, label in enumerate(order) if label.startswith(prefix))
+        for prefix in ("fast.", "static.", "artifacts.", "functional.", "glowup.")
+    ]
+    assert order.index("precheck") < min(phases)
+    assert max(phases) < order.index("confirm-head") < order.index("release")
+
+    # And the publishing step is the one the trace names.
+    import re
+
+    assert re.search(release_trace, "\n".join(plan.step_named("release").render())), (
+        f"the release step does not run {release_trace}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("recipe", "arguments"),
+    (
+        ("release-binaries", ("nightly",)),
+        ("release-profile", ("nightly", "code")),
+    ),
+)
+def test_failed_full_test_prevents_every_release_side_effect(
+    tmp_path: Path,
+    recipe: str,
+    arguments: tuple[str, ...],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing gate stops everything downstream of it.
+
+    The plan makes this structural: publication is `after=(confirm-head,)`
+    which is `after=(gate,)`, and a step whose dependency failed is never
+    submitted. Inspecting recipe text could never have proved this.
+    """
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate.errors import GateError
+    from capsem.gatelaunch import MARKER
+
+    # What a real run has: `capsem-gate` re-execs under a private bytecode
+    # cache and exports this, and the gate's first step refuses without it.
+    # The failure under test is further down, so it has to get past that.
+    monkeypatch.setenv(MARKER, str(tmp_path / "pycache"))
+
+    # The gate is composed into the release plan now, so "make the gate fail"
+    # means failing a step inside it rather than failing a `just test`
+    # subprocess. Clippy is as good as any: it is early, it is in every
+    # release plan, and everything that publishes is downstream of it.
+    runner = RecordingRunner(ROOT, failures=["cargo clippy"])
+    plan = _release_plan(recipe, *arguments)
+
+    with pytest.raises(GateError):
+        plan.run(_context(runner))
+
+    issued = "\n".join(runner.rendered)
+    assert "cargo clippy" in issued, "the gate must actually have been attempted"
+    for mutation in (
+        "publish-tested-main.py --expected-head",
+        "scripts/release-binaries.py",
+        "capsem-admin -- release",
+    ):
+        assert mutation not in issued, f"{mutation} ran after a failing gate"
+
+    outcomes = plan.outcomes
+    assert outcomes["fast.clippy"].status == "failed"
+    # Everything downstream is skipped rather than failed: it did not fail, it
+    # never ran, and a report conflating the two hides how far the real
+    # failure reached.
+    assert outcomes["confirm-head"].status == "skipped"
+    assert outcomes["release"].status == "skipped"
+
+
+def test_binary_and_profile_workflows_share_channel_transaction_lock() -> None:
+    for name in ("release.yaml", "release-assets.yaml"):
+        workflow = _workflow(name)
+        assert CHANNEL_GROUP in workflow
+        assert "cancel-in-progress: false" in workflow
+        assert workflow.index("concurrency:") < workflow.index("jobs:")
+        group_line = next(
+            line.strip() for line in workflow.splitlines() if line.strip().startswith("group:")
+        )
+        assert group_line == CHANNEL_GROUP
+        assert "github.sha" not in group_line
+        assert "inputs.profile" not in group_line
+        assert "inputs.tag" not in group_line
+
+
+def test_release_lanes_run_one_reusable_fast_gate_before_builders() -> None:
+    reusable = _workflow("fast-gate.yaml")
+    assert "workflow_call:" in reusable
+    assert "run: just _test-fast" in reusable
+    assert "run: just _test-static" in reusable
+    linux_prerequisites = reusable.index("Install Linux workspace lint prerequisites")
+    fast = reusable.index("Run complete shared fast module")
+    static = reusable.index("Run shared static module")
+    assert linux_prerequisites < fast < static
+
+    binary = _workflow("release.yaml")
+    assert "  fast-gate:\n    uses: ./.github/workflows/fast-gate.yaml" in binary
+    assert "needs: [runtime-preflight, fast-gate]" in _job_block(binary, "preflight")
+    assert "Run shared static module" not in _job_block(binary, "test-binary-pairing")
+    assert "Run complete shared fast module" not in _job_block(binary, "test-binary-pairing")
+
+    profile = _workflow("release-assets.yaml")
+    assert "  fast-gate:\n    uses: ./.github/workflows/fast-gate.yaml" in profile
+    build_assets = _job_block(profile, "build-assets")
+    assert "fast-gate" in build_assets.splitlines()[1]
+    assert "Run shared static module" not in _job_block(profile, "test-profile-pairing")
+    assert "Run shared release contracts" not in _job_block(profile, "test-profile-pairing")
+
+
+def test_release_profile_downloads_share_one_manifest_addressed_cache_module() -> None:
+    action = _read(".github/actions/fetch-release-inputs/action.yaml")
+
+    assert "scripts/fetch-release-artifacts.py" in action
+    assert '--manifest-url "${{ inputs.manifest-url }}"' in action
+    assert "--cache-dir target/release-input-cache" in action
+    assert "--prune-cache" not in action
+    assert "actions/cache/restore@" in action
+    assert "actions/cache/save@" in action
+    assert "steps.fetch.outputs.cache-misses != '0'" in action
+    assert "local-publication-base:" in action
+    assert "local-publication-dir:" in action
+    assert '--local-publication-base "${{ inputs.local-publication-base }}"' in action
+    assert '--local-publication-dir "${{ inputs.local-publication-dir }}"' in action
+    cache_key = next(line for line in action.splitlines() if line.strip().startswith("key:"))
+    assert "inputs.channel" not in cache_key
+    assert "inputs.manifest-url" not in cache_key
+
+    assert "./.github/actions/fetch-release-inputs" in _workflow("release.yaml")
+    assert "./.github/actions/fetch-release-inputs" in _workflow("release-assets.yaml")
+
+
+def test_binary_lane_pulls_profiles_and_never_builds_them() -> None:
+    workflow = _workflow("release.yaml")
+
+    assert "Fetch latest selected channel source manifest" in workflow
+    assert "binary-channel-source" in workflow
+    assert "Resolve exact candidate-after profiles" in workflow
+    assert "file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" in workflow
+    assert "just _test-artifacts" in workflow
+    assert "just _test-functional" in workflow
+    assert "just _test-glowup" in workflow
+    assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
+    assert "--config-root target/release-config" in workflow
+    assert "--shared-config-root config" in workflow
+    assert 'CAPSEM_CONFIG_ROOT="$PWD/target/release-config"' in workflow
+    assert '--package-file "$package"' in workflow
+    assert 'scripts/install-deb-runtime-dependencies.py "$package"' in workflow
+    assert "cp target/release-package-root/usr/bin/capsem*" not in workflow
+    assert "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem" in workflow
+
+    for forbidden in (
+        "just _build-kernel",
+        "just _build-rootfs",
+        "capsem-admin -- image build",
+    ):
+        assert forbidden not in workflow
+
+
+def test_profile_lane_installs_pulled_package_runtime_dependencies() -> None:
+    workflow = _workflow("release-assets.yaml")
+    pairing = _job_block(workflow, "test-profile-pairing")
+
+    resolve_package = pairing.index("--print-package-path")
+    install_dependencies = pairing.index('scripts/install-deb-runtime-dependencies.py "$package"')
+    functional = pairing.index("run: just _test-functional")
+
+    assert resolve_package < install_dependencies < functional
+    assert "sudo dpkg -i" not in pairing
+    assert "sudo apt-get install" not in pairing
+
+
+def test_binary_candidate_manifest_is_authored_once_before_pairing() -> None:
+    workflow = _workflow("release.yaml")
+    author = _job_block(workflow, "author-binary-candidate")
+    pairing = _job_block(workflow, "test-binary-pairing")
+    create = _job_block(workflow, "create-release")
+    assemble = _job_block(workflow, "assemble-release-channel")
+
+    assert "needs: [build-app-macos, build-app-linux, resolve-channel-source]" in author
+    assert author.count("assets channel record-binary") == 1
+    assert "binary-channel-candidate" in author
+    assert "manifest.before.json" in author
+    assert "manifest.json" in author
+
+    assert "author-binary-candidate" in pairing.splitlines()[1]
+    assert "binary-channel-candidate" in pairing
+    assert (
+        "manifest-url: file://${{ github.workspace }}/target/binary-channel/"
+        "${{ inputs.channel }}/manifest.json"
+    ) in pairing
+    assert "assets channel record-binary" not in pairing
+
+    assert "test-binary-pairing" in create.splitlines()[1]
+    assert "author-binary-candidate" in assemble.splitlines()[1]
+    assert "binary-channel-candidate" in assemble
+    assert "assets channel record-binary" not in assemble
+    assert "generate-host-binary-sbom.py" not in assemble
+
+
+def test_binary_pairing_uses_exact_public_before_and_candidate_after_cohorts() -> None:
+    workflow = _workflow("release.yaml")
+    resolve = _job_block(workflow, "resolve-channel-source")
+    pairing = _job_block(workflow, "test-binary-pairing")
+
+    assert "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}" in resolve
+    assert "allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}" in resolve
+    assert "kind: packages" in resolve
+    assert "kind: profiles" in resolve
+    assert "architecture: x86_64" in resolve
+    assert "binary-public-before-packages" in resolve
+    assert "binary-public-before-profiles" in resolve
+
+    assert "binary-public-before-packages" in pairing
+    assert "binary-public-before-profiles" in pairing
+    assert (
+        "manifest-url: file://${{ github.workspace }}/target/binary-channel/"
+        "${{ inputs.channel }}/manifest.json"
+    ) in pairing
+    assert "kind: profiles" in pairing
+    assert "target/candidate-profile-inputs" in pairing
+    for variable in (
+        "CAPSEM_RELEASE_CHANNEL",
+        "CAPSEM_RELEASE_TRANSITION=auto",
+        "CAPSEM_RELEASE_BEFORE_MANIFEST",
+        "CAPSEM_RELEASE_AFTER_MANIFEST",
+        "CAPSEM_RELEASE_BEFORE_PACKAGE",
+        "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS",
+        "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS",
+    ):
+        assert variable in pairing
+
+
+def test_profile_lane_pulls_binary_and_never_builds_packages() -> None:
+    workflow = _workflow("release-assets.yaml")
+
+    assert "Validate selected channel profile through capsem-admin" in workflow
+    assert "Select exact public-before manifest" in workflow
+    assert "Fetch latest selected channel source manifest" in workflow
+    assert "--bootstrap-missing-first-party" in workflow
+    assert '--profile "${{ inputs.profile }}"' in workflow
+    assert "Project inactive first-channel public-before state" in workflow
+    assert "scripts/project-first-channel-before.py" in workflow
+    assert "Select public-before authority for exact pairing" in workflow
+    assert "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}" in workflow
+    assert "Fetch exact deployed public-before package" in workflow
+    assert "Fetch exact deployed public-before profiles" in workflow
+    assert "bootstrap-manifest-url:" not in workflow
+    assert "allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}" in workflow
+    assert "capsem-admin -- release" in workflow
+    assert "--publication-base" in workflow
+    assert "channel-source-$CHANNEL.json" in workflow
+    assert "--public-manifest target/profile-public-before/profiles/manifest.json" in workflow
+    assert "steps.profile-delta.outputs.release_needed == 'true'" in workflow
+    assert "check-profile-release-delta.py" in workflow
+    assert "check-asset-release-delta.py" not in workflow
+    assert "just _test-artifacts" in workflow
+    assert "just _test-functional" in workflow
+    assert "just _test-glowup" in workflow
+    assert "--shared-config-root config" in workflow
+    assert "uses: ./.github/workflows/fast-gate.yaml" in workflow
+    assert "--input-dir target/profile-public-before/packages" in workflow
+    assert "--binary-dir target/debug" in workflow
+    assert "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem" in workflow
+
+    for forbidden in (
+        "just _cross-compile",
+        "scripts/build-pkg.sh",
+        "scripts/repack-deb.sh",
+        "cargo tauri build",
+    ):
+        assert forbidden not in workflow
+
+
+def test_profile_selection_creates_clean_runner_output_parent() -> None:
+    resolve = _job_block(_workflow("release-assets.yaml"), "resolve-current-binary")
+
+    create_parent = resolve.index("mkdir -p target")
+    validate = resolve.index("cargo run -p capsem-admin -- validate")
+    redirect = resolve.index("> target/profile-release-selection.json")
+
+    assert create_parent < validate < redirect
+
+
+def test_profile_pairing_reuses_one_staged_publication_and_exact_public_before() -> None:
+    workflow = _workflow("release-assets.yaml")
+    resolve = _job_block(workflow, "resolve-current-binary")
+    author = _job_block(workflow, "author-profile-release")
+    pairing = _job_block(workflow, "test-profile-pairing")
+    publish = _job_block(workflow, "publish-profile-release")
+
+    assert "manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}" in resolve
+    assert "kind: packages" in resolve
+    assert "kind: profiles" in resolve
+    assert "architecture: x86_64" in resolve
+    assert "profile-public-before-packages" in resolve
+    assert "profile-public-before-profiles" in resolve
+
+    assert "stage-profile-publication.py" in author
+    assert "verify-profile-publication.py" in author
+    assert "name: authored-profile-publication" in author
+
+    for artifact in (
+        "profile-public-before-packages",
+        "profile-public-before-profiles",
+        "authored-profile-publication",
+    ):
+        assert artifact in pairing
+    assert "--local-publication-base" in pairing
+    assert "--local-publication-dir" in pairing
+    assert "target/candidate-profile-inputs" in pairing
+    for variable in (
+        "CAPSEM_RELEASE_CHANNEL",
+        "CAPSEM_RELEASE_TRANSITION=profile_only",
+        "CAPSEM_RELEASE_BEFORE_MANIFEST",
+        "CAPSEM_RELEASE_AFTER_MANIFEST",
+        "CAPSEM_RELEASE_BEFORE_PACKAGE",
+        "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS",
+        "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS",
+        "CAPSEM_RELEASE_PROFILE",
+        "CAPSEM_RELEASE_CANDIDATE_PROFILE_PUBLICATION",
+        "CAPSEM_RELEASE_PUBLICATION_BASE",
+    ):
+        assert variable in pairing
+
+    assert "name: authored-profile-publication" in publish
+    assert "stage-profile-publication.py" not in publish
+    assert "verify-profile-publication.py" in publish
+
+
+def test_production_deploy_has_no_unserialized_direct_entrypoint() -> None:
+    deploy = _workflow("release-channel.yaml")
+    assert "workflow_dispatch:" not in deploy
+    assert "workflow_call:" in deploy
+    assert "capsem-admin -- release" not in deploy
+    assert "record-binary" not in deploy
+    assert "group: capsem-public-channel-deploy" in deploy
+    assert "cancel-in-progress: false" in deploy
+    assert "check-channel-deploy-freshness.py" in deploy
+    assert "build-complete-release-channel.py" not in deploy
+
+    production_callers = []
+    for path in WORKFLOWS.glob("*.yaml"):
+        text = path.read_text(encoding="utf-8")
+        if "uses: ./.github/workflows/release-channel.yaml" in text:
+            production_callers.append((path.name, text))
+
+    assert {name for name, _ in production_callers} >= {
+        "release.yaml",
+        "release-assets.yaml",
+    }
+    for name, workflow in production_callers:
+        if name == "release-channel-staging.yaml":
+            assert "deploy_branch: ${{ inputs.deploy_branch }}" in workflow
+            assert "validate_complete_public_channels: false" in workflow
+            continue
+        assert CHANNEL_GROUP in workflow, f"{name} deploys production without the channel lock"
+
+
+def test_retired_independent_release_authority_is_absent() -> None:
+    retired_workflow = "release-" + "qualification.yaml"
+    retired_checker = "check-release-" + "qualification.py"
+    assert not (WORKFLOWS / retired_workflow).exists()
+    assert not (ROOT / "scripts" / retired_checker).exists()
+    assert not (ROOT / "tests" / "capsem-build-chain" / "test_release_qualification.py").exists()
+
+    release = _workflow("release.yaml")
+    assert retired_checker not in release
+    assert "Verify exact commit passed remote " + "qualification" not in release
+
+
+def test_runtime_preflight_is_reused_without_independent_sha_authority() -> None:
+    preflight = _workflow("release-runtime-preflight.yaml")
+    assert "workflow_call:" in preflight
+    assert "workflow_dispatch:" not in preflight
+    assert "inputs.sha" not in preflight
+    assert "EXPECTED_SHA" not in preflight
+    assert "materialize-config.sh" in preflight
+    assert "profiles/co-work" not in preflight
+    assert "profiles/code" not in preflight
+
+    for name in ("release.yaml", "release-assets.yaml"):
+        workflow = _workflow(name)
+        assert "uses: ./.github/workflows/release-runtime-preflight.yaml" in workflow
+
+
+def test_release_runtime_preflight_bootstraps_only_from_manifest_catalog() -> None:
+    preflight = _workflow("release-runtime-preflight.yaml")
+    binary = _workflow("release.yaml")
+    profile = _workflow("release-assets.yaml")
+
+    assert "bootstrap_missing_first_party:" in preflight
+    assert "scripts/select-runtime-preflight-manifest.py" in preflight
+    assert "--bootstrap-missing-first-party" in preflight
+    assert "steps.manifest.outputs.manifest-url" in preflight
+    assert "ASSET_MANIFEST_URL" not in preflight
+
+    assert "bootstrap_missing_first_party: true" in profile
+    assert "bootstrap_missing_first_party: true" in binary
+
+
+def test_binary_bootstrap_uses_donor_only_as_public_before() -> None:
+    binary = _workflow("release.yaml")
+    resolver = binary.split("  resolve-channel-source:\n", maxsplit=1)[1].split(
+        "\n  preflight:\n", maxsplit=1
+    )[0]
+
+    assert "scripts/select-runtime-preflight-manifest.py" in resolver
+    assert "--bootstrap-missing-first-party" in resolver
+    assert "steps.public-before.outputs.manifest-url" in resolver
+    assert "steps.public-before.outputs.bootstrap" in resolver
+    assert "scripts/project-first-channel-before.py" in resolver
+    assert "Fetch latest selected channel source manifest" in resolver
+    source_fetch = resolver.split(
+        "- name: Fetch latest selected channel source manifest", maxsplit=1
+    )[1].split("- name:", maxsplit=1)[0]
+    assert "--bootstrap-missing-first-party" not in source_fetch
+    assert "--require-profile-membership" in source_fetch

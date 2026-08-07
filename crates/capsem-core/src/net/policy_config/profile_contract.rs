@@ -2062,7 +2062,17 @@ fn overlay_release_manifest_assets(
                     ));
                 }
                 descriptor.name = name.to_string();
-                descriptor.url = url.to_string();
+                descriptor.url = if url.starts_with('/') {
+                    let assets_dir = manifest_path.parent().ok_or_else(|| {
+                        format!(
+                            "installed manifest {} has no asset directory",
+                            manifest_path.display()
+                        )
+                    })?;
+                    format!("file://{}", assets_dir.join(arch).join(name).display())
+                } else {
+                    url.to_string()
+                };
                 descriptor.hash = Some(format!("blake3:{blake3}"));
                 descriptor.size = Some(size);
                 overlaid.insert(kind, ());

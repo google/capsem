@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sqlite3
@@ -11,10 +12,14 @@ import uuid
 from pathlib import Path
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, vm_session_db_path, vm_session_dir, wait_exec_ready, vm_name
-
+from helpers.service import (
+    ServiceInstance,
+    vm_name,
+    vm_session_db_path,
+    vm_session_dir,
+    wait_exec_ready,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
@@ -195,7 +200,17 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
     modify_path = f"ironbank-modified-{uuid.uuid4().hex[:8]}.txt"
     delete_path = f"ironbank-deleted-{uuid.uuid4().hex[:8]}.txt"
     script_path = f"ironbank-file-process-{uuid.uuid4().hex[:8]}.sh"
-    upload_body = f"upload:{nonce}\n".encode()
+    # Prose, not `key: value`. The listing's mime comes from Magika, which
+    # classifies by content and deliberately does not let the extension vote --
+    # so `upload:<random hex>` in a `.txt` file is a short line shaped exactly
+    # like a CSS or CSV record, and the answer depended on the nonce. One run
+    # of the complete gate got `text/css`; the reproduction lives in
+    # `capsem-service`'s `fs_utils` tests.
+    upload_body = (
+        "This is the ironbank upload fixture for the file, process and "
+        f"snapshot ledger.\nCorrelation nonce {nonce} identifies this run so "
+        "the ledger rows can be matched back to it.\n"
+    ).encode()
 
     try:
         service.start()
@@ -445,8 +460,6 @@ def test_file_process_snapshot_routes_pay_full_ledger_debt_blackbox():
         assert "snapshot_events" not in process_log
     finally:
         if client is not None:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
-            except Exception:
-                pass
         service.stop()

@@ -1,6 +1,8 @@
 # Preline Custom Tailwind Variants
 
-Preline provides 55 `@custom-variant` declarations imported via `@import "preline/variants.css"`. Use them as Tailwind class prefixes to style elements based on plugin state.
+Upstream Preline provides 55 plugin-state variants. Capsem does not import
+them; use this list only to recognize legacy patterns and replace them with
+Svelte-owned state plus ordinary conditional classes.
 
 ## Usage Pattern
 

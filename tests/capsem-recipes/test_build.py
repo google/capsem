@@ -1,10 +1,9 @@
 """Verify cargo build --workspace succeeds and expected binaries exist."""
 
 import subprocess
+from pathlib import Path
 
 import pytest
-
-from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 

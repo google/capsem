@@ -1,7 +1,6 @@
 """Shared fixtures for VM lifecycle integration tests."""
 
 import pytest
-
 from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.integration

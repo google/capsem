@@ -7,6 +7,19 @@
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+DOCKER_DISK_GIB=$(awk -F= '
+    /^\[docker\]$/ { in_docker=1; next }
+    /^\[/ { in_docker=0 }
+    in_docker && $1 ~ /^[[:space:]]*recommended_disk_gib[[:space:]]*$/ {
+        gsub(/[[:space:]]/, "", $2); print $2; exit
+    }
+' "$SCRIPT_DIR/config/storage-policy.toml")
+case "$DOCKER_DISK_GIB" in
+    ''|*[!0-9]*)
+        printf "invalid docker.recommended_disk_gib in config/storage-policy.toml\n" >&2
+        exit 2
+        ;;
+esac
 
 ASSUME_YES=0
 for arg in "$@"; do
@@ -95,7 +108,7 @@ if command -v rustup >/dev/null 2>&1; then
     printf "  [ok]   rustup\n"
 elif confirm "rustup (Rust toolchain manager, via sh.rustup.rs)"; then
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain stable --profile minimal
+        | sh -s -- -y --default-toolchain 1.97.1 --profile minimal
     # shellcheck disable=SC1091
     [ -f "$HOME/.cargo/env" ] && . "$HOME/.cargo/env"
 fi
@@ -150,6 +163,50 @@ if ! command -v flock >/dev/null 2>&1; then
     esac
 fi
 
+# The production host-SBOM generator reads the exact Debian packages emitted
+# by the Linux release rail. Ubuntu dpkg currently writes data.tar.zst, while
+# macOS bsdtar delegates that member to the external zstd executable. Install
+# it during canonical bootstrap so `just test` cannot discover the missing
+# decoder only after both release packages and the macOS package are built.
+if [ "$(uname -s)" = "Darwin" ] && ! command -v zstd >/dev/null 2>&1; then
+    if command -v brew >/dev/null 2>&1; then
+        if confirm "zstd (Debian package/SBOM archive support, via brew)"; then
+            brew install zstd
+        fi
+    else
+        printf "  [SKIP] zstd (Homebrew not installed -- install brew, then: brew install zstd)\n"
+    fi
+fi
+
+# The canonical macOS gate installs the exact package in a disposable Tart
+# guest. Bootstrap installs only the small host-side tools; the 25 GB macOS
+# image remains an explicit `just test` cost and is cached by Tart thereafter.
+if [ "$(uname -s)" = "Darwin" ] \
+    && { ! command -v tart >/dev/null 2>&1 || ! command -v sshpass >/dev/null 2>&1; }; then
+    if command -v brew >/dev/null 2>&1; then
+        if confirm "Tart + sshpass (clean macOS package install gate, via brew)"; then
+            # Tart 2.32 depends on softnet from the same official Cirrus Labs
+            # tap. Current Homebrew requires that dependency to be trusted
+            # explicitly before it will evaluate the Tart formula.
+            brew trust --formula cirruslabs/cli/softnet
+            brew install cirruslabs/cli/tart cirruslabs/cli/sshpass
+        fi
+    else
+        printf "  [SKIP] Tart install gate (Homebrew not installed -- install brew, then Tart + sshpass)\n"
+    fi
+fi
+
+# Bootstrap owns the one-time OCI pull and proves the VM really boots. Doctor
+# repeats the clone/boot/SSH proof from the cache and fails if the base is
+# missing, so the complete local release gate never discovers a dead Tart setup late.
+if [ "$(uname -s)" = "Darwin" ] \
+    && command -v tart >/dev/null 2>&1 \
+    && command -v sshpass >/dev/null 2>&1; then
+    printf "  Tart base image + boot readiness...\n"
+    uv run python "$SCRIPT_DIR/scripts/tart_readiness.py"
+    export CAPSEM_BOOTSTRAP_TART_PROVEN=1
+fi
+
 if command -v pnpm >/dev/null 2>&1; then
     printf "  Frontend deps (pnpm install)...\n"
     (cd frontend && CI=true pnpm install --frozen-lockfile)
@@ -199,8 +256,8 @@ case "$(uname -s)" in
             # Start Colima if installed but not running. Doctor's fix can't
             # do this -- it would just print the suggestion and fail.
             if command -v colima >/dev/null 2>&1 && ! colima status >/dev/null 2>&1; then
-                if confirm "start Colima now (vz, 16 GB, 8 CPU -- needed for build-assets + tauri install-test)"; then
-                    colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
+                if confirm "start Colima now (vz, 16 GB RAM, 8 CPU, ${DOCKER_DISK_GIB} GB disk -- release-gate profile)"; then
+                    colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk "$DOCKER_DISK_GIB"
                 fi
             fi
             # The persistent config can say Rosetta is enabled while the
@@ -221,13 +278,24 @@ case "$(uname -s)" in
                     fi
                 elif confirm "restart Colima with VZ Rosetta for amd64 release builds"; then
                     colima stop
-                    colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
+                    colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk "$DOCKER_DISK_GIB"
                 fi
             fi
             if command -v docker >/dev/null 2>&1; then
                 docker info >/dev/null
-                docker run --rm --pull=missing alpine:3.20 true >/dev/null
-                printf "  [ok]   docker VM probe (info + pull/run)\n"
+                docker_dns_ready=0
+                for attempt in $(seq 1 30); do
+                    if docker run --rm --pull=missing alpine:3.20 getent hosts ghcr.io >/dev/null 2>&1; then
+                        docker_dns_ready=1
+                        break
+                    fi
+                    sleep 1
+                done
+                if [ "$docker_dns_ready" -ne 1 ]; then
+                    printf "  [FAIL] Docker DNS did not become ready after Colima startup\n" >&2
+                    exit 1
+                fi
+                printf "  [ok]   docker VM probe (info + registry DNS)\n"
             fi
         fi ;;
     Linux)

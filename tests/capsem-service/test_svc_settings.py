@@ -6,7 +6,6 @@ so mutations here never touch the developer's real ~/.capsem/.
 """
 
 import pytest
-
 from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.integration

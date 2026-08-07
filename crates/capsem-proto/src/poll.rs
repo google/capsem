@@ -70,11 +70,15 @@ impl Default for RetryOpts {
 /// Calls `f()` repeatedly until it returns `Some(T)` or the deadline expires.
 /// Returns `Ok(T)` on success, `Err(TimedOut)` on timeout.
 ///
-/// ```ignore
+/// ```
+/// use capsem_proto::poll::{retry_with_backoff, RetryOpts};
+/// use std::time::Duration;
+///
 /// let fd = retry_with_backoff(
-///     &RetryOpts::new("vsock-connect", Duration::from_secs(30)),
-///     || vsock_connect(cid, port).ok(),
+///     &RetryOpts::new("first-result", Duration::from_secs(1)),
+///     || Some(7),
 /// );
+/// assert_eq!(fd.unwrap(), 7);
 /// ```
 pub fn retry_with_backoff<T, F>(opts: &RetryOpts, mut f: F) -> Result<T, TimedOut>
 where

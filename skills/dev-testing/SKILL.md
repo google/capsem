@@ -1,6 +1,6 @@
 ---
 name: dev-testing
-description: Capsem testing policy and workflow. Use whenever running tests, writing new tests, or verifying changes work. Covers the three test tiers (unit, smoke, full), TDD red-green-refactor, adversarial security testing, coverage policy, and the mandatory end-to-end VM validation. For VM-specific tests see dev-testing-vm, for hypervisor tests see dev-testing-hypervisor, for frontend tests see dev-testing-frontend.
+description: Capsem testing policy and workflow. Use whenever running tests, writing new tests, or verifying changes work. Covers focused native tests, developer smoke feedback, the single public full release gate, TDD red-green-refactor, adversarial security testing, coverage policy, and mandatory end-to-end VM validation. For VM-specific tests see dev-testing-vm, for hypervisor tests see dev-testing-hypervisor, for frontend tests see dev-testing-frontend.
 ---
 
 # Testing
@@ -8,108 +8,111 @@ description: Capsem testing policy and workflow. Use whenever running tests, wri
 Read `tests/README.md` before adding or moving test fixtures. Test-only config
 belongs under `tests/fixtures/`, not root `config/`.
 
-## Test tiers
-
-Three tiers, fast to thorough. Every change must pass all three before it ships.
+## Test execution
 
 | Command | What | VM? |
 |---------|------|-----|
-| `just test` | Everything: unit tests (llvm-cov, warnings-as-errors for service crates) + cross-compile + frontend + all Python integration tests + injection + benchmarks | Yes |
-| `just smoke` | Quick end-to-end: repack + sign + boot + capsem-doctor + MCP + service integration (~30s) | Yes |
+| `just test` | Everything: unit/coverage, cross-compile, frontend, Python/VM integration, injection, benchmarks, Linux install, and exact-package clean-Tart macOS install/glow-up | Yes |
+| `just smoke` | Focused developer feedback: repack, sign, boot, doctor, MCP, and service integration | Yes |
 
-`just test` is the single source of truth. There is no "fast" tier that skips integration tests -- that's how the "Connection refused" bug shipped while tests said green. Individual `test-*` recipes exist for targeted debugging but `just test` is the gate.
+`just test` is the single release source of truth. `just smoke` is useful
+developer feedback, but it never qualifies or releases anything. During TDD
+run the smallest native pytest, cargo, pnpm, or script command directly;
+release commands must execute full `just test`.
+
+The full gate is a construction boundary, not the edit loop. During TDD,
+reproduce the failure with the smallest focused test, run that test red/green,
+and batch adjacent parity fixes before paying for the complete gate. Run it
+once when the forward-fix source state is ready; any later production or gate
+change needs one new complete run.
+
+`just test` deliberately accepts committed or uncommitted developer work. It
+records `HEAD` plus a digest of every tracked and untracked non-ignored source
+byte, then fails if either changes while the gate runs. Generated output stays
+under ignored build directories. The local proof therefore covers the exact
+source state the developer asked to test without forcing commit choreography.
+Automatic gate benchmark output belongs under ignored
+`target/test-benchmarks/`. Historical benchmark publication uses the owning
+pytest/benchmark command and an explicit review; it is not a Just convenience
+recipe.
 
 ## Release CI invariant
 
-Every stable and nightly release must execute `just test` in CI for the exact
-versioned, untagged candidate SHA before an immutable tag exists. A local gate,
-a prior or nearby commit's green workflow, a matching title with a different
-`headSha`, or a release-specific subset is not evidence and must never unblock
-tag creation or publication. `release-qualification.yaml` must call `just test`
-so additions to the canonical gate automatically become mandatory.
+Release CI reuses the same checked-in private modules as local `just test`:
 
-Temporary hosted-CI exception: the full gate runs once on Linux because
-GitHub-hosted macOS lacks the nested Virtualization.framework access needed by
-Capsem VM tests and Colima, and no physical macOS runner is registered. Keep
-this limitation explicitly commented in `release-qualification.yaml`. The
-tagged workflow must verify the exact successful qualification before macOS
-and Linux package jobs fan out. Restore a parallel macOS `just test` job when
-a physical runner becomes available.
+- `_test-fast`
+- `_test-static`
+- `_test-artifacts`
+- `_test-functional`
+- `_test-glowup`
+- `_test-release-contracts`
+
+The build scope is selective; the quality scope is not. Binary CI builds only
+packages and resolves every channel profile by recorded digest. Profile CI
+builds exactly one channel/profile and resolves the current package by recorded
+digest. The resolved complementary artifacts are staged into the production
+test harness, not replaced by source-built substitutes.
+
+Every activated pairing must pass artifact validation, all VM suites,
+Winterfell/MCP lifecycle, IronBank, injection, integration, benchmarks, full
+`capsem-doctor`, exact native install, and update glow-up. A staged profile
+whose minimum package is not yet satisfied may run only the self-consistency,
+integrity, isolation, and boot proof; the following binary lane must run the
+complete functional and glow-up modules before activation.
 
 Both macOS and Linux must install their exact publishable native packages,
 including their real post-install scripts, before publication. Notarization and
-the public stable-to-nightly switch/upgrade glow-up remain mandatory afterward
-as the end-to-end deployed-release test. Do not duplicate `just test` after
-tagging or packaging.
+the public stable-to-nightly switch/upgrade glow-up remain mandatory
+end-to-end proof.
 
-Expensive harnesses need a cheap clean-environment bootstrap proof at the start
-of `just test`. The Linux install rail must build the real install-test image,
-use a container-owned `UV_PROJECT_ENVIRONMENT`, and prove `python -m pytest`
-launches before audits, builds, VMs, or package assembly consume hours. Keep an
-ordering contract for this Stage 0 proof. It is fail-fast infrastructure
+On Apple Silicon macOS, `just test` owns the pre-publication macOS package
+boundary through `scripts/macos_release_glowup.py`: it builds the package with the
+production assembler, installs that exact file in a disposable headless Tart
+guest, verifies the receipt, app bundle, complete binary cohort, service and
+gateway health, then extracts the same package on the physical Mac and boots a
+real Capsem guest VM from its exact binary/profile payload to a shell marker.
+The local package is unsigned; its postinstall ad-hoc signs the installed
+Mach-O payload with the required entitlements. Local qualification must not
+load Developer ID material or create a signing keychain. The tagged publication
+workflow alone signs, notarizes, staples, and installs the final publishable
+package.
+Tart macOS guests do not support nested virtualization, so these are two
+explicit halves of one script rather than a claimed nested proof. `just smoke`
+deliberately excludes Tart and therefore cannot be used for release.
+
+Rust is pinned to `1.97.1` across the workspace file, workflow steps,
+host-builder, and bootstrap. Change all pin surfaces together in a deliberate
+toolchain-bump PR. RustSec and JavaScript bulk advisories are blocking in
+`just smoke`, local `just test`, ordinary CI, and both release lanes,
+as well as the scheduled/manual audit. A new advisory fails the candidate
+until it is remediated or explicitly reviewed in checked-in scanner policy.
+
+Linux proof is host-aware: a cross-built non-host package receives structural
+validation in qualification and exact native installation in its tagged release
+job. `CAPSEM_REQUIRE_LINUX_DEB_PROOF=1` must not reject that non-host package
+before the host package reaches its mandatory KVM proof. The hosted arm64 runner
+does not expose `/dev/kvm`, so it proves exact package/service operation while
+the x86_64 runner additionally owns the guest-shell marker.
+
+Expensive harnesses need a cheap clean-environment bootstrap proof at the
+start of `just test`, before Docker/Colima or artifact preparation. The one
+private `_test-fast` module is also called by `just smoke`, ordinary CI, and
+both release lanes. It owns YAML/workflow and source syntax, source contracts,
+dependency audits, Clippy, Python lint/type checks, and JavaScript/frontend
+checks; no caller may reproduce a subset inline. Only a green fast gate may
+build the Linux install-test image. That preflight must use a
+container-owned `UV_PROJECT_ENVIRONMENT` and prove `python -m pytest` launches
+before VM, package, or asset work consumes hours. Keep an ordering contract.
+It is fail-fast infrastructure
 validation only: the later Docker/systemd install E2E remains mandatory and
 must still exercise the installed package and post-install behavior.
 
 ## Local/CI execution parity
 
-### Ironbank parity rule
-
-The Ironbank parity rule is that every portable release gate must be owned by
-`just test`. A release candidate is not qualified until the complete
-`just test` passes locally and exact-SHA CI runs that same recipe successfully.
-Specialized CI jobs may provide faster feedback or platform evidence, but they
-must call the same checked-in recipe or script already exercised by
-`just test`; they cannot be the only owner of a portable requirement.
-
-Treat `just test` as a strict superset, not merely a collection of similar
-assertions. Anything a CI workflow builds locally-portably must be built and
-tested by `just test` through the same production primitive. CI is allowed to
-run only the slice it needs; the local canonical gate is not allowed to omit
-that slice. A workflow-only build, even when another test validates its input
-schema, is an Ironbank violation because the produced artifact is unaccounted
-for.
-
-This includes workspace/runtime tests, Rust and Python coverage floors,
-`capsem-doctor` and Ironbank acceptance, benchmarks, artifact completeness,
-frontend/docs/marketing/release-site validation, and the Docker/systemd Linux
-package install and guest-shell proof. It also includes the full profile-owned
-VM asset matrix: `just test` calls `just test-assets`, which rebuilds every
-checked-in profile for arm64 and x86_64 through `just build-kernel` and
-`just build-rootfs`, validates the release payload and manifest, and boots each
-host-architecture result to a real guest-shell marker. Truly non-portable
-boundaries remain explicit final gates: Apple signing/notarization, hosted KVM,
-Cloudflare publication, and the physical-Mac public install plus VZ guest shell.
-
-Every portable release-critical CI path must be executable locally through the
-same production entrypoint. Do not create a local lookalike that merely checks
-similar commands. If CI calls a `just` recipe or checked-in script, local proof
-must call that same recipe or script; if a requirement is implemented as a
-shared shell function, both paths must execute that function.
-
-Run Linux-only build, doctor, package, and service prerequisites in Docker from
-`just test` whenever the host is macOS. Match the CI architecture, command
-names, environment variables, permissions, and service manager as closely as
-the container permits. Add a contract test that ties the workflow command to
-the local entrypoint, plus an executable container regression for the failed
-requirement. A CI-only failure is evidence of a missing parity gate: add the
-local reproducer before rerunning CI.
-
-The canonical gate also has a runtime budget. Measure full local and CI stage
-durations and keep meaningful headroom below the runner's observed lifetime;
-the workflow's declared timeout is not proof that the host will live that long.
-Two runs terminating at the same wall-clock age are a deterministic budget
-failure until disproved, not random infrastructure. Before another CI attempt,
-reproduce the expensive rail locally and remove the critical-path bottleneck.
-Parallelize only independent work with isolated workspaces, Docker tags, output
-roots, and cleanup ownership, and add a regression that asserts that isolation.
-
-When an unavoidable platform boundary prevents local execution, name it in the
-release skill and retain the nearest deterministic local proof. Hardware and
-external-service gates still require exact-SHA CI evidence; macOS VZ behavior
-still requires the final physical Mac install and guest-shell proof. Examples
-include Apple signing/notarization, hosted-runner KVM, Cloudflare publication,
-and physical-Mac VZ. Never silently omit a gate because the current host cannot
-run it.
+Read `references/local-ci-parity.md` before editing any release workflow, gate
+recipe, or CI job. It holds the Ironbank parity rule (every portable release
+gate must be owned by `just test`), scanner/tool pinning, Docker platform and
+prune discipline, runtime/disk budgets, and the source-guard contracts.
 
 ## TDD workflow
 
@@ -311,7 +314,7 @@ See `tests/capsem-service/test_svc_exec_ready.py` for the regression tests that 
 
 ### Exec latency regression gate
 
-`tests/capsem-serial/test_boot_timing.py::test_exec_latency_under_1_5_seconds` asserts that provision-to-first-exec completes in under 1.5s. If this test fails, investigate boot time (process.log boot_timeline spans), not the wait mechanism.
+`tests/capsem-serial/test_boot_timing.py::test_exec_latency_within_gate` asserts that provision-to-first-exec completes within `EXEC_LATENCY_GATE`. If this test fails, investigate boot time (process.log boot_timeline spans), not the wait mechanism.
 
 ## Where tests live
 
@@ -363,6 +366,41 @@ fn roundtrip() { ... }
 
 **When to push back.** If you see a new PR or agent output adding an inline `mod tests { ... }` block, request it be moved to `tests.rs` before merge. Exceptions are narrow: tiny helper modules under ~50 lines total where inline tests plus prod code fit on one screen, or a module that's already a test-only helper.
 
+### Source contracts must read the sibling, not the production file
+
+A Python contract asserting that some Rust test *exists* must read the sibling
+`tests.rs`, never the production `.rs` the test moved out of. Use
+`tests/rust_sources.py`:
+
+```python
+from rust_sources import production, sibling_tests
+
+assert "pub enum Status" in production(RELEASE_GRAPH)          # prod symbol
+assert "release_graph_enums_reject_unknown" in sibling_tests(RELEASE_GRAPH)
+```
+
+Keep the two sources **separate**. Several contracts assert a symbol is
+*absent* from production (`"Removed" not in source`), and a test module
+legitimately names the thing it proves is rejected -- concatenating them lets a
+fixture falsify a claim about shipped code.
+
+`sibling_tests()` resolves `mod tests;` the way Rust does (`foo.rs` →
+`foo/tests.rs`; `main.rs`/`lib.rs`/`mod.rs` → `tests.rs` beside it) and raises
+when the module is missing rather than passing on an empty string. The helper is
+not named `tests_of` on purpose: pytest collects `test*`, so the obvious name
+becomes a phantom failing test in every importer.
+
+`tests/test_rust_test_name_assertions.py` enforces this repo-wide and fails in
+seconds. It resolves each assertion's target through the AST, per function
+scope, so a contract that legitimately names a relocated test while asserting it
+against a test module or spec document is not flagged.
+
+**Why it matters.** This layout change broke sixteen contracts under
+`tests/capsem-release/`, then five more under `tests/capsem-install/` that run
+only inside the Docker install gate -- invisible until forty minutes into a
+release run. Nothing about the failure pointed at a moved function; it read as a
+broken release.
+
 ## Integration test suites
 
 All Python integration tests live under `tests/capsem-*/` and use pytest markers. Each suite has a dedicated `just` recipe.
@@ -392,65 +430,29 @@ All Python integration tests live under `tests/capsem-*/` and use pytest markers
 | Session exhaustive | `capsem-session-exhaustive/` | `session_exhaustive` | Yes | Per-table data validation, cross-table FK integrity |
 | Install | `capsem-install/` | `install` | No | Native package installer: layout, auto-launch, service install, manifest placement, update, uninstall, lifecycle, reinstall, error paths |
 
-Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign + serial + session-lifecycle + config-runtime + recovery. `just test-install` runs the install suite in Docker with systemd. `just test` runs everything.
+`just test` is the only public complete/release gate and `just smoke` is the
+only public focused composite. Suite-specific and install/package rails are
+private implementation details; run an individual pytest/cargo/pnpm command
+directly for focused diagnosis instead of adding another public composite.
+
+Public Just recipes, Capsem CLI command paths, and service HTTP method/path
+pairs are exact approval-gated surfaces. Any change must pass
+`tests/test_public_surface_contract.py` and requires explicit approval before
+editing `config/public-surface.toml`.
 
 ## Test matrix: what runs where
 
-### Rust crate CI matrix
-
-| Crate | Tests | CI macOS | CI Linux | Smoke | Full |
-|-------|------:|:--------:|:--------:|:-----:|:----:|
-| capsem-core | ~1695 | Yes | Compile/no-run + non-live-KVM | No | Yes |
-| capsem-agent | ~71 | Yes | Compile/no-run | No | Yes |
-| capsem-logger | ~47 | Yes | Compile/no-run | No | Yes |
-| capsem-proto | ~132 | Yes | Compile/no-run | No | Yes |
-| capsem-gateway | ~38 | Yes | Compile/no-run | No | Yes |
-| capsem-service | ~109 | Yes | Compile/no-run | No | Yes |
-| capsem (CLI) | ~140 | Yes | Compile/no-run | No | Yes |
-| capsem-mcp | ~67 | Yes | Compile/no-run | No | Yes |
-| capsem-tray | ~47 | Yes | No | No | Yes |
-| capsem-process | ~62 | Yes | Compile/no-run | No | Yes |
-| capsem-app | ~35 | Check | No | No | Yes |
-
-### Python integration suite tier map
-
-| Suite | Marker | VM? | CI | Smoke | Full |
-|-------|--------|:---:|:--:|:-----:|:----:|
-| capsem-bootstrap | `bootstrap` | No | Collect; run in full gate after assets exist | No | Yes |
-| capsem-codesign | `codesign` | No | Collect; run in full gate after signing | No | Yes |
-| capsem-rootfs-artifacts | `rootfs` | No | Run | No | Yes |
-| capsem-mcp | `mcp` | Yes | Collect | Yes | Yes |
-| capsem-service | `integration` | Yes | Collect | Yes | Yes |
-| capsem-cli | `integration` | Yes | Collect | Yes | Yes |
-| capsem-gateway | `gateway` | Yes | Collect | Yes | Yes |
-| capsem-e2e | `e2e` | Yes | Collect | No | Yes |
-| capsem-session | `session` | Yes | Collect | No | Yes |
-| capsem-session-lifecycle | `session_lifecycle` | Yes | Collect | No | Yes |
-| capsem-session-exhaustive | `session_exhaustive` | Yes | Collect | No | Yes |
-| capsem-security | `security` | Yes | Collect | No | Yes |
-| capsem-isolation | `isolation` | Yes | Collect | No | Yes |
-| capsem-snapshots | `snapshot` | Yes | Collect | No | Yes |
-| capsem-config | `config` | Yes | Collect | No | Yes |
-| capsem-config-runtime | `config_runtime` | Yes | Collect | No | Yes |
-| capsem-guest | `guest` | Yes | Collect | No | Yes |
-| capsem-cleanup | `cleanup` | Yes | Collect | No | Yes |
-| capsem-stress | `stress` | Yes | Collect | No | Yes |
-| capsem-recovery | `recovery` | Yes | Collect | No | Yes |
-| capsem-serial | `serial` | Yes | Collect | No | Yes |
-| capsem-lifecycle | `integration` | Yes | Collect | No | Yes |
-| capsem-build-chain | `build_chain` | Yes | Collect | No | Yes |
-| capsem-recipes | `recipe` | No | Run | No | Yes |
-| capsem-install | `install` | No | Yes (Docker) | No | Yes |
-
-"Run" = tests execute in PR CI. "Collect" = imports verified (`--collect-only`) but tests do not execute in that PR lane. Artifact-dependent no-VM suites still execute in the full `just test` gate after their build/sign prerequisites exist. "Yes (Docker)" = runs in dedicated Docker+systemd CI job.
+Read `references/test-matrix.md` for the per-crate Rust CI matrix and the
+Python suite map (which suites run versus collect in PR CI, smoke, and the full
+gate).
 
 ### Coverage targets
 
 | Component | Floor | Enforced | Where |
 |-----------|------:|:--------:|-------|
-| Rust workspace | 65% | `--fail-under-lines 65` | CI (`cargo llvm-cov`), `just test` |
-| Python top-level contracts | 89% | `--cov-fail-under=89` | PR CI (`tests/test_*.py`) |
-| Python full suite | 90% | `--cov-fail-under=90` | `just test` |
+| Rust workspace | 63% | `--fail-under-lines 63` | CI (`cargo llvm-cov`), `just test` |
+| Python selected CI suite | 85% | `--cov-fail-under=85` | Ordinary CI |
+| Python full suite | 85% | `--cov-fail-under=85` | `just test` |
 | capsem-service | 80% | Codecov component | `codecov.yml` |
 | capsem-mcp | 80% | Codecov component | `codecov.yml` |
 | capsem-gateway | 80% | Codecov component | `codecov.yml` |
@@ -458,84 +460,23 @@ Composite recipe: `just test-vm` runs build-chain + guest + cleanup + codesign +
 
 ## Coverage
 
-- Rust: `cargo llvm-cov` via `just test` (floor: 65% line coverage)
-- Python: PR top-level contract lane uses 89%; full `just test` uses 90%.
+- Rust: `cargo llvm-cov` via `just test` (floor: 63% line coverage)
+- Python: ordinary CI and the full `just test` suite both enforce 85%.
 - `codecov.yml` maps components to code paths. Update it when files or directories are added, moved, or renamed.
 
 ## Fast debug with capsem MCP tools
 
-When the capsem MCP server is configured, Claude Code has direct VM control via MCP tools -- no shell commands or just recipes needed. This is the fastest way to test changes interactively because you stay in the conversation loop: create a VM, run commands, inspect results, fix code, repeat.
-
-### The tools
-
-| Tool | What it does |
-|------|-------------|
-| `capsem_create` | Spin up a fresh VM (returns VM id). Named VMs are persistent. |
-| `capsem_run` | One-shot: boot temp VM, exec command, destroy, return output |
-| `capsem_exec` | Run a command inside a running guest |
-| `capsem_stop` | Stop VM (persistent: preserve state; ephemeral: destroy) |
-| `capsem_resume` | Resume a stopped persistent VM |
-| `capsem_read_file` | Read a file from the guest filesystem |
-| `capsem_write_file` | Write a file into the guest |
-| `capsem_list` | Show all VMs (running + stopped persistent) |
-| `capsem_info` | VM details (config, status, persistent, PID) |
-| `capsem_delete` | Destroy VM and wipe all state |
-| `capsem_persist` | Convert running ephemeral VM to persistent |
-| `capsem_purge` | Kill all temp VMs (all=true includes persistent) |
-| `capsem_fork` | Fork a running/stopped VM into a reusable image |
-| `capsem_image_list` | List all user images |
-| `capsem_image_inspect` | Inspect a specific image's metadata |
-| `capsem_image_delete` | Delete a user image |
-
-### Debug workflow
-
-**Quick one-shot** (no VM management): `capsem_run` with the command you want to test.
-
-**Iterative debugging** (long-lived VM):
-1. **Create**: `capsem_create` -- boots a fresh VM in ~10s
-2. **Test**: `capsem_exec` with the command you want to verify (e.g., `capsem-doctor -k net`, `cat /etc/resolv.conf`, `curl https://example.com`)
-3. **Inspect**: `capsem_read_file` to check config files/logs; typed stats, timeline, security, detection, and enforcement routes for telemetry
-4. **Iterate**: fix code on host, rebuild (`just build`), create a new VM to test again
-5. **Cleanup**: `capsem_delete` when done
-
-### When to use MCP tools vs just recipes
-
-| Scenario | Use |
-|----------|-----|
-| Quick check: "does this command work in the guest?" | `capsem_run` |
-| Read a guest file to understand state | `capsem_read_file` |
-| Verify telemetry was recorded correctly | typed stats/timeline/security routes or Ironbank direct ledger reads |
-| Full regression suite | `just test` |
-| Build + boot + validate in one shot | `just smoke` |
-| Benchmark performance | `just benchmark` |
-
-MCP tools are for fast, targeted checks during development. Just recipes are for comprehensive validation before committing.
-
-### Common debug queries
-
-```sql
--- Check network events for a domain
-SELECT * FROM net_events WHERE domain LIKE '%example%' ORDER BY timestamp DESC LIMIT 10;
-
--- Verify MCP-origin tool calls were logged
-SELECT server_name, tool_name, decision, duration_ms
-FROM tool_calls
-WHERE origin = 'mcp'
-ORDER BY timestamp DESC;
-
--- Check model API calls
-SELECT provider, model, status_code, duration_ms FROM model_calls ORDER BY timestamp DESC;
-
--- File system events
-SELECT operation, path, success FROM fs_events ORDER BY timestamp DESC LIMIT 20;
-```
+Read `references/mcp-debug-tools.md` for interactive VM debugging through the
+capsem MCP server: tool table, one-shot vs iterative workflows, and common
+session-DB queries. MCP tools are for fast targeted checks; just recipes are
+for comprehensive validation before committing.
 
 ## End-to-end validation is not optional
 
 After any change touching guest binaries, network policy, telemetry, MCP, or VM lifecycle:
 
 1. `just exec "capsem-doctor"` -- verifies sandbox integrity inside the VM
-2. After telemetry/logging changes: run a real session and verify with `just inspect-session` that net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, and security_rule_events are populated correctly for the exercised protocols
+2. After telemetry/logging changes: run a real session and verify with `python3 scripts/check_session.py` that net_events, model_calls, tool_calls, tool_responses, fs_events, dns_events, and security_rule_events are populated correctly for the exercised protocols
 
 ## When tests fail
 
@@ -544,6 +485,81 @@ Never dismiss a test failure as "pre-existing" or "unrelated." Every failure mus
 1. **Do not change the test to make it pass.** The test is evidence. Changing the assertion to match broken behavior destroys that evidence.
 2. **Reproduce and diagnose first.** Understand *why* it fails before writing any fix. See the dev-debugging skill for the full methodology: reproduce with a test, diagnose root cause, then fix comprehensively.
 3. **Fix the code, not the test.** If the test is genuinely wrong (not the code), explain in detail why the test's expectation is incorrect before changing it.
+
+### Measuring a gate's result
+
+**Never take the last line of a multi-part result as the result.** Two shapes of
+one mistake, both of which report success while the thing measured failed:
+
+**`$?` after a pipe is the pipe's status.** `just test | tail` reports what
+`tail` did. Redirect, then read the code separately:
+
+```bash
+just test > /tmp/gate.log 2>&1; echo "EXIT=$?"
+```
+
+**`tail -n1` across a multi-part result returns the last part, not the whole.**
+`cargo test -p capsem-service` runs three test binaries; the last prints
+`0 passed`, so `| tail -1` reads as though the crate had no tests while 91 and
+264 passed above it. Aggregate instead of sampling:
+
+```bash
+cargo test -p capsem-service 2>&1 | grep -E "^test result:"   # every binary
+```
+
+Both errors are silent and both flatter you: one turns a failed gate into a
+pass, the other turns a passing crate into a phantom regression. If a command
+can emit more than one verdict, read them all.
+
+Read the *first* real error, not the recipe cascade under it — `grep -aE "^FAILED|^E "` lands on the cause, while the trailing `error: Recipe ... failed` lines are only the unwind.
+
+`tests/test_exit_status_integrity.py` keeps this out of committed recipes,
+scripts, and workflows, and requires `set -o pipefail` in any bash recipe that
+pipes. It cannot see an agent's ad-hoc shell — that part is on you.
+
+### Fixtures use the wrapper, never the raw variable
+
+Redirect Capsem paths with `paths::CapsemPathsGuard::redirect(root)`. It sets
+`CAPSEM_HOME`, `CAPSEM_RUN_DIR`, and `CAPSEM_ASSETS_DIR` from one root and
+restores on drop, so a fixture cannot set one and inherit the rest.
+
+Read logs with `telemetry::read_log_tail`, including in assertions: a test that
+opens a `*.log` path directly stops exercising what the product does the moment
+that stream rotates.
+
+Both are enforced by `tests/test_path_and_log_wrappers_are_mandatory.py`. See
+`/dev-rust-patterns` "One rule, one function" for why.
+
+### Verify with the gate's environment, not a bare shell
+
+`just test` exports `CAPSEM_HOME`, `CAPSEM_RUN_DIR`, `CAPSEM_TEST_PROFILE`, and
+`CAPSEM_BENCHMARK_OUTPUT_ROOT`. A test that reads ambient state passes in your
+shell and fails in the gate:
+
+```bash
+CAPSEM_HOME="$PWD/target/test-home/.capsem" \
+CAPSEM_RUN_DIR="$PWD/target/test-home/.capsem/run" \
+  cargo test -p <crate>
+```
+
+A fixture that overrides `CAPSEM_HOME` must override `CAPSEM_RUN_DIR` too —
+the run dir takes precedence over the home-derived default, so setting only the
+first sends production code to the ambient run directory while the fixture
+writes into a temp one. Bisect by exporting one variable at a time; that names
+the culprit in two runs instead of guessing.
+
+### Thresholds belong in one place
+
+A number copied next to a rule drifts from it silently. Three separate gate failures in one session traced to this: a coverage floor asserted as `65` after it moved to `63`, a guest kernel check demanding `major >= 7` after the pin moved to `6.18`, and a Docker fixture simulating `30 GiB free` as "plenty" after the floor rose to `40`.
+
+Each read as a broken product, and each surfaced minutes-to-an-hour into a gate rather than at the edit. Derive the value from its source, or name it once and pin config and contract together:
+
+```python
+floor = tomllib.loads(BUILD_CONFIG.read_text())["rails"]["assets"]["minimum_free_gib"]
+ample_kib = (floor + 10) * 1024 * 1024   # follows the floor; never restates it
+```
+
+Prove it derives rather than hardcodes: change the source value and confirm the test *follows* instead of breaking.
 
 ## Platform gating tests
 

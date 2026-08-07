@@ -7,7 +7,6 @@ from typing import Any
 from helpers.constants import CODE_PROFILE_ID
 from helpers.service import ServiceInstance
 
-
 FORBIDDEN_FACTS = (
     "credential.",
     "snapshot.",

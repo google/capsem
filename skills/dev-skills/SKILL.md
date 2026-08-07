@@ -190,3 +190,22 @@ Skills in `~/.claude/skills/` are available across all projects. We install meta
    execute the same production entrypoint or shared predicate locally in
    Docker when possible, add a regression, and audit sibling workflows before
    retrying CI. Record any unavoidable platform boundary explicitly.
+
+
+## Guards encode a rule; they do not replace it
+
+When a rule keeps being broken, the first move is a function that makes the
+break unrepresentable -- not a lint that scolds. Add the guard to stop
+regressions *after* the wrapper exists, and point it at the wrapper.
+
+A guard must be precise before it is useful. Ours needed four iterations, each
+failing the same way: too coarse. It flagged prose for containing a retired
+term inside a current one; it flagged whole files for containing two shapes
+that never met; it flagged a variable named `path` in one function because
+another function had a parameter of that name. A guard with false positives
+teaches people to add exemptions, and the pressure is always to narrow its
+scope to fit the code rather than fix the code.
+
+Before trusting a new guard: run it, read every hit, and confirm each is real.
+Then break the rule deliberately and confirm it fails. A guard that has never
+been red is a guard you have not tested.

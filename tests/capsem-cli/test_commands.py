@@ -1,12 +1,10 @@
 """CLI command integration tests: create, list, exec, info, status, delete, run, resume, persist, purge."""
 
-import uuid
-
-import pytest
-
 import subprocess
+import uuid
 from pathlib import Path
 
+import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import wait_exec_ready
 
@@ -54,7 +52,7 @@ class TestList:
 
     def test_list_empty(self, uds_path):
         # May have VMs from other tests, just verify it doesn't crash
-        stdout, stderr, rc = run_cli("list", uds_path=uds_path)
+        _stdout, stderr, rc = run_cli("list", uds_path=uds_path)
         assert rc == 0, f"list failed: {stderr}"
 
     def test_list_shows_created_vm(self, uds_path):
@@ -116,7 +114,7 @@ class TestDelete:
     def test_delete(self, uds_path):
         name = f"ex1-{uuid.uuid4().hex[:4]}"
         _provision_vm(uds_path, name)
-        stdout, stderr, rc = run_cli("delete", name, uds_path=uds_path)
+        _stdout, stderr, rc = run_cli("delete", name, uds_path=uds_path)
         assert rc == 0, f"delete failed: {stderr}"
         # Verify gone from list
         list_out, _, _ = run_cli("list", uds_path=uds_path)
@@ -133,7 +131,7 @@ class TestAliases:
         """capsem rm <id> deletes a VM (alias for delete)."""
         name = f"rmal-{uuid.uuid4().hex[:4]}"
         _provision_vm(uds_path, name)
-        stdout, stderr, rc = run_cli("rm", name, uds_path=uds_path)
+        _stdout, stderr, rc = run_cli("rm", name, uds_path=uds_path)
         assert rc == 0, f"rm alias failed: {stderr}"
         list_out, _, _ = run_cli("list", uds_path=uds_path)
         assert name not in list_out

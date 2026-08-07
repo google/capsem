@@ -4,6 +4,7 @@
 //! service API, and small helpers used across command handlers.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -101,6 +102,8 @@ impl std::fmt::Display for VmLifecycleState {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct SessionInfo {
     pub id: String,
+    #[serde(default)]
+    pub profile_id: String,
     #[serde(default)]
     pub name: Option<String>,
     pub pid: u32,
@@ -222,6 +225,24 @@ pub struct ExecResponse {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+    /// The guest produced more output than the per-exec capture limit, so
+    /// `stdout` is a prefix. Defaulted so an older service still decodes.
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+impl ExecResponse {
+    /// Warning to print when the result was capped, or `None` when complete.
+    ///
+    /// The caller sends this to stderr: stdout stays byte-exact so piping and
+    /// programmatic consumers are unaffected by the notice. The limit itself
+    /// is deliberately not repeated here -- it lives in capsem-process, and
+    /// restating the number invites the two drifting apart.
+    pub fn truncation_notice(&self) -> Option<&'static str> {
+        self.truncated.then_some(
+            "capsem: guest output exceeded the capture limit; showing the retained prefix",
+        )
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -449,6 +470,20 @@ fn isolation_mode_active() -> bool {
         .unwrap_or(false)
 }
 
+fn direct_spawn_service_args(paths: &paths::CapsemPaths, isolated: bool) -> Vec<OsString> {
+    let mut args = vec![
+        "--foreground".into(),
+        "--assets-dir".into(),
+        paths.assets_dir.clone().into_os_string(),
+        "--process-binary".into(),
+        paths.process_bin.clone().into_os_string(),
+    ];
+    if isolated {
+        args.extend([OsString::from("--gateway-port"), OsString::from("0")]);
+    }
+    args
+}
+
 /// Validate that a session identifier is safe for path construction.
 /// Rejects identifiers containing path separators or traversal sequences.
 pub fn validate_id(id: &str) -> Result<()> {
@@ -630,17 +665,33 @@ impl UdsClient {
         // `subprocess.run(..., capture_output=True)`, that pipe inheritance
         // turns every `capsem run` into a 120s hang: Python's communicate()
         // waits for EOF on stdout/stderr, but the detached service keeps
-        // them alive long after the CLI returns. Service logs go to
-        // `<run_dir>/service.log` regardless, so nothing useful is lost.
+        // them alive long after the CLI returns.
+        //
+        // Detach to a file rather than /dev/null. A panic, and any failure
+        // before `telemetry::init` returns, reach stderr and nothing else --
+        // exactly the cases where the service's own log is empty and the user
+        // has a dead daemon to explain.
+        //
+        // Under `run/stderr/`, not beside the rotated streams: retention
+        // prunes anything in the log directory matching `service*.log`, and
+        // unlinking this file would not disturb the fd already open on it.
+        // The service would go on writing panics into an inode nobody can
+        // reach -- the same silence, harder to notice.
+        let stderr_dir = capsem_core::paths::capsem_run_dir().join("stderr");
+        let service_stderr = std::fs::create_dir_all(&stderr_dir)
+            .and_then(|()| {
+                std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(stderr_dir.join("service.log"))
+            })
+            .map(std::process::Stdio::from)
+            .unwrap_or_else(|_| std::process::Stdio::null());
         let mut child = tokio::process::Command::new(&paths.service_bin)
-            .arg("--foreground")
-            .arg("--assets-dir")
-            .arg(&paths.assets_dir)
-            .arg("--process-binary")
-            .arg(&paths.process_bin)
+            .args(direct_spawn_service_args(&paths, isolation_mode_active()))
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(service_stderr)
             .spawn()
             .context("failed to spawn capsem-service")?;
 

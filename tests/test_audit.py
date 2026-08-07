@@ -122,12 +122,12 @@ class TestParseTrivyJson:
 
     def test_missing_fixed_version(self):
         vulns = parse_trivy_json(TRIVY_JSON)
-        curl = [v for v in vulns if v.package == "curl"][0]
+        curl = next(v for v in vulns if v.package == "curl")
         assert curl.fixed_version == ""
 
     def test_missing_title(self):
         vulns = parse_trivy_json(TRIVY_JSON)
-        requests_v = [v for v in vulns if v.package == "requests"][0]
+        requests_v = next(v for v in vulns if v.package == "requests")
         assert requests_v.title == ""
 
     def test_no_vulnerabilities_key(self):
@@ -156,17 +156,17 @@ class TestParseGrypeJson:
 
     def test_severity_normalized(self):
         vulns = parse_grype_json(GRYPE_JSON)
-        zlib = [v for v in vulns if v.package == "zlib"][0]
+        zlib = next(v for v in vulns if v.package == "zlib")
         assert zlib.severity == "HIGH"  # "High" -> "HIGH"
 
     def test_fix_versions_joined(self):
         vulns = parse_grype_json(GRYPE_JSON)
-        libxml = [v for v in vulns if v.package == "libxml2"][0]
+        libxml = next(v for v in vulns if v.package == "libxml2")
         assert libxml.fixed_version == "3.0.1, 3.1.0"
 
     def test_not_fixed(self):
         vulns = parse_grype_json(GRYPE_JSON)
-        bash = [v for v in vulns if v.package == "bash"][0]
+        bash = next(v for v in vulns if v.package == "bash")
         assert bash.fixed_version == ""
 
     def test_scanner_is_grype(self):

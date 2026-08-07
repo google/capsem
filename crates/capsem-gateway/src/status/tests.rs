@@ -199,6 +199,7 @@ fn test_vm(id: &str, name: Option<&str>, status: VmLifecycleState, persistent: b
         model_call_count: None,
         can_resume: false,
         resume_blocked_reason: None,
+        last_error: None,
         available_actions: match status {
             VmLifecycleState::Running => vec![
                 VmAction::Pause,
@@ -577,6 +578,48 @@ fn list_response_deserializes_telemetry() {
     assert_eq!(list.sessions[0].total_input_tokens, Some(1000));
     assert_eq!(list.sessions[0].total_output_tokens, Some(500));
     assert_eq!(list.sessions[0].total_estimated_cost, Some(0.42));
+}
+
+#[tokio::test]
+async fn fetch_status_forwards_the_boot_error_of_a_defunct_session() {
+    // The service records a crashed boot's process.log tail in `last_error`
+    // and deliberately leaves `resume_blocked_reason` empty for a defunct
+    // session. Dropping `last_error` here leaves every downstream surface
+    // with nothing to say but "not resumable".
+    let mock = axum::Router::new().route(
+        "/vms/list",
+        axum::routing::get(|| async {
+            axum::Json(serde_json::json!({
+                "sandboxes": [{
+                    "id": "dead-vm", "profile_id": "code", "pid": 0,
+                    "status": "Defunct", "persistent": true,
+                    "can_resume": false,
+                    "last_error": "ERROR capsem_process: failed to build VmConfig: rootfs hash mismatch",
+                    "available_actions": ["delete"]
+                }]
+            }))
+        }),
+    );
+    let (path, h, _d) = mock_uds(mock).await;
+
+    let resp = fetch_status(&test_app_state(&path)).await;
+    assert_eq!(
+        resp.vms[0].last_error.as_deref(),
+        Some("ERROR capsem_process: failed to build VmConfig: rootfs hash mismatch")
+    );
+    assert_eq!(resp.vms[0].resume_blocked_reason, None);
+    h.abort();
+}
+
+#[test]
+fn vm_summary_omits_last_error_for_a_healthy_session() {
+    let vm = test_vm("vm1", Some("dev"), VmLifecycleState::Running, false);
+    let json = serde_json::to_value(&vm).unwrap();
+
+    assert!(
+        json.get("last_error").is_none(),
+        "a running VM must not carry an empty last_error key"
+    );
 }
 
 #[tokio::test]

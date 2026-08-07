@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 import json
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "verify-installed-release.py"
@@ -58,26 +60,73 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path]:
     return home, manifest, capsem
 
 
-def _run(home: Path, manifest: Path, capsem: Path) -> subprocess.CompletedProcess[str]:
+def _run(
+    home: Path,
+    manifest: Path,
+    capsem: Path,
+    *,
+    artifact: Path | None = None,
+    platform: str = "linux",
+    architecture: str = "amd64",
+    package_version: str = "1.5.9",
+) -> subprocess.CompletedProcess[str]:
+    command = [
+        sys.executable,
+        str(SCRIPT),
+        "--capsem",
+        str(capsem),
+        "--capsem-home",
+        str(home),
+        "--manifest-url",
+        manifest.resolve().as_uri(),
+        "--channel",
+        "stable",
+        "--package-version",
+        package_version,
+    ]
+    if artifact is not None:
+        command.extend(
+            [
+                "--artifact",
+                str(artifact),
+                "--platform",
+                platform,
+                "--architecture",
+                architecture,
+            ]
+        )
     return subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT),
-            "--capsem",
-            str(capsem),
-            "--capsem-home",
-            str(home),
-            "--manifest-url",
-            manifest.resolve().as_uri(),
-            "--channel",
-            "stable",
-            "--package-version",
-            "1.5.9",
-        ],
+        command,
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
     )
+
+
+def _add_package(
+    home: Path,
+    manifest: Path,
+    artifact: Path,
+    *,
+    version: str = "1.5.9",
+    platform: str = "linux",
+    architecture: str = "x86_64",
+) -> None:
+    contents = artifact.read_bytes()
+    release = json.loads(manifest.read_text(encoding="utf-8"))
+    release["packages"] = [
+        {
+            "name": artifact.name,
+            "version": version,
+            "platform": platform,
+            "architecture": architecture,
+            "bytes": len(contents),
+            "status": "current",
+            "digest": {"sha256": hashlib.sha256(contents).hexdigest()},
+        }
+    ]
+    manifest.write_text(json.dumps(release) + "\n", encoding="utf-8")
+    (home / "assets" / "manifest.json").write_bytes(manifest.read_bytes())
 
 
 def test_installed_release_gate_accepts_exact_manifest_metadata_and_ready_profiles(
@@ -89,6 +138,43 @@ def test_installed_release_gate_accepts_exact_manifest_metadata_and_ready_profil
 
     assert result.returncode == 0, result.stderr
     assert "verified installed stable release 1.5.9: 2/2 profiles ready" in result.stdout
+
+
+def test_installed_release_gate_accepts_manifest_selected_legacy_x86_64_deb(
+    tmp_path: Path,
+) -> None:
+    home, manifest, capsem = _write_fixture(tmp_path)
+    artifact = tmp_path / "capsem_1.5.9_amd64.deb"
+    artifact.write_bytes(b"exact legacy donor package")
+    _add_package(home, manifest, artifact)
+
+    result = _run(home, manifest, capsem, artifact=artifact)
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ("overrides", "field"),
+    [
+        ({"package_version": "9.9.9"}, "version"),
+        ({"platform": "macos"}, "platform"),
+        ({"architecture": "x86_64"}, "architecture"),
+    ],
+)
+def test_installed_release_gate_rejects_wrong_expected_package_identity(
+    tmp_path: Path,
+    overrides: dict[str, str],
+    field: str,
+) -> None:
+    home, manifest, capsem = _write_fixture(tmp_path)
+    artifact = tmp_path / "capsem_1.5.9_amd64.deb"
+    artifact.write_bytes(b"exact legacy donor package")
+    _add_package(home, manifest, artifact)
+
+    result = _run(home, manifest, capsem, artifact=artifact, **overrides)
+
+    assert result.returncode != 0
+    assert f"manifest-selected package {field}" in result.stderr
 
 
 def test_installed_release_gate_rejects_rewritten_manifest(tmp_path: Path) -> None:

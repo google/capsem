@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-
 pytestmark = pytest.mark.integration
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -149,7 +148,7 @@ def test_session_event_writes_stay_behind_dbwriter() -> None:
             continue
         for path in src.rglob("*.rs"):
             rel = path.relative_to(PROJECT_ROOT).as_posix()
-            if rel.endswith("/tests.rs") or rel.endswith("_tests.rs") or "/tests/" in rel:
+            if rel.endswith(("/tests.rs", "_tests.rs")) or "/tests/" in rel:
                 continue
             text = _production_text(path)
             if rel not in allowed_direct_sqlite:

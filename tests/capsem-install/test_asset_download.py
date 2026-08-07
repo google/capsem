@@ -15,12 +15,13 @@ against `CAPSEM_HOME` + `CAPSEM_ASSET_BASE_URL` pointed at the server.
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 import platform
 import subprocess
 import threading
+import tomllib
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -77,6 +78,20 @@ def _read_update_log(capsem_home: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
+# Fixtures must not exclude the binary under test. A literal "1.0.0" floor here
+# silently skipped every asset release once the project moved below that line,
+# and the tests reported "no compatible asset release" as if the product were
+# broken. Deriving it from the workspace version keeps the fixture honest
+# through the next line change too.
+def _fixture_min_binary() -> str:
+    cargo = Path(__file__).resolve().parents[2] / "Cargo.toml"
+    for line in cargo.read_text(encoding="utf-8").splitlines():
+        if line.startswith("version = "):
+            major, minor, *_ = line.split('"')[1].split(".")
+            return f"{major}.{minor}.0"
+    raise RuntimeError("workspace version not found in Cargo.toml")
+
+
 def _make_manifest(arch: str, files: dict[str, bytes], asset_version: str = ASSET_VERSION) -> dict:
     """Build a minimal v2 manifest for the given arch + byte blobs."""
     return {
@@ -88,7 +103,7 @@ def _make_manifest(arch: str, files: dict[str, bytes], asset_version: str = ASSE
                 asset_version: {
                     "date": "2030-01-01",
                     "deprecated": False,
-                    "min_binary": "1.0.0",
+                    "min_binary": _fixture_min_binary(),
                     "arches": {
                         arch: {
                             name: {"hash": _blake3(blob), "size": len(blob)}
@@ -122,7 +137,7 @@ def _make_release_channel_manifest(
 ) -> dict:
     """Build the split-lane release graph shape published at /assets/<channel>/manifest.json."""
     return {
-        "version": "1.5.2030010102",
+        "version": "1.5.1",
         "status": "current",
         "packages": [],
         "profiles": {
@@ -642,6 +657,76 @@ def test_update_assets_records_channel_change_audit_log(
     assert "package_version" not in complete["changed_fields"]
 
 
+def test_package_preactivation_manifest_preserves_its_declared_public_channel(
+    tmp_path: Path,
+    http_fixture,
+    installed_layout,
+):
+    base_url, serve_dir, requested_paths = http_fixture
+    arch = _arch()
+    old_files = {
+        "vmlinuz": b"preactivation-old-kernel",
+        "initrd.img": b"preactivation-old-initrd",
+        "rootfs.erofs": b"preactivation-old-rootfs",
+    }
+    new_files = {
+        "vmlinuz": b"preactivation-new-kernel",
+        "initrd.img": b"preactivation-new-initrd",
+        "rootfs.erofs": b"preactivation-new-rootfs",
+    }
+    candidate_url = f"{base_url}/candidate/manifest.json"
+    candidate = _make_manifest(arch, new_files, NEW_ASSET_VERSION)
+    candidate["channel"] = "nightly"
+    candidate["asset_base"] = f"{base_url}/candidate/blobs/{{asset_version}}"
+    candidate_path = serve_dir / "candidate" / "manifest.json"
+    candidate_path.parent.mkdir(parents=True)
+    candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+    blob_dir = serve_dir / "candidate" / "blobs" / NEW_ASSET_VERSION
+    blob_dir.mkdir(parents=True)
+    for name, blob in new_files.items():
+        (blob_dir / f"{arch}-{name}").write_bytes(blob)
+
+    capsem_home = tmp_path / ".capsem"
+    assets = capsem_home / "assets"
+    _write_installed_manifest_and_assets(
+        assets,
+        arch,
+        old_files,
+        asset_version=ASSET_VERSION,
+        origin={
+            "schema": "capsem.manifest_metadata.v1",
+            "origin": "package",
+            "manifest_url": "https://release.capsem.org/assets/nightly/manifest.json",
+            "channel": "nightly",
+            "channel_kind": "public",
+            "channel_locked": False,
+            "package_version": "1.6.1",
+        },
+    )
+
+    result = _run_binary(
+        _fresh_capsem_binary(),
+        {"CAPSEM_HOME": str(capsem_home)},
+        "update",
+        "--assets",
+        "--manifest",
+        candidate_url,
+    )
+
+    assert result.returncode == 0, f"stdout={result.stdout}\nstderr={result.stderr}"
+    metadata = json.loads((assets / "manifest-metadata.json").read_text())
+    assert metadata["manifest_url"] == candidate_url
+    assert metadata["checked_url"] == candidate_url
+    assert metadata["channel"] == "nightly"
+    assert metadata["channel_kind"] == "public"
+    assert metadata["channel_locked"] is False
+    assert metadata["package_version"] == "1.6.1"
+    assert "/candidate/manifest.json" in requested_paths
+    assert {
+        f"/candidate/blobs/{NEW_ASSET_VERSION}/{arch}-{name}" for name in new_files
+    }.issubset(set(requested_paths))
+
+
 def test_update_assets_accepts_release_channel_profile_manifest(
     tmp_path: Path,
     http_fixture,
@@ -660,9 +745,34 @@ def test_update_assets_accepts_release_channel_profile_manifest(
         "initrd.img": b"profile-graph-initrd-" + os.urandom(64),
         "rootfs.erofs": b"profile-graph-rootfs-" + os.urandom(64),
     }
-    profile_config = b'id = "default"\nrevision = "2030.0101.2"\n'
-
     channel_manifest_url = f"{base_url}/assets/stable/manifest.json"
+    profile_release_url = (
+        f"{base_url}/profiles/releases/{NEW_ASSET_VERSION}/default/{arch}"
+    )
+    profile_config = f"""\
+id = "default"
+name = "Default"
+description = "Release-channel profile graph fixture."
+revision = "{NEW_ASSET_VERSION}"
+refresh_policy = "24h"
+
+[assets]
+format = "profile-assets.v1"
+refresh_policy = "on_profile_refresh"
+
+[assets.arch.{arch}.kernel]
+name = "vmlinuz"
+url = "{profile_release_url}/vmlinuz"
+
+[assets.arch.{arch}.initrd]
+name = "initrd.img"
+url = "{profile_release_url}/initrd.img"
+
+[assets.arch.{arch}.rootfs]
+name = "rootfs.erofs"
+url = "{profile_release_url}/rootfs.erofs"
+""".encode()
+
     channel_manifest = _make_release_channel_manifest(
         arch,
         new_files,
@@ -721,7 +831,21 @@ def test_update_assets_accepts_release_channel_profile_manifest(
         target = assets / arch / _hashed_asset_name(name, blob)
         assert target.exists(), f"{target} not downloaded. stdout={result.stdout}"
         assert target.read_bytes() == blob
-    assert (capsem_home / "profiles" / "default" / "profile.toml").read_bytes() == profile_config
+    installed_profile = tomllib.loads(
+        (capsem_home / "profiles" / "default" / "profile.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    installed_assets = installed_profile["assets"]["arch"][arch]
+    images_by_kind = {image["kind"]: image for image in installed_images}
+    for kind in ("kernel", "initrd", "rootfs"):
+        image = images_by_kind[kind]
+        assert installed_assets[kind] == {
+            "name": image["name"],
+            "url": f"{base_url}{image['url']}",
+            "hash": f"blake3:{image['digest']['blake3']}",
+            "size": image["bytes"],
+        }
 
 
 def test_installed_cli_switches_public_channels_then_corporate_channel_locks(

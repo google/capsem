@@ -11,9 +11,9 @@ import stat
 import pytest
 
 from .conftest import (
+    ASSETS_DIR,
     CAPSEM_DIR,
     RUN_DIR,
-    ASSETS_DIR,
     run_capsem,
     temporarily_replace_installed_binary,
 )

@@ -6,9 +6,13 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import uuid
-
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
+
+from log_streams import read_log_stream
 
 from .constants import EXEC_READY_TIMEOUT
 from .sign import sign_binary
@@ -22,19 +26,147 @@ TRAY_BINARY = PROJECT_ROOT / "target/debug/capsem-tray"
 ASSETS_DIR = PROJECT_ROOT / "assets"
 PROFILES_DIR = PROJECT_ROOT / "target" / "config" / "profiles"
 LINUX_TEST_TMP_PARENT = Path("/var/tmp/capsem-tests")
+WINTERFELL_ROOT_ENV = {
+    "binary_dir": "CAPSEM_WINTERFELL_BIN_DIR",
+    "assets_dir": "CAPSEM_WINTERFELL_ASSETS_DIR",
+    "profiles_dir": "CAPSEM_WINTERFELL_PROFILES_DIR",
+}
+WINTERFELL_REQUIRED_BINARIES = (
+    "capsem-service",
+    "capsem-process",
+    "capsem-gateway",
+    "capsem-mcp",
+)
 
 
-ARTIFACT_MAX_FILE_BYTES = 25 * 1024 * 1024  # 25 MB hard cap per file
-ARTIFACT_SKIP_NAMES = frozenset({
-    # Multi-GB VM disk images -- regenerable from the build, would burn
-    # disk at ~2 GB per failure and we've been there.
-    "rootfs.img",
-    "rootfs.img.backing",
-    # VM memory checkpoints -- ~100MB+ per suspend, skip to save space.
-    # The logs in the same directory are what we need for debugging.
-    "checkpoint.vzsave",
-})
-ARTIFACT_MAX_KEPT_DIRS = 20  # rotate: keep only the N most-recent failure dirs
+with (PROJECT_ROOT / "config" / "storage-policy.toml").open("rb") as _policy_stream:
+    _DEBUG_ARTIFACT_POLICY = tomllib.load(_policy_stream)["debug_artifacts"]
+
+ARTIFACT_MAX_FILE_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_file_mib"]) * 1024 * 1024
+ARTIFACT_SKIP_NAMES = frozenset(_DEBUG_ARTIFACT_POLICY["skip_names"]) | frozenset(
+    {
+        # Multi-GB VM disk images -- regenerable from the build, would burn
+        # disk at ~2 GB per failure and we've been there.
+        "rootfs.img",
+        "rootfs.img.backing",
+        # VM memory checkpoints -- ~100MB+ per suspend, skip to save space.
+        # The logs in the same directory are what we need for debugging.
+        "checkpoint.vzsave",
+    }
+)
+ARTIFACT_MIN_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["minimum_runs"])
+ARTIFACT_MAX_KEPT_DIRS = int(_DEBUG_ARTIFACT_POLICY["maximum_runs"])
+ARTIFACT_MAX_AGE_S = int(_DEBUG_ARTIFACT_POLICY["maximum_age_days"]) * 24 * 60 * 60
+ARTIFACT_MAX_TOTAL_BYTES = int(_DEBUG_ARTIFACT_POLICY["maximum_total_gib"]) * 1024**3
+
+
+@dataclass(frozen=True)
+class WinterfellArtifactRoots:
+    """One coherent binary/profile/asset cohort for Winterfell."""
+
+    binary_dir: Path
+    assets_dir: Path
+    profiles_dir: Path
+    installed: bool
+
+    def binary(self, name: str) -> Path:
+        if name not in WINTERFELL_REQUIRED_BINARIES:
+            raise RuntimeError(f"unsupported Winterfell binary: {name}")
+        return self.binary_dir / name
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def resolve_winterfell_artifact_roots(
+    environment: Mapping[str, str] | None = None,
+) -> WinterfellArtifactRoots:
+    """Resolve dev defaults or one complete installed Winterfell cohort.
+
+    Any installed override turns on fail-closed mode. The caller must supply
+    all three roots, and none may alias the source-built development cohort.
+    """
+
+    environment = os.environ if environment is None else environment
+    configured = {
+        field: environment.get(variable) for field, variable in WINTERFELL_ROOT_ENV.items()
+    }
+    present = [field for field, value in configured.items() if value is not None]
+    if not present:
+        architecture = "arm64" if os.uname().machine == "arm64" else "x86_64"
+        return WinterfellArtifactRoots(
+            binary_dir=PROJECT_ROOT / "target" / "debug",
+            assets_dir=PROJECT_ROOT / "assets" / architecture,
+            profiles_dir=PROFILES_DIR,
+            installed=False,
+        )
+    if len(present) != len(WINTERFELL_ROOT_ENV) or any(
+        not configured[field] for field in WINTERFELL_ROOT_ENV
+    ):
+        raise RuntimeError(
+            "Winterfell requires all three installed artifact roots: "
+            "CAPSEM_WINTERFELL_BIN_DIR, CAPSEM_WINTERFELL_ASSETS_DIR, and "
+            "CAPSEM_WINTERFELL_PROFILES_DIR"
+        )
+
+    def configured_path(field: str) -> Path:
+        value = configured[field]
+        if not value:
+            raise RuntimeError(f"installed Winterfell {field} must not be empty")
+        return Path(value).expanduser().resolve()
+
+    binary_dir = configured_path("binary_dir")
+    assets_dir = configured_path("assets_dir")
+    profiles_dir = configured_path("profiles_dir")
+    source_roots = (
+        (binary_dir, (PROJECT_ROOT / "target" / "debug").resolve(), "binary"),
+        (assets_dir, (PROJECT_ROOT / "assets").resolve(), "asset"),
+        (profiles_dir, PROFILES_DIR.resolve(), "profile"),
+    )
+    for selected, source, family in source_roots:
+        if _path_is_within(selected, source):
+            raise RuntimeError(
+                f"installed Winterfell {family} root points at source-built artifacts: {selected}"
+            )
+
+    for directory, family in (
+        (binary_dir, "binary"),
+        (assets_dir, "asset"),
+        (profiles_dir, "profile"),
+    ):
+        if not directory.is_dir():
+            raise RuntimeError(
+                f"installed Winterfell {family} root is not a directory: {directory}"
+            )
+    if not (assets_dir / "manifest.json").is_file():
+        raise RuntimeError(f"installed Winterfell asset root has no manifest.json: {assets_dir}")
+    if not _contains_profile_toml(profiles_dir):
+        raise RuntimeError(f"installed Winterfell profile root has no profile.toml: {profiles_dir}")
+    for name in WINTERFELL_REQUIRED_BINARIES:
+        binary = binary_dir / name
+        if not binary.is_file() or not os.access(binary, os.X_OK):
+            raise RuntimeError(
+                f"installed Winterfell binary is missing or not executable: {binary}"
+            )
+        if _path_is_within(
+            binary.resolve(),
+            (PROJECT_ROOT / "target" / "debug").resolve(),
+        ):
+            raise RuntimeError(
+                f"installed Winterfell binary points at source-built artifacts: {binary}"
+            )
+
+    return WinterfellArtifactRoots(
+        binary_dir=binary_dir,
+        assets_dir=assets_dir,
+        profiles_dir=profiles_dir,
+        installed=True,
+    )
 
 
 def capsem_test_tmp_parent() -> Path:
@@ -45,8 +177,14 @@ def capsem_test_tmp_parent() -> Path:
     keeping paths short enough for Unix-domain sockets.
     """
     configured = os.environ.get("CAPSEM_TEST_TMPDIR")
-    parent = Path(configured) if configured else (
-        LINUX_TEST_TMP_PARENT if sys.platform.startswith("linux") else Path(tempfile.gettempdir())
+    parent = (
+        Path(configured)
+        if configured
+        else (
+            LINUX_TEST_TMP_PARENT
+            if sys.platform.startswith("linux")
+            else Path(tempfile.gettempdir())
+        )
     )
     parent.mkdir(parents=True, exist_ok=True)
     return parent
@@ -97,7 +235,7 @@ def materialize_test_profiles(tmp_dir: Path) -> Path:
     return profiles_dir
 
 
-def preserve_tmp_dir_on_failure(tmp_dir):
+def preserve_tmp_dir_on_failure(tmp_dir, *, force: bool = False):
     """Copy tmp_dir to test-artifacts/ when this worker saw any failure.
 
     Called by integration-test fixture teardowns BEFORE they rmtree the
@@ -122,7 +260,7 @@ def preserve_tmp_dir_on_failure(tmp_dir):
     most recent `ARTIFACT_MAX_KEPT_DIRS` failure dirs.
     """
     try:
-        from tests.conftest import FAILED_NODEIDS, ARTIFACTS_ROOT
+        from tests.conftest import ARTIFACTS_ROOT, FAILED_NODEIDS
     except ImportError:
         return
     tmp_dir = Path(tmp_dir)
@@ -132,13 +270,20 @@ def preserve_tmp_dir_on_failure(tmp_dir):
     # tmp_dir regardless of that worker's own failure state. Used during
     # concurrency investigations where a failure on worker B needs to be
     # correlated against what worker A was doing at the same time.
-    force = os.environ.get("CAPSEM_TEST_PRESERVE_ALWAYS")
-    if not force and not FAILED_NODEIDS:
-        return
+    force = force or bool(os.environ.get("CAPSEM_TEST_PRESERVE_ALWAYS"))
+    current_test = os.environ.get("PYTEST_CURRENT_TEST", "").rsplit(" (", 1)[0]
+    if not force:
+        if current_test and current_test not in FAILED_NODEIDS:
+            return
+        if not FAILED_NODEIDS:
+            return
     import stat as statmod
     import time
+
     worker = os.environ.get("PYTEST_XDIST_WORKER", "master")
-    if FAILED_NODEIDS:
+    if current_test:
+        tag = current_test.replace("/", "_").replace(":", "_")[:80]
+    elif FAILED_NODEIDS:
         tag = FAILED_NODEIDS[-1].replace("/", "_").replace(":", "_")[:80]
     else:
         tag = "no-failures-on-this-worker"
@@ -153,12 +298,14 @@ def preserve_tmp_dir_on_failure(tmp_dir):
 
     try:
         dest.mkdir(parents=True, exist_ok=True)
+
         # topdown=True so we can prune by emptying dirnames in-place if
         # needed; onerror catches listdir failures so a single unreadable
         # subdir doesn't abort the whole walk.
         def _on_walk_error(err):
             errors.append(f"walk {err.filename}: {err}")
-        for src_dir, dirnames, filenames in os.walk(tmp_dir, topdown=True, onerror=_on_walk_error):
+
+        for src_dir, _dirnames, filenames in os.walk(tmp_dir, topdown=True, onerror=_on_walk_error):
             src_path = Path(src_dir)
             rel = src_path.relative_to(tmp_dir)
             dst_dir = dest / rel
@@ -211,22 +358,61 @@ def preserve_tmp_dir_on_failure(tmp_dir):
         )
         for err in errors[:10]:
             print(f"  ! {err}", file=sys.stderr)
-        _rotate_artifacts(ARTIFACTS_ROOT, ARTIFACT_MAX_KEPT_DIRS)
+        _rotate_artifacts(
+            ARTIFACTS_ROOT,
+            keep=ARTIFACT_MAX_KEPT_DIRS,
+            minimum=ARTIFACT_MIN_KEPT_DIRS,
+            maximum_age_s=ARTIFACT_MAX_AGE_S,
+            maximum_total_bytes=ARTIFACT_MAX_TOTAL_BYTES,
+        )
     except Exception as e:
         print(f"ARTIFACT: preserve fatal for {tmp_dir}: {e}", file=sys.stderr)
 
 
-def _rotate_artifacts(root, keep):
-    """Delete oldest `test-artifacts/<...>` dirs beyond `keep` most-recent."""
+def _artifact_tree_size(path: Path) -> int:
+    total = 0
+    for candidate in path.rglob("*"):
+        try:
+            if candidate.is_file():
+                total += candidate.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _rotate_artifacts(root, keep, minimum, maximum_age_s, maximum_total_bytes):
+    """Bound failure evidence while always retaining the newest minimum."""
     if not root.exists():
         return
     try:
         dirs = sorted(
             (p for p in root.iterdir() if p.is_dir()),
-            key=lambda p: p.name,  # names begin with YYYYMMDD-HHMMSS so string sort == chronological
+            key=lambda p: (
+                p.name
+            ),  # names begin with YYYYMMDD-HHMMSS so string sort == chronological
         )
-        for stale in dirs[:-keep] if keep > 0 else []:
+        protected = set(dirs[-minimum:]) if minimum > 0 else set()
+        now = time.time()
+        stale_dirs = list(dirs[:-keep] if keep > 0 else dirs)
+        stale_dirs.extend(
+            path
+            for path in dirs
+            if path not in protected and now - path.stat().st_mtime > maximum_age_s
+        )
+        for stale in dict.fromkeys(stale_dirs):
             shutil.rmtree(stale, ignore_errors=True)
+        dirs = [path for path in dirs if path.exists()]
+        sizes = {path: _artifact_tree_size(path) for path in dirs}
+        total = sum(sizes.values())
+        remaining_count = len(dirs)
+        for stale in dirs:
+            if total <= maximum_total_bytes or remaining_count <= minimum:
+                break
+            if stale in protected:
+                continue
+            shutil.rmtree(stale, ignore_errors=True)
+            total -= sizes[stale]
+            remaining_count -= 1
     except OSError as e:
         print(f"ARTIFACT: rotation skipped: {e}", file=sys.stderr)
 
@@ -246,6 +432,7 @@ class ServiceInstance:
         self.profiles_dir = None
         self.proc = None
         self._log_file = None
+        self._failure_evidence_preserved = False
 
     def start(self):
         # Sign binaries before spawning (macOS needs virtualization entitlement)
@@ -268,28 +455,35 @@ class ServiceInstance:
         env["CAPSEM_RUN_DIR"] = str(self.tmp_dir)
         env["CAPSEM_HOME"] = str(self.home_dir)
         env["CAPSEM_PROFILES_DIR"] = str(self.profiles_dir)
-        env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(
-            self.home_dir / "credential-store.json"
-        )
+        env["CAPSEM_CREDENTIAL_STORE_PATH"] = str(self.home_dir / "credential-store.json")
         env["HOME"] = str(self.home_dir)
 
         log_path = self.tmp_dir / "service.log"
         print(f"SERVICE LOG: {log_path}")
-        self._log_file = open(log_path, "w")
+        self._log_file = open(log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
 
-        # Deliberately omit --tray-binary: the tray is a user-facing macOS
-        # menu bar icon and spawning it on every test instance flashes the
-        # menu bar dozens of times during a full suite run. Companion
-        # lifecycle tests exercise the tray via their own spawn.
+        # Omitting --tray-binary does NOT suppress the tray: the service falls
+        # back to `find_sibling_binary("capsem-tray")`, which the CLI's own
+        # direct spawn depends on, so every instance here starts a tray on
+        # macOS once the gateway writes its token. What keeps it off the menu
+        # bar is CAPSEM_TRAY_HEADLESS, set for the whole suite in
+        # tests/conftest.py and inherited through this env. capsem-guard binds
+        # the tray to this service, so it dies with us rather than leaking.
         self.proc = subprocess.Popen(
             [
                 str(SERVICE_BINARY),
-                "--uds-path", str(self.uds_path),
-                "--assets-dir", str(assets_dir),
-                "--process-binary", str(PROCESS_BINARY),
-                "--gateway-binary", str(GATEWAY_BINARY),
-                "--gateway-port", "0",
-                "--parent-pid", str(os.getpid()),
+                "--uds-path",
+                str(self.uds_path),
+                "--assets-dir",
+                str(assets_dir),
+                "--process-binary",
+                str(PROCESS_BINARY),
+                "--gateway-binary",
+                str(GATEWAY_BINARY),
+                "--gateway-port",
+                "0",
+                "--parent-pid",
+                str(os.getpid()),
                 "--foreground",
             ],
             env=env,
@@ -303,9 +497,18 @@ class ServiceInstance:
                 # Socket file exists -- verify server is actually accepting connections
                 try:
                     result = subprocess.run(
-                        ["curl", "-s", "--unix-socket", str(self.uds_path),
-                         "--max-time", "2", "http://localhost/vms/list"],
-                        capture_output=True, text=True, timeout=5,
+                        [
+                            "curl",
+                            "-s",
+                            "--unix-socket",
+                            str(self.uds_path),
+                            "--max-time",
+                            "2",
+                            "http://localhost/vms/list",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
                     )
                     if result.returncode == 0:
                         return
@@ -314,12 +517,23 @@ class ServiceInstance:
             time.sleep(0.5)
 
         self.stop()
-        if log_path.exists():
-            print(f"\n--- SERVICE LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
+        service_log = read_log_stream(log_path)
+        if service_log:
+            print(f"\n--- SERVICE LOG ---\n{service_log}\n---", file=sys.stderr)
         raise RuntimeError("capsem-service failed to accept connections within 15s")
 
     def client(self):
-        return UdsHttpClient(self.uds_path)
+        return UdsHttpClient(
+            self.uds_path,
+            before_vm_delete=self._preserve_failure_evidence_before_delete,
+        )
+
+    def _preserve_failure_evidence_before_delete(self):
+        """Archive a failing test's VM evidence before cleanup destroys it."""
+        if self._failure_evidence_preserved or sys.exc_info()[0] is None:
+            return
+        preserve_tmp_dir_on_failure(self.home_dir, force=True)
+        self._failure_evidence_preserved = True
 
     def stop(self, *, cleanup: bool = True):
         """Stop the service and clean up temporary directory.
@@ -346,7 +560,15 @@ class ServiceInstance:
         if not cleanup:
             return
 
-        preserve_tmp_dir_on_failure(self.home_dir)
+        # Tests commonly stop the service from a ``finally`` block.  That
+        # happens before pytest's makereport hook records FAILED_NODEIDS, so
+        # use the actively-propagating exception as authoritative failure
+        # evidence instead of deleting the only service/process logs.
+        if not self._failure_evidence_preserved:
+            if sys.exc_info()[0] is not None:
+                preserve_tmp_dir_on_failure(self.home_dir, force=True)
+            else:
+                preserve_tmp_dir_on_failure(self.home_dir)
 
         if self.home_dir.exists():
             shutil.rmtree(self.home_dir, ignore_errors=True)

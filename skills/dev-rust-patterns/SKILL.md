@@ -230,6 +230,48 @@ When adding a new long-running process or a new background-thread owner, wire it
 - `RUST_LOG=capsem=info` for top-level only
 - Use structured fields: `tracing::info!(domain = %domain, status = %code, "request completed")`
 
+## One rule, one function
+
+**A rule that lives in its callers is a rule that will be wrong in some of
+them.** Resolution, precedence, and lifetime rules belong in a function; callers
+call it.
+
+This is the single most expensive pattern in this codebase's history. Two
+instances, both found the same day:
+
+| Rule | Copies | Outcome |
+|---|---|---|
+| "read the recent log" | 4 (`support_bundle`, `/service-logs`, `triage`, service session tails) | rotation landed, one copy learned, two silently returned nothing -- a daemon logging errors reported none |
+| "point Capsem at a temp root" | every fixture, by hand | `CAPSEM_RUN_DIR`/`CAPSEM_ASSETS_DIR` outrank `CAPSEM_HOME`, so setting the home alone read the caller's directories: green locally, broken in the gate |
+
+Both look locally correct in every copy. That is what makes them expensive:
+nothing is visibly wrong at any one site, and a fix applied to one never
+reaches the others.
+
+**Established wrappers -- use them, do not re-derive:**
+
+| Need | Call | Never |
+|---|---|---|
+| Recent log content | `telemetry::read_log_tail(stream, max)` | `File::open`/`fs::read` on a `*.log` path |
+| Enumerate a stream | `telemetry::log_stream_files(stream)` | `read_dir` + name filtering |
+| Redirect paths in a fixture | `paths::CapsemPathsGuard::redirect(root)` | `set_var("CAPSEM_HOME", ...)` |
+| Any `~/.capsem/...` path | a `paths::` helper | `home.join(".capsem")` |
+| Checkpoint marker | `paths::checkpoint_complete_path(cp)` | rebuilding `<name>.complete` |
+
+`tests/test_path_and_log_wrappers_are_mandatory.py` enforces the first three.
+
+**When unifying, take the better implementation, not the first one.**
+`support_bundle`'s tail reader seeked to each file's end; the shared one read
+whole files. Guest console output is guest-controlled, so read-whole let a
+chatty VM decide how much memory `capsem support` allocated. The shared
+function now seeks.
+
+**Two copies that agree today are still a bug.** `checkpoint_complete_path`
+existed in capsem-process and capsem-service, identical except that one
+hardcoded the fallback name and the other used a constant. Changing that
+constant would have left the process writing a resume marker the service never
+looked for, with nothing wrong at either site.
+
 ## Lessons learned
 
 1. **Content-Encoding**: Always handle response decompression generically. Gzip compressed SSE responses caused NULL telemetry because the parser got binary garbage. Never strip Accept-Encoding as a workaround.

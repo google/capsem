@@ -4,13 +4,9 @@
 # PackageKit version ordering must not decide whether the app is replaced.
 set -euo pipefail
 source "$(dirname "$0")/install-diagnostics"
+source "$(dirname "$0")/install-user"
 
-if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != "root" ]; then
-    USER="$SUDO_USER"
-fi
-if [ "${USER:-root}" = "root" ] || [ -z "${USER:-}" ]; then
-    USER=$(stat -f '%Su' /dev/console 2>/dev/null || echo "")
-fi
+USER=$(capsem_resolve_install_user "/var/run/capsem/install-user")
 
 INSTALL_RUN_ID=$(date -u '+%Y%m%dT%H%M%SZ')
 INSTALL_LOG="/tmp/capsem-install.log"

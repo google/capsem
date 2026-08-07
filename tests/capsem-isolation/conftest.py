@@ -1,9 +1,9 @@
 """Shared fixtures for multi-VM isolation tests."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -29,8 +29,6 @@ def multi_vm_env():
     yield client, vm_a, vm_b, svc.tmp_dir
 
     for vm in (vm_a, vm_b):
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{vm}/delete")
-        except Exception:
-            pass
     svc.stop()

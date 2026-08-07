@@ -1,8 +1,8 @@
 """Provision, list, info, and delete endpoint tests."""
 
-import pytest
 import uuid
 
+import pytest
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import vm_name
 
@@ -38,13 +38,14 @@ class TestProvision:
         )
         first_id = first.get("id")
         second_id = second.get("id")
+        profile_prefix = f"{CODE_PROFILE_ID}-"
         try:
             assert uuid.UUID(first_id)
             assert uuid.UUID(second_id)
-            assert first["name"].startswith("code-")
-            assert second["name"].startswith("code-")
-            first_num = int(first["name"].removeprefix("code-"))
-            second_num = int(second["name"].removeprefix("code-"))
+            assert first["name"].startswith(profile_prefix)
+            assert second["name"].startswith(profile_prefix)
+            first_num = int(first["name"].removeprefix(profile_prefix))
+            second_num = int(second["name"].removeprefix(profile_prefix))
             assert second_num == first_num + 1
             assert not first["name"].startswith("tmp-")
             assert not second["name"].startswith("tmp-")

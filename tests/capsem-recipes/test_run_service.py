@@ -26,8 +26,23 @@ def test_run_service_creates_socket():
 
 
 def test_ensure_service_detaches_from_recipe_shell():
-    block = _recipe_block("_ensure-service:")
+    """The daemon must outlive the shell that started it, and inherit none of
+    its descriptors.
 
-    assert "nohup" in block
-    assert "3>&-" in block
-    assert "SVC_PID=$!" in block
+    This asserted `nohup`, `3>&-` and `SVC_PID=$!` in the recipe body -- the
+    shell spelling of exactly that. The recipe dispatches to `capsem-gate
+    ensure-service` now and the detaching is `Launch`, whose `start_new_session`
+    gives its own session and whose pipes are `DEVNULL`. The `3>&-` had to be
+    written by hand because the shell leaks the gate's execution-lock fd into
+    the child, which then holds the flock after the gate exits and blocks the
+    next run; Python closes non-inheritable descriptors across `exec` already.
+
+    So the claim is unchanged and its evidence moved: the recipe still owns
+    starting a detached service, and the detachment is asserted where it lives.
+    """
+    assert "capsem-gate ensure-service" in _recipe_block("_ensure-service:")
+
+    launch = (PROJECT_ROOT / "src/capsem/gate/proc.py").read_text(encoding="utf-8")
+    assert "start_new_session=True" in launch
+    assert "stdout=subprocess.DEVNULL" in launch
+    assert "stderr=subprocess.DEVNULL" in launch

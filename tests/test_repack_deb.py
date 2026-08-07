@@ -40,6 +40,8 @@ REQUIRED_BINARIES = [
     "capsem-gateway",
     "capsem-tray",
     "capsem-admin",
+    "capsem-mock-server",
+    "capsem-bench-rs",
 ]
 
 pytestmark = pytest.mark.skipif(
@@ -71,7 +73,7 @@ def _build_fixture_deb(workdir: Path, name: str = "capsem-fixture", version: str
     return deb_path
 
 
-def _seed_binaries(bin_dir: Path, which: list[str] = None):
+def _seed_binaries(bin_dir: Path, which: list[str] | None = None):
     """Drop fake executable files named like the companion binaries."""
     if which is None:
         which = REQUIRED_BINARIES
@@ -127,7 +129,7 @@ def _run_repack(
     input_deb: Path,
     bin_dir: Path,
     config_dir: Path,
-    output_deb: Path = None,
+    output_deb: Path | None = None,
     timeout: int = 30,
 ) -> subprocess.CompletedProcess:
     manifest = input_deb.parent / "manifest.json"
@@ -254,9 +256,10 @@ def test_postinst_script_is_included(tmp_path):
     assert postinst.read_text().startswith(expected_head), (
         "postinst doesn't look like scripts/deb-postinst.sh"
     )
-    assert "Tester action: copy the output of this command into the bug report:" in (
-        postinst.read_text()
-    )
+    postinst_text = postinst.read_text()
+    assert "Tester action: copy the output of this command into the bug report:" in postinst_text
+    assert "capsem_resolve_install_manifest" in postinst_text
+    assert "CAPSEM_INSTALL_MANIFEST_REQUEST" in postinst_text
 
 
 def test_preinst_script_is_included(tmp_path):
@@ -375,7 +378,7 @@ def test_repacked_deb_declares_tray_runtime_dependency(tmp_path):
     depends = " ".join(
         line.strip()
         for line in control.splitlines()
-        if line.startswith("Depends:") or line.startswith(" ")
+        if line.startswith(("Depends:", " "))
     )
     assert "libxdo3" in depends
 

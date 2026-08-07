@@ -1,10 +1,10 @@
 """Shared fixtures for session.db lifecycle tests."""
 
+import contextlib
 import sqlite3
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
 from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready
@@ -40,10 +40,8 @@ def lifecycle_env():
 
     yield client, vm_id, svc.tmp_dir, svc
 
-    try:
+    with contextlib.suppress(Exception):
         client.delete(f"/vms/{vm_id}/delete")
-    except Exception:
-        pass
     svc.stop()
 
 

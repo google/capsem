@@ -4,7 +4,6 @@ import sqlite3
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready
 
@@ -27,8 +26,10 @@ def test_wal_absent_after_clean_shutdown():
 
         db_path = vm_session_db_path(svc.tmp_dir, client, name)
 
-        # Clean shutdown
-        client.delete(f"/vms/{name}/delete")
+        # Stop is the clean-shutdown operation for a retained session. DELETE
+        # permanently destroys the database and cannot prove its final WAL
+        # state after returning.
+        client.post(f"/vms/{name}/stop", {})
 
         # Check WAL state
         wal_path = db_path.with_suffix(".db-wal")
@@ -39,14 +40,15 @@ def test_wal_absent_after_clean_shutdown():
             assert wal_size == 0, \
                 f"WAL file should be empty after clean shutdown, got {wal_size} bytes"
 
-        # DB should still be readable
-        if db_path.exists():
-            conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-            tables = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-            conn.close()
-            assert len(tables) > 0, "DB should have tables"
+        # DB must still be readable after stop. This is intentionally not
+        # conditional: a missing database is a clean-shutdown failure.
+        assert db_path.exists(), f"session DB disappeared after clean stop: {db_path}"
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+        conn.close()
+        assert len(tables) > 0, "DB should have tables"
 
     finally:
         svc.stop()

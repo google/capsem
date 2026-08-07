@@ -28,14 +28,17 @@ type PluginPolicyHandle =
 /// retry: the guest drives retry at the transport layer.
 const HANDSHAKE_RETRY_MAX: usize = 3;
 
-fn checkpoint_complete_path(checkpoint_path: &std::path::Path) -> PathBuf {
-    let marker_name = checkpoint_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| format!("{name}.complete"))
-        .unwrap_or_else(|| "checkpoint.vzsave.complete".to_string());
-    checkpoint_path.with_file_name(marker_name)
-}
+/// Bound for a control-channel `ExecDone` that arrives before the dedicated
+/// EXEC-port reader deposits the command's captured bytes.
+///
+/// The guest closes the EXEC socket before queuing `ExecDone`, so a healthy
+/// transport signals the notifier immediately once the reader is scheduled.
+/// Loaded qualification runners can delay that reader well beyond 100 ms,
+/// especially just after resume. Keep a generous transport-loss bound without
+/// imposing any delay on already-deposited or genuinely empty commands.
+const EXEC_OUTPUT_DEPOSIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+use capsem_core::paths::checkpoint_complete_path;
 
 pub(crate) struct VsockOptions {
     pub(crate) vm_id: String,
@@ -125,7 +128,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                     break (Arc::new(terminal_conn), Arc::new(control_conn));
                 }
                 Err(e) if attempt < HANDSHAKE_RETRY_MAX && is_retryable_handshake_error(&e) => {
-                    warn!(attempt, "initial handshake failed (retryable), dropping fds and awaiting guest reconnect: {e:#}");
+                    warn!(attempt, error = format!("{e:#}"), "initial handshake failed (retryable), dropping fds and awaiting guest reconnect");
                     drop(terminal_conn);
                     drop(control_conn);
                     drop(attempt_deferred);
@@ -165,7 +168,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
     vm_ready.store(true, Ordering::Release);
     let ready_path = uds_path.with_extension("ready");
     if let Err(e) = std::fs::File::create(&ready_path) {
-        warn!("failed to create ready sentinel: {e}");
+        warn!(error = %e, "failed to create ready sentinel");
     }
 
     // -----------------------------------------------------------------------
@@ -323,7 +326,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                 let mut replay_failed = false;
                 for msg in &to_replay {
                     if let Err(e) = write_control_msg(&mut writer_fd, msg) {
-                        error!("control bridge: replay write failed: {e}");
+                        error!(error = %e, "control bridge: replay write failed");
                         replay_failed = true;
                         break;
                     }
@@ -354,7 +357,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             pending.pending_acks.lock().unwrap().insert(id, msg.clone());
                         }
                         if let Err(e) = write_control_msg(&mut writer_fd, &msg) {
-                            error!("control bridge: write failed: {e}");
+                            error!(error = %e, "control bridge: write failed");
                             break;
                         }
                     }
@@ -373,7 +376,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             Some(Ok(msg)) => {
                                 if let Some(id) = ackable_response_id(&msg) {
                                     if let Err(e) = write_control_msg(&mut writer_fd, &HostToGuest::AckReply { id }) {
-                                        error!("control bridge: AckReply write failed: {e}");
+                                        error!(error = %e, "control bridge: AckReply write failed");
                                         break;
                                     }
                                 }
@@ -457,10 +460,12 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             .find_map(|(key, value)| (key == "CAPSEM_TRACE_ID").then_some(value))
                         });
                     let rules = security_rules_for_cmd.read().unwrap().clone();
-                    let event_id =
-                        capsem_core::security_engine::emit_process_exec_security_write_and_rules(
+                    let plugins = plugin_policy.read().unwrap().clone();
+                    let boundary =
+                        capsem_core::security_engine::emit_process_exec_security_boundary(
                             &db_for_cmd,
                             &rules,
+                            plugins,
                             capsem_logger::ExecEvent {
                                 event_id: None,
                                 timestamp: std::time::SystemTime::now(),
@@ -473,7 +478,25 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             },
                         )
                         .await;
-                    if let Some(event_id) = event_id {
+                    // The command has not reached the guest yet, so a non-allow
+                    // decision is enforceable here on the same terms as the
+                    // network and file boundaries: withhold the dispatch and
+                    // fail the caller's job.
+                    if let Some(refusal) = exec_boundary_refusal(id, &boundary) {
+                        js_for_cmd
+                            .active_exec
+                            .lock()
+                            .unwrap()
+                            .take_if(|active| active.id == id);
+                        if let Some(tx) = js_for_cmd.jobs.lock().unwrap().remove(&id) {
+                            capsem_core::try_send!(
+                                "job_result_exec_blocked",
+                                tx.send(JobResult::Error { message: refusal })
+                            );
+                        }
+                        continue;
+                    }
+                    if let Ok(Some(emission)) = &boundary {
                         if let Some(active) = js_for_cmd
                             .active_exec
                             .lock()
@@ -481,7 +504,7 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             .as_mut()
                             .filter(|active| active.id == id)
                         {
-                            active.event_id = Some(event_id);
+                            active.event_id = Some(emission.event_id.clone());
                         }
                     }
                     capsem_core::try_send!(
@@ -827,11 +850,11 @@ pub(crate) async fn setup_vsock(options: VsockOptions) -> Result<()> {
                             }
                         }
                         Ok(Err(e)) => {
-                            error!("control port: handshake failed: {e:#}");
+                            error!(error = format!("{e:#}"), "control port: handshake failed");
                             pending_aux.clear(); // Drop dead FDs
                         }
                         Err(e) => {
-                            error!("control port: handshake panicked: {e}");
+                            error!(error = %e, "control port: handshake panicked");
                             pending_aux.clear();
                         }
                     }
@@ -917,13 +940,22 @@ fn dispatch_aux_connection(
                 let mut file = match clone_fd(conn.fd) {
                     Ok(f) => f,
                     Err(e) => {
-                        error!("exec port: clone_fd failed: {e}");
+                        error!(error = %e, "exec port: clone_fd failed");
                         return;
                     }
                 };
                 if let Ok(GuestToHost::ExecStarted { id }) = read_control_msg(&mut file) {
                     info!(id, "exec port: received ExecStarted");
-                    let local_buf = read_exec_output(&mut file);
+                    let (local_buf, total_seen) = read_exec_output(&mut file);
+                    if total_seen > local_buf.len() as u64 {
+                        warn!(
+                            id,
+                            retained = local_buf.len(),
+                            total_bytes = total_seen,
+                            cap = MAX_EXEC_OUTPUT_BYTES,
+                            "exec output exceeded the cap; retaining the prefix"
+                        );
+                    }
                     // Deposit captured bytes and signal ExecDone it can
                     // proceed. notify_one stores a permit if ExecDone is
                     // not yet parked, so the common "deposit finishes
@@ -933,6 +965,7 @@ fn dispatch_aux_connection(
                         if let Some(ref mut active) = *guard {
                             if active.id == id {
                                 active.captured = local_buf;
+                                active.total_bytes = total_seen;
                                 Some(active.deposited.clone())
                             } else {
                                 None
@@ -955,7 +988,7 @@ fn dispatch_aux_connection(
                 let mut file = match clone_fd(conn.fd) {
                     Ok(f) => f,
                     Err(e) => {
-                        error!("audit port: clone_fd failed: {e}");
+                        error!(error = %e, "audit port: clone_fd failed");
                         return;
                     }
                 };
@@ -1065,23 +1098,48 @@ fn dispatch_aux_connection(
     }
 }
 
-/// Drain one exec-output stream through EOF.
+/// Maximum guest exec output retained in memory.
+///
+/// The Exec vsock port is a raw stream, so the `MAX_FRAME_SIZE` bound that
+/// `read_control_msg` applies to length-prefixed control frames never reaches
+/// it. Without a cap here, a guest running `yes` grows this process until the
+/// OOM killer takes it and every in-flight job with it.
+///
+/// 10 MiB matches capsem-gateway's `MAX_BODY_SIZE`: output past that already
+/// cannot traverse the gateway to a remote client, so this moves an existing
+/// ceiling to before the allocation instead of after it.
+const MAX_EXEC_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
+
+/// Drain one exec-output stream through EOF, retaining at most
+/// [`MAX_EXEC_OUTPUT_BYTES`].
+///
+/// Returns the retained bytes and the total number of bytes seen, which differ
+/// exactly when the guest exceeded the cap. Reading continues past the cap so
+/// the guest is not left blocked on a full socket and so the reported total is
+/// the real one; only the retained buffer stops growing.
 ///
 /// Signals can interrupt a blocking socket read. `Interrupted` is not EOF:
 /// treating it as completion publishes an empty/partial buffer before the
 /// guest's `ExecDone`, while still returning the child's successful exit code.
-fn read_exec_output(reader: &mut impl std::io::Read) -> Vec<u8> {
+fn read_exec_output(reader: &mut impl std::io::Read) -> (Vec<u8>, u64) {
     let mut output = Vec::new();
+    let mut total_seen: u64 = 0;
     let mut read_buf = [0u8; 8192];
     loop {
         match reader.read(&mut read_buf) {
             Ok(0) => break,
-            Ok(n) => output.extend_from_slice(&read_buf[..n]),
+            Ok(n) => {
+                total_seen = total_seen.saturating_add(n as u64);
+                let room = MAX_EXEC_OUTPUT_BYTES.saturating_sub(output.len());
+                if room > 0 {
+                    output.extend_from_slice(&read_buf[..n.min(room)]);
+                }
+            }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         }
     }
-    output
+    (output, total_seen)
 }
 
 /// Persistent DNS query handler over the vsock DNS port (T3.2).
@@ -1283,6 +1341,52 @@ fn file_content_preview(data: &[u8]) -> String {
     String::from_utf8_lossy(&data[..data.len().min(FILE_SECURITY_CONTENT_PREVIEW_MAX)]).into_owned()
 }
 
+/// The message to fail an exec job with, or `None` when the command may run.
+///
+/// A boundary that could not be evaluated refuses too: the exec rail is decided
+/// before dispatch, so "we do not know" has to mean "not yet" rather than a
+/// command that slipped through while the ledger was broken.
+fn exec_boundary_refusal(
+    id: u64,
+    boundary: &Result<Option<capsem_core::security_engine::SecurityRuleEmission>, String>,
+) -> Option<String> {
+    match boundary {
+        Ok(Some(emission)) if emission.enforcement.is_allowed() => None,
+        Ok(Some(emission)) => {
+            let rule = emission
+                .enforcement
+                .rule_id
+                .as_deref()
+                .unwrap_or("unknown")
+                .to_string();
+            warn!(
+                id,
+                rule = rule.as_str(),
+                decision = ?emission.enforcement.action,
+                "exec refused by security policy"
+            );
+            Some(emission.enforcement.reason.clone().unwrap_or_else(|| {
+                format!(
+                    "capsem: command {} by security rule: {rule}",
+                    match emission.enforcement.action {
+                        capsem_core::security_engine::SecurityEnforcementAction::Ask =>
+                            "requires approval",
+                        _ => "blocked",
+                    }
+                )
+            }))
+        }
+        Ok(None) => {
+            warn!(id, "failed to write exec boundary security event");
+            Some("capsem: command refused, security ledger unavailable".to_string())
+        }
+        Err(error) => {
+            warn!(id, error, "failed to evaluate exec boundary");
+            Some(format!("capsem: command refused, security evaluation failed: {error}"))
+        }
+    }
+}
+
 async fn emit_explicit_file_security_event(
     db: &Arc<capsem_logger::DbWriter>,
     security_rules: &SecurityRulesHandle,
@@ -1362,7 +1466,9 @@ async fn handle_guest_msg(
             // read loop + deposit. Wait on the deposit notifier so we read
             // the actual captured buffer, not a stale empty one. Short
             // timeout guards against lost connections (guest never opened
-            // the EXEC port) so we still return in bounded time.
+            // the EXEC port) so we still return in bounded time. This must be
+            // a transport-loss bound, not a scheduler-latency assumption: a
+            // loaded runner can delay the reader for hundreds of milliseconds.
             let notify = js
                 .active_exec
                 .lock()
@@ -1371,19 +1477,22 @@ async fn handle_guest_msg(
                 .filter(|a| a.id == id)
                 .map(|a| a.deposited.clone());
             if let Some(n) = notify {
-                let _ =
-                    tokio::time::timeout(std::time::Duration::from_millis(100), n.notified()).await;
+                let _ = tokio::time::timeout(EXEC_OUTPUT_DEPOSIT_TIMEOUT, n.notified()).await;
             }
             let active_exec = js.active_exec.lock().unwrap().take().filter(|a| a.id == id);
-            let (event_id, duration_ms, stdout) = active_exec
+            let (event_id, duration_ms, stdout, total_bytes) = active_exec
                 .map(|active| {
                     (
                         active.event_id,
                         active.started_at.elapsed().as_millis() as u64,
                         active.captured,
+                        active.total_bytes,
                     )
                 })
-                .unwrap_or((None, 0, Vec::new()));
+                .unwrap_or((None, 0, Vec::new(), 0));
+            // `total_bytes` is what the guest wrote; `stdout` is what survived
+            // the cap. They differ only on truncation.
+            let truncated = total_bytes > stdout.len() as u64;
 
             let complete = capsem_logger::ExecEventComplete {
                 exec_id: id,
@@ -1393,7 +1502,7 @@ async fn handle_guest_msg(
                     String::from_utf8_lossy(&stdout[..stdout.len().min(1024)]).into(),
                 ),
                 stderr_preview: None,
-                stdout_bytes: stdout.len() as u64,
+                stdout_bytes: total_bytes,
                 stderr_bytes: 0,
                 pid: None,
             };
@@ -1419,7 +1528,8 @@ async fn handle_guest_msg(
                     tx.send(JobResult::Exec {
                         stdout,
                         stderr: vec![],
-                        exit_code
+                        exit_code,
+                        truncated
                     })
                 );
             }

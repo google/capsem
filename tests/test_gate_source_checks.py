@@ -1,0 +1,198 @@
+"""Ruff and Ty as graph steps, with a policy the loader can reject.
+
+Both lived behind one opaque `Call` delegating to a sequential function, and
+the configuration behind them was raw CLI flags and arbitrary strings. It
+worked. What it could not do is let the plan schedule, time, or name the three
+checks independently -- so "the source gate took four minutes" resolved to one
+line covering Ruff, strict Ty and relaxed Ty together, and a typo in a
+held-back rule name was a flag the tool silently ignored.
+
+The tool vocabularies stay open: third-party rule names change, so their
+*grammar* is validated and the pinned tool decides what exists. Capsem's own
+vocabulary is closed and uses enums elsewhere.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pydantic
+import pytest
+
+from capsem.gate import config as gate_config
+from capsem.gate.harnessschema import LintConfig
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONFIG = gate_config.load(PROJECT_ROOT)
+
+
+def _policy(**overrides: object) -> LintConfig:
+    base = {
+        "python_roots": ("src", "scripts"),
+        "strict_roots": ("src",),
+        "error_on_warning": True,
+        "ty_ratchet": ("invalid-assignment",),
+    }
+    return LintConfig(**{**base, **overrides})
+
+
+# ---------------------------------------------------------------------------
+# The policy, validated where it is read rather than where it is used
+# ---------------------------------------------------------------------------
+
+
+def test_a_valid_policy_loads() -> None:
+    assert _policy().strict_roots == ("src",)
+
+
+@pytest.mark.parametrize(
+    "roots",
+    (
+        ("src", "src"),
+        ("/etc",),
+        ("../elsewhere",),
+        ("",),
+    ),
+    ids=("duplicate", "absolute", "escaping", "empty"),
+)
+def test_a_root_that_is_not_a_relative_tree_is_refused(roots: tuple[str, ...]) -> None:
+    with pytest.raises(pydantic.ValidationError):
+        _policy(python_roots=roots, strict_roots=())
+
+
+def test_a_strict_root_outside_the_checked_roots_is_refused() -> None:
+    """It would silently check nothing, which reads as passing."""
+    with pytest.raises(pydantic.ValidationError):
+        _policy(python_roots=("src",), strict_roots=("scripts",))
+
+
+@pytest.mark.parametrize("rule", ("Invalid-Assignment", "invalid assignment", "", "x"))
+def test_a_ratchet_entry_that_is_not_a_rule_name_is_refused(rule: str) -> None:
+    """`ty` ignores an unknown `--ignore`, so a typo held nothing back and
+    looked exactly like a rule that had been fixed."""
+    with pytest.raises(pydantic.ValidationError):
+        _policy(ty_ratchet=(rule,))
+
+
+def test_a_duplicated_ratchet_entry_is_refused() -> None:
+    with pytest.raises(pydantic.ValidationError):
+        _policy(ty_ratchet=("invalid-assignment", "invalid-assignment"))
+
+
+def test_the_semantic_option_is_configuration_and_the_flag_is_code() -> None:
+    """`--error-on-warning` was stored as CLI text.
+
+    A ty warning exits zero, so the option is load-bearing policy; how the
+    pinned tool spells it is an implementation detail of the adapter.
+    """
+    assert CONFIG.lint.error_on_warning is True
+    assert not hasattr(CONFIG.lint, "ty_flags")
+
+
+# ---------------------------------------------------------------------------
+# Three steps, not one opaque call
+# ---------------------------------------------------------------------------
+
+
+def _plan():
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    return GateCommand.registry["lint"](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+    )._describe()
+
+
+def test_each_tool_is_its_own_step() -> None:
+    labels = set(_plan().labels)
+
+    assert {"python.ruff", "python.ty.strict", "python.ty.relaxed"} <= labels
+
+
+def test_the_steps_are_independent_leaves() -> None:
+    """Ruff does not gate Ty and neither gates the other.
+
+    One sequential function meant a Ruff failure hid whatever Ty would have
+    said, which is how a gate takes three rounds to go green.
+    """
+    plan = _plan()
+
+    for label in ("python.ruff", "python.ty.strict", "python.ty.relaxed"):
+        assert not plan.after_of(label), f"{label} waits for something it does not need"
+
+
+def test_the_argv_each_step_issues() -> None:
+    described = _plan().describe()
+
+    assert "uv run ruff check ." in described
+    assert "uv run ty check --error-on-warning src" in described
+
+
+def test_strict_holds_nothing_back() -> None:
+    """The whole point of the strict list: `src` passes every rule."""
+    plan = _plan()
+    strict = " ".join(plan.step_named("python.ty.strict").render())
+
+    assert "--ignore" not in strict
+
+
+def test_the_relaxed_step_holds_back_each_ratchet_rule_exactly_once() -> None:
+    plan = _plan()
+    relaxed = " ".join(plan.step_named("python.ty.relaxed").render())
+
+    for rule in CONFIG.lint.ty_ratchet:
+        assert relaxed.count(f"--ignore {rule}") == 1
+    assert "src" not in relaxed.split("--ignore")[0].split()[4:], (
+        "a strict root must not be re-checked with rules held back"
+    )
+
+
+def test_two_failing_tools_both_report() -> None:
+    """The reason these are steps: the plan aggregates independent failures.
+
+    The sequential version collected failures by hand into a list, which is
+    the same thing done once, by hand, in a place the graph cannot see.
+    """
+    from helpers.gate import RecordingJournal, RecordingRunner
+
+    from capsem.gate.context import Context
+    from capsem.gate.errors import GateError
+
+    runner = RecordingRunner(PROJECT_ROOT, failures=["ruff check", "ty check"])
+    plan = _plan()
+
+    with pytest.raises(GateError) as raised:
+        plan.run(Context(runner, CONFIG, journal=RecordingJournal()))
+
+    message = str(raised.value)
+    assert "python.ruff" in message
+    assert "python.ty.strict" in message
+
+
+def test_no_source_check_hides_behind_an_opaque_call() -> None:
+    """Two `Call` wrappers delegated to one sequential function."""
+    for module in ("lint.py", "audits.py"):
+        source = (PROJECT_ROOT / "src/capsem/gate" / module).read_text(encoding="utf-8")
+        assert "Call(" not in source, f"{module} still wraps a source check in one call"
+
+
+def test_the_fast_phase_and_the_command_compose_the_same_fragment() -> None:
+    """Two spellings of one gate is two things to keep in step.
+
+    Phases are flat rather than nested -- `package.arm64.build` sits inside
+    the glow-up phase under its own name -- so a fragment keeps its labels
+    wherever it is composed.
+    """
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_labels
+
+    fast = set(gate_labels("test-fast"))
+
+    assert {"python.ruff", "python.ty.strict", "python.ty.relaxed"} <= fast

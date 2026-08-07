@@ -1,5 +1,6 @@
 """Scratch disk I/O benchmarks (sequential and random, dd-style)."""
 
+import contextlib
 import os
 import random
 import time
@@ -8,9 +9,16 @@ from rich.table import Table
 from rich.text import Text
 
 from .helpers import (
-    BLOCK_1M, BLOCK_4K, DEFAULT_DIR, DEFAULT_SIZE_MB,
-    RAND_IO_COUNT, RAND_IO_SIZE_MB,
-    console, fdatasync, drop_caches, throughput_mbps,
+    BLOCK_1M,
+    BLOCK_4K,
+    DEFAULT_DIR,
+    DEFAULT_SIZE_MB,
+    RAND_IO_COUNT,
+    RAND_IO_SIZE_MB,
+    console,
+    drop_caches,
+    fdatasync,
+    throughput_mbps,
 )
 
 
@@ -172,10 +180,8 @@ def disk_bench(directory=None, size_mb=None):
         table.add_row("Rand read (4K)", f"{stats['throughput_mbps']} MB/s",
                        f"{stats['iops']:.0f}", f"{stats['duration_ms']} ms")
     finally:
-        try:
+        with contextlib.suppress(OSError):
             os.unlink(testfile)
-        except OSError:
-            pass
 
     console.print(table)
     return results

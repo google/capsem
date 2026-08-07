@@ -10,8 +10,9 @@ from helpers.constants import CODE_PROFILE_ID
 class UdsHttpClient:
     """HTTP client that talks to an Axum server over a Unix Domain Socket via curl."""
 
-    def __init__(self, socket_path):
+    def __init__(self, socket_path, *, before_vm_delete=None):
         self.socket_path = str(socket_path)
+        self._before_vm_delete = before_vm_delete
 
     def _is_uuid(self, value):
         try:
@@ -96,6 +97,12 @@ class UdsHttpClient:
         return result.stdout
 
     def delete(self, path, timeout=60):
+        if (
+            self._before_vm_delete is not None
+            and path.startswith("/vms/")
+            and path.endswith("/delete")
+        ):
+            self._before_vm_delete()
         return self._curl("DELETE", path, timeout=timeout)
 
     def post_bytes(self, path, data, timeout=60):

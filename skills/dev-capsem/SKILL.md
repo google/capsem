@@ -33,7 +33,7 @@ Rule: if logic could be reused or tested without a specific crate, it belongs in
 | Path | What | Skill |
 |------|------|-------|
 | `crates/` | Rust workspace | `/site-architecture` |
-| `frontend/` | Astro 5 + Svelte 5 + Tailwind v4 + Preline | `/frontend-design` |
+| `frontend/` | Astro 7 + Svelte 5 + Tailwind v4 + owned semantic CSS | `/frontend-design` |
 | `site/` | Marketing website (Astro + Svelte 5) | `/site-marketing` |
 | `docs/` | Documentation site (Astro Starlight) | `/site-infra` |
 | `src/capsem/builder/` | Python image builder CLI | `/build-images` |
@@ -79,7 +79,7 @@ When working on a specific area, consult the relevant skill:
 ### Frontend & site
 | Skill | When |
 |-------|------|
-| `/frontend-design` | Design system, colors, Preline, Svelte 5 runes |
+| `/frontend-design` | Owned design system, semantic colors, Svelte 5 runes |
 | `/site-architecture` | System architecture, service daemon, gateway, key files |
 | `/site-infra` | Astro Starlight docs site |
 
@@ -131,12 +131,19 @@ Config naming is strict:
 - **Fork images are first-class objects.** `capsem fork <session> <image-name>`
   snapshots a session into a reusable template. Forked images depend on the
   base profile asset set and must remain compatible with the profile contract.
+- **Public surfaces are approval-gated.** `config/public-surface.toml` is the
+  exact allowlist for public Just recipes, Capsem CLI command paths, and
+  service HTTP method/path pairs. `tests/test_public_surface_contract.py`
+  fails on additions, removals, renames, or count drift. Never refresh that
+  ledger mechanically; a surface change requires explicit product approval.
 
 ## Installation
 
-Release packages are the primary install path. `just install` builds the same
-package shape as CI and invokes it with a manifest override for local
-development.
+Release packages are the primary install path. Native install validation is
+owned by the platform-neutral glow-up contract: Linux exercises the package in
+the systemd install rail; macOS installs the signed exact package in a clean
+Tart guest and boots its payload through physical Apple VZ. There is no public
+native-install or release-command fork.
 
 **Install layout** (`~/.capsem/`):
 - `bin/` -- capsem, capsem-service, capsem-process, capsem-mcp, capsem-mcp-aggregator, capsem-mcp-builtin, capsem-gateway, capsem-tray

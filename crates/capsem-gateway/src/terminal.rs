@@ -130,7 +130,7 @@ pub(crate) fn terminal_uds_path(service_uds: &std::path::Path, id: &str) -> Path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(std::path::Path::new("/tmp"));
-    run_dir.join("instances").join(format!("{}-ws.sock", id))
+    capsem_core::uds::terminal_socket_path(run_dir, id)
 }
 
 pub async fn handle_terminal_ws(
@@ -161,10 +161,14 @@ async fn handle_socket(mut client_ws: WebSocket, uds_path: PathBuf) {
                 uds_path.display(),
                 e
             );
+            // The concrete reason, not "VM not available". That string was
+            // all a user got while the real cause was a socket path over the
+            // platform limit -- true only in the sense that nothing could
+            // reach the VM, and useless for working out why.
             let _ = client_ws
                 .send(Message::Close(Some(axum::extract::ws::CloseFrame {
                     code: 1011, // unexpected condition
-                    reason: "VM not available".into(),
+                    reason: format!("terminal socket unreachable: {}", e.kind()).into(),
                 })))
                 .await;
             return;

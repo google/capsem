@@ -1,9 +1,9 @@
 """Resource bound enforcement: CPU and RAM limits."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance
 
@@ -25,20 +25,16 @@ class TestCpuLimits:
         name = f"cpu0-{uuid.uuid4().hex[:6]}"
         resp = client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": 0})
         assert resp is None or "error" in str(resp).lower(), f"cpus=0 should be rejected: {resp}"
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
 
     def test_cpu_over_max_rejected(self, config_svc):
         client = config_svc.client()
         name = f"cpumax-{uuid.uuid4().hex[:6]}"
         resp = client.post("/vms/create", {"name": name, "ram_mb": DEFAULT_RAM_MB, "cpus": 99})
         assert resp is None or "error" in str(resp).lower(), f"cpus=99 should be rejected: {resp}"
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
 
     def test_cpu_valid_accepted(self, config_svc):
         client = config_svc.client()
@@ -55,20 +51,16 @@ class TestRamLimits:
         name = f"ram0-{uuid.uuid4().hex[:6]}"
         resp = client.post("/vms/create", {"name": name, "ram_mb": 0, "cpus": DEFAULT_CPUS})
         assert resp is None or "error" in str(resp).lower(), f"ram=0 should be rejected: {resp}"
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
 
     def test_ram_over_max_rejected(self, config_svc):
         client = config_svc.client()
         name = f"rammax-{uuid.uuid4().hex[:6]}"
         resp = client.post("/vms/create", {"name": name, "ram_mb": 999999, "cpus": DEFAULT_CPUS})
         assert resp is None or "error" in str(resp).lower(), f"ram=999999 should be rejected: {resp}"
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
 
     def test_ram_valid_accepted(self, config_svc):
         client = config_svc.client()

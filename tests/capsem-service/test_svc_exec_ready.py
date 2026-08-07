@@ -12,8 +12,13 @@ not need to poll.
 import uuid
 
 import pytest
-
-from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_TIMEOUT_SECS, HTTP_TIMEOUT
+from helpers.constants import (
+    CODE_PROFILE_ID,
+    DEFAULT_CPUS,
+    DEFAULT_RAM_MB,
+    EXEC_TIMEOUT_SECS,
+    HTTP_TIMEOUT,
+)
 
 pytestmark = pytest.mark.integration
 

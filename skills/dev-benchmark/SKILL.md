@@ -8,7 +8,6 @@ description: Capsem benchmarking with capsem-bench and capsem-bench-rs. Use when
 ## Quick start
 
 ```bash
-just bench                          # Run the standard artifact-recording benchmark suite
 just exec "capsem-bench snapshot"    # Snapshot benchmarks only
 just exec "capsem-bench disk"        # Disk I/O only
 just exec "capsem-bench storage"     # Storage split diagnostics
@@ -58,7 +57,7 @@ scenario: RPS ratio, throughput ratio, p50/p95/p99 latency delta, and error
 delta. If a benchmark cannot produce both lanes, it is diagnostic only and not
 a release performance gate.
 
-`just bench` also records host-side benchmark artifacts under
+Intentional host-side benchmark runs record artifacts under
 `benchmarks/lifecycle/`, `benchmarks/fork/`, and `benchmarks/route-latency/`.
 The route-latency artifact measures `/stats` reads while public profile
 mutation routes are writing through the DB boundary. Treat it as the control
@@ -73,16 +72,9 @@ against the hardware that produced the run. The default host I/O directory is
 accidental baseline. Override with `CAPSEM_HOST_NATIVE_BENCH_DIR` for a specific
 disk.
 
-`just bench` runs `scripts/archive_superseded_benchmark_artifacts.py` for
-retention. Before recording new artifacts, it copies the current host
-architecture's active generated artifacts into `benchmarks/archive/` so
-same-version reruns do not silently overwrite the prior evidence. After
-recording artifacts, active benchmark directories keep only the newest generated
-`data_*.json` per category, architecture, and lane. Superseded generated
-artifacts are zipped under `benchmarks/archive/` with a manifest including path,
-hash, project version, architecture, lane, timestamp, and source commit. Treat
-archives as historical provenance, not current marketing or development
-baselines.
+Benchmark history is not managed by a Just convenience command. Run the owning
+pytest or Criterion command, review the produced JSON, and commit an intentional
+baseline update without overwriting prior evidence.
 
 `capsem-bench all` includes the `storage` section. Keep that in the canonical
 path so Linux and macOS artifacts both capture rootfs/workspace/tmpfs
@@ -90,10 +82,9 @@ attribution data; only the long-running load diagnostics stay opt-in.
 
 ### Cross-platform comparison
 
-`just benchmark-compare` reads committed artifacts under `benchmarks/`, compares
-Linux `x86_64` against macOS `arm64`, prints ratios and percentage deltas for
-shared lanes, and lists missing lanes. Use it after both platforms rerun
-`just benchmark`; do not create platform-specific benchmark shortcuts.
+Use `python3 scripts/benchmark_report.py <artifacts...>` to validate committed
+artifacts and optionally render graphs. Compare Linux `x86_64` against macOS
+`arm64` only after both platform lanes rerun the same owning benchmark.
 
 ### Snapshot benchmarks
 
@@ -142,8 +133,8 @@ Key metrics: per-operation latency in ms. Regressions in `create` usually mean t
 
 1. Run snapshot benchmark: `just exec "capsem-bench snapshot"`
 2. Check per-stage timing: `RUST_LOG=capsem=debug just exec "capsem-bench snapshot"` -- look for `snapshot_into_slot timing` log lines showing `clone_ws_ms`, `clone_sys_ms`, `hash_ms`
-3. Check session data: `just inspect-session` -- MCP tool usage section shows avg duration per snapshot operation
-4. Query detailed durations: `just query-session "SELECT tool_name, duration_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name LIKE 'snapshot%' ORDER BY duration_ms DESC LIMIT 20"`
+3. Check session data: `python3 scripts/check_session.py` -- MCP tool usage section shows avg duration per snapshot operation
+4. Query detailed durations: `sqlite3 "$HOME/.capsem/sessions/<id>/session.db" "SELECT tool_name, duration_ms FROM tool_calls WHERE origin = 'mcp' AND tool_name LIKE 'snapshot%' ORDER BY duration_ms DESC LIMIT 20"`
 
 Common causes:
 - **clone_ws_ms high**: Large workspace, or APFS clonefile falling back to byte copy
@@ -296,7 +287,7 @@ compiled-plan rebuilds, policy-context projection/materialization, 100-rule
 last-match paths, and native lookup comparators. The `capsem-core` security-pack
 harness measures Detection IR V1 JSON parse/validate, Detection IR to CEL
 detection-rule lowering, and lower-plus-compile costs.
-`just benchmark` archives both Criterion harnesses from
+Intentional Criterion publication archives both harnesses from
 `target/criterion/**/new/{benchmark,estimates}.json` into
 `benchmarks/security-engine/data_{version}_{arch}_cel_microbench.json` and
 `benchmarks/security-engine/data_{version}_{arch}_security_packs_microbench.json`;
@@ -366,7 +357,7 @@ projection.
 - Host-side endpoint latency: `uv run pytest tests/capsem-serial/test_endpoint_latency_benchmark.py -xvs`
 - Host-side Security Engine: `uv run pytest tests/capsem-serial/test_security_engine_benchmark.py -xvs`
 - Both host-side: `uv run pytest tests/capsem-serial/test_lifecycle_benchmark.py -xvs`
-- Full run: `just benchmark` (or alias `just bench`) or `just test`
+- Full release run: `just test`
 
 ## Benchmark data directory
 

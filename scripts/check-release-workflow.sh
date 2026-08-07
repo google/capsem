@@ -15,7 +15,17 @@ echo "Tools:"
 command -v cargo >/dev/null && pass "cargo" || fail "cargo not found"
 cargo tauri --version >/dev/null 2>&1 && pass "cargo-tauri" || fail "cargo-tauri not found (cargo install tauri-cli)"
 cargo sbom --help >/dev/null 2>&1 && pass "cargo-sbom" || fail "cargo-sbom not found (cargo install cargo-sbom)"
-command -v cdxgen >/dev/null && pass "cdxgen" || fail "cdxgen not found (npm install -g @cyclonedx/cdxgen)"
+CDXGEN_VERSION="12.7.0"
+if command -v cdxgen >/dev/null; then
+    CDXGEN_ACTUAL_VERSION=$(cdxgen --version 2>&1 | sed -n 's/.*CycloneDX Generator \([0-9.]*\).*/\1/p' | head -1)
+    if [ "$CDXGEN_ACTUAL_VERSION" = "$CDXGEN_VERSION" ]; then
+        pass "cdxgen $CDXGEN_VERSION"
+    else
+        fail "cdxgen version $CDXGEN_ACTUAL_VERSION does not match required $CDXGEN_VERSION (npm install -g @cyclonedx/cdxgen@12.7.0)"
+    fi
+else
+    fail "cdxgen not found (npm install -g @cyclonedx/cdxgen@12.7.0)"
+fi
 
 # --- Tauri key format ---
 echo ""

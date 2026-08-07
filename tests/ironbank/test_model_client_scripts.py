@@ -7,7 +7,6 @@ from ironbank.model_client_config import (
 )
 from ironbank.model_client_scripts import agy_cli_script, gemini_api_script
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 

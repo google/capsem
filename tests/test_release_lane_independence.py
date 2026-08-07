@@ -10,7 +10,6 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FIXTURE_GRAPH = (
     PROJECT_ROOT
@@ -65,14 +64,14 @@ def test_profile_update_does_not_touch_packages(tmp_path: Path) -> None:
     )
 
     profile = new["manifests"][channel][version]["profiles"][profile_id]
-    profile["revision"] = "2026.07.02.2-stable"
-    profile["version"] = "2026.07.02.2-stable"
+    profile["revision"] = "1.1.1-stable"
+    profile["version"] = "1.1.1-stable"
     architecture = profile["architectures"][0]
-    architecture["images"][0]["digest"] = _digest("stable-co-work-arm64-rootfs-2026.07.02.2")
-    architecture["config"][0]["digest"] = _digest("stable-co-work-arm64-profile-2026.07.02.2")
-    architecture["evidence"][0]["digest"] = _digest("stable-co-work-arm64-abom-2026.07.02.2")
+    architecture["images"][0]["digest"] = _digest("stable-co-work-arm64-rootfs-1.1.1")
+    architecture["config"][0]["digest"] = _digest("stable-co-work-arm64-profile-1.1.1")
+    architecture["evidence"][0]["digest"] = _digest("stable-co-work-arm64-abom-1.1.1")
     new["channels"][channel]["manifests"][0]["digest"] = _digest(
-        "stable-manifest-after-co-work-profile-2026.07.02.2"
+        "stable-manifest-after-co-work-profile-1.1.1"
     )
 
     assert _stable_package_payloads(new, channel, version) == old_packages
@@ -123,13 +122,13 @@ def test_cowork_nightly_isolated_update(tmp_path: Path) -> None:
     profile["revision"] = "1.0.1-nightly.20260703"
     profile["version"] = "1.0.1-nightly.20260703"
     architecture = _profile_architecture(profile, "arm64")
-    architecture["images"][0]["digest"] = _digest("nightly-co-work-arm64-rootfs-2026.07.03.1")
-    architecture["config"][0]["digest"] = _digest("nightly-co-work-arm64-profile-2026.07.03.1")
+    architecture["images"][0]["digest"] = _digest("nightly-co-work-arm64-rootfs-1.2.0")
+    architecture["config"][0]["digest"] = _digest("nightly-co-work-arm64-profile-1.2.0")
     architecture["software"][0]["version"] = "3.12.12"
     architecture["software"][0]["digest"] = _digest("nightly-co-work-arm64-python-3.12.12")
-    architecture["evidence"][0]["digest"] = _digest("nightly-co-work-arm64-abom-2026.07.03.1")
+    architecture["evidence"][0]["digest"] = _digest("nightly-co-work-arm64-abom-1.2.0")
     new["channels"][channel]["manifests"][0]["digest"] = _digest(
-        "nightly-manifest-after-co-work-arm64-2026.07.03.1"
+        "nightly-manifest-after-co-work-arm64-1.2.0"
     )
 
     assert json.dumps(new["manifests"]["stable"], sort_keys=True, separators=(",", ":")) == old_stable
@@ -206,7 +205,7 @@ def test_manifest_version_independence() -> None:
     assert profile_versions == {
         "1.0.0-stable.20260702",
         "1.0.0-nightly.20260702",
-        "2026.07.02.1",
+        "1.1.0",
     }
     assert stable_version not in package_versions
     assert nightly_version not in package_versions
@@ -317,14 +316,14 @@ def _run_policy(
         [sys.executable, str(DIFF_POLICY), "--old", str(old_path), "--new", str(new_path), *args],
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
 
 def _digest(seed: str) -> dict[str, str]:
-    import blake3
     import hashlib
+
+    import blake3
 
     payload = seed.encode("utf-8")
     return {

@@ -27,7 +27,6 @@ from pydantic import ValidationError
 from capsem.builder.config import load_guest_config
 from capsem.builder.models import GuestImageConfig
 
-
 # ---------------------------------------------------------------------------
 # Core types
 # ---------------------------------------------------------------------------
@@ -158,8 +157,7 @@ def _validate_pydantic(
 ) -> GuestImageConfig | None:
     """Load and validate config through Pydantic, emit E003-E005."""
     try:
-        config = load_guest_config(guest_dir)
-        return config
+        return load_guest_config(guest_dir)
     except FileNotFoundError:
         # Already caught by E001
         return None
@@ -226,10 +224,7 @@ def _is_bad_domain(domain: str) -> bool:
     """Check if a domain pattern is malformed."""
     if not domain or domain.isspace():
         return True
-    for pat in _DOMAIN_BAD_PATTERNS:
-        if pat.search(domain):
-            return True
-    return False
+    return any(pat.search(domain) for pat in _DOMAIN_BAD_PATTERNS)
 
 
 def _validate_duplicates(
@@ -358,7 +353,7 @@ def _validate_warnings(
     # W002: -dev packages in package lists
     for key, ps in config.package_sets.items():
         for pkg in ps.packages:
-            if pkg.endswith("-dev") or pkg.endswith("-devel"):
+            if pkg.endswith(("-dev", "-devel")):
                 diags.append(Diagnostic(
                     code="W002",
                     severity=Severity.WARNING,
@@ -499,10 +494,7 @@ def _check_rust_targets(config: GuestImageConfig, diags: list[Diagnostic]) -> No
 
 def _contains_secret(text: str) -> bool:
     """Check if text contains patterns that look like real secrets."""
-    for pat in _SECRET_PATTERNS:
-        if pat.search(text):
-            return True
-    return False
+    return any(pat.search(text) for pat in _SECRET_PATTERNS)
 
 
 def _is_placeholder(content: str) -> bool:
@@ -510,10 +502,7 @@ def _is_placeholder(content: str) -> bool:
     stripped = content.strip()
     if not stripped:
         return False
-    for pat in _PLACEHOLDER_PATTERNS:
-        if pat.match(stripped):
-            return True
-    return False
+    return any(pat.match(stripped) for pat in _PLACEHOLDER_PATTERNS)
 
 
 # ---------------------------------------------------------------------------

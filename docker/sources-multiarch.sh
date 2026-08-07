@@ -11,16 +11,16 @@ NATIVE_ARCH=$(dpkg --print-architecture)
 
 if [ "$NATIVE_ARCH" = "arm64" ]; then
     FOREIGN_ARCH="amd64"
-    NATIVE_MIRROR="http://ports.ubuntu.com/ubuntu-ports"
-    NATIVE_SECURITY="http://ports.ubuntu.com/ubuntu-ports"
-    FOREIGN_MIRROR="http://archive.ubuntu.com/ubuntu"
-    FOREIGN_SECURITY="http://security.ubuntu.com/ubuntu"
+    NATIVE_MIRROR="https://ports.ubuntu.com/ubuntu-ports"
+    NATIVE_SECURITY="https://ports.ubuntu.com/ubuntu-ports"
+    FOREIGN_MIRROR="https://archive.ubuntu.com/ubuntu"
+    FOREIGN_SECURITY="https://security.ubuntu.com/ubuntu"
 elif [ "$NATIVE_ARCH" = "amd64" ]; then
     FOREIGN_ARCH="arm64"
-    NATIVE_MIRROR="http://archive.ubuntu.com/ubuntu"
-    NATIVE_SECURITY="http://security.ubuntu.com/ubuntu"
-    FOREIGN_MIRROR="http://ports.ubuntu.com/ubuntu-ports"
-    FOREIGN_SECURITY="http://ports.ubuntu.com/ubuntu-ports"
+    NATIVE_MIRROR="https://archive.ubuntu.com/ubuntu"
+    NATIVE_SECURITY="https://security.ubuntu.com/ubuntu"
+    FOREIGN_MIRROR="https://ports.ubuntu.com/ubuntu-ports"
+    FOREIGN_SECURITY="https://ports.ubuntu.com/ubuntu-ports"
 else
     echo "ERROR: unsupported native arch '$NATIVE_ARCH'"
     exit 1
@@ -33,6 +33,16 @@ echo "$FOREIGN_ARCH" > /tmp/foreign-arch
 
 # Remove any existing sources to avoid conflicts
 rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*
+
+# A partial update is not usable for cross-architecture package resolution.
+# Retry transient mirror failures, then make any missing index fail the layer
+# instead of silently reusing stale metadata.
+cat > /etc/apt/apt.conf.d/80capsem-reliable-updates << 'EOF'
+Acquire::Retries "5";
+Acquire::http::Timeout "30";
+Acquire::https::Timeout "30";
+APT::Update::Error-Mode "any";
+EOF
 
 # Write arch-scoped multiarch sources (DEB822 format)
 cat > /etc/apt/sources.list.d/ubuntu.sources << EOF

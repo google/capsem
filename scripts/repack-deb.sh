@@ -20,6 +20,8 @@
 #   /usr/bin/capsem-gateway
 #   /usr/bin/capsem-tray
 #   /usr/bin/capsem-admin
+#   /usr/bin/capsem-mock-server
+#   /usr/bin/capsem-bench-rs
 #   /usr/share/capsem/assets/manifest-metadata.json
 #   /usr/share/capsem/profiles/
 #   DEBIAN/preinst script
@@ -33,6 +35,17 @@ embed_install_diagnostics() {
     {
         head -n 1 "$maintainer_script"
         sed -n '2,$p' "$SCRIPT_DIR/pkg-scripts/install-diagnostics"
+        sed -n '2,$p' "$maintainer_script"
+    } > "$combined"
+    mv "$combined" "$maintainer_script"
+}
+
+embed_install_manifest_resolver() {
+    local maintainer_script="$1"
+    local combined="${maintainer_script}.with-install-manifest"
+    {
+        head -n 1 "$maintainer_script"
+        sed -n '2,$p' "$SCRIPT_DIR/pkg-scripts/install-manifest"
         sed -n '2,$p' "$maintainer_script"
     } > "$combined"
     mv "$combined" "$maintainer_script"
@@ -218,7 +231,7 @@ ensure_deb_dependency "$WORK_DIR/deb/DEBIAN/control" "libxdo3"
 
 echo "=== Adding companion binaries ==="
 mkdir -p "$WORK_DIR/deb/usr/bin"
-for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
     src="$BIN_DIR/$bin"
     if [ -f "$src" ]; then
         cp "$src" "$WORK_DIR/deb/usr/bin/$bin"
@@ -237,6 +250,7 @@ embed_install_diagnostics "$WORK_DIR/deb/DEBIAN/preinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/preinst"
 cp "$SCRIPT_DIR/deb-postinst.sh" "$WORK_DIR/deb/DEBIAN/postinst"
 embed_install_diagnostics "$WORK_DIR/deb/DEBIAN/postinst"
+embed_install_manifest_resolver "$WORK_DIR/deb/DEBIAN/postinst"
 chmod 755 "$WORK_DIR/deb/DEBIAN/postinst"
 
 if [ ! -d "$CONFIG_ROOT/profiles" ]; then
@@ -244,6 +258,13 @@ if [ ! -d "$CONFIG_ROOT/profiles" ]; then
     echo "Run: just _materialize-config" >&2
     exit 1
 fi
+for profile_path in "$CONFIG_ROOT"/profiles/*/profile.toml; do
+    [ -f "$profile_path" ] || {
+        echo "ERROR: no materialized profiles found under $CONFIG_ROOT/profiles" >&2
+        exit 1
+    }
+    "$BIN_DIR/capsem-admin" profile validate "$profile_path" --config-root "$CONFIG_ROOT" --materialized
+done
 echo "=== Adding materialized profiles ==="
 mkdir -p "$WORK_DIR/deb/usr/share/capsem/profiles"
 cp -R "$CONFIG_ROOT/profiles/." "$WORK_DIR/deb/usr/share/capsem/profiles/"

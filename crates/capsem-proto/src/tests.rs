@@ -1612,3 +1612,121 @@ fn safe_rejects_new_file_outside_workspace() {
     let result = validate_file_path_safe(f.to_str().unwrap(), ws.path());
     assert!(result.is_err(), "file outside workspace must be rejected");
 }
+
+// -------------------------------------------------------------------
+// Frame-shape detector: adversarial
+// -------------------------------------------------------------------
+//
+// looks_like_ipc_frame is the only signal that a guest is writing control
+// protocol into its own PTY stream -- a confused-deputy leak from the control
+// channel into the terminal channel. It runs on every terminal buffer, so it
+// must never panic on a short or empty read, must fire on real encoder output,
+// and must not be widened into a false-positive machine by a guest that simply
+// cats a binary file.
+
+#[test]
+fn detector_fires_on_real_unit_variant_frames() {
+    // Unit variants encode as fixmap[1]: 0x81 0xa1 't' <fixstr name>.
+    let frame = encode_guest_msg(&GuestToHost::Pong).unwrap();
+    let body = &frame[4..];
+
+    assert_eq!(body[0] & 0xf0, 0x80, "expected a fixmap header, got {body:02x?}");
+    assert!(
+        looks_like_ipc_frame(body),
+        "a real encoded frame must be detected: {:02x?}",
+        &body[..body.len().min(8)]
+    );
+}
+
+#[test]
+fn detector_fires_on_real_payload_variant_frames() {
+    // Variants with content encode as fixmap[2].
+    let frame = encode_host_msg(&HostToGuest::Ping { epoch_secs: 42 }).unwrap();
+    let body = &frame[4..];
+
+    assert_eq!(body[0], 0x82, "payload variants are fixmap[2]: {body:02x?}");
+    assert!(looks_like_ipc_frame(body));
+}
+
+#[test]
+fn detector_never_panics_on_short_or_empty_reads() {
+    // A PTY read can return any length, including zero. Four bytes is the
+    // minimum the detector inspects; anything shorter must answer false
+    // rather than index out of bounds.
+    for len in 0..4 {
+        let buf = vec![0x81u8; len];
+        assert!(!looks_like_ipc_frame(&buf), "len {len} must not match");
+    }
+    assert!(!looks_like_ipc_frame(&[]));
+}
+
+#[test]
+fn detector_requires_every_byte_of_the_frame_prefix() {
+    let ok: [u8; 4] = [0x81, 0xa1, b't', 0xa5];
+    assert!(looks_like_ipc_frame(&ok), "control case must match");
+
+    // Flip one position at a time; each alone must defeat the match.
+    for (idx, bad) in [(0usize, 0x80u8), (0, 0x83), (1, 0xa2), (2, b'x'), (3, 0x9f)] {
+        let mut buf = ok;
+        buf[idx] = bad;
+        assert!(
+            !looks_like_ipc_frame(&buf),
+            "byte {idx} = {bad:#04x} must defeat the match"
+        );
+    }
+}
+
+#[test]
+fn detector_variant_name_byte_honours_the_fixstr_range() {
+    // data[3] is the fixstr header for the variant name: 0xa0..=0xbf.
+    for header in [0xa0u8, 0xb0, 0xbf] {
+        assert!(
+            looks_like_ipc_frame(&[0x82, 0xa1, b't', header]),
+            "{header:#04x} is inside the fixstr range"
+        );
+    }
+    for header in [0x9f, 0xc0, 0xff, 0x00] {
+        assert!(
+            !looks_like_ipc_frame(&[0x82, 0xa1, b't', header]),
+            "{header:#04x} is outside the fixstr range"
+        );
+    }
+}
+
+#[test]
+fn detector_ignores_frame_shaped_bytes_that_do_not_start_the_buffer() {
+    // `cat msgpack-blob.bin` must not be reported as a control-channel leak.
+    // The contract is start-of-buffer only.
+    let mut buf = b"total 8\r\n".to_vec();
+    buf.extend_from_slice(&[0x81, 0xa1, b't', 0xa5]);
+
+    assert!(!looks_like_ipc_frame(&buf));
+}
+
+#[test]
+fn detector_ignores_ordinary_terminal_output() {
+    for sample in [
+        &b"$ ls -la\r\n"[..],
+        &b"\x1b[0;32mOK\x1b[0m\r\n"[..],   // ANSI colour
+        &b"\x00\x00\x00\x10"[..],          // a length prefix, not a body
+        &b"{\"jsonrpc\":\"2.0\"}"[..],     // JSON, not msgpack
+        &[0xff, 0xfe, 0xfd, 0xfc][..],     // arbitrary binary
+    ] {
+        assert!(
+            !looks_like_ipc_frame(sample),
+            "ordinary output must not be flagged: {:02x?}",
+            &sample[..sample.len().min(6)]
+        );
+    }
+}
+
+#[test]
+fn detector_sees_a_leaked_frame_body_but_not_its_length_prefix() {
+    // The leak that matters is a raw body reaching the tty. A full framed
+    // message still carries its 4-byte length prefix, which shifts the shape
+    // out of position -- exactly why the PTY sink checks the body.
+    let frame = encode_guest_msg(&GuestToHost::Pong).unwrap();
+
+    assert!(!looks_like_ipc_frame(&frame), "length prefix hides the shape");
+    assert!(looks_like_ipc_frame(&frame[4..]), "body is detectable");
+}

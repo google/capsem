@@ -161,7 +161,7 @@ describe('update status model', () => {
     ]);
     expect(profileDashboardUpdateRows(status).map(row => row.label)).not.toContain('Binary');
     expect(profileDashboardUpdateRows(status)[0].detail).toContain('existing sessions stay pinned');
-    expect(profileDashboardUpdateRows(status)[1].detail).toContain('capsem update --assets');
+    expect(profileDashboardUpdateRows(status)[1].detail).toContain('apply the verified VM asset update automatically');
   });
 
   it('surfaces blocked profile state on the profile dashboard', () => {

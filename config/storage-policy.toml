@@ -1,0 +1,253 @@
+version = 1
+
+[docker]
+# The existing 100 GiB Colima disk is a supported minimum. New runtimes get
+# 128 GiB for working headroom. Capacity guidance must be revised from the
+# byte-accounted release ledger, never from host target/ anecdotes.
+minimum_disk_gib = 160
+recommended_disk_gib = 200
+minimum_free_gib = 40
+buildkit_keep_gib = 80
+linked_keep_gib = 4
+container_max_age_hours = 24
+cache_max_age_hours = 72
+report_path = "target/storage/docker-storage.jsonl"
+
+[tart]
+base_image = "ghcr.io/cirruslabs/macos-sequoia-base@sha256:fdd8b72a6ee46fc8ad35dc1b9f3b1f162b6607b82a584947d20bb28d3dcb99ed"
+owned_vm_prefix = "capsem-glowup-"
+report_path = "target/storage/tart-storage.jsonl"
+
+[rails.default]
+minimum_free_gib = 40
+buildkit_keep_gib = 80
+linked_keep_gib = 4
+
+[rails.assets]
+minimum_free_gib = 40
+buildkit_keep_gib = 80
+linked_keep_gib = 4
+
+[rails.package]
+minimum_free_gib = 40
+buildkit_keep_gib = 80
+linked_keep_gib = 4
+
+[rails.install-preflight]
+minimum_free_gib = 40
+buildkit_keep_gib = 80
+linked_keep_gib = 4
+
+[rails.install]
+minimum_free_gib = 40
+buildkit_keep_gib = 80
+linked_keep_gib = 4
+
+[resources.capsem-linux-rust-base]
+kind = "image"
+# A repository, not a tag -- the only managed resource of which that is true.
+# `base_tag()` keys this image by a blake2b of Cargo.lock, rust-toolchain.toml
+# and frontend/pnpm-lock.yaml, so every bump of any of the three mints a new
+# ~25 GiB tag. Nothing retired the old ones: a single fast-uri security bump
+# left three coexisting on a VM with 54.7 GiB free, which reaches disk-full
+# somewhere in the middle of a two-hour release run rather than at a point
+# where it is cheap.
+docker_name = "capsem-linux-rust-base"
+retention = "generational"
+owner = "linux-rust"
+# Keep only the tag the current lockfiles resolve to. Nothing can want another
+# by construction: the lane derives its tag the same way and refuses to start
+# when it is missing, naming the warm recipe -- the cheapest failure this gate
+# has, and a deliberate one.
+#
+# Zero rather than one, because a spare generation does not buy what it looks
+# like it buys. Removing a tag does not touch the BuildKit layer cache, and
+# that cache -- 80 GiB of it, held for 72h by this same policy -- is what makes
+# a rebuild fast: re-tagging a generation whose layers are still cached is
+# sub-second and needs no network (measured at 0.68s for the 25.4 GiB base). A
+# kept tag only pays once those layers have aged out too, and then it is a full
+# network rebuild either way. So one previous generation costs a permanent
+# ~25 GiB against a 40 GiB free-space floor to shorten a rebuild that is
+# already short. Raise it to 1 if a revert ever costs more than that.
+keep_previous = 0
+reason = "Only the tag the current lockfiles resolve to has a possible consumer."
+
+[resources.capsem-linux-rust-target]
+kind = "volume"
+retention = "working"
+owner = "linux-rust"
+last_consumer = "linux-rust"
+release_boundary = "after-linux-rust"
+reason = "Linux coverage compiler output has no later consumer."
+
+[resources.capsem-agent-target-arm64]
+kind = "volume"
+retention = "working"
+owner = "assets"
+last_consumer = "assets"
+release_boundary = "after-assets"
+reason = "Agent compiler output is consumed by the completed asset rail."
+
+[resources.capsem-agent-target-x86_64]
+kind = "volume"
+retention = "working"
+owner = "assets"
+last_consumer = "assets"
+release_boundary = "after-assets"
+reason = "Agent compiler output is consumed by the completed asset rail."
+
+[resources.capsem-rustup-arm64]
+kind = "volume"
+retention = "cache"
+owner = "assets"
+reason = "Architecture-native Rust toolchain avoids a repeated toolchain download."
+
+[resources.capsem-rustup-x86_64]
+kind = "volume"
+retention = "cache"
+owner = "assets"
+reason = "Architecture-native Rust toolchain avoids a repeated toolchain download."
+
+[resources.capsem-host-builder]
+kind = "image"
+docker_name = "capsem-host-builder:latest"
+retention = "working"
+owner = "packages"
+# Not `package-x86_64`: `docker/Dockerfile.install-test` is `FROM` this tag,
+# and the install proof always rebuilds -- deliberately, so a stale local
+# image cannot hide a new prerequisite. Released at `after-install`, which is
+# the last thing that derives from it.
+last_consumer = "install"
+release_boundary = "after-install"
+reason = "Both package builds and the install proof's base image need this tag."
+
+[resources.capsem-host-target-arm64]
+kind = "volume"
+retention = "working"
+owner = "package-arm64"
+last_consumer = "package-arm64"
+release_boundary = "after-package-arm64"
+reason = "The exact arm64 package is copied to dist before this compiler output is released."
+
+[resources.capsem-host-target-x86_64]
+kind = "volume"
+retention = "working"
+owner = "package-x86_64"
+last_consumer = "package-x86_64"
+release_boundary = "after-package-x86_64"
+reason = "The exact x86_64 package is copied to dist before this compiler output is released."
+
+[resources.capsem-install-target]
+kind = "volume"
+retention = "working"
+owner = "install"
+last_consumer = "install"
+release_boundary = "after-install"
+release_boundaries = ["before-packages", "after-install"]
+maximum_gib = 25
+reason = "Install compiler output is one-shot; the installed package and logs are the evidence."
+
+[resources.capsem-install-frontend-dist]
+kind = "volume"
+retention = "working"
+owner = "install"
+last_consumer = "install"
+release_boundary = "after-install"
+reason = "Generated frontend output is rebuilt and is not a dependency cache."
+
+[resources.capsem-install-test]
+kind = "image"
+docker_name = "capsem-install-test:latest"
+retention = "working"
+owner = "install"
+last_consumer = "install"
+release_boundaries = ["after-install-preflight", "after-install", "candidate-boundary"]
+reason = "Derived systemd test image is rebuilt from retained BuildKit layers."
+
+[resources.capsem-cargo-registry]
+kind = "volume"
+retention = "cache"
+owner = "shared-rust"
+reason = "Downloaded Cargo registry content is reused by asset and package rails."
+
+[resources.capsem-cargo-git]
+kind = "volume"
+retention = "cache"
+owner = "shared-rust"
+reason = "Downloaded Cargo git sources are reused by asset and package rails."
+
+[resources.capsem-rustup]
+kind = "volume"
+retention = "cache"
+owner = "packages"
+reason = "Pinned Rust toolchains and targets are reused by both package architectures."
+
+[resources.capsem-linux-rust-cargo-registry]
+kind = "volume"
+retention = "cache"
+owner = "linux-rust"
+reason = "Downloaded Cargo registry content is reused by the next Linux parity run."
+
+[resources.capsem-linux-rust-cargo-git]
+kind = "volume"
+retention = "cache"
+owner = "linux-rust"
+reason = "Downloaded Cargo git sources are reused by the next Linux parity run."
+
+[resources.capsem-linux-rust-rustup]
+kind = "volume"
+retention = "cache"
+owner = "linux-rust"
+reason = "Pinned Linux Rust toolchain is reused by the next Linux parity run."
+
+[resources.capsem-install-cargo]
+kind = "volume"
+retention = "cache"
+owner = "install"
+reason = "Downloaded Cargo registry content is reused by install builds."
+
+[resources.capsem-install-rustup]
+kind = "volume"
+retention = "cache"
+owner = "install"
+reason = "Pinned Rust toolchain is reused by install builds."
+
+[resources.capsem-install-frontend-node-modules]
+kind = "volume"
+retention = "cache"
+owner = "install"
+reason = "Resolved pnpm dependencies are reused; generated dist is tracked separately."
+
+[resources.capsem-install-release-site-node-modules]
+kind = "volume"
+retention = "cache"
+owner = "install"
+reason = "Linux-native release-site dependencies are reused without sharing host-native optional bindings."
+
+[resources.capsem-linux-python-venv]
+kind = "volume"
+retention = "obsolete"
+owner = "none"
+reason = "No production recipe mounts this legacy volume."
+
+[resources.capsem-linux-unit-target]
+kind = "volume"
+retention = "obsolete"
+owner = "none"
+reason = "No production recipe mounts this legacy target volume."
+
+[debug_artifacts]
+root = "test-artifacts"
+minimum_runs = 5
+maximum_runs = 30
+maximum_age_days = 14
+maximum_total_gib = 8
+maximum_file_mib = 25
+skip_names = [
+  "rootfs.img",
+  "scratch.img",
+  "disk.img",
+  "rootfs.erofs",
+  "vmlinuz",
+  "initrd.img",
+]

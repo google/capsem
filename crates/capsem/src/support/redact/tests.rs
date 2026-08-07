@@ -64,7 +64,10 @@ fn openai_proj_key_prefix_redacted() {
 fn bearer_with_extra_whitespace_redacted() {
     let line = "Authorization:    Bearer    sk-very-long-secret-token-12345";
     let r = redact_line(line);
-    assert!(r.contains("Bearer <redacted>"), "{r}");
+    // The header prefix is now kept verbatim so JSON-shaped lines survive
+    // redaction, which means the original spacing survives with it. What has
+    // to hold is that the credential is gone.
+    assert!(r.contains("<redacted>"), "{r}");
     assert!(!r.contains("sk-very-long-secret-token-12345"));
 }
 
@@ -122,4 +125,78 @@ fn json_secret_value_is_redacted() {
     let r = redact_config_text(json);
     assert!(r.contains("\"github_token\": \"<redacted>\""), "{r}");
     assert!(r.contains("\"endpoint\""));
+}
+
+
+// ── Leaks the redactor used to miss ────────────────────────────────
+//
+// A redactor is dangerous when it fails to fire, not when it over-redacts.
+// Both cases below shipped credentials into support bundles that are meant to
+// be attachable to a public bug report.
+
+#[test]
+fn json_shaped_authorization_header_is_redacted() {
+    // Capsem's own logs are JSON, so this -- not the bare `Authorization:`
+    // form -- is the shape a bundle actually carries. The quote between the
+    // header name and the colon used to defeat the match entirely.
+    let line = r#"{"level":"info","Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig"}"#;
+    let r = redact_line(line);
+
+    assert!(!r.contains("eyJhbGciOiJIUzI1NiJ9.payload.sig"), "{r}");
+    assert!(r.contains("<redacted>"), "{r}");
+}
+
+#[test]
+fn json_redaction_leaves_the_line_still_parseable() {
+    let line = r#"{"Authorization": "Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig"}"#;
+    let r = redact_line(line);
+
+    serde_json::from_str::<serde_json::Value>(&r)
+        .unwrap_or_else(|e| panic!("redaction broke the JSON: {e}\n{r}"));
+}
+
+#[test]
+fn unquoted_and_lowercase_json_authorization_are_both_redacted() {
+    for line in [
+        r#"{"authorization":"Bearer ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}"#,
+        r#"{"AUTHORIZATION" : "Bearer sometokenvalue"}"#,
+        "Authorization:Bearer notoken-space",
+    ] {
+        let r = redact_line(line);
+        assert!(r.contains("<redacted>"), "not redacted: {line} -> {r}");
+    }
+}
+
+#[test]
+fn github_tokens_are_redacted() {
+    // The config redactor already treats `github_token` as a secret key name,
+    // so a bare GitHub token in a log line has to go too.
+    for token in [
+        "ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "gho_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+        "ghs_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+    ] {
+        let r = redact_line(&format!("cloning with {token} from origin"));
+        assert!(!r.contains(token), "{token} leaked: {r}");
+        assert!(r.contains("<redacted-key>"), "{r}");
+    }
+}
+
+#[test]
+fn the_plain_header_form_still_redacts_and_keeps_its_shape() {
+    // Regression guard for the original behaviour while fixing the JSON form.
+    let line = "GET /v1 HTTP/1.1, Authorization: Bearer sk-ant-abcdefghijklmnopqrstuv";
+    let r = redact_line(line);
+
+    assert!(r.contains("Authorization: Bearer <redacted>"), "{r}");
+    assert!(!r.contains("sk-ant-abcdefghijklmnopqrstuv"));
+}
+
+#[test]
+fn short_provider_keys_stay_untouched_by_design() {
+    // The 20-char tail threshold is deliberate: it stops the redactor eating
+    // unrelated strings that merely start with `sk-`. Pinned so the threshold
+    // is a decision, not an accident.
+    let r = redact_line("branch sk-fix and file sk-notes.md");
+    assert_eq!(r, "branch sk-fix and file sk-notes.md");
 }

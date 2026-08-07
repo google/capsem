@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import shutil
 import socket
@@ -12,7 +13,6 @@ import time
 from pathlib import Path
 
 import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "clean_stale.py"
@@ -441,6 +441,92 @@ def test_cargo_budget_deps_only_counts_cargo_extensions(
     assert not old_rlib.exists(), "oldest .rlib should have been evicted"
 
 
+def test_cargo_budget_evicts_oldest_linked_test_binaries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Bound linked tests separately while retaining the newest focused cache."""
+    monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "linked", 0.000_01)
+    deps = tmp_path / "target" / "debug" / "deps"
+    deps.mkdir(parents=True)
+
+    old_binary = deps / "test_old-aaa111"
+    old_binary.write_bytes(b"\x00" * 8192)
+    old_binary.chmod(0o755)
+    old_time = time.time() - 5 * 86400
+    os.utime(old_binary, (old_time, old_time))
+
+    new_binary = deps / "test_new-bbb222"
+    new_binary.write_bytes(b"\x00" * 8192)
+    new_binary.chmod(0o755)
+
+    result = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
+
+    assert not old_binary.exists(), "oldest linked test binary should be evicted"
+    assert new_binary.exists(), "newest linked test binary should stay warm"
+    assert "budget=" in result.detail
+
+
+def test_target_transient_cleanup_removes_only_old_reproducible_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Old proof/debug staging is disposable; canonical asset caches are not."""
+    monkeypatch.setattr(clean_stale, "TARGET_TRANSIENT_MAX_AGE_S", 60)
+    target = tmp_path / "target"
+    target.mkdir()
+    old_time = time.time() - 3600
+
+    stale_names = (
+        "asset-release",
+        "generated-settings-linux.abc123",
+        "local-release-glowup-debug",
+        "agy-proof-arm64",
+        "ironbank-assets-sequential",
+        "s09-043-release-dist",
+    )
+    for name in stale_names:
+        path = target / name
+        path.mkdir()
+        (path / "payload").write_bytes(b"stale")
+        os.utime(path, (old_time, old_time))
+
+    protected = target / "ironbank-assets"
+    protected.mkdir()
+    (protected / "rootfs.erofs").write_bytes(b"expensive current cache")
+    os.utime(protected, (old_time, old_time))
+
+    fresh = target / "local-release-glowup"
+    fresh.mkdir()
+    (fresh / "report.json").write_text("{}")
+
+    result = clean_stale.clean_target_transients(tmp_path, dry_run=False, verbose=False)
+
+    assert result.removed == len(stale_names)
+    assert all(not (target / name).exists() for name in stale_names)
+    assert protected.exists(), "canonical Ironbank assets accelerate the next gate"
+    assert fresh.exists(), "a possibly active staging tree must not be removed"
+
+
+def test_target_tmp_cleanup_removes_old_scratch_but_preserves_fresh_work(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(clean_stale, "TARGET_TRANSIENT_MAX_AGE_S", 60)
+    scratch = tmp_path / "target" / "tmp"
+    scratch.mkdir(parents=True)
+    old = scratch / "obom-debug-rootfs"
+    old.mkdir()
+    (old / "rootfs.tar").write_bytes(b"stale")
+    old_time = time.time() - 3600
+    os.utime(old, (old_time, old_time))
+    fresh = scratch / "capsem-build-rootfs-active"
+    fresh.mkdir()
+
+    result = clean_stale.clean_target_transients(tmp_path, dry_run=False, verbose=False)
+
+    assert result.removed == 1
+    assert not old.exists()
+    assert fresh.exists()
+
+
 def test_cargo_prune_aggressive_drops_doc(tmp_path: Path):
     """When target/release has old content, aggressive mode is used and target/doc
     is dropped if nothing recent lives inside it."""
@@ -505,3 +591,46 @@ def test_target_missing(tmp_path: Path):
     rd = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
     assert ra.removed == 0
     assert rd.removed == 0
+
+
+def test_cargo_cleanup_reports_real_before_after_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setitem(clean_stale.CARGO_KIND_BUDGETS_GB, "incremental", 0.000_01)
+    incremental = tmp_path / "target" / "debug" / "incremental"
+    old = incremental / "old"
+    new = incremental / "new"
+    old.mkdir(parents=True)
+    new.mkdir()
+    (old / "blob").write_bytes(b"x" * 16_384)
+    (new / "blob").write_bytes(b"x" * 8_192)
+    old_time = time.time() - 5 * 86400
+    os.utime(old, (old_time, old_time))
+
+    result = clean_stale.clean_cargo_artifacts(tmp_path, dry_run=False, verbose=False)
+
+    assert result.bytes_before > result.bytes_after
+    assert result.bytes_reclaimed == result.bytes_before - result.bytes_after
+    assert result.bytes_reclaimed > 0
+
+
+def test_main_persists_cleanup_ledger(tmp_path: Path):
+    report = tmp_path / "cleanup.jsonl"
+    rc = clean_stale.main(
+        [
+            "--root",
+            str(tmp_path),
+            "--tmp-dir",
+            str(tmp_path / "tmp"),
+            "--sockets-dir",
+            str(tmp_path / "sockets"),
+            "--report",
+            str(report),
+        ]
+    )
+
+    assert rc == 0
+    payload = json.loads(report.read_text().splitlines()[-1])
+    assert payload["schema"] == "capsem.host_cleanup.v1"
+    assert payload["target"]["before_bytes"] >= payload["target"]["after_bytes"]
+    assert any(stage["name"] == "cargo" for stage in payload["stages"])

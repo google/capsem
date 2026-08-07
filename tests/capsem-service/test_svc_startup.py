@@ -5,12 +5,12 @@ and accepts connections -- the exact failure mode that was missed when
 'just test' excluded integration tests.
 """
 
+import contextlib
 import socket
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import ServiceInstance, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_name, wait_exec_ready
 
 pytestmark = pytest.mark.integration
 
@@ -56,10 +56,8 @@ class TestServiceStartup:
                 "service->process->VM boot chain is broken"
             )
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{name}/delete")
-            except Exception:
-                pass
 
     def test_service_clean_shutdown(self):
         """Service must shut down cleanly without orphaning processes."""

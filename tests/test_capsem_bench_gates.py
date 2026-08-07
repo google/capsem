@@ -3,7 +3,6 @@ import importlib.util
 from pathlib import Path
 
 import pytest
-
 from helpers import benchmark_gates
 from helpers.benchmark_gates import validate_capsem_bench_result
 

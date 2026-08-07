@@ -88,6 +88,17 @@ struct Args {
     /// Explicit initrd path (overrides assets_dir/initrd.img)
     #[arg(long)]
     initrd: Option<PathBuf>,
+    /// BLAKE3 hashes the booting profile pins for its boot assets.
+    ///
+    /// Supplied by the service, which resolves the profile: a channel carries one
+    /// image set per profile, so nothing here can derive them from a channel-wide
+    /// pointer without verifying one profile against another's kernel.
+    #[arg(long)]
+    expected_kernel_hash: String,
+    #[arg(long)]
+    expected_initrd_hash: String,
+    #[arg(long)]
+    expected_rootfs_hash: String,
     #[arg(long)]
     session_dir: PathBuf,
     #[arg(long)]
@@ -100,6 +111,17 @@ struct Args {
     scratch_disk_size_gb: u32,
     #[arg(long)]
     uds_path: PathBuf,
+    /// The service's run directory, so the terminal socket is derived from the
+    /// same place the gateway derives it from.
+    ///
+    /// Passed rather than walked up from `uds_path`. That worked while the IPC
+    /// socket was `{run_dir}/instances/{id}.sock` and broke the moment it was
+    /// shortened to `/tmp/capsem/<hash>.sock` -- which is precisely the long
+    /// run directory the shortening exists for. Two levels up from the short
+    /// form is `/tmp`, so the process bound `/tmp/instances/...` while the
+    /// gateway dialled `{run_dir}/instances/...`.
+    #[arg(long)]
+    run_dir: Option<PathBuf>,
     #[arg(long)]
     checkpoint_path: Option<PathBuf>,
     /// Environment variables to inject into guest (repeatable: --env KEY=VALUE)
@@ -238,6 +260,11 @@ fn main() -> Result<()> {
         }),
         machine_identifier_path: Some(&machine_identifier_path),
         serial_log_path: Some(&serial_log_path),
+        expected_asset_hashes: Some(capsem_core::asset_manager::ExpectedAssetHashes {
+            kernel: args.expected_kernel_hash.clone(),
+            initrd: args.expected_initrd_hash.clone(),
+            rootfs: args.expected_rootfs_hash.clone(),
+        }),
     })?;
 
     // Delete checkpoint file if we just restored from it, so we don't accidentally suspend on normal shutdown
@@ -282,7 +309,7 @@ fn main() -> Result<()> {
         )
         .await
         {
-            error!("async loop failed: {e:#}");
+            error!(error = format!("{e:#}"), "async loop failed");
             drain_background_owners(&shutdown_for_loop_error).await;
             std::process::exit(1);
         }
@@ -403,7 +430,7 @@ async fn run_async_main_loop(
             shutdown.lock().await.fs_monitor = Some(monitor);
         }
         Err(e) => {
-            error!("failed to start host file monitor: {e}");
+            error!(error = %e, "failed to start host file monitor");
         }
     }
 
@@ -591,8 +618,8 @@ async fn run_async_main_loop(
                         "auto snapshot captured"
                     );
                 }
-                Ok(Err(e)) => tracing::warn!("auto-snapshot failed: {e}"),
-                Err(e) => tracing::warn!("auto-snapshot task panicked: {e}"),
+                Ok(Err(e)) => tracing::warn!(error = %e, "auto-snapshot failed"),
+                Err(e) => tracing::warn!(error = %e, "auto-snapshot task panicked"),
             }
         }
     });
@@ -635,7 +662,7 @@ async fn run_async_main_loop(
     let pty_log = match pty_log::PtyLog::open(&session_dir.join("pty.log")) {
         Ok(pl) => Some(Arc::new(pl)),
         Err(e) => {
-            warn!("failed to open pty.log: {e}");
+            warn!(error = %e, "failed to open pty.log");
             None
         }
     };
@@ -673,7 +700,7 @@ async fn run_async_main_loop(
             // here lets the service's child-exit handler clean up the
             // instance promptly so the caller (test, CLI, MCP) sees the
             // failure in <1s instead of 30s.
-            error!("vsock failed: {e:#}");
+            error!(error = format!("{e:#}"), "vsock failed");
             drain_background_owners(&shutdown_for_vsock_error).await;
             std::process::exit(1);
         }
@@ -690,7 +717,18 @@ async fn run_async_main_loop(
     }
     info!(socket = %uds_path.display(), "listening for IPC (mode 0600)");
 
-    let ws_sock_path = uds_path.with_file_name(format!("{}-ws.sock", vm_id_ws));
+    // Through `capsem_core::uds`, which owns the length rule -- the gateway
+    // derives this same path independently, so both must apply it identically
+    // *and* start from the same run directory. The fallback keeps the old
+    // derivation for a caller that passes no run directory; it is only correct
+    // when the IPC path was not itself shortened, which is why the service
+    // passes one.
+    let walked_up = uds_path
+        .parent()
+        .and_then(|instances| instances.parent())
+        .unwrap_or_else(|| std::path::Path::new("/tmp"));
+    let ws_run_dir = args.run_dir.as_deref().unwrap_or(walked_up);
+    let ws_sock_path = capsem_core::uds::terminal_socket_path(ws_run_dir, &vm_id_ws);
     if ws_sock_path.exists() {
         std::fs::remove_file(&ws_sock_path)?;
     }
@@ -778,7 +816,7 @@ async fn run_async_main_loop(
             )
             .await
             {
-                error!("IPC error: {e:#}");
+                error!(error = format!("{e:#}"), "IPC error");
             }
         });
     }
@@ -954,415 +992,4 @@ fn resolve_mcp_aggregator_binary(exe_path: &Path) -> Result<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use clap::Parser;
-
-    // -----------------------------------------------------------------------
-    // Args parsing
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn args_parses_all_required() {
-        let args = Args::try_parse_from([
-            "capsem-process",
-            "--id",
-            "test-vm",
-            "--assets-dir",
-            "/tmp/assets",
-            "--rootfs",
-            "/tmp/rootfs.img",
-            "--session-dir",
-            "/tmp/session",
-            "--active-profile",
-            "/tmp/config/profiles/code",
-            "--uds-path",
-            "/tmp/vm.sock",
-        ])
-        .unwrap();
-        assert_eq!(args.id, "test-vm");
-        assert_eq!(args.assets_dir, PathBuf::from("/tmp/assets"));
-        assert_eq!(args.rootfs, PathBuf::from("/tmp/rootfs.img"));
-        assert_eq!(args.session_dir, PathBuf::from("/tmp/session"));
-        assert_eq!(
-            args.active_profile,
-            PathBuf::from("/tmp/config/profiles/code")
-        );
-        assert_eq!(args.uds_path, PathBuf::from("/tmp/vm.sock"));
-    }
-
-    #[test]
-    fn args_default_cpus() {
-        let args = Args::try_parse_from([
-            "capsem-process",
-            "--id",
-            "vm",
-            "--assets-dir",
-            "/a",
-            "--rootfs",
-            "/r",
-            "--session-dir",
-            "/s",
-            "--active-profile",
-            "/profiles/code",
-            "--uds-path",
-            "/u",
-        ])
-        .unwrap();
-        assert_eq!(args.cpus, 2);
-    }
-
-    #[test]
-    fn args_default_ram_mb() {
-        let args = Args::try_parse_from([
-            "capsem-process",
-            "--id",
-            "vm",
-            "--assets-dir",
-            "/a",
-            "--rootfs",
-            "/r",
-            "--session-dir",
-            "/s",
-            "--active-profile",
-            "/profiles/code",
-            "--uds-path",
-            "/u",
-        ])
-        .unwrap();
-        assert_eq!(args.ram_mb, 2048);
-    }
-
-    #[test]
-    fn args_default_scratch_disk_size_gb() {
-        let args = Args::try_parse_from([
-            "capsem-process",
-            "--id",
-            "vm",
-            "--assets-dir",
-            "/a",
-            "--rootfs",
-            "/r",
-            "--session-dir",
-            "/s",
-            "--active-profile",
-            "/profiles/code",
-            "--uds-path",
-            "/u",
-        ])
-        .unwrap();
-        assert_eq!(args.scratch_disk_size_gb, 16);
-    }
-
-    #[test]
-    fn args_custom_cpus_ram_and_scratch_disk_size() {
-        let args = Args::try_parse_from([
-            "capsem-process",
-            "--id",
-            "vm",
-            "--assets-dir",
-            "/a",
-            "--rootfs",
-            "/r",
-            "--session-dir",
-            "/s",
-            "--active-profile",
-            "/profiles/code",
-            "--uds-path",
-            "/u",
-            "--cpus",
-            "8",
-            "--ram-mb",
-            "16384",
-            "--scratch-disk-size-gb",
-            "64",
-        ])
-        .unwrap();
-        assert_eq!(args.cpus, 8);
-        assert_eq!(args.ram_mb, 16384);
-        assert_eq!(args.scratch_disk_size_gb, 64);
-    }
-
-    #[test]
-    fn prepare_session_layout_uses_requested_scratch_disk_size() {
-        let dir = tempfile::tempdir().unwrap();
-        let session_dir = dir.path().join("session");
-
-        let guest_dir = prepare_session_layout(&session_dir, 64).unwrap();
-
-        assert_eq!(guest_dir, session_dir.join("guest"));
-        let rootfs_img = guest_dir.join("system/rootfs.img");
-        let metadata = std::fs::metadata(&rootfs_img).unwrap();
-        assert_eq!(metadata.len(), 64 * 1024 * 1024 * 1024);
-    }
-
-    #[test]
-    fn args_missing_required_id_fails() {
-        let result = Args::try_parse_from([
-            "capsem-process",
-            "--assets-dir",
-            "/a",
-            "--rootfs",
-            "/r",
-            "--session-dir",
-            "/s",
-            "--active-profile",
-            "/profiles/code",
-            "--uds-path",
-            "/u",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn args_missing_required_assets_dir_fails() {
-        let result = Args::try_parse_from([
-            "capsem-process",
-            "--id",
-            "vm",
-            "--rootfs",
-            "/r",
-            "--session-dir",
-            "/s",
-            "--active-profile",
-            "/profiles/code",
-            "--uds-path",
-            "/u",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn args_missing_required_active_profile_fails() {
-        let result = Args::try_parse_from([
-            "capsem-process",
-            "--id",
-            "vm",
-            "--assets-dir",
-            "/a",
-            "--rootfs",
-            "/r",
-            "--session-dir",
-            "/s",
-            "--uds-path",
-            "/u",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn args_invalid_cpus_type_fails() {
-        let result = Args::try_parse_from([
-            "capsem-process",
-            "--id",
-            "vm",
-            "--assets-dir",
-            "/a",
-            "--rootfs",
-            "/r",
-            "--session-dir",
-            "/s",
-            "--active-profile",
-            "/profiles/code",
-            "--uds-path",
-            "/u",
-            "--cpus",
-            "not-a-number",
-        ]);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn args_checkpoint_path_optional() {
-        let args = Args::try_parse_from([
-            "capsem-process",
-            "--id",
-            "vm",
-            "--assets-dir",
-            "/a",
-            "--rootfs",
-            "/r",
-            "--session-dir",
-            "/s",
-            "--active-profile",
-            "/profiles/code",
-            "--uds-path",
-            "/u",
-        ])
-        .unwrap();
-        assert!(args.checkpoint_path.is_none());
-    }
-
-    #[test]
-    fn args_checkpoint_path_set() {
-        let args = Args::try_parse_from([
-            "capsem-process",
-            "--id",
-            "vm",
-            "--assets-dir",
-            "/a",
-            "--rootfs",
-            "/r",
-            "--session-dir",
-            "/s",
-            "--active-profile",
-            "/profiles/code",
-            "--uds-path",
-            "/u",
-            "--checkpoint-path",
-            "/tmp/cp.vzsave",
-        ])
-        .unwrap();
-        assert_eq!(
-            args.checkpoint_path.unwrap(),
-            PathBuf::from("/tmp/cp.vzsave")
-        );
-    }
-
-    #[test]
-    fn args_env_vars_parsed() {
-        let args = Args::try_parse_from([
-            "capsem-process",
-            "--id",
-            "vm",
-            "--assets-dir",
-            "/a",
-            "--rootfs",
-            "/r",
-            "--session-dir",
-            "/s",
-            "--active-profile",
-            "/profiles/code",
-            "--uds-path",
-            "/u",
-            "--env",
-            "FOO=bar",
-            "--env",
-            "BAZ=qux",
-        ])
-        .unwrap();
-        assert_eq!(args.env, vec!["FOO=bar", "BAZ=qux"]);
-    }
-
-    // -----------------------------------------------------------------------
-    // CLI env parsing (used in run_async_main_loop)
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn cli_env_parsing_valid() {
-        let env = ["FOO=bar".to_string(), "BAZ=qux=extra".to_string()];
-        let parsed: Vec<(String, String)> = env
-            .iter()
-            .filter_map(|kv| {
-                kv.split_once('=')
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
-            })
-            .collect();
-        assert_eq!(
-            parsed,
-            vec![
-                ("FOO".to_string(), "bar".to_string()),
-                ("BAZ".to_string(), "qux=extra".to_string()),
-            ]
-        );
-    }
-
-    #[test]
-    fn cli_env_parsing_no_equals_skipped() {
-        let env = ["NOEQ".to_string(), "GOOD=val".to_string()];
-        let parsed: Vec<(String, String)> = env
-            .iter()
-            .filter_map(|kv| {
-                kv.split_once('=')
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
-            })
-            .collect();
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0], ("GOOD".to_string(), "val".to_string()));
-    }
-
-    #[test]
-    fn cli_env_parsing_empty_value() {
-        let env = ["KEY=".to_string()];
-        let parsed: Vec<(String, String)> = env
-            .iter()
-            .filter_map(|kv| {
-                kv.split_once('=')
-                    .map(|(k, v)| (k.to_string(), v.to_string()))
-            })
-            .collect();
-        assert_eq!(parsed, vec![("KEY".to_string(), "".to_string())]);
-    }
-
-    // -----------------------------------------------------------------------
-    // trace_id generation: stitches together the three host-side processes
-    // (capsem-service, capsem-process, capsem-mcp-aggregator) so
-    // per-VM logs can be correlated across the process.log + the new
-    // mcp-aggregator.stderr.log streams.
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn generate_trace_id_is_16_hex_chars() {
-        let id = generate_trace_id();
-        assert_eq!(id.len(), 16);
-        assert!(
-            id.chars().all(|c| c.is_ascii_hexdigit()),
-            "non-hex character in trace_id: {id}"
-        );
-    }
-
-    #[test]
-    fn generate_trace_id_is_unique_across_calls() {
-        // Not cryptographic -- but within a process, rapid successive
-        // calls must not collide, otherwise correlation is useless.
-        use std::collections::HashSet;
-        let ids: HashSet<String> = (0..64).map(|_| generate_trace_id()).collect();
-        assert_eq!(ids.len(), 64, "trace_id collisions: {ids:?}");
-    }
-
-    #[test]
-    fn aggregator_log_path_lives_in_session_dir() {
-        let session = PathBuf::from("/tmp/some-session");
-        let log = aggregator_log_path(&session);
-        assert_eq!(log, session.join("mcp-aggregator.stderr.log"));
-    }
-
-    #[test]
-    fn process_kernel_cmdline_uses_arch_console_and_root_device() {
-        let cmdline = process_kernel_cmdline();
-        assert!(cmdline.contains("root=/dev/vda"));
-        #[cfg(target_arch = "x86_64")]
-        {
-            assert!(cmdline.contains("console=ttyS0"));
-            assert!(!cmdline.contains("console=hvc0"));
-        }
-        #[cfg(not(target_arch = "x86_64"))]
-        {
-            assert!(cmdline.contains("console=hvc0"));
-        }
-    }
-
-    #[test]
-    fn missing_mcp_aggregator_fails_loud_instead_of_empty_stub() {
-        let dir = tempfile::tempdir().unwrap();
-        let fake_exe = dir.path().join("capsem-process");
-        let error = resolve_mcp_aggregator_binary(&fake_exe)
-            .expect_err("missing aggregator binary must not resolve");
-        assert!(
-            error.to_string().contains("capsem-mcp-aggregator"),
-            "error should name the missing component: {error:#}"
-        );
-    }
-
-    #[test]
-    fn mcp_aggregator_resolver_supports_cargo_test_deps_layout() {
-        let dir = tempfile::tempdir().unwrap();
-        let deps = dir.path().join("deps");
-        std::fs::create_dir_all(&deps).unwrap();
-        let aggregator = dir.path().join("capsem-mcp-aggregator");
-        std::fs::write(&aggregator, "").unwrap();
-
-        let resolved = resolve_mcp_aggregator_binary(&deps.join("capsem-process-test")).unwrap();
-        assert_eq!(resolved, aggregator);
-    }
-}
+mod tests;

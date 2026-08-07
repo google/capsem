@@ -1,9 +1,9 @@
 """Full build chain E2E: build -> sign -> pack -> manifest -> boot VM -> exec -> delete."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -39,8 +39,6 @@ def test_full_chain_boot_exec_delete(signed_binaries):
         assert name not in ids, f"VM {name} still in list after delete"
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
         svc.stop()

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CONFIG_ROOT = PROJECT_ROOT / "config"
@@ -14,6 +14,17 @@ ALLOWED_CONFIG_DIRS = {
     "docker",
     "profiles",
     "settings",
+}
+
+ALLOWED_CONFIG_FILES = {
+    "README.md",
+    # The build and release gate's data: paths, timeouts, the boundary/rail
+    # pairs the storage policy accepts. Product config, read by the gate rather
+    # than by the product, but config/ is where the repository keeps authority
+    # files and a second location would be a second place to look.
+    "gate.toml",
+    "public-surface.toml",
+    "storage-policy.toml",
 }
 
 FORBIDDEN_CONFIG_DIRS = {
@@ -118,7 +129,12 @@ def test_active_docs_do_not_teach_retired_guest_config_authority() -> None:
     for path in ACTIVE_DOCS_AND_SKILLS:
         text = path.read_text()
         for needle in STALE_GUIDANCE:
-            if needle in text:
+            # Word-bounded so a retired term cannot be matched inside a current
+            # one. Substring matching flagged the correct term "profile pins"
+            # for containing the retired "file pins", which would have pushed
+            # docs away from the right vocabulary to satisfy the check.
+            pattern = rf"(?<!\w){re.escape(needle)}(?!\w)"
+            if re.search(pattern, text):
                 failures.append(f"{path.relative_to(PROJECT_ROOT)} contains {needle!r}")
 
     assert not failures, "stale active docs/skills:\n" + "\n".join(sorted(failures))
@@ -209,12 +225,12 @@ def test_config_root_has_only_declared_authority_directories() -> None:
     }
     assert actual_dirs == ALLOWED_CONFIG_DIRS
 
-    unexpected_files = [
+    actual_files = {
         path.name
         for path in CONFIG_ROOT.iterdir()
-        if path.is_file() and path.name != "README.md" and not path.name.startswith(".")
-    ]
-    assert unexpected_files == []
+        if path.is_file() and not path.name.startswith(".")
+    }
+    assert actual_files == ALLOWED_CONFIG_FILES
 
     forbidden_present = sorted(FORBIDDEN_CONFIG_DIRS & actual_dirs)
     assert forbidden_present == []

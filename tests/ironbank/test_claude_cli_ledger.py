@@ -8,7 +8,6 @@ Claude CLI proof discoverable as its own release ledger item.
 from __future__ import annotations
 
 import pytest
-
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_scripts import claude_api_script, claude_ollama_launch_script
 

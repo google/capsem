@@ -1,9 +1,9 @@
 """Rapid sequential exec commands on a single VM."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -32,10 +32,8 @@ def test_rapid_exec_sequence():
             assert f"seq-{i}" in resp.get("stdout", ""), f"Exec {i} missing output"
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
         svc.stop()
 
 
@@ -65,8 +63,6 @@ def test_rapid_file_io():
             assert f"content-{i}" in resp.get("content", ""), f"File {i} content mismatch"
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
         svc.stop()

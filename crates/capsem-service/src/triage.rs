@@ -393,21 +393,12 @@ pub fn latest_app_log(home: &Path) -> Option<PathBuf> {
 }
 
 fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
-    let metadata = std::fs::metadata(path).ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
-    let len = metadata.len();
-    let bytes = std::fs::read(path).ok()?;
-    if len <= max_bytes {
-        return Some(bytes);
-    }
-    let start = (len - max_bytes) as usize;
-    let mut tail = bytes[start..].to_vec();
-    if let Some(idx) = tail.iter().position(|b| *b == b'\n') {
-        tail.drain(..=idx);
-    }
-    Some(tail)
+    // Delegates so a rotated stream resolves the same way everywhere. This
+    // used to metadata() the stream name and return None the moment rotation
+    // landed, silently reporting no errors for a daemon that was logging them.
+    // Correct for unrotated paths too: the reader yields the single file.
+    capsem_core::telemetry::read_log_tail(path, max_bytes as usize)
+        .map(String::into_bytes)
 }
 
 fn redact_home_path(s: &str) -> String {

@@ -6,7 +6,6 @@ Verifies that requests are correctly proxied from TCP to UDS.
 import subprocess
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.gateway import GatewayInstance, TcpHttpClient
 

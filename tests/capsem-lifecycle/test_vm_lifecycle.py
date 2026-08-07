@@ -12,9 +12,8 @@ import time
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import wait_exec_ready, vm_name
+from helpers.service import vm_name, wait_exec_ready
 
 pytestmark = pytest.mark.integration
 

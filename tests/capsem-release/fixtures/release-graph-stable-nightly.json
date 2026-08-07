@@ -264,6 +264,21 @@
                 "status": "current",
                 "version": "1.5.0-nightly.20260702",
                 "description": "Capsem terminal UI executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 69,
+                "digest": {
+                  "blake3": "032a62eeb0dc40638aca5f0a1beef78c84080d281b308382c43a91d404963748",
+                  "sha256": "a784cb08b151a7739cfdc238c7f7c171b2c117e45a31fad29e739704b005a826"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-mock-server",
+                "name": "capsem-mock-server",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-mock-server",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem doctor mock upstream executable"
               }
             ],
             "bytes": 73,
@@ -276,10 +291,10 @@
                 "kind": "sbom",
                 "name": "capsem-1-5-0-nightly-20260702-pkg-sbom.spdx.json",
                 "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-1-5-0-nightly-20260702-pkg-sbom.spdx.json",
-                "bytes": 3722,
+                "bytes": 4030,
                 "digest": {
-                  "sha256": "cd0b1bdb1d3b624e7754c850bff85cbe9666fff6133ac3631ba1380af10c370e",
-                  "blake3": "1188350496821dc5dd6612ac67185154f7c11dd99293fd894be67f13fb218391"
+                  "sha256": "f8451f937c65ba78aef16e57e552b8a0b2b7436402085da643324c011b2e3d05",
+                  "blake3": "1392be85cd8204883184d823adb42ea5ba5554aedf675ccbf175378fd19f9688"
                 },
                 "status": "current"
               }
@@ -459,6 +474,21 @@
                 "status": "current",
                 "version": "1.5.0-nightly.20260702",
                 "description": "Capsem terminal UI executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 75,
+                "digest": {
+                  "blake3": "a141a7338533040999e646b31f9c3dd72e1e431068c70c18b2ad148bf36db38a",
+                  "sha256": "88862d504d269f8dcd13095ffb1ac38e1abc8702e305d937ff18a2e0502c93ac"
+                },
+                "installed_path": "/usr/bin/capsem-mock-server",
+                "name": "capsem-mock-server",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mock-server",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem doctor mock upstream executable"
               }
             ],
             "bytes": 79,
@@ -471,10 +501,10 @@
                 "kind": "sbom",
                 "name": "capsem-1-5-0-nightly-20260702-arm64-deb-sbom.spdx.json",
                 "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-1-5-0-nightly-20260702-arm64-deb-sbom.spdx.json",
-                "bytes": 3513,
+                "bytes": 3802,
                 "digest": {
-                  "sha256": "b2c1caeb605837a08398eeac72cef28eec894b1b59e059e4312b3561cfb87175",
-                  "blake3": "4e07cf43a45ef501f2bfd4507952eeb3e8ec48d1ad795fc963a2dc782597feab"
+                  "sha256": "401c4fef3c74b2fd9dc94e0a61f33ef43a7ad01981525f41a3c67dbe1c27ddf3",
+                  "blake3": "76fabfc07f5e3a36c13e2631f35780f5f0a10c1bd71e4d2dc5c4662830309ed2"
                 },
                 "status": "current"
               }
@@ -488,10 +518,10 @@
             "version": "1.5.0-nightly.20260702"
           },
           {
-            "architecture": "x86_64",
+            "architecture": "amd64",
             "binaries": [
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 94,
                 "digest": {
                   "blake3": "8e1f1711c5c0a05bf9702c97491bc220f7b76675180f9bf399962ac5acdf8b8c",
@@ -506,7 +536,7 @@
                 "description": "Capsem command-line executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 106,
                 "digest": {
                   "blake3": "67c61c6d6a4c4797f190082bbf397287c8dca007ec17c04abf6e89db012623e6",
@@ -521,7 +551,7 @@
                 "description": "Capsem release administration executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 102,
                 "digest": {
                   "blake3": "fed012b21bd43f44e14b66ff12be3313ecc0d4af7a88eb8e713ce7cb5ae5647e",
@@ -536,7 +566,7 @@
                 "description": "Capsem desktop application executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 110,
                 "digest": {
                   "blake3": "5ee281e99db414d20fff17ed5ee66e7bebd17d012e4ad756aa7002c3edc376df",
@@ -551,7 +581,7 @@
                 "description": "Capsem local gateway executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 102,
                 "digest": {
                   "blake3": "16be850c17f9a2056eb06f1daf8c8af62cb8f507806c446c325443d5d0804ee6",
@@ -566,7 +596,7 @@
                 "description": "Capsem MCP server executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 124,
                 "digest": {
                   "blake3": "328ef97807b4e3b61894215f4c9072f917793ba4a878a31d542531a0f870d71e",
@@ -581,7 +611,7 @@
                 "description": "Capsem MCP aggregator executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 118,
                 "digest": {
                   "blake3": "f1d6e53bcf99b3cc794c07302854e4572191e7ffa85acb7d8f76911fca17dff0",
@@ -596,7 +626,7 @@
                 "description": "Capsem builtin MCP tools executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 110,
                 "digest": {
                   "blake3": "9b9eb145779412e7c505ef1d23019f7c6de9ad1f6a90cf2658578e2a98599b3a",
@@ -611,7 +641,7 @@
                 "description": "Capsem guest process bridge executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 110,
                 "digest": {
                   "blake3": "564e43a58e0105162d5d8586202a018e39898fd180c582d18d0704b6cf8e63e7",
@@ -626,7 +656,7 @@
                 "description": "Capsem host service executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 104,
                 "digest": {
                   "blake3": "39e66d3ac08e3402885c348d2c130ae7a6590850d92acec06bb88e69ca0620d8",
@@ -641,7 +671,7 @@
                 "description": "Capsem tray companion executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 102,
                 "digest": {
                   "blake3": "5cc13dfcfa10ce6368c73f020033a8228ce5d1fb1df4a5a716adf418e6be4f7a",
@@ -654,6 +684,21 @@
                 "status": "current",
                 "version": "1.5.0-nightly.20260702",
                 "description": "Capsem terminal UI executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 75,
+                "digest": {
+                  "blake3": "3bee52d9373bbc367a842615815d19b4cc825df7aeb18802040fc2ac8466c39d",
+                  "sha256": "486563d377907fbf1338101d228d3de4d288840d116021c811de8fe99a366a2c"
+                },
+                "installed_path": "/usr/bin/capsem-mock-server",
+                "name": "capsem-mock-server",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mock-server",
+                "status": "current",
+                "version": "1.5.0-nightly.20260702",
+                "description": "Capsem doctor mock upstream executable"
               }
             ],
             "bytes": 81,
@@ -666,10 +711,10 @@
                 "kind": "sbom",
                 "name": "capsem-1-5-0-nightly-20260702-amd64-deb-sbom.spdx.json",
                 "url": "/packages/nightly/1.5.0-nightly.20260702/capsem-1-5-0-nightly-20260702-amd64-deb-sbom.spdx.json",
-                "bytes": 3513,
+                "bytes": 3802,
                 "digest": {
-                  "sha256": "014bb750d71f3886df1409eca7a4a26029018fb2711038719957e89737169068",
-                  "blake3": "5960be0e0f590f87d1c43020798d4926205bdefe930caf2fec9d1557e0e4899c"
+                  "sha256": "d83fe1816f831ed0b0d46310f529793f055b8371f7ddca4501b906d8b88506c2",
+                  "blake3": "79b2eb46b49cbe1144d84190c7741bb81fa296f7c6b47fe563720e064f8e2d09"
                 },
                 "status": "current"
               }
@@ -699,10 +744,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "97d9a86ed192b0eeb90e2e9a76737cc676d89c26ed7a9fe58a58c914b721e803",
-                      "blake3": "00638b2b8e8baf67d7f02be3cfca974078e7a85e50b5109c109f98376d783b28"
+                      "sha256": "c149780e4d7e8f491d29483447d0e0d40d194bf08422ccb728b61d9cfd8b0fc2",
+                      "blake3": "0439dda3a765c604311f7d7df538ffbb9b3bc9690775f5835db9de4ca241e8ea"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -710,10 +755,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "77b67479b2601f1561987bda92f4d0fddf8f28fc5dcb47afd7a41c201aebc44e",
-                      "blake3": "667bf6979f3a7221766611644274facba16e09c1104700e76c59686a0751d0d9"
+                      "sha256": "0cc70b66173adf7f813860ac5e93738280ae17586885f7eefb49e3aefbdbd091",
+                      "blake3": "97051106120aee60e637c4227fcbd8efeea35444670b2c043f12736662537db0"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -894,10 +939,10 @@
                       "sha256": "ee5848f99252b9a1f73c66d30d559630ea9b0170cd1658b8fd1f66a88e613b27"
                     },
                     "kind": "software_inventory",
-                    "url": "/assets/releases/2026.07.02.1/arm64-software-inventory.json"
+                    "url": "/assets/releases/1.1.0/arm64-software-inventory.json"
                   }
                 ],
-                "package_inventory_revision": "2026.07.02.1",
+                "package_inventory_revision": "1.1.0",
                 "image_revision": "1.0.0-nightly.20260702"
               },
               {
@@ -906,10 +951,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "e7b967afe107697866fb47d9bcb40e713f6276e4349bc528942bc7c504ddbb24",
-                      "blake3": "888931daeadcfac8cfc1e6c0e0b895faecf19945c5d75a7aab50fedacbf672c7"
+                      "sha256": "854a931a01f1abc9703e4a8461310493d7c55e862235a66e0511a62582417584",
+                      "blake3": "265688d9ccaf7a821f295e308791a45a4a3782e5f805b9aa854e3f61b9409819"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -917,10 +962,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "3a31e3bde0e600099c91a6a019d3bb0512a7394e173510d6a0c5f073385d7b3a",
-                      "blake3": "0836e22dbf49375ed61fbb79c15b8a05ce4d52fb3cc1391d79ecb4253a047f8c"
+                      "sha256": "7bc2fd7ae3d10795aa50eb181988dcf0a7840e7c4b1bafabe09b897d84609916",
+                      "blake3": "57349fa603ba8229ca2bc2f42ede33313abe9a59fc02652ef7dfc070fcb4de1b"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -1101,10 +1146,10 @@
                       "sha256": "4f43d25985eafe19a36a19ea501535634baba2d340e20d4b3fd8972049acebff"
                     },
                     "kind": "software_inventory",
-                    "url": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json"
+                    "url": "/assets/releases/1.1.0/x86_64-software-inventory.json"
                   }
                 ],
-                "package_inventory_revision": "2026.07.02.1",
+                "package_inventory_revision": "1.1.0",
                 "image_revision": "1.0.0-nightly.20260702"
               }
             ]
@@ -1124,10 +1169,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "97d9a86ed192b0eeb90e2e9a76737cc676d89c26ed7a9fe58a58c914b721e803",
-                      "blake3": "00638b2b8e8baf67d7f02be3cfca974078e7a85e50b5109c109f98376d783b28"
+                      "sha256": "c149780e4d7e8f491d29483447d0e0d40d194bf08422ccb728b61d9cfd8b0fc2",
+                      "blake3": "0439dda3a765c604311f7d7df538ffbb9b3bc9690775f5835db9de4ca241e8ea"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -1135,10 +1180,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "77b67479b2601f1561987bda92f4d0fddf8f28fc5dcb47afd7a41c201aebc44e",
-                      "blake3": "667bf6979f3a7221766611644274facba16e09c1104700e76c59686a0751d0d9"
+                      "sha256": "0cc70b66173adf7f813860ac5e93738280ae17586885f7eefb49e3aefbdbd091",
+                      "blake3": "97051106120aee60e637c4227fcbd8efeea35444670b2c043f12736662537db0"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -1319,10 +1364,10 @@
                       "sha256": "ee5848f99252b9a1f73c66d30d559630ea9b0170cd1658b8fd1f66a88e613b27"
                     },
                     "kind": "software_inventory",
-                    "url": "/assets/releases/2026.07.02.1/arm64-software-inventory.json"
+                    "url": "/assets/releases/1.1.0/arm64-software-inventory.json"
                   }
                 ],
-                "package_inventory_revision": "2026.07.02.1",
+                "package_inventory_revision": "1.1.0",
                 "image_revision": "1.0.0-nightly.20260702"
               },
               {
@@ -1331,10 +1376,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "e7b967afe107697866fb47d9bcb40e713f6276e4349bc528942bc7c504ddbb24",
-                      "blake3": "888931daeadcfac8cfc1e6c0e0b895faecf19945c5d75a7aab50fedacbf672c7"
+                      "sha256": "854a931a01f1abc9703e4a8461310493d7c55e862235a66e0511a62582417584",
+                      "blake3": "265688d9ccaf7a821f295e308791a45a4a3782e5f805b9aa854e3f61b9409819"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -1342,10 +1387,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "3a31e3bde0e600099c91a6a019d3bb0512a7394e173510d6a0c5f073385d7b3a",
-                      "blake3": "0836e22dbf49375ed61fbb79c15b8a05ce4d52fb3cc1391d79ecb4253a047f8c"
+                      "sha256": "7bc2fd7ae3d10795aa50eb181988dcf0a7840e7c4b1bafabe09b897d84609916",
+                      "blake3": "57349fa603ba8229ca2bc2f42ede33313abe9a59fc02652ef7dfc070fcb4de1b"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -1526,10 +1571,10 @@
                       "sha256": "4f43d25985eafe19a36a19ea501535634baba2d340e20d4b3fd8972049acebff"
                     },
                     "kind": "software_inventory",
-                    "url": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json"
+                    "url": "/assets/releases/1.1.0/x86_64-software-inventory.json"
                   }
                 ],
-                "package_inventory_revision": "2026.07.02.1",
+                "package_inventory_revision": "1.1.0",
                 "image_revision": "1.0.0-nightly.20260702"
               }
             ]
@@ -1711,6 +1756,21 @@
                 "status": "current",
                 "version": "1.4.0",
                 "description": "Capsem terminal UI executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 51,
+                "digest": {
+                  "blake3": "131c9ff5bc02cb54103f5e8f7264e400d97e6396f9f26632ae76356131d8c8da",
+                  "sha256": "c231cd617860e3bb36f103dcbbee22816d9a312b4affe0b67d98dd9a93944d75"
+                },
+                "installed_path": "/usr/local/share/capsem/bin/capsem-mock-server",
+                "name": "capsem-mock-server",
+                "platform": "macos",
+                "sbom_component_ref": "SPDXRef-File-capsem-mock-server",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem doctor mock upstream executable"
               }
             ],
             "bytes": 38,
@@ -1723,10 +1783,10 @@
                 "kind": "sbom",
                 "name": "capsem-1-4-0-pkg-sbom.spdx.json",
                 "url": "/packages/stable/1.4.0/capsem-1-4-0-pkg-sbom.spdx.json",
-                "bytes": 3670,
+                "bytes": 3978,
                 "digest": {
-                  "sha256": "d73f9b219b511f84214b5c3d80c710446cb67d0a64212a893890c06b874eb067",
-                  "blake3": "f9187b4292c12486c2bfa0804720857ca4808b60b2ba723061b70c5ad18d36c0"
+                  "sha256": "a98e037587985542c51a530f212154c8c4e419777d6e24684d09d16d890131b9",
+                  "blake3": "3df3f90e7c0c62aa122bb1672404bc65c7d8bd2b452b8b50fececb71d6c14834"
                 },
                 "status": "current"
               }
@@ -1906,6 +1966,21 @@
                 "status": "current",
                 "version": "1.4.0",
                 "description": "Capsem terminal UI executable"
+              },
+              {
+                "architecture": "arm64",
+                "bytes": 57,
+                "digest": {
+                  "blake3": "a05c84f22ed2de6d15c30bacdef0a5e16014409a5443c043f237f0dede805262",
+                  "sha256": "071329de1a72e93827830e77a77979fb62f4c4b59e967fcc987bec90e749282a"
+                },
+                "installed_path": "/usr/bin/capsem-mock-server",
+                "name": "capsem-mock-server",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mock-server",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem doctor mock upstream executable"
               }
             ],
             "bytes": 44,
@@ -1918,10 +1993,10 @@
                 "kind": "sbom",
                 "name": "capsem-1-4-0-arm64-deb-sbom.spdx.json",
                 "url": "/packages/stable/1.4.0/capsem-1-4-0-arm64-deb-sbom.spdx.json",
-                "bytes": 3461,
+                "bytes": 3750,
                 "digest": {
-                  "sha256": "d6ab3bf20b5ff79c8edcb4d8c4b008729188d93d1b379808b736e1c29d98a850",
-                  "blake3": "cb7a9db4e70b21521003e0f0b27fc78ce8e3a376548d4c3cc7b7d05dd14466d3"
+                  "sha256": "54e315c62f59df0775c320f69f5d60d7ef376308eee49614f1947a3923d154b7",
+                  "blake3": "3bb1291fca11f8025baa13ed9ec877ae5f0cbc2c23819d1ad53d54b3626f3955"
                 },
                 "status": "current"
               }
@@ -1935,10 +2010,10 @@
             "version": "1.4.0"
           },
           {
-            "architecture": "x86_64",
+            "architecture": "amd64",
             "binaries": [
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 59,
                 "digest": {
                   "blake3": "830a71720e6b02bed1c91f9123356d47aedea6fa67b26c689d7b4c4568cb3ee4",
@@ -1953,7 +2028,7 @@
                 "description": "Capsem command-line executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 71,
                 "digest": {
                   "blake3": "d8a13312c199fca97624f5112e8744c8d8b8d7259814075898cfd6702d96a5e1",
@@ -1968,7 +2043,7 @@
                 "description": "Capsem release administration executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 67,
                 "digest": {
                   "blake3": "8cab52dd5417a5e0893392c9a72bccc513e5ffc277cd793461daf3eee69e490b",
@@ -1983,7 +2058,7 @@
                 "description": "Capsem desktop application executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 75,
                 "digest": {
                   "blake3": "32fa921d7057a9b54756b5f828bd606c663e6949b3eb494f69cab716313954b5",
@@ -1998,7 +2073,7 @@
                 "description": "Capsem local gateway executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 67,
                 "digest": {
                   "blake3": "c3a1ee0ac87ecff1f91bc8f8bab959b59e139a2c42d8cb50629024c120025a04",
@@ -2013,7 +2088,7 @@
                 "description": "Capsem MCP server executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 89,
                 "digest": {
                   "blake3": "efa30170219629756ac6a198a3f2492d2cbd58ce8c7cf9c3579bd2208d8e9065",
@@ -2028,7 +2103,7 @@
                 "description": "Capsem MCP aggregator executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 83,
                 "digest": {
                   "blake3": "f78f5f51535d523446f767ae9c503f93d8b456ae6f85d0a622e3599a7260de40",
@@ -2043,7 +2118,7 @@
                 "description": "Capsem builtin MCP tools executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 75,
                 "digest": {
                   "blake3": "d611da07e4d13c996fe8b5c3f2fe1ea3e9619c17e3385dfb0734d54b84078b09",
@@ -2058,7 +2133,7 @@
                 "description": "Capsem guest process bridge executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 75,
                 "digest": {
                   "blake3": "d21af4d85e0a3dacc0ccdf2b8354ceb863a5ecbcaffbfc54b6b5c838783d47c5",
@@ -2073,7 +2148,7 @@
                 "description": "Capsem host service executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 69,
                 "digest": {
                   "blake3": "da84ceb23d8dfc954d28bdc3dd3a92f8acde1fb61cb746c64bec09bbc122c2cf",
@@ -2088,7 +2163,7 @@
                 "description": "Capsem tray companion executable"
               },
               {
-                "architecture": "x86_64",
+                "architecture": "amd64",
                 "bytes": 67,
                 "digest": {
                   "blake3": "ba0bc4ba019dd90606255c4dffb7d6aca5c2600aa1b487a53077b3607ed1fc00",
@@ -2101,6 +2176,21 @@
                 "status": "current",
                 "version": "1.4.0",
                 "description": "Capsem terminal UI executable"
+              },
+              {
+                "architecture": "amd64",
+                "bytes": 57,
+                "digest": {
+                  "blake3": "eb84665d299b2fd5dab68b71f04165d9707de08a48ca8d11c9c698c85acad2f6",
+                  "sha256": "b838be0ab470d4efb9046fdc3a9029220523d2f183cc3f19f9374597fba03add"
+                },
+                "installed_path": "/usr/bin/capsem-mock-server",
+                "name": "capsem-mock-server",
+                "platform": "linux",
+                "sbom_component_ref": "SPDXRef-File-capsem-mock-server",
+                "status": "current",
+                "version": "1.4.0",
+                "description": "Capsem doctor mock upstream executable"
               }
             ],
             "bytes": 46,
@@ -2113,10 +2203,10 @@
                 "kind": "sbom",
                 "name": "capsem-1-4-0-amd64-deb-sbom.spdx.json",
                 "url": "/packages/stable/1.4.0/capsem-1-4-0-amd64-deb-sbom.spdx.json",
-                "bytes": 3461,
+                "bytes": 3750,
                 "digest": {
-                  "sha256": "e9ee8abab093bb5dba8cf2530155105567e115cd160ab17d966b3024aed7f65b",
-                  "blake3": "bdcbf418fe760e78e889754b076c20c8a3bb790ac8e4b235fffb3c8895632b46"
+                  "sha256": "cb922e1f5f53064b5e51e78eb0998f8eefd1975baf0994a88f6b86b1f4c76d65",
+                  "blake3": "065438364a4e644a6e2edb7ffd86e959218a4d18b59e6b32740252210326c813"
                 },
                 "status": "current"
               }
@@ -2146,10 +2236,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "97d9a86ed192b0eeb90e2e9a76737cc676d89c26ed7a9fe58a58c914b721e803",
-                      "blake3": "00638b2b8e8baf67d7f02be3cfca974078e7a85e50b5109c109f98376d783b28"
+                      "sha256": "c149780e4d7e8f491d29483447d0e0d40d194bf08422ccb728b61d9cfd8b0fc2",
+                      "blake3": "0439dda3a765c604311f7d7df538ffbb9b3bc9690775f5835db9de4ca241e8ea"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -2157,10 +2247,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "77b67479b2601f1561987bda92f4d0fddf8f28fc5dcb47afd7a41c201aebc44e",
-                      "blake3": "667bf6979f3a7221766611644274facba16e09c1104700e76c59686a0751d0d9"
+                      "sha256": "0cc70b66173adf7f813860ac5e93738280ae17586885f7eefb49e3aefbdbd091",
+                      "blake3": "97051106120aee60e637c4227fcbd8efeea35444670b2c043f12736662537db0"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -2341,10 +2431,10 @@
                       "sha256": "ee5848f99252b9a1f73c66d30d559630ea9b0170cd1658b8fd1f66a88e613b27"
                     },
                     "kind": "software_inventory",
-                    "url": "/assets/releases/2026.07.02.1/arm64-software-inventory.json"
+                    "url": "/assets/releases/1.1.0/arm64-software-inventory.json"
                   }
                 ],
-                "package_inventory_revision": "2026.07.02.1",
+                "package_inventory_revision": "1.1.0",
                 "image_revision": "1.0.0-stable.20260702"
               },
               {
@@ -2353,10 +2443,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "e7b967afe107697866fb47d9bcb40e713f6276e4349bc528942bc7c504ddbb24",
-                      "blake3": "888931daeadcfac8cfc1e6c0e0b895faecf19945c5d75a7aab50fedacbf672c7"
+                      "sha256": "854a931a01f1abc9703e4a8461310493d7c55e862235a66e0511a62582417584",
+                      "blake3": "265688d9ccaf7a821f295e308791a45a4a3782e5f805b9aa854e3f61b9409819"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -2364,10 +2454,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "3a31e3bde0e600099c91a6a019d3bb0512a7394e173510d6a0c5f073385d7b3a",
-                      "blake3": "0836e22dbf49375ed61fbb79c15b8a05ce4d52fb3cc1391d79ecb4253a047f8c"
+                      "sha256": "7bc2fd7ae3d10795aa50eb181988dcf0a7840e7c4b1bafabe09b897d84609916",
+                      "blake3": "57349fa603ba8229ca2bc2f42ede33313abe9a59fc02652ef7dfc070fcb4de1b"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -2548,10 +2638,10 @@
                       "sha256": "4f43d25985eafe19a36a19ea501535634baba2d340e20d4b3fd8972049acebff"
                     },
                     "kind": "software_inventory",
-                    "url": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json"
+                    "url": "/assets/releases/1.1.0/x86_64-software-inventory.json"
                   }
                 ],
-                "package_inventory_revision": "2026.07.02.1",
+                "package_inventory_revision": "1.1.0",
                 "image_revision": "1.0.0-stable.20260702"
               }
             ]
@@ -2571,10 +2661,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "97d9a86ed192b0eeb90e2e9a76737cc676d89c26ed7a9fe58a58c914b721e803",
-                      "blake3": "00638b2b8e8baf67d7f02be3cfca974078e7a85e50b5109c109f98376d783b28"
+                      "sha256": "c149780e4d7e8f491d29483447d0e0d40d194bf08422ccb728b61d9cfd8b0fc2",
+                      "blake3": "0439dda3a765c604311f7d7df538ffbb9b3bc9690775f5835db9de4ca241e8ea"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -2582,10 +2672,10 @@
                   {
                     "architecture": "arm64",
                     "digest": {
-                      "sha256": "77b67479b2601f1561987bda92f4d0fddf8f28fc5dcb47afd7a41c201aebc44e",
-                      "blake3": "667bf6979f3a7221766611644274facba16e09c1104700e76c59686a0751d0d9"
+                      "sha256": "0cc70b66173adf7f813860ac5e93738280ae17586885f7eefb49e3aefbdbd091",
+                      "blake3": "97051106120aee60e637c4227fcbd8efeea35444670b2c043f12736662537db0"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/arm64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/arm64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -2766,10 +2856,10 @@
                       "sha256": "ee5848f99252b9a1f73c66d30d559630ea9b0170cd1658b8fd1f66a88e613b27"
                     },
                     "kind": "software_inventory",
-                    "url": "/assets/releases/2026.07.02.1/arm64-software-inventory.json"
+                    "url": "/assets/releases/1.1.0/arm64-software-inventory.json"
                   }
                 ],
-                "package_inventory_revision": "2026.07.02.1",
+                "package_inventory_revision": "1.1.0",
                 "image_revision": "1.0.0-stable.20260702"
               },
               {
@@ -2778,10 +2868,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "e7b967afe107697866fb47d9bcb40e713f6276e4349bc528942bc7c504ddbb24",
-                      "blake3": "888931daeadcfac8cfc1e6c0e0b895faecf19945c5d75a7aab50fedacbf672c7"
+                      "sha256": "854a931a01f1abc9703e4a8461310493d7c55e862235a66e0511a62582417584",
+                      "blake3": "265688d9ccaf7a821f295e308791a45a4a3782e5f805b9aa854e3f61b9409819"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "python",
                     "source": "apt",
                     "version": "3.12.11"
@@ -2789,10 +2879,10 @@
                   {
                     "architecture": "x86_64",
                     "digest": {
-                      "sha256": "3a31e3bde0e600099c91a6a019d3bb0512a7394e173510d6a0c5f073385d7b3a",
-                      "blake3": "0836e22dbf49375ed61fbb79c15b8a05ce4d52fb3cc1391d79ecb4253a047f8c"
+                      "sha256": "7bc2fd7ae3d10795aa50eb181988dcf0a7840e7c4b1bafabe09b897d84609916",
+                      "blake3": "57349fa603ba8229ca2bc2f42ede33313abe9a59fc02652ef7dfc070fcb4de1b"
                     },
-                    "evidence": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json",
+                    "evidence": "/assets/releases/1.1.0/x86_64-software-inventory.json",
                     "name": "node",
                     "source": "npm",
                     "version": "24.2.0"
@@ -2973,10 +3063,10 @@
                       "sha256": "4f43d25985eafe19a36a19ea501535634baba2d340e20d4b3fd8972049acebff"
                     },
                     "kind": "software_inventory",
-                    "url": "/assets/releases/2026.07.02.1/x86_64-software-inventory.json"
+                    "url": "/assets/releases/1.1.0/x86_64-software-inventory.json"
                   }
                 ],
-                "package_inventory_revision": "2026.07.02.1",
+                "package_inventory_revision": "1.1.0",
                 "image_revision": "1.0.0-stable.20260702"
               }
             ]

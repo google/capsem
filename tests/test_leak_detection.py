@@ -16,10 +16,9 @@ from pathlib import Path
 
 import psutil
 import pytest
-
 from conftest import (
-    _ancestry,
     _CAUGHT_THREAD_EXCEPTIONS,
+    _ancestry,
     _desired_open_file_limit,
     _is_pytest_descendant,
     _leak_log_path,
@@ -170,6 +169,16 @@ def test_leak_log_path_uses_sanitized_parallel_run_namespace():
         {"CAPSEM_TEST_RUN_ID": "smoke service/cli"},
     ) == Path(__file__).parent / "leak-attribution-smoke-service-cli.jsonl"
     assert _sanitize_leak_log_namespace("../../bad name") == "bad-name"
+
+
+def test_leak_log_path_uses_explicit_writable_output_root(tmp_path):
+    assert _leak_log_path(
+        "leak-attribution.jsonl",
+        {
+            "CAPSEM_TEST_OUTPUT_ROOT": str(tmp_path),
+            "CAPSEM_TEST_RUN_ID": "install preflight",
+        },
+    ) == tmp_path / "leak-attribution-install-preflight.jsonl"
 
 
 # ---------------------------------------------------------------------------

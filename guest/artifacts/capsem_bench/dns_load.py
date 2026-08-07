@@ -156,7 +156,7 @@ def _do_query(qname: str, qtype: int, timeout_s: float):
         if len(resp) >= 2 and (resp[0] << 8 | resp[1]) != qid:
             return (elapsed_ms, 0, f"id mismatch: query=0x{qid:04x}")
         return (elapsed_ms, _decode_rcode(resp), None)
-    except socket.timeout:
+    except TimeoutError:
         elapsed_ms = (time.monotonic() - start) * 1000
         return (elapsed_ms, 0, "timeout")
     except OSError as exc:

@@ -2,63 +2,19 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
-from pathlib import Path
-
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
-)
+from helpers.release_site import build_release_site_from_fixture
 
 
 def test_release_site_builds_from_release_graph_fixture() -> None:
-    env = {
-        **os.environ,
-        "ASTRO_TELEMETRY_DISABLED": "1",
-        "CAPSEM_RELEASE_CHANNEL_DIST": str(FIXTURE_GRAPH),
-    }
-    result = subprocess.run(
-        ["pnpm", "--dir", "release-site", "run", "build"],
-        cwd=PROJECT_ROOT,
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    dist = build_release_site_from_fixture()
 
-    index = (PROJECT_ROOT / "release-site" / "dist" / "index.html").read_text(
-        encoding="utf-8"
-    )
-    stable = (
-        PROJECT_ROOT / "release-site" / "dist" / "channels" / "stable" / "index.html"
-    ).read_text(encoding="utf-8")
+    index = (dist / "index.html").read_text(encoding="utf-8")
+    stable = (dist / "channels" / "stable" / "index.html").read_text(encoding="utf-8")
     package_detail = (
-        PROJECT_ROOT
-        / "release-site"
-        / "dist"
-        / "channels"
-        / "stable"
-        / "packages"
-        / "capsem-1-4-0-pkg"
-        / "index.html"
+        dist / "channels" / "stable" / "packages" / "capsem-1-4-0-pkg" / "index.html"
     ).read_text(encoding="utf-8")
     profile = (
-        PROJECT_ROOT
-        / "release-site"
-        / "dist"
-        / "channels"
-        / "stable"
-        / "profiles"
-        / "co-work"
-        / "index.html"
+        dist / "channels" / "stable" / "profiles" / "co-work" / "index.html"
     ).read_text(encoding="utf-8")
 
     assert "/assets/stable/manifest.json" in index

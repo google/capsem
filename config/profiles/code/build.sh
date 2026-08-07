@@ -21,8 +21,37 @@ install_from_url() {
     trap - EXIT
 }
 
+install_agy() {
+    AGY_VERSION="1.1.3"
+    case "$(uname -m)" in
+        aarch64|arm64)
+            asset="agy_cli_linux_arm64.tar.gz"
+            sha256="453f9c5530877ab6369e2536e576cfab2bbbcb45923a9bc776678142538e419d"
+            ;;
+        x86_64|amd64)
+            asset="agy_cli_linux_x64.tar.gz"
+            sha256="7a7239a69b65d3cf3af7e75f27b2ff4e9cce696a7b9a9e5c37c695f1c74eec34"
+            ;;
+        *)
+            echo "unsupported AGY architecture: $(uname -m)" >&2
+            exit 1
+            ;;
+    esac
+    tmp="$(mktemp -d)"
+    trap 'rm -rf "$tmp"' EXIT
+    archive="$tmp/$asset"
+    curl -fsSL \
+        "https://github.com/google-antigravity/antigravity-cli/releases/download/$AGY_VERSION/$asset" \
+        -o "$archive"
+    printf '%s  %s\n' "$sha256" "$archive" | sha256sum -c -
+    tar -xzf "$archive" -C "$tmp"
+    install -m 555 "$tmp/antigravity" /usr/local/bin/agy
+    rm -rf "$tmp"
+    trap - EXIT
+}
+
 install_from_url "https://claude.ai/install.sh" "claude"
-install_from_url "https://antigravity.google/cli/install.sh" "agy"
+install_agy
 
 curl -fsSL https://ollama.com/install.sh | sh
 command -v ollama >/dev/null 2>&1

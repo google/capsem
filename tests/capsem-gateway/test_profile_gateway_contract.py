@@ -11,7 +11,6 @@ import json
 import subprocess
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.service import ServiceInstance

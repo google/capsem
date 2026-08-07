@@ -307,7 +307,7 @@ pub fn write_settings_file(path: &Path, file: &SettingsFile) -> Result<(), Strin
 pub fn load_settings_and_corp_files() -> (SettingsFile, SettingsFile) {
     let settings = match settings_config_path() {
         Some(path) => load_local_settings_file(&path).unwrap_or_else(|e| {
-            tracing::warn!("local settings: {e}");
+            tracing::warn!(error = %e, "local settings");
             SettingsFile::default()
         }),
         None => SettingsFile::default(),
@@ -358,7 +358,7 @@ pub fn load_settings_and_corp_files() -> (SettingsFile, SettingsFile) {
                 }
             }
             Err(e) => {
-                tracing::warn!("corp settings at {}: {e}", path.display());
+                tracing::warn!(error = %e, "corp settings at {}", path.display());
             }
         }
     }

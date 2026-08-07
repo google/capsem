@@ -9,7 +9,6 @@ from urllib.error import URLError
 
 import pytest
 
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -122,9 +121,19 @@ def test_asset_workflow_and_local_gate_share_complete_dist_builder() -> None:
     assert local_web_gate.count("scripts/build-complete-release-channel.py") == 2
     assert '--channel-source "stable=file://$graph_sources/stable.json"' in local_web_gate
     assert '--channel-source "nightly=file://$graph_sources/nightly.json"' in local_web_gate
-    assert "--profile-source-ref HEAD" in local_web_gate
+    assert '--profile-source-root "$ROOT"' in local_web_gate
+    assert "--profile-source-ref HEAD" not in local_web_gate
+    assert 'command.extend(["--source-root", str(args.profile_source_root)])' in builder
+    assert "profile_source = parser.add_mutually_exclusive_group()" in builder
     assert "--channel stable" not in workflow.split(
         "- name: Build complete asset channel preview", maxsplit=1
     )[1].split("- name: Publish immutable", maxsplit=1)[0]
     assert 'REQUIRED_CHANNELS = ("stable", "nightly")' in builder
     assert '"assets",\n                "channel",\n                "check"' in builder
+
+
+def test_complete_builder_preserves_public_mirror_from_public_bytes() -> None:
+    builder = (PROJECT_ROOT / "scripts/build-complete-release-channel.py").read_text()
+
+    assert "is_public_mirror" in builder
+    assert 'command.extend(["--public-base", args.release_site])' in builder

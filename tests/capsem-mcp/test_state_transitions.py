@@ -1,10 +1,10 @@
 """State-changing MCP tools: suspend, persist, purge."""
 
+import contextlib
 import shutil
 import uuid
 
 import pytest
-
 from helpers.constants import EXEC_READY_TIMEOUT
 from helpers.mcp import parse_content, wait_exec_ready
 from helpers.service import make_service_home_run_dirs
@@ -128,10 +128,8 @@ def test_suspend_ephemeral_rejected(mcp_session):
             f"expected error suspending ephemeral, got: {resp}"
         )
     finally:
-        try:
+        with contextlib.suppress(Exception):
             mcp_session.call_tool("capsem_delete", {"id": vm_id})
-        except Exception:
-            pass
 
 
 def test_persist_converts_ephemeral(mcp_session):
@@ -155,10 +153,8 @@ def test_persist_converts_ephemeral(mcp_session):
         assert info.get("persistent") is True, f"info after persist: {info}"
     finally:
         for candidate in (new_name, vm_id):
-            try:
+            with contextlib.suppress(Exception):
                 mcp_session.call_tool("capsem_delete", {"id": candidate})
-            except Exception:
-                pass
 
 
 def test_persist_duplicate_name_rejected(fresh_vm, mcp_session):
@@ -177,10 +173,8 @@ def test_persist_duplicate_name_rejected(fresh_vm, mcp_session):
             f"expected error on duplicate persist name, got: {resp}"
         )
     finally:
-        try:
+        with contextlib.suppress(Exception):
             mcp_session.call_tool("capsem_delete", {"id": ephemeral})
-        except Exception:
-            pass
 
 
 def test_purge_ephemeral_only(fresh_vm, mcp_session):
@@ -243,7 +237,5 @@ def test_isolated_mcp_session_does_not_affect_shared_service(
             f"{bystander} destroyed by isolated purge -- services are not isolated"
         )
     finally:
-        try:
+        with contextlib.suppress(Exception):
             mcp_session.call_tool("capsem_delete", {"id": bystander})
-        except Exception:
-            pass

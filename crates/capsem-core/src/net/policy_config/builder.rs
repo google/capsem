@@ -48,11 +48,11 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
             if !s.metadata.env_vars.is_empty() && !ev.is_empty() {
                 for var_name in &s.metadata.env_vars {
                     if let Err(e) = validate_env_key(var_name) {
-                        tracing::warn!("skipping invalid env var from metadata: {e}");
+                        tracing::warn!(error = %e, "skipping invalid env var from metadata");
                         continue;
                     }
                     if let Err(e) = validate_env_value(ev) {
-                        tracing::warn!("skipping env var {var_name}: invalid value: {e}");
+                        tracing::warn!(error = %e, "skipping env var {var_name}: invalid value");
                         continue;
                     }
                     env.insert(var_name.clone(), ev.to_string());
@@ -72,7 +72,7 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
             }
             if !file_content.is_empty() {
                 if let Err(e) = validate_file_path(file_path) {
-                    tracing::warn!("skipping boot file: {e}");
+                    tracing::warn!(error = %e, "skipping boot file");
                     continue;
                 }
 
@@ -88,11 +88,11 @@ pub fn settings_to_guest_config(resolved: &[ResolvedSetting]) -> GuestConfig {
         if let Some(var_name) = s.id.strip_prefix("guest.env.") {
             if let Some(text_value) = text_value.as_deref().filter(|v| !v.is_empty()) {
                 if let Err(e) = validate_env_key(var_name) {
-                    tracing::warn!("skipping dynamic env var: {e}");
+                    tracing::warn!(error = %e, "skipping dynamic env var");
                     continue;
                 }
                 if let Err(e) = validate_env_value(text_value) {
-                    tracing::warn!("skipping dynamic env var {var_name}: invalid value: {e}");
+                    tracing::warn!(error = %e, "skipping dynamic env var {var_name}: invalid value");
                     continue;
                 }
                 env.insert(var_name.to_string(), text_value.to_string());
@@ -188,14 +188,14 @@ impl MergedPolicies {
         let security_rules = match compile_merged_security_rules(user, corp) {
             Ok(rules) => rules,
             Err(error) => {
-                tracing::warn!("security rules ignored: {error}");
+                tracing::warn!(error = %error, "security rules ignored");
                 SecurityRuleSet::new(Vec::new())
             }
         };
         let model_endpoints = match compile_model_endpoint_registry(user, corp) {
             Ok(registry) => registry,
             Err(error) => {
-                tracing::warn!("model endpoint registry ignored: {error}");
+                tracing::warn!(error = %error, "model endpoint registry ignored");
                 ModelEndpointRegistry::default()
             }
         };

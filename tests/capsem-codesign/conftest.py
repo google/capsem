@@ -4,10 +4,9 @@ These tests FAIL (not skip) when binaries are unsigned on macOS.
 """
 
 import os
+from pathlib import Path
 
 import pytest
-
-from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 TARGET_DIR = PROJECT_ROOT / "target" / "debug"

@@ -9,7 +9,8 @@ description: Setting up a Capsem development environment from scratch. Use when 
 
 - **macOS 13+** (Ventura or later) -- required for Virtualization.framework
 - **Apple Silicon** (arm64) -- primary target. Intel Macs are not supported for VM features.
-- **Docker (via Colima on macOS)** -- needed for `just build-assets` (kernel + rootfs builds)
+- **Docker (via Colima on macOS)** -- needed for `just _build-assets` (kernel + rootfs builds)
+- **Tart + sshpass (macOS)** -- needed for the clean-macOS package install owned by `just test`
 
 ## Required tools
 
@@ -24,12 +25,13 @@ Run `just doctor` to check all of these:
 | uv | Python package manager | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | Docker (via Colima on macOS) | VM image builds | `brew install colima docker` (macOS) or `sudo apt install docker.io` (Linux) |
 | Docker BuildKit (buildx) | Cross-arch container builds | `brew install docker-buildx` (macOS) or `sudo apt install docker-buildx-plugin` (Linux) |
+| Tart + sshpass (macOS) | Disposable clean-Mac package install gate | `brew trust --formula cirruslabs/cli/softnet && brew install cirruslabs/cli/tart cirruslabs/cli/sshpass` |
 
-Rust targets (auto-installed by `just doctor-fix`):
+Rust targets (auto-installed by `just doctor fix`):
 - `aarch64-unknown-linux-musl` -- guest binaries (arm64)
 - `x86_64-unknown-linux-musl` -- guest binaries (x86_64)
 
-Cargo tools (auto-installed by `just doctor-fix`):
+Cargo tools (auto-installed by `just doctor fix`):
 - `cargo-llvm-cov` -- coverage
 - `cargo-audit` -- vulnerability scanner
 - `cargo-tauri` -- Tauri CLI
@@ -113,7 +115,7 @@ git clone <repo> && cd capsem
 just exec "echo hello from capsem"
 ```
 
-`bootstrap.sh` lives at the **repo root** (not under `scripts/`). It runs `just build-assets` as part of doctor's auto-fix, so step 3 just confirms the VM boots.
+`bootstrap.sh` lives at the **repo root** (not under `scripts/`). It runs `just _build-assets` as part of doctor's auto-fix, so step 3 just confirms the VM boots.
 
 ### What bootstrap installs
 
@@ -127,13 +129,14 @@ Three phases. Default at every prompt is **Yes** (Enter accepts; type `n` to dec
 | 2 | `uv` | `astral.sh/uv` -> `~/.local/bin` |
 | 2 | Python deps | `uv sync` |
 | 2 (macOS) | `flock`, `pnpm` | `brew` |
+| 2 (macOS) | `tart`, `sshpass` | `brew` |
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` (+ symlink into `~/.docker/cli-plugins`) |
 | 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` |
 | 2 | Frontend deps | `pnpm install --frozen-lockfile` |
 | 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` -- Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`, build VM assets, pack initrd |
 
 Release-only local preflight also needs `cdxgen`. Install it with
-`npm install -g @cyclonedx/cdxgen` before running
+`npm install -g @cyclonedx/cdxgen@12.7.0` before running
 `bash scripts/check-release-workflow.sh` or local VM asset release dry runs.
 
 ### Kernel version
@@ -148,8 +151,8 @@ Or step by step:
 
 ```bash
 just doctor          # Check tools (colored output, structured recap)
-just doctor-fix      # Auto-fix missing targets, cargo tools, config files
-just build-assets    # Build kernel + rootfs (~10 min)
+just doctor fix      # Auto-fix missing targets, cargo tools, config files
+just _build-assets    # Build kernel + rootfs (~10 min)
 just exec "echo hi"   # Verify VM boots
 ```
 
@@ -160,8 +163,8 @@ If step 4 prints "hello from capsem" and exits cleanly, you're set.
 ```bash
 just shell            # Build + boot VM interactively (~10s)
 just exec "CMD"        # Build + boot + run command + exit
-just test             # Unit tests + cross-compile + frontend check
-just ui               # Frontend dev server (mock mode, no VM)
+just test             # Full release gate, including clean Tart .pkg install on macOS
+just dev ui               # Frontend dev server (mock mode, no VM)
 just dev              # Full Tauri app with hot-reload
 ```
 
@@ -223,12 +226,12 @@ the entitlements, and verifies the operation succeeds. Run `just doctor` after i
 confirm signing works.
 
 **Linux developers**: codesign is not available and not needed on Linux. VM features use the
-KVM backend when `/dev/kvm` and `/dev/vhost-vsock` are available. Use `just benchmark`
+KVM backend when `/dev/kvm` and `/dev/vhost-vsock` are available. Use `just test`
 for the same artifact-recording performance suite as macOS.
 
 ## Troubleshooting
 
-### `just run` fails with codesign error
+### `just exec` fails with codesign error
 - Run `just doctor` -- it will diagnose the specific signing issue
 - Ensure Xcode CLTools are installed: `xcode-select --install`
 - Check entitlements file exists: `cat entitlements.plist`
@@ -236,30 +239,30 @@ for the same artifact-recording performance suite as macOS.
 - Check SIP status: `csrutil status`
 
 ### `just doctor` fails
-Run `just doctor-fix` to auto-fix all fixable issues. Fixes run in dependency order (rustup targets before cargo tools before build-assets before pack-initrd). Non-fixable issues show install hints.
+Run `just doctor fix` to auto-fix all fixable issues. Fixes run in dependency order (rustup targets before cargo tools before build-assets before pack-initrd). Non-fixable issues show install hints.
 
-### `just build-assets` or `just test-install` fails with exit code 137 (or 143 mid-cargo-build)
+### `just _build-assets` or `just _gate-install` fails with exit code 137 (or 143 mid-cargo-build)
 The container runtime VM ran out of memory. Bump Colima to at least 12GB (16GB recommended):
 - Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8`
 - Linux: Docker runs natively, no memory tuning needed
 
-### `just build-assets` fails with "Release file not valid yet"
+### `just _build-assets` fails with "Release file not valid yet"
 The container VM's clock has drifted. The builder uses `Acquire::Check-Valid-Until=false` to work around this, but if you see this error on an old builder version:
 - Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` (resets clock)
 - Docker Desktop: restart Docker Desktop
 
-### `just build-assets` fails (other)
+### `just _build-assets` fails (other)
 - Check Docker is running: `docker info`
 - Check the profile contract is valid: `capsem-admin profile check config/profiles/code/profile.toml --config-root config`
 - On first run, Docker image pulls can be slow
 
-### `just run` fails with "assets not found"
-Run `just build-assets` first. Assets are gitignored and must be built locally.
+### `just exec` fails with "assets not found"
+Run `just _build-assets` first. Assets are gitignored and must be built locally.
 
 ### `cargo run` or `cargo test` crashes with signing error
 - `.cargo/config.toml` must exist and be tracked in git -- it configures the custom runner (`scripts/run_signed.sh`) that signs binaries with Virtualization.framework entitlements before execution
 - If missing: `git checkout .cargo/config.toml`
-- The justfile `_sign` recipe signs separately, so `just run` works even without the cargo runner -- but direct `cargo run`/`cargo test` and IDE integrations will crash
+- The justfile `_sign` recipe signs separately, so `just exec` works even without the cargo runner -- but direct `cargo run`/`cargo test` and IDE integrations will crash
 - **Lesson:** bare `.gitignore` patterns (no `/` prefix) match at any depth. Always anchor with `/` when you mean root-only (e.g., `/config.toml` not `config.toml`), or you risk silently ignoring files in subdirectories like `.cargo/`
 
 ### Cross-compile errors
@@ -294,7 +297,7 @@ Fix: set `credsStore` to empty string in `~/.docker/config.json`:
 - Check codesigning: `codesign -dvv target/debug/capsem 2>&1 | grep entitlements`
 - Check assets exist: `ls assets/arm64/vmlinuz assets/arm64/rootfs.erofs`
 - Check kernel architecture matches host: wrong-arch kernel causes silent hang. `VmConfig::build()` now rejects mismatched kernels at config time.
-- Try with debug logs: `RUST_LOG=capsem=debug just run`
+- Try with debug logs: `RUST_LOG=capsem=debug just exec`
 
 ## Doctor architecture
 
@@ -303,11 +306,11 @@ The doctor system is three bash scripts:
 ```
 scripts/
   doctor-common.sh    # Entry point, cross-platform checks, fix registry, recap
-  doctor-macos.sh     # macOS: Colima, Rosetta, codesigning, brew hints
+  doctor-macos.sh     # macOS: Tart, Colima, Rosetta, codesigning, brew hints
   doctor-linux.sh     # Linux: KVM, apt/dnf hints
 ```
 
-`just doctor` calls `doctor-common.sh`. `just doctor-fix` calls `doctor-common.sh --fix`.
+`just doctor` calls `doctor-common.sh`. `just doctor fix` calls `doctor-common.sh --fix`.
 
 ### Fix registry
 

@@ -3231,10 +3231,9 @@ fn with_temp_configs<F: FnOnce(&std::path::Path, &std::path::Path)>(
     loader::write_settings_file(&user_path, &user_file).unwrap();
     loader::write_settings_file(&corp_path, &corp_file).unwrap();
     // Point env vars to temp files
-    std::env::set_var("CAPSEM_HOME", dir.path());
+    let _capsem_paths = crate::paths::CapsemPathsGuard::redirect(dir.path());
     std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
     f(&user_path, &corp_path);
-    std::env::remove_var("CAPSEM_HOME");
     std::env::remove_var("CAPSEM_CORP_CONFIG");
 }
 

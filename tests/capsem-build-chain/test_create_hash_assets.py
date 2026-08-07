@@ -8,15 +8,14 @@ already planned to create -- leaving stale names untouched and, through
 subsequent builds, re-pointing them to unrelated inodes.
 """
 
-import json
 import errno
 import importlib.util
+import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
-
-from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 SCRIPT = PROJECT_ROOT / "scripts" / "create_hash_assets.py"

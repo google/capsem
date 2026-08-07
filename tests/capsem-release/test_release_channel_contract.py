@@ -27,10 +27,24 @@ from typing import Any
 from urllib.parse import urlparse
 
 import pytest
-
+from helpers.release_site import release_site_build_lock
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CHANNEL = "stable"
+BUILD_COMPLETE_SPEC = importlib.util.spec_from_file_location(
+    "build_complete_release_channel",
+    PROJECT_ROOT / "scripts" / "build-complete-release-channel.py",
+)
+assert BUILD_COMPLETE_SPEC is not None and BUILD_COMPLETE_SPEC.loader is not None
+BUILD_COMPLETE = importlib.util.module_from_spec(BUILD_COMPLETE_SPEC)
+BUILD_COMPLETE_SPEC.loader.exec_module(BUILD_COMPLETE)
+DEPLOY_FRESHNESS_SPEC = importlib.util.spec_from_file_location(
+    "check_channel_deploy_freshness",
+    PROJECT_ROOT / "scripts" / "check-channel-deploy-freshness.py",
+)
+assert DEPLOY_FRESHNESS_SPEC is not None and DEPLOY_FRESHNESS_SPEC.loader is not None
+DEPLOY_FRESHNESS = importlib.util.module_from_spec(DEPLOY_FRESHNESS_SPEC)
+DEPLOY_FRESHNESS_SPEC.loader.exec_module(DEPLOY_FRESHNESS)
 
 pytestmark = pytest.mark.build_chain
 
@@ -46,6 +60,87 @@ def test_deploy_workflow_runs_authoritative_live_validator_for_both_channels() -
     assert 'CHANNEL_ARGS=(--channel stable --channel nightly)' in workflow
     assert '--base-url "$RELEASE_SITE_URL"' in workflow
     assert "--attempts 30" in workflow
+    assert "group: capsem-public-channel-deploy" in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert workflow.index("check-channel-deploy-freshness.py") < workflow.index(
+        "      - name: Deploy"
+    )
+
+
+def test_complete_dist_preserves_untouched_channel_manifest_version() -> None:
+    stable = {
+        "channel": "stable",
+        "version": "1.0.7",
+        "profiles": {},
+        "packages": [],
+    }
+    nightly = {
+        "channel": "nightly",
+        "version": "1.0.8",
+        "profiles": {},
+        "packages": [],
+    }
+
+    assert (
+        BUILD_COMPLETE.manifest_version_for_channel(
+            channel="stable",
+            primary_channel="stable",
+            document=stable,
+            primary_version="1.0.9",
+        )
+        == "1.0.9"
+    )
+    assert (
+        BUILD_COMPLETE.manifest_version_for_channel(
+            channel="nightly",
+            primary_channel="stable",
+            document=nightly,
+            primary_version="1.0.9",
+        )
+        == "1.0.8"
+    )
+
+    with pytest.raises(ValueError, match="untouched nightly"):
+        BUILD_COMPLETE.manifest_version_for_channel(
+            channel="nightly",
+            primary_channel="stable",
+            document={"channel": "nightly", "profiles": {}, "packages": []},
+            primary_version="1.0.9",
+        )
+
+
+def test_deploy_rejects_stale_untouched_channel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dist = tmp_path / "dist"
+    nightly = dist / "assets" / "nightly" / "manifest.json"
+    nightly.parent.mkdir(parents=True)
+    nightly.write_bytes(b'{"channel":"nightly","version":"1.0.8"}\n')
+    live_nightly = nightly.read_bytes()
+    monkeypatch.setattr(
+        DEPLOY_FRESHNESS,
+        "read_live_manifest",
+        lambda _release_site, channel: (
+            live_nightly
+            if channel == "nightly"
+            else (_ for _ in ()).throw(AssertionError(channel))
+        ),
+    )
+
+    DEPLOY_FRESHNESS.verify_untouched_channels(
+        selected_channel="stable",
+        dist=dist,
+        release_site="https://release.example.test",
+    )
+
+    nightly.write_bytes(b'{"channel":"nightly","version":"stale"}\n')
+    with pytest.raises(ValueError, match="refusing to replace another channel"):
+        DEPLOY_FRESHNESS.verify_untouched_channels(
+            selected_channel="stable",
+            dist=dist,
+            release_site="https://release.example.test",
+        )
 
 
 def _run(
@@ -69,6 +164,127 @@ def _run(
         f"stderr:\n{result.stderr}"
     )
     return result
+
+
+def test_untouched_public_graph_render_is_byte_idempotent(tmp_path: Path) -> None:
+    fixture = json.loads(
+        (
+            PROJECT_ROOT
+            / "tests"
+            / "capsem-release"
+            / "fixtures"
+            / "release-graph-stable-nightly.json"
+        ).read_text(encoding="utf-8")
+    )
+    source = tmp_path / "nightly-source.json"
+    source.write_text(
+        json.dumps(
+            fixture["manifests"]["nightly"]["1.0.2"],
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+
+    for manifest, output in (
+        (source, first),
+        (first / "assets" / "nightly" / "manifest.json", second),
+    ):
+        _run(
+            [
+                "cargo",
+                "run",
+                "-p",
+                "capsem-admin",
+                "--quiet",
+                "--",
+                "assets",
+                "channel",
+                "build",
+                "--manifest",
+                manifest.resolve().as_uri(),
+                "--channel",
+                "nightly",
+                "--manifest-version",
+                "1.0.2",
+                "--generated-at",
+                "2026-07-26T00:00:00Z",
+                "--out-dir",
+                str(output),
+            ]
+        )
+
+    assert (
+        first / "assets" / "nightly" / "manifest.json"
+    ).read_bytes() == (
+        second / "assets" / "nightly" / "manifest.json"
+    ).read_bytes()
+
+
+def _prepare_install_test_assets(path: Path) -> dict[str, Any]:
+    _run(
+        ["bash", "scripts/prepare-install-test-assets.sh"],
+        env={
+            "CAPSEM_ARCH": "arm64",
+            "CAPSEM_ASSETS_DIR": str(path),
+        },
+    )
+    return json.loads((path / "arm64" / "obom.cdx.json").read_text())
+
+
+def _assert_rootfs_scoped_install_test_obom(document: dict[str, Any]) -> None:
+    properties = document["metadata"]["component"].get("properties", [])
+    assert {
+        "name": "capsem:evidence:scope",
+        "value": "exported-rootfs",
+    } in properties
+    assert any(
+        isinstance(component.get("purl"), str)
+        and component["purl"].startswith("pkg:deb/debian/")
+        for component in document["components"]
+    )
+    assert "cdx:osquery:category" not in json.dumps(document)
+
+
+def test_install_test_assets_generate_rootfs_scoped_obom(tmp_path: Path) -> None:
+    _assert_rootfs_scoped_install_test_obom(
+        _prepare_install_test_assets(tmp_path / "assets")
+    )
+
+
+def test_install_test_assets_replace_stale_host_inventory_obom(tmp_path: Path) -> None:
+    assets = tmp_path / "assets"
+    obom = assets / "arm64" / "obom.cdx.json"
+    obom.parent.mkdir(parents=True)
+    obom.write_text(
+        json.dumps(
+            {
+                "bomFormat": "CycloneDX",
+                "specVersion": "1.6",
+                "metadata": {"component": {"name": "build-host", "type": "device"}},
+                "components": [
+                    {
+                        "name": "browser-extension-from-host",
+                        "type": "application",
+                        "properties": [
+                            {
+                                "name": "cdx:osquery:category",
+                                "value": "chrome_extensions",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    document = _prepare_install_test_assets(assets)
+
+    _assert_rootfs_scoped_install_test_obom(document)
+    assert "browser-extension-from-host" not in json.dumps(document)
 
 
 def _run_admin(
@@ -99,15 +315,24 @@ def _build_release_channel(
     *,
     manifest_path: Path | None = None,
     assets_dir: Path | None = None,
+    asset_source_base: str | None = None,
 ) -> None:
-    source_manifest = manifest_path or PROJECT_ROOT / "assets" / "manifest.json"
+    if manifest_path is None:
+        prepared_assets = dist.parent / "prepared-assets"
+        _run(
+            ["bash", "scripts/prepare-install-test-assets.sh"],
+            env={"CAPSEM_ASSETS_DIR": str(prepared_assets)},
+        )
+        manifest_path = prepared_assets / "manifest.json"
+        assets_dir = prepared_assets
+    source_manifest = manifest_path
     working_manifest = dist.parent / "manifest-with-binary-metadata.json"
     working_manifest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_manifest, working_manifest)
     _record_test_binary_metadata(working_manifest, dist.parent / "binary-artifacts")
     manifest_url = working_manifest.resolve().as_uri()
-    assets_dir = assets_dir or PROJECT_ROOT / "assets"
-    _run_admin(
+    assets_dir = assets_dir or manifest_path.parent
+    command = [
         "assets",
         "channel",
         "build",
@@ -119,17 +344,28 @@ def _build_release_channel(
         CHANNEL,
         "--out-dir",
         str(dist),
-    )
+    ]
+    if asset_source_base is not None:
+        command.extend(["--asset-source-base", asset_source_base])
+    _run_admin(*command)
     _run(
         ["pnpm", "--dir", "release-site", "install", "--frozen-lockfile"],
         timeout=180,
         env={},
     )
-    _run(
-        ["pnpm", "--dir", "release-site", "run", "build:channel"],
-        timeout=180,
-        env={"CAPSEM_RELEASE_CHANNEL_DIST": str(dist)},
-    )
+    # build:channel renders through the shared release-site/dist before
+    # overlaying into `dist`, so it has to serialize with every other build.
+    with release_site_build_lock():
+        _run(
+            ["pnpm", "--dir", "release-site", "run", "build:channel"],
+            timeout=180,
+            env={
+                # The graph to render from and the dist to overlay into --
+                # one directory here, two meanings.
+                "CAPSEM_RELEASE_GRAPH": str(dist),
+                "CAPSEM_RELEASE_CHANNEL_DIST": str(dist),
+            },
+        )
     _run_admin("assets", "channel", "check", "--channel", CHANNEL, "--dist", str(dist))
 
 
@@ -247,6 +483,19 @@ def _write_minimal_pkg(path: Path, version: str, members: dict[str, bytes]) -> N
 
 
 def _write_minimal_deb(path: Path, members: dict[str, bytes]) -> None:
+    architecture = path.stem.rsplit("_", maxsplit=1)[-1]
+    assert architecture in {"amd64", "arm64"}
+    control = (
+        "Package: capsem\n"
+        "Version: 1.0.0\n"
+        f"Architecture: {architecture}\n"
+    ).encode()
+    control_tar_gz = io.BytesIO()
+    with tarfile.open(fileobj=control_tar_gz, mode="w:gz") as tar:
+        info = tarfile.TarInfo("control")
+        info.mode = 0o644
+        info.size = len(control)
+        tar.addfile(info, io.BytesIO(control))
     data_tar_gz = io.BytesIO()
     with tarfile.open(fileobj=data_tar_gz, mode="w:gz") as tar:
         for member_path, contents in members.items():
@@ -256,7 +505,7 @@ def _write_minimal_deb(path: Path, members: dict[str, bytes]) -> None:
             tar.addfile(info, io.BytesIO(contents))
     deb = bytearray(b"!<arch>\n")
     _append_ar_member(deb, "debian-binary", b"2.0\n")
-    _append_ar_member(deb, "control.tar.gz", b"")
+    _append_ar_member(deb, "control.tar.gz", control_tar_gz.getvalue())
     _append_ar_member(deb, "data.tar.gz", data_tar_gz.getvalue())
     path.write_bytes(bytes(deb))
 
@@ -458,6 +707,122 @@ def test_fresh_install_assets_generate_release_channel_evidence(
         assert _validate_release_site(url, capsys=capsys) == 0
 
 
+def _add_sha256_to_current_assets(manifest_path: Path, assets_dir: Path) -> dict[str, Any]:
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    current = manifest["assets"]["current"]
+    for arch, entries in manifest["assets"]["releases"][current]["arches"].items():
+        for logical_name, entry in entries.items():
+            entry["sha256"] = hashlib.sha256(
+                (assets_dir / arch / logical_name).read_bytes()
+            ).hexdigest()
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return manifest
+
+
+def test_channel_build_never_hydrates_historical_release_from_current_asset_paths(
+    tmp_path: Path,
+) -> None:
+    assets_dir = tmp_path / "assets"
+    dist = tmp_path / "dist"
+    _run(
+        ["bash", "scripts/prepare-install-test-assets.sh"],
+        env={"CAPSEM_ASSETS_DIR": str(assets_dir)},
+    )
+    manifest_path = assets_dir / "manifest.json"
+    manifest = _add_sha256_to_current_assets(manifest_path, assets_dir)
+    current = manifest["assets"]["current"]
+    historical = json.loads(json.dumps(manifest["assets"]["releases"][current]))
+    for entries in historical["arches"].values():
+        for entry in entries.values():
+            entry["hash"] = "f" * 64
+            entry["sha256"] = "e" * 64
+    manifest["assets"]["releases"]["2025.0101.1"] = historical
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    _build_release_channel(
+        dist,
+        manifest_path=manifest_path,
+        assets_dir=assets_dir,
+        asset_source_base="https://example.invalid/assets-v{asset_version}",
+    )
+
+
+def test_remote_channel_build_uses_manifest_digests_without_reopening_vm_blobs(
+    tmp_path: Path,
+) -> None:
+    assets_dir = tmp_path / "assets"
+    dist = tmp_path / "dist"
+    _run(
+        ["bash", "scripts/prepare-install-test-assets.sh"],
+        env={"CAPSEM_ASSETS_DIR": str(assets_dir)},
+    )
+    manifest_path = assets_dir / "manifest.json"
+    manifest = _add_sha256_to_current_assets(manifest_path, assets_dir)
+    current = manifest["assets"]["current"]
+    for arch, entries in manifest["assets"]["releases"][current]["arches"].items():
+        rootfs_name = next(name for name in entries if name.startswith("rootfs."))
+        rootfs = assets_dir / arch / rootfs_name
+        rootfs.unlink()
+        rootfs.mkdir()
+
+    _build_release_channel(
+        dist,
+        manifest_path=manifest_path,
+        assets_dir=assets_dir,
+        asset_source_base="https://example.invalid/assets-v{asset_version}",
+    )
+
+
+def test_local_channel_copy_fails_closed_on_asset_byte_mutation(tmp_path: Path) -> None:
+    assets_dir = tmp_path / "assets"
+    dist = tmp_path / "dist"
+    _run(
+        ["bash", "scripts/prepare-install-test-assets.sh"],
+        env={"CAPSEM_ASSETS_DIR": str(assets_dir)},
+    )
+    manifest_path = assets_dir / "manifest.json"
+    manifest = _add_sha256_to_current_assets(manifest_path, assets_dir)
+    current = manifest["assets"]["current"]
+    arch = next(iter(manifest["assets"]["releases"][current]["arches"]))
+    rootfs_name = next(
+        name
+        for name in manifest["assets"]["releases"][current]["arches"][arch]
+        if name.startswith("rootfs.")
+    )
+    (assets_dir / arch / rootfs_name).write_bytes(b"tampered but locally present\n")
+    _record_test_binary_metadata(manifest_path, tmp_path / "binary-artifacts")
+
+    result = subprocess.run(
+        [
+            "cargo",
+            "run",
+            "-p",
+            "capsem-admin",
+            "--quiet",
+            "--",
+            "assets",
+            "channel",
+            "build",
+            "--manifest",
+            manifest_path.resolve().as_uri(),
+            "--assets-dir",
+            str(assets_dir),
+            "--channel",
+            CHANNEL,
+            "--out-dir",
+            str(dist),
+        ],
+        cwd=PROJECT_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "rootfs" in result.stderr
+    assert "mismatch" in result.stderr
+
+
 def test_release_channel_contract_rejects_swapped_manifest(
     tmp_path: Path,
     release_channel_dist: Path,
@@ -469,10 +834,9 @@ def test_release_channel_contract_rejects_swapped_manifest(
     manifest = json.loads(manifest_path.read_text())
     profile = next(iter(manifest["profiles"].values()))
     image = profile["architectures"][0]
-    asset_version = image["image_revision"]
     image["images"][0]["url"] = image["images"][0]["url"].replace(
-        f"/assets/releases/{asset_version}/",
-        "/assets/releases/2030.0101.1/",
+        "/profiles/releases/stable/",
+        "/profiles/releases/nightly/",
     )
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
 
@@ -546,3 +910,57 @@ def _semantic_manifest_contract(path: Path) -> dict[str, Any]:
         package.pop("bytes", None)
         package.pop("digest", None)
     return manifest
+
+
+def test_release_channel_contract_rejects_an_html_body_for_a_missing_manifest(
+    tmp_path: Path,
+    release_channel_dist: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A missing manifest answers `200` with the site's SPA fallback.
+
+    Every other case here is about the manifest being *wrong* -- swapped,
+    stale, mutated, digest-drifted. This is the one where it is absent, and it
+    is the one that actually happens: the release site serves its index page
+    for any unknown path, so a check that trusts the status code reports a
+    healthy channel that has never been published to.
+
+    Observed live: `GET /assets/nightly/manifest.json` returns 200 and
+    `<!DOCTYPE html>`, because nothing has ever been published there.
+    """
+    dist = tmp_path / "dist"
+    shutil.copytree(release_channel_dist, dist)
+    manifest_path = dist / "assets" / CHANNEL / "manifest.json"
+    manifest_path.write_text(
+        '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">'
+        "<title>capsem</title></head><body>not a manifest</body></html>\n"
+    )
+
+    with _serve_release_channel(dist) as url:
+        exit_code, _stdout, stderr = _validator_exit_code(url, capsys=capsys)
+
+    assert exit_code == 1, "an HTML body was accepted as a channel manifest"
+    assert "manifest JSON parse failed" in stderr, stderr
+
+
+def test_release_channel_contract_rejects_a_manifest_that_is_not_an_object(
+    tmp_path: Path,
+    release_channel_dist: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Valid JSON is not a valid manifest.
+
+    A body that parses but is a list, a string, or `null` gets past the parse
+    and into every downstream lookup, where it fails as a confusing
+    `AttributeError` somewhere far from the cause.
+    """
+    dist = tmp_path / "dist"
+    shutil.copytree(release_channel_dist, dist)
+    manifest_path = dist / "assets" / CHANNEL / "manifest.json"
+    manifest_path.write_text('["channel", "stable"]\n')
+
+    with _serve_release_channel(dist) as url:
+        exit_code, _stdout, stderr = _validator_exit_code(url, capsys=capsys)
+
+    assert exit_code == 1
+    assert "is not an object" in stderr, stderr

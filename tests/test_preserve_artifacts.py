@@ -8,23 +8,25 @@ so a future "helpful" loosening that reintroduces the bloat surfaces
 in CI rather than on the next `just test` run.
 """
 
+import tomllib
 from pathlib import Path
 
 import pytest
+
+from tests import conftest as tests_conftest
 
 # Import the module under test. Fixture below resets the module-level
 # FAILED_NODEIDS / ARTIFACTS_ROOT state that the helper reads from
 # tests.conftest.
 from tests.helpers import service as svc_mod
-from tests import conftest as tests_conftest
 
 
 @pytest.fixture
-def artifact_env(tmp_path, monkeypatch):
+def artifact_env(tmp_path, monkeypatch, request):
     """Point ARTIFACTS_ROOT at tmp_path and seed a single failed nodeid."""
     monkeypatch.setattr(tests_conftest, "ARTIFACTS_ROOT", tmp_path / "test-artifacts")
     # Replace, don't mutate -- other tests may run in the same process.
-    monkeypatch.setattr(tests_conftest, "FAILED_NODEIDS", ["tests/fake/test_x.py::test_thing"])
+    monkeypatch.setattr(tests_conftest, "FAILED_NODEIDS", [request.node.nodeid])
     return tmp_path / "test-artifacts"
 
 
@@ -55,6 +57,16 @@ def _copied_files(archive_root: Path) -> set[str]:
         for p in archive_root.rglob("*")
         if p.is_file()
     }
+
+
+def test_failure_artifact_limits_come_from_storage_policy() -> None:
+    with (svc_mod.PROJECT_ROOT / "config" / "storage-policy.toml").open("rb") as stream:
+        debug = tomllib.load(stream)["debug_artifacts"]
+
+    assert debug["minimum_runs"] == svc_mod.ARTIFACT_MIN_KEPT_DIRS
+    assert debug["maximum_runs"] == svc_mod.ARTIFACT_MAX_KEPT_DIRS
+    assert debug["maximum_total_gib"] * 1024**3 == svc_mod.ARTIFACT_MAX_TOTAL_BYTES
+    assert debug["maximum_file_mib"] * 1024**2 == svc_mod.ARTIFACT_MAX_FILE_BYTES
 
 
 def test_make_capsem_tmp_dir_honors_configured_parent(tmp_path, monkeypatch):
@@ -111,6 +123,46 @@ def test_logs_and_session_db_are_preserved(artifact_env, tmp_path):
         )
 
 
+def test_service_client_preserves_failure_evidence_before_delete(
+    tmp_path, monkeypatch
+):
+    """A cleanup DELETE in an exception handler must not erase the evidence
+    before the test harness can archive it.
+
+    Production DELETE remains a real destructive operation. The test-only
+    client callback captures the isolated test home exactly once while the
+    original assertion is still propagating.
+    """
+    preserved = []
+
+    def _record_preserve(path, *, force=False):
+        preserved.append((Path(path), force))
+
+    monkeypatch.setattr(svc_mod, "preserve_tmp_dir_on_failure", _record_preserve)
+    service = svc_mod.ServiceInstance()
+    client = service.client()
+    monkeypatch.setattr(
+        client,
+        "_curl",
+        lambda *_args, **_kwargs: {"success": True},
+    )
+
+    try:
+        try:
+            raise AssertionError("original test failure")
+        except AssertionError:
+            client.delete("/vms/first/delete")
+            client.delete("/vms/second/delete")
+
+        assert preserved == [(service.home_dir, True)]
+
+        # Passing-test cleanup must not create failure artifacts.
+        client.delete("/vms/third/delete")
+        assert preserved == [(service.home_dir, True)]
+    finally:
+        service.stop()
+
+
 def test_no_op_when_no_failures(artifact_env, tmp_path, monkeypatch):
     # Override artifact_env's FAILED_NODEIDS to be empty.
     monkeypatch.setattr(tests_conftest, "FAILED_NODEIDS", [])
@@ -119,6 +171,42 @@ def test_no_op_when_no_failures(artifact_env, tmp_path, monkeypatch):
     assert not artifact_env.exists(), (
         "ARTIFACTS_ROOT should not be created when no tests failed"
     )
+
+
+def test_forced_preserve_uses_current_test_not_prior_worker_failure(
+    artifact_env, tmp_path, monkeypatch
+):
+    src = _seed_tmp_dir(tmp_path)
+    monkeypatch.setattr(
+        tests_conftest, "FAILED_NODEIDS", ["tests/fake/test_x.py::test_thing"]
+    )
+    monkeypatch.setenv(
+        "PYTEST_CURRENT_TEST",
+        "tests/ironbank/test_doctor_ledger.py::test_doctor_timeout (call)",
+    )
+
+    svc_mod.preserve_tmp_dir_on_failure(src, force=True)
+
+    archives = [path.name for path in artifact_env.iterdir() if path.is_dir()]
+    assert len(archives) == 1
+    assert "tests_ironbank_test_doctor_ledger.py__test_doctor_timeout" in archives[0]
+    assert "tests_fake_test_x.py__test_thing" not in archives[0]
+
+
+def test_prior_worker_failure_does_not_archive_later_passing_test(
+    artifact_env, tmp_path, monkeypatch
+):
+    src = _seed_tmp_dir(tmp_path)
+    monkeypatch.setattr(
+        tests_conftest, "FAILED_NODEIDS", ["tests/fake/test_x.py::test_thing"]
+    )
+    monkeypatch.setenv(
+        "PYTEST_CURRENT_TEST", "tests/ironbank/test_later.py::test_passes (teardown)"
+    )
+
+    svc_mod.preserve_tmp_dir_on_failure(src)
+
+    assert not artifact_env.exists()
 
 
 def test_preserve_survives_concurrent_unlink(artifact_env, tmp_path, monkeypatch):
@@ -189,6 +277,7 @@ def test_preserve_logs_survive_oversize_sibling(artifact_env, tmp_path):
 def test_rotation_keeps_only_most_recent_n(artifact_env, tmp_path, monkeypatch):
     # Shrink the cap for a fast test.
     monkeypatch.setattr(svc_mod, "ARTIFACT_MAX_KEPT_DIRS", 3)
+    monkeypatch.setattr(svc_mod, "ARTIFACT_MIN_KEPT_DIRS", 1)
 
     # Seed 5 pre-existing failure dirs with timestamps.
     artifact_env.mkdir(parents=True)
@@ -214,3 +303,26 @@ def test_rotation_keeps_only_most_recent_n(artifact_env, tmp_path, monkeypatch):
     assert "20260101-000002-gw0-fail-2" not in remaining
     assert "20260101-000005-gw0-fail-5" in remaining
     assert "20260101-000004-gw0-fail-4" in remaining
+
+
+def test_rotation_size_budget_never_discards_minimum_recent_failures(tmp_path):
+    root = tmp_path / "test-artifacts"
+    root.mkdir()
+    for index in range(4):
+        failure = root / f"20260101-00000{index}-failure"
+        failure.mkdir()
+        (failure / "evidence.log").write_bytes(b"x" * 32)
+
+    svc_mod._rotate_artifacts(
+        root,
+        keep=10,
+        minimum=2,
+        maximum_age_s=10**9,
+        maximum_total_bytes=1,
+    )
+
+    remaining = sorted(path.name for path in root.iterdir())
+    assert remaining == [
+        "20260101-000002-failure",
+        "20260101-000003-failure",
+    ]

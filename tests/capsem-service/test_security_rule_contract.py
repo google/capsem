@@ -134,3 +134,64 @@ def test_evaluate_route_rejects_unbacked_cel_roots() -> None:
             assert "not a first-party security-event root" in rejected["error"]
     finally:
         service.stop()
+
+
+def test_evaluate_route_rejects_fields_that_cannot_match() -> None:
+    """A rule that can never match must fail at the route, not compile quietly.
+
+    Field validation used to check only the CEL root, so a misspelled leaf and a
+    bare family root both compiled into rules that silently never fired.
+    """
+    service = ServiceInstance()
+    try:
+        service.start()
+        client = service.client()
+
+        for label, condition, expected in (
+            (
+                "misspelled_leaf",
+                'file.wrte.path == "/etc/passwd"',
+                "is not a security-event field on root 'file'",
+            ),
+            ("bare_root", "has(http)", "is not a security-event field on root 'http'"),
+        ):
+            rejected = _evaluate(
+                client,
+                f"""
+                [profiles.rules.bad_{label}]
+                name = "bad_{label}"
+                action = "block"
+                match = '{condition}'
+                """,
+                {"event_type": "http.request", "http_host": "example.com"},
+            )
+            assert "error" in rejected, f"{label} must be rejected: {rejected}"
+            assert expected in rejected["error"], f"{label}: {rejected['error']}"
+    finally:
+        service.stop()
+
+
+def test_evaluate_route_survives_a_non_ascii_condition() -> None:
+    """A non-ASCII field name used to panic the condition splitter mid-request."""
+    service = ServiceInstance()
+    try:
+        service.start()
+        client = service.client()
+
+        rejected = _evaluate(
+            client,
+            """
+            [profiles.rules.bad_non_ascii]
+            name = "bad_non_ascii"
+            action = "block"
+            match = 'héllo == "x"'
+            """,
+            {"event_type": "http.request", "http_host": "example.com"},
+        )
+        assert "error" in rejected, rejected
+        assert "not a first-party security-event root" in rejected["error"]
+
+        # The route answered instead of panicking, and the service is still up.
+        assert client.get("/version", timeout=30)
+    finally:
+        service.stop()

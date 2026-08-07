@@ -12,7 +12,6 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-
 INSTALL_SH = Path(__file__).parent.parent / "site" / "public" / "install.sh"
 DOCS_INSTALL_SH = Path(__file__).parent.parent / "docs" / "public" / "install.sh"
 
@@ -137,7 +136,7 @@ FAKE_RELEASE_MANIFEST = r"""
       "version": "1.5.0"
     },
     {
-      "architecture": "x86_64",
+      "architecture": "amd64",
       "binaries": [],
       "bytes": 17,
       "digest": {"sha256": "f46ed56922b881235bea694d06c5e366954607fd25526c9dbf56ffefa67830b9"},
@@ -166,13 +165,18 @@ FAKE_RELEASE_MANIFEST = r"""
 
 
 class TestFindAssetURL:
-    def _run(self, os_val: str, arch_val: str) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self,
+        os_val: str,
+        arch_val: str,
+        manifest: str = FAKE_RELEASE_MANIFEST,
+    ) -> subprocess.CompletedProcess[str]:
         # Escape the JSON for shell embedding via a heredoc.
         script = textwrap.dedent(f"""\
             __INSTALL_SH_SOURCED=1
             . "{INSTALL_SH}"
             RELEASE_MANIFEST=$(cat <<'ENDJSON'
-{FAKE_RELEASE_MANIFEST}
+{manifest}
 ENDJSON
             )
             find_asset_url "$RELEASE_MANIFEST" "{os_val}" "{arch_val}"
@@ -212,6 +216,20 @@ ENDJSON
         r = self._run("linux", "amd64")
         assert r.returncode == 0
         url, version = r.stdout.strip().splitlines()
+        assert url.endswith("/Capsem_1.5.0_amd64.deb")
+        assert version == "1.5.0"
+
+    def test_linux_amd64_accepts_existing_x86_64_manifest_identity(self):
+        existing_manifest = FAKE_RELEASE_MANIFEST.replace(
+            '"architecture": "amd64"',
+            '"architecture": "x86_64"',
+            1,
+        )
+
+        result = self._run("linux", "amd64", existing_manifest)
+
+        assert result.returncode == 0, result.stderr
+        url, version = result.stdout.strip().splitlines()
         assert url.endswith("/Capsem_1.5.0_amd64.deb")
         assert version == "1.5.0"
 
@@ -266,12 +284,37 @@ def test_macos_installers_apply_pkg_before_cleaning_download(tmp_path: Path) -> 
                 return 97
             }}
             sudo() {{
-                printf '%s\\n' "$*" > "{call_log}"
-                test "$1" = '/usr/sbin/installer'
-                test "$2" = '-pkg'
-                test -f "$3"
-                test "$4" = '-target'
-                test "$5" = '/'
+                case "$1" in
+                    /usr/bin/install)
+                        if [ "$2" = '-d' ]; then
+                            test "$3" = '-o'
+                            test "$4" = 'root'
+                            test "$5" = '-g'
+                            test "$6" = 'wheel'
+                            test "$7" = '-m'
+                            test "$8" = '0700'
+                        else
+                            test "$2" = '-o'
+                            test "$3" = 'root'
+                            test "$4" = '-g'
+                            test "$5" = 'wheel'
+                            test "$6" = '-m'
+                            test "$7" = '0600'
+                            test -f "$8"
+                        fi
+                        ;;
+                    /usr/sbin/installer)
+                        printf '%s\\n' "$*" > "{call_log}"
+                        test "$2" = '-pkg'
+                        test -f "$3"
+                        test "$4" = '-target'
+                        test "$5" = '/'
+                        ;;
+                    rm)
+                        test "$2" = '-f'
+                        ;;
+                    *) return 98 ;;
+                esac
             }}
             install_macos \
               'https://example.invalid/Capsem.pkg' \
@@ -289,6 +332,16 @@ def test_macos_installers_apply_pkg_before_cleaning_download(tmp_path: Path) -> 
         )
         assert not (install_root / "download").exists()
         assert "Capsem 1.5.0 installed." in result.stdout
+
+
+def test_public_macos_installer_hands_package_a_secure_target_user() -> None:
+    for install_script in (INSTALL_SH, DOCS_INSTALL_SH):
+        source = install_script.read_text(encoding="utf-8")
+        assert "prepare_macos_install_user" in source
+        assert "CAPSEM_INSTALL_USER_REQUEST" in source
+        assert "/usr/bin/install -d -o root -g wheel -m 0700" in source
+        assert "/usr/bin/install -o root -g wheel -m 0600" in source
+        assert "clear_macos_install_user_request" in source
 
 
 def test_macos_curl_pipe_entrypoint_installs_pkg_end_to_end(tmp_path: Path) -> None:
@@ -333,12 +386,37 @@ echo 'unexpected GUI installer handoff' >&2
 exit 97
 """,
         "sudo": """#!/bin/sh
-printf '%s\n' "$*" > "$INSTALLER_LOG"
-test "$1" = '/usr/sbin/installer'
-test "$2" = '-pkg'
-test -f "$3"
-test "$4" = '-target'
-test "$5" = '/'
+case "$1" in
+    /usr/bin/install)
+        if [ "$2" = '-d' ]; then
+            test "$3" = '-o'
+            test "$4" = 'root'
+            test "$5" = '-g'
+            test "$6" = 'wheel'
+            test "$7" = '-m'
+            test "$8" = '0700'
+        else
+            test "$2" = '-o'
+            test "$3" = 'root'
+            test "$4" = '-g'
+            test "$5" = 'wheel'
+            test "$6" = '-m'
+            test "$7" = '0600'
+            test -f "$8"
+        fi
+        ;;
+    /usr/sbin/installer)
+        printf '%s\n' "$*" > "$INSTALLER_LOG"
+        test "$2" = '-pkg'
+        test -f "$3"
+        test "$4" = '-target'
+        test "$5" = '/'
+        ;;
+    rm)
+        test "$2" = '-f'
+        ;;
+    *) exit 98 ;;
+esac
 """,
     }
     for name, body in commands.items():
@@ -382,7 +460,14 @@ def test_linux_curl_pipe_entrypoint_installs_verified_deb_end_to_end(tmp_path: P
     bin_dir.mkdir()
     temp_dir.mkdir()
     manifest = tmp_path / "manifest.json"
-    manifest.write_text(FAKE_RELEASE_MANIFEST, encoding="utf-8")
+    manifest.write_text(
+        FAKE_RELEASE_MANIFEST.replace(
+            '"architecture": "amd64"',
+            '"architecture": "x86_64"',
+            1,
+        ),
+        encoding="utf-8",
+    )
     installer_log = tmp_path / "installer-call"
 
     commands = {

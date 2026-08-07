@@ -238,7 +238,9 @@ Key implementation details:
 
 - **Container runtime auto-detection.** Docker CLI.
 - **CI cache integration.** Docker buildx with GitHub Actions cache (`type=gha`) when `GITHUB_ACTIONS` is set.
-- **Kernel version resolution.** Fetches the latest stable version for the configured LTS branch from `kernel.org/releases.json`, falls back to a hardcoded version on network failure.
+- **Kernel version resolution.** Fetches the latest non-EOL version for the
+  configured LTS branch from `kernel.org/releases.json` and fails closed when
+  freshness or support status cannot be established.
 - **Cross-compilation.** Guest agent binaries are cross-compiled with `cargo build --target {rust_target}` using `rust-lld` as the linker (configured in `.cargo/config.toml`).
 - **Clock skew resilience.** All `apt-get update` calls use `-o Acquire::Check-Valid-Until=false` to handle container VM clock drift.
 
@@ -256,13 +258,17 @@ build runs apt, npm, and profile install steps, requiring substantial memory.
 ```bash
 # Colima (macOS): configure VM resources
 colima stop
-colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8
+colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 128
 
 # Linux: Docker runs natively, no memory tuning needed
 # sudo apt install docker.io
 ```
 
-`just doctor` and `capsem-builder doctor` both check these resources automatically and fail if below minimum.
+The release-gate storage policy supports existing Colima disks from 96 GiB,
+recommends 128 GiB for new runtimes, keeps a 24 GiB BuildKit cache cohort, and
+reserves 24 GiB free for the active rail. The source of truth is
+`config/storage-policy.toml`; `just doctor` reports an undersized existing
+Colima disk before an expensive gate begins.
 
 ## Install Manager Types
 

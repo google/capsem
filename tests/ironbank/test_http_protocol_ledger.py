@@ -2,22 +2,22 @@
 
 from __future__ import annotations
 
-from contextlib import closing
 import json
 import os
-from pathlib import Path
 import re
 import sqlite3
 import textwrap
 import time
 import uuid
+from contextlib import closing, suppress
+from pathlib import Path
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
+from log_streams import read_log_stream
 
 pytestmark = pytest.mark.integration
 
@@ -376,14 +376,13 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         uds_rows = _query_rows(
             client,
             session_id,
-            """
+            f"""
             SELECT event_id, domain, port, method, path, query, status_code, decision,
                    bytes_sent, bytes_received, matched_rule, request_body_preview,
                    response_body_preview, conn_type, trace_id
             FROM net_events
-            WHERE event_id = '%s'
-            """
-            % event_id,
+            WHERE event_id = '{event_id}'
+            """,
         )
         assert len(uds_rows) == 1
         assert uds_rows[0]["event_id"] == event_id
@@ -437,17 +436,15 @@ def test_plain_json_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["allow"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
+        service_log = read_log_stream(service.tmp_dir / "service.log")
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "gateway.proxy.ok" in gateway_log
     finally:
         stop_process(mock_proc)
         if client is not None:
-            try:
+            with suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
-            except Exception:
-                pass
         if gateway is not None:
             gateway.stop()
         service.stop()
@@ -804,17 +801,15 @@ def test_http_body_handling_matrix_pays_full_ledger_debt_blackbox() -> None:
             assert by_action["allow"] >= 5
             assert by_event_type["http.request"] >= 5
 
-        service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
+        service_log = read_log_stream(service.tmp_dir / "service.log")
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "gateway.proxy.ok" in gateway_log
     finally:
         stop_process(mock_proc)
         if client is not None:
-            try:
+            with suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
-            except Exception:
-                pass
         if gateway is not None:
             gateway.stop()
         service.stop()
@@ -1311,7 +1306,7 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
             assert by_action["allow"] >= 3
             assert by_event_type["http.request"] >= 3
 
-        service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
+        service_log = read_log_stream(service.tmp_dir / "service.log")
         gateway_log = gateway.stop_and_read_log()
         assert "capsem_test_oauth_access_" not in service_log
         assert "capsem_test_oauth_refresh_" not in service_log
@@ -1319,10 +1314,8 @@ def test_brokered_http_rewrite_pays_full_ledger_debt_blackbox() -> None:
     finally:
         stop_process(mock_proc)
         if client is not None:
-            try:
+            with suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
-            except Exception:
-                pass
         if gateway is not None:
             gateway.stop()
         service.stop()
@@ -1538,14 +1531,13 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         uds_rows = _query_rows(
             client,
             session_id,
-            """
+            f"""
             SELECT event_id, domain, port, method, path, query, status_code, decision,
                    bytes_sent, bytes_received, matched_rule, request_body_preview,
                    response_body_preview, conn_type, trace_id
             FROM net_events
-            WHERE event_id = '%s'
-            """
-            % event_id,
+            WHERE event_id = '{event_id}'
+            """,
         )
         assert len(uds_rows) == 1
         assert uds_rows[0]["event_id"] == event_id
@@ -1572,17 +1564,15 @@ def test_denied_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["block"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
+        service_log = read_log_stream(service.tmp_dir / "service.log")
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "gateway.proxy.ok" in gateway_log
     finally:
         stop_process(mock_proc)
         if client is not None:
-            try:
+            with suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
-            except Exception:
-                pass
         if gateway is not None:
             gateway.stop()
         service.stop()
@@ -1822,14 +1812,13 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         uds_net_rows = _query_rows(
             client,
             session_id,
-            """
+            f"""
             SELECT event_id, method, path, status_code, decision, matched_rule,
                    policy_action, policy_rule, request_body_preview,
                    response_body_preview, trace_id
             FROM net_events
-            WHERE event_id = '%s'
-            """
-            % event_id,
+            WHERE event_id = '{event_id}'
+            """,
         )
         assert len(uds_net_rows) == 1
         assert uds_net_rows[0]["decision"] == "denied"
@@ -1840,12 +1829,11 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         uds_ask_rows = _query_rows(
             client,
             session_id,
-            """
+            f"""
             SELECT ask_id, event_id, event_type, rule_id, status, trace_id
             FROM security_ask_events
-            WHERE ask_id = '%s'
-            """
-            % ask_id,
+            WHERE ask_id = '{ask_id}'
+            """,
         )
         assert uds_ask_rows == [
             {
@@ -1877,17 +1865,15 @@ def test_asked_http_request_pays_full_ledger_debt_blackbox() -> None:
         assert by_action["ask"] >= 1
         assert by_event_type["http.request"] >= 1
 
-        service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
+        service_log = read_log_stream(service.tmp_dir / "service.log")
         gateway_log = gateway.stop_and_read_log()
         assert "handle_exec" in service_log or "exec" in service_log
         assert "gateway.proxy.ok" in gateway_log
     finally:
         stop_process(mock_proc)
         if client is not None:
-            try:
+            with suppress(Exception):
                 client.delete(f"/vms/{session_id}/delete", timeout=60)
-            except Exception:
-                pass
         if gateway is not None:
             gateway.stop()
         service.stop()

@@ -12,7 +12,6 @@ import json
 import subprocess
 from typing import Any
 
-
 PROFILE = "code"
 PLUGIN_IDS = {
     "credential_broker",

@@ -4,13 +4,13 @@ Verifies that the capsem-mcp-server binary exists and that the host
 MITM MCP endpoint responds to JSON-RPC messages over framed vsock:5002.
 """
 
+import contextlib
 import json
 import os
 import re
 import subprocess
 
 import pytest
-
 from conftest import run
 
 LOCAL_MOCK_SERVER_ENV = "CAPSEM_MOCK_SERVER_BASE_URL"
@@ -899,7 +899,7 @@ def _cleanup_snapshots():
     while _created_snapshots:
         cp = _created_snapshots.pop()
         # Best-effort delete (may already be deleted by the test).
-        try:
+        with contextlib.suppress(Exception):
             _mcp_call([
                 {"jsonrpc": "2.0", "id": 1, "method": "initialize",
                  "params": {"protocolVersion": "2024-11-05", "capabilities": {},
@@ -908,8 +908,6 @@ def _cleanup_snapshots():
                 {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                  "params": {"name": "local__snapshots_delete", "arguments": {"checkpoint": cp}}},
             ], timeout=5)
-        except Exception:
-            pass
 
 
 def _snap_create(name):

@@ -1,6 +1,7 @@
-import pytest
 import importlib.util
 from pathlib import Path
+
+import pytest
 
 MODULE_PATH = (
     Path(__file__).parent

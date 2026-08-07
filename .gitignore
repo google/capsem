@@ -40,7 +40,10 @@ dist/*
 *.bak
 .s.yml
 .DS_Store
-*_Store
+# Narrow: bare `*_Store` also matches source directories such as
+# crates/capsem-process/src/job_store/, and macOS sets core.ignorecase=true,
+# so the match is case-insensitive and silent.
+*.DS_Store
 private/
 
 # Dev setup sentinel (written by just doctor)
@@ -55,9 +58,12 @@ codecov-*.json
 codecov-*.xml
 *-junit.xml
 
+# Benchmark recordings are generated evidence. Existing tracked files are the
+# reviewed baselines; new data must be explicitly force-added to become approved.
+benchmarks/**/data_*.json
+
 # Rust
 target/
-Cargo.lock
 
 # Git worktrees
 worktrees/

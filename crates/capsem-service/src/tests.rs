@@ -11,7 +11,6 @@ fn statvfs_bytes_accepts_platform_block_widths() {
     assert_eq!(statvfs_bytes(7_u32, 4096), 28_672);
     assert_eq!(statvfs_bytes(7_u64, 4096), 28_672);
 }
-
 #[test]
 fn suspend_confirm_timeout_matches_public_api_budget() {
     assert_eq!(
@@ -143,6 +142,45 @@ fn update_status_reports_binary_and_asset_tracks_from_cache_and_manifest() {
     assert_eq!(status.assets.state, api::UpdateTrackState::UpdateAvailable);
     assert_eq!(status.profiles.state, api::UpdateTrackState::NotPublished);
     assert_eq!(status.images.state, api::UpdateTrackState::NotPublished);
+}
+
+#[test]
+fn current_asset_state_keeps_independent_release_graph_profiles() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    std::fs::create_dir_all(&assets_dir).unwrap();
+    let images = |seed: char| {
+        serde_json::json!([
+            {"kind":"kernel","name":"vmlinuz","bytes":10,"status":"current","digest":{"blake3":seed.to_string().repeat(64),"sha256":"1".repeat(64)}},
+            {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":"b".repeat(64),"sha256":"2".repeat(64)}},
+            {"kind":"rootfs","name":"rootfs.erofs","bytes":30,"status":"current","digest":{"blake3":"c".repeat(64),"sha256":"3".repeat(64)}}
+        ])
+    };
+    let manifest = serde_json::json!({
+        "profiles": {
+            "co-work": {
+                "revision": "2030.0101.1",
+                "status": "current",
+                "architectures": [{"architecture":"arm64","image_revision":"2030.0101.10","images":images('a')}]
+            },
+            "code": {
+                "revision": "2030.0101.2",
+                "status": "current",
+                "architectures": [{"architecture":"arm64","image_revision":"2030.0101.20","images":images('9')}]
+            }
+        }
+    });
+    std::fs::write(
+        assets_dir.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let expected = capsem_core::asset_manager::release_graph_profile_state(&manifest).unwrap();
+
+    assert_eq!(
+        current_asset_version_from_manifest(&assets_dir),
+        Some(expected.images_revision)
+    );
 }
 
 #[test]
@@ -510,7 +548,12 @@ async fn system_status_route_returns_exact_installed_documents_in_one_response()
                     {"kind":"initrd","name":"initrd.img","bytes":20,"status":"current","digest":{"blake3":digest('b'),"sha256":digest('2')}},
                     {"kind":"rootfs","name":"rootfs.erofs","bytes":30,"status":"current","digest":{"blake3":digest('c'),"sha256":digest('3')}}
                 ],
-                "evidence": [{"kind":"obom","url":"https://example.test/obom.json"}]
+                "evidence": [{
+                    "kind":"obom",
+                    "url":"https://example.test/obom.json",
+                    "bytes":40,
+                    "digest":{"blake3":digest('d'),"sha256":digest('4')}
+                }]
             }]
         }}
     });
@@ -778,7 +821,7 @@ fn make_test_state() -> Arc<ServiceState> {
         assets_dir: PathBuf::from("/nonexistent/assets"),
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        manifest: None,
+        manifest: RwLock::new(None),
         current_version: "0.0.0".into(),
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -806,6 +849,8 @@ fn make_test_state() -> Arc<ServiceState> {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        update_lock: tokio::sync::Mutex::new(()),
+        update_restart: tokio::sync::Notify::new(),
         _test_tempdir: Some(test_tempdir),
     })
 }
@@ -896,7 +941,9 @@ async fn update_route_check_live_executes_non_mutating_cli_check() {
     let previous = std::env::var_os("CAPSEM_CLI");
     std::env::set_var("CAPSEM_CLI", &cli);
 
-    let app = build_service_router(make_test_state());
+    let assets_dir = dir.path().join("assets");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    let app = build_service_router(make_asset_state(assets_dir));
     let (status, body) = route_request(
         app,
         axum::http::Method::POST,
@@ -912,69 +959,53 @@ async fn update_route_check_live_executes_non_mutating_cli_check() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "succeeded");
     assert_eq!(body["command"]["args"], json!(["update", "--check"]));
-    assert_eq!(std::fs::read_to_string(log).unwrap(), "update --check\n");
+    assert_eq!(capsem_core::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --check\n");
 }
 
 #[tokio::test]
-async fn update_route_apply_dry_run_plans_binary_profiles_and_assets() {
+async fn update_route_apply_dry_run_plans_one_atomic_update() {
     let app = build_service_router(make_test_state());
-    let (binary_status, binary_body) = route_request(
-        app.clone(),
-        axum::http::Method::POST,
-        "/update/apply",
-        Some(json!({ "action": "binary_profiles", "dry_run": true })),
-    )
-    .await;
-    let (assets_status, assets_body) = route_request(
+    let (status, body) = route_request(
         app,
         axum::http::Method::POST,
         "/update/apply",
-        Some(json!({ "action": "assets", "dry_run": true })),
+        Some(json!({ "dry_run": true })),
     )
     .await;
 
-    assert_eq!(binary_status, StatusCode::OK);
-    assert_eq!(binary_body["status"], "planned");
-    assert_eq!(binary_body["command"]["args"], json!(["update", "--yes"]));
-    assert_eq!(assets_status, StatusCode::OK);
-    assert_eq!(assets_body["status"], "planned");
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "planned");
+    assert_eq!(body["command"]["args"], json!(["update", "--yes"]));
+}
+
+#[tokio::test]
+async fn update_route_apply_requires_confirmation_for_live_command() {
+    let app = build_service_router(make_test_state());
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::POST,
+        "/update/apply",
+        Some(json!({})),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(
-        assets_body["command"]["args"],
-        json!(["update", "--assets"])
+        body["error"],
+        "update apply requires confirmed=true or dry_run=true"
     );
 }
 
 #[tokio::test]
-async fn update_route_apply_requires_confirmation_for_live_commands() {
-    let app = build_service_router(make_test_state());
-    for action in ["binary_profiles", "assets"] {
-        let (status, body) = route_request(
-            app.clone(),
-            axum::http::Method::POST,
-            "/update/apply",
-            Some(json!({ "action": action })),
-        )
-        .await;
-
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{action}");
-        assert_eq!(
-            body["error"], "update apply requires confirmed=true or dry_run=true",
-            "{action}"
-        );
-    }
-}
-
-#[tokio::test]
-async fn update_route_apply_rejects_ambiguous_action_body() {
+async fn update_route_apply_rejects_obsolete_split_action_body() {
     let app = build_service_router(make_test_state());
     let (status, body) = route_request(
         app,
         axum::http::Method::POST,
         "/update/apply",
         Some(json!({
-            "action": "binary_profiles",
             "confirmed": true,
-            "assets": true,
+            "action": "assets",
         })),
     )
     .await;
@@ -991,7 +1022,7 @@ async fn update_route_apply_rejects_ambiguous_action_body() {
 }
 
 #[tokio::test]
-async fn update_route_apply_confirmed_dispatches_binary_profiles_and_assets() {
+async fn update_route_apply_confirmed_dispatches_one_atomic_update() {
     let _env_lock = SETTINGS_ENV_LOCK.lock().await;
     let dir = tempfile::tempdir().unwrap();
     let cli = dir.path().join("capsem");
@@ -1007,19 +1038,14 @@ async fn update_route_apply_confirmed_dispatches_binary_profiles_and_assets() {
     let previous = std::env::var_os("CAPSEM_CLI");
     std::env::set_var("CAPSEM_CLI", &cli);
 
-    let app = build_service_router(make_test_state());
-    let (binary_status, binary_body) = route_request(
-        app.clone(),
-        axum::http::Method::POST,
-        "/update/apply",
-        Some(json!({ "action": "binary_profiles", "confirmed": true })),
-    )
-    .await;
-    let (assets_status, assets_body) = route_request(
+    let assets_dir = dir.path().join("assets");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    let app = build_service_router(make_asset_state(assets_dir));
+    let (status, body) = route_request(
         app,
         axum::http::Method::POST,
         "/update/apply",
-        Some(json!({ "action": "assets", "confirmed": true })),
+        Some(json!({ "confirmed": true })),
     )
     .await;
     match previous {
@@ -1027,19 +1053,363 @@ async fn update_route_apply_confirmed_dispatches_binary_profiles_and_assets() {
         None => std::env::remove_var("CAPSEM_CLI"),
     }
 
-    assert_eq!(binary_status, StatusCode::OK);
-    assert_eq!(binary_body["status"], "succeeded");
-    assert_eq!(binary_body["command"]["args"], json!(["update", "--yes"]));
-    assert_eq!(assets_status, StatusCode::OK);
-    assert_eq!(assets_body["status"], "succeeded");
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["status"], "succeeded");
+    assert_eq!(body["command"]["args"], json!(["update", "--yes"]));
+    assert_eq!(capsem_core::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --yes\n");
+}
+
+#[tokio::test]
+async fn update_route_live_commands_share_one_serial_lock() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cli = dir.path().join("capsem");
+    let log = dir.path().join("serial.log");
+    let active = dir.path().join("active");
+    std::fs::write(
+        &cli,
+        format!(
+            "#!/bin/sh\n\
+             if ! mkdir '{}'; then printf '%s\\n' overlap >> '{}'; exit 9; fi\n\
+             printf '%s\\n' start >> '{}'\n\
+             sleep 0.1\n\
+             printf '%s\\n' end >> '{}'\n\
+             rmdir '{}'\n",
+            active.display(),
+            log.display(),
+            log.display(),
+            log.display(),
+            active.display(),
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&cli).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&cli, permissions).unwrap();
+    let previous = std::env::var_os("CAPSEM_CLI");
+    std::env::set_var("CAPSEM_CLI", &cli);
+
+    let assets_dir = dir.path().join("assets");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    let app = build_service_router(make_asset_state(assets_dir));
+    let first = route_request(
+        app.clone(),
+        axum::http::Method::POST,
+        "/update/apply",
+        Some(json!({ "confirmed": true })),
+    );
+    let second = route_request(
+        app,
+        axum::http::Method::POST,
+        "/update/check",
+        Some(json!({})),
+    );
+    let (first, second) = tokio::join!(first, second);
+    match previous {
+        Some(value) => std::env::set_var("CAPSEM_CLI", value),
+        None => std::env::remove_var("CAPSEM_CLI"),
+    }
+
+    assert_eq!(first.0, StatusCode::OK);
+    assert_eq!(first.1["status"], "succeeded");
+    assert_eq!(second.0, StatusCode::OK);
+    assert_eq!(second.1["status"], "succeeded");
+    let execution = capsem_core::telemetry::read_log_tail(&log, usize::MAX).unwrap();
+    assert!(!execution.contains("overlap"), "{execution}");
+    assert_eq!(execution, "start\nend\nstart\nend\n");
+}
+
+fn write_update_runtime_manifest(assets_dir: &StdPath, binary: &str, assets: &str) {
+    std::fs::create_dir_all(assets_dir).unwrap();
+    let manifest = capsem_core::asset_manager::ManifestV2 {
+        format: 2,
+        refresh_policy: "24h".to_string(),
+        asset_base: None,
+        assets: capsem_core::asset_manager::AssetsSection {
+            current: assets.to_string(),
+            releases: HashMap::new(),
+        },
+        binaries: capsem_core::asset_manager::BinariesSection {
+            current: binary.to_string(),
+            releases: HashMap::new(),
+        },
+    };
+    std::fs::write(
+        assets_dir.join("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).unwrap(),
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn update_runtime_reloads_profile_only_activation_without_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    let state = make_asset_state(assets_dir.clone());
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-2");
+
+    let disposition = reload_activated_update_runtime(&state).unwrap();
+
+    assert_eq!(disposition, UpdateRuntimeDisposition::Reloaded);
     assert_eq!(
-        assets_body["command"]["args"],
-        json!(["update", "--assets"])
+        state
+            .manifest
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .assets
+            .current,
+        "profiles-2"
+    );
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(10),
+            state.update_restart.notified()
+        )
+        .await
+        .is_err(),
+        "profile-only activation must not restart a current binary"
+    );
+}
+
+#[tokio::test]
+async fn update_runtime_requests_restart_after_binary_activation() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    let state = make_asset_state(assets_dir.clone());
+    write_update_runtime_manifest(&assets_dir, "9.9.9", "profiles-2");
+
+    let disposition = reload_activated_update_runtime(&state).unwrap();
+
+    assert_eq!(disposition, UpdateRuntimeDisposition::RestartRequested);
+    tokio::time::timeout(
+        std::time::Duration::from_millis(10),
+        state.update_restart.notified(),
+    )
+    .await
+    .expect("binary activation must request a managed service restart");
+    assert_eq!(
+        state
+            .manifest
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .binaries
+            .current,
+        "9.9.9"
+    );
+}
+
+#[test]
+fn update_runtime_rejects_invalid_manifest_without_replacing_cached_graph() {
+    let dir = tempfile::tempdir().unwrap();
+    let assets_dir = dir.path().join("assets");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-1");
+    let state = make_asset_state(assets_dir.clone());
+    std::fs::write(assets_dir.join("manifest.json"), b"{not-json").unwrap();
+
+    let error = reload_activated_update_runtime(&state).unwrap_err();
+
+    assert!(error.1.contains("validate activated update manifest"));
+    assert_eq!(
+        state
+            .manifest
+            .read()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .assets
+            .current,
+        "profiles-1"
+    );
+}
+
+fn resolved_automatic_update(
+    value: capsem_core::net::policy_config::SettingValue,
+) -> capsem_core::net::policy_config::ResolvedSetting {
+    capsem_core::net::policy_config::ResolvedSetting {
+        id: "app.auto_update".to_string(),
+        category: "App".to_string(),
+        name: "Automatic updates".to_string(),
+        description: String::new(),
+        setting_type: capsem_core::net::policy_config::SettingType::Bool,
+        default_value: capsem_core::net::policy_config::SettingValue::Bool(true),
+        effective_value: value,
+        source: capsem_core::net::policy_config::PolicySource::User,
+        modified: Some("test".to_string()),
+        corp_locked: false,
+        enabled_by: None,
+        enabled: true,
+        metadata: capsem_core::net::policy_config::SettingMetadata::default(),
+        collapsed: false,
+        history: Vec::new(),
+    }
+}
+
+#[test]
+fn automatic_update_setting_defaults_on_and_honors_false() {
+    use capsem_core::net::policy_config::SettingValue;
+
+    assert!(automatic_updates_enabled_from_resolved(&[]));
+    assert!(automatic_updates_enabled_from_resolved(&[
+        resolved_automatic_update(SettingValue::Bool(true))
+    ]));
+    assert!(!automatic_updates_enabled_from_resolved(&[
+        resolved_automatic_update(SettingValue::Bool(false))
+    ]));
+    assert!(automatic_updates_enabled_from_resolved(&[
+        resolved_automatic_update(SettingValue::Text("false".to_string()))
+    ]));
+}
+
+#[test]
+fn automatic_update_failure_backoff_is_bounded() {
+    assert_eq!(
+        automatic_update_failure_backoff(1),
+        std::time::Duration::from_secs(AUTOMATIC_UPDATE_POLL_SECS)
     );
     assert_eq!(
-        std::fs::read_to_string(log).unwrap(),
-        "update --yes\nupdate --assets\n"
+        automatic_update_failure_backoff(2),
+        std::time::Duration::from_secs(AUTOMATIC_UPDATE_POLL_SECS * 2)
     );
+    assert_eq!(
+        automatic_update_failure_backoff(100),
+        std::time::Duration::from_secs(AUTOMATIC_UPDATE_MAX_BACKOFF_SECS)
+    );
+}
+
+#[test]
+fn automatic_update_poll_delay_override_is_positive_and_fail_closed() {
+    use std::ffi::OsStr;
+
+    let fallback = std::time::Duration::from_secs(AUTOMATIC_UPDATE_POLL_SECS);
+    assert_eq!(
+        automatic_update_delay_from_value(None, AUTOMATIC_UPDATE_POLL_SECS),
+        fallback
+    );
+    assert_eq!(
+        automatic_update_delay_from_value(Some(OsStr::new("")), AUTOMATIC_UPDATE_POLL_SECS),
+        fallback
+    );
+    assert_eq!(
+        automatic_update_delay_from_value(Some(OsStr::new("0")), AUTOMATIC_UPDATE_POLL_SECS),
+        fallback
+    );
+    assert_eq!(
+        automatic_update_delay_from_value(Some(OsStr::new("invalid")), AUTOMATIC_UPDATE_POLL_SECS),
+        fallback
+    );
+    assert_eq!(
+        automatic_update_delay_from_value(Some(OsStr::new("2")), AUTOMATIC_UPDATE_POLL_SECS),
+        std::time::Duration::from_secs(2)
+    );
+}
+
+#[test]
+fn automatic_update_loop_runs_only_for_the_unbounded_installed_service() {
+    assert!(should_start_automatic_update_loop(None));
+    assert!(!should_start_automatic_update_loop(Some(1234)));
+}
+
+#[tokio::test]
+async fn automatic_update_disabled_setting_skips_command_execution() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("home");
+    std::fs::create_dir_all(&capsem_home).unwrap();
+    std::fs::write(
+        capsem_home.join("settings.toml"),
+        "[settings.\"app.auto_update\"]\nvalue = false\nmodified = \"test\"\n",
+    )
+    .unwrap();
+    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(&capsem_home);
+    let state = make_test_state();
+
+    let outcome = run_automatic_update_once(&state).await;
+
+    assert_eq!(outcome, AutomaticUpdateOutcome::Disabled);
+}
+
+#[tokio::test]
+async fn automatic_update_skips_without_queueing_when_explicit_update_is_active() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(dir.path());
+    let state = make_test_state();
+    let explicit_guard = state.update_lock.lock().await;
+
+    let outcome = run_automatic_update_once(&state).await;
+
+    drop(explicit_guard);
+    assert_eq!(outcome, AutomaticUpdateOutcome::Busy);
+}
+
+#[tokio::test]
+async fn automatic_update_runs_one_complete_apply_and_reloads_runtime() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let capsem_home = dir.path().join("home");
+    let assets_dir = capsem_home.join("assets");
+    let cli = dir.path().join("capsem");
+    let log = dir.path().join("automatic.log");
+    write_update_runtime_manifest(&assets_dir, "0.0.0", "profiles-2");
+    std::fs::write(
+        &cli,
+        format!("#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\n", log.display()),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&cli).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&cli, permissions).unwrap();
+    let previous_cli = std::env::var_os("CAPSEM_CLI");
+    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(&capsem_home);
+    std::env::set_var("CAPSEM_CLI", &cli);
+    let state = make_asset_state(assets_dir);
+
+    let outcome = run_automatic_update_once(&state).await;
+
+    match previous_cli {
+        Some(value) => std::env::set_var("CAPSEM_CLI", value),
+        None => std::env::remove_var("CAPSEM_CLI"),
+    }
+    assert_eq!(
+        outcome,
+        AutomaticUpdateOutcome::Succeeded(UpdateRuntimeDisposition::Reloaded)
+    );
+    assert_eq!(capsem_core::telemetry::read_log_tail(&log, usize::MAX).unwrap(), "update --yes\n");
+}
+
+#[tokio::test]
+async fn automatic_update_reports_command_failure_for_backoff() {
+    let _env_lock = SETTINGS_ENV_LOCK.lock().await;
+    let dir = tempfile::tempdir().unwrap();
+    let cli = dir.path().join("capsem");
+    std::fs::write(
+        &cli,
+        "#!/bin/sh\nprintf 'network unavailable\\n' >&2\nexit 7\n",
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&cli).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&cli, permissions).unwrap();
+    let previous_cli = std::env::var_os("CAPSEM_CLI");
+    let _capsem_paths = capsem_core::paths::CapsemPathsGuard::redirect(dir.path());
+    std::env::set_var("CAPSEM_CLI", &cli);
+    let state = make_test_state();
+
+    let outcome = run_automatic_update_once(&state).await;
+
+    match previous_cli {
+        Some(value) => std::env::set_var("CAPSEM_CLI", value),
+        None => std::env::remove_var("CAPSEM_CLI"),
+    }
+    let AutomaticUpdateOutcome::Failed(error) = outcome else {
+        panic!("expected automatic update failure");
+    };
+    assert!(error.contains("exit Some(7)"), "{error}");
+    assert!(error.contains("network unavailable"), "{error}");
 }
 
 async fn decode_response_json<T: serde::de::DeserializeOwned>(
@@ -1067,7 +1437,7 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         assets_dir,
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        manifest,
+        manifest: RwLock::new(manifest),
         current_version: "0.0.0".into(),
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -1095,6 +1465,8 @@ fn make_asset_state(assets_dir: PathBuf) -> Arc<ServiceState> {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        update_lock: tokio::sync::Mutex::new(()),
+        update_restart: tokio::sync::Notify::new(),
         _test_tempdir: None,
     })
 }
@@ -1246,16 +1618,45 @@ fn test_persistent_entry(name: &str, session_dir: PathBuf) -> PersistentVmEntry 
     }
 }
 
+/// Copy a checked-in profile tree into a test's scratch directory.
+///
+/// Two details that are not incidental.
+///
+/// `std::fs::copy` gives the destination the *source's* permissions, and then
+/// fails with `EACCES` if it is asked to write a destination that already
+/// exists without write permission. Copying a tree twice into one place is
+/// therefore self-blocking, so an existing target is removed first.
+///
+/// And every failure names the file. This panicked as a bare
+/// `Os { code: 13, kind: PermissionDenied }` with no path, which under
+/// parallel `nextest` inside the Linux container produced an intermittent
+/// failure nobody could place -- the message identified neither which file
+/// nor which side of the copy.
 fn copy_dir_all(src: &std::path::Path, dst: &std::path::Path) {
-    std::fs::create_dir_all(dst).unwrap();
-    for entry in std::fs::read_dir(src).unwrap() {
-        let entry = entry.unwrap();
-        let ty = entry.file_type().unwrap();
+    std::fs::create_dir_all(dst)
+        .unwrap_or_else(|e| panic!("create {}: {e}", dst.display()));
+    let entries = std::fs::read_dir(src)
+        .unwrap_or_else(|e| panic!("read dir {}: {e}", src.display()));
+    for entry in entries {
+        let entry = entry.unwrap_or_else(|e| panic!("read entry under {}: {e}", src.display()));
+        let ty = entry
+            .file_type()
+            .unwrap_or_else(|e| panic!("stat {}: {e}", entry.path().display()));
         let target = dst.join(entry.file_name());
         if ty.is_dir() {
             copy_dir_all(&entry.path(), &target);
         } else {
-            std::fs::copy(entry.path(), target).unwrap();
+            if target.exists() {
+                std::fs::remove_file(&target)
+                    .unwrap_or_else(|e| panic!("replace {}: {e}", target.display()));
+            }
+            std::fs::copy(entry.path(), &target).unwrap_or_else(|e| {
+                panic!(
+                    "copy {} -> {}: {e}",
+                    entry.path().display(),
+                    target.display()
+                )
+            });
         }
     }
 }
@@ -3250,7 +3651,11 @@ fn checked_in_profile_catalog_status_reports_code_and_co_work() {
         .expect("repo root");
     let profiles_dir = repo_root.join("config/profiles");
     let catalog = ProfileCatalog::load_from_dir(&profiles_dir).expect("checked-in catalog loads");
-    let state = make_asset_state(repo_root.join("target/test-empty-assets"));
+    // The canonical Mac gate also runs this test inside a Linux container with
+    // the checkout mounted read-only. Test state must therefore live in an
+    // isolated writable directory instead of the repository's target tree.
+    let dir = tempfile::tempdir().expect("writable test root");
+    let state = make_asset_state(dir.path().join("assets"));
 
     let status = profile_catalog_status_value(&state, &catalog);
     let profile_ids = status["profiles"]
@@ -6867,7 +7272,7 @@ fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
         assets_dir: PathBuf::from("/nonexistent/assets"),
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        manifest: None,
+        manifest: RwLock::new(None),
         current_version: "0.0.0".into(),
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -6895,6 +7300,8 @@ fn make_state_in(test_root: PathBuf) -> Arc<ServiceState> {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        update_lock: tokio::sync::Mutex::new(()),
+        update_restart: tokio::sync::Notify::new(),
         _test_tempdir: None,
     })
 }
@@ -6927,9 +7334,9 @@ fn preserve_renames_session_dir_and_keeps_logs() {
         })
         .expect("a vm-abc-failed-* dir must exist");
     let preserved = failed.path().join("process.log");
-    assert_eq!(std::fs::read(&preserved).unwrap(), b"boot failed: ...");
+    assert_eq!(capsem_core::telemetry::read_log_tail(&preserved, usize::MAX).unwrap().into_bytes(), b"boot failed: ...");
     let preserved_serial = failed.path().join("serial.log");
-    assert_eq!(std::fs::read(&preserved_serial).unwrap(), b"kernel panic");
+    assert_eq!(capsem_core::telemetry::read_log_tail(&preserved_serial, usize::MAX).unwrap().into_bytes(), b"kernel panic");
 }
 
 #[test]
@@ -7019,6 +7426,204 @@ fn cull_ignores_non_failed_dirs() {
     assert!(
         sessions.join("vm-alive").exists(),
         "active VM dir must not be culled"
+    );
+}
+
+#[tokio::test]
+async fn delete_route_destroys_retained_state_before_success() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().to_path_buf());
+    let id = new_persistent_vm_id();
+    let name = "delete-contract";
+    let session_dir = state.run_dir.join("persistent").join(&id);
+    std::fs::create_dir_all(&session_dir).unwrap();
+    std::fs::write(session_dir.join("session.db"), b"retained state").unwrap();
+    std::fs::write(session_dir.join("process.log"), b"retained logs").unwrap();
+
+    let mut entry = test_persistent_entry(name, session_dir.clone());
+    entry.id.clone_from(&id);
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert(name.into(), entry);
+
+    let app = build_service_router(Arc::clone(&state));
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::DELETE,
+        &format!("/vms/{id}/delete"),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["success"], true);
+    assert!(
+        !session_dir.exists(),
+        "DELETE must not respond before the retained session directory is gone"
+    );
+    let failed_prefix = format!("{id}-failed-");
+    let failed_dirs: Vec<_> = std::fs::read_dir(state.run_dir.join("sessions"))
+        .unwrap()
+        .flatten()
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&failed_prefix)
+        })
+        .collect();
+    assert!(
+        failed_dirs.is_empty(),
+        "clean DELETE must destroy state, not relabel it as failed: {failed_dirs:?}"
+    );
+    assert!(
+        !state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .data
+            .vms
+            .contains_key(name),
+        "DELETE must unregister the retained session"
+    );
+}
+
+#[tokio::test]
+async fn delete_route_accepts_canonical_alias_to_trusted_run_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().join("service"));
+    let id = new_persistent_vm_id();
+    let name = "canonical-alias-delete-contract";
+    let trusted_session_dir = state.run_dir.join("persistent").join(&id);
+    std::fs::create_dir_all(&trusted_session_dir).unwrap();
+    std::fs::write(trusted_session_dir.join("owner-data"), b"delete me").unwrap();
+
+    let run_dir_alias = dir.path().join("run-dir-alias");
+    std::os::unix::fs::symlink(&state.run_dir, &run_dir_alias).unwrap();
+    let aliased_session_dir = run_dir_alias.join("persistent").join(&id);
+    let mut entry = test_persistent_entry(name, aliased_session_dir);
+    entry.id.clone_from(&id);
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert(name.into(), entry);
+
+    let app = build_service_router(Arc::clone(&state));
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::DELETE,
+        &format!("/vms/{id}/delete"),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["success"], true);
+    assert!(
+        !trusted_session_dir.exists(),
+        "a canonical alias to the trusted run directory must delete the owned session"
+    );
+}
+
+#[tokio::test]
+async fn delete_route_rejects_registry_path_outside_run_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().join("service"));
+    let id = new_persistent_vm_id();
+    let name = "unsafe-delete-contract";
+    let outside_dir = dir.path().join("must-not-delete");
+    std::fs::create_dir_all(&outside_dir).unwrap();
+    std::fs::write(outside_dir.join("owner-data"), b"preserve me").unwrap();
+
+    let mut entry = test_persistent_entry(name, outside_dir.clone());
+    entry.id.clone_from(&id);
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert(name.into(), entry);
+
+    let app = build_service_router(Arc::clone(&state));
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::DELETE,
+        &format!("/vms/{id}/delete"),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(
+        outside_dir.join("owner-data").exists(),
+        "a registry path outside the service run directory must never be deleted"
+    );
+    assert!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .data
+            .vms
+            .contains_key(name),
+        "an unsafe path rejection must leave the registry entry intact"
+    );
+}
+
+#[tokio::test]
+async fn delete_route_rejects_symlinked_session_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = make_state_in(dir.path().join("service"));
+    let id = new_persistent_vm_id();
+    let name = "symlink-delete-contract";
+    let outside_root = dir.path().join("outside-persistent");
+    let outside_session = outside_root.join(&id);
+    std::fs::create_dir_all(&outside_session).unwrap();
+    std::fs::write(outside_session.join("owner-data"), b"preserve me").unwrap();
+    std::os::unix::fs::symlink(&outside_root, state.run_dir.join("persistent")).unwrap();
+
+    let session_dir = state.run_dir.join("persistent").join(&id);
+    let mut entry = test_persistent_entry(name, session_dir);
+    entry.id.clone_from(&id);
+    state
+        .persistent_registry
+        .lock()
+        .unwrap()
+        .data
+        .vms
+        .insert(name.into(), entry);
+
+    let app = build_service_router(Arc::clone(&state));
+    let (status, body) = route_request(
+        app,
+        axum::http::Method::DELETE,
+        &format!("/vms/{id}/delete"),
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(
+        outside_session.join("owner-data").exists(),
+        "a symlinked service root must never redirect recursive deletion"
+    );
+    assert!(
+        state
+            .persistent_registry
+            .lock()
+            .unwrap()
+            .data
+            .vms
+            .contains_key(name),
+        "a symlink-root rejection must leave the registry entry intact"
     );
 }
 
@@ -7416,7 +8021,7 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         assets_dir: dir.path().join("assets"),
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        manifest: None,
+        manifest: RwLock::new(None),
         current_version: "0.0.0".into(),
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -7444,6 +8049,8 @@ fn make_test_state_with_tempdir() -> (Arc<ServiceState>, tempfile::TempDir) {
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        update_lock: tokio::sync::Mutex::new(()),
+        update_restart: tokio::sync::Notify::new(),
         _test_tempdir: None,
     });
     (state, dir)
@@ -10055,7 +10662,8 @@ async fn stats_detail_ledger_exposes_orphan_tool_parent_inconsistency() {
 // -----------------------------------------------------------------------
 
 struct SettingsEnvGuard {
-    previous_home_override: Option<std::ffi::OsString>,
+    // Holds the path redirect for the guard's lifetime; restores on drop.
+    _capsem_paths: capsem_core::paths::CapsemPathsGuard,
     previous_corp: Option<std::ffi::OsString>,
 }
 
@@ -10128,12 +10736,6 @@ impl Drop for TestBuiltinMcpBinaryGuard {
 
 impl Drop for SettingsEnvGuard {
     fn drop(&mut self) {
-        if let Some(previous_home_override) = self.previous_home_override.take() {
-            std::env::set_var("CAPSEM_HOME", previous_home_override);
-        } else {
-            std::env::remove_var("CAPSEM_HOME");
-        }
-
         if let Some(previous_corp) = self.previous_corp.take() {
             std::env::set_var("CAPSEM_CORP_CONFIG", previous_corp);
         } else {
@@ -10157,10 +10759,9 @@ fn install_empty_settings_env(dir: &tempfile::TempDir) -> (SettingsEnvGuard, Pat
     .unwrap();
 
     let guard = SettingsEnvGuard {
-        previous_home_override: std::env::var_os("CAPSEM_HOME"),
+        _capsem_paths: capsem_core::paths::CapsemPathsGuard::redirect(dir.path()),
         previous_corp: std::env::var_os("CAPSEM_CORP_CONFIG"),
     };
-    std::env::set_var("CAPSEM_HOME", dir.path());
     std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
     (guard, settings_path, corp_path)
 }
@@ -10246,7 +10847,7 @@ fn make_test_state_with_tempdir_at(
         assets_dir: run_dir.join("assets"),
         run_dir: run_dir.clone(),
         job_counter: AtomicU64::new(1),
-        manifest: None,
+        manifest: RwLock::new(None),
         current_version: "0.0.0".into(),
         asset_reconcile: Mutex::new(AssetReconcileState::default()),
         asset_reconcile_inflight: AtomicBool::new(false),
@@ -10274,6 +10875,8 @@ fn make_test_state_with_tempdir_at(
         evaluate_last_response_cache: Mutex::new(None),
         save_restore_lock: tokio::sync::RwLock::new(()),
         shutdown_lock: tokio::sync::Mutex::new(()),
+        update_lock: tokio::sync::Mutex::new(()),
+        update_restart: tokio::sync::Notify::new(),
         _test_tempdir: None,
     });
     (state, dir)
@@ -11152,5 +11755,131 @@ fn apple_vz_host_lock_is_required_only_on_macos() {
         super::requires_vz_host_lock(),
         cfg!(target_os = "macos"),
         "the host-wide save/restore lock protects Apple VZ, not independent KVM VMs"
+    );
+}
+
+// ── Spawn environment leak boundary ────────────────────────────────
+//
+// Both provision and resume call `child_cmd.env_clear()` and then re-add only
+// PROCESS_ENV_ALLOWLIST. That allowlist is the entire boundary between the
+// service's own environment -- which on a developer or CI machine routinely
+// holds ANTHROPIC_API_KEY, AWS_SECRET_ACCESS_KEY, GITHUB_TOKEN -- and the
+// per-VM process that talks to the guest. Nothing else enforces it, so these
+// tests fail the build the moment a secret-shaped name is added.
+
+/// Substrings that mark a variable as likely secret-bearing.
+const SECRET_MARKERS: &[&str] = &[
+    "KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH", "SESSION", "COOKIE",
+];
+
+/// The one allowlisted name that trips the marker scan without carrying a
+/// secret: it is a filesystem path to the broker's store, deliberately
+/// redirected by the hermetic integration and Ironbank rails.
+const SECRET_MARKER_EXCEPTIONS: &[&str] = &["CAPSEM_CREDENTIAL_STORE_PATH"];
+
+#[test]
+fn spawn_env_allowlist_carries_no_secret_bearing_names() {
+    let offenders: Vec<&str> = PROCESS_ENV_ALLOWLIST
+        .iter()
+        .copied()
+        .filter(|key| !SECRET_MARKER_EXCEPTIONS.contains(key))
+        .filter(|key| {
+            let upper = key.to_ascii_uppercase();
+            SECRET_MARKERS.iter().any(|marker| upper.contains(marker))
+        })
+        .collect();
+
+    assert!(
+        offenders.is_empty(),
+        "these keys would forward host secrets into the per-VM process: {offenders:?}. \
+         If one is genuinely not a secret, add it to SECRET_MARKER_EXCEPTIONS with a reason."
+    );
+}
+
+#[test]
+fn spawn_env_allowlist_forwards_only_capsem_vars_and_a_minimal_os_set() {
+    // Anything outside this set is third-party environment the guest-facing
+    // process has no reason to inherit.
+    const OS_BASELINE: &[&str] = &["HOME", "PATH", "USER", "TMPDIR"];
+
+    let unexpected: Vec<&str> = PROCESS_ENV_ALLOWLIST
+        .iter()
+        .copied()
+        .filter(|key| !key.starts_with("CAPSEM_") && !OS_BASELINE.contains(key))
+        .collect();
+
+    assert!(
+        unexpected.is_empty(),
+        "only CAPSEM_-prefixed vars and the minimal OS baseline may cross into \
+         the per-VM process: {unexpected:?}"
+    );
+}
+
+#[test]
+fn spawn_env_allowlist_is_deduplicated() {
+    let unique: std::collections::HashSet<&str> = PROCESS_ENV_ALLOWLIST.iter().copied().collect();
+
+    assert_eq!(
+        unique.len(),
+        PROCESS_ENV_ALLOWLIST.len(),
+        "duplicate entries hide review churn in the leak boundary"
+    );
+}
+
+#[test]
+fn spawn_env_allowlist_keeps_the_vars_the_child_actually_needs() {
+    for required in ["HOME", "PATH", "CAPSEM_HOME"] {
+        assert!(
+            PROCESS_ENV_ALLOWLIST.contains(&required),
+            "{required} is required for the per-VM process to start"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Service pidfile ownership
+// ---------------------------------------------------------------------------
+//
+// The pidfile is the only handle a harness has on a detached service: the
+// asset gate, `_ensure-service`, and every abort path reap by
+// `$run_dir/service.pid`. A guard that removes that file when it no longer
+// records us erases the pid of whichever service is now serving, and every
+// later `stop_gate_pidfile` reads as a silent success while the real service
+// runs on under launchd.
+
+#[test]
+fn service_pidfile_removes_its_own_record_on_drop() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("service.pid");
+
+    let guard = ServicePidfile::claim(path.clone());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap().trim(),
+        std::process::id().to_string(),
+        "claim must record our own pid for the reaper to find"
+    );
+
+    drop(guard);
+    assert!(
+        !path.exists(),
+        "a dead service must not leave a stale pid for the reaper to kill"
+    );
+}
+
+#[test]
+fn service_pidfile_leaves_a_successors_record_intact() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("service.pid");
+
+    let guard = ServicePidfile::claim(path.clone());
+    // A successor service claims the same run directory while we shut down.
+    std::fs::write(&path, "424242").unwrap();
+    drop(guard);
+
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap().trim(),
+        "424242",
+        "erasing a successor's pid strands it: every later reap finds no \
+         pidfile and reports success while the service keeps running"
     );
 }

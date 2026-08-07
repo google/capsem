@@ -8,9 +8,9 @@ keep the OpenAI release surface executable by name.
 from __future__ import annotations
 
 import pytest
-
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_scripts import openai_responses_api_script
+
 from tests.ironbank.test_model_client_ledger_contract import (
     ModelClientEnv,
     _assert_openai_embeddings_and_image_ledger,

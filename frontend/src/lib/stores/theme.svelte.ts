@@ -1,6 +1,6 @@
 // Global theme store. Three independent axes:
-//   1. UI mode (light/dark) -- controls Preline/Tailwind shell
-//   2. Preline theme (ocean, moon, ...) -- controls chrome/shell colors
+//   1. UI mode (light/dark) -- controls the Tailwind shell
+//   2. Accent theme (ocean, moon, ...) -- controls chrome/shell colors
 //   3. Terminal theme family (dracula, nord, ...) -- controls xterm.js in all iframes
 //
 // All persist in localStorage (parent frame only -- iframes cannot access it).
@@ -11,7 +11,8 @@ import { FAMILY_NAMES, DEFAULT_FAMILY, resolveThemeKey } from '../terminal/theme
 
 const UI_MODE_KEY = 'capsem-ui-mode';
 const TERMINAL_THEME_KEY = 'capsem-terminal-theme';
-const PRELINE_THEME_KEY = 'capsem-preline-theme';
+const ACCENT_THEME_KEY = 'capsem-accent-theme';
+const LEGACY_ACCENT_THEME_KEY = 'capsem-preline-theme';
 const FONT_SIZE_KEY = 'capsem-font-size';
 const FONT_FAMILY_KEY = 'capsem-font-family';
 const UI_FONT_SIZE_KEY = 'capsem-ui-font-size';
@@ -30,9 +31,9 @@ function resolveMode(pref: UiModePref): UiMode {
   return pref === 'auto' ? systemMode() : pref;
 }
 
-// -- Preline themes (value = data-theme attribute, '' = default/no attribute) --
+// -- Capsem accent themes (value = data-theme attribute, '' = default/no attribute) --
 
-export const PRELINE_THEMES = [
+export const ACCENT_THEMES = [
   { value: '',                label: 'Default',    color: '#2563eb' },
   { value: 'theme-ocean',    label: 'Ocean',      color: '#0891b2' },
   { value: 'theme-moon',     label: 'Moon',       color: '#1f2937' },
@@ -44,7 +45,7 @@ export const PRELINE_THEMES = [
   { value: 'theme-olive',    label: 'Olive',      color: '#4d7c0f' },
 ] as const;
 
-const PRELINE_THEME_VALUES = PRELINE_THEMES.map(t => t.value) as readonly string[];
+const ACCENT_THEME_VALUES = ACCENT_THEMES.map(t => t.value) as readonly string[];
 
 // -- localStorage load/save helpers --
 
@@ -68,10 +69,12 @@ function loadTerminalTheme(): string {
   return DEFAULT_FAMILY;
 }
 
-function loadPrelineTheme(): string {
+function loadAccentTheme(): string {
   try {
-    const stored = localStorage.getItem(PRELINE_THEME_KEY);
-    if (stored && PRELINE_THEME_VALUES.includes(stored)) return stored;
+    const stored =
+      localStorage.getItem(ACCENT_THEME_KEY) ??
+      localStorage.getItem(LEGACY_ACCENT_THEME_KEY);
+    if (stored && ACCENT_THEME_VALUES.includes(stored)) return stored;
   } catch {
     // localStorage unavailable
   }
@@ -93,8 +96,11 @@ function saveTerminalTheme(name: string): void {
   try { localStorage.setItem(TERMINAL_THEME_KEY, name); } catch { /* ignore */ }
 }
 
-function savePrelineTheme(theme: string): void {
-  try { localStorage.setItem(PRELINE_THEME_KEY, theme); } catch { /* ignore */ }
+function saveAccentTheme(theme: string): void {
+  try {
+    localStorage.setItem(ACCENT_THEME_KEY, theme);
+    localStorage.removeItem(LEGACY_ACCENT_THEME_KEY);
+  } catch { /* ignore */ }
   if (typeof document !== 'undefined') {
     if (theme) {
       document.documentElement.dataset.theme = theme;
@@ -182,7 +188,7 @@ class ThemeStore {
   // Effective mode: tracks system preference when modePref is 'auto'
   #systemMode = $state<UiMode>(systemMode());
   terminalTheme = $state<string>(loadTerminalTheme());
-  prelineTheme = $state<string>(loadPrelineTheme());
+  accentTheme = $state<string>(loadAccentTheme());
   fontSize = $state<number>(loadFontSize());
   fontFamily = $state<string>(loadFontFamily());
   uiFontSize = $state<number>(loadUiFontSize());
@@ -191,8 +197,8 @@ class ThemeStore {
     if (typeof document !== 'undefined') {
       // Apply initial state to DOM
       applyMode(this.mode);
-      if (this.prelineTheme) {
-        document.documentElement.dataset.theme = this.prelineTheme;
+      if (this.accentTheme) {
+        document.documentElement.dataset.theme = this.accentTheme;
       }
       if (this.uiFontSize !== DEFAULT_UI_FONT_SIZE) {
         document.documentElement.style.fontSize = this.uiFontSize + 'px';
@@ -235,10 +241,10 @@ class ThemeStore {
     }
   }
 
-  setPrelineTheme(theme: string): void {
-    if (theme === '' || PRELINE_THEME_VALUES.includes(theme)) {
-      this.prelineTheme = theme;
-      savePrelineTheme(theme);
+  setAccentTheme(theme: string): void {
+    if (theme === '' || ACCENT_THEME_VALUES.includes(theme)) {
+      this.accentTheme = theme;
+      saveAccentTheme(theme);
     }
   }
 

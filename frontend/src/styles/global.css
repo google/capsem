@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./capsem-theme.css";
 
 /* -- Bundled fonts (local, zero external loads) -- */
 
@@ -85,11 +86,6 @@
   font-weight: 700;
   font-display: swap;
 }
-
-/* Preline UI -- base theme only, accents via our own overrides */
-@source "../../node_modules/preline";
-@import "preline/variants.css";
-@import "preline/css/themes/theme.css";
 
 /* Pointer cursor on interactive elements */
 @layer base {

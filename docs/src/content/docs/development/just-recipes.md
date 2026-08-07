@@ -26,15 +26,12 @@ quick checks. After frontend changes intended for the desktop app, use
 
 | Recipe | What it does | Boots VM? |
 |--------|-------------|-----------|
-| `just smoke` | Fast end-to-end gate: audit, doctor, injection, service/CLI/MCP/gateway tests | Yes |
-| `just test` | Full gate: unit, coverage, cross-compile, frontend, Python, injection, integration, benchmarks, install E2E | Yes |
-| `just test-gateway` | Gateway unit and mock-UDS tests | No |
-| `just test-gateway-e2e` | Gateway E2E tests with real service and VMs | Yes |
-| `just test-install` | Installer E2E plus local release glow-up in Docker/systemd | No host VM |
-| `just bench` | In-VM and host lifecycle benchmarks | Yes |
+| `just smoke` | Focused developer feedback: audit, doctor, injection, service/CLI/MCP/gateway tests | Yes |
+| `just test` | Full gate: unit/coverage, VM suites, cross-compile, both Linux packages, Docker install, and a clean-Tart exact `.pkg` install/glow-up on macOS | Yes |
 
-`just test` is the source of truth. Targeted commands are for iteration, not
-for declaring a sprint done.
+`just smoke` is for developer feedback only. `just test` is the release source
+of truth, and both public release commands execute it before any release work.
+Targeted commands are for diagnosis and iteration, not release readiness.
 
 ## Policy Verification
 
@@ -48,7 +45,7 @@ and telemetry. Use this sequence for focused iteration:
 | Frontend policy UI/model | `pnpm -C frontend test -- settings-model settings-export api settings-store` |
 | Frontend type/check gate | `pnpm -C frontend run check` |
 | Docs gate | `cd docs && pnpm run build` |
-| VM smoke | `just smoke` |
+| Focused VM feedback | `just smoke` |
 | Session integrity | `just inspect-session [id]` |
 | Session SQL proof | `just query-session "SQL" [id]` |
 | Final gate | `just test` |
@@ -121,19 +118,27 @@ the current-build runtime profile under `target/config/` from checked-in
 
 | Recipe | What it does |
 |--------|-------------|
-| `just audit` | Check for known vulnerabilities in Rust + npm deps |
 | `just update-deps` | `cargo update` + `pnpm update` to latest compatible versions |
 | `just update-prices` | Refresh model pricing JSON from upstream |
 | `just doctor` | Check tools, colored output, structured recap (exits 1 if failures) |
 | `just doctor fix` | Doctor + auto-fix all fixable issues in dependency order |
 
+Rust and JavaScript vulnerability audits are mandatory parts of `just smoke`
+and `just test`; there is no separate public audit recipe that can drift from
+the tested composition.
+
 ## Release
 
 | Recipe | What it does |
 |--------|-------------|
-| `just cut-release` | Run tests, bump version, stamp changelog, commit, and create a local tag |
-| `just release [tag]` | Wait for CI to build + publish a pushed tag |
-| `just install` | Build release package and install locally |
+| `just release-binaries <channel>` | Build packages only, pull every selected-channel profile by digest, run the complete pairing proof, and publish binary-owned manifest fields |
+| `just release-profile <channel> <profile>` | Call `capsem-admin release`, build exactly one channel/profile, pull the channel package by digest, and publish only that profile |
+
+Both commands share one `capsem-release-<channel>` lock from source-manifest
+read through deployment. If a profile needs newer code, release the profile
+first as staged immutable assets, then release the binary; the second lane
+reuses the same profile bytes and activates the completed pairing after the
+full functional and glow-up proof.
 
 ## Cleanup
 
@@ -156,7 +161,9 @@ smoke            -> _install-tools + _pnpm-install + _check-assets + _pack-initr
 test             -> _install-tools + _clean-stale + _pnpm-install + _generate-settings + _check-assets + _pack-initrd
 build-assets     -> _install-tools + _clean-stale + doctor + capsem-admin image build
 test-install     -> Docker package install + generated local stable/nightly glow-up
-cut-release      -> test + _stamp-version
+scripts/macos_release_glowup.py -> production .pkg + clean Tart install + physical-host exact-payload VZ boot
+release-profile  -> capsem-admin release + locked one-profile workflow
+release-binaries -> adversarial binary script + locked package workflow
 ```
 
 `_`-prefixed recipes are internal (hidden from `just --list`). Key internal recipes:
@@ -170,3 +177,26 @@ cut-release      -> test + _stamp-version
 | `_check-assets` | Verifies VM assets exist, tells you to run `build-assets` if not |
 | `_generate-settings` | Generates settings schema, UI metadata, and frontend mock data |
 | `_ensure-service` | Builds/signs host binaries and starts or reuses the service |
+| `_test-fast` | YAML/source syntax, source contracts, Clippy, Python/JavaScript checks, web surfaces, and all dependency audits |
+| `_test-static` | Rust/Python coverage, install-harness preflight, and cross-compilation |
+| `_test-artifacts` | Packages, inventories, SBOM/OBOM, images, evidence, digests, architecture coverage, and boot |
+| `_test-functional` | VM suites, Winterfell, MCP lifecycle, IronBank, injection, integration, benchmarks, and full doctor |
+| `_test-glowup` | Native install and manifest-driven binary/profile/channel update transitions |
+| `_test-release-contracts` | Lane boundaries, shared serialization, deploy containment, and corporate authoring |
+
+## Where the logic lives
+
+The justfile dispatches; it does not decide. Every recipe is a call into
+`capsem-gate` or a single command, and none carries a shell body -- a contract
+test holds that. The build, test and release logic lives in
+`src/capsem/gate/`, where it is unit tested.
+
+That means a recipe is rarely the thing to read. To see what one does:
+
+```bash
+uv run capsem-gate <command> --dry-run
+```
+
+which prints every step in execution order with the exact argv it would invoke,
+and runs none of it. `--graph` prints the same thing as a diagram, and
+`--timing` reports where a finished run's time went.

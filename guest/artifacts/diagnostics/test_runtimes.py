@@ -5,7 +5,6 @@ import textwrap
 import zipfile
 
 import pytest
-
 from conftest import run
 
 
@@ -188,15 +187,50 @@ def test_apt_install_works(output_dir):
     assert "capsem-apt-ok" in result.stdout
 
 
+def _bounded_remote_apt(arguments, *, run_command=run):
+    """Run a real remote apt operation with two independently bounded attempts."""
+    failures = []
+    for force_ipv4 in (False, True):
+        ipv4_option = "-o Acquire::ForceIPv4=true " if force_ipv4 else ""
+        command = (
+            "rm -rf /var/lib/apt/lists/partial/* && "
+            "mkdir -p /var/lib/apt/lists/partial && "
+            "DEBIAN_FRONTEND=noninteractive "
+            "timeout --signal=TERM --kill-after=5s 60s "
+            "apt-get "
+            "-o Acquire::Retries=2 "
+            "-o Acquire::http::Timeout=15 "
+            "-o Acquire::https::Timeout=15 "
+            "-o Acquire::Check-Valid-Until=false "
+            "-o Acquire::Check-Date=false "
+            f"{ipv4_option}{arguments} 2>&1"
+        )
+        result = run_command(command, timeout=70)
+        if result.returncode == 0:
+            return result
+        attempt = "IPv4 fallback" if force_ipv4 else "default network"
+        failures.append(f"{attempt} (exit {result.returncode}): {result.stdout}")
+
+    pytest.fail(
+        "remote apt failed after two bounded attempts: " + " | ".join(failures),
+        pytrace=False,
+    )
+
+
+def _remote_apt_update(*, run_command=run):
+    return _bounded_remote_apt("update", run_command=run_command)
+
+
+def _remote_apt_install(package, *, run_command=run):
+    return _bounded_remote_apt(
+        f"install -y -qq --no-install-recommends {package}",
+        run_command=run_command,
+    )
+
+
 def test_remote_apt_https_install_works():
     """Runtime apt must fetch over HTTPS, install, and run the package."""
-    update = run(
-        "apt-get "
-        "-o Acquire::Check-Valid-Until=false "
-        "-o Acquire::Check-Date=false "
-        "update 2>&1",
-        timeout=180,
-    )
+    update = _remote_apt_update()
     assert update.returncode == 0, f"remote apt-get update failed:\n{update.stdout}"
     assert "https://deb.debian.org" in update.stdout, (
         f"runtime apt sources did not use HTTPS debian.org:\n{update.stdout}"
@@ -204,11 +238,7 @@ def test_remote_apt_https_install_works():
     assert "Certificate verification failed" not in update.stdout
     assert "No system certificates available" not in update.stdout
 
-    install = run(
-        "DEBIAN_FRONTEND=noninteractive "
-        "apt-get install -y -qq --no-install-recommends hello 2>&1",
-        timeout=180,
-    )
+    install = _remote_apt_install("hello")
     assert install.returncode == 0, f"remote apt install failed:\n{install.stdout}"
     hello = run("hello", timeout=15)
     assert hello.returncode == 0, f"remote apt package binary failed:\n{hello.stdout}\n{hello.stderr}"

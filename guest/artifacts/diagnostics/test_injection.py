@@ -12,7 +12,6 @@ import os
 import stat
 
 import pytest
-
 from conftest import run
 
 MANIFEST_PATH = "/tmp/capsem-injection-manifest.json"
@@ -111,7 +110,7 @@ class TestGitCredentials:
         cred_files = [f for f in m["files"] if f["path"] == "/root/.git-credentials"]
         if not cred_files:
             return
-        content = open("/root/.git-credentials").read()
+        content = open("/root/.git-credentials").read()  # noqa: SIM115 -- handed to Popen; must outlive this statement
         for line in content.strip().splitlines():
             assert line.startswith("https://"), f"credential line must start with https://: {line}"
             assert "@" in line, f"credential line must contain @: {line}"
@@ -139,7 +138,7 @@ class TestGitCredentials:
         if not cred_files:
             return
         assert os.path.isfile("/root/.gitconfig"), ".gitconfig must exist alongside .git-credentials"
-        content = open("/root/.gitconfig").read()
+        content = open("/root/.gitconfig").read()  # noqa: SIM115 -- handed to Popen; must outlive this statement
         assert "helper = store" in content, ".gitconfig must set credential.helper = store"
 
     def test_git_credential_fill(self):
@@ -148,7 +147,7 @@ class TestGitCredentials:
         cred_files = [f for f in m["files"] if f["path"] == "/root/.git-credentials"]
         if not cred_files:
             return
-        content = open("/root/.git-credentials").read()
+        content = open("/root/.git-credentials").read()  # noqa: SIM115 -- handed to Popen; must outlive this statement
         for line in content.strip().splitlines():
             # Parse https://oauth2:TOKEN@HOST
             parts = line.split("@", 1)

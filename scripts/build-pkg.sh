@@ -197,7 +197,7 @@ cp -R "$APP_PATH" "$WORK_DIR/payload/Applications/Capsem.app"
 # Companion binaries
 SHARE_DIR="$WORK_DIR/payload/usr/local/share/capsem"
 mkdir -p "$SHARE_DIR/bin"
-for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
     src="$BIN_DIR/$bin"
     if [ -f "$src" ]; then
         reject_retired_credential_store_markers "$src"
@@ -236,6 +236,13 @@ if [ ! -d "$CONFIG_ROOT/profiles" ]; then
     echo "Run: just _materialize-config" >&2
     exit 1
 fi
+for profile_path in "$CONFIG_ROOT"/profiles/*/profile.toml; do
+    [ -f "$profile_path" ] || {
+        echo "ERROR: no materialized profiles found under $CONFIG_ROOT/profiles" >&2
+        exit 1
+    }
+    "$BIN_DIR/capsem-admin" profile validate "$profile_path" --config-root "$CONFIG_ROOT" --materialized
+done
 mkdir -p "$SHARE_DIR/profiles"
 copy_tree_clean "$CONFIG_ROOT/profiles" "$SHARE_DIR/profiles"
 
@@ -246,6 +253,8 @@ mkdir -p "$PKG_SCRIPTS"
 install -m 0755 "$SCRIPT_DIR/pkg-scripts/preinstall" "$PKG_SCRIPTS/preinstall"
 install -m 0755 "$SCRIPT_DIR/pkg-scripts/postinstall" "$PKG_SCRIPTS/postinstall"
 install -m 0755 "$SCRIPT_DIR/pkg-scripts/install-diagnostics" "$PKG_SCRIPTS/install-diagnostics"
+install -m 0755 "$SCRIPT_DIR/pkg-scripts/install-user" "$PKG_SCRIPTS/install-user"
+install -m 0755 "$SCRIPT_DIR/pkg-scripts/install-manifest" "$PKG_SCRIPTS/install-manifest"
 
 # Strip macOS extended attributes in the temporary staging area. Otherwise
 # pkgbuild serializes AppleDouble `._*` sidecars into Payload/Scripts.
@@ -254,9 +263,40 @@ if command -v xattr >/dev/null 2>&1; then
 fi
 find "$WORK_DIR/payload" "$PKG_SCRIPTS" -name '._*' -delete
 
+# pkgbuild otherwise infers Capsem.app as relocatable. On a build machine where
+# the signed source bundle still exists, PackageKit then redirects the payload
+# back into target/release/bundle/macos instead of installing /Applications.
+COMPONENT_PLIST="$WORK_DIR/component.plist"
+pkgbuild --analyze --root "$WORK_DIR/payload" "$COMPONENT_PLIST"
+python3 - "$COMPONENT_PLIST" <<'PY'
+import pathlib
+import plistlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+with path.open("rb") as fh:
+    components = plistlib.load(fh)
+
+app_path = "Applications/Capsem.app"
+matches = [
+    component
+    for component in components
+    if component.get("RootRelativeBundlePath") == app_path
+]
+if len(matches) != 1:
+    raise SystemExit(
+        f"expected exactly one {app_path} component, found {len(matches)}"
+    )
+matches[0]["BundleIsRelocatable"] = False
+
+with path.open("wb") as fh:
+    plistlib.dump(components, fh, sort_keys=True)
+PY
+
 # Build the component .pkg with package-owned preinstall/postinstall scripts.
 pkgbuild \
     --root "$WORK_DIR/payload" \
+    --component-plist "$COMPONENT_PLIST" \
     --scripts "$PKG_SCRIPTS" \
     --identifier "com.capsem.pkg" \
     --version "$VERSION" \

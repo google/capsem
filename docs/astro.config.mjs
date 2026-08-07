@@ -29,36 +29,36 @@ export default defineConfig({
         { slug: 'getting-started' },
         {
           label: 'Usage',
-          autogenerate: { directory: 'usage' },
+          items: [{ autogenerate: { directory: 'usage' } }],
         },
         {
           label: 'Architecture',
-          autogenerate: { directory: 'architecture' },
+          items: [{ autogenerate: { directory: 'architecture' } }],
         },
         {
           label: 'Security',
-          autogenerate: { directory: 'security' },
+          items: [{ autogenerate: { directory: 'security' } }],
         },
         {
           label: 'Benchmarks',
-          autogenerate: { directory: 'benchmarks' },
+          items: [{ autogenerate: { directory: 'benchmarks' } }],
         },
         {
           label: 'Debugging',
-          autogenerate: { directory: 'debugging' },
+          items: [{ autogenerate: { directory: 'debugging' } }],
         },
         {
           label: 'Gotchas / FAQ',
-          autogenerate: { directory: 'gotchas' },
+          items: [{ autogenerate: { directory: 'gotchas' } }],
         },
         {
           label: 'Development',
-          autogenerate: { directory: 'development' },
+          items: [{ autogenerate: { directory: 'development' } }],
         },
         {
           label: 'Releases',
           collapsed: true,
-          autogenerate: { directory: 'releases' },
+          items: [{ autogenerate: { directory: 'releases' } }],
         },
       ],
     }),

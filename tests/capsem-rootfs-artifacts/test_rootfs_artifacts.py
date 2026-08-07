@@ -1,10 +1,9 @@
 """Verify rootfs artifacts are consistent across build context, Dockerfile, and doctor checks."""
 
 import tempfile
+from pathlib import Path
 
 import pytest
-
-from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 ARTIFACTS_DIR = PROJECT_ROOT / "guest" / "artifacts"
@@ -54,8 +53,8 @@ class TestBuildContext:
     def test_prepare_build_context_copies_all(self):
         """prepare_build_context copies all required artifacts to context dir."""
         try:
-            from capsem.builder.docker import prepare_build_context
             from capsem.builder.config import load_guest_config
+            from capsem.builder.docker import prepare_build_context
         except ImportError:
             pytest.skip("capsem-builder not installed")
 
@@ -64,7 +63,7 @@ class TestBuildContext:
             pytest.skip("No guest config directory found")
 
         config = load_guest_config(guest_dir)
-        arch_name = list(config.build.architectures.keys())[0]
+        arch_name = next(iter(config.build.architectures.keys()))
 
         with tempfile.TemporaryDirectory() as tmp:
             context_dir = Path(tmp)

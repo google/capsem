@@ -17,6 +17,8 @@ from pathlib import Path
 
 from helpers.service import PROJECT_ROOT, ServiceInstance
 
+from scripts.release_test_binary import ensure_host_test_binary
+
 
 def _arch() -> str:
     machine = platform.machine().lower()
@@ -87,13 +89,12 @@ def _write_manifest(source_assets: Path, arch: str, files: dict[str, bytes]) -> 
 
 def _ensure_capsem_admin() -> Path:
     binary = PROJECT_ROOT / "target" / "debug" / "capsem-admin"
-    if not binary.exists():
-        subprocess.run(
-            ["cargo", "build", "-p", "capsem-admin"],
-            cwd=PROJECT_ROOT,
-            check=True,
-            timeout=120,
-        )
+    ensure_host_test_binary(
+        binary,
+        source_paths=(PROJECT_ROOT / "crates" / "capsem-admin").rglob("*.rs"),
+        build_command=("cargo", "build", "-p", "capsem-admin"),
+        project_root=PROJECT_ROOT,
+    )
     return binary
 
 

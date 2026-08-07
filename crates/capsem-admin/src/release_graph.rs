@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{anyhow, bail, Context, Result};
+pub use capsem_core::asset_manager::{Architecture, PackageArchitecture};
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as ShaDigest, Sha256};
@@ -49,22 +50,6 @@ pub enum PackageKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Architecture {
-    Arm64,
-    X86_64,
-}
-
-impl Architecture {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::Arm64 => "arm64",
-            Self::X86_64 => "x86_64",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
 pub enum ProfileImageArtifactKind {
     Kernel,
     Initrd,
@@ -84,6 +69,7 @@ pub enum ProfileConfigKind {
     Build,
     Tips,
     RootManifest,
+    RootPayload,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +80,13 @@ pub enum ReleaseLedgerKind {
     Binary,
     Profile,
     ProfileImage,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ReleaseLedgerArchitecture {
+    Package(PackageArchitecture),
+    Machine(Architecture),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,7 +104,7 @@ pub struct PackageInventoryRow {
     pub version: String,
     pub kind: PackageKind,
     pub platform: String,
-    pub architecture: Architecture,
+    pub architecture: PackageArchitecture,
     pub url: String,
     pub bytes: u64,
     pub digest: DigestSet,
@@ -130,7 +123,7 @@ pub struct BinaryInventoryRow {
     pub description: String,
     pub installed_path: String,
     pub platform: String,
-    pub architecture: Architecture,
+    pub architecture: PackageArchitecture,
     pub bytes: u64,
     pub digest: DigestSet,
     pub status: Status,
@@ -167,6 +160,8 @@ pub struct ProfileDocument {
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_capsem_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_capsem_version: Option<String>,
     pub architectures: Vec<ProfileArchitectureImages>,
 }
 
@@ -176,7 +171,7 @@ pub struct SoftwareInventoryRow {
     pub name: String,
     pub version: String,
     pub source: String,
-    pub architecture: String,
+    pub architecture: Architecture,
     pub evidence: String,
     pub digest: DigestSet,
 }
@@ -270,7 +265,7 @@ pub struct ReleaseLedgerEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub architecture: Option<Architecture>,
+    pub architecture: Option<ReleaseLedgerArchitecture>,
 }
 
 impl DigestSet {
@@ -352,6 +347,28 @@ impl PackageInventoryRow {
         }
         if self.platform.trim().is_empty() {
             bail!("package {} platform must not be empty", self.name);
+        }
+        let expected_architecture = PackageArchitecture::from_package_name(&self.name)?;
+        if expected_architecture != self.architecture {
+            bail!(
+                "package {} filename architecture does not match graph architecture",
+                self.name
+            );
+        }
+        match self.kind {
+            PackageKind::MacosPkg if self.platform != "macos" => {
+                bail!("macOS package {} platform must be macos", self.name);
+            }
+            PackageKind::MacosPkg if !self.name.ends_with(".pkg") => {
+                bail!("macOS package {} name must end in .pkg", self.name);
+            }
+            PackageKind::DebianPackage if self.platform != "linux" => {
+                bail!("Debian package {} platform must be linux", self.name);
+            }
+            PackageKind::DebianPackage if !self.name.ends_with(".deb") => {
+                bail!("Debian package {} name must end in .deb", self.name);
+            }
+            _ => {}
         }
         validate_url_like(&self.url).with_context(|| {
             format!(
@@ -651,7 +668,7 @@ impl ReleaseManifest {
                 version: package.version.clone(),
                 status: package.status,
                 profile: None,
-                architecture: Some(package.architecture),
+                architecture: Some(ReleaseLedgerArchitecture::Package(package.architecture)),
             });
         }
         for package in &self.packages {
@@ -663,7 +680,7 @@ impl ReleaseManifest {
                     version: binary.version.clone(),
                     status: binary.status,
                     profile: None,
-                    architecture: Some(binary.architecture),
+                    architecture: Some(ReleaseLedgerArchitecture::Package(binary.architecture)),
                 });
             }
         }
@@ -686,7 +703,9 @@ impl ReleaseManifest {
                         version: profile.revision.clone(),
                         status: artifact.status,
                         profile: Some(profile_id.clone()),
-                        architecture: Some(architecture.architecture),
+                        architecture: Some(ReleaseLedgerArchitecture::Machine(
+                            architecture.architecture,
+                        )),
                     });
                 }
             }
@@ -832,12 +851,6 @@ impl SoftwareInventoryRow {
                 self.name
             );
         }
-        if self.architecture.trim().is_empty() {
-            bail!(
-                "profile {profile} software {} architecture must not be empty",
-                self.name
-            );
-        }
         validate_url_like(&self.evidence).with_context(|| {
             format!(
                 "profile {profile} software {} evidence is invalid",
@@ -889,6 +902,7 @@ impl ProfileConfigKind {
             Self::Build => "build",
             Self::Tips => "tips",
             Self::RootManifest => "root_manifest",
+            Self::RootPayload => "root_payload",
         }
     }
 }
@@ -915,6 +929,13 @@ impl ProfileArchitectureImages {
             .collect::<Vec<_>>();
         for software in &self.software {
             software.validate(profile)?;
+            if software.architecture != self.architecture {
+                bail!(
+                    "profile {profile} architecture {:?} software {} architecture mismatch",
+                    self.architecture,
+                    software.name
+                );
+            }
             if software_inventory_digests
                 .iter()
                 .any(|digest| **digest == software.digest)
@@ -1095,1122 +1116,42 @@ fn validate_url_like(value: &str) -> Result<()> {
     Ok(())
 }
 
+/// Parse a profile revision as strict semver.
+///
+/// A revision is a profile's tag: what a corp operator reads, what asset reuse
+/// is keyed on, and what publication immutability is enforced against. It is
+/// versioned independently per profile -- profiles are orthogonal, so `code`
+/// moving says nothing about `co-work` -- and it is a separate axis from the
+/// `min_capsem_version`/`max_capsem_version` window the profile declares
+/// against the binary.
+///
+/// Strict semver is not decoration. The scheme this replaces was a date plus a
+/// counter (`2026.06.08.9`), which could not order releases: the date recorded
+/// when a human last edited the field rather than when the assets were built,
+/// and text comparison ranks `0.10.0` below `0.9.0`.
+pub fn parse_profile_revision(revision: &str) -> Result<Version> {
+    Version::parse(revision).with_context(|| {
+        format!("profile revision must be semver MAJOR.MINOR.PATCH, got {revision:?}")
+    })
+}
+
+/// Reject a publication whose revision does not advance past what is published.
+///
+/// Immutable publication already refuses to overwrite differing bytes under an
+/// existing revision, but it cannot tell the operator what to do about it. This
+/// fails earlier and says the actionable thing: the revision has to move.
+pub fn ensure_revision_advances(previous: &str, next: &str) -> Result<()> {
+    let previous_version = parse_profile_revision(previous)?;
+    let next_version = parse_profile_revision(next)?;
+    if next_version <= previous_version {
+        bail!("profile revision {next:?} does not advance past published {previous:?}");
+    }
+    Ok(())
+}
+
 fn default_status_current() -> Status {
     Status::Current
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn digest_json() -> serde_json::Value {
-        serde_json::json!({
-            "sha256": "a".repeat(64),
-            "blake3": "b".repeat(64)
-        })
-    }
-
-    fn digest_set() -> DigestSet {
-        digest_set_with('a', 'b')
-    }
-
-    fn digest_set_with(sha256: char, blake3: char) -> DigestSet {
-        DigestSet {
-            sha256: sha256.to_string().repeat(64),
-            blake3: blake3.to_string().repeat(64),
-        }
-    }
-
-    fn software_row() -> SoftwareInventoryRow {
-        SoftwareInventoryRow {
-            name: "python".to_string(),
-            version: "3.12.11".to_string(),
-            source: "apt".to_string(),
-            architecture: "all".to_string(),
-            evidence: "/profiles/releases/1.0.0/co-work/apt-packages.txt".to_string(),
-            digest: digest_set(),
-        }
-    }
-
-    #[test]
-    fn release_graph_enums_reject_unknown_status_values() {
-        let error = serde_json::from_value::<Status>(serde_json::json!("removed"))
-            .expect_err("removed is absence from a newer graph, not a status");
-
-        assert!(
-            error.to_string().contains("unknown variant")
-                || error.to_string().contains("expected one of"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn release_graph_enums_accept_only_canonical_status_values() {
-        for (raw, expected) in [
-            ("current", Status::Current),
-            ("supported", Status::Supported),
-            ("deprecated", Status::Deprecated),
-            ("revoked", Status::Revoked),
-        ] {
-            let parsed: Status = serde_json::from_value(serde_json::json!(raw)).expect(raw);
-            assert_eq!(parsed, expected);
-        }
-    }
-
-    #[test]
-    fn release_graph_manifest_records_use_version_not_schema_version() {
-        let valid = serde_json::json!({
-            "version": "1.4.0",
-            "status": "current",
-            "url": "/manifests/stable/1.4.0/manifest.json",
-            "digest": digest_json(),
-            "min_capsem_version": "1.4.0"
-        });
-        serde_json::from_value::<ManifestRecord>(valid)
-            .expect("version is the manifest record key");
-
-        let invalid = serde_json::json!({
-            "schema_version": 2,
-            "status": "current",
-            "url": "/manifests/stable/1.4.0/manifest.json",
-            "digest": digest_json()
-        });
-        let error = serde_json::from_value::<ManifestRecord>(invalid)
-            .expect_err("manifest records must not use schema_version");
-
-        assert!(error.to_string().contains("schema_version"), "{error}");
-    }
-
-    #[test]
-    fn release_graph_channels_catalog_lists_manifest_records() {
-        let catalog = serde_json::json!({
-            "version": 1,
-            "generated_at": "2030-01-01T00:00:00Z",
-            "channels": {
-                "stable": {
-                    "label": "Stable",
-                    "manifests": [
-                        {
-                            "version": "1.4.0",
-                            "status": "current",
-                            "url": "/manifests/stable/1.4.0/manifest.json",
-                            "digest": digest_json()
-                        },
-                        {
-                            "version": "1.3.0",
-                            "status": "supported",
-                            "url": "/manifests/stable/1.3.0/manifest.json",
-                            "digest": digest_json()
-                        }
-                    ]
-                },
-                "nightly": {
-                    "label": "Nightly",
-                    "manifests": [
-                        {
-                            "version": "1.5.0-nightly.20300101",
-                            "status": "current",
-                            "url": "/manifests/nightly/1.5.0-nightly.20300101/manifest.json",
-                            "digest": digest_json()
-                        }
-                    ]
-                }
-            }
-        });
-
-        let parsed: ChannelsCatalog =
-            serde_json::from_value(catalog).expect("channels catalog parses");
-        assert_eq!(parsed.channels["stable"].manifests.len(), 2);
-        assert_eq!(
-            parsed.channels["nightly"].manifests[0].status,
-            Status::Current
-        );
-        parsed.validate().expect("catalog validates");
-    }
-
-    #[test]
-    fn release_graph_channels_catalog_rejects_duplicate_manifest_versions() {
-        let catalog = serde_json::json!({
-            "version": 1,
-            "generated_at": "2030-01-01T00:00:00Z",
-            "channels": {
-                "stable": {
-                    "label": "Stable",
-                    "manifests": [
-                        {
-                            "version": "1.4.0",
-                            "status": "current",
-                            "url": "/manifests/stable/1.4.0/manifest.json",
-                            "digest": digest_json()
-                        },
-                        {
-                            "version": "1.4.0",
-                            "status": "supported",
-                            "url": "/manifests/stable/1.4.0-copy/manifest.json",
-                            "digest": digest_json()
-                        }
-                    ]
-                }
-            }
-        });
-        let parsed: ChannelsCatalog =
-            serde_json::from_value(catalog).expect("JSON shape parses before validation");
-        let error = parsed
-            .validate()
-            .expect_err("duplicate manifest versions are ambiguous");
-        assert!(
-            error.to_string().contains("duplicate manifest version"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn release_graph_channels_catalog_rejects_bad_digest_shape() {
-        let catalog = serde_json::json!({
-            "version": 1,
-            "generated_at": "2030-01-01T00:00:00Z",
-            "channels": {
-                "nightly": {
-                    "label": "Nightly",
-                    "manifests": [
-                        {
-                            "version": "1.5.0-nightly.20300101",
-                            "status": "current",
-                            "url": "/manifests/nightly/1.5.0-nightly.20300101/manifest.json",
-                            "digest": {
-                                "sha256": "a".repeat(40),
-                                "blake3": "b".repeat(64)
-                            }
-                        }
-                    ]
-                }
-            }
-        });
-        let parsed: ChannelsCatalog =
-            serde_json::from_value(catalog).expect("JSON shape parses before validation");
-        let error = parsed.validate().expect_err("bad sha256 rejected");
-        assert!(error.to_string().contains("sha256"), "{error}");
-    }
-
-    #[test]
-    fn release_graph_digest_verifier_rejects_tampered_profile_ref() {
-        let bytes = br#"{"id":"co-work","version":"1.2.0"}"#;
-        let digest = DigestSet {
-            sha256: format!("{:x}", Sha256::digest(bytes)),
-            blake3: blake3::hash(bytes).to_hex().to_string(),
-        };
-
-        digest
-            .verify_bytes(bytes, "profile co-work")
-            .expect("original bytes verify");
-        let error = digest
-            .verify_bytes(br#"{"id":"co-work","version":"1.2.1"}"#, "profile co-work")
-            .expect_err("tampered profile ref is rejected");
-        assert!(error.to_string().contains("sha256 mismatch"), "{error}");
-    }
-
-    #[test]
-    fn release_graph_revoked_manifest_is_listed_but_not_selectable() {
-        let catalog: ChannelsCatalog = serde_json::from_value(serde_json::json!({
-            "version": 1,
-            "generated_at": "2030-01-01T00:00:00Z",
-            "channels": {
-                "stable": {
-                    "label": "Stable",
-                    "manifests": [
-                        {
-                            "version": "1.4.0-bad",
-                            "status": "revoked",
-                            "url": "/manifests/stable/1.4.0-bad/manifest.json",
-                            "digest": digest_json()
-                        },
-                        {
-                            "version": "1.3.0",
-                            "status": "supported",
-                            "url": "/manifests/stable/1.3.0/manifest.json",
-                            "digest": digest_json()
-                        }
-                    ]
-                }
-            }
-        }))
-        .expect("catalog shape");
-
-        catalog
-            .validate()
-            .expect("revoked manifests remain auditable");
-        let selected = catalog
-            .select_manifest("stable")
-            .expect("supported fallback selected");
-        assert_eq!(selected.version, "1.3.0");
-        assert_eq!(
-            catalog.channels["stable"].manifests[0].status,
-            Status::Revoked
-        );
-    }
-
-    #[test]
-    fn release_graph_current_manifest_is_preferred_over_supported_and_deprecated() {
-        let catalog: ChannelsCatalog = serde_json::from_value(serde_json::json!({
-            "version": 1,
-            "generated_at": "2030-01-01T00:00:00Z",
-            "channels": {
-                "nightly": {
-                    "label": "Nightly",
-                    "manifests": [
-                        {
-                            "version": "1.5.0-nightly.old",
-                            "status": "deprecated",
-                            "url": "/manifests/nightly/1.5.0-nightly.old/manifest.json",
-                            "digest": digest_json()
-                        },
-                        {
-                            "version": "1.5.0-nightly.supported",
-                            "status": "supported",
-                            "url": "/manifests/nightly/1.5.0-nightly.supported/manifest.json",
-                            "digest": digest_json()
-                        },
-                        {
-                            "version": "1.5.0-nightly.current",
-                            "status": "current",
-                            "url": "/manifests/nightly/1.5.0-nightly.current/manifest.json",
-                            "digest": digest_json()
-                        }
-                    ]
-                }
-            }
-        }))
-        .expect("catalog shape");
-
-        let selected = catalog
-            .select_manifest("nightly")
-            .expect("manifest selected");
-        assert_eq!(selected.version, "1.5.0-nightly.current");
-    }
-
-    #[test]
-    fn package_inventory_rows_are_separate_from_binary_rows() {
-        let binary = BinaryInventoryRow {
-            name: "capsem".to_string(),
-            version: "1.4.0".to_string(),
-            description: "Capsem executable fixture".to_string(),
-            installed_path: "/usr/local/bin/capsem".to_string(),
-            platform: "macos".to_string(),
-            architecture: Architecture::Arm64,
-            bytes: 7,
-            digest: digest_set(),
-            status: Status::Current,
-            sbom_component_ref: "SPDXRef-File-capsem".to_string(),
-        };
-        let manifest = ReleaseManifest {
-            version: "1.4.0".to_string(),
-            status: Status::Current,
-            packages: vec![PackageInventoryRow {
-                name: "Capsem-1.4.0.pkg".to_string(),
-                version: "1.4.0".to_string(),
-                kind: PackageKind::MacosPkg,
-                platform: "macos".to_string(),
-                architecture: Architecture::Arm64,
-                url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
-                bytes: 42,
-                digest: digest_set(),
-                status: Status::Current,
-                binaries: vec![binary],
-                evidence: vec![EvidenceRef {
-                    kind: "sbom".to_string(),
-                    url: "/packages/stable/1.4.0/capsem-1-4-0-pkg-sbom.spdx.json".to_string(),
-                    digest: digest_set(),
-                }],
-            }],
-            profiles: BTreeMap::new(),
-        };
-
-        manifest
-            .validate_inventory_shape()
-            .expect("package and binary inventory is valid");
-        assert_ne!(
-            manifest.packages[0].name,
-            manifest.packages[0].binaries[0].name
-        );
-        assert_eq!(
-            manifest.packages[0].binaries[0].installed_path,
-            "/usr/local/bin/capsem"
-        );
-    }
-
-    #[test]
-    fn package_inventory_requires_package_sbom() {
-        let manifest = ReleaseManifest {
-            version: "1.4.0".to_string(),
-            status: Status::Current,
-            packages: vec![PackageInventoryRow {
-                name: "Capsem-1.4.0.pkg".to_string(),
-                version: "1.4.0".to_string(),
-                kind: PackageKind::MacosPkg,
-                platform: "macos".to_string(),
-                architecture: Architecture::Arm64,
-                url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
-                bytes: 42,
-                digest: digest_set(),
-                status: Status::Current,
-                binaries: vec![BinaryInventoryRow {
-                    name: "capsem".to_string(),
-                    version: "1.4.0".to_string(),
-                    description: "Capsem executable fixture".to_string(),
-                    installed_path: "/usr/local/bin/capsem".to_string(),
-                    platform: "macos".to_string(),
-                    architecture: Architecture::Arm64,
-                    bytes: 7,
-                    digest: digest_set(),
-                    status: Status::Current,
-                    sbom_component_ref: "SPDXRef-File-capsem".to_string(),
-                }],
-                evidence: Vec::new(),
-            }],
-            profiles: BTreeMap::new(),
-        };
-
-        let error = manifest
-            .validate_inventory_shape()
-            .expect_err("missing package SBOM evidence is rejected");
-        assert!(
-            format!("{error:#}").contains("must include package SBOM evidence"),
-            "{error:#}"
-        );
-    }
-
-    #[test]
-    fn package_inventory_requires_sha256_and_blake3() {
-        let manifest = ReleaseManifest {
-            version: "1.4.0".to_string(),
-            status: Status::Current,
-            packages: vec![PackageInventoryRow {
-                name: "capsem_1.4.0_arm64.deb".to_string(),
-                version: "1.4.0".to_string(),
-                kind: PackageKind::DebianPackage,
-                platform: "linux".to_string(),
-                architecture: Architecture::Arm64,
-                url: "/packages/stable/1.4.0/capsem_1.4.0_arm64.deb".to_string(),
-                bytes: 42,
-                digest: DigestSet {
-                    sha256: "a".repeat(64),
-                    blake3: "not-a-blake3-digest".to_string(),
-                },
-                status: Status::Current,
-                binaries: vec![BinaryInventoryRow {
-                    name: "capsem".to_string(),
-                    version: "1.4.0".to_string(),
-                    description: "Capsem executable fixture".to_string(),
-                    installed_path: "/usr/bin/capsem".to_string(),
-                    platform: "linux".to_string(),
-                    architecture: Architecture::Arm64,
-                    bytes: 7,
-                    digest: digest_set(),
-                    status: Status::Current,
-                    sbom_component_ref: "SPDXRef-File-capsem".to_string(),
-                }],
-                evidence: Vec::new(),
-            }],
-            profiles: BTreeMap::new(),
-        };
-
-        let error = manifest
-            .validate_inventory_shape()
-            .expect_err("bad package digest is rejected");
-        assert!(format!("{error:#}").contains("blake3"), "{error:#}");
-    }
-
-    #[test]
-    fn executable_inventory_records_every_packaged_binary_with_hashes_and_sbom_refs() {
-        let package = PackageInventoryRow {
-            name: "Capsem-1.4.0.pkg".to_string(),
-            version: "1.4.0".to_string(),
-            kind: PackageKind::MacosPkg,
-            platform: "macos".to_string(),
-            architecture: Architecture::Arm64,
-            url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
-            bytes: 42,
-            digest: digest_set(),
-            status: Status::Current,
-            binaries: Vec::new(),
-            evidence: Vec::new(),
-        };
-        let files = vec![
-            PackagedExecutableFile {
-                name: "capsem-service".to_string(),
-                description: "Capsem executable fixture".to_string(),
-                installed_path: "/usr/local/share/capsem/bin/capsem-service".to_string(),
-                bytes: b"service-bin".to_vec(),
-            },
-            PackagedExecutableFile {
-                name: "capsem".to_string(),
-                description: "Capsem executable fixture".to_string(),
-                installed_path: "/usr/local/bin/capsem".to_string(),
-                bytes: b"capsem-bin".to_vec(),
-            },
-        ];
-        let sbom_refs = BTreeMap::from([
-            (
-                "/usr/local/bin/capsem".to_string(),
-                "SPDXRef-File-capsem".to_string(),
-            ),
-            (
-                "/usr/local/share/capsem/bin/capsem-service".to_string(),
-                "SPDXRef-File-capsem-service".to_string(),
-            ),
-        ]);
-
-        let rows =
-            executable_inventory_from_package_files(&package, &files, &sbom_refs).expect("rows");
-
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].name, "capsem");
-        assert_eq!(rows[0].installed_path, "/usr/local/bin/capsem");
-        assert_eq!(
-            rows[0].digest.sha256,
-            format!("{:x}", Sha256::digest(b"capsem-bin"))
-        );
-        assert_eq!(
-            rows[0].digest.blake3,
-            blake3::hash(b"capsem-bin").to_hex().to_string()
-        );
-        assert_eq!(rows[0].sbom_component_ref, "SPDXRef-File-capsem");
-        assert_eq!(rows[1].sbom_component_ref, "SPDXRef-File-capsem-service");
-    }
-
-    #[test]
-    fn executable_inventory_rejects_missing_sbom_component_ref() {
-        let package = PackageInventoryRow {
-            name: "capsem_1.4.0_arm64.deb".to_string(),
-            version: "1.4.0".to_string(),
-            kind: PackageKind::DebianPackage,
-            platform: "linux".to_string(),
-            architecture: Architecture::Arm64,
-            url: "/packages/stable/1.4.0/capsem_1.4.0_arm64.deb".to_string(),
-            bytes: 42,
-            digest: digest_set(),
-            status: Status::Current,
-            binaries: Vec::new(),
-            evidence: Vec::new(),
-        };
-        let files = vec![PackagedExecutableFile {
-            name: "capsem".to_string(),
-            description: "Capsem executable fixture".to_string(),
-            installed_path: "/usr/bin/capsem".to_string(),
-            bytes: b"capsem-bin".to_vec(),
-        }];
-
-        let error = executable_inventory_from_package_files(&package, &files, &BTreeMap::new())
-            .expect_err("missing SBOM component ref rejected");
-
-        assert!(
-            format!("{error:#}").contains("missing SBOM component reference"),
-            "{error:#}"
-        );
-    }
-
-    #[test]
-    fn executable_inventory_matches_macos_and_deb_package_contents() {
-        let macos_package = PackageInventoryRow {
-            name: "Capsem-1.4.0.pkg".to_string(),
-            version: "1.4.0".to_string(),
-            kind: PackageKind::MacosPkg,
-            platform: "macos".to_string(),
-            architecture: Architecture::Arm64,
-            url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
-            bytes: 99,
-            digest: digest_set(),
-            status: Status::Current,
-            binaries: Vec::new(),
-            evidence: Vec::new(),
-        };
-        let macos_files = vec![
-            PackagedExecutableFile {
-                name: "capsem".to_string(),
-                description: "Capsem executable fixture".to_string(),
-                installed_path: "/usr/local/share/capsem/bin/capsem".to_string(),
-                bytes: b"macos-capsem".to_vec(),
-            },
-            PackagedExecutableFile {
-                name: "capsem-service".to_string(),
-                description: "Capsem executable fixture".to_string(),
-                installed_path: "/usr/local/share/capsem/bin/capsem-service".to_string(),
-                bytes: b"macos-service".to_vec(),
-            },
-        ];
-        let macos_sbom_refs = BTreeMap::from([
-            (
-                "/usr/local/share/capsem/bin/capsem".to_string(),
-                "SPDXRef-File-macos-capsem".to_string(),
-            ),
-            (
-                "/usr/local/share/capsem/bin/capsem-service".to_string(),
-                "SPDXRef-File-macos-capsem-service".to_string(),
-            ),
-        ]);
-        let macos_rows =
-            executable_inventory_from_package_files(&macos_package, &macos_files, &macos_sbom_refs)
-                .expect("macOS package rows");
-        verify_package_contents_match_binary_inventory(&macos_package, &macos_files, &macos_rows)
-            .expect("macOS package contents match manifest inventory");
-
-        let deb_package = PackageInventoryRow {
-            name: "Capsem_1.4.0_arm64.deb".to_string(),
-            version: "1.4.0".to_string(),
-            kind: PackageKind::DebianPackage,
-            platform: "linux".to_string(),
-            architecture: Architecture::Arm64,
-            url: "/packages/stable/1.4.0/Capsem_1.4.0_arm64.deb".to_string(),
-            bytes: 101,
-            digest: digest_set(),
-            status: Status::Current,
-            binaries: Vec::new(),
-            evidence: Vec::new(),
-        };
-        let deb_files = vec![
-            PackagedExecutableFile {
-                name: "capsem".to_string(),
-                description: "Capsem executable fixture".to_string(),
-                installed_path: "/usr/bin/capsem".to_string(),
-                bytes: b"deb-capsem".to_vec(),
-            },
-            PackagedExecutableFile {
-                name: "capsem-service".to_string(),
-                description: "Capsem executable fixture".to_string(),
-                installed_path: "/usr/bin/capsem-service".to_string(),
-                bytes: b"deb-service".to_vec(),
-            },
-        ];
-        let deb_sbom_refs = BTreeMap::from([
-            (
-                "/usr/bin/capsem".to_string(),
-                "SPDXRef-File-deb-capsem".to_string(),
-            ),
-            (
-                "/usr/bin/capsem-service".to_string(),
-                "SPDXRef-File-deb-capsem-service".to_string(),
-            ),
-        ]);
-        let deb_rows =
-            executable_inventory_from_package_files(&deb_package, &deb_files, &deb_sbom_refs)
-                .expect("deb package rows");
-        verify_package_contents_match_binary_inventory(&deb_package, &deb_files, &deb_rows)
-            .expect("deb package contents match manifest inventory");
-    }
-
-    #[test]
-    fn executable_inventory_rejects_package_content_hash_drift() {
-        let package = PackageInventoryRow {
-            name: "Capsem_1.4.0_arm64.deb".to_string(),
-            version: "1.4.0".to_string(),
-            kind: PackageKind::DebianPackage,
-            platform: "linux".to_string(),
-            architecture: Architecture::Arm64,
-            url: "/packages/stable/1.4.0/Capsem_1.4.0_arm64.deb".to_string(),
-            bytes: 101,
-            digest: digest_set(),
-            status: Status::Current,
-            binaries: Vec::new(),
-            evidence: Vec::new(),
-        };
-        let files = vec![PackagedExecutableFile {
-            name: "capsem".to_string(),
-            description: "Capsem executable fixture".to_string(),
-            installed_path: "/usr/bin/capsem".to_string(),
-            bytes: b"deb-capsem".to_vec(),
-        }];
-        let sbom_refs = BTreeMap::from([(
-            "/usr/bin/capsem".to_string(),
-            "SPDXRef-File-deb-capsem".to_string(),
-        )]);
-        let mut rows =
-            executable_inventory_from_package_files(&package, &files, &sbom_refs).expect("rows");
-        rows[0].digest.sha256 = "0".repeat(64);
-
-        let error = verify_package_contents_match_binary_inventory(&package, &files, &rows)
-            .expect_err("tampered package content hash must be rejected");
-
-        assert!(
-            format!("{error:#}").contains("sha256 mismatch"),
-            "{error:#}"
-        );
-    }
-
-    fn profile_with_image_artifacts(
-        revision: &str,
-        artifacts: Vec<ProfileImageArtifactRef>,
-    ) -> ProfileDocument {
-        ProfileDocument {
-            version: revision.to_string(),
-            id: "co-work".to_string(),
-            name: "Co-work".to_string(),
-            revision: revision.to_string(),
-            status: Status::Current,
-            min_capsem_version: Some("1.4.0".to_string()),
-            architectures: vec![profile_architecture(revision, artifacts)],
-        }
-    }
-
-    fn profile_architecture(
-        revision: &str,
-        artifacts: Vec<ProfileImageArtifactRef>,
-    ) -> ProfileArchitectureImages {
-        ProfileArchitectureImages {
-            architecture: Architecture::Arm64,
-            software: vec![software_row()],
-            config: vec![ProfileConfigRef {
-                kind: ProfileConfigKind::Mcp,
-                path: "profiles/co-work/mcp.json".to_string(),
-                url: format!("/profiles/releases/{revision}/co-work/arm64/mcp.json"),
-                bytes: 12,
-                digest: digest_set(),
-                status: Status::Current,
-            }],
-            artifacts,
-            evidence: vec![
-                EvidenceRef {
-                    kind: "abom".to_string(),
-                    url: format!("/profiles/releases/{revision}/co-work/arm64/abom.cdx.json"),
-                    digest: digest_set(),
-                },
-                EvidenceRef {
-                    kind: "obom".to_string(),
-                    url: format!("/profiles/releases/{revision}/co-work/arm64/obom.cdx.json"),
-                    digest: digest_set(),
-                },
-                EvidenceRef {
-                    kind: "software_inventory".to_string(),
-                    url: format!(
-                        "/profiles/releases/{revision}/co-work/arm64/software-inventory.json"
-                    ),
-                    digest: digest_set_with('c', 'd'),
-                },
-            ],
-        }
-    }
-
-    fn profile_image_artifact(
-        kind: ProfileImageArtifactKind,
-        name: &str,
-        revision: &str,
-    ) -> ProfileImageArtifactRef {
-        ProfileImageArtifactRef {
-            kind,
-            name: name.to_string(),
-            url: format!("/profiles/releases/{revision}/co-work/arm64/{name}"),
-            bytes: 42,
-            digest: digest_set(),
-            status: Status::Current,
-        }
-    }
-
-    fn profile_image_artifact_set(revision: &str) -> Vec<ProfileImageArtifactRef> {
-        vec![
-            profile_image_artifact(ProfileImageArtifactKind::Kernel, "vmlinuz", revision),
-            profile_image_artifact(ProfileImageArtifactKind::Initrd, "initrd.img", revision),
-            profile_image_artifact(ProfileImageArtifactKind::Rootfs, "rootfs.erofs", revision),
-        ]
-    }
-
-    #[test]
-    fn profile_image_versions_append_without_deprecating_previous() {
-        let first = profile_with_image_artifacts("1.0.0", profile_image_artifact_set("1.0.0"));
-        let second = profile_with_image_artifacts("1.0.1", profile_image_artifact_set("1.0.1"));
-        let mut history =
-            ProfileVersionHistory::new("nightly", first).expect("first profile version");
-
-        history
-            .append_version(second)
-            .expect("new profile image version appends");
-
-        assert_eq!(history.versions.len(), 2);
-        assert_eq!(history.versions[0].revision, "1.0.0");
-        assert!(history.versions[0].architectures[0]
-            .artifacts
-            .iter()
-            .all(|artifact| artifact.status == Status::Current));
-        assert_eq!(history.versions[1].revision, "1.0.1");
-    }
-
-    #[test]
-    fn profile_image_artifact_sets_require_kernel_initrd_and_rootfs() {
-        let profile = profile_with_image_artifacts(
-            "1.0.0",
-            vec![
-                profile_image_artifact(ProfileImageArtifactKind::Initrd, "initrd.img", "1.0.0"),
-                profile_image_artifact(ProfileImageArtifactKind::Rootfs, "rootfs.erofs", "1.0.0"),
-            ],
-        );
-
-        let error = profile
-            .validate_profile_ownership()
-            .expect_err("profile image sets must include every required image kind");
-
-        assert!(
-            error.to_string().contains("images missing kernel"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn profile_image_evidence_must_match_owning_architecture() {
-        let mut profile =
-            profile_with_image_artifacts("1.0.0", profile_image_artifact_set("1.0.0"));
-        let abom = profile.architectures[0]
-            .evidence
-            .iter_mut()
-            .find(|evidence| evidence.kind == "abom")
-            .expect("abom evidence");
-        abom.url = abom.url.replace("/arm64/", "/x86_64/");
-
-        let error = profile
-            .validate_profile_ownership()
-            .expect_err("image evidence must stay scoped to its owning architecture");
-
-        assert!(
-            error
-                .to_string()
-                .contains("evidence abom url must include /arm64/"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn profile_image_versions_removed_image_is_absent_not_status_removed() {
-        let previous = profile_with_image_artifacts("1.0.0", profile_image_artifact_set("1.0.0"));
-        let next = profile_with_image_artifacts(
-            "1.0.1",
-            vec![
-                profile_image_artifact(ProfileImageArtifactKind::Kernel, "vmlinuz", "1.0.1"),
-                profile_image_artifact(ProfileImageArtifactKind::Rootfs, "rootfs.erofs", "1.0.1"),
-            ],
-        );
-
-        let error = diff_profile_image_artifacts(&previous, &next)
-            .expect_err("required image artifacts cannot be omitted from a profile revision");
-
-        assert!(
-            error.to_string().contains("images missing initrd"),
-            "{error}"
-        );
-
-        let invalid_removed_status = serde_json::json!({
-            "kind": "initrd",
-            "name": "initrd.img",
-            "url": "/profiles/releases/1.0.1/co-work/arm64/initrd.img",
-            "bytes": 42,
-            "digest": digest_json(),
-            "status": "removed"
-        });
-        serde_json::from_value::<ProfileImageArtifactRef>(invalid_removed_status)
-            .expect_err("removed is represented by absence, not by a status enum");
-    }
-
-    #[test]
-    fn profile_config_kind_rejects_unknown_values() {
-        let invalid_kind = serde_json::json!({
-            "kind": "misc",
-            "path": "profiles/co-work/misc.json",
-            "url": "/profiles/releases/1.0.0/co-work/arm64/misc.json",
-            "bytes": 42,
-            "digest": digest_json(),
-            "status": "current"
-        });
-
-        serde_json::from_value::<ProfileConfigRef>(invalid_kind)
-            .expect_err("profile config kind must be a release graph enum");
-    }
-
-    #[test]
-    fn profile_json_ownership_has_min_capsem_not_current_binary() {
-        let profile = ProfileDocument {
-            version: "1.0.0".to_string(),
-            id: "co-work".to_string(),
-            name: "Co-work".to_string(),
-            revision: "1.0.0".to_string(),
-            status: Status::Current,
-            min_capsem_version: Some("1.4.0".to_string()),
-            architectures: vec![ProfileArchitectureImages {
-                architecture: Architecture::Arm64,
-                software: vec![software_row()],
-                config: vec![ProfileConfigRef {
-                    kind: ProfileConfigKind::Mcp,
-                    path: "profiles/co-work/mcp.json".to_string(),
-                    url: "/profiles/releases/1.0.0/co-work/arm64/mcp.json".to_string(),
-                    bytes: 12,
-                    digest: digest_set(),
-                    status: Status::Current,
-                }],
-                artifacts: vec![
-                    ProfileImageArtifactRef {
-                        kind: ProfileImageArtifactKind::Kernel,
-                        name: "vmlinuz".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/vmlinuz".to_string(),
-                        bytes: 42,
-                        digest: digest_set(),
-                        status: Status::Current,
-                    },
-                    ProfileImageArtifactRef {
-                        kind: ProfileImageArtifactKind::Initrd,
-                        name: "initrd.img".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/initrd.img".to_string(),
-                        bytes: 42,
-                        digest: digest_set(),
-                        status: Status::Current,
-                    },
-                    ProfileImageArtifactRef {
-                        kind: ProfileImageArtifactKind::Rootfs,
-                        name: "rootfs.erofs".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/rootfs.erofs".to_string(),
-                        bytes: 42,
-                        digest: digest_set(),
-                        status: Status::Current,
-                    },
-                ],
-                evidence: vec![
-                    EvidenceRef {
-                        kind: "abom".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/abom.cdx.json".to_string(),
-                        digest: digest_set(),
-                    },
-                    EvidenceRef {
-                        kind: "obom".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/obom.cdx.json".to_string(),
-                        digest: digest_set(),
-                    },
-                    EvidenceRef {
-                        kind: "software_inventory".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/software-inventory.json"
-                            .to_string(),
-                        digest: digest_set_with('c', 'd'),
-                    },
-                ],
-            }],
-        };
-
-        profile
-            .validate_profile_ownership()
-            .expect("profile-owned graph validates");
-        assert_eq!(profile.min_capsem_version.as_deref(), Some("1.4.0"));
-        assert_eq!(profile.architectures[0].evidence.len(), 3);
-    }
-
-    #[test]
-    fn profile_json_ownership_rejects_unversioned_software_rows() {
-        let mut profile = profile_with_image_artifacts(
-            "1.0.0",
-            vec![profile_image_artifact(
-                ProfileImageArtifactKind::Rootfs,
-                "rootfs.erofs",
-                "1.0.0",
-            )],
-        );
-        profile.architectures[0].software[0].version = "unversioned".to_string();
-
-        let error = profile
-            .validate_profile_ownership()
-            .expect_err("profile software rows must use real versions");
-
-        assert!(error.to_string().contains("unversioned"), "{error}");
-    }
-
-    #[test]
-    fn profile_json_ownership_rejects_reused_software_inventory_digest() {
-        let mut profile = profile_with_image_artifacts(
-            "1.0.0",
-            vec![profile_image_artifact(
-                ProfileImageArtifactKind::Rootfs,
-                "rootfs.erofs",
-                "1.0.0",
-            )],
-        );
-        let inventory_digest = profile.architectures[0]
-            .evidence
-            .iter()
-            .find(|evidence| evidence.kind == "software_inventory")
-            .expect("software inventory evidence")
-            .digest
-            .clone();
-        profile.architectures[0].software[0].digest = inventory_digest;
-
-        let error = profile
-            .validate_profile_ownership()
-            .expect_err("software rows must not reuse inventory file digests");
-
-        assert!(
-            error
-                .to_string()
-                .contains("reuses software_inventory evidence digest"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn profile_json_ownership_rejects_current_binary_and_assets() {
-        let invalid = serde_json::json!({
-            "version": "1.0.0",
-            "id": "co-work",
-            "name": "Co-work",
-            "revision": "1.0.0",
-            "status": "current",
-            "min_capsem_version": "1.4.0",
-            "current_binary": "1.4.0",
-            "current_assets": "2026.0627.8"
-        });
-
-        let error = serde_json::from_value::<ProfileDocument>(invalid)
-            .expect_err("profile JSON must not contain channel-owned current binary/assets");
-        assert!(
-            error.to_string().contains("current_binary")
-                || error.to_string().contains("current_assets"),
-            "{error}"
-        );
-    }
-
-    #[test]
-    fn release_ledger_is_derived_from_channels_and_manifests() {
-        let catalog: ChannelsCatalog = serde_json::from_value(serde_json::json!({
-            "version": 1,
-            "generated_at": "2030-01-01T00:00:00Z",
-            "channels": {
-                "stable": {
-                    "label": "Stable",
-                    "manifests": [
-                        {
-                            "version": "1.4.0",
-                            "status": "current",
-                            "url": "/manifests/stable/1.4.0/manifest.json",
-                            "digest": digest_json()
-                        }
-                    ]
-                },
-                "nightly": {
-                    "label": "Nightly",
-                    "manifests": [
-                        {
-                            "version": "1.5.0-nightly.20300101",
-                            "status": "current",
-                            "url": "/manifests/nightly/1.5.0-nightly.20300101/manifest.json",
-                            "digest": digest_json()
-                        }
-                    ]
-                }
-            }
-        }))
-        .expect("catalog shape");
-
-        let mut profiles = BTreeMap::new();
-        profiles.insert(
-            "co-work".to_string(),
-            ProfileDocument {
-                version: "1.0.0".to_string(),
-                id: "co-work".to_string(),
-                name: "Co-work".to_string(),
-                revision: "1.0.0".to_string(),
-                status: Status::Current,
-                min_capsem_version: Some("1.4.0".to_string()),
-                architectures: vec![ProfileArchitectureImages {
-                    architecture: Architecture::Arm64,
-                    software: vec![software_row()],
-                    config: vec![ProfileConfigRef {
-                        kind: ProfileConfigKind::Mcp,
-                        path: "profiles/co-work/mcp.json".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/mcp.json".to_string(),
-                        bytes: 12,
-                        digest: digest_set(),
-                        status: Status::Current,
-                    }],
-                    artifacts: vec![ProfileImageArtifactRef {
-                        kind: ProfileImageArtifactKind::Rootfs,
-                        name: "rootfs.erofs".to_string(),
-                        url: "/profiles/releases/1.0.0/co-work/arm64/rootfs.erofs".to_string(),
-                        bytes: 42,
-                        digest: digest_set(),
-                        status: Status::Current,
-                    }],
-                    evidence: vec![
-                        EvidenceRef {
-                            kind: "abom".to_string(),
-                            url: "/profiles/releases/1.0.0/co-work/arm64/abom.cdx.json".to_string(),
-                            digest: digest_set(),
-                        },
-                        EvidenceRef {
-                            kind: "obom".to_string(),
-                            url: "/profiles/releases/1.0.0/co-work/arm64/obom.cdx.json".to_string(),
-                            digest: digest_set(),
-                        },
-                        EvidenceRef {
-                            kind: "software_inventory".to_string(),
-                            url: "/profiles/releases/1.0.0/co-work/arm64/software-inventory.json"
-                                .to_string(),
-                            digest: digest_set_with('c', 'd'),
-                        },
-                    ],
-                }],
-            },
-        );
-
-        let mut manifests = BTreeMap::new();
-        manifests.insert(
-            "stable".to_string(),
-            BTreeMap::from([(
-                "1.4.0".to_string(),
-                ReleaseManifest {
-                    version: "1.4.0".to_string(),
-                    status: Status::Current,
-                    packages: vec![PackageInventoryRow {
-                        name: "Capsem-1.4.0.pkg".to_string(),
-                        version: "1.4.0".to_string(),
-                        kind: PackageKind::MacosPkg,
-                        platform: "macos".to_string(),
-                        architecture: Architecture::Arm64,
-                        url: "/packages/stable/1.4.0/Capsem-1.4.0.pkg".to_string(),
-                        bytes: 42,
-                        digest: digest_set(),
-                        status: Status::Current,
-                        binaries: vec![BinaryInventoryRow {
-                            name: "capsem".to_string(),
-                            version: "1.4.0".to_string(),
-                            description: "Capsem executable fixture".to_string(),
-                            installed_path: "/usr/local/bin/capsem".to_string(),
-                            platform: "macos".to_string(),
-                            architecture: Architecture::Arm64,
-                            bytes: 7,
-                            digest: digest_set(),
-                            status: Status::Current,
-                            sbom_component_ref: "SPDXRef-File-capsem".to_string(),
-                        }],
-                        evidence: Vec::new(),
-                    }],
-                    profiles,
-                },
-            )]),
-        );
-
-        let ledger = ReleaseLedger::derive(&catalog, &manifests);
-        assert!(ledger.entries.iter().any(|entry| {
-            entry.channel == "stable"
-                && entry.kind == ReleaseLedgerKind::Package
-                && entry.name == "Capsem-1.4.0.pkg"
-        }));
-        assert!(ledger.entries.iter().any(|entry| {
-            entry.channel == "stable"
-                && entry.kind == ReleaseLedgerKind::Binary
-                && entry.name == "capsem"
-        }));
-        assert!(ledger.entries.iter().any(|entry| {
-            entry.channel == "stable"
-                && entry.kind == ReleaseLedgerKind::Profile
-                && entry.profile.as_deref() == Some("co-work")
-        }));
-        assert!(ledger.entries.iter().any(|entry| {
-            entry.channel == "stable"
-                && entry.kind == ReleaseLedgerKind::ProfileImage
-                && entry.profile.as_deref() == Some("co-work")
-                && entry.architecture == Some(Architecture::Arm64)
-        }));
-        assert!(ledger.entries.iter().any(|entry| {
-            entry.channel == "nightly" && entry.kind == ReleaseLedgerKind::Manifest
-        }));
-    }
-}
+mod tests;

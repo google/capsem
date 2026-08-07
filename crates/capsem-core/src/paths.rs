@@ -86,116 +86,73 @@ fn env_nonempty(key: &str) -> Option<String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// The marker written beside a checkpoint once it is fully flushed.
+///
+/// Both the process that writes the checkpoint and the service that waits for
+/// it must agree on this name. They had a copy each, identical except that one
+/// hardcoded the fallback and the other used a constant -- so changing the
+/// constant would have left the process writing a marker the service never
+/// looked for, and resume would fail with nothing wrong on either side.
+pub fn checkpoint_complete_path(checkpoint_path: &std::path::Path) -> PathBuf {
+    const FALLBACK: &str = "checkpoint.vzsave.complete";
+    let marker = checkpoint_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| format!("{name}.complete"))
+        .unwrap_or_else(|| FALLBACK.to_string());
+    checkpoint_path.with_file_name(marker)
+}
 
-    fn lock_env() -> tokio::sync::MutexGuard<'static, ()> {
-        crate::credential_broker::TEST_ENV_LOCK.blocking_lock()
-    }
+/// Redirect every Capsem path variable at a temporary root, restoring on drop.
+///
+/// Test support, deliberately not `#[cfg(test)]`: fixtures in other crates
+/// need it too, and the whole point is that there is one way to do this.
+///
+/// Set them **together or not at all**. `CAPSEM_RUN_DIR` and
+/// `CAPSEM_ASSETS_DIR` each take precedence over the value derived from
+/// `CAPSEM_HOME`, so a fixture that redirects only the home leaves production
+/// code reading whichever run or assets directory the caller exported --
+/// `just test` exports both. That fixture passes in a bare shell and fails
+/// only inside the gate, which is exactly how the support-bundle tests came to
+/// collect no host logs during a release run.
+#[must_use = "the guard restores the previous environment when dropped"]
+pub struct CapsemPathsGuard {
+    previous: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
 
-    struct EnvGuard {
-        key: &'static str,
-        prev: Option<String>,
-    }
-    impl EnvGuard {
-        fn set(key: &'static str, value: &str) -> Self {
-            let prev = std::env::var(key).ok();
-            std::env::set_var(key, value);
-            Self { key, prev }
+impl CapsemPathsGuard {
+    /// Point `CAPSEM_HOME`, `CAPSEM_RUN_DIR`, and `CAPSEM_ASSETS_DIR` at `root`.
+    pub fn redirect(root: &std::path::Path) -> Self {
+        let values = [
+            ("CAPSEM_HOME", root.to_path_buf()),
+            ("CAPSEM_RUN_DIR", root.join("run")),
+            ("CAPSEM_ASSETS_DIR", root.join("assets")),
+        ];
+        let mut previous = Vec::with_capacity(values.len());
+        for (key, value) in values {
+            previous.push((key, std::env::var_os(key)));
+            // SAFETY: tests that redirect paths serialize on a shared lock.
+            unsafe {
+                std::env::set_var(key, value);
+            }
         }
-        fn unset(key: &'static str) -> Self {
-            let prev = std::env::var(key).ok();
-            std::env::remove_var(key);
-            Self { key, prev }
-        }
+        Self { previous }
     }
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match &self.prev {
-                Some(v) => std::env::set_var(self.key, v),
-                None => std::env::remove_var(self.key),
+}
+
+impl Drop for CapsemPathsGuard {
+    fn drop(&mut self) {
+        for (key, value) in self.previous.drain(..) {
+            // SAFETY: as above.
+            unsafe {
+                match value {
+                    Some(previous) => std::env::set_var(key, previous),
+                    None => std::env::remove_var(key),
+                }
             }
         }
     }
-
-    #[test]
-    fn capsem_home_uses_env_var_when_set() {
-        let _lock = lock_env();
-        let _g = EnvGuard::set("CAPSEM_HOME", "/tmp/test-capsem-home");
-        assert_eq!(capsem_home(), PathBuf::from("/tmp/test-capsem-home"));
-    }
-
-    #[test]
-    fn capsem_home_ignores_empty_env_var() {
-        let _lock = lock_env();
-        let _g = EnvGuard::set("CAPSEM_HOME", "");
-        let _h = EnvGuard::set("HOME", "/home/alice");
-        assert_eq!(capsem_home(), PathBuf::from("/home/alice/.capsem"));
-    }
-
-    #[test]
-    fn capsem_home_falls_back_to_home() {
-        let _lock = lock_env();
-        let _g = EnvGuard::unset("CAPSEM_HOME");
-        let _h = EnvGuard::set("HOME", "/home/bob");
-        assert_eq!(capsem_home(), PathBuf::from("/home/bob/.capsem"));
-    }
-
-    #[test]
-    fn run_dir_honors_env_override_over_home() {
-        let _lock = lock_env();
-        let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
-        let _r = EnvGuard::set("CAPSEM_RUN_DIR", "/tmp/custom-run");
-        assert_eq!(capsem_run_dir(), PathBuf::from("/tmp/custom-run"));
-    }
-
-    #[test]
-    fn run_dir_under_isolated_home() {
-        let _lock = lock_env();
-        let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
-        let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
-        assert_eq!(capsem_run_dir(), PathBuf::from("/tmp/isolated/run"));
-    }
-
-    #[test]
-    fn assets_dir_honors_env_override_over_home() {
-        let _lock = lock_env();
-        let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
-        let _a = EnvGuard::set("CAPSEM_ASSETS_DIR", "/repo/assets");
-        assert_eq!(capsem_assets_dir(), PathBuf::from("/repo/assets"));
-    }
-
-    #[test]
-    fn assets_dir_under_isolated_home() {
-        let _lock = lock_env();
-        let _a = EnvGuard::unset("CAPSEM_ASSETS_DIR");
-        let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
-        assert_eq!(capsem_assets_dir(), PathBuf::from("/tmp/isolated/assets"));
-    }
-
-    #[test]
-    fn sessions_dir_under_isolated_home() {
-        let _lock = lock_env();
-        let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
-        assert_eq!(
-            capsem_sessions_dir(),
-            PathBuf::from("/tmp/isolated/sessions")
-        );
-    }
-
-    #[test]
-    fn service_socket_and_pidfile_under_run_dir() {
-        let _lock = lock_env();
-        let _h = EnvGuard::set("CAPSEM_HOME", "/tmp/isolated");
-        let _r = EnvGuard::unset("CAPSEM_RUN_DIR");
-        assert_eq!(
-            service_socket_path(),
-            PathBuf::from("/tmp/isolated/run/service.sock")
-        );
-        assert_eq!(
-            service_pidfile_path(),
-            PathBuf::from("/tmp/isolated/run/service.pid")
-        );
-    }
 }
+
+#[cfg(test)]
+mod tests;

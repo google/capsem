@@ -50,7 +50,9 @@ fn any_conn() -> ConnMeta {
 }
 
 struct EnvGuard {
-    old_home_override: Option<String>,
+    // Redirects CAPSEM_HOME/RUN_DIR/ASSETS_DIR together; restores on drop.
+    // None for trace-only guards, which redirect no paths.
+    _capsem_paths: Option<crate::paths::CapsemPathsGuard>,
     old_home: Option<String>,
     old_store: Option<String>,
     old_trace: Option<String>,
@@ -62,15 +64,13 @@ impl EnvGuard {
         home: &std::path::Path,
         test_store: &std::path::Path,
     ) -> Self {
-        let old_home_override = std::env::var("CAPSEM_HOME").ok();
         let old_home = std::env::var("HOME").ok();
         let old_store = std::env::var(crate::credential_broker::STORE_PATH_ENV).ok();
         let old_trace = std::env::var("CAPSEM_TRACE_ID").ok();
-        std::env::set_var("CAPSEM_HOME", capsem_home);
         std::env::set_var("HOME", home);
         std::env::set_var(crate::credential_broker::STORE_PATH_ENV, test_store);
         Self {
-            old_home_override,
+            _capsem_paths: Some(crate::paths::CapsemPathsGuard::redirect(capsem_home)),
             old_home,
             old_store,
             old_trace,
@@ -78,13 +78,12 @@ impl EnvGuard {
     }
 
     fn trace_only(trace_id: &str) -> Self {
-        let old_home_override = std::env::var("CAPSEM_HOME").ok();
         let old_home = std::env::var("HOME").ok();
         let old_store = std::env::var(crate::credential_broker::STORE_PATH_ENV).ok();
         let old_trace = std::env::var("CAPSEM_TRACE_ID").ok();
         std::env::set_var("CAPSEM_TRACE_ID", trace_id);
         Self {
-            old_home_override,
+            _capsem_paths: None,
             old_home,
             old_store,
             old_trace,
@@ -94,10 +93,6 @@ impl EnvGuard {
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
-        match &self.old_home_override {
-            Some(v) => std::env::set_var("CAPSEM_HOME", v),
-            None => std::env::remove_var("CAPSEM_HOME"),
-        }
         match &self.old_home {
             Some(v) => std::env::set_var("HOME", v),
             None => std::env::remove_var("HOME"),

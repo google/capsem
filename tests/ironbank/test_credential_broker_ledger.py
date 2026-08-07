@@ -8,7 +8,6 @@ from tests.ironbank.test_http_protocol_ledger import (
     test_brokered_http_rewrite_pays_full_ledger_debt_blackbox as _broker_rewrite_proof,
 )
 
-
 pytestmark = pytest.mark.integration
 
 

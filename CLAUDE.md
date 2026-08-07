@@ -2,19 +2,25 @@
 
 Sandboxes AI agents in air-gapped Linux VMs on macOS using Apple's Virtualization.framework. Runs as a daemon service (like Docker). Built with Rust and Astro.
 
-Shared agent invariants live in `AGENTS.md`. Read that file too; it is the
-Codex/Claude/Gemini common contract for DB boundaries, skills, and release
-discipline.
+Shared agent invariants live in `AGENTS.md`; it is the Codex/Claude/Gemini
+common contract. **Read it before any release work or any change touching
+logged data** -- it carries the two hard contracts: serialized orthogonal
+binary/profile releases with complete reusable test modules, and the logger DB
+boundary (only `capsem-logger` executes ledger queries).
+For release inputs, the manifest is the bible: absent means nonexistent.
+Mutable manifests are fetched fresh; immutable caches are keyed only by
+manifest-recorded artifact digests, never by channel, and reverified on use.
 
 ## Quick Start
 
 ```bash
 just doctor        # Check tools (first time)
-just build-assets  # Build kernel + rootfs (first time, needs docker via Colima on macOS)
+just doctor fix    # Install prerequisites and materialize missing VM assets
 just shell         # Build + boot VM (~10s)
-just smoke         # Fast path: doctor + integration tests
-just install       # Build release .pkg/.deb and install to ~/.capsem/
+just smoke         # Focused developer feedback; not release qualification
 just test          # ALL tests: unit + integration + cross-compile + Docker e2e. No shortcuts.
+just release-binaries nightly
+just release-profile nightly code
 ```
 
 See `/dev-just` for the full recipe reference and dependency chains.
@@ -25,26 +31,35 @@ See `/dev-just` for the full recipe reference and dependency chains.
 crates/capsem-core/            VM library (config, boot, serial, vsock, machine)
 crates/capsem-service/         Daemon service (axum HTTP over UDS, VM lifecycle)
 crates/capsem-process/         Per-VM process (boots VM, bridges vsock, job store)
-crates/capsem/                 CLI client (create, shell, list, status, setup, update)
+crates/capsem/                 CLI client (create, shell, exec, list, install, assets, update)
+crates/capsem-tui/             Terminal control UI (reads and drives state via the gateway)
+crates/capsem-admin/           Profile/asset/release administration (validate, materialize, publish)
 crates/capsem-gateway/         TCP-to-UDS HTTP gateway (frontend + tray + remote auth)
 crates/capsem-mcp/             Host MCP server for AI agents (stdio, bridges to service)
 crates/capsem-mcp-aggregator/  Low-privilege subprocess: connects to external MCP servers
 crates/capsem-mcp-builtin/     Stdio MCP server for built-in tools (HTTP, file/snapshot)
-crates/capsem-agent/           Guest PTY agent + net-proxy + mcp-server + sysutil (musl)
+crates/capsem-agent/           Guest PTY agent + net-proxy + dns-proxy + mcp-server + sysutil (musl)
 crates/capsem-app/             Thin Tauri desktop shell (points at gateway)
 crates/capsem-tray/            System tray (polls gateway, quick actions)
 crates/capsem-proto/           Shared protocol types (host-guest, service-process IPC)
 crates/capsem-logger/          Session DB schema, queries, async writer
 crates/capsem-guard/           Companion lifecycle primitives (parent-watch + flock singleton)
-frontend/                 Astro 5 + Svelte 5 + Tailwind v4 + Preline
+crates/capsem-bench/           Benchmark harness, ships as capsem-bench-rs (guest musl + host)
+crates/capsem-mock-server/     Hermetic mock upstream (HTTP/TLS/WS) for tests and benchmarks
+frontend/                 Astro 7 + Svelte 5 + Tailwind v4 + owned semantic CSS
 site/                     Marketing website (Astro + Svelte 5)
 docs/                     Documentation site (Astro Starlight)
-src/capsem/builder/       capsem-builder CLI (config-driven image builder)
-guest/config/             Guest image configuration (TOML configs)
+release-site/             Release channel site (Astro, built from target/release-channel/)
+config/                   Runtime product config source -- never developer skills (see Skills)
+config/profiles/<id>/     Profile ledgers (code, co-work): profile.toml + packages, MCP, rules, root seed
+src/capsem/builder/       capsem-builder backend helpers (image builds are driven by capsem-admin)
 guest/artifacts/          Guest scripts and diagnostics (capsem-init, bashrc, tests)
 assets/                   Built VM assets (gitignored, per-arch: assets/{arch}/)
 graphics/                 Brand icons and Tauri app icons (source of truth)
 skills/                   Shared AI agent skills (SKILL.md format)
+tests/                    Cross-crate suites (ironbank/ black-box gates, citadel/ guards)
+src/capsem/gate/          The build and release gate: the justfile dispatches, this decides
+scripts/                  CI and release gate scripts invoked by the gate
 ```
 
 ## Skills
@@ -83,30 +98,36 @@ Skills contain hard-won lessons and project-specific patterns. **Before writing 
 | Session DB | `/dev-session-debug` | Inspecting session.db, correlating events |
 | Benchmarking | `/dev-benchmark` | capsem-bench, performance regression |
 | capsem-doctor | `/dev-capsem-doctor` | In-VM diagnostic suite, adding new tests |
-| Frontend | `/frontend-design` | UI components, Svelte 5 runes, Tailwind, Preline |
+| Frontend | `/frontend-design` | UI components, Svelte 5 runes, Tailwind, owned semantic CSS |
 | Build images | `/build-images` | capsem-builder, guest config, rootfs, kernel |
 | Initrd repack | `/build-initrd` | Guest binary changes, fast iteration loop |
 | Asset pipeline | `/asset-pipeline` | Asset manifest, hash verification, boot-time resolution |
 | Just recipes | `/dev-just` | Which just command to run for a given task |
+| Build/release gate | `/dev-gate` | Adding or changing a `capsem-gate` command; boundary, primitive, or contention guard failures |
 | Debugging | `/dev-debugging` | Bug investigation, reproduce-first workflow |
+| CI triage | `/dev-ci` | Red gates, pr-gate failures, rerun decisions, stop-the-line policy |
 | Sprints | `/dev-sprint` | Running a multi-step feature sprint |
 | Release | `/release-process` | CI, signing, notarization, changelog |
+| Release gate proof | `/ironbank` | Black-box acceptance proof for VM, network, MCP, security, or release-gate behavior |
+| Bug queue | `/dev-bug-review` | Working a queue of bug reports one-by-one (confirm, push back, fix, commit) |
 | Installation | `/dev-installation` | Setup wizard, service registration, self-update, install tests |
 | Architecture | `/site-architecture` | System design, service architecture, vsock, key files |
 | Docs site | `/site-infra` | Writing/editing docs, Starlight, sidebar, release pages |
 | Marketing site | `/site-marketing` | Marketing website (capsem.org), copy, components, theme |
 | Skills system | `/dev-skills` | How skills work, naming, discovery |
 | Skills layout | `/meta-organize-skills` | Skills directory conventions, symlinks |
+| Skill discovery | `/meta-find-skills` | Finding or installing skills from the ecosystem |
+| Skill authoring | `/meta-skill-creation` | Creating, improving, or evaluating skills |
 
 ## Desktop app (capsem-app)
 
 - Thin Tauri webview shell -- only IPC commands are `log_frontend`, `open_url`, `check_for_app_update`. No VM logic, no capsem-core dep. All UI state flows through the gateway at `http://127.0.0.1:19222`.
-- **The frontend is embedded in the Rust binary at cargo build time** via `tauri::generate_context!()`. Running `pnpm run build` alone does **nothing** to a compiled binary. After any frontend change meant for the desktop app, run `just build-ui` (frontend build + `cargo build -p capsem-app`). The toolbar shows `build <timestamp>` -- if it's stale, you forgot to rebuild the Rust binary.
+- **The frontend is embedded in the Rust binary at cargo build time** via `tauri::generate_context!()`. Running `pnpm run build` alone does **nothing** to a compiled binary. After any frontend change meant for the desktop app, run `just build` (frontend build + `cargo build -p capsem-app`). The toolbar shows `build <timestamp>` -- if it's stale, you forgot to rebuild the Rust binary.
 - Iframe `src` for bundled pages must be explicit (`/vm/terminal/index.html`). The Tauri custom protocol on macOS does not auto-append `index.html` the way dev servers do.
 
 ## Code Style
 
-- **Warnings are errors.** Fix every compiler/linter warning before considering code done. Never leave warnings. Frontend: `pnpm run check` uses `--fail-on-warnings`. Rust: all crates use `#[deny(warnings)]` -- treat clippy and rustc warnings as build failures.
+- **Warnings are errors.** Fix every compiler/linter warning before considering code done. Never leave warnings. Frontend: `pnpm run check` uses `--fail-on-warnings`. Rust: the root `Cargo.toml` sets `[workspace.lints.rust] warnings = "deny"` and every crate inherits it via `[lints] workspace = true` -- clippy and rustc warnings are build failures. New-stable clippy fallout is absorbed by documented allows in `[workspace.lints.clippy]`, not per-file attributes.
 - **Reuse over reinvention.** Check `capsem-core` first. Extend existing abstractions.
 - **Minimize code.** Delete dead code, inline single-use helpers. Every line must earn its place.
 - **`capsem-core` is the shared library.** Service, process, CLI, and agent crates are thin shells. Business logic lives in core.
@@ -130,6 +151,13 @@ All guest binaries deployed chmod 555 (read-only). Rootfs mounted read-only. Gue
 ### Codesigning
 
 The binary must be codesigned with `com.apple.security.virtualization` or VZ calls crash. The justfile handles this.
+
+## Vocabulary and gotchas
+
+- **glowup** = installed-package release proof owned by `just test`: Linux runs `scripts/local-release-glowup.py` in Docker/systemd; macOS installs the signed exact package in Tart and boots it through physical Apple VZ.
+- **winterfell** = service session-ledger lifecycle fixtures in `crates/capsem-service/src/tests.rs`; AGENTS.md's gate list refers to these.
+- `just test` writes benchmark recordings under `target/test-benchmarks/`; intentional historical publication uses the owning benchmark command and explicit review.
+- Rust is pinned to 1.97.1 in `rust-toolchain.toml`, bootstrap, CI, and Docker. Bump every surface together in a deliberate monthly toolchain PR and handle new-lint fallout there.
 
 ## Commits
 

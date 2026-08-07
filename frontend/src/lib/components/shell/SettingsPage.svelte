@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { themeStore, PRELINE_THEMES, FONT_SIZES, FONT_FAMILIES, UI_FONT_SIZES } from '../../stores/theme.svelte.ts';
+  import { themeStore, ACCENT_THEMES, FONT_SIZES, FONT_FAMILIES, UI_FONT_SIZES } from '../../stores/theme.svelte.ts';
   import { settingsStore } from '../../stores/settings.svelte.ts';
   import { THEME_FAMILIES, getTheme, resolveThemeKey } from '../../terminal/themes';
   import SettingsSection from '../settings/SettingsSection.svelte';
@@ -187,16 +187,16 @@
               <p class="text-xs text-muted-foreground-1 mt-0.5">Color accent for the interface chrome</p>
             </div>
             <div class="flex items-center gap-x-2">
-              {#each PRELINE_THEMES as theme (theme.value)}
+              {#each ACCENT_THEMES as theme (theme.value)}
                 <button
                   type="button"
                   class="size-6 rounded-full border-2 transition-transform
-                    {themeStore.prelineTheme === theme.value
+                    {themeStore.accentTheme === theme.value
                       ? 'border-foreground scale-110'
                       : 'border-transparent hover:scale-110'}"
                   style="background-color: {theme.color}"
                   title={theme.label}
-                  onclick={() => themeStore.setPrelineTheme(theme.value)}
+                  onclick={() => themeStore.setAccentTheme(theme.value)}
                 ></button>
               {/each}
             </div>

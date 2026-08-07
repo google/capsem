@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-
 from ironbank.model_pricing import estimate_cost_usd, has_pricing
 
 

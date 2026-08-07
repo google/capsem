@@ -2,24 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
-import hashlib
 from pathlib import Path
 from typing import Any
 
 import blake3
+from helpers.release_site import FIXTURE_GRAPH, PROJECT_ROOT, release_site_build_lock
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-FIXTURE_GRAPH = (
-    PROJECT_ROOT
-    / "tests"
-    / "capsem-release"
-    / "fixtures"
-    / "release-graph-stable-nightly.json"
-)
 PROFILE_IDS = ("co-work", "code")
 
 
@@ -28,19 +20,25 @@ def test_local_multichannel_dist_contract(tmp_path: Path) -> None:
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     _materialize_graph_dist(graph, dist)
 
-    result = subprocess.run(
-        ["pnpm", "--dir", "release-site", "run", "build:channel"],
-        cwd=PROJECT_ROOT,
-        env={
-            **os.environ,
-            "ASTRO_TELEMETRY_DISABLED": "1",
-            "CAPSEM_RELEASE_CHANNEL_DIST": str(dist),
-        },
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+    # build:channel renders through the shared release-site/dist before
+    # overlaying into `dist`, so it has to serialize with every other build.
+    with release_site_build_lock():
+        result = subprocess.run(
+            ["pnpm", "--dir", "release-site", "run", "build:channel"],
+            cwd=PROJECT_ROOT,
+            env={
+                **os.environ,
+                "ASTRO_TELEMETRY_DISABLED": "1",
+                # Both: `astro build` renders from the graph and
+                # `overlay-dist.mjs` writes the channel dist. Here they are
+                # one directory, which is why one name looked sufficient.
+                "CAPSEM_RELEASE_GRAPH": str(dist),
+                "CAPSEM_RELEASE_CHANNEL_DIST": str(dist),
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
     assert result.returncode == 0, result.stdout + result.stderr
 
     channels = json.loads((dist / "channels.json").read_text(encoding="utf-8"))

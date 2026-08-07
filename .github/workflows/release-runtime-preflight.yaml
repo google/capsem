@@ -1,0 +1,66 @@
+name: Release runtime preflight
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        required: true
+        type: string
+      bootstrap_missing_first_party:
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  materialize:
+    name: Materialize (${{ matrix.os }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x86_64
+          - os: macos-14
+            arch: arm64
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - name: Select fresh manifest-authorized runtime graph
+        id: manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            --channel "${{ inputs.channel }}"
+            --github-output "$GITHUB_OUTPUT"
+          )
+          if [[ "${{ inputs.bootstrap_missing_first_party }}" == "true" ]]; then
+            args+=(--bootstrap-missing-first-party)
+          fi
+          python3 scripts/select-runtime-preflight-manifest.py "${args[@]}"
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          key: runtime-materialization-${{ matrix.os }}-${{ matrix.arch }}
+
+      # Both serialized release lanes retain this fail-fast proof of the
+      # currently public runtime graph before constructing a candidate.
+      - name: Materialize live release graph with release command
+        env:
+          CAPSEM_ARCH: ${{ matrix.arch }}
+          PREFLIGHT_MANIFEST_URL: ${{ steps.manifest.outputs.manifest-url }}
+        run: |
+          set -euo pipefail
+          CAPSEM_ASSET_MANIFEST="$PREFLIGHT_MANIFEST_URL" \
+            bash scripts/materialize-config.sh
+          test -f target/config/assets/manifest.json
+          test -d target/config/profiles

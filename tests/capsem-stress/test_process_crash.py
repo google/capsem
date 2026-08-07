@@ -1,12 +1,12 @@
 """Service recovery after capsem-process crash."""
 
+import contextlib
 import os
 import signal
 import time
 import uuid
 
 import pytest
-
 from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.stress
@@ -40,10 +40,8 @@ def test_service_survives_process_kill():
         assert list_resp is not None, "Service died after process kill"
 
         # Clean up the dead VM
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
 
         # Should be able to create a new VM
         name2 = f"after-crash-{uuid.uuid4().hex[:8]}"

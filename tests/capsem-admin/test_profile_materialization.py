@@ -11,6 +11,8 @@ from pathlib import Path
 
 from blake3 import blake3
 
+from scripts.release_test_binary import ensure_host_test_binary
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ADMIN = PROJECT_ROOT / "target" / "debug" / "capsem-admin"
 SOURCE_PROFILE = PROJECT_ROOT / "config" / "profiles" / "code" / "profile.toml"
@@ -22,16 +24,11 @@ def _host_arch() -> str:
 
 
 def _ensure_admin_binary() -> None:
-    admin_source = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "main.rs"
-    if ADMIN.exists() and ADMIN.stat().st_mtime >= admin_source.stat().st_mtime:
-        return
-    subprocess.run(
-        ["cargo", "build", "-p", "capsem-admin"],
-        cwd=PROJECT_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=120,
+    ensure_host_test_binary(
+        ADMIN,
+        source_paths=(PROJECT_ROOT / "crates" / "capsem-admin").rglob("*.rs"),
+        build_command=("cargo", "build", "-p", "capsem-admin"),
+        project_root=PROJECT_ROOT,
     )
 
 
@@ -76,9 +73,9 @@ def _write_publishable_manifest(root: Path) -> Path:
             },
         },
         "binaries": {
-            "current": "1.4.1234567890",
+            "current": "1.4.1",
             "releases": {
-                "1.4.1234567890": {
+                "1.4.1": {
                     "date": "2030-01-01",
                     "deprecated": False,
                     "min_assets": "2030.0101.1",
@@ -100,7 +97,7 @@ def _write_local_url_profile_catalog(root: Path) -> Path:
 id = "code"
 name = "Code"
 description = "Profile catalog fixture with local source URLs."
-revision = "profiles-2030.0101.1"
+revision = "2.0.0"
 refresh_policy = "24h"
 
 [assets]
@@ -258,22 +255,24 @@ def test_assets_channel_profile_catalog_is_publishable_not_local(tmp_path: Path)
     manifest_text = manifest_path.read_text(encoding="utf-8")
     assert "file://" not in manifest_text
     assert str(tmp_path) not in manifest_text
-    assert "/assets/releases/2030.0101.1/arm64-vmlinuz" in manifest_text
-    assert (
-        "/assets/releases/2030.0101.1/arm64-obom.cdx.json" in manifest_text
+    publication_root = (
+        "/profiles/releases/stable/code/2.0.0/arm64"
     )
+    assert f"{publication_root}/vmlinuz" in manifest_text
+    assert f"{publication_root}/obom.cdx.json" in manifest_text
+    assert "/assets/releases/" not in manifest_text
 
     manifest = json.loads(manifest_text)
     assert "profile_catalog" not in manifest
     profile = manifest["profiles"]["code"]
+    assert profile["revision"] == "2.0.0"
     arm64 = profile["architectures"][0]
     kernel = next(item for item in arm64["images"] if item["kind"] == "kernel")
+    assert kernel["url"] == f"{publication_root}/vmlinuz"
     assert kernel["digest"]["blake3"]
     assert kernel["bytes"] > 0
     obom = next(item for item in arm64["evidence"] if item["kind"] == "obom")
-    assert obom["url"] == (
-        "/assets/releases/2030.0101.1/arm64-obom.cdx.json"
-    )
+    assert obom["url"] == f"{publication_root}/obom.cdx.json"
 
 
 def test_profile_materialize_rejects_bare_manifest_path(tmp_path: Path) -> None:

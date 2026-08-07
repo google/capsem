@@ -1,174 +1,114 @@
 ---
 name: dev-just
-description: Capsem development toolchain -- all just recipes, what they do, when to use which, and dependency chains. Use when you need to know how to build, run, test, or ship Capsem, or when deciding which just command to run for a given change. This is the toolchain reference.
+description: Capsem's deliberately small Just command surface. Use when choosing, changing, documenting, or reviewing a Just recipe.
 ---
 
-# Capsem Toolchain
+# Capsem Just discipline
 
-All workflows use `just` (not make). The justfile is the single entry point.
+The Justfile is a product interface, not a script drawer. Its public surface is
+exactly the allowlist in `config/public-surface.toml`; the contract test derives
+the live recipe list and fails on additions, removals, renames, or count drift.
+A new public recipe requires explicit user/product approval and an intentional
+allowlist update in the same change.
 
-## Quick reference
+## Approved public commands
 
-| Command | What it does |
-|---------|-------------|
-| `just doctor` | Check all required tools, colored output, structured recap |
-| `just doctor fix` | Doctor + auto-fix all fixable issues in dependency order |
-| `just shell` | Daily driver: cross-compile + repack initrd + build + sign + boot temp VM + shell (~10s) |
-| `just exec "CMD"` | Run CMD in a fresh temp VM (auto-provisioned and destroyed) |
-| `just run-service` | Start capsem-service daemon (builds, signs, launches or reuses) |
-| `just ui` | Tauri dev with hot reload (service + Astro dev server on :5173 in Tauri webview) |
-| `just dev-frontend` | Frontend-only dev server on :5173 (no Tauri, no VM, mock data) |
-| `just build-ui [release]` | **Frontend build + `cargo build -p capsem-app` in lockstep.** Use after any frontend change when running the Tauri binary directly. |
-| `just run-ui -- [args]` | `build-ui` then launch `./target/debug/capsem-app` with args (e.g. `--connect <id>`) |
-| `just build-assets [arch]` | Full VM asset rebuild through capsem-admin/profile materialization and the private Python builder backend. Default: both arches. |
-| `just smoke` | Hermetic smoke gate: audit + doctor + injection + integration + parallel pytest groups |
-| `just test` | ALL tests: unit (warnings-as-errors) + cov + cross-compile + frontend + python + injection + integration + bench + install e2e |
-| `just test-gateway` | Gateway unit + mock-UDS tests (no VM needed) |
-| `just test-gateway-e2e` | Gateway E2E tests (real service + VMs) |
-| `just test-install` | Install e2e in Docker + systemd, then hermetic local release glow-up from generated stable/nightly channels |
-| `just coverage` | HTML coverage report across all Rust crates (opens `target/llvm-cov/html/index.html`) |
-| `just cross-compile [arch]` | Full Linux build in container (agent + deb) |
-| `just benchmark` | Standard artifact-recording benchmark suite across host-native, in-VM, lifecycle/fork/parallel, and Security Engine lanes |
-| `just bench` | Alias for `just benchmark` |
-| `just inspect-session [args]` | Session DB integrity + event summary |
-| `just list-sessions` | Table of recent sessions with event counts |
-| `just query-session "SQL" [id]` | Run SQL against a session DB (latest with a DB by default) |
-| `just update-fixture <src>` | Copy + scrub real session DB as test fixture |
-| `just update-prices` | Refresh model pricing JSON |
-| `just update-deps` | `cargo update` + `pnpm update` |
-| `just logs` | Tail `~/.capsem/run/service.log` |
-| `just sandbox-logs <id>` | View process + serial logs for a specific sandbox |
-| `just build-host-image` | Build/refresh the `capsem-host-builder` Docker image |
-| `just install` | Build release .pkg/.deb + install it locally (postinstall handles codesign, PATH, service registration) |
-| `just prepare-release` | Run local full gate, stamp version/changelog, and commit an untagged candidate |
-| `just qualify-release` | Run and wait for the remote canonical Linux gate on exact published `HEAD` |
-| `just cut-release` | Verify exact-SHA remote qualification, then create the local immutable tag |
-| `just release [tag]` | Verify qualification again, then wait for CI package proofs and publication |
-| `just clean` | Remove all build artifacts |
-| `just clean all` | clean + Docker prune (full reset) |
+| Command | Contract |
+|---|---|
+| `just dev [ui\|frontend\|tui]` | Select one development surface. No passthrough arguments: `just` joins a variadic before interpolating it, so no spelling preserves argument boundaries. Use `uv run capsem-gate dev tui …` when you need them. |
+| `just build [debug\|release]` | Build the desktop app with its embedded frontend. |
+| `just build-all [debug\|release]` | Build all host binaries, desktop app, docs, and site. |
+| `just build-docs` | Build documentation and marketing sites. |
+| `just shell` | Start the service and enter a temporary VM. |
+| `just exec "<command>"` | Run one command in a fresh temporary VM. |
+| `just run-service` | Materialize assets/config and start the local daemon idempotently. |
+| `just logs [sandbox-id\|failure]` | Tail service logs, show a sandbox log, or list the latest preserved failure evidence. |
+| `just doctor [fix]` | Validate host tools, Docker/Colima, Tart cache/boot/SSH, signing, and assets. |
+| `just smoke` | Focused developer integration feedback; never release qualification. |
+| `just test` | Complete local all-artifact construction and test proof. |
+| `just release-binaries <channel>` | Run complete `just test`, then build and release only packages for one channel against pulled profiles. |
+| `just release-profile <channel> <profile>` | Run complete `just test`, then call `capsem-admin release` for one profile against the pulled package. |
 
-## When to use which
+`just --summary` must print only those 13 names.
 
-| What changed | Command |
-|-------------|---------|
-| Rust host code | `just smoke` (E2E) or `just test` (full) |
-| Guest binary (agent, net-proxy, mcp-server) | `just smoke` (auto-repacks initrd) |
-| `capsem-init` | `just smoke` (auto-repacks) |
-| In-VM diagnostics (`guest/artifacts/diagnostics/`) | `just smoke` |
-| Profile payloads (`config/profiles/<id>/`) or rootfs packages | `just build-assets` then `just shell` |
-| Frontend components | `just ui` (iterate) then `just test` (validate) |
-| Frontend standalone (no VM) | `just dev-frontend` |
-| Tauri binary (not dev) | `just build-ui` then `just run-ui` |
-| Telemetry pipelines | `just exec "<cmd>"` then `just inspect-session` |
-| Gateway code | `just test-gateway` (unit) or `just test-gateway-e2e` (real VMs) |
-| Service HTTP API / CLI / MCP | `just smoke` (parallel pytest groups cover all three) |
-| Install / postinst / systemd / release glow-up flow | `just test-install` |
-| Pre-release | `just test` |
-| Prepare candidate | `just prepare-release`, then manually push only `main` |
-| Qualify candidate | `just qualify-release` (no tag or publication) |
-| Ship qualified candidate | `just cut-release`, push the tag, then `just release <tag> <channel>` |
+## What a recipe may contain
 
-## Dependency chains
+A recipe is a dispatch or a single command. Nothing else, and this is checked
+rather than advised:
 
-```
-shell            -> _check-assets + _pack-initrd + _ensure-service (_sign + build)
-ui               -> _ensure-setup + _pnpm-install + run-service
-run-service      -> _check-assets + _pack-initrd + _ensure-service
-exec             -> run-service
-build-assets     -> _install-tools + _clean-stale (inline: doctor, capsem-admin image build)
-build-ui         -> _frontend-dist (pnpm build + cargo build -p capsem-app)
-smoke            -> _install-tools + _frontend-dist + _check-assets + _pack-initrd + _ensure-service
-test             -> _install-tools + _clean-stale + _frontend-dist + _generate-settings
-                    + _check-assets + _pack-initrd
-bench            -> _ensure-setup + _check-assets + _pack-initrd + _ensure-service
-test-gateway-e2e -> _check-assets + _pack-initrd + _sign
-test-install     -> Docker package install + generated local stable/nightly glow-up
-install          -> _pnpm-install + _stamp-version + _check-assets + _pack-initrd
-prepare-release  -> test + _stamp-version (commit only, no tag)
-qualify-release  -> exact origin/main SHA + release-qualification.yaml
-cut-release      -> exact successful qualification + local tag (no stamp/commit)
-```
+- no shell body (no `#!/bin/bash`) -- `tests/test_gate_boundary.py`
+- at most five executable lines
+- no `if`, `for`, `while`, `case`, `until` or `trap`
 
-`_`-prefixed recipes are internal (hidden from `just --list`).
+The justfile carried roughly 2070 lines of inline `bash` across thirty-five
+recipes, none of it reachable by a test, so every defect in it was found by
+running the forty-minute gate. It is 73 body lines now. Logic lives in
+`src/capsem/gate/`; see `/dev-gate` for how to add or change a command.
 
-`_ensure-service` honors `CAPSEM_HOME` / `CAPSEM_RUN_DIR` for isolated
-smoke/test runs and assigns the gateway an ephemeral port in that mode. This
-keeps test services from colliding with the user's installed gateway on the
-default developer port.
+The one exception is a single command with no branching -- `cargo build`,
+`cd frontend && pnpm run dev` -- where routing through Python would add a `uv`
+startup and, for an interactive dev server, break TTY and signal handling, in
+exchange for no decision made.
 
-## Docker disk management
+## What does not belong in Just
 
-Docker builds (`build-assets`, `cross-compile`, `test-install`) accumulate images, build cache, and stopped containers inside the Colima VM. The `_docker-gc` helper runs automatically after each of these recipes to prevent unbounded disk growth:
+- `smoke` is the one public focused developer gate. It is never sufficient for
+  release; both release commands must call complete `test`, not `smoke`.
+- No generic or combined release recipe. The two approved release commands
+  each run `just test` before delegating to one checked-in implementation, and
+  the two workflows share the per-channel lock.
+- No dependency-update, fixture-update, audit-only, coverage-only, benchmark,
+  cleanup, session-SQL, or package-install convenience recipes. Call the owning
+  script/tool directly.
+- No separate UI aliases. Use `just dev <surface>` or `just build`.
+- No public build primitives for kernel, rootfs, Docker images, architectures,
+  or package rails.
 
-- Removes stopped containers
-- Prunes unused images older than 72h
-- Prunes build cache older than 72h
-- Runs `fstrim` on the Colima VM disk to release freed space back to macOS
+Private underscore recipes may exist only as dependencies of the approved
+commands or as narrow CI primitives. Specialized skills and workflows may
+name those internals, but general developer guidance must not present them as
+public commands. Prefer a tested script when orchestration has state,
+branching, reporting, cleanup, or resource ownership.
 
-The Colima VM uses a Virtualization.framework raw disk that only grows, never shrinks on its own. Without `fstrim`, Docker prune frees space inside the VM but macOS never gets it back. This is why `_docker-gc` always trims after pruning.
+## Canonical testing
 
-For a full manual reset: `just clean all` (removes all build artifacts + aggressive Docker prune).
+`just test` owns the complete graph:
 
-## Tauri gotcha: frontend is embedded at cargo build time
+- fail-fast bootstrap and clean install-harness proof;
+- audits, lint, frontend, Rust and Python coverage;
+- both profile/architecture VM asset lanes and real VM boot;
+- four-VM parallel integration;
+- Linux parity and both `.deb` architectures;
+- host package SBOM;
+- Linux systemd install plus channel glow-up;
+- on macOS, an unsigned local `.pkg` install in Tart, ad-hoc signature checks
+  on the installed executable payload, and physical Apple VZ boot from that
+  exact package.
 
-`tauri::generate_context!()` reads `tauri.conf.json` `frontendDist: ../../frontend/dist` and **bakes every file under that directory into the Rust binary** during `cargo build`. Consequences:
+Release CI calls the checked-in `_test-fast`, `_test-static`,
+`_test-artifacts`, `_test-functional`, `_test-glowup`, and
+`_test-release-contracts` modules. `_test-fast` is also the first phase of
+`just test` and `just smoke`; it owns YAML/source syntax, source contracts,
+Clippy, Python and JavaScript checks, and every locked-ecosystem vulnerability
+audit. Callers must reuse it whole rather than duplicating a subset.
+Binary CI builds packages and pulls profiles; profile CI builds one profile and
+pulls packages. Both retain complete functional and glow-up proof before
+activation. Do not fork or approximate this graph in another public recipe.
+All checked-in automation enters through the same two public release recipes;
+it must not call their scripts or workflows directly.
+Local qualification must not import, unlock, or use Apple Developer
+certificates. Developer ID package signing, notarization, and stapling belong
+only to the tagged publication workflow.
 
-- Recipes that compile the full workspace (`just smoke`, `just test`) must build `_frontend-dist` before `cargo clippy --workspace --all-targets`; otherwise `capsem-app` fails during macro expansion if `frontend/dist` is missing.
-- Rebuilding only the frontend (`pnpm run build`) has **zero effect** on a running `./target/**/capsem-app` -- the binary still carries the old bundle.
-- After any edit to `frontend/**`, you must `cargo build -p capsem-app` for the change to reach the Tauri app.
-- `just ui` (`cargo tauri dev`) sidesteps this by serving `http://localhost:5173` directly -- no embedding happens in dev mode.
-- For manual launches, always go through `just build-ui` / `just run-ui`, never raw `pnpm run build` followed by re-running an already-compiled binary.
+## Public-surface gate
 
-Symptom you'll see when you forget: edits to Svelte/CSS don't appear in the window, but `http://localhost:5173` in a browser shows the new version. That's the embed-vs-live split.
-
-## Build log
-
-All build infrastructure (runner, code signing, generation scripts) logs to `target/build.log`. This is a unified diagnostic log -- never write to stdout from build scripts. The runner (`scripts/run_signed.sh`) and `_generate-settings` both append here.
-
-When debugging build issues, check `target/build.log` first. When writing new build scripts or recipes, always log to this file, never stdout (which contaminates binary output like `mcp-export`).
-
-## First-time setup
+Run:
 
 ```bash
-just doctor        # Check tools (colored output, shows fixable issues)
-just doctor fix    # Auto-fix missing targets, cargo tools, config files
-just build-assets  # Build kernel + rootfs (~10 min, needs docker)
-just shell         # Boot a temp VM and drop into a shell
+uv run python scripts/check_public_surface.py
+uv run python -m pytest tests/test_public_surface_contract.py
 ```
 
-Or use bootstrap which does all of this:
-
-```bash
-sh bootstrap.sh   # Installs deps + runs doctor fix
-```
-
-## Daily dev
-
-`just shell` is the daily driver. It cross-compiles the guest agent, repacks the initrd, builds the host binary, codesigns, boots the VM, and drops into a shell. For a one-shot command use `just exec "CMD"`. For UI iteration use `just ui` (Tauri dev with hot reload).
-
-## Builder CLI
-
-The capsem-builder Python package is the backend implementation. Product image
-truth enters through `capsem-admin` and profile-owned config, not direct
-builder authoring commands:
-
-```bash
-capsem-admin profile check --profile config/profiles/<profile-id>/profile.toml --config-root config
-just build-assets              # Build profile-owned VM assets through the profile-derived build rail
-just _materialize-config       # Materialize generated runtime profile config
-```
-
-The only public `capsem-builder` helper commands are backend support commands
-used by just/CI: `doctor`, `validate-skills`, `agent`, and `audit`.
-There is no public `capsem-builder build`, `validate`, `inspect`, `--dry-run`,
-`mcp`, or render-only rail. If the product contract needs a new image input,
-add it to the profile/corp/settings config model and the `capsem-admin`
-validation path.
-
-## Cross-compilation
-
-On macOS, agent binaries are compiled inside a Linux container (docker) via `cross_compile_agent()` in `docker.py`. This avoids needing `rust-lld`, musl targets, or `llvm-tools` on the host. On Linux (CI), cargo builds natively.
-
-`just cross-compile [arch]` is a debug/verification tool that builds everything in a container: agent binaries, frontend, and the full Tauri `.deb`. It's not in the daily `just shell` path -- `_pack-initrd` calls `cross_compile_agent()` directly for agent-only builds.
-
-Guest binaries target `aarch64-unknown-linux-musl` and `x86_64-unknown-linux-musl`. Per-arch named volumes (`capsem-agent-target-{arch}`) cache build artifacts separately to prevent cache clobbering.
+The gate also locks the Capsem CLI command tree and service HTTP method/path
+table. Review `config/public-surface.toml` as an API approval ledger, never as a
+snapshot to refresh automatically.

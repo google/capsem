@@ -1,9 +1,10 @@
-# Preline Design Token System
+# Capsem Semantic Token System
 
-Preline's theme system uses semantic CSS variables mapped to Tailwind utilities via `@theme inline {}`. Import `theme.css` to get the full token system with light and dark mode.
+Capsem owns semantic CSS variables mapped to Tailwind utilities via
+`@theme inline {}`. Import the checked-in contract for light and dark mode.
 
 ```css
-@import "preline/css/themes/theme.css";
+@import "./capsem-theme.css";
 ```
 
 ## How Tokens Work
@@ -152,10 +153,10 @@ Shipped in `preline/css/themes/`:
 
 Activate: `<html data-theme="theme-harvest">`
 
-Import all or specific ones:
+Capsem accent themes are declared in `global.css`; do not import an upstream
+theme package. The owned setup is:
 ```css
-@import "preline/css/themes/theme.css";
-@import "preline/css/themes/harvest.css";
+@import "./capsem-theme.css";
 ```
 
 ## Customization

@@ -1,0 +1,443 @@
+"""The three guarantees `just test` makes on the way out.
+
+These were text assertions against the recipe when the gate was shell: the trap
+had to be armed, had to `return "$status"` rather than `exit "$status"`, and
+must not be disarmed early. Each was checked by grepping the justfile, which
+proves the code was written a particular way and not that it behaves a
+particular way.
+
+They then became assertions about an imperative `CandidateGate.run()`. The gate
+is a composed plan now, and the guarantees split cleanly by *when* they must
+hold:
+
+  the source state is a pair of steps, because re-asserting it must not happen
+  when the gate failed -- the failure is the report
+
+  the process count and the failure evidence are `Resource`s, because they must
+  happen on every path including the aborted one, and a step whose dependency
+  failed is skipped
+
+So the claims are unchanged and the evidence moved to whichever of those two
+places now owns each one.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from contextlib import suppress
+from pathlib import Path
+
+import pytest
+from helpers.gate import RecordingJournal, RecordingRunner, built_command
+
+from capsem.gate import cli  # noqa: F401 - imported so every command registers
+from capsem.gate import config as gate_config
+from capsem.gate.candidate import CandidateCommand, keep_awake
+from capsem.gate.command import GateCommand
+from capsem.gate.context import Context
+from capsem.gate.errors import GateError
+from capsem.gate.lifecycle import held
+from capsem.gate.sourcestate import RecordSourceState, RequireSourceUnchanged
+
+# The Colima lifecycle has its own home in
+# tests/capsem-cleanup-script/test_colima_lifecycle.py, where it is driven
+# against a real executable rather than a recording runner.
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+#: `resources()` takes the runner it should build with; these tests ask
+#: *what* is held, so any runner will do.
+def _resource_runner():
+    from helpers.gate import RecordingRunner
+
+    return RecordingRunner(PROJECT_ROOT)
+
+
+RUNNER_FOR_RESOURCES = _resource_runner()
+CONFIG = gate_config.load(PROJECT_ROOT)
+HEAD = "abcdef1234567890"
+DIGEST = "sha256:cafe"
+
+
+def _checkout(tmp_path: Path) -> Path:
+    (tmp_path / "config").mkdir(parents=True)
+    (tmp_path / "config" / "gate.toml").write_text(
+        (PROJECT_ROOT / "config" / "gate.toml").read_text(encoding="utf-8")
+    )
+    return tmp_path
+
+
+class Running(RecordingRunner):
+    """A gate whose source state holds still unless a test moves it."""
+
+    head = HEAD
+    digest = DIGEST
+
+    def execute(self, command):
+        rendered = str(command)
+        if "rev-parse HEAD" in rendered:
+            return self._answer(command, self.head)
+        if "source-state-digest" in rendered:
+            return self._answer(command, self.digest)
+        return super().execute(command)
+
+    def _answer(self, command, value: str):
+        completed = super().execute(command)
+        completed.stdout = value
+        return completed
+
+
+def _command(root: Path, **kwargs) -> CandidateCommand:
+    runner = Running(root, **kwargs)
+    return GateCommand.registry["candidate"](
+        runner, argparse.Namespace(dry_run=False, graph=False, timing=False)
+    )
+
+
+def _context(root: Path, **kwargs) -> Context:
+    """A context for a gate that is really running.
+
+    `observing` defaults false, which is the point: these tests are about what
+    a run does to the machine (see `test_an_observed_plan_touches_nothing`).
+    """
+    from helpers.gate import RecordingJournal
+
+    return Context(Running(root, **kwargs), gate_config.for_root(root), journal=RecordingJournal())
+
+
+def _plan():
+    return _command(PROJECT_ROOT)._describe()
+
+
+# ---------------------------------------------------------------------------
+# The source state under test
+# ---------------------------------------------------------------------------
+
+
+def test_the_source_state_is_captured_before_anything_runs() -> None:
+    labels = list(_plan().labels)
+
+    assert labels[0] == "source.record"
+
+
+def test_the_process_baseline_precedes_anything_that_can_spawn_one() -> None:
+    """Taken later, it would absorb this run's own processes -- and a
+    developer's dev daemon would be blamed for a leak it did not cause.
+
+    Acquisition order is the guarantee now: resources are taken left to right
+    and released in reverse, so the baseline is first taken and last compared.
+    """
+    names = [resource.name for resource in _command(PROJECT_ROOT).resources(RUNNER_FOR_RESOURCES)]
+
+    assert names[0] == "orphan-accounting"
+
+
+def test_the_fast_module_runs_before_the_expensive_one() -> None:
+    """Its failures come back in minutes rather than after the Docker and VM
+    work."""
+    labels = list(_plan().labels)
+    fast = next(i for i, label in enumerate(labels) if label.startswith("fast."))
+    static = next(i for i, label in enumerate(labels) if label.startswith("static."))
+
+    assert fast < static
+
+
+def test_a_head_that_moved_mid_run_fails(tmp_path: Path) -> None:
+    """A gate that qualified a HEAD nobody has proved nothing about anything."""
+    root = _checkout(tmp_path)
+    context = _context(root)
+    RecordSourceState().perform(context)
+
+    moved = _context(root)
+    moved.runner.head = "0000000000000000"
+    with pytest.raises(GateError, match="source HEAD changed"):
+        RequireSourceUnchanged().perform(moved)
+
+
+def test_a_working_tree_the_gate_edited_fails(tmp_path: Path) -> None:
+    root = _checkout(tmp_path)
+    RecordSourceState().perform(_context(root))
+
+    dirtied = _context(root)
+    dirtied.runner.digest = "sha256:changed"
+    with pytest.raises(GateError, match="changed the source working tree"):
+        RequireSourceUnchanged().perform(dirtied)
+
+
+def test_a_verification_with_nothing_recorded_refuses(tmp_path: Path) -> None:
+    """A missing record must not read as agreement."""
+    with pytest.raises(GateError, match="never recorded"):
+        RequireSourceUnchanged().perform(_context(_checkout(tmp_path)))
+
+
+# ---------------------------------------------------------------------------
+# Closing out: what must happen on every path
+# ---------------------------------------------------------------------------
+
+
+def _accounting(root: Path, **kwargs):
+    from capsem.gate.candidate import OrphanAccounting
+
+    runner = Running(root, **kwargs)
+    return OrphanAccounting(gate_config.for_root(root), runner), runner
+
+
+def test_a_leaked_process_fails_an_otherwise_passing_run(tmp_path: Path) -> None:
+    """The whole point: a run that did everything right and left a service
+    behind is not a run that passed."""
+    accounting, _ = _accounting(_checkout(tmp_path), failures=["orphan-processes.py check"])
+    accounting.acquire()
+
+    with pytest.raises(GateError, match="outlived the gate"):
+        accounting.release()
+
+
+def test_the_count_still_happens_when_the_gate_fails(tmp_path: Path) -> None:
+    """An aborted run is the one that skips its own cleanup, so it is exactly
+    the run whose survivors need counting.
+
+    A `Resource` releases on every path, which is why the accounting is one
+    rather than a step -- a step whose dependency failed is skipped.
+    """
+    accounting, runner = _accounting(_checkout(tmp_path))
+
+    with pytest.raises(GateError, match="boom"), held(accounting):
+        raise GateError("boom")
+
+    assert runner.ran(r"check-orphan-processes\.py check")
+
+
+def test_a_failing_run_keeps_its_own_error_rather_than_the_cleanups(
+    tmp_path: Path,
+) -> None:
+    """Otherwise the operator reads about a leaked process and never sees the
+    failure that caused it."""
+    accounting, _ = _accounting(_checkout(tmp_path), failures=["orphan-processes.py check"])
+
+    with pytest.raises(GateError) as failure, held(accounting):
+        raise GateError("the real failure")
+
+    assert "the real failure" in str(failure.value)
+
+
+def test_an_interrupted_run_is_never_reported_as_a_pass(tmp_path: Path) -> None:
+    """The hazard `try`/`finally` removes.
+
+    Inside an EXIT trap `$?` is the last command's status, which on Ctrl-C is
+    0, so `exit "$status"` discarded the shell's own 130 and turned an abort
+    into a green gate. An interrupt propagates through `held` unless something
+    explicitly swallows it.
+    """
+    accounting, runner = _accounting(_checkout(tmp_path))
+
+    with pytest.raises(KeyboardInterrupt), held(accounting):
+        raise KeyboardInterrupt
+
+    assert runner.ran(r"check-orphan-processes\.py check"), (
+        "the count must happen on the abort path too"
+    )
+
+
+def test_failure_evidence_is_captured_and_labelled_with_the_head(
+    tmp_path: Path,
+) -> None:
+    """`preserve` runs only on failure and before release, because release is
+    what destroys the evidence."""
+    from capsem.gate.candidate import FailureEvidence
+
+    root = _checkout(tmp_path)
+    RecordSourceState().perform(_context(root))
+    runner = Running(root)
+    evidence = FailureEvidence(gate_config.for_root(root), runner)
+
+    with pytest.raises(GateError), held(evidence):
+        raise GateError("boom")
+
+    captured = runner.matching(r"capture-failure")
+    assert captured
+    assert HEAD[:12] in captured[0]
+
+
+def test_a_passing_run_captures_no_failure_evidence(tmp_path: Path) -> None:
+    from capsem.gate.candidate import FailureEvidence
+
+    root = _checkout(tmp_path)
+    runner = Running(root)
+
+    with held(FailureEvidence(gate_config.for_root(root), runner)):
+        pass
+
+    assert not runner.ran(r"capture-failure")
+
+
+def test_the_gate_holds_everything_that_must_be_given_back() -> None:
+    """The set, so a later change cannot quietly drop one."""
+    names = {resource.name for resource in _command(PROJECT_ROOT).resources(RUNNER_FOR_RESOURCES)}
+
+    assert names == {"orphan-accounting", "workspace", "colima", "failure-evidence"}
+
+
+# ---------------------------------------------------------------------------
+# Staying awake
+# ---------------------------------------------------------------------------
+
+
+def test_macos_wraps_the_gate_so_the_machine_cannot_sleep_through_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("shutil.which", lambda _name: "/usr/bin/caffeinate")
+    monkeypatch.delenv(CONFIG.candidate.keep_awake_marker, raising=False)
+
+    prefix = keep_awake(Running(_checkout(tmp_path)))
+
+    assert prefix is not None
+    assert prefix[0] == "caffeinate"
+    assert f"{CONFIG.candidate.keep_awake_marker}=1" in prefix
+
+
+def test_the_wrapper_is_applied_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without the marker it would re-exec itself forever."""
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setenv(CONFIG.candidate.keep_awake_marker, "1")
+
+    assert keep_awake(Running(_checkout(tmp_path))) is None
+
+
+def test_linux_needs_no_wrapper(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+
+    assert keep_awake(Running(_checkout(tmp_path))) is None
+
+
+def test_a_macos_host_without_caffeinate_is_told_why_it_matters(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Darwin")
+    monkeypatch.setattr("shutil.which", lambda _name: None)
+    monkeypatch.delenv(CONFIG.candidate.keep_awake_marker, raising=False)
+
+    with pytest.raises(GateError, match="unattended"):
+        keep_awake(Running(_checkout(tmp_path)))
+
+
+# ---------------------------------------------------------------------------
+# Observing a plan is not running one
+# ---------------------------------------------------------------------------
+
+
+def test_an_observed_plan_touches_nothing(tmp_path: Path) -> None:
+    """`tests/helpers/gate.py` runs the real candidate plan against a
+    recording runner to read back the argv it would issue. That stubs
+    subprocesses -- it does not stub filesystem actions, so `source.record`
+    wrote the gate's own `target/gate-source-state.json` with the recorder's
+    empty output, and the gate's `source.verify` then reported
+
+        source HEAD changed while the gate was running:  -> <head>
+
+    for a tree nobody had touched. It only reached that far once the last step
+    in the plan started passing.
+
+    Reading a plan is not running one, and the context says so rather than
+    each action deciding for itself -- the next action to write a file will not
+    remember either.
+    """
+    root = _checkout(tmp_path)
+    config = gate_config.for_root(root)
+    recorded = config.path(config.candidate.source_state_file)
+
+    RecordSourceState().perform(
+        Context(Running(root), config, journal=RecordingJournal(), observing=True)
+    )
+    assert not recorded.exists(), "an observed plan wrote to the checkout"
+
+    # And a run that is really running records exactly as before.
+    RecordSourceState().perform(_context(root))
+    assert json.loads(recorded.read_text(encoding="utf-8"))["head"] == HEAD
+
+
+def test_observation_reaches_past_a_step_that_claims_an_output(
+    tmp_path: Path,
+) -> None:
+    """Otherwise it stops at the first one and every later step goes unseen.
+
+    A step's declared artifacts are hashed after its actions run, and nothing
+    built them because nothing ran -- so `Hash` raised `cannot hash ...: it is
+    not a file` and the observation ended three steps in. Every contract that
+    reads back issued argv was reading a prefix.
+    """
+    from capsem.gate.execution import step
+    from capsem.gate.fileactions import MakeDir
+
+    absent = tmp_path / "never-built.bin"
+    journal = RecordingJournal()
+    context = Context(
+        Running(tmp_path),
+        gate_config.for_root(_checkout(tmp_path)),
+        journal=journal,
+        observing=True,
+    )
+
+    step("claims", MakeDir(tmp_path / "made"), produces=(absent,)).run(context)
+
+    assert not (tmp_path / "made").exists(), "an observed step created a directory"
+    assert journal.artifacts == [], "an observed step recorded bytes nobody produced"
+
+
+def test_interrogating_the_gate_plan_leaves_the_checkout_alone() -> None:
+    """The helper every contract uses, against the real checkout.
+
+    Guarded here rather than in the helper, because the helper is not the only
+    thing that will ever run a plan to look at it.
+
+    The sentinel is this test's own baseline. Reading whatever happens to be on
+    disk would compare the observer's output against the observer's output the
+    moment a previous run left one there -- and pass. It matters most during a
+    real gate, when the file already holds the true HEAD: a broken `observing`
+    would then rewrite identical bytes and go unnoticed.
+
+    It is written to a *private* path, and that is not incidental. Planting the
+    sentinel in the real `target/gate-source-state.json` made this test the one
+    thing in the suite that deliberately writes a file the whole suite shares.
+    Under `pytest -n 4 --dist=loadfile` that raced: this test wrote the
+    sentinel, a test in another worker had snapshotted the file before that
+    write, and `conftest._the_running_gate_keeps_its_own_source_state` blamed
+    *that* test for the change and restored the file underneath this one. Both
+    failed, in `functional.pytest.broad.code`, and neither was at fault. With
+    the sentinel private, the guard's invariant -- nothing in the suite writes
+    these paths -- is true again, so a future writer is correctly blamed.
+    """
+    config = gate_config.load(PROJECT_ROOT)
+    # Inside `target/`, so it is build output rather than tracked source, and
+    # per-process, so four xdist workers cannot collide on it either.
+    probe = f"{config.candidate.source_state_file}.probe-{os.getpid()}"
+    observed = config.model_copy(
+        update={"candidate": config.candidate.model_copy(update={"source_state_file": probe})}
+    )
+    recorded = config.path(probe)
+    shared = config.path(config.candidate.source_state_file)
+    shared_before = shared.read_bytes() if shared.exists() else None
+
+    sentinel = json.dumps({"head": "sentinel", "digest": "sentinel"}).encode()
+    recorded.parent.mkdir(parents=True, exist_ok=True)
+    recorded.write_bytes(sentinel)
+    try:
+        command = built_command(PROJECT_ROOT, "candidate")
+        plan = command._describe()
+        # A step that needs a machine fails here; what it did before failing is
+        # still what this asserts on.
+        with suppress(Exception):
+            plan.run(Context(command._runner, observed, observing=True))
+
+        assert recorded.read_bytes() == sentinel, (
+            "reading the plan rewrote the gate's own source state"
+        )
+        assert (shared.read_bytes() if shared.exists() else None) == shared_before, (
+            "reading the plan touched the state file belonging to the gate "
+            "running this suite, which is the file every other test shares"
+        )
+    finally:
+        recorded.unlink(missing_ok=True)

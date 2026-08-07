@@ -118,6 +118,16 @@
         }
       ],
       "fileName": "/usr/local/share/capsem/bin/capsem-tui"
+    },
+    {
+      "SPDXID": "SPDXRef-File-capsem-mock-server",
+      "checksums": [
+        {
+          "algorithm": "SHA256",
+          "checksumValue": "c231cd617860e3bb36f103dcbbee22816d9a312b4affe0b67d98dd9a93944d75"
+        }
+      ],
+      "fileName": "/usr/local/share/capsem/bin/capsem-mock-server"
     }
   ],
   "name": "capsem-1-4-0-pkg-sbom.spdx.json",

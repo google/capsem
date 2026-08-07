@@ -22,17 +22,19 @@ fn negotiate_succeeds_when_both_sides_match() {
 }
 
 #[test]
-#[ignore = "waits the full 5s HELLO_TIMEOUT; run with --include-ignored when verifying handshake"]
 fn negotiate_times_out_when_peer_silent() {
     let (mut a, _b) = UnixStream::pair().unwrap();
-    // _b kept alive but never writes a Hello -- our side waits for one.
-    // Use a deliberately short timeout for the test by calling read_hello
-    // directly (negotiate_responder reads first).
-    let err = negotiate_responder(&mut a, "capsem-service-test", "").unwrap_err();
-    // Default HELLO_TIMEOUT is 5s; this test waits the full 5s. Trade-off:
-    // accept the latency to keep the public API minimal. To make tests
-    // fast, we'd parameterize the timeout -- not worth doing today.
-    assert!(matches!(err, HandshakeError::Timeout { .. }), "{err:?}");
+    let timeout = Duration::from_millis(10);
+
+    let err =
+        negotiate_responder_with_timeout(&mut a, "capsem-service-test", "", timeout).unwrap_err();
+
+    match err {
+        HandshakeError::Timeout { timeout_ms } => {
+            assert_eq!(timeout_ms, timeout.as_millis() as u64);
+        }
+        other => panic!("expected timeout, got {other:?}"),
+    }
 }
 
 #[test]

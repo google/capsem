@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).parent.parent
 
 
@@ -136,7 +135,7 @@ def test_session_event_writes_stay_behind_dbwriter():
             continue
         for path in src.rglob("*.rs"):
             rel = path.relative_to(PROJECT_ROOT).as_posix()
-            if rel.endswith("/tests.rs") or rel.endswith("_tests.rs") or "/tests/" in rel:
+            if rel.endswith(("/tests.rs", "_tests.rs")) or "/tests/" in rel:
                 continue
             text = _production_text(path)
             if rel not in allowed_direct_sqlite:

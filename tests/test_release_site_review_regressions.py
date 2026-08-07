@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
-import os
-import shutil
-import subprocess
 from pathlib import Path
 
+from helpers.release_site import build_release_site
 from test_release_site_html_contract import (
     FIXTURE_GRAPH,
-    PROJECT_ROOT,
     RELEASE_SITE_DIST,
     build_release_site_from_fixture,
     fixture_graph,
@@ -77,7 +73,7 @@ def test_package_sbom_owner_level() -> None:
                     assert evidence["url"] not in binary_section
 
 
-def test_channel_descriptions_from_metadata() -> None:
+def test_channel_descriptions_from_metadata(tmp_path: Path) -> None:
     build_release_site_from_fixture()
     graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
 
@@ -96,12 +92,11 @@ def test_channel_descriptions_from_metadata() -> None:
     stripped_graph = json.loads(FIXTURE_GRAPH.read_text(encoding="utf-8"))
     for channel in stripped_graph["channels"].values():
         channel.pop("description", None)
-    graph_path = PROJECT_ROOT / "target" / "release-site-no-channel-descriptions.json"
-    graph_path.parent.mkdir(parents=True, exist_ok=True)
+    graph_path = tmp_path / "release-site-no-channel-descriptions.json"
     graph_path.write_text(json.dumps(stripped_graph), encoding="utf-8")
 
-    build_release_site_from_graph(graph_path)
-    stripped_index = (RELEASE_SITE_DIST / "index.html").read_text(encoding="utf-8")
+    stripped_dist = build_release_site(graph_path)
+    stripped_index = (stripped_dist / "index.html").read_text(encoding="utf-8")
 
     assert "Recommended release channel for everyday Capsem installs." not in stripped_index
     assert "Faster-moving release channel for daily fixes and early validation." not in stripped_index
@@ -386,28 +381,3 @@ def _assert_digest_label(page: str, item: dict, label: str) -> None:
         assert f"{value[:8]}..." in page, (
             f"{label} {algorithm} is not shown as a short human label"
         )
-
-
-def build_release_site_from_graph(graph_path: Path) -> None:
-    if RELEASE_SITE_DIST.exists():
-        shutil.rmtree(RELEASE_SITE_DIST)
-
-    lock_path = Path(os.environ.get("TMPDIR", "/tmp")) / "capsem-release-site-build.lock"
-    with lock_path.open("w", encoding="utf-8") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        env = {
-            **os.environ,
-            "ASTRO_TELEMETRY_DISABLED": "1",
-            "CAPSEM_RELEASE_CHANNEL_DIST": str(graph_path),
-        }
-        result = subprocess.run(
-            ["pnpm", "--dir", "release-site", "run", "build"],
-            cwd=PROJECT_ROOT,
-            env=env,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=False,
-        )
-    build_release_site_from_fixture.cache_clear()
-    assert result.returncode == 0, result.stdout + result.stderr

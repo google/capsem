@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID
 from helpers.service import ServiceInstance
-
 
 pytestmark = pytest.mark.integration
 

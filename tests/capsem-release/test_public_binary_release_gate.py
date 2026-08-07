@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import gzip
 import hashlib
-import io
 import importlib.util
+import io
 import json
 import re
 import subprocess
 import sys
 import tarfile
-from types import ModuleType
 from pathlib import Path
+from types import ModuleType
 
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "check-public-binary-release.py"
@@ -72,6 +73,16 @@ def test_public_binary_release_gate_fetch_retries_ipv4_on_network_unreachable(
     ]
 
 
+def test_public_binary_release_gate_rejects_machine_architecture_as_package_identity() -> None:
+    gate = _load_release_gate()
+
+    with pytest.raises(gate.argparse.ArgumentTypeError, match="package architecture"):
+        gate.RequiredPackage.parse("linux:x86_64:debian_package")
+
+    required = gate.RequiredPackage.parse("linux:amd64:debian_package")
+    assert required.architecture is gate.PackageArchitecture.AMD64
+
+
 def test_public_binary_release_gate_reads_package_contents(tmp_path: Path) -> None:
     package_dir = tmp_path / "packages"
     package_dir.mkdir()
@@ -89,7 +100,7 @@ def test_public_binary_release_gate_reads_package_contents(tmp_path: Path) -> No
         tmp_path,
         [
             _package_record(
-                "x86_64",
+                "amd64",
                 package.name,
                 package,
                 [
@@ -114,7 +125,7 @@ def test_public_binary_release_gate_reads_package_contents(tmp_path: Path) -> No
             "--package-dir",
             str(package_dir),
             "--required-package",
-            "linux:x86_64:debian_package",
+            "linux:amd64:debian_package",
         ],
         cwd=PROJECT_ROOT,
         capture_output=True,
@@ -141,7 +152,7 @@ def test_public_binary_release_gate_rejects_manifest_binary_hash_drift(
         tmp_path,
         [
             _package_record(
-                "x86_64",
+                "amd64",
                 package.name,
                 package,
                 [_binary_record("capsem", "/usr/bin/capsem", wrong_contents)],
@@ -163,7 +174,7 @@ def test_public_binary_release_gate_rejects_manifest_binary_hash_drift(
             "--package-dir",
             str(package_dir),
             "--required-package",
-            "linux:x86_64:debian_package",
+            "linux:amd64:debian_package",
         ],
         cwd=PROJECT_ROOT,
         capture_output=True,
@@ -220,7 +231,7 @@ def test_public_binary_release_gate_does_not_execute_gui_payload_without_deps(
         tmp_path,
         [
             _package_record(
-                "x86_64",
+                "amd64",
                 package.name,
                 package,
                 [
@@ -246,7 +257,7 @@ def test_public_binary_release_gate_does_not_execute_gui_payload_without_deps(
             "--package-dir",
             str(package_dir),
             "--required-package",
-            "linux:x86_64:debian_package",
+            "linux:amd64:debian_package",
         ],
         cwd=PROJECT_ROOT,
         capture_output=True,
@@ -276,7 +287,7 @@ def test_public_binary_release_gate_rejects_frozen_manifest_payload(tmp_path: Pa
         tmp_path,
         [
             _package_record(
-                "x86_64",
+                "amd64",
                 package.name,
                 package,
                 [_binary_record("capsem", "/usr/bin/capsem", capsem)],
@@ -298,7 +309,7 @@ def test_public_binary_release_gate_rejects_frozen_manifest_payload(tmp_path: Pa
             "--package-dir",
             str(package_dir),
             "--required-package",
-            "linux:x86_64:debian_package",
+            "linux:amd64:debian_package",
         ],
         cwd=PROJECT_ROOT,
         capture_output=True,
@@ -328,7 +339,7 @@ def test_public_binary_release_gate_rejects_manifest_metadata_package_version_dr
         tmp_path,
         [
             _package_record(
-                "x86_64",
+                "amd64",
                 package.name,
                 package,
                 [_binary_record("capsem", "/usr/bin/capsem", capsem)],
@@ -350,7 +361,7 @@ def test_public_binary_release_gate_rejects_manifest_metadata_package_version_dr
             "--package-dir",
             str(package_dir),
             "--required-package",
-            "linux:x86_64:debian_package",
+            "linux:amd64:debian_package",
         ],
         cwd=PROJECT_ROOT,
         capture_output=True,
@@ -395,14 +406,23 @@ def test_release_workflow_verifies_exact_installed_state_before_artifact_publica
     workflow = (PROJECT_ROOT / ".github/workflows/release.yaml").read_text(encoding="utf-8")
     jobs = _workflow_job_blocks(workflow)
 
-    for job_name in ("build-app-macos", "build-app-linux"):
+    for job_name in ("test-native-macos-package", "test-native-linux-package"):
         job = jobs[job_name]
+        assert "needs:" in job and "author-binary-candidate" in job
+        assert "name: binary-channel-candidate" in job
         assert "scripts/verify-installed-release.py" in job
-        assert job.index("scripts/verify-installed-release.py") < job.index(
-            "Collect macOS artifacts" if job_name == "build-app-macos" else "Collect Linux artifacts"
-        )
+        assert "PREACTIVATION_MANIFEST=file://" in job
 
-    assert jobs["create-release"].index("needs: [build-app-macos, build-app-linux]") >= 0
+    assert "sudo /usr/sbin/installer" not in jobs["build-app-macos"]
+    assert "sudo dpkg -i" not in jobs["build-app-linux"]
+    assert "Record binary candidate metadata once" in jobs["author-binary-candidate"]
+
+    assert (
+        jobs["create-release"].index(
+            "needs: [test-native-macos-package, test-native-linux-package, test-binary-pairing]"
+        )
+        >= 0
+    )
 
 
 def test_public_binary_release_gate_keeps_public_installer_default_on_stable() -> None:
@@ -513,7 +533,7 @@ def test_public_binary_transition_gate_uses_two_real_manifests_and_downgrades(
             "version": version,
             "kind": "debian_package",
             "platform": "linux",
-            "architecture": "x86_64",
+            "architecture": "amd64",
             "status": "current",
             "url": f"https://example.test/v{version}/Capsem_{version}_amd64.deb",
             "bytes": 100,
@@ -677,8 +697,10 @@ def _write_minimal_deb(
         "usr/share/capsem/assets/manifest-metadata.json": origin,
     }
     data_tar = io.BytesIO()
-    with gzip.GzipFile(fileobj=data_tar, mode="wb", mtime=0) as gz:
-        with tarfile.open(fileobj=gz, mode="w") as tar:
+    with (
+        gzip.GzipFile(fileobj=data_tar, mode="wb", mtime=0) as gz,
+        tarfile.open(fileobj=gz, mode="w") as tar,
+    ):
             for member_path, contents in members.items():
                 info = tarfile.TarInfo(member_path)
                 info.mode = 0o755
@@ -686,9 +708,18 @@ def _write_minimal_deb(
                 info.mtime = 0
                 tar.addfile(info, io.BytesIO(contents))
     control_tar = io.BytesIO()
-    with gzip.GzipFile(fileobj=control_tar, mode="wb", mtime=0) as gz:
-        with tarfile.open(fileobj=gz, mode="w"):
-            pass
+    with (
+        gzip.GzipFile(fileobj=control_tar, mode="wb", mtime=0) as gz,
+        tarfile.open(fileobj=gz, mode="w") as tar,
+    ):
+            control = (
+                f"Package: capsem\nVersion: {package_version}\nArchitecture: amd64\n"
+            ).encode()
+            info = tarfile.TarInfo("control")
+            info.mode = 0o644
+            info.size = len(control)
+            info.mtime = 0
+            tar.addfile(info, io.BytesIO(control))
     deb = (
         b"!<arch>\n"
         + _ar_member("debian-binary", b"2.0\n")

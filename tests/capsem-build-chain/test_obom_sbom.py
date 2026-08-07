@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ast
+import re
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CDXGEN_VERSION = "12.7.0"
 
 
 def _read(path: str) -> str:
@@ -17,7 +19,8 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     asset_workflow = _read(".github/workflows/release-assets.yaml")
     channel_workflow = _read(".github/workflows/release-channel.yaml")
 
-    assert "npm install -g @cyclonedx/cdxgen@latest" in asset_workflow
+    assert f"npm install -g @cyclonedx/cdxgen@{CDXGEN_VERSION}" in asset_workflow
+    assert "@cyclonedx/cdxgen@latest" not in asset_workflow
     assert "attestations: write" in asset_workflow
     assert "id-token: write" in asset_workflow
     assert "CAPSEM_CDXGEN_CMD: cdxgen" in asset_workflow
@@ -25,22 +28,23 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
         "- name: Build VM assets"
     )
     assert asset_workflow.index("CAPSEM_CDXGEN_CMD: cdxgen") < asset_workflow.index(
-        "just build-rootfs"
+        "just _build-rootfs"
     )
     assert "asset-channel-preview" in asset_workflow
-    assert "Publish immutable GitHub asset release" in asset_workflow
+    assert "Publish immutable GitHub profile release" in asset_workflow
     assert "Attest VM asset provenance" in asset_workflow
-    assert "actions/attest-build-provenance@v4" in asset_workflow
-    assert (
-        "if: ${{ inputs.dry_run == false && steps.asset-delta.outputs.asset_blobs_changed == 'true' }}"
-        in asset_workflow
-    )
-    assert "target/asset-release/assets-v*/*-vmlinuz" in asset_workflow
-    assert "target/asset-release/assets-v*/*-initrd.img" in asset_workflow
-    assert "target/asset-release/assets-v*/*-rootfs.erofs" in asset_workflow
-    assert "target/asset-release/assets-v*/*-obom.cdx.json" in asset_workflow
-    assert asset_workflow.index("Publish immutable GitHub asset release") < asset_workflow.index(
-        "Attest VM asset provenance"
+    assert "actions/attest-build-provenance@" in asset_workflow
+    publish_profile = asset_workflow.split("  publish-profile-release:", maxsplit=1)[1].split(
+        "  deploy-channel:", maxsplit=1
+    )[0]
+    assert "needs.author-profile-release.outputs.release_needed == 'true'" in publish_profile
+    assert "needs.test-profile-pairing.result == 'success'" in publish_profile
+    assert "if: ${{ inputs.dry_run == false }}" in publish_profile
+    assert "scripts/stage-profile-publication.py" in asset_workflow
+    assert "scripts/verify-profile-publication.py" in asset_workflow
+    assert "subject-path: target/asset-release/profile-*/*" in asset_workflow
+    assert publish_profile.index("Attest VM asset provenance") < publish_profile.index(
+        "Publish immutable GitHub profile release"
     )
     assert (
         'for key in ("vm_oboms", "host_sboms", "host_binary_files", "attestations")'
@@ -52,11 +56,21 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
     assert "--output release-artifacts/capsem-sbom.spdx.json" in binary_workflow
     assert "cargo sbom --output-format spdx_json_2_3" not in binary_workflow
     assert "install_cargo_tool cargo-sbom" not in binary_workflow
-    channel_sbom = binary_workflow.split(
+    author_sbom = binary_workflow.split("  author-binary-candidate:", maxsplit=1)[1].split(
+        "  test-binary-pairing:", maxsplit=1
+    )[0]
+    assert "Generate packaged host SBOM once" in author_sbom
+    assert "scripts/generate-host-binary-sbom.py" in author_sbom
+    assembly = binary_workflow.split("  assemble-release-channel:", maxsplit=1)[1].split(
+        "  verify-release-candidate:", maxsplit=1
+    )[0]
+    assert "Generate packaged host SBOM" not in assembly
+    assert "name: binary-channel-candidate" in assembly
+    create_release = binary_workflow.split("  create-release:", maxsplit=1)[1].split(
         "  assemble-release-channel:", maxsplit=1
-    )[1].split("- name: Verify binary channel artifacts", maxsplit=1)[0]
-    assert "Generate packaged host SBOM" in channel_sbom
-    assert "scripts/generate-host-binary-sbom.py" in channel_sbom
+    )[0]
+    assert "name: binary-host-sbom" in create_release
+    assert "Generate packaged host SBOM" not in create_release
     assert "Attest SBOM" in binary_workflow
     sbom_attestation = binary_workflow.split("- name: Attest SBOM", maxsplit=1)[1].split(
         "- name: Build summary", maxsplit=1
@@ -73,15 +87,65 @@ def test_release_workflows_generate_binary_sbom_and_asset_obom() -> None:
 
 def test_builder_emits_obom_and_keeps_build_ledger_debug_scoped() -> None:
     builder = _read("src/capsem/builder/docker.py")
+    syntax = ast.parse(builder)
+    cdxgen_commands: list[list[str]] = []
+    for node in ast.walk(syntax):
+        if (
+            not isinstance(node, ast.Call)
+            or not isinstance(node.func, ast.Name)
+            or node.func.id != "run_cmd"
+            or not node.args
+            or not isinstance(node.args[0], ast.List)
+        ):
+            continue
+        command = node.args[0]
+        if not any(
+            isinstance(element, ast.Starred)
+            and isinstance(element.value, ast.Call)
+            and isinstance(element.value.func, ast.Name)
+            and element.value.func.id == "_cdxgen_command"
+            for element in command.elts
+        ):
+            continue
+        cdxgen_commands.append(
+            [
+                element.value
+                for element in command.elts
+                if isinstance(element, ast.Constant) and isinstance(element.value, str)
+            ]
+        )
 
     assert 'OBOM_ASSET = "obom.cdx.json"' in builder
     assert 'BUILD_LEDGER_NAME = "build-ledger.log"' in builder
+    assert f'CDXGEN_VERSION = "{CDXGEN_VERSION}"' in builder
+    assert cdxgen_commands == [["-t", "rootfs", "--no-validate", "-o"]]
+    assert "def _normalize_cyclonedx_obom" in builder
+    assert "def _cdx_validate_command" in builder
+    assert '"capsem:evidence:scope", "value": "exported-rootfs"' in builder
+    assert 'prop.get("name") == "cdx:osquery:category"' in builder
+    assert "], capture=True)" in builder
     assert "def generate_cyclonedx_obom" in builder
     assert "cdxgen" in builder
     assert "CAPSEM_CDXGEN_CMD" in builder
     assert "The build ledger records declared build inputs" in builder
     assert "This OBOM is the runtime" in builder
     assert '"capsem.build_ledger.v1"' in builder
+
+
+def test_cdxgen_is_pinned_identically_across_local_and_ci_asset_rails() -> None:
+    builder = _read("src/capsem/builder/docker.py")
+    host_builder = _read("docker/Dockerfile.host-builder")
+    asset_workflow = _read(".github/workflows/release-assets.yaml")
+
+    pins = {
+        "builder": re.search(r'CDXGEN_VERSION = "([0-9.]+)"', builder),
+        "host_builder": re.search(r"@cyclonedx/cdxgen@([0-9.]+)", host_builder),
+        "asset_workflow": re.search(r"@cyclonedx/cdxgen@([0-9.]+)", asset_workflow),
+    }
+    assert all(match is not None for match in pins.values())
+    assert {match.group(1) for match in pins.values() if match is not None} == {CDXGEN_VERSION}
+    for text in (builder, host_builder, asset_workflow):
+        assert "@cyclonedx/cdxgen@latest" not in text
 
 
 def test_admin_materialization_and_service_routes_expose_verified_obom_evidence() -> None:

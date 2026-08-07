@@ -2,7 +2,8 @@ use super::*;
 use crate::net::policy_config::{SecurityRuleProfile, SecurityRuleSource};
 
 struct EnvGuard {
-    old_home_override: Option<String>,
+    // Redirects CAPSEM_HOME/RUN_DIR/ASSETS_DIR together; restores on drop.
+    _capsem_paths: crate::paths::CapsemPathsGuard,
     old_home: Option<String>,
     old_store: Option<String>,
 }
@@ -13,14 +14,12 @@ impl EnvGuard {
         home: &std::path::Path,
         test_store: &std::path::Path,
     ) -> Self {
-        let old_home_override = std::env::var("CAPSEM_HOME").ok();
         let old_home = std::env::var("HOME").ok();
         let old_store = std::env::var(crate::credential_broker::STORE_PATH_ENV).ok();
-        std::env::set_var("CAPSEM_HOME", capsem_home);
         std::env::set_var("HOME", home);
         std::env::set_var(crate::credential_broker::STORE_PATH_ENV, test_store);
         Self {
-            old_home_override,
+            _capsem_paths: crate::paths::CapsemPathsGuard::redirect(capsem_home),
             old_home,
             old_store,
         }
@@ -29,10 +28,6 @@ impl EnvGuard {
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
-        match &self.old_home_override {
-            Some(v) => std::env::set_var("CAPSEM_HOME", v),
-            None => std::env::remove_var("CAPSEM_HOME"),
-        }
         match &self.old_home {
             Some(v) => std::env::set_var("HOME", v),
             None => std::env::remove_var("HOME"),

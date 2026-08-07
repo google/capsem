@@ -95,6 +95,13 @@ pub struct VmSummary {
     pub can_resume: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resume_blocked_reason: Option<String>,
+    /// Why a crashed VM died: the `process.log` tail the service captured.
+    /// The service splits the two on purpose -- a defunct session carries its
+    /// reason here and leaves `resume_blocked_reason` empty -- so a consumer
+    /// that reads only the latter has nothing to show for the one state where
+    /// the user most needs a reason.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
     pub available_actions: Vec<VmAction>,
 }
 
@@ -202,6 +209,8 @@ struct SessionInfo {
     can_resume: bool,
     #[serde(default)]
     resume_blocked_reason: Option<String>,
+    #[serde(default)]
+    last_error: Option<String>,
     available_actions: Vec<VmAction>,
 }
 
@@ -264,6 +273,7 @@ async fn fetch_status(state: &AppState) -> StatusResponse {
             model_call_count: sess.model_call_count,
             can_resume: sess.can_resume,
             resume_blocked_reason: sess.resume_blocked_reason.clone(),
+            last_error: sess.last_error.clone(),
             available_actions: sess.available_actions.clone(),
         });
     }

@@ -22,10 +22,10 @@ fn exec_output_read_retries_interrupted_socket_reads() {
         data: std::io::Cursor::new(b"IRONBANK_CLIENT_RESULT={\"ok\":true}\n".to_vec()),
     };
 
-    assert_eq!(
-        read_exec_output(&mut reader),
-        b"IRONBANK_CLIENT_RESULT={\"ok\":true}\n"
-    );
+    let (captured, total) = read_exec_output(&mut reader);
+
+    assert_eq!(captured, b"IRONBANK_CLIENT_RESULT={\"ok\":true}\n");
+    assert_eq!(total, captured.len() as u64, "nothing was dropped");
 }
 
 // -----------------------------------------------------------------------
@@ -355,6 +355,64 @@ async fn exec_done_with_empty_stdout_resolves_without_500ms_stall() {
 }
 
 #[tokio::test]
+async fn exec_done_waits_for_delayed_output_deposit_without_truncation() {
+    use crate::job_store::{JobResult, JobStore};
+    use capsem_proto::GuestToHost;
+    use std::sync::Arc;
+    use tokio::sync::oneshot;
+
+    let js = Arc::new(JobStore::new());
+    let db = Arc::new(capsem_logger::DbWriter::open_in_memory(16).unwrap());
+    let security_rules = Arc::new(std::sync::RwLock::new(Arc::new(
+        capsem_core::net::policy_config::SecurityRuleSet::new(Vec::new()),
+    )));
+    let plugin_policy = empty_plugin_policy();
+
+    let id: u64 = 43;
+    let (tx, rx) = oneshot::channel::<JobResult>();
+    js.jobs.lock().unwrap().insert(id, tx);
+    *js.active_exec.lock().unwrap() = Some(crate::job_store::ActiveExec::new(id));
+
+    // Reproduce a loaded runner after resume: the serialized control channel
+    // delivers ExecDone promptly, while the dedicated EXEC-port reader does
+    // not get scheduled to deposit the already-produced bytes for >100 ms.
+    let js_for_deposit = Arc::clone(&js);
+    let deposit = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let notify = {
+            let mut guard = js_for_deposit.active_exec.lock().unwrap();
+            let active = guard
+                .as_mut()
+                .filter(|active| active.id == id)
+                .expect("ExecDone must not discard the capture slot before deposit");
+            active.captured = b"/run/capsem-venv\n".to_vec();
+            Arc::clone(&active.deposited)
+        };
+        notify.notify_one();
+    });
+
+    handle_guest_msg(
+        GuestToHost::ExecDone { id, exit_code: 0 },
+        &js,
+        &db,
+        &security_rules,
+        &plugin_policy,
+    )
+    .await;
+    deposit.await.unwrap();
+
+    match rx.await.expect("job oneshot must resolve") {
+        JobResult::Exec {
+            stdout, exit_code, ..
+        } => {
+            assert_eq!(stdout, b"/run/capsem-venv\n");
+            assert_eq!(exit_code, 0);
+        }
+        other => panic!("expected Exec result, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn read_file_content_emits_file_export_before_job_result() {
     use capsem_proto::GuestToHost;
     use std::sync::Arc;
@@ -506,4 +564,328 @@ match = 'dns.qname == "api.openai.com" && dns.qtype == "1"'
     assert_eq!(row[1].as_str(), Some(event_id.as_str()));
     assert_eq!(row[2].as_str(), Some("profiles.rules.openai_dns_seen"));
     assert_eq!(row[3].as_str(), Some("informational"));
+}
+
+// ── Ack-eligible message sets ──────────────────────────────────────
+//
+// ackable_id and ackable_response_id decide which messages join the retry /
+// replay path: the sender keeps them pending and replays them on every fresh
+// control connection until an AckReply arrives. Getting the set wrong is
+// silent both ways -- a missing variant is a message that can be lost across
+// a reconnect, an extra one is a message replayed forever. Neither had a test.
+
+#[test]
+fn every_host_to_guest_side_effect_is_ack_eligible() {
+    let cases: Vec<(HostToGuest, u64)> = vec![
+        (
+            HostToGuest::Exec {
+                id: 1,
+                command: "ls".into(),
+            },
+            1,
+        ),
+        (
+            HostToGuest::FileWrite {
+                id: 2,
+                path: "/w/a".into(),
+                data: vec![1, 2, 3],
+                mode: 0o644,
+            },
+            2,
+        ),
+        (
+            HostToGuest::FileRead {
+                id: 3,
+                path: "/w/b".into(),
+            },
+            3,
+        ),
+        (
+            HostToGuest::FileDelete {
+                id: 4,
+                path: "/w/c".into(),
+            },
+            4,
+        ),
+    ];
+
+    for (msg, want) in cases {
+        assert_eq!(
+            ackable_id(&msg),
+            Some(want),
+            "{msg:?} performs guest-side work and must survive a reconnect"
+        );
+    }
+}
+
+#[test]
+fn control_chatter_is_not_ack_eligible() {
+    // Replaying these would be noise at best; Shutdown replayed after a
+    // reconnect would be actively wrong.
+    for msg in [
+        HostToGuest::Ping { epoch_secs: 0 },
+        HostToGuest::Shutdown,
+        HostToGuest::AckReply { id: 9 },
+    ] {
+        assert_eq!(ackable_id(&msg), None, "{msg:?} must not be replayed");
+    }
+}
+
+#[test]
+fn every_guest_to_host_completion_is_ack_eligible() {
+    let cases: Vec<(GuestToHost, u64)> = vec![
+        (
+            GuestToHost::ExecDone {
+                id: 10,
+                exit_code: 0,
+            },
+            10,
+        ),
+        (GuestToHost::FileOpDone { id: 11 }, 11),
+        (
+            GuestToHost::FileContent {
+                id: 12,
+                path: "/w/b".into(),
+                data: vec![0xde, 0xad],
+            },
+            12,
+        ),
+        (
+            GuestToHost::Error {
+                id: 13,
+                message: "denied".into(),
+            },
+            13,
+        ),
+    ];
+
+    for (msg, want) in cases {
+        assert_eq!(
+            ackable_response_id(&msg),
+            Some(want),
+            "{msg:?} is a completion the host must not lose"
+        );
+    }
+}
+
+#[test]
+fn guest_liveness_messages_are_not_ack_eligible() {
+    for msg in [GuestToHost::Pong, GuestToHost::Ready { version: "1.0".into() }] {
+        assert_eq!(
+            ackable_response_id(&msg),
+            None,
+            "{msg:?} carries no correlation id to ack"
+        );
+    }
+}
+
+#[test]
+fn the_two_directions_agree_on_which_ids_they_carry() {
+    // A request that is ack-eligible must have a completion that is too,
+    // otherwise one half of the pair survives a reconnect and the other does
+    // not, and the caller waits forever on a reply that was dropped.
+    let request = HostToGuest::FileRead {
+        id: 77,
+        path: "/w/x".into(),
+    };
+    let completion = GuestToHost::FileContent {
+        id: 77,
+        path: "/w/x".into(),
+        data: vec![],
+    };
+
+    assert_eq!(ackable_id(&request), ackable_response_id(&completion));
+}
+
+// ── Exec output cap ────────────────────────────────────────────────
+//
+// The Exec vsock port is a raw stream, so the MAX_FRAME_SIZE bound that
+// read_control_msg applies to length-prefixed control frames never reaches it.
+// Before the cap, a guest running `yes` grew this process until the OOM killer
+// took it and every in-flight job with it -- and the 5s deposit timeout did not
+// help, because the reader thread is detached and keeps allocating after
+// ExecDone has given up and dropped the slot.
+
+/// A reader that never reaches EOF, standing in for `yes` or `cat /dev/urandom`.
+struct EndlessReader {
+    served: usize,
+    limit: usize,
+}
+
+impl std::io::Read for EndlessReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        // Stop eventually so a regression fails the test instead of hanging it.
+        if self.served >= self.limit {
+            return Ok(0);
+        }
+        let n = buffer.len().min(self.limit - self.served);
+        buffer[..n].fill(b'y');
+        self.served += n;
+        Ok(n)
+    }
+}
+
+#[test]
+fn exec_output_is_capped_against_an_endless_guest_stream() {
+    // Offer twice the cap. A pre-fix build retains all of it.
+    let mut reader = EndlessReader {
+        served: 0,
+        limit: MAX_EXEC_OUTPUT_BYTES * 2,
+    };
+
+    let (captured, total) = read_exec_output(&mut reader);
+
+    assert_eq!(
+        captured.len(),
+        MAX_EXEC_OUTPUT_BYTES,
+        "retained buffer must stop at the cap"
+    );
+    assert_eq!(
+        total,
+        (MAX_EXEC_OUTPUT_BYTES * 2) as u64,
+        "the reported total is what the guest wrote, not what was kept"
+    );
+}
+
+#[test]
+fn exec_output_keeps_the_prefix_and_drains_to_eof() {
+    // Draining past the cap matters: stopping the read early would leave the
+    // guest blocked on a full socket instead of finishing its command.
+    let mut reader = EndlessReader {
+        served: 0,
+        limit: MAX_EXEC_OUTPUT_BYTES + 4096,
+    };
+
+    let (captured, total) = read_exec_output(&mut reader);
+
+    assert!(captured.iter().all(|b| *b == b'y'), "prefix is intact");
+    assert_eq!(captured.len(), MAX_EXEC_OUTPUT_BYTES);
+    assert_eq!(total, (MAX_EXEC_OUTPUT_BYTES + 4096) as u64);
+}
+
+#[test]
+fn output_at_exactly_the_cap_is_not_reported_as_truncated() {
+    let mut reader = EndlessReader {
+        served: 0,
+        limit: MAX_EXEC_OUTPUT_BYTES,
+    };
+
+    let (captured, total) = read_exec_output(&mut reader);
+
+    assert_eq!(captured.len(), MAX_EXEC_OUTPUT_BYTES);
+    assert_eq!(
+        total,
+        captured.len() as u64,
+        "the boundary case must not look truncated"
+    );
+}
+
+#[test]
+fn ordinary_output_is_unaffected_by_the_cap() {
+    let mut reader = std::io::Cursor::new(b"total 42\r\n".to_vec());
+
+    let (captured, total) = read_exec_output(&mut reader);
+
+    assert_eq!(captured, b"total 42\r\n");
+    assert_eq!(total, 10);
+}
+
+#[test]
+fn a_read_error_ends_capture_without_losing_what_was_already_read() {
+    struct DataThenError {
+        sent: bool,
+    }
+    impl std::io::Read for DataThenError {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if self.sent {
+                return Err(std::io::Error::other("socket died"));
+            }
+            self.sent = true;
+            buffer[..5].copy_from_slice(b"hello");
+            Ok(5)
+        }
+    }
+
+    let (captured, total) = read_exec_output(&mut DataThenError { sent: false });
+
+    assert_eq!(captured, b"hello");
+    assert_eq!(total, 5);
+}
+
+fn emission_with(
+    action: capsem_core::security_engine::SecurityEnforcementAction,
+    rule_id: Option<&str>,
+    reason: Option<&str>,
+) -> capsem_core::security_engine::SecurityRuleEmission {
+    capsem_core::security_engine::SecurityRuleEmission {
+        event_id: capsem_core::security_engine::SecurityEventId::parse("0123456789ab").unwrap(),
+        emitted: 1,
+        enforcement: capsem_core::security_engine::SecurityEnforcementDecision {
+            action,
+            rule_id: rule_id.map(str::to_string),
+            rule_name: rule_id.map(str::to_string),
+            reason: reason.map(str::to_string),
+            ask_id: None,
+        },
+        event: capsem_core::security_engine::SecurityEvent::new(
+            capsem_core::security_engine::RuntimeSecurityEventType::ProcessExec,
+        ),
+        rule_events: Vec::new(),
+    }
+}
+
+#[test]
+fn exec_boundary_allows_only_an_allow_decision() {
+    use capsem_core::security_engine::SecurityEnforcementAction as Action;
+
+    assert_eq!(
+        exec_boundary_refusal(1, &Ok(Some(emission_with(Action::Allow, None, None)))),
+        None,
+        "an allowing boundary must dispatch the command"
+    );
+
+    let blocked = exec_boundary_refusal(
+        2,
+        &Ok(Some(emission_with(
+            Action::Block,
+            Some("profiles.rules.guard_curl"),
+            Some("curl is not allowed"),
+        ))),
+    );
+    assert_eq!(
+        blocked.as_deref(),
+        Some("curl is not allowed"),
+        "the rule's own reason is what the caller sees"
+    );
+
+    let asked = exec_boundary_refusal(
+        3,
+        &Ok(Some(emission_with(
+            Action::Ask,
+            Some("profiles.rules.guard_curl"),
+            None,
+        ))),
+    );
+    assert_eq!(
+        asked.as_deref(),
+        Some("capsem: command requires approval by security rule: profiles.rules.guard_curl"),
+        "an ask with no resolution path still withholds the command"
+    );
+}
+
+#[test]
+fn exec_boundary_refuses_when_it_cannot_decide() {
+    let unwritten = exec_boundary_refusal(4, &Ok(None));
+    assert_eq!(
+        unwritten.as_deref(),
+        Some("capsem: command refused, security ledger unavailable"),
+        "a boundary that could not be recorded must not dispatch"
+    );
+
+    let failed = exec_boundary_refusal(5, &Err("rule set is broken".to_string()));
+    assert_eq!(
+        failed.as_deref(),
+        Some("capsem: command refused, security evaluation failed: rule set is broken"),
+        "an unevaluated boundary must not dispatch"
+    );
 }

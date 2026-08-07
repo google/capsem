@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import closing, contextmanager
 import json
 import os
 import re
@@ -11,15 +10,15 @@ import subprocess
 import sys
 import time
 import uuid
+from contextlib import closing, contextmanager, suppress
 from pathlib import Path
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mcp import content_text, kill_mcp_proc
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready, vm_name
-
+from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
+from log_streams import read_log_stream
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MCP_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-mcp"
@@ -250,7 +249,12 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             created = _json_tool_result(
                 mcp.call_tool(
                     "capsem_create",
-                    {"name": session_id, "ramMb": DEFAULT_RAM_MB, "cpuCount": DEFAULT_CPUS},
+                    {
+                        "name": session_id,
+                        "profile": CODE_PROFILE_ID,
+                        "ramMb": DEFAULT_RAM_MB,
+                        "cpuCount": DEFAULT_CPUS,
+                    },
                 )
             )
             assert created.get("id") == session_id or created.get("name") == session_id
@@ -289,7 +293,9 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 f"/profiles/{CODE_PROFILE_ID}/mcp/servers/list",
                 timeout=30,
             )
-            mcp_servers = _json_tool_result(mcp.call_tool("capsem_mcp_servers"))
+            mcp_servers = _json_tool_result(
+                mcp.call_tool("capsem_mcp_servers", {"profile": CODE_PROFILE_ID})
+            )
             assert mcp_servers == route_servers
             assert any(server["name"] == "local" for server in mcp_servers)
 
@@ -306,7 +312,12 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 f"/profiles/{CODE_PROFILE_ID}/mcp/servers/local/tools/list",
                 timeout=30,
             )
-            mcp_tools = _json_tool_result(mcp.call_tool("capsem_mcp_tools", {"server": "local"}))
+            mcp_tools = _json_tool_result(
+                mcp.call_tool(
+                    "capsem_mcp_tools",
+                    {"profile": CODE_PROFILE_ID, "server": "local"},
+                )
+            )
             assert mcp_tools == route_tools
             assert {tool["namespaced_name"] for tool in mcp_tools} >= {
                 "local__http_headers",
@@ -328,6 +339,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                 mcp.call_tool(
                     "capsem_mcp_call",
                     {
+                        "profile": CODE_PROFILE_ID,
                         "name": "local__http_headers",
                         "arguments": {"url": url, "method": "GET"},
                     },
@@ -404,7 +416,7 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
                     WHERE path = ?
                     ORDER BY id
                     """,
-                    (guest_path.lstrip("/root/"),),
+                    (guest_path.removeprefix("/root/"),),
                 )
                 assert fs_rows
                 assert {row["action"] for row in fs_rows} == {"created"}
@@ -493,10 +505,10 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             purged = _json_tool_result(mcp.call_tool("capsem_purge", {"all": False}))
             assert isinstance(purged, dict)
 
-            service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
+            service_log = read_log_stream(service.tmp_dir / "service.log")
             assert "profile_mcp_tool_call" in service_log or "mcp" in service_log.lower()
             _close_mcp_proc_gracefully(mcp.proc)
-            mcp_log = (service.tmp_dir / "mcp.log").read_text(encoding="utf-8")
+            mcp_log = read_log_stream(service.tmp_dir / "mcp.log")
             assert "capsem-mcp starting" in mcp_log
             assert "Registered" in mcp_log
     finally:
@@ -506,12 +518,8 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config
         if mock_proc is not None:
             stop_process(mock_proc)
-        try:
+        with suppress(Exception):
             service.client().delete(f"/vms/{fork_id}/delete", timeout=30)
-        except Exception:
-            pass
-        try:
+        with suppress(Exception):
             service.client().delete(f"/vms/{session_id}/delete", timeout=30)
-        except Exception:
-            pass
         service.stop()

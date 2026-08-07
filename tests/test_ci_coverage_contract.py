@@ -9,17 +9,42 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_python_coverage_gate_does_not_round_subthreshold_total() -> None:
-    project = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())
-    precision = project["tool"]["coverage"]["report"]["precision"]
-    justfile = (PROJECT_ROOT / "justfile").read_text()
+    report = tomllib.loads((PROJECT_ROOT / "pyproject.toml").read_text())["tool"][
+        "coverage"
+    ]["report"]
 
-    assert precision >= 2
-    assert "--cov-fail-under=90" in justfile
+    assert report["precision"] >= 2, (
+        "a floor compared against a rounded total passes at 84.5%"
+    )
+    assert report["fail_under"] > 0, "coverage must actually block"
+
+
+def test_no_caller_restates_the_coverage_floor() -> None:
+    """The floor lives in pyproject; every runner inherits it.
+
+    It used to be spelled `--cov-fail-under=85` in the justfile and again in
+    ci.yaml, and a third `--cov=` invocation in ci.yaml carried no floor at all
+    -- so that step measured coverage and enforced nothing, invisibly, for as
+    long as it existed. Reading the config is the only way all of them agree.
+    """
+    restating = [
+        path.relative_to(PROJECT_ROOT)
+        for path in (
+            PROJECT_ROOT / "justfile",
+            *sorted((PROJECT_ROOT / ".github" / "workflows").glob("*.yaml")),
+            *sorted((PROJECT_ROOT / "scripts").rglob("*.sh")),
+        )
+        if "--cov-fail-under" in path.read_text(encoding="utf-8")
+    ]
+
+    assert not restating, (
+        "pass no --cov-fail-under; pyproject's [tool.coverage.report] fail_under "
+        f"already applies to every reporting run: {restating}"
+    )
 
 
 @dataclass(frozen=True)

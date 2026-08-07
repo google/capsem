@@ -148,7 +148,7 @@ just exec "capsem-doctor"            # VM smoke test
 
 If the sprint touched telemetry:
 ```bash
-just inspect-session                # Verify telemetry after a real session
+python3 scripts/check_session.py                # Verify telemetry after a real session
 ```
 
 If tests fail, fix them before considering the sprint done. See `/dev-debugging` for the methodology.

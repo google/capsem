@@ -22,6 +22,7 @@ async fn exec_wait_returns_completed_exec_result() {
         stdout: b"done\n".to_vec(),
         stderr: Vec::new(),
         exit_code: 0,
+        truncated: false,
     })
     .unwrap();
 
@@ -30,6 +31,7 @@ async fn exec_wait_returns_completed_exec_result() {
             stdout,
             stderr,
             exit_code,
+            ..
         } => {
             assert_eq!(stdout, b"done\n");
             assert!(stderr.is_empty());

@@ -1,10 +1,10 @@
 """VM lifecycle: create, list, info, delete and edge cases."""
 
+import contextlib
 import time
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.mcp import parse_content
 
@@ -43,10 +43,8 @@ def test_create_with_resources(mcp_session):
         assert uuid.UUID(info["id"])
         assert info["name"] == vm_name
     finally:
-        try:
+        with contextlib.suppress(Exception):
             mcp_session.call_tool("capsem_delete", {"id": vm_name})
-        except Exception:
-            pass
 
 
 def test_create_auto_name(mcp_session):
@@ -55,10 +53,8 @@ def test_create_auto_name(mcp_session):
     data = parse_content(res)
     vm_id = data.get("id") or data.get("name")
     assert vm_id, f"No ID in create response: {data}"
-    try:
+    with contextlib.suppress(Exception):
         mcp_session.call_tool("capsem_delete", {"id": vm_id})
-    except Exception:
-        pass
 
 
 def test_create_duplicate_name(mcp_session):
@@ -70,10 +66,8 @@ def test_create_duplicate_name(mcp_session):
         result = resp.get("result", {})
         assert result.get("isError") is True or "error" in resp
     finally:
-        try:
+        with contextlib.suppress(Exception):
             mcp_session.call_tool("capsem_delete", {"id": vm_name})
-        except Exception:
-            pass
 
 
 def test_info_fields(shared_vm, mcp_session):

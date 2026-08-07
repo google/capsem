@@ -1,8 +1,13 @@
 """Core no-state service endpoints: /version, /stats, /service-logs, profile reload."""
 
+import tomllib
+from pathlib import Path
+
 import pytest
 
 pytestmark = pytest.mark.integration
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class TestVersion:
@@ -12,8 +17,18 @@ class TestVersion:
         assert resp is not None
         version = resp.get("version")
         assert isinstance(version, str) and version, f"empty version: {resp}"
-        # Version follows "1.0.<timestamp>" convention from workspace package.
-        assert version.startswith("1."), f"unexpected version: {version}"
+        # Compared against Cargo.toml rather than a prefix literal. The old
+        # assertion was `startswith("1.")` for a "1.0.<timestamp>" convention
+        # that no longer exists, so it failed the release rather than the
+        # service. The real property is that the daemon reports the version it
+        # was built from.
+        workspace = tomllib.loads(
+            (PROJECT_ROOT / "Cargo.toml").read_text(encoding="utf-8")
+        )
+        declared = workspace["workspace"]["package"]["version"]
+        assert version == declared, (
+            f"service reports {version!r} but the workspace declares {declared!r}"
+        )
 
 
 class TestStats:

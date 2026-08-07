@@ -5,6 +5,7 @@ Uses mock UDS with a WebSocket echo server to verify relay behavior.
 """
 
 import asyncio
+import contextlib
 import os
 import tempfile
 import threading
@@ -13,7 +14,6 @@ from pathlib import Path
 
 import pytest
 import websockets
-
 from helpers.gateway import GatewayInstance
 
 pytestmark = pytest.mark.gateway
@@ -217,7 +217,7 @@ class TestTerminalWebSocket:
         async def run():
             url = f"ws://127.0.0.1:{gw.port}/terminal/vm..bad"
             headers = {"Authorization": f"Bearer {gw.token}"}
-            with pytest.raises(Exception):
+            with pytest.raises(websockets.exceptions.InvalidStatus):
                 await websockets.connect(url, additional_headers=headers)
 
         asyncio.run(run())
@@ -228,7 +228,7 @@ class TestTerminalWebSocket:
 
         async def run():
             url = f"ws://127.0.0.1:{gw.port}/terminal/ws-vm"
-            with pytest.raises(Exception):
+            with pytest.raises(websockets.exceptions.InvalidStatus):
                 await websockets.connect(url)
 
         asyncio.run(run())
@@ -245,10 +245,12 @@ class TestTerminalWebSocket:
             try:
                 async with websockets.connect(url, additional_headers=headers) as ws:
                     # Try to receive -- should get close or error
-                    try:
+                    # Either shape means the gateway refused: a close frame,
+                    # or no data at all before the timeout.
+                    with contextlib.suppress(
+                        TimeoutError, websockets.exceptions.ConnectionClosed
+                    ):
                         await asyncio.wait_for(ws.recv(), timeout=3)
-                    except (websockets.exceptions.ConnectionClosed, asyncio.TimeoutError):
-                        pass  # Expected
             except (websockets.exceptions.ConnectionClosed, ConnectionRefusedError):
                 pass  # Also expected
 

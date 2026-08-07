@@ -2,7 +2,6 @@
 
 
 import pytest
-
 from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.recovery

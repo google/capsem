@@ -10,8 +10,11 @@ import subprocess
 import sys
 import tempfile
 import time
-
 from pathlib import Path
+
+from log_streams import read_log_stream
+
+from scripts.release_test_binary import ensure_host_test_binary
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 GATEWAY_BINARY = PROJECT_ROOT / "target/debug/capsem-gateway"
@@ -23,22 +26,12 @@ GATEWAY_SOURCE_PATHS = [
 
 
 def _ensure_gateway_binary_current() -> None:
-    if GATEWAY_BINARY.exists() and all(
-        GATEWAY_BINARY.stat().st_mtime >= path.stat().st_mtime for path in GATEWAY_SOURCE_PATHS
-    ):
-        return
-    result = subprocess.run(
-        ["cargo", "build", "-p", "capsem-gateway"],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=120,
+    ensure_host_test_binary(
+        GATEWAY_BINARY,
+        source_paths=GATEWAY_SOURCE_PATHS,
+        build_command=("cargo", "build", "-p", "capsem-gateway"),
+        project_root=PROJECT_ROOT,
     )
-    if result.returncode != 0:
-        raise RuntimeError(
-            "cargo build -p capsem-gateway failed\n"
-            f"stdout: {result.stdout}\nstderr: {result.stderr}"
-        )
 
 
 class GatewayInstance:
@@ -82,7 +75,7 @@ class GatewayInstance:
 
         log_path = self._log_path
         print(f"GATEWAY LOG: {log_path}")
-        self._log_file = open(self._stdio_log_path, "w")
+        self._log_file = open(self._stdio_log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
 
         # capsem-gateway refuses to run without a live parent service (see
         # capsem-guard). Standalone test invocations pass the pytest worker PID
@@ -134,8 +127,9 @@ class GatewayInstance:
             time.sleep(0.2)
 
         self.stop()
-        if log_path.exists():
-            print(f"\n--- GATEWAY LOG ---\n{log_path.read_text()}\n---", file=sys.stderr)
+        gateway_log = read_log_stream(log_path)
+        if gateway_log:
+            print(f"\n--- GATEWAY LOG ---\n{gateway_log}\n---", file=sys.stderr)
         if self._stdio_log_path.exists():
             print(
                 f"\n--- GATEWAY STDIO ---\n{self._stdio_log_path.read_text()}\n---",
@@ -157,9 +151,15 @@ class GatewayInstance:
             self._log_file = None
 
     def stop_and_read_log(self) -> str:
-        """Stop the gateway so Rust's stdout/stderr log buffer is flushed."""
+        """Stop the gateway so Rust's stdout/stderr log buffer is flushed.
+
+        `gateway.log` names a daily-rotated stream, so the bare name is empty
+        once it has rotated. Reading it directly returned "" and callers then
+        asserted against an empty string, reporting a gateway that logged
+        nothing when it had logged normally into `gateway.<date>.log`.
+        """
         self.stop()
-        return self._log_path.read_text(encoding="utf-8") if self._log_path.exists() else ""
+        return read_log_stream(self._log_path)
 
     @property
     def base_url(self) -> str:

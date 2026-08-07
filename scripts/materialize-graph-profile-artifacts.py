@@ -10,11 +10,13 @@ import re
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin, urlparse
+from urllib.request import Request, urlopen
 
 import blake3
 
-
 ASSET_TAG_RE = re.compile(r"/releases/download/(assets-v[^/]+)/")
+USER_AGENT = "capsem-release-mirror/1"
 
 
 def main() -> int:
@@ -24,24 +26,43 @@ def main() -> int:
     parser.add_argument("--dist", required=True, type=Path)
     parser.add_argument("--repo-root", default=Path("."), type=Path)
     parser.add_argument("--channel", action="append", dest="channels")
-    parser.add_argument(
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument(
         "--source-ref",
         help="Override the inferred assets-v... source tag for all profile config files.",
+    )
+    source.add_argument(
+        "--source-root",
+        type=Path,
+        help="Read profile config files from this local candidate worktree.",
+    )
+    source.add_argument(
+        "--public-base",
+        help="Preserve profile config bytes from an existing public release site.",
     )
     args = parser.parse_args()
 
     dist = args.dist.resolve()
     repo_root = args.repo_root.resolve()
+    source_root = args.source_root.resolve() if args.source_root else None
+    if args.public_base:
+        parsed_public = urlparse(args.public_base)
+        if parsed_public.scheme not in {"http", "https"} or not parsed_public.netloc:
+            raise SystemExit("--public-base must be an absolute HTTP(S) URL")
     manifests = manifest_paths(dist, args.channels)
     written = 0
     for manifest_path in manifests:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        source_ref = args.source_ref or infer_source_ref(manifest, manifest_path)
-        ensure_ref(repo_root, source_ref)
+        source_ref = None
+        if source_root is None and args.public_base is None and has_local_profile_config(manifest):
+            source_ref = args.source_ref or infer_source_ref(manifest, manifest_path)
+            ensure_ref(repo_root, source_ref)
         written += materialize_manifest_profile_files(
             dist=dist,
             repo_root=repo_root,
             source_ref=source_ref,
+            source_root=source_root,
+            public_base=args.public_base,
             manifest=manifest,
         )
     print(f"materialized {written} graph profile artifact files")
@@ -105,15 +126,7 @@ def ensure_ref(repo_root: Path, source_ref: str) -> None:
     )
 
 
-def materialize_manifest_profile_files(
-    *,
-    dist: Path,
-    repo_root: Path,
-    source_ref: str,
-    manifest: dict[str, Any],
-) -> int:
-    written = 0
-    seen: dict[str, bytes] = {}
+def has_local_profile_config(manifest: dict[str, Any]) -> bool:
     for profile in manifest.get("profiles", {}).values():
         if not isinstance(profile, dict):
             continue
@@ -121,15 +134,69 @@ def materialize_manifest_profile_files(
             if not isinstance(architecture, dict):
                 continue
             for item in architecture.get("config", []):
+                if (
+                    isinstance(item, dict)
+                    and isinstance(item.get("url"), str)
+                    and item["url"].startswith("/profiles/releases/")
+                ):
+                    return True
+    return False
+
+
+def materialize_manifest_profile_files(
+    *,
+    dist: Path,
+    repo_root: Path,
+    source_ref: str | None,
+    source_root: Path | None,
+    manifest: dict[str, Any],
+    public_base: str | None = None,
+) -> int:
+    written = 0
+    seen: dict[str, bytes] = {}
+    channel = manifest.get("channel")
+    if not isinstance(channel, str) or not channel:
+        raise SystemExit("profile manifest missing channel")
+    for profile_id, profile in manifest.get("profiles", {}).items():
+        if not isinstance(profile, dict):
+            continue
+        if profile.get("id") != profile_id:
+            raise SystemExit(
+                f"profile key {profile_id!r} does not match embedded profile id"
+            )
+        revision = profile.get("revision")
+        if not isinstance(revision, str) or not revision:
+            raise SystemExit(f"profile {profile_id} missing revision")
+        profile_prefix = f"/profiles/releases/{channel}/{profile_id}/{revision}/"
+        for architecture in profile.get("architectures", []):
+            if not isinstance(architecture, dict):
+                continue
+            arch = architecture.get("architecture")
+            if not isinstance(arch, str) or not arch:
+                raise SystemExit(f"profile {profile_id} architecture missing name")
+            architecture_prefix = f"{profile_prefix}{arch}/"
+            for item in architecture.get("config", []):
                 if not isinstance(item, dict):
                     continue
                 url = item.get("url")
                 source_path = item.get("path")
                 if not isinstance(url, str) or not url.startswith("/profiles/releases/"):
                     continue
+                if public_base is None and not url.startswith(architecture_prefix):
+                    raise SystemExit(
+                        f"profile config {url} is not channel-qualified as "
+                        f"{channel}/{profile_id}/{revision}/{arch}"
+                    )
                 if not isinstance(source_path, str) or not source_path:
                     raise SystemExit(f"profile config {url} missing source path")
-                source_bytes = git_show(repo_root, source_ref, f"config/{source_path}")
+                source_bytes = read_source(
+                    repo_root=repo_root,
+                    source_ref=source_ref,
+                    source_root=source_root,
+                    source_path=source_path,
+                    public_base=public_base,
+                    source_url=url,
+                )
                 verify_descriptor(url, item, source_bytes)
                 previous = seen.get(url)
                 if previous is not None and previous != source_bytes:
@@ -148,6 +215,38 @@ def git_show(repo_root: Path, source_ref: str, source_path: str) -> bytes:
     return subprocess.check_output(
         ["git", "-C", str(repo_root), "show", f"{source_ref}:{source_path}"]
     )
+
+
+def read_source(
+    *,
+    repo_root: Path,
+    source_ref: str | None,
+    source_root: Path | None,
+    source_path: str,
+    public_base: str | None,
+    source_url: str,
+) -> bytes:
+    if public_base is not None:
+        request = Request(
+            urljoin(f"{public_base.rstrip('/')}/", source_url),
+            headers={"User-Agent": USER_AGENT},
+        )
+        with urlopen(request, timeout=60) as response:
+            return response.read()
+    if source_root is None:
+        if source_ref is None:
+            raise SystemExit("profile config source needs a git ref or local source root")
+        return git_show(repo_root, source_ref, f"config/{source_path}")
+
+    config_root = (source_root / "config").resolve()
+    candidate = (config_root / source_path).resolve()
+    try:
+        candidate.relative_to(config_root)
+    except ValueError as error:
+        raise SystemExit(f"profile config source escapes config root: {source_path}") from error
+    if not candidate.is_file():
+        raise SystemExit(f"profile config source is not a file: {source_path}")
+    return candidate.read_bytes()
 
 
 def verify_descriptor(url: str, item: dict[str, Any], contents: bytes) -> None:

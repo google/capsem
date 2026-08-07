@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+
 - Started the Claude Web GUI feasibility programme on the `v1.6` branch,
   required its GUI profile to use the normal `capsem-admin` authoring and build
   rails, added its arm64-only source profile with digest-verified Claude and
@@ -24,14 +25,2457 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   process-owned private UDS and authenticated gateway WebSocket, sized the
   bounded zero-copy relay for uncompressed 4K frames, and rendered the live
   Claude surface as one fitted, tray-free application canvas in the pinned
-  Xpra HTML client, preinstalled Git for local sessions, and added a per-VM
-  GNOME Keyring/Secret Service launcher so authentication survives restarts
-  without an insecure Chromium credential-store override, and ordered shared
-  system CA installation before profile hooks that seed application trust,
-  recorded its host, budget, and transport baseline, and retained useful
-  reviewed work for later hardening.
+  Xpra HTML client, preinstalled Git for local sessions, added a per-VM GNOME
+  Keyring/Secret Service launcher so authentication survives restarts without
+  an insecure Chromium credential-store override, ordered shared system CA
+  installation before profile hooks that seed application trust, recorded its
+  host, budget, and transport baseline, and retained useful reviewed work for
+  later hardening.
+
+### Added
+
+- `capsem-linux-rust-base` is declared `generational` in
+  `config/storage-policy.toml`, and warming it now retires the tags it
+  supersedes. The image is tagged by a blake2b of `Cargo.lock`,
+  `rust-toolchain.toml` and `frontend/pnpm-lock.yaml`, so every bump of any of
+  the three mints a new ~25 GiB tag -- and nothing retired the old ones. A
+  single `fast-uri` security bump left three coexisting on a VM with 54.7 GiB
+  free; left alone that reaches disk-full in the middle of a two-hour release
+  rather than at a point where it is cheap.
+
+  Not by relaxing the rule that automatic GC never prunes tagged images -- that
+  rule is what stops a running gate losing the image it is about to use.
+  Instead `docker-storage-policy.py reclaim` retires the *superseded* tags of
+  one repository, anchored on a tag the caller names: once
+  `warm-linux-rust-base` holds the tag the current lockfiles resolve to, no run
+  can want another, because the lane derives its tag the same way and refuses
+  to start when it is missing. It runs on the already-present path too, so a
+  machine that is already warm with stale tags beside it is cleared before the
+  next bump adds a fourth, rather than after.
+
+  `keep_previous = 0`: one previous generation is not the cheap revert it looks
+  like. Removing a tag leaves the BuildKit layer cache untouched, and that
+  cache is what makes a rebuild fast -- re-tagging a generation whose layers
+  are still cached is sub-second and needs no network. A kept tag only pays
+  once those layers have aged out too, and then it is a full network rebuild
+  either way.
+
+- `just _warm-linux-rust-base` builds the Linux parity base image, with
+  network, before a sealed run needs it. The lane deliberately refuses to build
+  it mid-run -- its tag is keyed by `Cargo.lock`, `rust-toolchain.toml` and
+  `frontend/pnpm-lock.yaml`, so a dependency bump re-keys it, and resolving
+  that inside the run would turn a `--network none` lane into a multi-gigabyte
+  network build at minute four -- and its refusal named `just warm`, which did
+  not exist. Bumping `fast-uri` for a security advisory re-keyed the image and
+  found it: the release stopped correctly and handed back a command that fails.
+
+  A contract now checks that every recipe the gate names in an operator-facing
+  message is a recipe the justfile defines. `hostimage.py` already carried a
+  note about the last time this happened -- `just _build-host-image`, dispatched
+  by two lanes, never written -- so it is a class, not an incident.
 
 ### Fixed
+
+- `capsem-gate doctor` no longer reads a justfile comment as a dispatch. It
+  scanned every line containing `capsem-gate `, so prose naming a subcommand
+  was parsed as a call to ``linux-rust` `` -- trailing backtick included -- and
+  reported as unknown. Three doctor checks went red on a comment.
+
+- `test_a_live_run_is_never_rotated_away_by_another` no longer answers
+  differently depending on how pytest was started. A spawned child re-imports
+  its target's module with nothing but a copy of the parent's `sys.path`, and
+  `--import-mode=importlib` names test modules `tests.<basename>` without ever
+  putting the repository root on that path -- so the name resolved under
+  `python -m pytest`, which contributes the working directory and is how the
+  gate invokes every suite, and not under the `pytest` console script. Run the
+  file on its own and the child died on `ModuleNotFoundError: No module named
+  'tests'` while the parent sat out a sixty-second queue timeout. The worker
+  moved to `tests/helpers/`, which the root conftest puts on `sys.path` before
+  collection under every invocation and in every xdist worker. Spawn is
+  unchanged: cross-process rotation safety is the point, and it is the
+  stricter start method.
+
+- The gate's ordering contracts run from a linked git worktree again.
+  `docker_git_metadata_mount` skips its probe entirely when `.git` is a
+  directory, so an ordinary checkout never asks; a worktree carries a `.git`
+  file instead, asks `git rev-parse --git-common-dir`, and got "" back from a
+  recording runner that answers nothing by default. An unresolvable common dir
+  is a build the gate rightly refuses, so the recorded plan died at
+  `package.<arch>.build` and every contract about a command issued at or after
+  that point failed for want of a git answer rather than for anything it was
+  about -- on worktrees only, which is why it stayed invisible. The recorder
+  now answers that one probe from the real repository, truthfully, because a
+  wrong path here becomes a `-v` mount those same contracts assert against.
+
+### Security
+
+- `fast-uri` is bounded past GHSA-7p8r-x3mc-p8w7 (host confusion via a
+  backslash authority introducer). The frontend's override read `>=3.1.2`,
+  which resolved to 4.1.1 -- inside the advisory's `>=4.0.0 <4.1.2` -- so the
+  bound admitted the very version it was there to exclude. Now `>=4.1.2`. It
+  arrives through `@astrojs/check`, so it is dev-only tooling, but the audit is
+  a release gate and blocked one.
+
+### Fixed
+
+- The filesystem observer reported 42 phantom source mutations on every release
+  run, and each named a file nothing had touched. `shutil.rmtree` deletes
+  through a directory descriptor -- `os.unlink('profile.toml', dir_fd=5)` -- so
+  a bare entry name reached the observer, which resolved it against the current
+  working directory. That directory is the checkout root, so removing
+  `target/config/profiles/code/profile.toml`, an ordinary step, was reported as
+
+      [source-tree] profile.toml: unlink during the run
+
+  naming the tracked `config/profiles` file of the same basename. A guard that
+  cries wolf 42 times a run is a guard nobody reads, and this is the guard that
+  exists to catch the `config/profiles` race that killed a release run.
+
+  Fixed in three places, because one of them alone would have hidden the
+  others. Interception now resolves a subject against its `dir_fd` (and
+  resolves an integer descriptor subject, as in `os.truncate(fd, n)`), so the
+  fault names where the call acted. The judge refuses to classify any path that
+  is not absolute, so no caller's loose spelling can be misattributed again --
+  not merely the one that was found. And `dist`, `packages` and `assets` join
+  `target` as build output: all are gitignored roots the gate rewrites every
+  run, and with only `target` excluded, resyncing `assets/current` or clearing
+  a stale `.deb` read as mutating the tree being qualified.
+
+  When a path genuinely cannot be established the event is not judged at all: a
+  fault nobody can locate is not evidence, and inventing one is worse than
+  missing it.
+
+### Security
+
+- The local Tauri signing key and its password no longer reach anything that
+  writes them down. The package rail read both out of `private/tauri/` and put
+  them into `docker run`'s argv as `-e NAME=value`, so the values appeared in
+  the process listing -- world-readable through `ps`, and beyond the reach of
+  any log filtering -- and then in `target/gate-runs/*/run.jsonl`, in the step
+  error of a failed build, in `run.end`'s failures, and in the summary. That
+  directly contradicted the run log's own claim that a run directory is safe to
+  attach to a bug report. Docker now receives `-e NAME` and takes the value
+  from its own environment, and secrecy is declared on the invocation itself:
+  a `Command` that names a credential cannot render it, in argv or in the
+  environment, through `str()`, the journal, or the exception a failure raises.
+  The variable name is kept and the value becomes `<redacted>`.
+
+### Changed
+
+- Sealing the Linux parity lane left its old machinery behind, and the release
+  gate caught it. `_LinuxRustSuite` -- the action that assembled the read-only
+  source mount, the writable grafts and the four named volumes -- was still in
+  `hostimage.py` with nothing constructing it, along with nine `[hostimage]`
+  settings that existed only to repair what sharing a checkout with a
+  root-owned container broke: a writable `/tmp`, a hand-placed `HOME`, a
+  bound-out nextest directory, a writable graft for Tauri's generated ACLs, and
+  the volumes themselves. All are gone.
+
+  Restored in the same pass: the lane raised a named error on a host that is
+  neither Linux nor macOS, and sealing it dropped that guard, so a third
+  platform fell through to the Docker path and would have failed somewhere
+  inside a container instead of saying which host it will not run on.
+
+  The two contract tests that pinned the old mechanism are reimplemented rather
+  than deleted, and two of their claims are now stronger: `/src:ro` said the
+  container could not write the checkout, where the assertion is now that
+  nothing is mounted at all; and the lane's `--network none` is asserted, which
+  no earlier test could claim because it was not true.
+
+- The Linux parity lane holds its own bytes. It bind-mounted the live checkout,
+  grafted two writable mounts back through it to retrieve coverage, inherited
+  four named volumes that survive between runs, and ran with outbound network
+  because nothing ever passed `--network`. It now builds its source into an
+  image, runs with `--network none`, and returns coverage through `docker cp`.
+  Dependencies live in a base image keyed by `Cargo.lock`,
+  `rust-toolchain.toml` and `frontend/pnpm-lock.yaml`; a lockfile change makes
+  a new tag and the gate refuses to start rather than rebuilding multiple
+  gigabytes at minute four.
+
+  Sealing it surfaced two fetches nobody had recorded. The lane built the
+  frontend with `pnpm install` mid-run whenever `frontend/dist` was absent, and
+  `ort` -- ONNX Runtime, under `magika` -- downloaded a binary from
+  `cdn.pyke.io` inside a build script on every cold build. Both now come from
+  the image: the frontend is built there, and ONNX Runtime is Microsoft's
+  official release with `ORT_STRATEGY=system` and `ORT_PREFER_DYNAMIC_LINK`.
+
+- Containers now declare their network, and a mount of the working tree is
+  refused. Nothing in the gate passed `--network` at all, so every container
+  had outbound access by omission and several fetched dependencies mid-run --
+  the difference between proving a build reproduces and proving it reproduces
+  today. `Mount` refuses a source inside the checkout, because
+  `-v <repo_root>:/src` let a host step churning hardlinks and a container
+  reading the same inodes over virtiofs share a filesystem neither declared,
+  which killed a release run with an intermittent `Permission denied` on a
+  file that was `0644` before and after. The two privileged install
+  containers still need both and say so through `Mount.unmigrated`, which a
+  test enumerates so the count can only shrink.
+
+- Every `Call` answers, in a form a machine can read, why it is not an ordinary
+  declared action and what it can affect. It carried a required kind before;
+  now it carries a closed kind, a reason its author wrote, and a declared
+  effect set, all of which reach the dry run and `run.jsonl`. A pure inspection
+  that declares a filesystem effect is refused, because that label is the
+  weakest of the four and therefore the most tempting. A contract rejects
+  placeholder reasons -- "temporary", "misc", "legacy", "TODO" -- since that is
+  how an exemption stops describing outstanding work and starts describing
+  policy.
+
+- Ruff, strict Ty and relaxed Ty are three graph steps rather than one opaque
+  call around a function that ran them in sequence and gathered their failures
+  into a list by hand. They are timed apart, a Ruff failure no longer hides
+  what Ty would have said, and the plan aggregates independent failures the way
+  it does everywhere else. Their policy is typed too: roots must be relative,
+  unique and inside the checkout, strict roots must be a subset of the checked
+  ones, and a ratchet entry must look like a `ty` rule -- `ty` ignores an
+  unknown `--ignore`, so a misspelt entry held nothing back and looked exactly
+  like a rule somebody had fixed.
+
+- The scheduler reserves a step's contention claims before submitting it,
+  rather than submitting everything and having each worker block inside the
+  resource lock. A worker was previously occupied purely by waiting, so the
+  pool had to be as large as the plan -- eighty-one threads for the candidate
+  gate -- for the one step that could actually run to have somewhere to go.
+  Parallelism is a configured bound now, and a step's outcome carries three
+  numbers instead of one: how long it waited for its dependencies, how long it
+  waited for a resource, and how long its own work took. A step that took
+  twenty minutes because it queued nineteen of them behind Docker used to look
+  exactly like a step doing twenty minutes of work.
+
+- A run records what built it: where `capsem.gate` was imported from, and
+  which isolated bytecode cache the interpreter ran under. `HEAD` and the
+  source digest describe a checkout and say nothing about which code read
+  them. The three waits also reach `run.jsonl` and the timing report, so a
+  plan whose critical path is mostly queueing says so instead of looking slow.
+
+- Whether two steps can be in flight together is one predicate, used by the
+  plan validator, the scheduler and their tests. It was implemented twice, and
+  the copies agreed with each other about the wrong answer.
+
+### Fixed
+
+- Failure-evidence bundles were quietly incomplete. `copy_small_file` returned
+  the same silence for three different outcomes -- the file was absent, over
+  the size cap, or unreadable -- and the IronBank globs matched nothing at all
+  on a tree where those builds never ran, so a bundle could not distinguish
+  "there was nothing to collect" from "the collector failed". Every bundle now
+  carries a `collected.json` naming each source attempted and what became of
+  it, globs included when they match nothing.
+
+  The first bundle written with that manifest reported `build.log` and
+  `docker-storage.jsonl` as over the cap -- meaning every previous bundle had
+  silently omitted the two files a post-mortem reaches for first, and did so
+  precisely on the long runs that needed them. Oversized files are now tailed
+  rather than dropped, because the end of a build log is where the failure is.
+
+- A fresh clone now plans the same gate a warm tree does. The functional
+  module asked for its profile axis while the plan was being *built*, and that
+  read `target/config/profiles` -- build output -- so the same commit produced
+  one plan on a developer's machine and another on a clean checkout. A release
+  passed a 57-minute gate locally on leftovers, pushed, dispatched, and CI
+  failed with 94 tests all reporting `no materialized profiles found`. Neither
+  `source.record` nor `source.verify` could have caught it: they digest tracked
+  source, and this input was not tracked source. The axis comes from checked-in
+  `config/profiles/` now. The agreement it used to check inline -- materialized
+  against declared against source -- did not go away; it became a step, which
+  is where a question about build output can actually be asked.
+
+- A gate now reports what it did to the filesystem, as it does it. `contends`
+  is a list an author typed and the overlap check compares two such lists to
+  each other -- nothing in that loop had ever looked at a disk, so a step that
+  did not mention what it touched satisfied every check by saying nothing, and
+  the writer was frequently a unit test three subprocesses down. Two sources
+  feed it now: the in-process primitives are proxied, so the caller and the
+  state *before* the call are both known exactly, and a `watchdog` observer
+  covers what subprocesses do. Faults land on stderr the minute they occur, in
+  a size-capped log beside the run that survives a `kill -9`, and in the run
+  log. It names hardlinks between checked-in source and build output, modes
+  that change and change back, source writable beyond its owner, artifacts that
+  end a run empty, identical bytes under two names, and two concurrent steps
+  touching one path neither declared.
+
+- `release-profile` reached the step before publishing and refused, because
+  `tested-head` was empty: four contracts that run a release plan to read back
+  its argv had overwritten the running gate's record of the revision under
+  test. Same defect as the source state, and the fix for that one did not
+  reach here -- it taught the `Action` subclasses to check whether the plan was
+  being read or run, and `RecordHead` writes through the `write_text` helper
+  instead. The guard has been widened from one file to the set a run records
+  its identity in, so the next instance fails by name in seconds rather than
+  an hour into a release.
+
+- A fresh install materialized one profile's images and reported success. A
+  channel's profiles own their images, so the release graph gives each its own
+  asset release and the channel pointer can name at most one of them -- but
+  both the local-copy and the download path resolved that single pointer and
+  fetched only its assets. Installing a channel whose profiles pin different
+  kernels left the others' absent, and the profile that sorted first became an
+  unbootable default. Once profile-suffixed release keys existed it got
+  sharper still: the resolver could pick a profile whose asset names differ
+  and fail the install outright.
+
+  Both paths now ask one function what this architecture needs, across every
+  compatible release. It keys by logical name *and* hash, because two profiles
+  legitimately ship a different `vmlinuz` and keying by name alone silently
+  keeps one of them -- the same missing-kernel install, reintroduced by the
+  fix for it.
+
+- Reading a gate plan no longer runs it. `tests/helpers/gate.py` reads back the
+  argv a command would issue by *running* its plan against a recording runner,
+  which stubs subprocesses and nothing else -- so every filesystem action ran
+  for real, against the real checkout, while a gate might be holding it. The
+  step that writes down the HEAD and source digest under test wrote them with
+  the recorder's empty output, and forty minutes later `source.verify` compared
+  that against reality and reported
+
+      source HEAD changed while the gate was running:  -> <head>
+
+  for a tree nobody had touched. A context now says whether its plan is being
+  read or run, and every primitive that touches the machine asks -- rather than
+  each action deciding for itself, which the next one to write a file would not
+  remember to do.
+
+  That also makes an observation reach the whole plan. A step's declared
+  artifacts are hashed once its actions run, and nothing built them because
+  nothing ran, so `Hash` raised `cannot hash ...: it is not a file` and the
+  observation ended at the first step claiming an output. Every contract
+  reading back issued argv was reading a prefix of the plan.
+
+  The release fail-stop contract was the one actually corrupting the gate: it
+  runs real release plans against the real checkout to prove a failing gate
+  stops publication, and `source.record` sits ahead of the step it fails on.
+  It reads its plans now instead of running them, and `tests/conftest.py`
+  fails any test that rewrites the state file -- by name, in seconds, with the
+  file put back -- rather than letting a gate discover it forty minutes later
+  and blame git.
+
+- The recipe suite no longer launches a recipe whose graph takes the machine
+  lock from inside a run that is holding it. `just doctor` depends on
+  `_pnpm-install`, which dispatches to an exclusive command, so the child
+  would have waited out its full timeout for a lock only its own parent could
+  release -- the deadlock the composition model exists to prevent, refused by
+  name. The claim splits where the architecture does: the dispatch is read
+  from the justfile, and the half that can actually fail runs in-process. The
+  same suite asserted a detached service by looking for `nohup` and `3>&-` in
+  a recipe body; that is `Launch` now, and the assertion moved with it.
+
+- `capsem-gate gc` no longer deletes the run it is writing. It reclaims
+  `target/gate-runs` and records into it, which were compatible only while
+  `gc` recorded nothing -- and a command that removes whole trees is exactly
+  the one whose evidence is worth keeping, so it was made to record. The next
+  journal write then failed with `FileNotFoundError` and the command could not
+  complete at all. The run history is bounded by its own retention policy;
+  `ensure_space` already excluded it, and this was the caller that did not.
+
+- The IronBank ledger fixture no longer asks a content classifier for an
+  answer its own payload makes ambiguous. It uploaded `upload:<random hex>`
+  into a `.txt` file and asserted `text/plain`; the listing's mime comes from
+  Magika, which classifies by content and deliberately does not let the
+  extension vote, and a short `key: value` line is the shape of a CSS
+  declaration or a CSV record. So the answer depended on the nonce -- one
+  complete gate got `text/css` -- and the test was intermittent on a boundary
+  it was not written to test. The payload is prose now, and a reproduction
+  with a pinned nonce lives beside the detection it is about.
+
+- The complete local gate can finish on macOS. Its last step required the
+  native Tart glow-up report -- correctly, since a macOS host cannot boot a
+  guest inside the Linux install container, so that proof stands in for it --
+  and looked for it only in `CAPSEM_MACOS_NATIVE_GLOWUP_REPORT`, which nothing
+  set. The report's path has been declared in `[modules]` the whole time and
+  the step immediately before writes it exactly there, so every complete local
+  gate failed at its very last step with "requires the native glow-up report
+  from this module" while the report sat where configuration said it would.
+  The variable still wins, because a release lane produces the report in
+  another job; absent both, the refusal stands, which is the case it was
+  written for.
+
+- A VM on a long run directory boots again. `capsem-process` derived the run
+  directory for its terminal socket by walking two levels up from its own IPC
+  socket -- correct while that socket is `{run}/instances/{id}.sock`, and wrong
+  the moment it is shortened to `/tmp/capsem/<hash>.sock`, which is exactly the
+  long run directory the shortening exists for. Walking up gave `/tmp`, whose
+  `instances/` does not exist, so the bind failed with `No such file or
+  directory` inside the async loop and the VM never became exec-ready. The run
+  directory is passed explicitly now, and `terminal_socket_path` creates the
+  directory for whichever form it returns -- only the fallback branch did, and
+  the preferred one trusted somebody else to have made it.
+
+- A half-exported release environment no longer takes the diagnostics down
+  with it. Parsing the release state in every command's constructor meant
+  `runs last`, `logs`, `version` and `gc --dry-run` refused with the same
+  message as the gate itself -- which is correct for a command that would
+  *prove* something and useless for one that only reports, at exactly the
+  moment an operator is trying to find out what the broken workflow did.
+  Commands whose plan depends on the answer declare it.
+
+- The release state is a discriminated union, so its illegal shapes are
+  unrepresentable rather than merely unreachable. A dataclass with four
+  optional fields let a local run carry an input directory perfectly happily
+  and kept the invariant inside one parsing function; the path and profile
+  values are validated as text at the boundary, and never against the
+  filesystem -- a `--dry-run` that stats the disk depends on the machine it is
+  only describing.
+
+- Ctrl-C stops the gate instead of scheduling a stop. The plan runner held its
+  thread pool through a `with` block, and that context manager's exit joins
+  every running future -- an interrupt fifty milliseconds into a 750ms action
+  returned after 756ms, and against a real copy or image assembly the operator
+  watches nothing happen for minutes. Returning immediately would be worse: the
+  machine lock, the workspace and the service are released on the way out, and
+  releasing them under a worker still writing turns an interrupt into
+  corruption. So it is cooperative: pending steps are cancelled, waiters are
+  woken, the long filesystem and hashing primitives give up at their next safe
+  boundary, and the run waits a bounded ten seconds before naming whatever is
+  still going.
+
+- A run directory now holds what its commands printed. `RunLog.step_log()`
+  existed, the module documentation promised a log per step, and no production
+  code called it -- a real recorded `release-binaries` run in this checkout had
+  a `steps/` directory with zero files in it, so compiler, pytest, Docker and
+  script output survived only as terminal scrollback. Output is teed by the
+  funnel now: filed against whichever step is running, streamed live so a long
+  gate is still distinguishable from a hung one, and a failed command repeats a
+  configured tail of its own output in the error. The log is line-buffered, so
+  a running step can be read while it runs and a hard-killed one keeps what it
+  had printed. The cost is deliberate -- output goes through a pipe, so
+  children no longer see a TTY.
+
+- A run records the invocation it was given. `RunStart` was reconstructed from
+  the parsed namespace by looking for a field named `argv` that almost no
+  command declares, so `release-binaries nightly` was recorded as
+  `['release-binaries']` and a failed release could not say which channel it
+  had attempted.
+
+- A run's directory is protected from the moment it exists until its summary is
+  written. It was created before the marker that says "being written" was
+  taken, and the marker was dropped before `run.end` and the summary were
+  written -- two windows in which another command allocating its own run could
+  classify this one as crashed and rotate it away, the second of them after a
+  release had already published.
+
+- Duplicate artifact producers are accepted only when they truly serialize. The
+  guard intersected contention *names*, so two steps both claiming one resource
+  in `shared` mode -- a readers-lock, designed to overlap -- passed validation
+  and were free to overwrite one path concurrently. The test repeated the same
+  name-only algorithm, so it agreed with the bug.
+
+- Retention measures each surviving run once instead of re-walking every
+  remaining tree on every removal pass.
+
+- The gate can no longer qualify stale bytecode. CPython validates a `.pyc`
+  against the source's mtime and size, so two edits of the same length inside
+  one timestamp tick leave bytecode that still looks current -- during a review
+  of the gate that produced 74 identical false failures naming something the
+  source no longer contained, and an isolated cache made them vanish with no
+  source change. That is not just bad local feedback: `just test` and both
+  release commands start with `uv run capsem-gate`, and the source guard
+  records a digest of the bytes on disk rather than the bytes the interpreter
+  is running. `capsem-gate` now re-execs under a per-invocation
+  `pycache_prefix` before importing any of the gate, exports it so pytest and
+  every other child inherit the same isolation, and the complete gate refuses
+  in its first step if it was not started that way.
+
+- Every `just` recipe argument now crosses exactly one argv boundary. `just`
+  interpolates `{{value}}` into the recipe body as shell *source*, so
+  `just build 'debug; rm -rf ~'` ran the payload before any Python saw it. The
+  release selectors were quoted; `build`, `build-all`, `_build-ui`,
+  `_cross-compile` and the CI-facing asset primitives were not, and
+  `justfile_directory()` was unquoted in two places, so a checkout under a path
+  with a space was not portable. Manual double quotes are not a fix -- `$(...)`
+  and backticks still expand inside them -- which is why `build` and
+  `build-all` looked safe and were not. The boundary test now discovers every
+  parameter from `just --dump` instead of a hand-written list of five, and
+  asserts the argv a real shell builds rather than whether a quote appears
+  somewhere on the line. `just dev`'s variadic passthrough is gone: `just`
+  joins a variadic before interpolating it, so no spelling preserves argument
+  boundaries -- `uv run capsem-gate dev tui …` is the one that can.
+
+- A partial release environment can no longer build a hybrid proof. Three gate
+  modules each decided independently whether they were in a release lane --
+  the artifact module from `CAPSEM_RELEASE_INPUT_DIR`, the functional module
+  from the same one, the glow-up module from `CAPSEM_RELEASE_PACKAGE` -- and
+  nothing compared their answers. Exporting only the input directory built a
+  plan that verified manifest-selected assets and then rebuilt the package from
+  source; exporting only the package did the mirror image. Both are green, both
+  cost a full gate, and both prove source bytes in place of the bytes that
+  ship. One dropped `GITHUB_ENV` line was enough. The state is now one
+  indivisible value with exactly three legal shapes -- local, binary release,
+  profile release -- read once per run and passed down, and every partial
+  combination is refused during plan construction with both sides named.
+
+- Internal environment protocols have one owner. `[environment]` named
+  `CAPSEM_HOME` and `CAPSEM_RUN_DIR`, and seven modules spelled those and
+  thirteen others again as dictionary keys -- invisible to the guard that
+  watches for literal environment *reads*, and exactly as hard to rename. The
+  guard inspects writes now too, with an explicit allowlist for standard
+  process and tool conventions: `HOME` and `TMPDIR` mean what they mean
+  everywhere, and moving them into TOML would be dumping strings rather than
+  giving a protocol an owner.
+
+- Every remaining `Call` says why it is opaque to a dry run. Twenty of them
+  shared one rationale -- "a package build carries signing material" -- which
+  is true of exactly one, and a reason that covers everything is not a reason.
+  `Why.SECRETS`, `Why.DYNAMIC` and `Why.COMPUTATION` are required now, a
+  contract holds the first to the single phase that earns it, and the third is
+  named to look weak because work that only decides or reports can usually be
+  a declared action with its own render and its own timing.
+
+- Hashing a declared artifact is bracketed like every other action, so the time
+  it takes appears in the timing report instead of vanishing into its step.
+
+### Removed
+
+- Ten `justfile` values nothing read (`binary`, `cli_binary`, `service_binary`,
+  `process_binary`, `mcp_binary`, `gateway_binary`, `admin_binary`,
+  `host_binaries`, `assets_dir`, `entitlements`), the `output` parameter the
+  four asset recipes accepted and never forwarded, the `_build-image-template`
+  recipe left with no caller, and `_dev-tui`, which duplicated
+  `capsem-gate dev tui` through a variadic that could not preserve its own
+  arguments.
+
+### Changed
+
+- The service tests' profile-tree copy replaces an existing target and names
+  every failure. `std::fs::copy` gives the destination the source's
+  permissions and then refuses a destination that exists without write
+  permission, so copying one tree twice into one place blocks itself. And the
+  panic was a bare `Os { code: 13, kind: PermissionDenied }` with no path,
+  which under parallel `nextest` in the Linux container produced an
+  intermittent failure identifying neither the file nor the side of the copy.
+  I could not reproduce it on demand -- this removes the mechanism I can see
+  and makes any residual occurrence say what it touched.
+
+- The terminal socket path goes through `capsem_core::uds`, which owns the
+  `sun_path` length rule and which neither side was using. The gateway and
+  `capsem-process` each built `{run_dir}/instances/{uuid}-ws.sock` by hand --
+  54 bytes of fixed suffix, leaving about fifty for the run directory against
+  macOS's 104. Past that every connection failed with `path must be shorter
+  than SUN_LEN`, logged at ERROR on each retry (12,024 in one observed run) and
+  surfaced as a session whose shell simply never appeared. The short form has
+  to be deterministic because the two processes derive it independently and
+  never exchange it, so it is a blake3 digest rather than the per-process
+  `DefaultHasher` the existing fallback uses. The close frame now carries the
+  concrete reason instead of "VM not available", which was true of every cause
+  and pointed at none.
+
+- The plan can express a phase that holds something against outsiders while
+  its own lanes share it, and the asset build's `ThreadPoolExecutor` is gone.
+  An exclusive was a `threading.Lock`, so declaring `docker_daemon` serialized
+  the two architecture lanes -- which must overlap to fit the time budget --
+  and not declaring it let any Docker step schedule beside them. `assetlanes`
+  answered that with its own pool: concurrency the graph could not see, order
+  against, time, or attribute a failure to, which is why it had to collect
+  both failures by hand. A claim now carries a mode, shared or exclusive, and
+  the scheduler holds a readers-writer lock per resource. The lanes are two
+  steps in one wave holding Docker shared; the asset phase is five steps
+  (`preflight`, both `build.<arch>`, `sweep`, `assemble`) instead of one call.
+  Awaiting both lanes stops being a module's promise and becomes the
+  scheduler's rule: two steps with no edge between them both run, and a
+  failure skips only what depends on it.
+- The release-channel contract asserts what an *absent* manifest looks like.
+  Every case it covered was the manifest being wrong -- swapped, stale,
+  mutated, digest-drifted -- and none was it being missing, which is the case
+  that actually happens: the site serves its index page for any unknown path,
+  so `GET /assets/nightly/manifest.json` answers `200` with `<!DOCTYPE html>`.
+  The validator already handled it, by fetching bytes and parsing rather than
+  trusting a status code; nothing asserted that, so nothing would have caught
+  it regressing. Mutation-tested: make the parse fall back to a stub and the
+  new case goes red. A manifest that parses but is not an object is covered
+  too, since valid JSON is not a valid manifest.
+
+- `modules_bypassing_primitives` is deleted, not emptied. `assets`, `assetlanes`, `doctor`
+  and `versions` went through the filesystem primitives, `doctor`'s entry-point
+  probe went through the runner -- it called `subprocess.run` directly, so a
+  doctor could report on a machine the run log never saw it touch -- and the
+  file operations split into `filesystem.py`, with `crossexec.py` and
+  `assetevidence.py` taking the questions that were never about building
+  assets.
+
+- The Linux package lane is eight steps instead of one opaque call. It was a
+  single `Call` whose dry run printed one line of prose while six things
+  happened: storage release, capacity, clock sync, asset sync, the docker
+  build, package resolution, the proof, and reclaim. So `--dry-run` was blind
+  for the gate's most expensive phase, twenty minutes of work carried one
+  duration, and a failure named the whole rail -- which is how an exit-125 came
+  to need a 25 MB log to locate. Every storage-ordering defect in that file
+  came from having to reason about those phases from outside the box. Proven by
+  behaviour rather than by plan text, since the plan changes on purpose: the
+  same seven commands in the same order, captured against a recording runner
+  before and after. `crosscompile.py` is the first module to leave
+  `modules_bypassing_primitives`; its file operations go through the primitive
+  module, while the build itself keeps a `Call` because its argv carries
+  signing material that `--dry-run` must never print.
+
+- The package rail's capacity checks measure two different moments. The pair
+  exists because the builder image is itself part of what fills that rail --
+  one check once it exists, one before the build spends the headroom -- and
+  both calls sat on adjacent lines, so the second could only ever agree with
+  the first. Two contracts asserted the count without noticing they were
+  adjacent; deleting one looked right and would have lost a real check.
+- `packageinputs.py` holds what a package build is *told* -- the pinned
+  toolchain, the channel, the builder environment -- as pure functions, so a
+  rename in `config/gate.toml` fails a unit test rather than producing a
+  package built against the wrong manifest. `assets/current` is synced through
+  the removal primitive instead of `rm -rf` and `cp -r` built from Python
+  strings, which is the one shape the reclaimer guards exist to prevent and
+  showed up in no dry run.
+
+- The artifact contract has real producers. `Step.produces` drove both the
+  per-step hashing into the run log and the "one owner per artifact" check, and
+  no production step supplied it -- so `Hash` had no caller through that
+  mechanism, every run log recorded zero artifacts, and the ownership check
+  iterated an empty set. A guard that is green because it was asked nothing is
+  worse than no guard. The signed host binaries, the cross-compiled guest
+  agents, the repacked initrd and the source-state record declare their outputs
+  at the fragment that builds them, so both release lanes inherit the claim.
+  With real data the check reports what it always should have: three signing
+  steps write the same binaries, which is safe only because they contend for
+  one exclusive -- and that is now asserted rather than assumed.
+
+- The recorded revision survives the checkouts a release is actually cut from.
+  `head_revision` parsed `.git/HEAD` and then a loose ref by hand, which
+  returns nothing for a linked worktree -- where `.git` is a *file* -- and
+  nothing for a packed ref. Both recorded an empty revision, silently, so a
+  timing or artifact comparison could be against a revision nobody knows. It
+  asks git now. The test named after the linked-worktree case took `tmp_path`
+  and ignored it, running against the ordinary checkout instead; it builds a
+  real worktree, a real packed-ref repository, and a tree with no git at all.
+- A live run cannot be rotated away by one that starts after it. Allocation,
+  rotation and the `latest` pointer were uncoordinated, and every candidate for
+  eviction is unfinished -- because unfinished is what a running gate looks
+  like. Under a tight retention cap the oldest live run is the first thing
+  reached for. Each run now holds a lock file for its length, so retention can
+  tell "being written" from "crashed"; the three operations that touch another
+  run's directory are serialized on a short-lived history lock, deliberately
+  not the machine lock, which is held for a whole gate and would make opening a
+  run log wait for one.
+
+- One file owns one responsibility. `release.py` claimed the two release
+  commands and also held the development surfaces and the guest entry points;
+  they are `devloop.py` and `guestcommands.py` now. `vmmodules.py` held three
+  independently composed release phases, which is three reasons for one file to
+  change; they are `module_artifacts.py`, `module_functional.py` and
+  `module_glowup.py`, re-exported so composition keeps one import site. Purely
+  mechanical: `candidate`, `release-binaries` and `release-profile` render
+  byte-identical dry-run and graph output before and after, which is the guard
+  this kind of move deserves.
+
+- Deployment data has one owner, and the guard that was supposed to enforce
+  that can now see the shapes it was missing. It walked flat strings, so a path
+  built with `/` was inspected as separate components and none of them looked
+  like a path -- `Path(root) / "private" / "tauri" / "capsem.key"` passed
+  cleanly. And an environment variable name is not a path at all, so nothing
+  looked at `os.environ.get("CAPSEM_INSTALL_MANIFEST_URL")`, which is exactly
+  the deployment data this rule exists for. Both are checked now, with the
+  bootstrap exemption honoured and the checks watched failing on the shapes
+  they exist for. What moved: the Tauri signing paths and variable names into
+  `[package.signing]`; the package rail's three inputs into `[package]`; the
+  install profile-inputs variable into `[install]`; `CAPSEM_HOME`,
+  `CAPSEM_RUN_DIR` and the benchmark and coverage names into `[environment]`,
+  where Workspace exports and Service reads the same ones rather than each
+  spelling its own; and the three bootable asset filenames into `[artifacts]`,
+  which two config lists and `initrd.py` had spelled independently. The macOS
+  report variable was already declared and `install.py` spelled it again.
+- `packagesigning.py` owns whether a checkout can sign and under what names.
+  It was a function inside the package rail, which is a different question from
+  how a package is built -- and it pushed that module past the 300-line ceiling
+  the boundary guard holds.
+
+- Resources run through the same guarded, journaling runner as the plan.
+  `execute` built one for the plan's context and then constructed resources
+  from the command's raw runner, so everything a resource did on the way in or
+  out -- the orphan baseline, Colima, the service launch, the failure-evidence
+  capture -- emitted no `exec` event and skipped the nested-gate refusal. The
+  one code path that runs *while the machine lock is held* was the one path
+  allowed to start a second gate, and a resource failure could leave no trace
+  of the command that caused it.
+- A detached launch is recorded. `GuardedRunner.launch` refused re-entry and
+  delegated, so a daemon appeared in no run at all -- which is exactly the
+  process the orphan count later has to account for. `launch` is now an event
+  of its own, with argv, cwd, environment delta, pid and time-to-spawn; it is
+  not an `exec`, because nothing waited for it and there is no exit status to
+  report.
+
+- Every consumer of a run agrees with what `run.end` recorded. `Timing.outcome`
+  already treated a failed run as failed, and nothing read it: the summary, the
+  run list and `runs last --failed` each classified by failed *steps*, so a run
+  that failed while taking the machine lock, acquiring a resource or tearing
+  one down was reported and selected as a success -- exactly the failures that
+  are hardest to diagnose. The summary also names them now, rather than
+  colouring the line red with no cause to act on.
+- Whether a command records a run depends on how it was invoked. `gc` was a
+  class constant `records = False`, with "only reads runs" copied from the run
+  readers, while it reclaims whole trees -- so a partial reclaim left terminal
+  output and no durable evidence. `gc --dry-run` is inspection; any other `gc`
+  records. The guard asks an invocation instead of approving a command by name.
+- `--timing` on a command that records no run says so instead of raising
+  `AttributeError: 'NullJournal' object has no attribute 'directory'`, which is
+  what `version --timing`, `runs --timing` and `gc --dry-run --timing` did.
+
+- Public recipe arguments can no longer become host shell syntax.
+  `release-binaries`, `release-profile` and `logs` interpolated their values
+  into the recipe body unquoted, and `just release-binaries 'nightly; echo X'`
+  ran `echo X` on the host. Python could never contain this: the shell parses
+  the recipe before the gate receives an argument. `dev` was worse -- it built
+  the *recipe name* from input, which quoting cannot fix -- so it dispatches to
+  the `dev` command, which already validates the three surfaces.
+- Both release commands keep the host awake again. Keep-awake belonged to
+  `candidate` because the gate belonged to `candidate`; the releases reached it
+  by launching `just test`. Deleting that child was right, and left them owning
+  the same forty-minute qualification with none of the wrapper, so an
+  unattended macOS release could sleep through its own publication. A
+  `CompleteGate` mixin owns the wrapper and the gate's resources, and the guard
+  states the policy -- everything containing the complete gate -- rather than
+  naming one command, which is why the old one stayed green through the gap.
+
+- An install retry can no longer change where the product comes from. The
+  postinst dropped the manifest handoff from an `EXIT` trap, so a failing
+  `dpkg -i` consumed it and the `apt-get install -f -y` that immediately
+  follows hydrated from the public channel instead. The reported error then
+  named production while the real failure was local -- and a retry that
+  happened to succeed would have had the gate qualify an install of something
+  nobody handed it. The handoff is now cleared on success only, by the writer
+  that owns it, and the install proof reads back the source the postinst
+  recorded and refuses anything but the channel it handed over. Silence is
+  refused too: an install that recorded no source cannot be qualified.
+
+- The update fixtures read the compatibility floor from `Cargo.toml` instead of
+  restating it. They said `min_capsem_version = "1.0.0"`, which every profile
+  satisfied while the workspace was 1.x and none satisfied once it moved back
+  to 0.6 -- so `capsem update` refused every catalog with "profile code
+  requires Capsem 1.0.0 or newer, selected 0.6.0", and seven update-state tests
+  failed as soon as the install proof got far enough to run them.
+- `capsem-gate install` builds the image its Dockerfile derives from.
+  `docker/Dockerfile.install-test` is `FROM capsem-host-builder:latest`, and
+  the lane's plan was a single step, so it only worked when an earlier phase of
+  a larger plan had left that tag behind. Run on its own -- or on any machine
+  where the previous run released it at `after-install` -- it failed with
+  `pull access denied`. The release contract requires every module to own its
+  prerequisites and be runnable in a clean environment; a guard holds it now.
+
+- A `file://` release channel resolves its artifacts against its own dist root
+  rather than the filesystem root. A generated channel is a website: the
+  manifest sits at `<root>/assets/<channel>/manifest.json` and records its
+  artifacts site-root-relative, as `/profiles/releases/...`. Over https that is
+  exactly right, because the site root is the origin. Resolved against a
+  `file://` manifest the whole path was replaced, producing
+  `file:///profiles/releases/...` -- the filesystem root -- so every hydration
+  of a locally built channel failed with ENOENT. The gate's install proof hands
+  the postinst exactly such a channel, so the candidate gate could not install
+  the package it had just built, and the `apt-get install -f` retry then
+  reported a 404 against the public channel that nobody had asked it to use.
+
+- The install proof's container mounts `/tmp` and `/run` with `exec`. Docker's
+  default tmpfs flags are `rw,nosuid,nodev,noexec`, and the proof unpacks the
+  shipped package into `/tmp` to run its `capsem-admin` -- deliberately, so the
+  release graph is authored by the exact binary being shipped. On a noexec
+  mount `test -x` returns false, and `test` prints nothing when it says no, so
+  the gate failed after fifty-three minutes with an exit status and no
+  explanation. The Linux-Rust container had already spelled its tmpfs out for
+  the same reason; this is the other one.
+
+- `last_consumer` in `config/storage-policy.toml` is load-bearing instead of
+  decorative. `capsem-host-builder` declared `last_consumer = "package-x86_64"`
+  and `reason = "Final tag is needed by both package builds"`, then also listed
+  an `after-linux-rust-builder` boundary that released it before either --
+  `package.arm64` died with docker exit 125 thirty-seven minutes into a run.
+  The shell survived it because the cross-compile lane rebuilt the image;
+  composed into one plan, `hostimage.fragment` is `plan.shared` and runs once,
+  so an early release is simply destruction. The extra boundary is gone, and a
+  guard now fails when any resource is reclaimed before the step its own policy
+  names as its last consumer. Its real last consumer turned out not to be a
+  package build at all: `docker/Dockerfile.install-test` is `FROM
+  capsem-host-builder:latest` and the install proof always rebuilds -- on
+  purpose, so a stale tag cannot hide a new prerequisite -- so releasing at
+  `after-packages` broke `glowup.install` with `pull access denied` fifty-three
+  minutes in. The tag is released at `after-install`, and the `after-packages`
+  boundary, which held nothing else, is gone.
+- The parity lane's build tree is released at all. That boundary held one
+  resource, so removing it left the phase empty and the phase went too -- which
+  surfaced that the contract asserting "the build tree is handed back before
+  the assets need room" was asserting on the builder *image*'s phase, a
+  different resource. `capsem-linux-rust-target` was therefore never released,
+  and the asset build ran with its space still held.
+
+- `test_double_slash_in_path` asks the gateway for a status code rather than a
+  JSON body. It had been rewritten from a vacuous `assert resp is not None or
+  True` into `assert resp is not None` plus `resp.status_code < 500` -- but the
+  test client returns parsed JSON or `None`, never anything with a
+  `status_code`, and a 404 (the most likely correct answer for `//vms/list`)
+  has no body at all. The claim was always "the gateway answered rather than
+  died"; `get_raw` is what answers it.
+
+- The asset lane creates its VM run directory where `config/gate.toml` says
+  to. `run_dir_template = "/tmp/capsem-a.XXXXXX"` exists because AF_UNIX paths
+  must fit macOS's 104-byte `sun_path` once the gateway appends
+  `instances/<uuid>-ws.sock`, but the code used the template's *name* as an
+  `mkdtemp` prefix and dropped its parent -- so the directory landed in
+  `$TMPDIR`, which on macOS is `/var/folders/<11>/<24>/T/` and spends 57 bytes
+  before anything else. Every terminal connection failed with `path must be
+  shorter than SUN_LEN`, 12,024 times in one gate run, while the VM sat at a
+  healthy prompt the TUI could never display and the shell proof timed out
+  reporting only that no prompt appeared.
+
+- Storage a later step still needs is no longer reclaimed by an earlier one.
+  `install-image` ended by releasing the linux-rust builder rail, and 164ms
+  later `cache-ownership` ran that exact image and got exit 125. Four rails
+  were handed back from two places each -- once as a properly ordered step, and
+  once as a statement inside some other step's body where nothing could order
+  it. In the shell those statements were ordered by the line they sat on; once
+  the preflight moved ahead of the parity lane, the accident stopped holding.
+  The statements are gone; the steps own their rails, and the contract that
+  watched the old arrangement now asserts the edge instead of the line.
+- `all_guest_binaries_in_pack_initrd` reads `[initrd] binaries` from
+  `config/gate.toml` rather than the `cp`/`chmod` lines of a recipe that no
+  longer packs anything. Same claim, against the list that now decides it.
+- `event-listener` 5.4.1 -> 5.4.2, clearing RUSTSEC-2026-0221 (`!Send` tags
+  crossing thread boundaries via `StackSlot`), which reached the workspace
+  through zbus under the Tauri plugins.
+
+- A gate command started from inside a gate run is refused instead of
+  deadlocking. `GuardedRunner` sees a *subprocess* that re-enters the gate, but
+  not a `cli.main([...])` called from Python inside a process the gate itself
+  launched -- and the gate launches pytest, whose suite did exactly that. The
+  worker blocked on the lock its own grandparent held, for the full
+  7200-second timeout, with the run looking alive throughout. The machine lock
+  now exports `CAPSEM_GATE_RUN` like any other resource environment, so every
+  descendant can tell it is inside a run, and an exclusive command that finds
+  it fails in milliseconds saying what to do instead. Read-only commands are
+  unaffected: asking `runs last` what a running gate is doing is the point of
+  `runs last`.
+- The gate CLI's dispatch tests drive the parser and the plan rather than
+  `execute()`. What they assert is that argv reaches the right primitive with
+  the right arguments, which never needed the machine lock.
+
+- The last 12 contracts that read gate behaviour out of `justfile` text now
+  read it off the gate: `tests/helpers/gate.py` builds any command's plan and
+  runs it against a recording runner, so a claim like "both dependency audits
+  run in parallel and neither hides the other" is asserted as two steps with
+  the same predecessors instead of as two `&` and a `wait` in a recipe body.
+  Nine test files shared eight copies of that helper; there is one now, cached,
+  which also took a minute off the contract suite.
+- `test_release_channel_contract_suite_is_in_pr_and_local_gates` asserted
+  `... or True`, which is not an assertion. The suite *is* ignored by the broad
+  pytest run, deliberately -- the release-contracts phase owns it -- so that is
+  what the contract says now.
+
+- `GateCommand.execute` now enforces the rules every command used to be trusted
+  to remember, and all three were being broken. A plan action may no longer
+  invoke `just` or another `capsem-gate` subcommand: the machine lock is not
+  reentrant, so each such call was a child waiting out its timeout for the lock
+  its own parent held, and the static guard finds 22 of them across 9 modules.
+  Every subprocess is recorded by the runner rather than by whatever wanted the
+  command, which is why `RunLog.exec` had no production caller at all and no
+  run log held a single command. And plan construction runs with the machine
+  sealed, so `--dry-run` cannot touch it. The seal is ambient rather than a
+  property of one runner, because `release.py` built its own `Runner` inside
+  `plan()` to capture `git rev-parse HEAD` -- the dry run printed a real
+  revision while nothing recorded that anything had run.
+- Resources contribute their environment through the lifecycle protocol, and
+  `execute` folds what was acquired into the context. `Workspace.environment`
+  existed and production never read it, so every command advertised as isolated
+  was in fact running against the developer's own `~/.capsem`.
+- Inspection is decided before any re-exec, so `--dry-run` and `--graph` can no
+  longer become a real run. Previously `candidate --dry-run` on macOS re-execed
+  into `just test`: an inert question starting a forty-minute destructive gate.
+- The revision a release publishes is captured by a step rather than read while
+  the plan was being built, so the value comes from the run instead of from
+  whenever the description happened to be assembled.
+- Every gate run now writes a record: an event stream, a log per step, and a
+  summary, under `target/gate-runs/<id>/` with `latest` pointing at the most
+  recent. Diagnosing a failure used to require having been present when it
+  happened -- which command ran with which arguments, what it exited with,
+  where the time went, which bytes came out all lived in a terminal, for
+  whoever was watching. Every line is validated against a model on the way
+  out, so the log cannot drift into a shape nothing reads back. `exec` records
+  only the environment a command *added*, never the ambient one, because this
+  file gets attached to bug reports and a release machine's environment holds
+  tokens. Rotation is bounded by both count and bytes, and gives up completed
+  runs before crashed ones -- a crashed run is precisely the case where the
+  terminal output was lost with it.
+- `just exec` works, and no longer lets guest text run on the host. Three
+  independent defects met in one command. The CLI subparser stored the
+  subcommand name in `command` and `ExecCommand` stored its payload there too,
+  so argparse overwrote the name and dispatch raised `TypeError: cannot use
+  'list' as a dict key` -- the public command could not run at all. The recipe
+  interpolated `{{CMD}}` unquoted, so `just exec 'echo guest; echo HOST'`
+  rendered a second *host* command: text a user believes is going into a
+  sandbox executed outside it. And it invoked `capsem exec`, which executes in
+  an existing session and takes one, rather than `capsem run`, which is the
+  one-shot fresh session the recipe documents. The payload is now one exact
+  string, quoted by `just` and passed after `--`, so a leading dash stays a
+  payload rather than becoming a flag.
+- The configuration is validated for meaning, not only shape. Pydantic rejected
+  unknown keys but accepted any integer, so `version = 2` loaded happily and was
+  then read with the wrong meaning, and `keep_runs = 0` pruned the run being
+  written -- surfacing as a missing directory rather than as the bad policy it
+  was. The schema version is a literal and the retention bounds are on the
+  types.
+- Guest-binary freshness stopped guessing from `*.rs` mtimes. A dependency bump,
+  a feature change or a toolchain bump leaves every source file older than the
+  staged binary while the binary is stale, and a stale guest binary ships into
+  an initrd that does not match the source it claims to be built from.
+  `Cargo.toml`, `Cargo.lock`, `build.rs` and the toolchain pin are inputs now.
+- Mutating commands hold the machine lock. `sign`, `build-ui`, `install-tools`,
+  `install-node` and `test-release-contracts` all write something another
+  process could be reading, and none of them took it. Per-step
+  `[execution.exclusives]` are `threading.Lock`s -- they order steps inside one
+  plan and coordinate nothing between two `capsem-gate` processes, so `just
+  _sign` in one terminal could replace the codesigned binaries a qualification
+  in another was executing. Only genuine inspection is non-exclusive now, and
+  the guard names each one with its reason.
+- An empty artifact stops counting as a built one. `imagebuild.missing` asked
+  `is_file()`, so a zero-length `vmlinuz` -- which is what a build that ran out
+  of disk leaves -- satisfied the check meant to catch exactly that.
+- `release-profile` refuses an unknown channel or profile before the gate
+  rather than after it. `release-binaries` already validated its channel; the
+  asymmetry cost a complete run to learn something knowable in milliseconds.
+- A run log can now be trusted, which is the whole reason it exists. Step
+  attribution was one mutable string on the `RunLog`, and the plan runs
+  independent steps concurrently -- so whichever step started last owned every
+  action, note, artifact and subprocess any of them emitted. Each write was
+  mutex-protected, which made the *lines* correct and the *attribution* wrong;
+  a record that confidently blames the wrong step is worse than no record. It
+  is a `ContextVar` now, which the worker threads inherit.
+- A run that failed outside every step is no longer reported as passing. The
+  machine lock, a resource that would not acquire and a teardown that raised
+  all live outside a step, so classifying by steps alone called a run whose
+  every step passed and whose workspace then refused to release a success.
+- The summary is written when the run closes rather than when somebody asks
+  for `--timing`, so the run nobody asked about still leaves something a bug
+  report can attach -- which is exactly the run that needs one. Run ids carry a
+  random suffix, because they had one-second resolution and the machine lock is
+  taken *after* the log is opened, so two contenders collided on the way in.
+- `runs` and `gc` no longer record themselves. `runs last --failed` opened a
+  run and repointed `latest` at itself before answering, so the honest answer
+  to "which run failed" could be the question.
+- `just smoke` starts. `SmokeCommand` declared a `Service` resource whose
+  `acquire` raised unconditionally, so the command died on acquisition every
+  time -- after the recipe had already paid for the fast checks and the runtime
+  preparation. Underneath that was the ownership mistake the raise stood in
+  for: the service resolved `CAPSEM_HOME` from the ambient environment when it
+  was constructed, so even a working acquire could have started a daemon in one
+  place and stopped something else on the way out. It is built from the
+  `Workspace` beside it now, and handed the runner rather than building one, so
+  "which service" and "which home" cannot drift apart and a recording runner
+  can see the launch.
+- Isolation actually reaches commands. `Workspace.environment` was a property
+  while the `Resource` protocol calls it as a method, so folding an acquired
+  workspace's environment into the context raised `TypeError: 'dict' object is
+  not callable` against the one resource every isolated command holds. The
+  funnel tests never caught it because they exercise a recorder written to
+  match the protocol rather than the classes that implement it; a guard now
+  checks every concrete `Resource` in the package, and the workspace's four
+  variables by name.
+- `CAPSEM_RELEASE_CHANNEL_DIST` meant two things and now means one.
+  `loadReleaseData` read it to decide *what to render*; `overlay-dist.mjs` read
+  it to decide *where to copy the built output*. Those are an input and an
+  output, and nothing but convention kept a caller from setting one where the
+  other was expected. `CAPSEM_RELEASE_GRAPH` is the input; the old name is the
+  output directory and only that.
+  The overload had grown a branch to survive itself: the overlay inspected its
+  target and skipped its own work when the path turned out to be a *file*,
+  because a file meant "graph fixture" -- the input meaning arriving at the
+  output variable. That check is deleted with the ambiguity that required it.
+  No compatibility path: both consumers are in this repository, so the rename
+  lands atomically. Where one path genuinely plays both roles -- a generated
+  distribution is both the graph rendered and the directory rendered into --
+  callers set both names, and a guard requires them to be driving the command
+  that does both halves rather than merely naming both.
+- No plan action starts a second gate anywhere. The last three modules are
+  composed: the asset lanes call the image builder directly, the package rail
+  calls the Debian proof directly, and both release commands *contain* the
+  complete gate rather than launching `just test`. Because both are exclusive,
+  that launch could never have succeeded -- the child would have waited out its
+  timeout for the lock its own parent held -- so "nothing publishes before the
+  complete proof passes" was a promise no run could keep, and is now an edge.
+  The ratchet tracking the remaining offenders is deleted rather than emptied:
+  a list describing no remaining work reads as permission for some.
+- Concurrent asset lanes stop overwriting each other. `_build-image-template`
+  declared an `output` parameter and never forwarded it, so `capsem-admin`
+  wrote into the one configured assets tree while each lane verified a private
+  directory nothing had written. Every test walked past it because the fakes
+  fabricated artifacts from the argv the *dispatcher* was handed, one layer
+  above where the value was dropped; they key on the builder's own argv now.
+- The three `CAPSEM_PROOF_*` variables are gone. They existed only to carry
+  arguments across a process boundary that no longer exists, and `DebProof`
+  always took them as arguments.
+- `just test` is one process, one machine lock, one workspace and one plan --
+  64 steps and 91 actions in a single graph, where it used to be a tree of
+  exclusive commands each waiting out a 7200-second timeout for the lock its
+  own parent held. The ordering that lived in three languages at once (`just`
+  dependencies, the line order of a shell body, and four separate `plan()`
+  methods) is now edges. Steps are namespaced by phase, so the run log and the
+  timing report say which part of the gate a slow step belongs to.
+- The two things that must happen even when the gate fails became resources
+  rather than steps, because a step whose dependency failed is skipped -- which
+  is right for work and wrong for cleanup. The orphan-process accounting is one
+  (an aborted run is exactly the run whose survivors need counting), and so is
+  the Colima lifecycle, which was a shell trap wrapping only the commands that
+  happened to sit inside the wrapper. `scripts/with-gate-colima.sh` goes.
+- A cleanup that cannot happen now says so. `Remove` used
+  `shutil.rmtree(ignore_errors=True)`, so every removal succeeded on paper: a
+  busy or unwritable path survived into the next qualification while the plan
+  recorded the cleanup as done. Run-history rotation had the same shape and
+  additionally reported reclaimed bytes that were still on the disk, so every
+  later capacity decision was made against a wrong number. Absence is still the
+  tolerable outcome -- teardown runs against whatever a failure left behind --
+  but a refusal is a failure, and the path is now verified gone before success
+  is recorded.
+- A teardown failure no longer replaces the failure that caused it. `held`
+  released resources in a `finally`, and an exception raised there *replaces*
+  the one in flight -- so an operator was told a process had leaked and never
+  learned which test failed and leaked it. Cleanup failures are now reported
+  and attached to the primary error as a note, and only become the error
+  themselves when there is no primary one to lose.
+- The two VM-owned test modules compose the work they used to launch. The
+  assets build, the install proof, the package builds, signing, the host SBOM,
+  the install-test image, the Linux parity lane and every storage-release
+  boundary were each a fresh `capsem-gate` or `just` process started from
+  inside a plan whose command already held the machine lock. Composing them
+  surfaced a real cycle immediately: the glow-up lane chains architectures so
+  the second package build waits for the first to release its disk, and passing
+  that ordering down to the shared builder image made the image depend on a
+  package that depends on the image. Shared groundwork now takes no ordering
+  from its caller -- only the work that runs inside it does.
+- The Linux builder image is built again. `installimage.prepare()` and
+  `CrossCompiler._prepare_builder()` both ran `just _build-host-image`, a recipe
+  that carries a heading in the justfile and no body -- so install-image
+  preflight and every cross-compiled package had been failing at that line, and
+  with them static qualification and the package lanes. Both compose
+  `hostimage.fragment()` now, which is `shared`, so several lanes in one plan
+  build the six-gigabyte image once and hang off it. Their two ordering
+  contracts moved from watching a runner issue a command to asserting the edge,
+  because watching a runner cannot tell a command that ran from one that failed.
+- The macOS keep-awake wrapper re-execs the operator's own invocation rather
+  than `just test`, so the flags they passed survive and an already-dispatched
+  command does not re-enter the dispatch chain from the top.
+- Profile selection for a functional proof moved into `capsem.gate.profiles`,
+  where a plan can be built from it without a subprocess. The base profile is
+  named in config rather than by a sort key comparing against the string
+  `code` inside a script -- a product decision that had been spelled as a
+  lambda. `scripts/release-test-profiles.py` stays as the command-line surface
+  CI already calls.
+### Fixed
+
+- A step that produces a fixed path must not share it with another producer
+  that claims no common exclusive, and the plan now refuses to run when two
+  do. A lock around the mutation is not a lock around the artifact: a step can
+  hold an exclusive while it builds, release it, and hand back "look at this
+  path" -- and the next claimant overwrites that path before the consumer
+  reads it. An edge orders a consumer after *its* producer and says nothing
+  about a second producer beside it.
+- Web-surface builds now serialize on a declared `astro_build` exclusive.
+  Astro stages prerendering in a path derived from the project root rather
+  than the invocation, so neither `--outDir` nor `--cacheDir` isolates two
+  concurrent builds and they delete each other's staging. The four surfaces do
+  have distinct roots today, so this is insurance -- worth buying, because a
+  build is under a second and the alternative is a rule that holds only until
+  someone adds a second consumer of one root.
+- `pnpm install` claims a `node_modules` exclusive: it rewrites a workspace
+  in place and every web build reads it.
+- `release-site/scripts/overlay-dist.mjs` takes its source directory as an
+  argument instead of hardcoding Astro's default `outDir`, where a change to
+  that setting would have broken the overlay silently.
+
+### Changed
+
+- New `/dev-gate` skill covering the gate's five layers, how to add a command,
+  and every guard that will fail you. `/dev-just` now states the recipe rule as
+  enforced rather than advised, and the docs point at `--dry-run` as the way to
+  read what a recipe does -- since the recipe itself is now one line.
+- The justfile no longer contains a shell body. It went from 2457 lines with
+  roughly 2070 of inline `bash` across thirty-five recipes to 73 body lines
+  across sixty-four, none over five, none with a shebang -- and the ratchet
+  that tracked the outstanding extraction has been deleted rather than
+  emptied, because a list describing no remaining work reads as permission for
+  some. The ceiling is five lines and the inline-control-flow exception list
+  is empty.
+- Fourteen more recipes are dispatches: the image-build family (four recipes
+  spelling out one `capsem-admin image build` invocation where only the
+  template varied), the asset presence check (which hand-rolled a
+  `uname -m | sed` architecture mapping that `config.arch` already owned), the
+  toolchain installs, the Linux-Rust parity lane and its builder image, the
+  host SBOM, signing, the desktop bundle build, log reading, and the dev
+  surface selector. The justfile is 995 body lines to 336.
+- `_test-candidate-run` is gone. All six modules `just test` is made of are
+  commands now, each declaring the workspace it needs and the graph of steps it
+  contains -- both answerable without running anything. A module used to be the
+  text between two `if` statements selected by an environment variable, so
+  running one in isolation meant exporting a variable and hoping. The justfile
+  is 995 body lines to 593.
+- pytest is invoked one way now. Sixteen call sites across two recipes each
+  assembled their own flags and agreed by hand -- the same `--tb=short`, the
+  same four `--ignore` directories, the same `CAPSEM_REQUIRE_ARTIFACTS=1` --
+  which is sixteen chances for one to differ with nothing to notice which.
+  More importantly, what may not share a machine is now declared rather than
+  achieved by placement: the host-snapshot suites claim the single service,
+  the benchmarks claim the Apple VZ launch budget, and the suites that rebuild
+  the workspace claim the binaries a running VM test is using. In shell those
+  held only because each sat below a `wait`.
+- The fast gate is the first module ported out of `_test-candidate-run`, and
+  it is now a graph rather than seven backgrounded jobs aggregating into one
+  `FAIL` bit. Every failure comes back named. The one real dependency in it --
+  clippy reads `frontend/dist`, which `capsem-app` embeds at compile time --
+  is an edge instead of a conditional that used to skip clippy entirely when
+  the frontend failed, losing that result on exactly the runs where the most
+  had changed.
+- The source-contract test inventory moved from 47 hand-maintained lines in
+  the justfile into `config/gate.toml`, with a guard requiring every
+  `tests/test_gate_*.py` to appear in it. Eleven had been added without
+  reaching the list, so they ran in neither the fast module nor the exclusion
+  that keeps them out of the VM matrix.
+- The isolated gate home is one `Workspace` resource rather than three
+  hand-written setups. `_test-candidate-run`, `smoke` and the asset gate each
+  built the same thing with the same four exported variables and an EXIT trap,
+  and each got slightly different details right -- while the details are the
+  whole point. Two orderings are now structural instead of positional: the
+  service stops before its run directory is removed, because stopping it is
+  what flushes `serial.log`, and failure evidence is copied out before either,
+  because both destroy it. The benchmark recordings are deliberately not
+  cleared with the home; a module wiping them is why a fortnight of full gates
+  left that directory empty and froze the published arm64 history.
+- Every gate command now shares one lifecycle. A command declares what it
+  holds and what work it contains; when to release, in what order steps run,
+  whether it needs the machine to itself and how any of it is recorded are the
+  same for all of them, and a contract test forbids a command from defining
+  its own. That is what makes `--dry-run`, `--graph` and `--timing` exist on
+  every command by construction rather than by each author remembering.
+- Two new commands: `capsem-gate runs` reads a recorded run back -- list it,
+  explain one, or jump to the last failure -- and `capsem-gate gc` reclaims
+  the disk the gate is holding, replacing four scattered ways to clean up one
+  of which a developer had to know to pick. Neither takes the machine lock,
+  because asking what a run did is a question you should be able to ask while
+  the next one is going.
+- The gate now bounds and reclaims what it occupies. Every tree it can create
+  is declared in `[disk] reclaimable`, nothing outside that may be removed,
+  and `ensure_space` reclaims before refusing -- running out of disk an hour
+  into a VM asset build wastes the hour and leaves a half-built tree the next
+  run has to clear first. The removal refuses any path that resolves outside
+  the checkout and unlinks symlinks rather than following them, so a link
+  someone left pointing at their home directory costs them the link.
+- A run now reports where its time went, and reports the right thing: the
+  critical path, not the slowest step. Shortening a step that runs beside
+  something longer changes nothing, so the number worth acting on is the
+  longest chain that had to happen in order. Slow actions are named by what
+  they invoked rather than by a label, and a failure is reported with the
+  steps it took down with it. Computed from the recorded events, so the
+  question can be asked about a finished run from a directory somebody
+  attached to a bug report.
+- Two gate runs can no longer start on one machine. A run's first act is to
+  remove `$CAPSEM_HOME` and stop the service inside it, so a second run
+  deletes the first's home mid-flight and both report failures belonging to
+  neither. The lock is `flock`, not a pidfile: the kernel drops it when the
+  holder dies, so a killed gate cannot wedge the machine and there is no
+  staleness heuristic to get wrong. Contention names the holder -- what it is
+  running, which pid, for how long -- instead of blocking mutely, and a
+  missing or half-written holder record still reports the contention rather
+  than an error about the record. All three subtleties the shell version
+  carried in comments are now tests: the lockfile sits outside every tree the
+  gate wipes, a daemon launched from a shell does not keep the lock alive
+  after the gate dies, and the descriptor is explicitly non-inheritable.
+- Gate ordering is declared as a dependency graph and derived by topological
+  sort, rather than written out as a list whose order is its meaning. The
+  install gate's defect was exactly this shape -- a manifest URL consumed
+  before anything staged the file it pointed at -- and the fix was to move two
+  lines, which no arrangement of source lines can now get wrong. A cycle is
+  reported before any step runs, naming the steps involved. Whatever the sort
+  makes simultaneously ready is independent by construction, so concurrency is
+  no longer a human judgement about which jobs are safe beside each other;
+  seven bare `&` in one recipe body were exactly that judgement, made once and
+  never rechecked. Steps that are independent but still cannot share the
+  machine declare what they contend for, and the plan serializes only those.
+- Every gate command can now be asked what it would do without doing it.
+  `--dry-run` prints the steps in execution order with the argv each would
+  invoke and the contention each declares; `--graph` emits the same thing as a
+  diagram. Both are free, which is the point: the question "what does `just
+  test` actually do" previously cost forty minutes to answer.
+- A failed step's dependents are reported as skipped rather than failed. They
+  never ran, and a report that conflates the two hides how far the real failure
+  reached. Independent failures are all reported together, so a broken gate
+  takes one round to diagnose instead of three.
+- Gate runs know their own critical path -- the longest chain of steps by
+  measured duration, not the slowest single step. Shortening the slowest step
+  does nothing when it runs beside something longer; the critical path is what
+  a run's duration is actually made of.
+- Exactly three gate modules may touch the machine directly: the filesystem
+  primitives, the single funnel every invocation passes through, and the one
+  place a signal is sent. Work that goes around them is work a dry run cannot
+  show and a run log cannot time, so a contract test holds the line, with the
+  not-yet-extracted modules on a ratchet that can only shrink. The same guard
+  forbids `pkill`, `killall` and `pgrep` anywhere in the package: killing by
+  process name cannot tell this run's daemons from the developer's own, and
+  `_ensure-service` avoided it deliberately with nothing enforcing that.
+- The initrd repack rule is enforced rather than remembered. The initrd is a
+  hash-named file hardlinked into every asset tree built from the same bytes,
+  so rewriting it in place rewrites all of them and the damage surfaces later
+  as a VM that will not boot from a tree nobody touched. `_pack-initrd` avoided
+  that by writing a scratch file and moving it; that is now an
+  `AtomicReplace` primitive with a test that fails if the target is written
+  directly.
+- Gate work is built from reusable primitives rather than opaque callables. An
+  action says what it would do and does it, and the two are independent, so
+  `--dry-run` can print the argv a command would actually invoke instead of a
+  list of step names, and a run can be timed below the step level. A context is
+  handed to each action rather than closed over, which is what lets the same
+  piece of work be reused by a command that sequences it differently.
+- Gate teardown is a stack rather than a sequence of lines. `capsem.gate.held`
+  acquires resources in order, releases them in reverse, and collects evidence
+  on failure *before* releasing, because release is what destroys it. The two
+  rules this replaces were both enforced only by where their `finally` lines
+  happened to sit: the manifest handoff must clear before the install container
+  goes, and the service must stop before its run directory is deleted, because
+  stopping it is what flushes `serial.log`. A resource now declares its name at
+  class definition, so forgetting it is an import error rather than a teardown
+  message that says `resource` failed forty minutes in.
+- The gate's policy for running *itself* is now declared in `config/gate.toml`
+  rather than implied by shell: which work may not run beside which and why
+  (`[execution.exclusives]`), who holds the machine (`[locks.gate]`), where a
+  run is recorded (`[runlog]`), and how much disk it may occupy (`[disk]`).
+  Each exclusive carries the reason it exists -- the Apple VZ launch budget,
+  the single service-scoped snapshot lock, the binaries `cargo build` replaces
+  underneath a running VM test. That knowledge previously lived in comments
+  beside seven backgrounded jobs in `_test-candidate-run` and three more in
+  `smoke`, where an eighth lane could violate a constraint recorded three
+  hundred lines away.
+- Reclaimable paths are validated at load: an entry that is absolute or
+  escapes upwards fails with the offending value named. These are whole-tree
+  removals, and the difference between a relative path and one aimed at the
+  wrong tree is a single editing mistake.
+- The gate's config schemas split by what they describe --
+  `configschema` for the product being built, `harnessschema` for the gate
+  running itself -- keeping both under the module ceiling the package enforces
+  on its own source.
+
+### Fixed
+
+- Three `# noqa: BLE001` directives in `capsem.gate` suppressed a rule that is
+  not enabled, so ruff reported each as an unused directive. The comments
+  explaining why each `except` is deliberately broad are kept; the dead
+  directives are gone.
+
+- Build and release logic is moving out of the justfile and into
+  `capsem.gate`, a unit-tested Python package the justfile dispatches to. The
+  justfile held roughly 2070 lines of `bash` inside recipe bodies, none of it
+  reachable by a test, so every defect in it was found by running the
+  forty-minute gate and reading the wreckage. Two contract tests now hold both
+  sides of that boundary: the justfile may not grow a shell body back, and no
+  gate module may swell into the file it replaced.
+- The Python coverage floor is declared once, as `fail_under` in pyproject's
+  `[tool.coverage.report]`. It had been spelled in the justfile, again in
+  `ci.yaml`, and a third time in the test that checked them -- while a fourth
+  coverage run in `ci.yaml` enforced no floor at all, because its copy had been
+  forgotten.
+
+- `just test` itself moved into `capsem.gate.candidate`, which removes the
+  hazard its EXIT trap had to be written around. Inside a trap `$?` is the
+  *last command's* status -- 0 on Ctrl-C -- so `exit "$status"` discarded the
+  shell's own 130 and reported an interrupted gate as a pass. `try`/`finally`
+  has no such status to misread, and the three guarantees are now asserted as
+  behaviour rather than by grepping the recipe for `return "$status"`.
+- The exact-package proof moved into `capsem.gate.debproof`. It mounts the
+  checkout read-only -- a package that only works because it wrote back into
+  `/src` is not a package that works -- and now fails when a shipped binary
+  reports a version other than the package's own. A `.deb` can install cleanly
+  carrying binaries from an earlier build, since the package metadata and the
+  ELF inside it are stamped separately, and every file-existence check passes
+  on that package.
+- The VM asset build and boot gate moved into `capsem.gate.assets`. Its two
+  architecture lanes ran concurrently in shell, with each lane's exit status
+  coming back through `wait` into a variable -- and a variable that goes unread
+  turns a failed build into a passing gate. Both lanes are now always awaited
+  before either result is read, and a run with two broken lanes reports two.
+- A contract test forbids the gate's code from spelling a path, an
+  architecture, or a channel. Extracting the justfile had put its data straight
+  back: `CONTAINER = "capsem-install-test"` and `LAYOUT = Layout(assets=...)`
+  grew in whichever module needed them, and `versions.py` carried its own copy
+  of the stamped-file list while `[[versions.stamped]]` declared the same
+  files with nothing connecting the two. Fifty-odd literals moved into config
+  as a result. Table keys stay allowed -- `release("after-install")` names
+  which entry to look up and fails immediately on an unknown one, which is an
+  API rather than a copy.
+- The gate's data lives in `config/gate.toml`, loaded through a Pydantic model
+  that validates it. Container names, scratch paths, timeouts, the
+  boundary/rail pairs the storage policy accepts, the artifacts an asset build
+  must produce, and the architecture table were previously spelled inside
+  whichever module needed them -- the same scattering that gave the justfile
+  eleven hand-written copies of one storage command. There is now one record
+  per architecture rather than a config model and a dataclass mirroring it, so
+  `arm64` cannot mean one thing in one file and another elsewhere. A missing
+  key or a mistyped timeout fails at load with the field named, rather than
+  forty minutes in as a `KeyError` inside a Docker call.
+- `capsem-gate doctor` checks that this checkout's gate is installed and
+  coherent: every declared console script runs, every storage phase names a
+  rail the policy declares, and every `capsem-gate` subcommand the justfile
+  dispatches to exists. Wired into `just doctor`, so an operator meets these at
+  setup rather than mid-release.
+- `ruff` and `ty` now cover every first-party Python tree through one
+  `capsem-gate lint` step. `ty` had run on `src/capsem` alone, so `scripts/` --
+  release machinery, not scratch -- and every test helper went unchecked; a
+  type error in a release script had no gate at all. `ruff`'s rule set widens
+  from four families to twelve, adding the ones that find defects rather than
+  style: likely bugs, comprehension misuse, exception chaining, and syntax
+  superseded by the minimum supported Python. ty warnings now fail the gate
+  rather than exiting zero.
+
+### Fixed
+
+- Every release-site gate rendered into the one shared `release-site/dist` and
+  then read its pages back after dropping the build lock, so a build started by
+  another `pytest -n` worker swapped the HTML out from under a test's
+  assertions -- the eight top-level release-site files failed eight or nine
+  assertions on *every* run of the gate's own `-n 4 --dist=loadfile` step, on a
+  different set of assertions each time. Astro compounded it: it stages
+  prerendered chunks at a path fixed under the project root, so two overlapping
+  builds delete each other's staging mid-prerender and `--outDir` buys no
+  isolation at all. Thirteen files had grown seven copy-pasted build helpers,
+  four carrying a lock that covered the build but not the reads it was there to
+  protect. One `tests/helpers/release_site.py` now owns the lock, and each build
+  snapshots its output into a private directory while that lock is still held;
+  callers read the snapshot, and nothing outside the helper touches
+  `release-site/dist`. Snapshots are keyed by graph content, so the gates that
+  share the fixture graph still share one build. A contract gate holds both
+  halves: a module that spawns a release-site build must reach the shared
+  lock, and only the helper may name `release-site/dist`.
+- Three defects the widened source gates found immediately: an ironbank ledger
+  assertion called with a required argument missing, so that path raised
+  `TypeError` rather than asserting anything; a gateway test whose assertion
+  was `assert resp is not None or True`, which is true for every value; and
+  `guest_path.lstrip("/root/")` used as if it stripped a prefix, when it
+  strips a character *set* -- `/root/root_notes.txt` came back as
+  `_notes.txt`. Nine `raise` statements inside `except` blocks now name their
+  cause, and two blind `pytest.raises(Exception)` assertions were narrowed to
+  the exception they mean, so neither passes when the service is simply down.
+- The install gate handed the package's postinstall script nothing to read.
+  `capsem-admin` authors the release graph and ships *inside* the package under
+  test, so the gate installed first and authored afterwards -- and the postinst
+  does not fail in that case. It falls back to the URL baked into the package,
+  so the whole-world **local** proof was hydrating from `release.capsem.org`,
+  and reported a product failure when those public artifacts were retired. The
+  graph is now authored from a `dpkg-deb --extract`ed copy of the exact binary
+  being shipped, and handed over before `dpkg -i`. A handoff naming a file that
+  does not exist, or naming the legacy runtime projection instead of the
+  authoritative graph, is refused rather than silently ignored.
+- The Linux package build no longer spells the pinned Rust toolchain three
+  times. It reads `rust-toolchain.toml`, so a toolchain bump cannot leave the
+  package rail behind on the old one. The build itself moved out of an escaped
+  `bash -c` argument into `scripts/build-linux-package.sh`, where the repository's
+  shell syntax gate can see it.
+- Version stamping reads `[workspace.package].version` from `Cargo.toml`
+  instead of `grep '^version' | head -1`, which matched the first line in the
+  file beginning with `version` wherever it lived -- so any table added above
+  it that declared a version would have renamed the release after a
+  dependency. A version with a zero-padded component (`2026.0730.16`, the
+  retired date-derived asset format) is now refused as the invalid semver it
+  is, rather than accepted and sorted above every compatibility floor it was
+  meant to be compared against.
+- `_stamp-version` fails when a file in the release cohort stops spelling the
+  version, instead of `sed` matching nothing and reporting success. A silent
+  no-op there leaves one artifact on the previous release's version while the
+  rest move.
+- The `just --list` description of `_cross-compile` had drifted onto the
+  storage recipe that followed it, so the two documented each other's
+  behaviour.
+
+- A gate run could finish green while leaving a `capsem-service` -- and the
+  gateway and tray it holds -- alive under launchd. The service wrote
+  `$run_dir/service.pid` before resolving its own startup race, so a second
+  starter that found a compatible peer already serving deleted the *winner's*
+  pidfile on the way out. Every later `stop_gate_pidfile` then found no file,
+  no-opped, and reported success, because a no-op cleanup is indistinguishable
+  from a successful one. Six services accumulated across one session of
+  release-lane runs, each alive for hours. The pidfile is now claimed only once
+  a process owns the service socket, and removed only while it still records
+  that process's own pid, so neither a losing starter nor a shutting-down
+  predecessor can strand whoever is actually serving.
+- The integration harness binds its own `capsem-service` to the process that
+  spawned it via `--parent-pid`. Its teardown runs from a `finally`, which an
+  aborted run or a SIGKILL never reaches, and nothing else bounded that
+  service's lifetime. Real users still get an unbounded daemon: theirs must
+  outlive the CLI that spawns it.
+- `just test` now counts capsem processes at the end of every run, passing or
+  aborted, and fails when any process from this checkout outlived it. It takes
+  a baseline first, so a developer's own dev daemon is never blamed on the
+  gate, and it reaps what it finds by exact pid. The existing guard proved the
+  reaping was *wired* to a pidfile some binary writes; it stayed green through
+  this entire bug, because wiring and working are different claims.
+- Test runs no longer put a menu bar icon on the developer's screen per
+  service. Omitting `--tray-binary` was believed to prevent the tray; it does
+  not, because the spawn falls back to `find_sibling_binary("capsem-tray")` --
+  a fallback the CLI's auto-started daemon depends on, since it passes no
+  companion paths at all. The tray's singleton lock lives under
+  `CAPSEM_RUN_DIR`, which every test service points at its own temp dir, so
+  the locks never deduped either: one live tray per service. The suite now
+  sets `CAPSEM_TRAY_HEADLESS`, which drops the icon while the companion still
+  starts, holds its guard and lock, and is reaped with its service -- so the
+  service's spawn-and-reap path stays covered rather than going untested.
+- The release stamper no longer builds a version from the clock. It still
+  assembled `1.${RELEASE_MINOR}.$(date +%s)` for the whole semver rewrite, so
+  `just release-binaries` would have stamped `1.6.<timestamp>` and then failed
+  its own cohort check against the `0.6` line. The version is now a human
+  decision recorded in `Cargo.toml` -- only a person knows whether a release is
+  a fix, a feature, or a break, which is what makes `min_capsem_version`
+  meaningful -- and stamping only propagates it to `tauri.conf.json`,
+  `pyproject.toml`, and both frozen lockfiles. Re-releasing an already-tagged
+  version is refused, so the bump stays deliberate.
+- The release write-set no longer requires every version file to change. With a
+  human-chosen version the cohort already agrees when the release runs, so a
+  no-op stamp is the correct outcome; only the release notes must be written. A
+  stale lockfile is still rejected, by its contents rather than its mtime.
+- Installing 0.6.0 failed at asset hydration: `no compatible asset release for
+  binary 0.6.0 (min_assets: 2026.0730.16)`. The asset release declared
+  `min_binary` as a hardcoded `1.0.0`, so renumbering the binary from the 1.x
+  line to 0.6 put every binary *below* the floor its own assets demanded, and
+  the sole asset release was skipped as incompatible. The floor is now derived
+  from the binary's release line rather than written as a literal -- and it is
+  the line base, not the exact version, so a compatibility window survives: any
+  0.6.x binary runs these assets and a patch release does not force everyone to
+  re-hydrate.
+- The macOS glow-up reported a working tamper rejection as a failure. Its guest
+  script tailed `$CAPSEM_HOME/run/service.log`, the bare name of a rotated
+  stream, so it polled an empty file for three minutes while the rejection it
+  waited for sat in `service.<date>.log`. The service had rejected the tampered
+  manifest correctly; only the proof could not see it. The wrapper guard now
+  tracks a shell variable from its assignment to its read, the same
+  indirection that hid the Python case.
+- `GET /host-logs/{name}` returned an empty log for a service that was writing
+  normally, so the `capsem_host_logs` MCP tool and `capsem` support bundles
+  reported nothing. It opened the rotated stream by its bare name with its own
+  hand-rolled seek-from-end, a fourth copy of the rule `telemetry::read_log_tail`
+  already owns. Same defect as the earlier `/service-logs` regression, in the
+  endpoint next door.
+- Session log readers follow the rotation this release introduced. `serial.log`
+  is written through `CappedLogWriter` in both hypervisor backends, so it
+  rotates -- but boot-failure diagnostics and `GET` of a session's logs still
+  read the bare name and lost the rotated slice. Those reads were also
+  unbounded, letting guest-controlled console output choose the allocation;
+  they now take a bounded tail. A local `read_log_tail` in `capsem-service`
+  shadowed the shared one with different behaviour and is gone.
+- The wrapper guard stopped exempting a whole file because one function in it
+  used the stream reader. That file-level pass is why `/host-logs` stayed
+  invisible: `main.rs` reads one stream correctly and read another by hand, and
+  the correct call bought silence for the rest. The exemption is now per
+  function, and the guard follows a path handed back by a helper rather than
+  only a literal `.join("x.log")`. It is scoped to streams whose writer
+  actually rotates, so `pty.log` -- binary, read as bytes -- stays out.
+- The gateway test helper read `gateway.log` by name and returned `""` when it
+  was absent, so an ironbank black-box test asserted `"gateway.proxy.ok" in ""`
+  against a gateway that had logged normally into `gateway.<date>.log`. The
+  same silent-empty read sat in the failure diagnostics of the gateway, MCP,
+  and service helpers, which is why the failure arrived with no log to explain
+  it. The wrapper guard now tracks a binding to its read the way the Rust half
+  always has -- `self._log_path` was assigned in the constructor and read two
+  hundred lines away, so a single-expression pattern never saw it.
+- A cold-started channel no longer pairs against a retired donor's artifacts.
+  Bootstrapping inherits the other channel's package cohort so a new channel's
+  first profile can be proved against shipped binaries, but those URLs are
+  validated for shape and never for existence. Once the donor was retired the
+  inherited cohort 404'd, and every release lane died fetching a package that no
+  longer exists. An absent channel's before-state is now empty of both families,
+  which is what it actually was; the first profile release stages deferred and
+  the binary release that follows publishes that channel's own packages and
+  activates it. An empty cohort must still be stated explicitly -- a live
+  channel whose packages stop resolving stays a hard failure, because that is
+  precisely the breakage users would hit.
+- Cold-starting a first-party channel is reachable again. The first-channel
+  projection required the serialized source to carry non-empty profiles, but
+  the only manifest it can ever be handed is the bootstrapped source for an
+  *absent* channel, which by construction has none -- and the projection then
+  set profiles to empty anyway. It rejected its sole valid input, so no channel
+  could ever be bootstrapped. Its test fixture hand-built a nightly source with
+  profiles that no bootstrap could emit, which is why the tests agreed with the
+  code and both were wrong.
+- Swept the log-rotation blast radius the original change never covered. Twelve
+  Python sites and one shell snippet in the macOS glow-up read `service.log` by
+  name, which is empty after rotation: ironbank ledger tests asserted on an
+  empty string, and failure-diagnostic helpers guarded on `is_file()` so they
+  printed nothing at all rather than failing. `tests/log_streams.py` is the
+  Python half of `telemetry::read_log_tail`, and the wrapper guard now covers
+  Python and shell as well as Rust -- it only scanned `crates/` before, which
+  is why the gate found this one test at a time.
+
+### Fixed
+
+- The service writes `service.pid`, which the harness reaps by. Nothing wrote
+  it, so every cleanup targeting `$run_dir/service.pid` no-opped -- silently,
+  since a no-op cleanup is indistinguishable from a successful one. The asset
+  gate left a `capsem-service` behind on every run, each holding a
+  `capsem-tray`; sixteen accumulated in a day, all reparented to launchd.
+- VM serial logs are capped instead of appended forever. Guest console output
+  is guest-controlled and a persistent VM runs for weeks, so the log was
+  bounded only by the disk. Both hypervisor backends had their own writer and
+  neither was bounded; they now share `telemetry::CappedLogWriter`, which
+  rotates to `<stem>.1.<ext>` so the rotated file stays inside the stream
+  readers already enumerate.
+
+### Added
+
+- `tests/test_pidfile_cleanup_is_wired.py` fails when the gate stops a pidfile
+  no binary writes.
+- The retired-version guard now reads the justfile, shell scripts, and
+  workflows, not only Python string literals. The stamper survived the semver
+  rewrite because a literal scan cannot see a shell template, and nothing had
+  ever pointed the guard at the file that does the stamping.
+
+### Fixed
+
+- Fixed `triage` reporting no errors for a daemon that was logging them. It
+  `metadata()`d the log stream name and returned `None` once rotation landed --
+  the same bug as `/service-logs`, in the second of four copies of "read the
+  recent log". All four now call `telemetry::read_log_tail`.
+- The shared log reader seeks to each file's tail instead of reading whole
+  files. `support_bundle` already did this and explained why: guest console
+  output grows on the guest's terms, so reading whole files let a chatty VM
+  choose how much memory `capsem support` allocated. Unifying took the better
+  implementation rather than the first one.
+- `checkpoint_complete_path` existed in capsem-process and capsem-service,
+  identical except that one hardcoded the fallback marker name and the other
+  used a constant. Changing that constant would have left the process writing a
+  resume marker the service never looked for, with nothing wrong at either
+  site. It now lives in `capsem-core::paths`.
+
+### Added
+
+- `tests/test_path_and_log_wrappers_are_mandatory.py` fails when a log path is
+  opened as a file, or when a Capsem path variable is set outside
+  `CapsemPathsGuard`. Wrappers nobody must use are suggestions.
+
+### Fixed
+
+- Fixed `/service-logs` returning an empty log for a service that was writing
+  normally. `service.log` names a daily-rotated stream rather than a file, and
+  the endpoint still opened that name directly. Resolution and tailing now live
+  in one function, `telemetry::read_log_tail`, so the endpoint and any future
+  consumer read the same log the support bundle does.
+
+### Changed
+
+- Test fixtures redirect Capsem paths through `paths::CapsemPathsGuard`, which
+  sets `CAPSEM_HOME`, `CAPSEM_RUN_DIR`, and `CAPSEM_ASSETS_DIR` from one root.
+  The run and assets variables each take precedence over the home-derived
+  default, so a fixture that set only the home left production code reading the
+  caller's directories -- green in a bare shell, broken inside `just test`.
+  Setting them one at a time is no longer possible.
+
+### Added
+
+- The security-rule CEL engine now pins what an absent field means. Every atom
+  kind -- `has`, `==`, `!=`, `contains`, `startsWith`, `endsWith`, `matches`,
+  `contains_pii` -- is false when the field it reads is missing. That rule is
+  load-bearing: it is the only thing scoping a rule to one event family, so a
+  `file.*` rule cannot fire on an HTTP event. Its cost is that a negation is a
+  filter over data that is present, not a deny-by-default -- `http.host !=
+  "allowed.test"` goes quiet on an event with no host. The tests state both
+  halves and show the pattern that does deny by default: a low-precedence
+  `block` catch-all with higher-precedence `allow` exceptions, which holds even
+  when the field the exception reads is absent.
+
+- `tests/test_exit_status_integrity.py` keeps a gate's result from being read out
+  of the last line of a multi-part output. Two shapes of one mistake: `$?` after
+  a pipe reports the pipe's status, and `tail -n1` across a multi-part result
+  returns the last part -- `cargo test -p capsem-service` runs three test
+  binaries and the last prints `0 passed`, so a piped tail reads as though the
+  crate had no tests while 91 and 264 passed above it. The guard covers recipes,
+  scripts, and workflows, and requires `set -o pipefail` in any bash recipe that
+  pipes.
+
+### Changed
+
+- Release recipes verify a clean tree and the right branch *before* running the
+  gate. `publish-tested-main.py` already refused a dirty tree, but only after
+  `just test`, so uncommitted work cost a full forty-minute gate to discover
+  something fixable in seconds. The rule stays in one place -- `--precheck` runs
+  the same preconditions -- and the authoritative check still runs at
+  publication, since state can drift during the gate.
+- Source-only contracts added this cycle now run in the fast gate rather than
+  only in the functional stage thirty minutes in.
+
+### Fixed
+
+- A security rule naming a field that does not exist no longer compiles. Field
+  validation checked only the CEL root, so `file.wrte.path == "/etc/passwd"`
+  passed `capsem-admin` validation and the service evaluate route, then matched
+  nothing forever -- a `block` rule that silently never fires. The same hole
+  accepted a bare family root: `has(http)` resolves to no field, so it was always
+  false. `SECURITY_EVENT_CEL_FIELDS` in `capsem-core` is now the authoring
+  contract, the rejection names the fields the author meant, and a guard test
+  proves every advertised field resolves against a fully populated event. A
+  profile carrying a misspelled rule now fails validation instead of shipping a
+  dead rule.
+
+- A non-ASCII character outside a string literal panicked rule compilation
+  instead of failing validation. The condition splitter sliced the condition by
+  byte offset, so `héllo == "x"` hit a char-boundary panic -- reachable from any
+  profile or corp rule file, and from the caller-supplied `rules_toml` on the
+  service's enforcement evaluate route. Splitting now compares bytes, which is
+  correct because every character the splitter reacts to is ASCII and a UTF-8
+  continuation byte never collides with one. Non-ASCII string literals such as
+  `http.host == "café.example"` still compile and still match.
+
+- The explicit-file security boundary dropped `credential_ref` on its way to the
+  rule ledger. The `fs_events` row kept it, but the `SecurityEvent` handed to
+  rule evaluation did not, so `security_rule_events` and
+  `security_decision_events` rows for imports and exports could not be
+  correlated back to the credential while ordinary file events could.
+
+- A postprocess plugin running in `ask` mode was silently downgraded to `allow`.
+  `evaluate_security_boundary` re-read the event decision after the postprocess
+  stage but honored only `block`, so an asking plugin raised the event's decision
+  state and left enforcement allowing. Both stages now escalate through one
+  helper, and a plugin-mode matrix covers every stage, mode, and rule action --
+  including the direction that must never change, since the decision merge is
+  escalate-only and no plugin may talk a blocking rule down to allow.
+
+- `contains_pii()` rebuilt its regex on every call, putting regex compilation on
+  the per-event enforcement path. It is now compiled once. The operator also had
+  no test coverage at all -- what it matches, what it does not, and that it reads
+  only the field it names -- so its behavior is now pinned.
+
+- Host-initiated process exec now enforces its security rules instead of only
+  recording them. `capsem exec` evaluated the rule set, computed a decision,
+  threw it away, and dispatched the command regardless -- so a profile rule with
+  `action = "block"` on `process.command` wrote a `security_rule_events` row
+  saying "block" while the command ran. Every other enforcing boundary (HTTP,
+  DNS, model, MCP, file import/export) already refused. Exec is decided before
+  the command reaches the guest, so it can refuse on the same terms: the job
+  fails with the rule's reason and a non-zero exit, and the attempt plus the
+  rule that refused it stay on the ledger. The file and process rails now share
+  one `emit_security_boundary_with_plugins` path, and the emission carries the
+  enforcement decision rather than a row count, so a caller cannot use the
+  boundary and accidentally not enforce. Guest `execve` audit records stay
+  detection-only by nature -- they describe a process that already started.
+
+- `emit_matching_security_rules_with_plugins` and its blocking twin ran the
+  plugin stages and then returned a row count, discarding the block or ask
+  verdict the plugins had just produced. Nothing calls them yet, which is the
+  point: they are the surface a custom plugin will be evaluated through, and the
+  count-returning shape made "ran the plugin, ignored what it said" the path of
+  least resistance. They now return `SecurityRuleEmission`, so the verdict
+  reaches the caller, and every rail escalates a plugin decision through one
+  shared helper.
+
+- The policy doc's first-party field table listed a `security` root that was
+  never valid and omitted `ip`, `tcp`, and `udp`, which the shipped `code`
+  profile uses in its own rules. Now that unknown fields fail compilation, a
+  drifted table sends authors straight to a rule that will not build, so the
+  table is complete and a guard test compares it against
+  `SECURITY_EVENT_CEL_FIELDS` in both directions. The doc also now states the
+  rule-precedence tie-break -- first match wins, ties broken by rule id, so give
+  the stricter rule the stronger priority rather than trusting the alphabet --
+  and the deny-by-default pattern that a negation cannot express.
+
+- One row the schema rejected discarded every row batched alongside it. The
+  writer executes a batch as a single transaction for throughput, so a `CHECK`
+  violation on one op -- a malformed `credential_ref`, say -- rolled the whole
+  transaction back and the writer logged a `warn` and moved on. On a security
+  ledger that turned one bad row from one producer into a silent hole covering
+  an arbitrary window of unrelated events, up to a full batch wide. A failed
+  batch is now re-run one op at a time: the valid ops land, each rejected op is
+  dropped alone with an `error` log naming its kind and event id, and
+  `db.write_op_rejected_total` counts it. The committing path is untouched, so
+  the fast path keeps its batching. The retry reloads the model-item dedup set
+  first, since the rollback left it describing rows that no longer exist.
+
+- The benchmark retention contract asserted `>= (1, 6)` while its own docstring
+  promised retention follows Cargo.toml "without a second place to update". The
+  literal was that second place, and it failed the moment the workspace moved to
+  0.6. It now compares against the declared workspace version.
+
+### Changed
+
+- Daemon logs rotate daily and retain a bounded history. `LogSink::File` now
+  names a stream rather than a single file: `<run>/service.log` produces
+  `service.<date>.log`, capped at `LOG_FILES_RETAINED` days, read back with
+  `log_stream_files`. An unbounded single file grows until the disk or the
+  reader gives out, and the support bundle had no way to select recent history.
+- Long-lived daemons route panics into their own log instead of losing them to a
+  detached stderr, and errors are logged as structured fields rather than being
+  formatted into the message text, so they stay queryable.
+
+### Added
+
+- Added a scheduled Live Channel Watch that proves published channels still
+  resolve. `check-release-site-contract.py` already fetches every artifact a
+  manifest references -- GitHub release downloads included -- and verifies size
+  and sha256, but it ran only during a channel deploy. The release system could
+  therefore only notice a broken channel while publishing a new one; anything
+  that broke an already-published channel from outside a deploy, such as a
+  deleted release or an artifact aged out by retention, stayed invisible until
+  the next release and users met it first. Deleting the 1.x releases
+  demonstrated it exactly: stable 1.0.143 went on serving a manifest whose
+  twenty artifact URLs were all 404, with every gate green because no gate was
+  looking.
+
+### Changed
+
+- **Capsem is 0.6.0.** The version line moves from 1.6 to 0.6 and the patch
+  becomes a real semver patch instead of a Unix timestamp. `1.6.1785421421`
+  parsed as semver but its patch was a clock, so a compatibility window could
+  only ever express "built before/after this instant" -- two releases a second
+  apart looked as far apart as two a year apart, and the number told an
+  operator writing `min_capsem_version` nothing.
+- **Profile revisions are semver, independently per profile.** `code` and
+  `co-work` start at 0.6.0 and move independently from there; profiles are
+  orthogonal, so one advancing says nothing about the other. The previous
+  scheme was a date plus a counter (`2026.06.08.9`) that could not order
+  releases: the date recorded when someone last edited the field rather than
+  when the assets were built -- a July build shipped wearing a June date -- and
+  the counter counted hand-edits, so `.8` and `.9` existed having never been
+  published. `parse_profile_revision` and `ensure_revision_advances` in
+  capsem-admin make the rule executable for first-party and corp-authored
+  profiles alike, and reject a revision that fails to advance past what is
+  already published.
+- Internal crate dependencies are path-only. `capsem-guard` was pinned at
+  `1.0.1776688771` in two crates, satisfied unnoticed by caret matching against
+  every 1.x, and broke the whole workspace build the moment the line moved to
+  0.6. The workspace version now lives in exactly one place.
+
+## [1.6.1785421421] - 2026-07-30
+
+### Fixed
+
+- Fixed the asset gate's Docker capacity test hardcoding free-space fixtures
+  against the old 24 GiB floor. "30 GiB is plenty" silently became "30 GiB is
+  not enough" when the floor moved to 40, and it surfaced as a release gate
+  refusing to build assets rather than as a stale fixture. The fixtures now
+  derive from `config/storage-policy.toml`, so the floor and the test that
+  exercises it cannot disagree.
+
+### Changed
+
+- Host logs now rotate daily and keep a week. Every sink appended to one file
+  forever: on a month-old install `gateway.log` had reached 314 MB across
+  943,739 lines, 99.99% of it `tower_http` DEBUG request tracing driven by a
+  5-second status poll -- about 11 MB/day, or 4 GB/year, per user. Worse for
+  debugging than for disk: `support-bundle` caps each log at a 5 MB tail, so
+  that stream offered roughly ten hours of history and a failure from the day
+  before was already unreachable. `LogSink::File` now names a *stream* rather
+  than a file, rotating to `service.<date>.log` -- extension last, so an
+  operator's `*.log` reflex and the asset gate's evidence copy still match --
+  bounded by `LOG_FILES_RETAINED`. `capsem_core::telemetry::log_stream_files`
+  is the one way to read a stream back, and `capsem support-bundle` uses it to
+  ship every rotated file newest-first instead of whichever one holds today.
+  Raw process stderr moved to `run/stderr/`: retention prunes on
+  `starts_with(prefix) && ends_with(suffix)`, so a `service.log` beside the
+  rotated stream was itself a prune candidate, and unlinking it would have
+  left the service writing panics into an inode nobody could open. The bundle
+  collects that directory and its own reading instructions now name it.
+
+- Errors are logged as fields, not baked into message text. 59 call sites
+  across six crates interpolated the error into the message, which makes it
+  ungroupable: every distinct path or errno produced a distinct message, so
+  the one field a bug report is read for could not be filtered or counted.
+  They now pass `error = %e`, or `error = format!("{e:#}")` where the value is
+  an `anyhow::Error` whose cause chain `%` would have flattened away.
+  `tests/test_logging_contract.py` fails on the next one, with no allowlist --
+  a guard needing exemptions is not a guard -- and the bundle's own reading
+  instructions now say to filter on `error` rather than grep message text.
+
+- Raised the Docker storage budget so BuildKit stops discarding a hot cache.
+  `buildkit_keep_gib` was 24 while the cache ran at ~65 GB with ~35 GB hot, so
+  every pressure prune threw away layers that were about to be reused and the
+  host-builder image recompiled cold. The budget is now 80 GiB kept, a 40 GiB
+  free floor, and a 200 GiB recommended disk. `minimum_disk_gib` rose from 96
+  to 160 to keep the policy satisfiable: keep + free floor + fixed cache usage
+  must fit inside the minimum disk, or the floor can never be met by the one
+  action taken to meet it -- which is how a full daemon timed out the capacity
+  probe and failed a release gate.
+
+### Added
+
+- Added `tests/test_rust_test_name_assertions.py`, which fails when a Python
+  source contract asserts a Rust test name against production source instead of
+  the sibling `tests.rs` the test lives in. This class cost two release
+  attempts: sixteen contracts under `tests/capsem-release/`, then five more
+  under `tests/capsem-install/` that run only inside the Docker install gate and
+  so stayed invisible until forty minutes into a release run. The guard resolves
+  each assertion's target through the AST, per function scope, so contracts that
+  legitimately name a relocated test while asserting it against a test module or
+  a spec document are not flagged -- a guard needing exemptions is not a guard.
+
+### Fixed
+
+- Fixed a panicking or early-dying `capsem-service` leaving no record at all.
+  The CLI's direct-spawn path detached the service's stderr to `/dev/null`, on
+  the reasoning that tracing writes `service.log` anyway -- true for everything
+  except the two failures that matter most here, a panic and any failure before
+  `telemetry::init` returns, which reach stderr and nothing else. Stderr now
+  appends to `service.log`, matching how the service already redirects its own
+  companions, and still detaches so a capturing test harness sees EOF.
+  `capsem-service` also installs a panic logger; that hook is now one shared
+  `capsem_core::telemetry::install_panic_logger` rather than a gateway-local
+  copy. `tests/test_logging_contract.py` holds both.
+
+- Fixed `service.log` recording that a VM boot died but never why. Three sites
+  held the captured `process.log` tail and logged only the fact: the provision
+  path's `capsem-process exited before reaching ready`, the child-exit handler
+  that writes `last_error` into the persistent registry, and the defunct
+  reconciler. The reason survived only inside the session's own `process.log`,
+  so the first file an operator opens -- and the one the asset gate copies --
+  was the one file that could not answer the question. Each now carries a
+  `cause` field. `capsem_core::session::boot_failure_summary` distils a tail to
+  its last meaningful line in one place, replacing two inline copies of that
+  idiom in the CLI rather than adding a third.
+
+- Fixed `capsem list` and `capsem info` staying silent about a session the
+  service will not run. Both read the failure field that matched a particular
+  status -- `last_error` for `Defunct`, `resume_blocked_reason` for
+  `Incompatible` -- so a `Stopped` or `Suspended` VM whose assets fail
+  validation printed as an ordinary row despite carrying its reason, and
+  `capsem info` rendered no reason for any state at all. One rule now answers
+  "why can this not run" for every row, and `capsem info` prints a `Problem:`
+  line beside the status instead of sending the user to `capsem logs` for
+  something the service had already returned.
+
+- Fixed the gateway dropping a crashed VM's boot error on the way to every
+  client. The service splits the two deliberately -- a defunct session carries
+  its `process.log` tail in `last_error` and leaves `resume_blocked_reason`
+  empty -- and `capsem-gateway`'s `VmSummary` carried only the latter, so the
+  reason stopped at the gateway. It now forwards `last_error`.
+
+- Fixed the installed-shell proof reporting a 300-second timeout instead of the
+  boot error the service had already handed it. `capsem create` returns once the
+  VM process is launched, so a boot that dies afterwards leaves the TUI parked on
+  its non-resumable screen and no prompt ever arrives; the proof watched only the
+  terminal, so it waited out its whole budget and then blamed the missing prompt.
+  It now polls `capsem info --json` while it waits and fails immediately with the
+  session's own `last_error` or `resume_blocked_reason` -- the `process.log` tail
+  naming the real cause. This is what turned the 1.6 asset-pin mismatch into a
+  five-minute wait pointing at the wrong thing.
+
+- Fixed `just _gate-assets` preserving no evidence for a failed boot proof. The
+  proof deleted its session in an unconditional cleanup, so `process.log` and
+  `serial.log` were gone before the gate's `run-failure` copy ran and the copy
+  captured empty directories. A failing proof now keeps its session -- stopping
+  the gate service still reaps every VM process and leaves persistent session
+  dirs intact -- and the copy walks the run dir for host-side diagnostics,
+  including the `vm/active_profile.toml` whose recorded pins are what a hash
+  mismatch is argued from. It prunes `guest/` and `auto_snapshots/` so the guest
+  workspace, duplicated once per snapshot generation, stays out of `target/`.
+
+- Fixed `docker-storage-policy.py enforce` crashing with a bare
+  `KeyError: 'free_bytes'` when Docker stopped reporting capacity between its
+  opening snapshot and the re-measure after pruning -- which pruning itself can
+  provoke. The opening snapshot was guarded for availability and the re-measure
+  was not. It now fails with a message naming Docker and the free-space floor it
+  could not check, instead of a traceback that named neither.
+
+- Fixed the guest kernel diagnostic failing every freshly built image. Moving
+  `kernel_branch` from 7.0 to 6.18 left the in-VM check asserting
+  `major >= 7`, so each newly built kernel failed its own diagnostics at the
+  end of the release gate, minutes of VM boots away from the one-line cause.
+  The diagnostic now asserts the configured branch, and
+  `tests/test_guest_kernel_branch_contract.py` holds it equal to the build pin
+  so the two cannot drift again. A `major >= N` floor was wrong in both
+  directions: it rejected the pinned branch and would have accepted any future
+  kernel the guest was never built against.
+
+- Fixed VM boot rejecting correct assets because a pin and its digest were
+  spelled differently. Profile pins derived from the release graph carry
+  `blake3:<hex>`; asset manifests carry bare hex. Boot compared the two
+  verbatim, so every VM in the asset gate died with a mismatch whose expected
+  and actual digests were character-for-character identical apart from the
+  algorithm tag. `VmConfigBuilder::verify_hash` now resolves both spellings in
+  the one place that decides what an expected hash means, and refuses a
+  non-blake3 algorithm outright rather than letting a `sha256:` pin masquerade
+  as asset corruption it can never match. The boot-audit line logs pins in full:
+  truncated to 16 characters, both spellings render as plausible prefixes, which
+  is exactly how this hid.
+
+- Fixed 16 release-contract tests that blocked both release lanes. They asserted
+  that specific Rust tests exist, but read only the production `.rs` file after
+  those tests moved to sibling `tests.rs` modules, so the whole gate failed on a
+  layout change that broke nothing. Source contracts now read production code
+  and its test module through `tests/rust_sources.py`, which resolves `mod
+  tests;` the way Rust does and raises when the module is absent instead of
+  passing on an empty string. The two sources stay separate deliberately:
+  several contracts assert a symbol is *absent* from production, and a test
+  module legitimately names what it proves is rejected.
+- Fixed the Rust line-coverage floor asserted by two separate contracts, which
+  still demanded 65 after the measured surface grew to include previously
+  unmonitored crates and the real floor became 63. The value is now named once
+  as `RUST_LINE_COVERAGE_FLOOR`, since a floor that disagrees with itself is
+  worse than no floor.
+
+### Added
+
+- Added `manyfaces`, a Rust suite holding the asset model to Docker's: blobs
+  content-addressed and shared between profiles, a profile's `image_revision`
+  behaving as a tag so several revisions coexist on disk, and blob lifetime
+  reference-counted rather than governed by a channel-wide pointer. Fifteen
+  tests pass, describing what already holds. Five are deliberately red and are
+  the specification for removing that pointer: three profiles currently collapse
+  to one asset set, a profile's kernel becomes unreachable, one global hash
+  cannot verify three profiles, and a refresh deletes an installed profile's
+  kernel as unreferenced.
+- Added a Rust test-layout contract to the shared fast gate. It fails on an
+  inline `#[cfg(test)] mod tests { ... }` block, a `tests.rs` that no parent
+  module declares (which silently never compiles or runs), a crate shipping no
+  Rust tests at all, and any Rust source a `.gitignore` rule would drop.
+  `just test`, `just smoke`, ordinary CI and both release lanes all reach it
+  through `_test-fast`.
+
+### Changed
+
+- Lowered the Rust coverage floor from 65% to 63%. The workspace measures
+  63.63%, so the 65% gate was failing before this branch and would have kept
+  failing after it: 47 new tests moved the number +0.09 points, because the
+  uncovered mass in the binary crates is async I/O the Python suites drive
+  through subprocesses, which `cargo llvm-cov` cannot see. 63% is where the
+  code actually is, which keeps the floor doing its stated job -- catching a
+  "we deleted half the test suite" regression -- instead of failing every run.
+  Raise it by ratchet as real coverage lands, not ahead of it.
+- Moved every Rust unit-test module out of its production file and into the
+  sibling `tests.rs` the project convention requires. 86 files carried inline
+  `#[cfg(test)] mod tests { ... }` blocks; the largest buried 4,070 lines of
+  tests under 8,855 lines of production code, so every read, grep, and scroll
+  to reach that code walked the tests first. Bodies moved verbatim -- the only
+  content edits are three `include_str!` paths that follow their file one
+  directory deeper.
+
+### Fixed
+
+- Restricted the desktop shell's `open_url` command to http, https and mailto.
+  It is a Tauri command, so anything running in the webview could invoke it
+  with any string, and the page-side filter forwards any href carrying
+  `target="_blank"` without inspecting its scheme -- so `file:///` and
+  `javascript:` reached the OS opener unchecked. The allowlist is positive, so
+  a scheme nobody considered stays refused rather than being opened because it
+  looked harmless.
+- Covered the benchmark harness's JSON scrape of guest command output and the
+  latency-summary edges. Both feed published numbers: a scrape that picks the
+  wrong object reports a figure that was never measured, and a degenerate
+  sample set must summarise to zeros rather than to something plausible.
+- Closed a guest-triggerable bypass of support-bundle redaction.
+  `redact_log_bytes` decoded the whole file and passed it through untouched if
+  any of it was not UTF-8, so a guest writing a single invalid byte to its
+  console disabled redaction for all of `serial.log` -- every credential in
+  that log shipped in the bundle in the clear. Redaction is now decided per
+  line, and lines that genuinely are not UTF-8 still pass through byte-exact.
+- Stopped reading whole log files to return their tail. `read_tail` read the
+  entire file before slicing off the last few MiB, which let a chatty guest
+  decide how much memory `capsem support-bundle` allocated via serial.log; it
+  now seeks.
+- Covered the tray against the status casing a real gateway sends. The gateway
+  serializes VM state capitalized ("Running", "Suspended"), but every tray test
+  used the lowercase form, leaving the production shape the one thing nothing
+  exercised; a regression in either case-folding site would have rendered a live
+  service as unavailable and stripped Connect from every running VM.
+- Covered the shared mock server's request parsers. It is the single fixture
+  behind benchmarks, doctor, protocol replay, gateway integration and Ironbank,
+  and several of its parsers fail into a default rather than an error -- junk
+  bodies become `{}`, a path that names no model resolves to a fallback model.
+  That is fine for a fixture but means a suite built on a malformed request can
+  pass for the wrong reason, so the silent defaults are now stated behaviour.
+- Told the user when exec output was capped. `capsem exec` and `capsem run`
+  now print a notice on stderr, leaving stdout byte-exact so piping and
+  programmatic consumers are unaffected; previously a truncated result was
+  indistinguishable from a command that genuinely produced that much.
+- Surfaced exec output truncation in the service /exec response, so an HTTP
+  caller can tell a capped result from a complete one.
+- Carried exec output truncation across the process/service IPC boundary, so a
+  capped result can no longer reach a caller looking like a complete one. The
+  field is `#[serde(default)]`, so a producer built before it existed still
+  decodes as not truncated rather than failing the frame.
+- Bounded guest exec output at 10 MiB. The Exec vsock port is a raw stream, so
+  the `MAX_FRAME_SIZE` bound applied to length-prefixed control frames never
+  reached it and `read_exec_output` accumulated without limit: a guest running
+  `yes` grew capsem-process until the OOM killer took it and every in-flight
+  job with it. The 5s deposit timeout did not help, because the reader thread
+  is detached and keeps allocating after `ExecDone` has given up and dropped
+  the slot -- so the memory was spent on output nobody would read. The cap
+  matches capsem-gateway's `MAX_BODY_SIZE`, reading continues to EOF so the
+  guest is never left blocked on a full socket, and `stdout_bytes` telemetry
+  now reports the bytes the guest actually wrote rather than the retained
+  slice.
+- Covered two untested boundaries in the per-VM process. `parse_pty_log` walks
+  a length-prefixed binary format off disk and was only ever exercised through
+  its own writer, so nothing checked a recording truncated by a crash or a
+  corrupt length field claiming 4 GiB of payload; it must return what it can
+  parse rather than panic into the terminal view. `ackable_id` /
+  `ackable_response_id` decide which messages are replayed until acknowledged,
+  where a missing variant loses a message across a reconnect and an extra one
+  replays forever -- including `Shutdown`, which must never be replayed.
+- Closed two leaks in the support-bundle redactor, which exists so a bundle can
+  be attached to a public bug report without shipping credentials. It matched
+  only a bare `Authorization:`, so the JSON-shaped
+  `{"Authorization": "Bearer <token>"}` that Capsem's own JSON logs actually
+  produce passed through untouched; the header prefix is now preserved and only
+  the credential replaced, so a redacted line stays valid JSON. GitHub tokens
+  (`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`) were not matched at all despite
+  `github_token` already being treated as a secret key name in the same module.
+- Covered the guest agent's auditd record parsers, which turn kernel audit
+  lines into the exec attribution the security ledger records. All four were
+  untested. The tests pin the sharp edges deliberately: field lookup is a
+  substring search, so the leading space in `" pid="` is load-bearing and
+  dropping it silently attributes the parent's pid to the child; `extract_execve_argv`
+  truncates at the first gap in argument numbering rather than mis-ordering;
+  and an absurd timestamp saturates instead of wrapping into a plausible value
+  that would reorder the ledger.
+- Covered builtin MCP tool-failure propagation. `extract_text` decides whether
+  a refused tool call reaches the agent as a failure or as a successful result
+  whose body happens to contain error prose; the `isError` branch exists
+  because it once did the latter, and none of it was tested. Both refusal
+  channels are now pinned, along with the precedence between them and the
+  sharp edge that a non-boolean `isError` is not a refusal signal.
+- Covered the guest control-channel leak detector adversarially.
+  `looks_like_ipc_frame` is the only signal that a guest is writing IPC
+  protocol bytes into its own PTY stream, and it was asserted only negatively.
+  It now has positive cases pinned to real encoder output, so a wire-format
+  change breaks the test instead of silently disabling the detector, plus the
+  short/empty reads a PTY can always return, each byte of the frame prefix in
+  isolation, the fixstr range boundaries, and ordinary terminal output that
+  must not be flagged.
+- Attached every remaining Rust source to a codecov component. Sixteen
+  capsem-core files belonged to none: `credential_broker.rs` now reports under
+  Security, `telemetry.rs` under Monitoring, `host_state.rs` under
+  Virtualization and `bin/mcp_export.rs` under Tooling, with two new components
+  for concerns that had no home -- Assets (`asset_manager.rs`,
+  `manifest_compat.rs`, the runtime half of the manifest contract) and Core
+  Platform (path resolution, UDS helpers, IPC handshake, backoff, macros). The
+  `#[cfg(test)]`-only `test_support/` helpers moved to `ignore`. All 200 Rust
+  sources across every crate now resolve to exactly one component.
+- Repointed four stale `codecov.yml` component paths at files that no longer
+  exist. Three sat in `network` (`mitm_proxy.rs`, deleted `domain_policy.rs`
+  and `http_policy.rs`) and one in `security` (deleted `host_config.rs`), so
+  both components silently measured less than their own comments claimed --
+  `network` excluded the entire MITM proxy it is named for, along with DNS,
+  the AI-provider interpreters and the SSE/DNS parsers. Both now match their
+  documented scope: all of `net/` except `policy_config`, and the policy
+  engine including `security_engine/`. This drops `network` from a flattering
+  91.7% to an honest 71.7%, so its first `target: auto` build will re-baseline
+  against the wider scope.
+- Followed the moved unit tests in four source-contract assertions. Contracts
+  in `test_release_doctor_contract.py` and `test_dbwriter_snapshot_contract.py`
+  read a production file and asserted that test names or fixture strings
+  appeared in it, which stopped holding once those tests moved to sibling
+  `tests.rs` files; one had been silently reduced to asserting against the
+  two-character remainder of a `split()`.
+- Put a test under the service's spawn environment boundary.
+  `PROCESS_ENV_ALLOWLIST` is the whole barrier between the daemon's own
+  environment -- which on a developer or CI machine routinely holds
+  `ANTHROPIC_API_KEY`, `AWS_SECRET_ACCESS_KEY` and the like -- and the per-VM
+  process that talks to the guest. Nothing enforced its contents, so adding a
+  secret-shaped or non-Capsem name now fails the build instead of silently
+  forwarding a host secret.
+- Covered the MCP server manager's reserved-header check, `WWW-Authenticate`
+  scope parsing, JSON-RPC error sniffing and pool-routing guard conditions.
+  Without the header test, a server definition could have contested
+  `Mcp-Session-Id` and steered another session's stream.
+- Covered the two Rust surfaces that had no unit tests worth the name.
+  `capsem-mcp-aggregator` was the only crate in the workspace with none at all,
+  and `StreamTracker` in the MITM MCP frame path had none despite being the
+  only thing standing between a hostile guest and response confusion. Both
+  parse guest-controlled input, so the new tests assert the rejections: reused,
+  backwards and reserved stream ids, and unresolvable tool, resource and prompt
+  names returning a structured error instead of panicking the process.
+- Narrowed the `*_Store` ignore rule to `*.DS_Store`. macOS sets
+  `core.ignorecase=true`, so the bare pattern matched source directories such
+  as `crates/capsem-process/src/job_store/` case-insensitively and silently:
+  the tree still built locally, and a fresh clone would have failed on an
+  unresolved `mod tests;`.
+
+## [1.6.1785322564] - 2026-07-29
+
+### Changed
+
+- Standardized the blocking Python coverage floor at an exact 85% in ordinary
+  CI and the complete local release gate.
+
+### Fixed
+
+- Corrected the `CLAUDE.md` project layout against the real tree: `guest/config/`
+  has not existed since the ontology cleanup, so profile definitions now point at
+  `config/profiles/<id>/` and are named as runtime product config rather than
+  developer skill source, `src/capsem/builder/` is described as the admin-driven
+  backend it became, and the four shipped crates plus `config/`, `tests/`, and
+  `scripts/` are no longer missing from the map.
+- Repointed the MITM skill's static CA keypair at `security/keys/`, where
+  `net/cert_authority.rs` actually reads it from, instead of a `config/` path
+  that the five-directory config contract would never allow.
+- Retried transient release-catalog reads in the runtime preflight instead of
+  letting one reset CDN connection fail the first gating step of both release
+  lanes. Authoritative 4xx answers still fail closed on the first attempt.
+- Covered the installed-product half of candidate channel preservation: a
+  preserved transition must leave `manifest-metadata.json` on its packaged
+  public channel, which is exactly what the published release gate reads back.
+- Brought the build-provenance invariant into the test suite: the embedded
+  build hash must carry the real source revision whenever one is readable,
+  rather than relying on `check-build-provenance.sh` alone to keep a binary
+  with no source identity out of a release.
+- Made the host-builder container trust its bind-mounted `/src` checkout. On
+  Linux the host UID differs from the container user, so git rejected the
+  repository and the package build died after a successful compile; the same
+  condition silently degrades the embedded build hash to `unknown`.
+- Generalized the pnpm cache-ownership gate to follow the Just recipe graph
+  instead of accepting one hardcoded recipe name, so every just-driven CI job
+  can cache its pnpm store. Re-enabled that cache on the install and Linux
+  gates, and factored the recipe reachability both contracts need into one
+  shared `scripts/justfile-graph.py`.
+- Installed the musl C toolchain in the ordinary CI install gate, which runs
+  `just doctor` through `_cross-compile` and needs it to build guest binaries.
+- Provisioned the tools each CI job actually invokes: `just` in the macOS
+  `test` job, whose `tests/capsem-release/` contracts shell out to it, and
+  pnpm/Node in `test-install` and `test-linux`, whose `just` recipes reach
+  `_pnpm-install`. Both gaps failed only on CI, because local `just test` runs
+  where every tool is already on PATH.
+- Added a checked-in contract asserting every job in `ci.yaml`, `release.yaml`,
+  and `release-assets.yaml` installs the tools its own steps invoke, resolving
+  justfile recipe dependencies transitively so the fast local gate fails first
+  instead of discovering provisioning drift in CI.
+- Preserved manifest-declared channels during candidate package installation
+  and accepted selected release graphs in the shared bootstrap suite.
+- Made ordinary CI build the exact native release-mode Debian package before
+  the install/glow-up gate, with an actionable fail-closed diagnostic when the
+  expected package is absent.
+- Refreshed embedded package provenance across cached commits and worktrees,
+  and made every local and CI package builder reject a binary whose build
+  identity does not match the exact release source.
+- Made guest-kernel resolution fail closed when kernel.org is unavailable or
+  the configured branch is EOL, and moved both architectures from EOL 7.0 to
+  the supported 6.18 LTS branch.
+
+## [1.6.1785192352] - 2026-07-27
+
+### Fixed
+
+- Made binary package jobs consume only digest-verified, manifest-selected
+  profile inputs instead of regenerating the checked-in profile catalog.
+
+## [1.6.1785138870] - 2026-07-27
+
+### Fixed
+
+- Made the shared fast gate reject case-insensitive Justfile references locally,
+  and made binary release fail early when its manifest-authorized staged channel
+  source does not exist.
+
+## [1.6.1785096259] - 2026-07-26
+
+### Fixed
+
+- Fail invalid binary release-note state before the complete local gate, push,
+  version, tag, package, image, or VM work.
+
+## [1.6.1785062334] - 2026-07-26
+
+### Fixed
+
+- Restored fail-closed release inputs and early gates: CI now caches
+  manifest-selected native profile blobs by recorded digest, installed
+  Doctor/Winterfell boots real assets with retained failure evidence, blocking
+  audits/Clippy/web checks run before builders, all JavaScript workspaces audit
+  clean, and the frontend uses its checked-in semantic theme without a Preline
+  dependency.
+
+### Added
+
+- Added fail-closed release glow-up inputs that bind each orthogonal transition
+  to its exact public-before manifest, candidate-after manifest, native package
+  bytes, verified profile inputs, and selected profile publication.
+
+- Added digest-verified candidate profile resolution that combines one locally
+  staged immutable profile publication with unchanged manifest-hosted profiles
+  without publishing or rebuilding either input.
+
+- Added one cross-platform installed-transition evidence contract for fresh
+  installs, orthogonal updates, staged profile-then-binary activation, channel
+  switches, tamper rejection, full doctor, and Winterfell proofs.
+
+- Added a fail-closed installed-Winterfell runner so persistence tests execute
+  one exact installed binary, profile, and asset cohort without signing or
+  falling back to source-built artifacts.
+
+- Scheduled the nightly binary lane once daily through the same
+  `just release-binaries nightly` command, with a clean no-op when `main`
+  already points at an immutable binary release.
+
+- Added `capsem-admin manifest corporate` for corporation-owned channel/profile
+  manifests with exact or verified-latest official Capsem package selection,
+  owned profile namespaces, and rejection of first-party or package writes.
+
+### Changed
+
+- Wired the binary release gate to the exact deployed public-before packages
+  and profiles plus the authored candidate package, manifest, and complete
+  profile cohort, classifying a single staged profile as a composed update.
+
+- Wired the profile release gate to the exact deployed public-before package
+  and profiles, staged and verified its immutable candidate publication once,
+  and reused those same bytes for compatibility testing and publication.
+
+- Allowed a composed binary release to validate and activate the complete set
+  of previously staged profiles while still requiring every unchanged profile
+  to remain byte-for-byte identical.
+
+- Constructed hermetic Linux glow-up transports from the exact before/after
+  native packages and verified profile cohorts, proving the local manifests
+  differ from their manifest authorities only by artifact URLs.
+
+- Moved binary candidate manifest authoring and host SBOM generation ahead of
+  complete pairing tests, then reused that exact tested source manifest for
+  immutable publication and final channel assembly without a second mutation.
+
+- Enforced every active profile's minimum and maximum Capsem bounds before
+  recording binary metadata or assembling a public channel, while preserving
+  the exact staged profile bytes for later compatible-binary activation.
+- Split profile authoring, pairing tests, and immutable publication so a
+  profile requiring new code is built and staged once, remains absent from the
+  public channel, and is later consumed unchanged by the compatible binary lane.
+- Bound release compatibility tests to manifest-derived, digest-verified
+  complementary artifacts; staged exact profile config and every selected
+  profile image, replaced source-built host binaries with package inventory
+  bytes, and made each selected channel profile an explicit VM-suite axis.
+- Parameterized Winterfell, IronBank, doctor, MCP lifecycle, injection,
+  integration, and benchmark execution across every active profile in the
+  selected channel manifest without rebuilding either artifact family.
+- Preserved every channel profile's membership, revision, config, evidence,
+  and image identity in runtime update state instead of collapsing a public
+  release graph to one default profile.
+- Channel-qualified immutable profile config, image, inventory, and evidence
+  paths so the same profile revision in different channels cannot alias bytes.
+- Replaced the retired independent release gate with serialized orthogonal
+  binary/profile lanes that reuse the unchanged artifact family, call the same
+  complete test modules as local `just test`, and expose only
+  `release-binaries` and `release-profile`.
+- Centralized release-gate Docker capacity, cache retention, resource
+  ownership, and debug-artifact limits in `config/storage-policy.toml`;
+  retained a measured 24 GiB BuildKit cohort, released one-shot compiler
+  outputs at their last consumer, recorded byte-accounted cleanup ledgers,
+  and put both Docker and Tart working resources under the Python controller.
+
+### Fixed
+
+- Preserved installed doctor and failed VM-session evidence when the native
+  package gate fails in CI.
+
+- Bootstrapped an absent first-party channel through `capsem-admin release`
+  with existing official packages and empty profile membership, while
+  preserving non-selected public-channel manifests and profile bytes.
+
+- Emitted the selected corporate channel identity in every validated
+  `capsem-admin` corporate manifest.
+
+- Passed the immutable release tag as an explicit binary-workflow input so the
+  public release command cannot push a tag and then fail GitHub dispatch
+  validation.
+
+- Installed the pinned `uv` tool before the Linux install CI job enters the
+  shared package gate.
+
+- Retried transient Tart SSH failures only before authenticated guest
+  execution, while failing without replay after a native package install has
+  started.
+- Removed stale source-contract references to the retired asset-delta helper
+  so the orthogonal release doctrine teardown remains internally executable.
+
+## [1.5.1784808246] - 2026-07-23
+
+### Fixed
+- Made the canonical macOS gate install its exact package in a clean Tart VM,
+  verify the installed app/binaries/service, and boot a real Capsem guest from
+  that package payload on the physical Mac; removed the forked `just release`
+  dispatcher.
+
+## [1.5.1784785930] - 2026-07-23
+
+## [1.5.1784768556] - 2026-07-22
+
+## [1.5.1784752101] - 2026-07-22
+
+## [1.5.1784736726] - 2026-07-22
+
+## [1.5.1784734533] - 2026-07-22
+
+## [1.5.1784731579] - 2026-07-22
+
+## [1.5.1784729931] - 2026-07-22
+
+## [1.5.1784695365] - 2026-07-22
+
+### Fixed
+- Made headless macOS package installs prove the exact non-root target user and
+  package receipt with labeled assertions, while retaining unconditional user,
+  app-path, receipt, and Installer diagnostics for failed release jobs.
+- Started the local Docker backend before release-gate storage preflight so a
+  correctly stopped Colima daemon cannot fail qualification before bootstrap.
+
+## [1.5.1784693563] - 2026-07-22
+
+### Fixed
+- Restored Colima to its pre-gate state after local release qualification,
+  including failed gates, and set the three-resident-VM macOS average
+  create-to-exec budget to two seconds while retaining the stricter single-VM
+  latency gate.
+
+## [1.5.1784689174] - 2026-07-21
+
+## [1.5.1784673252] - 2026-07-21
+
+### Fixed
+- Kept unattended macOS candidate gates awake, ran the release benchmark once,
+  and preserved service/VM logs when exception teardown precedes pytest's
+  failure report.
+
+## [1.5.1784663414] - 2026-07-21
+
+### Fixed
+- Honored virtqueue interrupt suppression in the KVM VirtioFS worker and
+  stopped raising interrupts for empty post-resume queue notifications,
+  preventing lost completion wakeups during restored workspace bursts.
+
+## [1.5.1784645585] - 2026-07-21
+
+## [1.5.1784597803] - 2026-07-20
+
+### Fixed
+- Bounded linked Cargo test binaries and aged reproducible `target/` staging,
+  retained useful compiler/toolchain caches under Docker pressure, reclaimed
+  abandoned created containers, and rechecked daemon capacity immediately
+  before the Linux package-install pytest tail.
+- Released multi-gigabyte Docker stage images as soon as their consumers were
+  done—including both preflight and Linux-parity host builders before the
+  intervening asset rail—and calibrated the Linux package reserve separately
+  from the larger asset-expansion and installed-package reserves, retaining a
+  smaller private BuildKit floor once the final package builder exists and
+  reclaiming unreferenced failed-rail stage tags before the next candidate.
+- Released disposable install-gate incremental objects after package linking
+  while retaining dependency caches, linked binaries, and package bundles;
+  removed its derived stage image on every exit; and sized the runtime-only
+  pytest reserve separately from compilation reserves.
+- Kept Rust and npm advisory failures blocking in the scheduled/manual security
+  audit while making candidate, smoke, and PR gates report external-clock
+  advisory changes without reddening unrelated source commits.
+
+## [1.5.1784567996] - 2026-07-20
+
+## [1.5.1784507249] - 2026-07-19
+
+## [1.5.1784501682] - 2026-07-19
+
+## [1.5.1784498926] - 2026-07-19
+
+## [1.5.1784496688] - 2026-07-19
+
+## [1.5.1784493824] - 2026-07-19
+
+### Added
+- Added a scheduled/manual blocking dependency-audit workflow, while keeping
+  upstream RustSec clock changes out of ordinary PR and candidate gates.
+- `dev-ci` skill: CI triage procedure and stop-the-line red-gate discipline
+  (named diagnosis before any rerun, streaks are P0, failure classification).
+- Cross-agent skill index contract test (`tests/test_agent_skill_index.py`):
+  every skill must be indexed in CLAUDE.md and GEMINI.md, no dangling skill
+  references in any agent instruction file, discovery symlinks must resolve to
+  canonical `skills/`, and both indexes must carry the AGENTS.md hard-contract
+  pointer. The test runs in the PR gate's Python schema lane and in the full
+  `just test` gate.
+
+### Changed
+- Pinned Rust 1.97.1 across local, CI, bootstrap, and builder environments;
+  pinned external GitHub Actions to immutable commits; unified artifact
+  uploads; and replaced source-built CI utilities with reviewed prebuilts.
+- CI now runs on `main`, cancels only superseded PR runs, treats token-gated
+  Codecov uploads as non-blocking, and uses structural docs/site smokes.
+- Split `release-process` and `dev-testing` skills into sub-500-line spines
+  with on-demand `references/` files (release graph, CI invariants, Apple
+  signing, post-release verification, local/CI parity, test matrix, MCP debug
+  tools) -- content moved verbatim.
+- Brought GEMINI.md's skill index to full parity with CLAUDE.md and made both
+  files' AGENTS.md pointers name the release-evidence and logger-DB hard
+  contracts; indexed the previously missing `ironbank`, `dev-bug-review`,
+  `meta-find-skills`, and `meta-skill-creation` skills.
+
+### Fixed
+- Bound `just test` to one clean committed `HEAD`, routed automatic benchmark
+  output under `target/`, ignored new benchmark recordings until deliberately
+  approved, and made missing release-site Astro fail immediately with the
+  owning install step named.
+- Made the public GitHub package release inert until candidate URLs, SHA-256,
+  BLAKE3, and `install.sh` pass, then advance the user-visible channel.
+
+## [1.5.1784485843] - 2026-07-19
+
+### Fixed
+- Preserved guest command output that arrives after the control channel reports
+  completion, replacing the 100 ms reader race with a bounded five-second
+  transport-loss window and deterministic delayed-output regression coverage.
+- Bounded Docker storage across the canonical Ironbank gate: capacity is
+  checked before and after builder materialization, inactive incremental state
+  is reclaimed under pressure, prior target volumes are flushed before a new
+  canonical run, and successful runs flush compiler artifacts while retaining
+  a bounded hot BuildKit cache.
+
+## [1.5.1784475356] - 2026-07-19
+
+### Fixed
+- Isolated the packaged Linux install and channel glow-up harness from ignored
+  developer VM assets, forwarding the selected fixture tree through every
+  repack and channel stage so local runs cannot copy multi-gigabyte root files
+  into Docker temp storage while clean CI uses tiny fixtures.
+- Made the install/release test-asset generator emit the same rootfs-scoped
+  CycloneDX contract as production and replace stale live-host inventories,
+  preventing dirty developer assets and clean CI fixtures from diverging at
+  the public release-channel validator.
+- Replaced cdxgen's live-host `os` inventory with a deterministic scan of the
+  exported Debian guest rootfs, normalized the pinned scanner's invalid
+  lowercase Sendmail license and colliding certificate subset before strict
+  schema validation, and made local/public release gates reject unscoped or
+  osquery-backed host OBOMs. Added an exact-SHA macOS/Linux GitHub
+  materialization preflight so Cloudflare client-policy or manifest-schema
+  failures stop before the multi-hour qualification gate.
+- Hardened release manifest consumers against Cloudflare rejecting Python's
+  default HTTP identity, taught package materialization and asset-delta checks
+  to distinguish the public release graph from the legacy VM asset manifest,
+  replaced the post-deploy legacy-only URL verifier with a byte/BLAKE3 checked
+  dual-schema rail, and made release preparation stamp before the full local
+  package gate so both schemas and the exact candidate version are exercised
+  before qualification.
+- Made VM asset generation stream BLAKE3 and SHA-256 together into the
+  authoritative manifest, made channel assembly reuse those digests instead
+  of repeatedly reopening gigabyte root files, isolated historical releases
+  from current asset paths, and replaced release graph tests' real asset tree
+  with deterministic prepared fixtures while retaining fail-closed local-copy
+  mutation coverage.
+- Pinned cdxgen 12.7.0 across local and CI asset rails, captured successful
+  scanner chatter, and forced EROFS helper containers onto the Docker host's
+  native Linux platform on Intel Linux and Apple Silicon macOS so cross-guest
+  builds cannot silently compress multi-gigabyte images under QEMU or overwhelm
+  exact-SHA qualification with per-file output.
+- Made local release glow-up staging hardlink immutable package and VM blobs
+  on the same filesystem on macOS and Linux, with a tested cross-filesystem
+  copy fallback, so exact-SHA qualification cannot exhaust runner disk by
+  duplicating the multi-gigabyte asset cohort at the final install gate.
+- Made the fail-fast hardcoded release-selection guard run with Python's
+  standard library alone, so a clean qualification runner without `rg` cannot
+  burn a complete candidate gate before testing begins.
+- Removed the unused non-crossable librsvg introspection toolchain from Linux
+  package cross-builds, and pinned both VM profiles to checksum-verified
+  Antigravity CLI release artifacts after the vendor installer URL disappeared.
+- Replaced privileged Docker clock mutation with a bounded Colima VM clock
+  synchronizer, preventing both silent apt date skew and Docker clients hanging
+  after the clock-setting container exits.
+- Made local release-site graph qualification materialize profile files from
+  the candidate worktree instead of the previous `HEAD`, while production
+  release assembly retains immutable git-ref sourcing.
+- Provisioned and preflighted `zstd` in local macOS bootstrap/doctor and the
+  exact-SHA Linux qualification gate, and made host-SBOM generation fail with
+  a direct prerequisite error before invoking `tar`. This closes the parity
+  hole where `just test` could build every release package before discovering
+  that macOS could not inspect the Linux `data.tar.zst` payloads.
+- Replaced installed-update tests' retired release endpoint environment
+  overrides with package-shaped `manifest-metadata.json` provenance, and made
+  the hardcoded-selection guard reject either override if it returns to the
+  installed test suite.
+- Masked `systemd-binfmt` in privileged Linux install-test containers and made
+  the local install gate prove Colima's live Rosetta registration survives the
+  full systemd/package/glow-up lifecycle. The container previously flushed the
+  host VM's binfmt table, making the later doctor/recipe rail fail after the
+  install rail had otherwise passed.
+- Made macOS bootstrap wait for registry DNS inside a real container after a
+  Colima restart. A cached `alpine true` probe previously reported success
+  while the VM DNS forwarder was still starting, allowing the next package
+  image build to fail resolving GHCR.
 - Made release qualification validate the live public manifest with the exact
   candidate runtime, and made update checks reject profile graphs that the
   runtime cannot install, including graphs missing required image revisions.
@@ -50,6 +2494,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by `just test`, which now validates the frontend, docs, marketing site, and
   generated release-site channel through the same checked-in entrypoint used
   by CI and release workflows.
+- Made macOS-local `just test` exercise Linux-only Rust branches in a faithful
+  non-root Docker environment, fail generated-settings drift, build the real
+  release-mode macOS package and both Linux packages, generate the production
+  host SBOM from those exact artifacts, and execute the previously omitted
+  recipe tests after VM proofs complete.
+- Made exact-SHA Linux qualification require KVM for the native package without
+  rejecting the structurally validated non-host package before the native
+  systemd and guest-shell proof can run.
+- Made parallel VM asset qualification preflight Docker daemon capacity,
+  reclaim unused builder cache before extraction, and retain fully flushed,
+  architecture-specific failure logs.
+- Removed silent `code` selection from desktop shortcuts, the create dialog,
+  the tray, CLI run/MCP commands, and MCP tools. Profile-scoped operations now
+  carry an explicit or catalog-selected profile, and the UI fails closed when
+  the installed profile catalog cannot be loaded.
+- Made release packages materialize and validate every installed profile,
+  bound exact-SHA qualification to the exact stable/nightly channel, and added
+  a `just test` grep guard for current and planned profile names, channel URLs,
+  package rails, and qualification calls.
+- Removed the native macOS/Linux postinstall fallback to the stable manifest;
+  installers now require the package-generated `manifest-metadata.json` and
+  its manifest URL instead of silently changing channel when metadata is
+  missing.
+- Made isolated `CAPSEM_HOME` service launches bind an ephemeral gateway port,
+  and made `capsem shell` wait for and pass that exact runtime endpoint to the
+  TUI instead of silently falling back to another installation on port 19222.
 
 ## [1.5.1784153530] - 2026-07-15
 

@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
-from contextlib import closing
 import json
 import os
-from pathlib import Path
 import sqlite3
 import textwrap
 import time
 import uuid
+from contextlib import closing
+from pathlib import Path
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready, vm_name
+from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
+from log_streams import read_log_stream
 
 pytestmark = pytest.mark.integration
 
@@ -479,7 +479,7 @@ def test_observed_remote_mcp_protocol_pays_full_ledger_blackbox():
         assert len(mcp_tool_events) == 1
         assert mcp_tool_events[0]["tool_name"] == "fixture_lookup"
 
-        service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
+        service_log = read_log_stream(service.tmp_dir / "service.log")
         gateway_log = gateway.stop_and_read_log()
         assert "gateway.proxy.ok" in gateway_log
         assert "security_latest" in service_log or "/security/latest" in service_log

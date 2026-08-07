@@ -127,8 +127,8 @@ def main():
     # mitm-load runs only when explicitly requested -- it's a long-running
     # proxy stress test and would dominate `capsem-bench all`.
     if mode == "mitm-load":
-        from .mitm_load import mitm_load_bench
         from .load_harness import parse_concurrency_levels
+        from .mitm_load import mitm_load_bench
         c = parse_concurrency_levels(args[1]) if len(args) > 1 else None
         duration = float(args[2]) if len(args) > 2 else None
         output["mitm_load"] = mitm_load_bench(
@@ -136,8 +136,8 @@ def main():
         )
 
     if mode == "mcp-load":
-        from .mcp_load import mcp_load_bench
         from .load_harness import parse_concurrency_levels
+        from .mcp_load import mcp_load_bench
         c = parse_concurrency_levels(args[1]) if len(args) > 1 else None
         duration = float(args[2]) if len(args) > 2 else None
         output["mcp_load"] = mcp_load_bench(

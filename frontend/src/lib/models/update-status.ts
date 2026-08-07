@@ -138,10 +138,10 @@ function dashboardTrackDetail(
   if (track.blocked_reason) return track.blocked_reason;
   if (track.compatibility === 'unknown') return 'Compatibility unknown';
   if (key === 'profiles' && track.update_available) {
-    return 'Run capsem update to refresh the local profile catalog; existing sessions stay pinned.';
+    return 'The installed service will apply the verified profile update automatically; existing sessions stay pinned.';
   }
   if (key === 'assets' && track.update_available) {
-    return 'Run capsem update --assets before creating or recreating sessions that need the new VM assets.';
+    return 'The installed service will apply the verified VM asset update automatically before new sessions use it.';
   }
   if (key === 'images' && track.update_available) {
     return 'Create or recreate sessions explicitly to use the newer image state.';

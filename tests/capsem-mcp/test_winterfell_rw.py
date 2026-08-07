@@ -6,10 +6,10 @@ The full "the north remembers" lifecycle via MCP tools:
   delete -> list (gone) -> resume (fails)
 """
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import EXEC_READY_TIMEOUT
 from helpers.mcp import content_text, parse_content
 from helpers.mcp import wait_exec_ready as wait_ready
@@ -124,8 +124,6 @@ def test_winterfell_rw(mcp_session):
         )
 
     except Exception:
-        try:
+        with contextlib.suppress(Exception):
             mcp_session.call_tool("capsem_delete", {"id": vm_id or name})
-        except Exception:
-            pass
         raise

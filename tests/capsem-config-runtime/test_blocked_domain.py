@@ -1,9 +1,9 @@
 """Verify blocked domains are enforced at runtime."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import wait_exec_ready
 
@@ -42,7 +42,5 @@ def test_blocked_domain_denied(config_svc):
         ), f"Blocked domain should fail, got: {stdout}"
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass

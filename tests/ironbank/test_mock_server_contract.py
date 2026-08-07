@@ -14,9 +14,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 import pytest
-
 from helpers.mock_server import start_mock_server, stop_process
-
 
 pytestmark = pytest.mark.integration
 
@@ -32,7 +30,7 @@ def _post_json(url: str, value: object) -> dict:
         assert response.status == 200
         assert response.headers["content-type"] in {"application/json", "text/event-stream"}
         body = response.read().decode()
-    if body.startswith("event:") or body.startswith("data:"):
+    if body.startswith(("event:", "data:")):
         return {"_stream": body}
     parsed = json.loads(body)
     assert isinstance(parsed, dict)

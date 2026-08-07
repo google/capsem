@@ -1,11 +1,11 @@
 """Verify session.db survives clean VM shutdown."""
 
+import contextlib
 import shutil
 import tempfile
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready
 
@@ -60,8 +60,6 @@ def test_db_survives_clean_shutdown():
             conn.close()
             assert len(tables) > 0, "Copied session.db has no tables"
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{vm_name}/delete")
-        except Exception:
-            pass
         svc.stop()

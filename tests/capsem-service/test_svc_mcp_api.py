@@ -8,12 +8,12 @@ downstream MCP aggregator in the guest (tracked as a follow-up, same as
 test_mcp_call.py in tests/capsem-mcp/).
 """
 
+import contextlib
 import json
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
-from helpers.service import wait_exec_ready, vm_name
+from helpers.service import vm_name, wait_exec_ready
 
 pytestmark = pytest.mark.integration
 
@@ -168,7 +168,5 @@ class TestMcpCall:
                 f"unknown tool should reject: {resp}"
             )
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 client.delete(f"/vms/{name}/delete")
-            except Exception:
-                pass

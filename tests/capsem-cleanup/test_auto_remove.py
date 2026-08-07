@@ -11,7 +11,6 @@ import time
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import vm_session_dir, wait_exec_ready
 

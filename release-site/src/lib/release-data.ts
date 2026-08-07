@@ -42,8 +42,12 @@ export interface ChannelRow {
 }
 
 export function loadReleaseData(): ReleaseData {
-  const distEnv = process.env.CAPSEM_RELEASE_CHANNEL_DIST ?? DEFAULT_RELEASE_GRAPH;
-  const dist = resolveReleaseInput(distEnv);
+  // The graph to render. Named for what it is: this used to read
+  // CAPSEM_RELEASE_CHANNEL_DIST, which the overlay also read to decide where to
+  // *write* -- so one name selected an input in one place and an output in
+  // another, and nothing but convention kept a caller from crossing them.
+  const graphEnv = process.env.CAPSEM_RELEASE_GRAPH ?? DEFAULT_RELEASE_GRAPH;
+  const dist = resolveReleaseInput(graphEnv);
   if (isJsonFile(dist)) {
     return loadGraphData(dist);
   }

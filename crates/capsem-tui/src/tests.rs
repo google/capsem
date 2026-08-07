@@ -169,10 +169,10 @@ async fn start_service_action_uses_local_capsem_binary_without_gateway_token() {
 }
 
 #[tokio::test]
-async fn update_action_runs_binary_profile_update_with_yes() {
+async fn update_action_runs_complete_update_with_yes() {
     let (script, log) = fake_capsem_script("binary-profile");
 
-    let outcome = update_with_binary(&script, false)
+    let outcome = update_with_binary(&script)
         .await
         .expect("run capsem update");
 
@@ -181,22 +181,6 @@ async fn update_action_runs_binary_profile_update_with_yes() {
     assert_eq!(
         std::fs::read_to_string(log).expect("read args"),
         "update --yes\n"
-    );
-}
-
-#[tokio::test]
-async fn asset_update_action_runs_asset_only_update() {
-    let (script, log) = fake_capsem_script("assets");
-
-    let outcome = update_with_binary(&script, true)
-        .await
-        .expect("run capsem update --assets");
-
-    assert_eq!(outcome.message, "Capsem update finished");
-    assert_eq!(outcome.focus_session, None);
-    assert_eq!(
-        std::fs::read_to_string(log).expect("read args"),
-        "update --assets\n"
     );
 }
 
@@ -461,7 +445,7 @@ fn shell_commands_are_alt_owned() {
 }
 
 #[test]
-fn update_actions_are_alt_owned_and_confirmed() {
+fn update_action_is_alt_owned_atomic_and_confirmed() {
     let mut app = App::new(fixture_state());
 
     assert_eq!(
@@ -469,27 +453,19 @@ fn update_actions_are_alt_owned_and_confirmed() {
         AppAction::Consumed
     );
     assert_eq!(app.overlay(), AppOverlay::Confirm);
-    assert_eq!(
-        app.pending_action(),
-        Some(&ControlAction::Update { assets: false })
-    );
+    assert_eq!(app.pending_action(), Some(&ControlAction::Update));
     let snapshot = render_app_snapshot(&app, 100, 24).expect("render update confirmation");
-    assert!(snapshot.contains("binary and profile catalog"));
+    assert!(snapshot.contains("complete verified release"));
     assert_eq!(
         app.handle_key(key(KeyCode::Enter, KeyModifiers::NONE)),
-        AppAction::Invoke(ControlAction::Update { assets: false })
+        AppAction::Invoke(ControlAction::Update)
     );
 
     assert_eq!(
         app.handle_key(key(KeyCode::Char('a'), KeyModifiers::ALT)),
-        AppAction::Consumed
+        AppAction::Forward
     );
-    assert_eq!(
-        app.pending_action(),
-        Some(&ControlAction::Update { assets: true })
-    );
-    let snapshot = render_app_snapshot(&app, 100, 24).expect("render assets confirmation");
-    assert!(snapshot.contains("VM assets for future sessions"));
+    assert_eq!(app.pending_action(), None);
 }
 
 #[test]
@@ -582,9 +558,8 @@ fn help_lists_save_sessions_status_and_fork_shortcuts() {
     assert!(snapshot.contains("Alt+p"));
     assert!(snapshot.contains("purge"));
     assert!(snapshot.contains("Alt+u"));
-    assert!(snapshot.contains("apply binary/profile updates"));
-    assert!(snapshot.contains("Alt+a"));
-    assert!(snapshot.contains("refresh VM assets"));
+    assert!(snapshot.contains("apply complete verified release"));
+    assert!(!snapshot.contains("Alt+a"));
 }
 
 #[test]
@@ -1048,7 +1023,7 @@ fn gateway_binary_update_with_blocked_profile_keeps_both_tui_labels() {
 }
 
 #[test]
-fn tui_update_smoke_matrix_covers_release_states_and_actions() {
+fn tui_update_smoke_matrix_covers_release_states_and_atomic_action() {
     let cases = [
         (
             "no-update",
@@ -1100,19 +1075,13 @@ fn tui_update_smoke_matrix_covers_release_states_and_actions() {
         app.handle_key(key(KeyCode::Char('u'), KeyModifiers::ALT)),
         AppAction::Consumed
     );
-    assert_eq!(
-        app.pending_action(),
-        Some(&ControlAction::Update { assets: false })
-    );
+    assert_eq!(app.pending_action(), Some(&ControlAction::Update));
     app.handle_key(key(KeyCode::Esc, KeyModifiers::NONE));
     assert_eq!(
         app.handle_key(key(KeyCode::Char('a'), KeyModifiers::ALT)),
-        AppAction::Consumed
+        AppAction::Forward
     );
-    assert_eq!(
-        app.pending_action(),
-        Some(&ControlAction::Update { assets: true })
-    );
+    assert_eq!(app.pending_action(), None);
 }
 
 #[test]

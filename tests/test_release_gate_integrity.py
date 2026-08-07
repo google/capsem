@@ -1,0 +1,332 @@
+"""Release gate identity, toolchain, and publication-order contracts."""
+
+from __future__ import annotations
+
+import re
+import tomllib
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+WORKFLOWS = PROJECT_ROOT / ".github" / "workflows"
+PINNED_RUST = "1.97.1"
+
+
+def _read(path: str) -> str:
+    return (PROJECT_ROOT / path).read_text(encoding="utf-8")
+
+
+def _job_block(workflow: str, name: str) -> str:
+    match = re.search(
+        rf"(?ms)^  {re.escape(name)}:\n(?P<body>.*?)(?=^  [a-zA-Z0-9_-]+:\n|\Z)",
+        workflow,
+    )
+    assert match is not None, f"workflow job {name!r} missing"
+    return match.group(0)
+
+
+def test_just_test_holds_source_state_stable_without_archiving_benchmarks() -> None:
+    """Both HEAD and the working-tree digest are captured before and compared
+    after: a gate that qualified a HEAD nobody has, or a tree edited halfway
+    through, proved nothing about any particular version."""
+    import argparse
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate import config as gate_config
+    from capsem.gate.command import GateCommand
+    from capsem.gate.proc import Runner
+
+    root = Path(__file__).resolve().parents[1]
+    config = gate_config.load(root)
+    command = GateCommand.registry["candidate"](
+        Runner(root), argparse.Namespace(dry_run=False, graph=False, timing=False)
+    )
+
+    assert "capsem-gate candidate" in _read("justfile")
+
+    # The source state is bracketed by two steps rather than read while the
+    # plan is built: a value captured during construction names whatever was
+    # checked out when the description was assembled, not what ran.
+    labels = list(command._describe().labels)
+    assert labels[0] == "source.record"
+    assert labels[-1] == "source.verify"
+    assert config.candidate.source_digest_script.endswith("source-state-digest.py")
+
+    # Colima is given back on every path, including the aborted one -- which is
+    # why it is a resource and not a step, and why the shell wrapper that used
+    # to cover only part of the gate is gone.
+    from helpers.gate import RecordingRunner
+
+    held = {
+        resource.name
+        for resource in command.resources(RecordingRunner(PROJECT_ROOT))
+    }
+    assert {"colima", "orphan-accounting", "failure-evidence"} <= held
+
+    # Declared in `[environment]`, which Workspace exports and Service reads.
+    # This asserted the literal was spelled in `workspace.py`; both spelled it
+    # separately, so an isolated workspace could export one name while the
+    # daemon inside it honoured another.
+    from capsem.gate import config as gate_config
+
+    names = gate_config.load(PROJECT_ROOT).environment
+    assert names.benchmark_root == "CAPSEM_BENCHMARK_OUTPUT_ROOT"
+    assert "environment.benchmark_root" in _read("src/capsem/gate/workspace.py") or (
+        "names.benchmark_root" in _read("src/capsem/gate/workspace.py")
+    )
+    assert config.workspace.benchmark_root == "target/test-benchmarks"
+    assert "benchmarks/**/data_*.json" in _read(".gitignore")
+
+
+def _gate_plan():
+    """The complete gate, as one plan.
+
+    These contracts were written against `_test-candidate`'s shell body. The
+    ordering they are about is edges in a single graph now, so it is read from
+    there -- which also means they cover the whole gate rather than the part
+    that happened to live in one recipe.
+    """
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate.command import GateCommand
+
+    return GateCommand.registry["candidate"](
+        RecordingRunner(Path(__file__).resolve().parents[1]),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
+    )._describe()
+
+
+def _step_at(labels: list[str], fragment: str) -> int:
+    for position, label in enumerate(labels):
+        if fragment in label:
+            return position
+    raise AssertionError(f"no step matching {fragment!r} in:\n  " + "\n  ".join(labels))
+
+
+
+def test_gate_run_retains_the_vm_performance_recordings_it_produces() -> None:
+    """`functional` writes the VM recordings and `glowup` runs after it.
+
+    While the wipe lived in the per-module runner, the later module deleted the
+    earlier one's numbers, so a full gate produced a complete set and then threw
+    most of it away. It is cleared exactly once, in the preparation phase,
+    before any module runs.
+    """
+    from capsem.gate import config as gate_config
+
+    root = Path(__file__).resolve().parents[1]
+    config = gate_config.load(root)
+    labels = list(_gate_plan().labels)
+    workspace = (root / "src/capsem/gate/workspace.py").read_text(encoding="utf-8")
+
+    assert config.workspace.benchmark_root == "target/test-benchmarks"
+    # The workspace deliberately does not clear it on acquire: one gate runs
+    # several modules through one workspace.
+    assert "Deliberately not the benchmark root" in workspace
+
+    cleared = _step_at(labels, "prepare.storage-budget")
+    assert cleared < _step_at(labels, "functional.")
+    assert cleared < _step_at(labels, "glowup.")
+
+
+def test_full_gate_runs_capsem_bench_baseline_for_every_selected_profile() -> None:
+    """One recorded baseline per selected profile, and exactly one.
+
+    Two files launching VMs at once measure each other rather than Capsem,
+    which is why the baseline claims `apple_vz` and runs alone.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate import profiles
+
+    root = Path(__file__).resolve().parents[1]
+    config = gate_config.load(root)
+    labels = list(_gate_plan().labels)
+
+    for profile in profiles.selected(config):
+        matching = [
+            label for label in labels if label.endswith(f"pytest.benchmark.{profile}")
+        ]
+        assert len(matching) == 1, (
+            f"{profile} has {len(matching)} recorded baselines, expected one"
+        )
+
+    step = _gate_plan().step_named(
+        next(label for label in labels if "pytest.benchmark." in label)
+    )
+    assert [e.name for e in step.contends] == ["apple_vz"]
+
+
+def test_full_gate_serializes_host_snapshot_files_without_dropping_coverage() -> None:
+    """The snapshot files run once, alone, and are excluded from the parallel run.
+
+    Production has one service and one service-scoped save/restore lock; an
+    xdist worker per service does not reproduce that. Run in both places they
+    would run twice, once in the way that proves nothing.
+    """
+    from capsem.gate import config as gate_config
+    from capsem.gate import pytestsuite
+
+    root = Path(__file__).resolve().parents[1]
+    config = gate_config.load(root)
+    base = config.suites.pytest.base_profile
+
+    broad = pytestsuite.broad(config, profile=base).argv(config)
+    snapshot = pytestsuite.host_snapshot(config, profile=base)
+
+    for path in config.suites.pytest.host_snapshot_serial:
+        assert f"--ignore={path}" in broad, f"{path} runs twice"
+        assert path in snapshot.argv(config)
+
+    assert "--maxfail=1" in broad
+    assert [e.name for e in snapshot.contends] == ["host_service"]
+    assert not snapshot.parallel
+
+    labels = list(_gate_plan().labels)
+    assert (
+        _step_at(labels, f"pytest.broad.{base}")
+        < _step_at(labels, f"pytest.host-snapshot.{base}")
+        < _step_at(labels, f"pytest.timing.{base}")
+    )
+
+
+def test_local_gate_bootstraps_docker_before_storage_preflight() -> None:
+    """A storage budget measured before the daemon exists measures nothing."""
+    labels = list(_gate_plan().labels)
+
+    assert _step_at(labels, "prepare.bootstrap") < _step_at(
+        labels, "prepare.storage-budget"
+    )
+
+
+def test_macos_full_gate_holds_a_system_sleep_assertion() -> None:
+    """A forty-minute run that dies at minute thirty because the machine slept
+    proves nothing, and by then it is usually unattended."""
+    from capsem.gate import config as gate_config
+
+    settings = gate_config.load(PROJECT_ROOT).candidate
+
+    assert settings.keep_awake_command[0] == "caffeinate"
+    assert settings.keep_awake_marker == "CAPSEM_TEST_CAFFEINATED"
+    assert "keep_awake" in _read("src/capsem/gate/candidate.py")
+
+
+def test_toolchain_and_workflow_inputs_are_immutable_and_consistent() -> None:
+    toolchain = tomllib.loads(_read("rust-toolchain.toml"))
+    assert toolchain["toolchain"]["channel"] == PINNED_RUST
+
+    workflow_text = "\n".join(path.read_text(encoding="utf-8") for path in WORKFLOWS.glob("*.yaml"))
+    assert "dtolnay/rust-toolchain@stable" not in workflow_text
+    assert "toolchain: stable" not in workflow_text
+    for block in workflow_text.split("uses: dtolnay/rust-toolchain@")[1:]:
+        step = block.split("\n      - ", maxsplit=1)[0]
+        assert f"toolchain: {PINNED_RUST}" in step
+    for block in workflow_text.split("uses: taiki-e/install-action@")[1:]:
+        step = block.split("\n      - ", maxsplit=1)[0]
+        tool_line = next(line for line in step.splitlines() if "tool:" in line)
+        tools = tool_line.split("tool:", maxsplit=1)[1].strip().split(",")
+        assert all("@" in tool for tool in tools)
+
+    builder = _read("docker/Dockerfile.host-builder")
+    assert f"--default-toolchain {PINNED_RUST}" in builder
+    assert "--default-toolchain stable" not in builder
+
+    bootstrap = _read("bootstrap.sh")
+    assert f"--default-toolchain {PINNED_RUST}" in bootstrap
+    assert "--default-toolchain stable" not in bootstrap
+
+    uses_pattern = re.compile(r"^\s*- uses:\s+([^\s#]+)", re.MULTILINE)
+    upload_refs: set[str] = set()
+    failures: list[str] = []
+
+    for path in WORKFLOWS.glob("*.yaml"):
+        text = path.read_text(encoding="utf-8")
+        for use in uses_pattern.findall(text):
+            if use.startswith("./"):
+                continue
+            action, separator, ref = use.partition("@")
+            if separator != "@" or re.fullmatch(r"[0-9a-f]{40}", ref) is None:
+                failures.append(f"{path.name}: {use}")
+            if action == "actions/upload-artifact":
+                upload_refs.add(ref)
+
+    assert failures == []
+    assert len(upload_refs) == 1
+
+    security_audit = _read(".github/workflows/security-audit.yaml")
+    assert "schedule:" in security_audit
+    assert "cron:" in security_audit
+    assert "workflow_dispatch:" in security_audit
+    assert "run: python3 scripts/check-cargo-audit.py" in security_audit
+    assert "run: python3 scripts/audit-pnpm-bulk.py" in security_audit
+
+
+def test_host_builder_trusts_the_bind_mounted_source_checkout() -> None:
+    """On Linux CI the checkout's owner is not the image's user, so git rejects
+    the mount as dubious ownership -- and `build.rs` answers that by embedding
+    `unknown` rather than failing, which is how a binary with no source identity
+    reaches the provenance check.
+
+    The mount path is config now, and the probe that reproduces the condition
+    is a step rather than a hope.
+    """
+    from capsem.gate import config as gate_config
+
+    root = Path(__file__).resolve().parents[1]
+    config = gate_config.load(root)
+    builder = _read(config.hostimage.dockerfile)
+    hostimage_source = _read("src/capsem/gate/hostimage.py")
+
+    assert f"git config --system --add safe.directory {config.hostimage.mount}" in builder
+    assert "_ForeignUidProbe" in hostimage_source
+    assert "probe_user" in hostimage_source
+    assert config.hostimage.mount == "/src"
+
+
+def test_remote_storage_images_are_immutable() -> None:
+    policy = tomllib.loads(_read("config/storage-policy.toml"))
+    floating: list[str] = []
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+        elif (
+            isinstance(value, str)
+            and value.endswith(":latest")
+            and not value.startswith("capsem-")
+        ):
+            floating.append(value)
+
+    visit(policy)
+    assert floating == []
+
+    tart_image = policy["tart"]["base_image"]
+    assert re.fullmatch(
+        r"ghcr\.io/cirruslabs/macos-sequoia-base@sha256:[0-9a-f]{64}",
+        tart_image,
+    )
+
+
+def test_public_release_storage_is_verified_before_channel_deployment() -> None:
+    workflow = _read(".github/workflows/release.yaml")
+    create = _job_block(workflow, "create-release")
+    candidate = _job_block(workflow, "verify-release-candidate")
+    deploy = _job_block(workflow, "deploy-release-channel")
+    public = _job_block(workflow, "verify-release-downloads")
+
+    assert "scripts/publish-immutable-release-assets.sh" in create
+    assert "gh release create" not in create
+    assert "--draft" not in create
+    assert "needs: [create-release, assemble-release-channel]" in candidate
+    assert "binary-channel-preview" in candidate
+    assert "https://capsem.org/install.sh" in candidate
+    assert "CAPSEM_MANIFEST_URL" in candidate
+    assert "github.com/${{ github.repository }}/releases/download" in candidate
+    assert "b3sum -c -" in candidate
+    assert "needs: [verify-release-candidate]" in deploy
+    assert "needs: [deploy-release-channel]" in public

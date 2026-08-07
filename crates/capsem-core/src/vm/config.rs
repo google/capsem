@@ -40,6 +40,8 @@ pub enum ConfigError {
     MissingDisk(PathBuf),
     #[error("hash mismatch for {0}: expected {1}, got {2}")]
     HashMismatch(String, String, String),
+    #[error("expected hash for {0} names unsupported algorithm {1:?}; boot verifies blake3")]
+    UnsupportedHashAlgorithm(String, String),
     #[error("failed to read file for hashing: {0}")]
     Io(#[from] std::io::Error),
     #[error("VirtioFS share directory does not exist: {0}")]
@@ -307,8 +309,32 @@ impl VmConfigBuilder {
         }
     }
 
+    /// The blake3 hex digest an expected-hash value denotes.
+    ///
+    /// Two spellings reach boot for the same digest: asset manifests carry
+    /// bare hex, while release-graph digests and the profile pins derived from
+    /// them carry `blake3:<hex>`. Both are accepted here, in the one place
+    /// that decides what an expected hash means, so no caller has to remember
+    /// which spelling it holds.
+    ///
+    /// An explicit algorithm tag is honoured rather than string-compared. A
+    /// `sha256:` expectation must never be satisfied by a blake3 digest that
+    /// happens to match, so any other algorithm is refused instead of being
+    /// treated as opaque text that will simply never compare equal.
+    fn expected_blake3_hex<'a>(path: &Path, expected: &'a str) -> Result<&'a str, ConfigError> {
+        match expected.split_once(':') {
+            None => Ok(expected),
+            Some(("blake3", hex)) => Ok(hex),
+            Some((algorithm, _)) => Err(ConfigError::UnsupportedHashAlgorithm(
+                path.display().to_string(),
+                algorithm.to_string(),
+            )),
+        }
+    }
+
     pub fn verify_hash(path: &Path, expected_hash: &str) -> Result<(), ConfigError> {
         let _span = debug_span!("verify_hash", path = %path.display()).entered();
+        let expected_hash = Self::expected_blake3_hex(path, expected_hash)?;
         if Self::verify_hash_cache(path, expected_hash)? {
             return Ok(());
         }

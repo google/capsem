@@ -6,7 +6,8 @@
 //!
 //! ```text
 //! manifest.json                          # entry point
-//! host/{service,mcp,gateway,tray}.log    # last 5MB each
+//! host/<stream>.<date>.log               # every rotated file, last 5MB each
+//! host/stderr/<binary>.log               # raw stderr: panics, pre-init death
 //! host/app/<latest 3>.jsonl
 //! host/run-snapshot/{service.pid,gateway.pid,gateway.port}
 //! sessions/<id>/{session.db,serial.log,process.log,metadata.json,...}
@@ -113,10 +114,79 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
     // -- host logs --
     let run_dir = capsem_core::paths::capsem_run_dir();
     for name in ["service", "mcp", "gateway", "tray"] {
-        let path = run_dir.join(format!("{name}.log"));
-        let entry_path = format!("{bundle_root}/host/{name}.log");
-        match read_tail(&path, MAX_LOG_TAIL_BYTES) {
-            Some(bytes) => {
+        let stream = run_dir.join(format!("{name}.log"));
+        // Rotation means a stream is several files. Collect them newest-first
+        // so a bundle taken days after the failure still carries the day it
+        // happened, not just the day it was reported.
+        let files = capsem_core::telemetry::log_stream_files(&stream);
+        if files.is_empty() {
+            sections.push(Section {
+                path: format!("{bundle_root}/host/{name}.log"),
+                kind: "log",
+                bytes: None,
+                missing: true,
+                reason: Some(format!("file-not-found: {}", stream.display())),
+                truncated_to_last_bytes: None,
+            });
+            continue;
+        }
+        for path in files {
+            let file_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| format!("{name}.log"));
+            let entry_path = format!("{bundle_root}/host/{file_name}");
+            match read_tail(&path, MAX_LOG_TAIL_BYTES) {
+                Some(bytes) => {
+                    let bytes = if no_redact {
+                        bytes
+                    } else {
+                        redact_log_bytes(&bytes)
+                    };
+                    let len = bytes.len() as u64;
+                    add_bytes(&mut tar, &entry_path, &bytes)?;
+                    sections.push(Section {
+                        path: entry_path,
+                        kind: "log",
+                        bytes: Some(len),
+                        missing: false,
+                        reason: None,
+                        truncated_to_last_bytes: if path.metadata().map(|m| m.len()).unwrap_or(0)
+                            > MAX_LOG_TAIL_BYTES
+                        {
+                            Some(MAX_LOG_TAIL_BYTES)
+                        } else {
+                            None
+                        },
+                    });
+                }
+                None => {
+                    sections.push(Section {
+                        path: entry_path,
+                        kind: "log",
+                        bytes: None,
+                        missing: true,
+                        reason: Some(format!("file-not-found: {}", path.display())),
+                        truncated_to_last_bytes: None,
+                    });
+                }
+            }
+        }
+    }
+
+    // -- raw stderr (panics, death before tracing came up) --
+    // Kept in its own directory so log retention cannot prune it; a bundle
+    // without it cannot explain the one failure mode that writes no
+    // structured lines at all.
+    let stderr_dir = run_dir.join("stderr");
+    if let Ok(read) = fs::read_dir(&stderr_dir) {
+        for entry in read.flatten() {
+            let path = entry.path();
+            let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+                continue;
+            };
+            let entry_path = format!("{bundle_root}/host/stderr/{name}");
+            if let Some(bytes) = read_tail(&path, MAX_LOG_TAIL_BYTES) {
                 let bytes = if no_redact {
                     bytes
                 } else {
@@ -130,22 +200,6 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
                     bytes: Some(len),
                     missing: false,
                     reason: None,
-                    truncated_to_last_bytes: if path.metadata().map(|m| m.len()).unwrap_or(0)
-                        > MAX_LOG_TAIL_BYTES
-                    {
-                        Some(MAX_LOG_TAIL_BYTES)
-                    } else {
-                        None
-                    },
-                });
-            }
-            None => {
-                sections.push(Section {
-                    path: entry_path,
-                    kind: "log",
-                    bytes: None,
-                    missing: true,
-                    reason: Some(format!("file-not-found: {}", path.display())),
                     truncated_to_last_bytes: None,
                 });
             }
@@ -648,10 +702,17 @@ pub fn run_with_opts(opts: Opts) -> Result<PathBuf> {
         warnings,
         next_steps: vec![
             "Open manifest.json first.".into(),
-            "Then host/service.log around the timestamp of the failure.".into(),
+            "Then host/service.<date>.log around the timestamp of the failure.".into(),
             "sessions/<latest>/process.log for the matching window.".into(),
+            "A daemon that died without explaining itself: host/stderr/ \
+             carries raw process stderr, where a panic or a pre-tracing \
+             startup failure lands."
+                .into(),
             "Search by `target=ipc` for IPC handshake / dropped-message events.".into(),
             "Search by `target=service status>=500` for swallowed server errors.".into(),
+            "Errors are fields, not prose: filter on `error` rather than \
+             grepping message text."
+                .into(),
         ],
     };
     let manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
@@ -698,22 +759,10 @@ fn add_bytes<W: Write>(tar: &mut TarBuilder<W>, path: &str, bytes: &[u8]) -> Res
 }
 
 fn read_tail(path: &Path, max_bytes: u64) -> Option<Vec<u8>> {
-    let metadata = fs::metadata(path).ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
-    let len = metadata.len();
-    let bytes = fs::read(path).ok()?;
-    if len <= max_bytes {
-        return Some(bytes);
-    }
-    // Skip leading partial line so the first byte starts mid-record-cleanly.
-    let start = (len - max_bytes) as usize;
-    let mut tail = bytes[start..].to_vec();
-    if let Some(idx) = tail.iter().position(|b| *b == b'\n') {
-        tail.drain(..=idx);
-    }
-    Some(tail)
+    // Delegates: the shared reader seeks to each file's tail, so guest console
+    // output cannot decide how much memory `capsem support` allocates, and a
+    // rotated stream resolves the same way it does for every other consumer.
+    capsem_core::telemetry::read_log_tail(path, max_bytes as usize).map(String::into_bytes)
 }
 
 fn config_diagnostics(home: &Path) -> serde_json::Value {
@@ -814,17 +863,27 @@ fn config_diagnostics(home: &Path) -> serde_json::Value {
 }
 
 fn redact_log_bytes(bytes: &[u8]) -> Vec<u8> {
-    // Best-effort: split on \n, redact each line. Binary content trips
-    // the from_utf8 path -- we leave it untouched.
-    match std::str::from_utf8(bytes) {
-        Ok(text) => text
-            .lines()
-            .map(redact::redact_line)
-            .collect::<Vec<_>>()
-            .join("\n")
-            .into_bytes(),
-        Err(_) => bytes.to_vec(),
+    // Split on \n at the byte level and decide per line, not per file.
+    //
+    // This used to decode the whole buffer first and pass it through untouched
+    // if that failed. serial.log is guest console output, so a guest emitting a
+    // single invalid UTF-8 byte anywhere in the file disabled redaction for all
+    // of it -- every credential in that log shipped in the bundle in the clear.
+    //
+    // Lines that genuinely are not UTF-8 still pass through byte-exact, so
+    // binary content keeps the property the original was reaching for; only
+    // the blast radius shrinks from the file to the line.
+    let mut out = Vec::with_capacity(bytes.len());
+    for (index, line) in bytes.split(|byte| *byte == b'\n').enumerate() {
+        if index > 0 {
+            out.push(b'\n');
+        }
+        match std::str::from_utf8(line) {
+            Ok(text) => out.extend_from_slice(redact::redact_line(text).as_bytes()),
+            Err(_) => out.extend_from_slice(line),
+        }
     }
+    out
 }
 
 fn ts_filename() -> String {

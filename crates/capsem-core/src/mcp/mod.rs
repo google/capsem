@@ -283,7 +283,7 @@ pub fn load_tool_cache() -> Vec<ToolCacheEntry> {
     };
     match std::fs::read_to_string(&path) {
         Ok(content) => serde_json::from_str(&content).unwrap_or_else(|e| {
-            warn!("failed to parse tool cache: {e}");
+            warn!(error = %e, "failed to parse tool cache");
             Vec::new()
         }),
         Err(_) => Vec::new(),

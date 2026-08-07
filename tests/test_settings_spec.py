@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
+from pydantic import ValidationError
 
 from capsem.builder.schema import (
     ActionKind,
@@ -23,8 +25,8 @@ from capsem.builder.schema import (
     PolicySource,
     SettingMetadata,
     SettingNode,
-    SettingType,
     SettingsRoot,
+    SettingType,
     SideEffect,
     Widget,
     count_by_type,
@@ -45,7 +47,7 @@ FIXTURE_DIR = Path(__file__).parent / "settings_spec"
 class TestSettingType:
     """SettingType enum has 13 values (11 value types + action + mcp_tool)."""
 
-    EXPECTED_VALUES = [
+    EXPECTED_VALUES: ClassVar[list[str]] = [
         "text",
         "number",
         "url",
@@ -71,7 +73,7 @@ class TestSettingType:
 
 
 class TestWidget:
-    EXPECTED = [
+    EXPECTED: ClassVar[list[str]] = [
         "toggle",
         "text_input",
         "number_input",
@@ -98,7 +100,7 @@ class TestSideEffect:
 
 
 class TestActionKind:
-    EXPECTED = ["check_update"]
+    EXPECTED: ClassVar[list[str]] = ["check_update"]
 
     def test_all_values_present(self):
         actual = sorted(e.value for e in ActionKind)
@@ -117,7 +119,7 @@ class TestMcpTransport:
 
 
 class TestPolicySource:
-    EXPECTED = ["default", "user", "corp"]
+    EXPECTED: ClassVar[list[str]] = ["default", "user", "corp"]
 
     def test_all_values_present(self):
         actual = sorted(e.value for e in PolicySource)
@@ -125,7 +127,7 @@ class TestPolicySource:
 
 
 class TestMcpToolOrigin:
-    EXPECTED = ["builtin", "remote", "in_vm"]
+    EXPECTED: ClassVar[list[str]] = ["builtin", "remote", "in_vm"]
 
     def test_all_values_present(self):
         actual = sorted(e.value for e in McpToolOrigin)
@@ -171,7 +173,7 @@ class TestHistoryEntry:
             value=42,
             source=PolicySource.DEFAULT,
         )
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             h.timestamp = "changed"
 
     def test_roundtrip(self):
@@ -838,7 +840,7 @@ class TestGoldenFixture:
         settings1 = extract_settings(root1.settings)
         settings2 = extract_settings(root2.settings)
         assert len(settings1) == len(settings2)
-        for s1, s2 in zip(settings1, settings2):
+        for s1, s2 in zip(settings1, settings2, strict=False):
             assert s1.key == s2.key
             assert s1.setting_type == s2.setting_type
             assert s1.name == s2.name

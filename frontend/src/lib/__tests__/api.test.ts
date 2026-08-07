@@ -1295,58 +1295,32 @@ describe('api', () => {
       expect(JSON.parse(String(call[1].body))).toEqual({});
     });
 
-    it('applies binary/profile and asset update actions through typed confirmed bodies', async () => {
-      mockFetch
-        .mockReturnValueOnce(jsonResponse({
-          status: 'planned',
-          command: { program: 'capsem', args: ['update', '--yes'] },
-        }))
-        .mockReturnValueOnce(jsonResponse({
-          status: 'planned',
-          command: { program: 'capsem', args: ['update', '--assets'] },
-        }));
+    it('applies the complete update transaction through one confirmed body', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        status: 'planned',
+        command: { program: 'capsem', args: ['update', '--yes'] },
+      }));
 
-      await api.applyUpdateAction('binary_profiles', { confirmed: true });
-      await api.applyUpdateAction('assets', { confirmed: true });
+      await api.applyUpdate({ confirmed: true });
 
-      const binaryCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 2];
-      const assetsCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(binaryCall[0]).toContain('/update/apply');
-      expect(binaryCall[1].method).toBe('POST');
-      expect(JSON.parse(String(binaryCall[1].body))).toEqual({
-        action: 'binary_profiles',
-        confirmed: true,
-      });
-      expect(assetsCall[0]).toContain('/update/apply');
-      expect(assetsCall[1].method).toBe('POST');
-      expect(JSON.parse(String(assetsCall[1].body))).toEqual({
-        action: 'assets',
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(call[0]).toContain('/update/apply');
+      expect(call[1].method).toBe('POST');
+      expect(JSON.parse(String(call[1].body))).toEqual({
         confirmed: true,
       });
     });
 
-    it('plans update actions without confirmation only through dry runs', async () => {
-      mockFetch
-        .mockReturnValueOnce(jsonResponse({
-          status: 'planned',
-          command: { program: 'capsem', args: ['update', '--yes'] },
-        }))
-        .mockReturnValueOnce(jsonResponse({
-          status: 'planned',
-          command: { program: 'capsem', args: ['update', '--assets'] },
-        }));
+    it('plans the complete update transaction without confirmation only through dry run', async () => {
+      mockFetch.mockReturnValueOnce(jsonResponse({
+        status: 'planned',
+        command: { program: 'capsem', args: ['update', '--yes'] },
+      }));
 
-      await api.applyUpdateAction('binary_profiles', { dry_run: true });
-      await api.applyUpdateAction('assets', { dry_run: true });
+      await api.applyUpdate({ dry_run: true });
 
-      const binaryCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 2];
-      const assetsCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
-      expect(JSON.parse(String(binaryCall[1].body))).toEqual({
-        action: 'binary_profiles',
-        dry_run: true,
-      });
-      expect(JSON.parse(String(assetsCall[1].body))).toEqual({
-        action: 'assets',
+      const call = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(JSON.parse(String(call[1].body))).toEqual({
         dry_run: true,
       });
     });

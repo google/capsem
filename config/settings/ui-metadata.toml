@@ -18,8 +18,8 @@ description = "Application settings"
 collapsed = false
 
 [settings.app.auto_update]
-name = "Auto-check for updates"
-description = "Check for new Capsem versions on launch"
+name = "Automatic updates"
+description = "Poll for and apply verified Capsem release updates"
 type = "bool"
 default = true
 

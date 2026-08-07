@@ -8,7 +8,6 @@ import platform
 import subprocess
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "simulate-install.sh"
 BINARIES = [
@@ -22,6 +21,8 @@ BINARIES = [
     "capsem-gateway",
     "capsem-tray",
     "capsem-admin",
+    "capsem-mock-server",
+    "capsem-bench-rs",
 ]
 
 

@@ -255,8 +255,13 @@ fn split_top_level_operator<'a>(
     let mut escaped = false;
     let mut paren_depth = 0usize;
     let bytes = condition.as_bytes();
+    let operator_bytes = operator.as_bytes();
     let mut i = 0;
 
+    // Scanned byte-wise on purpose: every byte this loop reacts to is ASCII, and
+    // a UTF-8 continuation byte never collides with ASCII, so a multi-byte
+    // character is skipped harmlessly. Slicing `condition` at `i` instead would
+    // panic the moment a rule condition carried a non-ASCII character.
     while i < bytes.len() {
         let ch = bytes[i] as char;
         if let Some(active_quote) = quote {
@@ -279,7 +284,7 @@ fn split_top_level_operator<'a>(
                     .checked_sub(1)
                     .ok_or_else(|| "policy condition has unmatched ')'".to_string())?;
             }
-            _ if paren_depth == 0 && condition[i..].starts_with(operator) => {
+            _ if paren_depth == 0 && bytes[i..].starts_with(operator_bytes) => {
                 let atom = condition[start..i].trim();
                 if atom.is_empty() {
                     return Err("policy condition contains an empty CEL term".into());
@@ -400,11 +405,14 @@ fn parse_zero_arg_method_call<'a>(atom: &'a str, method: &str) -> Result<Option<
     Ok(Some(field))
 }
 
+/// Compiled once. `contains_pii()` runs per security event, so building this
+/// regex inside the call put regex compilation on the enforcement hot path.
+static SSN_PATTERN: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"\b\d{3}-\d{2}-\d{4}\b").expect("PII regex is valid")
+});
+
 fn looks_like_pii(value: &str) -> bool {
-    value.contains('@')
-        || regex::Regex::new(r"\b\d{3}-\d{2}-\d{4}\b")
-            .expect("PII regex is valid")
-            .is_match(value)
+    value.contains('@') || SSN_PATTERN.is_match(value)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

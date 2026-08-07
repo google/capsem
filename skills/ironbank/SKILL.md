@@ -20,10 +20,11 @@ missing contract.
 ### Ironbank parity rule
 
 The Ironbank parity rule is that every portable release gate belongs in
-`just test`. The exact candidate must pass the complete recipe locally, then
-exact-SHA CI must run the same recipe; green split jobs do not replace it.
-Specialized workflows must reuse the same checked-in entrypoints exercised by
-`just test`, including workspace/runtime tests, coverage floors,
+`just test`. Local `just test` rebuilds both artifact families and runs the
+complete recipe. Binary and profile release CI reuse the same checked-in
+modules while pulling the unchanged artifact family; green split jobs do not
+replace those modules. The shared entrypoints include workspace/runtime tests,
+coverage floors,
 `capsem-doctor`, Ironbank acceptance, benchmarks, artifact checks, all web
 surfaces, and Docker/systemd Linux install plus a real guest-shell proof. Only
 unavoidable platform boundaries may remain outside, and each must be named
@@ -31,12 +32,35 @@ with its authoritative final gate.
 
 `just test` is the strict superset of portable CI work. CI workflows may run a
 smaller relevant slice, but no portable artifact may be built only in workflow
-YAML. In particular, VM asset publication uses the same `just build-kernel`
-and `just build-rootfs` primitives owned by `just test` through
-`just test-assets`; the canonical gate rebuilds every profile for arm64 and
+YAML. In particular, VM asset publication uses the same `just _build-kernel`
+and `just _build-rootfs` primitives owned by `just test` through
+`just _gate-assets`; the canonical gate rebuilds every profile for arm64 and
 x86_64, validates every required artifact and manifest, and boots each rebuilt
 host-architecture image to a guest-shell marker. Input-contract tests are not
 a substitute for testing the artifact that was actually built.
+
+The accounting applies to host packages too: macOS-local `just test` must build
+the real release-mode `.pkg` and both release-mode Linux `.deb` architectures,
+then execute the production host-SBOM generator over those exact packages.
+Linux-only Rust branches must run locally in Docker as a non-root user through
+the same checked-in runner used by Linux CI. Generated files must pass a
+generate-and-compare idempotence gate; silently refreshing stale outputs is not
+a green test.
+
+Hardcoded release selection is also unaccounted state. The canonical gate must
+run the grep-backed selection guard covering current and planned profile names
+(`code`, `co-work`/`cowork`, `terminal`, `termional`, and `gui`), public channel
+names, manifest URLs, user-facing request bodies, native postinstall scripts,
+and both serialized release commands. Defaults may be declared explicitly at API
+boundaries, but downstream profile/channel routes must carry the selected value
+and damaged packages must fail closed instead of falling back to stable.
+
+For multi-architecture packages, `required` applies to the package matching the
+release host. Cross artifacts are still built and structurally validated,
+but must not fail early merely because they cannot execute natively on the
+opposite-architecture runner. Tagged arm64 CI must install and verify its exact
+package/service even though that hosted runner lacks KVM; x86_64 CI additionally
+owns the mandatory exact-package guest-shell proof.
 
 An exact gate that routinely approaches the hosted runner's observed lifetime
 is not release proof. Runtime headroom is part of the ledger: record stage
@@ -44,6 +68,11 @@ durations, treat repeated same-age termination as a deterministic budget bug,
 and require the expensive production rail to pass locally before spending
 another CI run. Parallel work is acceptable only when its hidden workspaces,
 container tags, outputs, and cleanup are isolated and covered by a test.
+
+Preflight the Docker daemon capacity required by concurrent artifact lanes.
+Low-space failures must be detected before launch, after safe unused-cache
+reclamation, with architecture-specific logs that are fully flushed before the
+gate reports failure.
 
 ## Required Shape
 

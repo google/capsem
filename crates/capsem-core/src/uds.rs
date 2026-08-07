@@ -38,28 +38,49 @@ pub fn instance_socket_path(run_dir: &Path, id: &str) -> PathBuf {
     dir.join(format!("{:x}.sock", h.finish()))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn short_path_uses_run_dir() {
-        let run_dir = PathBuf::from("/tmp/r");
-        let p = instance_socket_path(&run_dir, "vm-1");
-        assert_eq!(p, PathBuf::from("/tmp/r/instances/vm-1.sock"));
+/// Compute the terminal WebSocket UDS path for a VM instance.
+///
+/// Unlike [`instance_socket_path`], both the gateway and `capsem-process`
+/// derive this *independently* and never exchange it -- so the short form has
+/// to be deterministic across processes. That rules out `DefaultHasher`, whose
+/// seed is randomised per process: a fallback computed with it would leave one
+/// side binding a path the other never dials.
+///
+/// Neither side used this module at all. Each built
+/// `{run_dir}/instances/{id}-ws.sock` by hand, which is 54 bytes of fixed
+/// suffix for a 36-character session id, leaving roughly fifty for the run
+/// directory. Past that every connection failed with `path must be shorter
+/// than SUN_LEN`, logged at ERROR on each retry and surfaced to the user as a
+/// session whose shell never appeared.
+pub fn terminal_socket_path(run_dir: &Path, id: &str) -> PathBuf {
+    let preferred = run_dir.join("instances").join(format!("{id}-ws.sock"));
+    if preferred.as_os_str().len() < SUN_PATH_MAX {
+        return ensured(preferred);
     }
-
-    #[test]
-    fn long_path_falls_back_to_tmp_capsem() {
-        let run_dir = PathBuf::from(
-            "/var/folders/lv/deeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeep/T/capsem-test-xxxx",
-        );
-        let p = instance_socket_path(&run_dir, "tmp-long-name-that-blows-past-sun-len");
-        assert!(
-            p.starts_with("/tmp/capsem/"),
-            "expected fallback under /tmp/capsem/, got {}",
-            p.display()
-        );
-        assert!(p.as_os_str().len() < SUN_PATH_MAX);
-    }
+    let mut digest = blake3::Hasher::new();
+    digest.update(run_dir.as_os_str().as_encoded_bytes());
+    digest.update(id.as_bytes());
+    let short = &digest.finalize().to_hex()[..16];
+    ensured(PathBuf::from("/tmp/capsem").join(format!("{short}-ws.sock")))
 }
+
+/// A path with a directory to bind in.
+///
+/// Only the fallback branch created its directory; the preferred branch
+/// returned `{run_dir}/instances/…` and trusted somebody else to have made it.
+/// That held for the service's own run tree and nowhere else, and the failure
+/// it produced was `bind: No such file or directory` from inside an async
+/// loop -- a VM that simply never became exec-ready.
+///
+/// A creation failure is left to `bind`, which reports the same condition
+/// with the path in it: a caller that cannot bind here is going to say so a
+/// line later, and better.
+fn ensured(path: PathBuf) -> PathBuf {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    path
+}
+
+#[cfg(test)]
+mod tests;

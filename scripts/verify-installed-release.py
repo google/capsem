@@ -5,11 +5,23 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 import re
 import subprocess
 import sys
 import urllib.request
+from pathlib import Path
+from typing import NoReturn
+
+try:
+    from release_glowup import (
+        GlowupContractError,
+        artifact_identity_from_manifest_package,
+    )
+except ModuleNotFoundError:
+    from scripts.release_glowup import (
+        GlowupContractError,
+        artifact_identity_from_manifest_package,
+    )
 
 
 METADATA_SCHEMA = "capsem.manifest_metadata.v1"
@@ -25,7 +37,7 @@ LEGACY_STATE_PATHS = (
 )
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     raise SystemExit(f"installed release verification failed: {message}")
 
 
@@ -49,7 +61,16 @@ def main() -> int:
     parser.add_argument("--manifest-url", required=True)
     parser.add_argument("--channel", required=True)
     parser.add_argument("--package-version", required=True)
+    parser.add_argument("--artifact", type=Path)
+    parser.add_argument("--platform")
+    parser.add_argument("--architecture")
+    parser.add_argument("--evidence-out", type=Path)
     args = parser.parse_args()
+    artifact_options = (args.artifact, args.platform, args.architecture)
+    if any(value is not None for value in artifact_options) and not all(
+        value is not None for value in artifact_options
+    ):
+        fail("--artifact, --platform, and --architecture must be supplied together")
 
     assets_dir = args.capsem_home / "assets"
     installed_manifest_path = assets_dir / "manifest.json"
@@ -72,6 +93,28 @@ def main() -> int:
         fail(f"installed release JSON is invalid: {error}")
     if not isinstance(manifest, dict) or not isinstance(metadata, dict):
         fail("manifest and manifest-metadata must be JSON objects")
+    if args.artifact is not None:
+        artifact = artifact_identity_from_manifest_package(
+            installed_bytes,
+            args.artifact,
+        )
+        expected_identity = {
+            "version": args.package_version,
+            "platform": args.platform,
+            "architecture": args.architecture,
+        }
+        actual_identity = {
+            "version": artifact.version,
+            "platform": artifact.platform,
+            "architecture": artifact.architecture.value,
+        }
+        for field, expected in expected_identity.items():
+            actual = actual_identity[field]
+            if actual != expected:
+                fail(
+                    f"manifest-selected package {field} is {actual!r}, "
+                    f"expected {expected!r}"
+                )
 
     expected_metadata = {
         "schema": METADATA_SCHEMA,
@@ -137,6 +180,27 @@ def main() -> int:
             f"status reports {total} profiles but selected manifest declares "
             f"{len(manifest_profiles)}"
         )
+    if args.evidence_out is not None:
+        args.evidence_out.parent.mkdir(parents=True, exist_ok=True)
+        args.evidence_out.write_text(
+            json.dumps(
+                {
+                    "package_version": args.package_version,
+                    "channel": args.channel,
+                    "manifest_url": args.manifest_url,
+                    "installed": True,
+                    "running": True,
+                    "service": "ok",
+                    "gateway": "ok",
+                    "profiles_ready": ready,
+                    "profiles_total": total,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
 
     print(
         f"verified installed {args.channel} release {args.package_version}: "
@@ -148,6 +212,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (OSError, subprocess.SubprocessError) as error:
+    except (GlowupContractError, OSError, subprocess.SubprocessError) as error:
         print(f"installed release verification failed: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from error

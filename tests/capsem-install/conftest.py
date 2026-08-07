@@ -11,7 +11,6 @@ Tests are split into two tiers:
 from __future__ import annotations
 
 import atexit
-from contextlib import contextmanager
 import os
 import re
 import shutil
@@ -20,6 +19,7 @@ import stat
 import subprocess
 import tempfile
 import time
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import pytest
@@ -100,6 +100,7 @@ BINARIES = [
     "capsem-gateway",
     "capsem-tray",
     "capsem-admin",
+    "capsem-mock-server",
 ]
 DEFAULT_TIMEOUT = 30
 
@@ -206,10 +207,8 @@ def _kill_service() -> None:
                     break
                 time.sleep(0.2)
             else:
-                try:
+                with suppress(ProcessLookupError):
                     os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
         except (ValueError, ProcessLookupError, PermissionError):
             pass
         pidfile.unlink(missing_ok=True)
@@ -219,14 +218,12 @@ def _kill_service() -> None:
     # is consistent and we never match target/debug binaries.
     install_prefix = str(INSTALL_DIR) + "/"
     if os.environ.get("CAPSEM_DEB_INSTALLED") == "1" and shutil.which("systemctl"):
-        try:
+        with suppress(subprocess.TimeoutExpired):
             subprocess.run(
                 ["systemctl", "--user", "stop", "capsem"],
                 capture_output=True,
                 timeout=10,
             )
-        except subprocess.TimeoutExpired:
-            pass
 
     for proc_name in [
         "capsem-service",

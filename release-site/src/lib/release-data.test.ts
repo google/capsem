@@ -11,7 +11,7 @@ import {
 
 describe('release-site graph data', () => {
   beforeEach(() => {
-    process.env.CAPSEM_RELEASE_CHANNEL_DIST =
+    process.env.CAPSEM_RELEASE_GRAPH =
       '../tests/capsem-release/fixtures/release-graph-stable-nightly.json';
     process.env.CAPSEM_RELEASE_CHANNEL = 'stable';
   });

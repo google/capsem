@@ -1,24 +1,24 @@
 ---
 name: frontend-design
-description: Capsem frontend design system. Use when building UI components, styling views, working with the design system, choosing colors, or understanding the component library. Covers the stack (Astro 5 + Svelte 5 + Tailwind v4 + Preline), color scheme, Svelte 5 rune patterns, data fetching, and code reuse policy.
+description: Capsem frontend design system. Use when building UI components, styling views, working with the design system, choosing colors, or understanding the component library. Covers the stack (Astro 7 + Svelte 5 + Tailwind v4 + Capsem-owned semantic CSS), color scheme, Svelte 5 rune patterns, data fetching, and code reuse policy.
 ---
 
 # Frontend Design
 
 ## Stack
 
-- **Astro 5** -- static site generator, renders `index.astro` as a thin shell
+- **Astro 7** -- static site generator, renders `index.astro` as a thin shell
 - **Svelte 5** -- reactive UI framework, loaded via `client:only="svelte"`
 - **Tailwind v4** -- utility-first CSS (via Vite plugin, `@source` directives in `global.css`)
-- **Preline** -- CSS-only: semantic design tokens and component CSS patterns. **Do NOT use Preline JS plugins.** All interactivity is implemented in pure Svelte 5 runes + TypeScript. Use Preline only for its token system (`bg-primary`, `text-foreground`, etc.) and CSS component patterns (class strings from the docs). Never import `preline` JS, never call `HSStaticMethods`, never use `data-hs-*` attributes or `hs-*-active:` variants.
+- **Capsem-owned semantic CSS** -- `src/styles/capsem-theme.css` owns the complete token contract (`bg-primary`, `text-foreground`, and peers). Production code must never install, import, scan, or execute Preline or another component library. Historical component references may inspire class composition only; copy the result into Capsem-owned code.
 
 ## Loading into capsem-app (Tauri)
 
 `tauri::generate_context!()` bakes `frontend/dist/**` into the `capsem-app` binary at cargo compile time (via the `custom-protocol` feature). This means:
 
 - `pnpm run build` alone has **no effect** on a running `./target/**/capsem-app` -- the bundle is embedded in the binary.
-- After any `frontend/` change you intend to test in the desktop app, run `just build-ui` (chains frontend build + `cargo build -p capsem-app`).
-- `just ui` (`cargo tauri dev`) bypasses this by loading `http://localhost:5173` -- good for iteration, but the production code path goes through the embedded bundle.
+- After any `frontend/` change you intend to test in the desktop app, run `just build` (chains frontend build + `cargo build -p capsem-app`).
+- `just dev ui` (`cargo tauri dev`) bypasses this by loading `http://localhost:5173` -- good for iteration, but the production code path goes through the embedded bundle.
 - The Toolbar shows `build YYYY-MM-DD HH:MM:SS` as a quick visual sanity check -- if it's stale after you rebuilt, you forgot `cargo build -p capsem-app`.
 
 Also: iframe `src` for bundled pages **must end in `index.html`** (e.g. `/vm/terminal/index.html`). Tauri's custom protocol on macOS does not auto-append `index.html` for trailing-slash paths the way Vite/Astro dev server does. A `/vm/terminal/` src loads fine in Chrome dev mode and silently 404s in the Tauri app.
@@ -27,15 +27,15 @@ Also: iframe `src` for bundled pages **must end in `index.html`** (e.g. `/vm/ter
 
 **Simplicity and correctness above all else.** Every line of frontend code must earn its place.
 
-- Preline CSS tokens for theming + Tailwind utilities for layout -- nothing else
+- Capsem-owned semantic tokens for theming + Tailwind utilities for layout
 - All interactivity via Svelte 5 runes + TypeScript -- no JS plugins, no jQuery, no framework plugins
 - Custom `@theme` tokens in `global.css` for domain-specific colors (status, providers, charts)
 - **Visual verification required** -- every UI change must be verified via Chrome DevTools MCP (see `/dev-testing-frontend`)
-- **No DaisyUI** -- Preline is the only component library. DaisyUI remnants in the code are being replaced.
+- **No component-library dependency** -- do not add Preline, DaisyUI, or an equivalent package to production or build dependencies.
 
 ## Framework references
 
-- Read `references/preline.md` for Preline UI overview and quick reference. Detailed docs in `references/preline-docs/` covering JS plugins, CSS components, variants, tokens, and framework integration.
+- `references/preline.md` and `references/preline-docs/` are historical pattern catalogues only. Their upstream install/import examples are forbidden in Capsem; the checked-in theme and Svelte components are authoritative.
 - Read `references/tailwind.md` for Tailwind v4 utility patterns, responsive design, and CSS-first config.
 - Read `references/svelte5.md` for Svelte 5 patterns and `@sveltejs/mcp` CLI doc lookups.
 - Read `references/astro.md` for Astro framework patterns (components, content collections, SSR).
@@ -57,12 +57,12 @@ These are set in `:root` and `.dark` blocks in `global.css`. All accent themes s
 
 ## Color scheme (firm -- do not deviate)
 
-- **Blue** = main/positive color (allowed, running, ok states). Use Preline `primary` tokens (`bg-primary`, `text-primary-foreground`, etc.)
-- **Purple** = negative color (denied, stopped, error states). Override Preline `destructive` tokens with purple, not red.
+- **Blue** = main/positive color (allowed, running, ok states). Use Capsem `primary` tokens (`bg-primary`, `text-primary-foreground`, etc.)
+- **Purple** = negative color (denied, stopped, error states). Keep the owned `destructive` tokens purple, not red.
 - **No green or red anywhere in the UI** -- use blue for positive, purple for negative
 - Chart colors: blue `oklch(0.7 0.15 250)` for allowed, purple `oklch(0.65 0.15 300)` for denied
 - Terminal emulation colors (xterm #4ade80 green) are fine -- that's xterm, not UI chrome
-- **Do NOT hardcode colors or override Preline token CSS variables** (except the surface overrides above). Theme customization happens by selecting a Preline theme (`data-theme` on `<html>`), not by overriding `--destructive` or other vars in `global.css`.
+- **Do NOT hardcode colors in components.** Change the owned semantic contract in `capsem-theme.css` or the deliberate surface/accent overrides in `global.css`; theme selection uses `data-theme` on `<html>`.
 
 ## Terminal theme contrast
 
@@ -72,7 +72,7 @@ Contrast utilities (`parseHex`, `relativeLuminance`, `contrastRatio`) are export
 
 ## Component patterns
 
-Use Preline's semantic token classes for all UI components. Read `references/preline.md` for the overview and load the relevant `preline-docs/` reference for details.
+Use Capsem's semantic token classes for all UI components. Historical pattern references may guide layout, but no upstream CSS or JavaScript may enter the build.
 
 - **Buttons**: `bg-primary text-primary-foreground hover:bg-primary-hover` (solid), `bg-layer border border-layer-line text-layer-foreground` (white), etc.
 - **Cards**: `bg-card border border-card-line rounded-xl`, headers `bg-surface border-b border-card-divider`

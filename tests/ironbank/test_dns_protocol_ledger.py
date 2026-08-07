@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
-from contextlib import closing
 import json
 import os
-from pathlib import Path
 import sqlite3
 import textwrap
 import time
 import uuid
+from contextlib import closing, suppress
+from pathlib import Path
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.gateway import GatewayInstance, TcpHttpClient
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_session_db_path, vm_session_dir, wait_exec_ready, vm_name
+from helpers.service import (
+    ServiceInstance,
+    vm_name,
+    vm_session_db_path,
+    vm_session_dir,
+    wait_exec_ready,
+)
+from log_streams import read_log_stream
 
 pytestmark = pytest.mark.integration
 
@@ -390,15 +396,14 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         uds_rows = _query_rows(
             client,
             session_id,
-            """
+            f"""
             SELECT event_id, qname, qtype, qclass, rcode, answer_ip, decision,
                    matched_rule, source_proto, upstream_resolver_ms, policy_action,
                    policy_rule, policy_reason, trace_id
             FROM dns_events
-            WHERE qname IN ('%s', '%s')
+            WHERE qname IN ('{allowed_qname}', '{blocked_qname}')
             ORDER BY qname
-            """
-            % (allowed_qname, blocked_qname),
+            """,
         )
         assert len(uds_rows) == 2
         assert {row["qname"] for row in uds_rows} == {allowed_qname, blocked_qname}
@@ -443,7 +448,7 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
         assert by_level["informational"] >= 1
         assert by_level["high"] >= 1
 
-        service_log = (service.tmp_dir / "service.log").read_text(encoding="utf-8")
+        service_log = read_log_stream(service.tmp_dir / "service.log")
         process_log = (
             vm_session_dir(service.tmp_dir, client, vm_id) / "process.log"
         ).read_text(encoding="utf-8")
@@ -454,10 +459,8 @@ def test_dns_query_and_block_matrix_pays_full_ledger_debt_blackbox() -> None:
     finally:
         stop_process(mock_proc)
         if client is not None:
-            try:
+            with suppress(Exception):
                 client.delete(f"/vms/{vm_id or session_id}/delete", timeout=60)
-            except Exception:
-                pass
         if gateway is not None:
             gateway.stop()
         service.stop()

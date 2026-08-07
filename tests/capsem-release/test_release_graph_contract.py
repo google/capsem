@@ -7,9 +7,10 @@ keep the source contract visible to the release CI lane.
 
 from __future__ import annotations
 
-from pathlib import Path
 import json
+from pathlib import Path
 
+import rust_sources
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_GRAPH = PROJECT_ROOT / "crates" / "capsem-admin" / "src" / "release_graph.rs"
@@ -23,7 +24,11 @@ FIXTURE_GRAPH = (
 
 
 def _source() -> str:
-    return RELEASE_GRAPH.read_text(encoding="utf-8")
+    return rust_sources.production(RELEASE_GRAPH)
+
+
+def _tests() -> str:
+    return rust_sources.sibling_tests(RELEASE_GRAPH)
 
 
 def test_status_enum_rejects_unknown_values() -> None:
@@ -33,7 +38,7 @@ def test_status_enum_rejects_unknown_values() -> None:
     for variant in ("Current", "Supported", "Deprecated", "Revoked"):
         assert variant in source
     assert "Removed" not in source
-    assert "release_graph_enums_reject_unknown_status_values" in source
+    assert "release_graph_enums_reject_unknown_status_values" in _tests()
 
 
 def test_manifest_record_uses_version_not_schema_version() -> None:
@@ -45,7 +50,7 @@ def test_manifest_record_uses_version_not_schema_version() -> None:
     )[0]
     assert "pub version: String" in manifest_record
     assert "schema_version" not in manifest_record
-    assert "release_graph_manifest_records_use_version_not_schema_version" in source
+    assert "release_graph_manifest_records_use_version_not_schema_version" in _tests()
 
 
 def test_channels_json_lists_all_manifest_records() -> None:
@@ -54,8 +59,10 @@ def test_channels_json_lists_all_manifest_records() -> None:
     assert "pub struct ChannelsCatalog" in source
     assert "pub channels: BTreeMap<String, ChannelRecord>" in source
     assert "pub manifests: Vec<ManifestRecord>" in source
-    assert "release_graph_channels_catalog_lists_manifest_records" in source
-    assert "release_graph_channels_catalog_rejects_duplicate_manifest_versions" in source
+
+    tests = _tests()
+    assert "release_graph_channels_catalog_lists_manifest_records" in tests
+    assert "release_graph_channels_catalog_rejects_duplicate_manifest_versions" in tests
 
 
 def test_graph_verifier_rejects_tampered_profile_ref() -> None:
@@ -64,7 +71,7 @@ def test_graph_verifier_rejects_tampered_profile_ref() -> None:
     assert "pub fn verify_bytes" in source
     assert "sha256 mismatch" in source
     assert "blake3 mismatch" in source
-    assert "release_graph_digest_verifier_rejects_tampered_profile_ref" in source
+    assert "release_graph_digest_verifier_rejects_tampered_profile_ref" in _tests()
 
 
 def test_revoked_manifest_is_listed_but_not_selectable() -> None:
@@ -72,7 +79,7 @@ def test_revoked_manifest_is_listed_but_not_selectable() -> None:
 
     assert "pub fn select_manifest" in source
     assert "Status::Revoked => 255" in source
-    assert "release_graph_revoked_manifest_is_listed_but_not_selectable" in source
+    assert "release_graph_revoked_manifest_is_listed_but_not_selectable" in _tests()
 
 
 def test_fixture_has_stable_and_nightly() -> None:
@@ -104,6 +111,7 @@ def test_fixture_has_stable_and_nightly() -> None:
         "capsem-mcp": "SPDXRef-File-capsem-mcp",
         "capsem-mcp-aggregator": "SPDXRef-File-capsem-mcp-aggregator",
         "capsem-mcp-builtin": "SPDXRef-File-capsem-mcp-builtin",
+        "capsem-mock-server": "SPDXRef-File-capsem-mock-server",
         "capsem-process": "SPDXRef-File-capsem-process",
         "capsem-service": "SPDXRef-File-capsem-service",
         "capsem-tray": "SPDXRef-File-capsem-tray",

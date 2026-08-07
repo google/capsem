@@ -6,9 +6,9 @@ on the host. The builder must re-apply 555 on the host so the guest-binary
 read-only invariant (CLAUDE.md) holds for every caller.
 """
 
-import pytest
 from pathlib import Path
 
+import pytest
 
 from capsem.builder.docker import GUEST_BINARIES, enforce_guest_binary_perms
 
@@ -55,8 +55,25 @@ def test_enforce_guest_binary_perms_missing_file_raises(tmp_path):
 
 
 def test_pack_initrd_reasserts_cached_guest_binary_permissions():
-    """Cached staging binaries are repaired before initrd packaging."""
-    justfile = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8")
-    recipe = justfile.split("_pack-initrd:", 1)[1].split("\n_", 1)[0]
+    """Cached staging binaries are repaired before initrd packaging.
 
-    assert 'chmod 555 "$RELEASE_DIR/$b"' in recipe
+    The claim is unchanged and the evidence moved: this was `chmod 555` in a
+    recipe, and is the repack step's own reassertion now. The mode comes from
+    config rather than from a literal in two places, so what is asserted is
+    that the packer applies it to every staged binary -- not that a particular
+    shell line still exists.
+    """
+    from capsem.gate import config as gate_config
+
+    config = gate_config.load(PROJECT_ROOT)
+    packer = (
+        PROJECT_ROOT / "src" / "capsem" / "gate" / "initrd.py"
+    ).read_text(encoding="utf-8")
+
+    assert config.initrd.binary_mode == 0o555, (
+        "guest binaries must be read-only: the guest cannot be allowed to "
+        "modify its own binaries"
+    )
+    assert "chmod(settings.binary_mode)" in packer, (
+        "the repack no longer reasserts the mode on staged binaries"
+    )

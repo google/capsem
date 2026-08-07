@@ -61,9 +61,9 @@ metadata only helps render settings.
 ## CLI commands
 
 ```bash
-just build-assets code [arch]                # Profile-derived asset rebuild
-just build-kernel arm64 code                 # Kernel slice
-just build-rootfs arm64 code                 # Rootfs slice
+just _build-assets code [arch]                # Profile-derived asset rebuild
+just _build-kernel arm64 code                 # Kernel slice
+just _build-rootfs arm64 code                 # Rootfs slice
 uv run capsem-builder audit                  # Parse trivy/grype vulnerability output
 ```
 
@@ -78,13 +78,13 @@ CLI contracts.
 
 Full rebuild (kernel + rootfs):
 ```bash
-just build-assets    # Runs doctor + validate + build for host arch
+just _build-assets    # Runs doctor + validate + build for host arch
 ```
 
 Individual templates:
 ```bash
-just build-kernel arm64
-just build-rootfs arm64
+just _build-kernel arm64
+just _build-rootfs arm64
 ```
 
 ## Per-arch asset layout
@@ -96,7 +96,7 @@ assets/
   arm64/
     vmlinuz              Kernel
     rootfs.erofs         Root filesystem
-    initrd.img           Initial ramdisk (repacked by just run)
+    initrd.img           Initial ramdisk (repacked by just exec)
 ```
 
 Rootfs EROFS settings are profile-derived. The approved release default
@@ -130,7 +130,7 @@ on every run; stale generated roots are a release blocker, not a cache.
    `config/profiles/code/apt-packages.txt`,
    `python-requirements.txt`, or `npm-packages.txt`.
 2. Run the admin/profile validation path.
-3. Run `just build-assets code` to rebuild the rootfs.
+3. Run `just _build-assets code` to rebuild the rootfs.
 4. Verify with `capsem-doctor` inside a booted VM.
 
 Do not edit generated Dockerfiles. Docker templates live under `config/docker/`.
@@ -149,7 +149,7 @@ profile declares the package/build hook and any required guest root seed files.
    provider config.
 5. Let the credential broker plugin capture/materialize credentials at runtime;
    do not add settings-owned boot secrets.
-6. Rebuild with `just build-assets code` and verify with `capsem-doctor`.
+6. Rebuild with `just _build-assets code` and verify with `capsem-doctor`.
 
 `build.sh` is executed only while constructing the rootfs image. It is the
 right place for official installer commands such as Claude, AGY, or Ollama
@@ -163,7 +163,7 @@ Remember this rail when touching profile image contents:
 
 - `config/profiles/<profile_id>/build.sh` is a profile-owned build hook.
 - It runs inside the rootfs Docker build, before the EROFS image is produced.
-- It does not run during `just install`, service startup, VM boot, or user
+- It does not run during native glow-up, service startup, VM boot, or user
   session creation.
 - It is for image construction work that cannot be cleanly expressed through
   `apt-packages.txt`, `python-requirements.txt`, or `npm-packages.txt`.
@@ -270,7 +270,7 @@ The data flows through four layers:
 4. Validate and materialize through `capsem-admin`; if the rail cannot express
    the change, implement it with tests first.
 5. Add or update capsem-admin materialization tests and Docker context tests.
-6. Rebuild: `just build-assets code` and verify with `capsem-doctor`.
+6. Rebuild: `just _build-assets code` and verify with `capsem-doctor`.
 
 Ollama is intentionally installed by `config/profiles/<id>/build.sh`, not by a
 VM one-off command. That keeps Codex, Claude, AGY, and OpenAI-compatible local
@@ -282,7 +282,7 @@ testing available in every shipped profile image that declares the hook.
    `python-requirements.txt`, or `npm-packages.txt`.
 2. Validate and materialize through `capsem-admin`.
 3. Keep the checked-in profile source free of generated hashes or sizes.
-4. Rebuild: `just build-assets <profile_id>`.
+4. Rebuild: `just _build-assets <profile_id>`.
 
 ## How to: Add a new guest binary
 
@@ -294,13 +294,13 @@ Guest binaries are compiled from `crates/capsem-agent/`. On macOS, `cross_compil
 
 ## Verifying Linux builds locally
 
-`just cross-compile [arch]` builds everything in a container: agent binaries,
+`just _cross-compile [arch]` builds everything in a container: agent binaries,
 frontend, and the full Linux `.deb` package. Useful for catching system
 dependency issues before CI.
 
 ```bash
-just cross-compile           # Build for host arch (arm64 on Apple Silicon)
-just cross-compile x86_64    # Build x86_64 deb
+just _cross-compile           # Build for host arch (arm64 on Apple Silicon)
+just _cross-compile x86_64    # Build x86_64 deb
 ```
 
 ## Backend Workspace Schema

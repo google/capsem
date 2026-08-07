@@ -11,13 +11,12 @@ import os
 import pytest
 
 from .conftest import (
+    BINARIES,
     INSTALL_DIR,
     RUN_DIR,
     run_capsem,
-    BINARIES,
     temporarily_replace_installed_binary,
 )
-
 
 _REGISTER_LAUNCHAGENT_REQUIRED = pytest.mark.skipif(
     os.environ.get("CAPSEM_TEST_REGISTER_LAUNCHAGENT") != "1",

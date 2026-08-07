@@ -4,31 +4,37 @@ TDD: these tests define the expected behavior of docker.py before implementation
 Build execution tests mock run_cmd (single subprocess seam) -- no Docker needed.
 """
 
+import hashlib
 import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 import tomllib
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from capsem.builder.config import load_guest_config
-from capsem.builder.models import ErofsConfig
 from capsem.builder.docker import (
     BUILD_LEDGER_NAME,
-    FALLBACK_KERNEL_VERSION,
+    CDXGEN_VERSION,
     GUEST_BINARIES,
     ROOTFS_SCRIPTS,
     _append_build_ledger,
+    _cdx_validate_command,
+    _cdxgen_command,
     _directory_tree_hash,
     _file_ledger_entry,
+    _normalize_cyclonedx_obom,
     _rootfs_config_input_record,
     _validate_cyclonedx_obom,
     build_all_architectures,
-    build_version_script,
     build_image,
+    build_version_script,
     container_compile_agent,
     create_erofs,
     cross_compile_agent,
@@ -37,20 +43,75 @@ from capsem.builder.docker import (
     experimental_erofs_build_config,
     export_container_fs,
     extract_software_inventory,
-    extract_tool_versions,
     extract_kernel_assets,
+    extract_tool_versions,
     generate_build_context,
-    generate_cyclonedx_obom,
     generate_checksums,
+    generate_cyclonedx_obom,
     get_project_version,
     is_ci,
     prepare_build_context,
     render_dockerfile,
     resolve_kernel_version,
+    run_cmd,
     sync_container_clock,
 )
+from capsem.builder.models import ErofsConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_cdxgen_default_is_exactly_pinned_and_override_remains_explicit(monkeypatch):
+    monkeypatch.delenv("CAPSEM_CDXGEN_CMD", raising=False)
+    assert _cdxgen_command() == [
+        "npx",
+        "--yes",
+        f"@cyclonedx/cdxgen@{CDXGEN_VERSION}",
+    ]
+
+    monkeypatch.setenv("CAPSEM_CDXGEN_CMD", "cdxgen --custom")
+    assert _cdxgen_command() == ["cdxgen", "--custom"]
+
+
+def test_cdx_validate_default_is_pinned_and_global_override_is_explicit(monkeypatch):
+    monkeypatch.delenv("CAPSEM_CDX_VALIDATE_CMD", raising=False)
+    monkeypatch.delenv("CAPSEM_CDXGEN_CMD", raising=False)
+    assert _cdx_validate_command() == [
+        "npx",
+        "--yes",
+        "--package",
+        f"@cyclonedx/cdxgen@{CDXGEN_VERSION}",
+        "cdx-validate",
+    ]
+
+    monkeypatch.setenv("CAPSEM_CDXGEN_CMD", "cdxgen")
+    assert _cdx_validate_command() == ["cdx-validate"]
+
+    monkeypatch.setenv("CAPSEM_CDX_VALIDATE_CMD", "custom-validator --strict")
+    assert _cdx_validate_command() == ["custom-validator", "--strict"]
+
+
+def test_run_cmd_surfaces_captured_subprocess_stderr(monkeypatch, capsys):
+    """Opaque Docker failures must retain the daemon's actual diagnosis."""
+    failure = subprocess.CalledProcessError(
+        125,
+        ["docker", "run", "missing-image"],
+        output="stdout evidence\n",
+        stderr="Unable to find image 'missing-image' locally\n",
+    )
+
+    def fail(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(subprocess, "run", fail)
+
+    with pytest.raises(subprocess.CalledProcessError) as raised:
+        run_cmd(["docker", "run", "missing-image"], capture=True)
+
+    assert raised.value is failure
+    captured = capsys.readouterr()
+    assert "stdout evidence" in captured.err
+    assert "Unable to find image 'missing-image' locally" in captured.err
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +430,9 @@ class TestRootfsLayerOrdering:
         assert strip_pos > npm_pos, "setuid strip must come after npm install"
         if "uv pip install --system" in rendered_profile_arm64:
             # Find the LAST uv pip install (python packages, not certifi)
-            last_pip = rendered_profile_arm64.rfind("uv pip install --system --break-system-packages")
+            last_pip = rendered_profile_arm64.rfind(
+                "uv pip install --system --break-system-packages"
+            )
             assert strip_pos > last_pip, "setuid strip must come after python packages"
 
     def test_x86_64_has_same_ordering(self, rendered_arm64, rendered_x86):
@@ -427,7 +490,7 @@ class TestRootfsSecurityInvariants:
         allowlist_pos = rendered_arm64.index("profile-setuid-allowlist")
         restore_pos = rendered_arm64.index("chmod 4755", allowlist_pos)
         assert strip_pos < allowlist_pos < restore_pos
-        assert 'stat -c \'%u:%g:%a\'' in rendered_arm64
+        assert "stat -c '%u:%g:%a'" in rendered_arm64
         assert "setuid allowlist path must be absolute" in rendered_arm64
 
     def test_apt_sources_https(self, rendered_arm64):
@@ -474,6 +537,10 @@ class TestRootfsVersionExtractability:
 
 class TestRenderKernel:
     """Kernel Dockerfile renders correctly for both architectures."""
+
+    def test_context_requires_resolved_version(self, real_config):
+        with pytest.raises(ValueError, match="kernel_version is required"):
+            generate_build_context("Dockerfile.kernel.j2", real_config, "arm64")
 
     def test_arm64_from(self, real_config):
         result = render_dockerfile(
@@ -669,13 +736,15 @@ class TestResolveKernelVersion:
     @patch("capsem.builder.docker.urllib.request.urlopen")
     def test_valid_json(self, mock_urlopen):
         mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({
-            "releases": [
-                {"version": "6.6.131", "moniker": "longterm", "iseol": False},
-                {"version": "6.6.127", "moniker": "longterm", "iseol": False},
-                {"version": "6.12.5", "moniker": "stable", "iseol": False},
-            ]
-        }).encode()
+        mock_resp.read.return_value = json.dumps(
+            {
+                "releases": [
+                    {"version": "6.6.131", "moniker": "longterm", "iseol": False},
+                    {"version": "6.6.127", "moniker": "longterm", "iseol": False},
+                    {"version": "6.12.5", "moniker": "stable", "iseol": False},
+                ]
+            }
+        ).encode()
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
@@ -685,14 +754,16 @@ class TestResolveKernelVersion:
     @patch("capsem.builder.docker.urllib.request.urlopen")
     def test_explicit_stable_branch(self, mock_urlopen):
         mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({
-            "releases": [
-                {"version": "7.1-rc6", "moniker": "mainline", "iseol": False},
-                {"version": "7.0.11", "moniker": "stable", "iseol": False},
-                {"version": "7.0.10", "moniker": "stable", "iseol": False},
-                {"version": "6.18.34", "moniker": "longterm", "iseol": False},
-            ]
-        }).encode()
+        mock_resp.read.return_value = json.dumps(
+            {
+                "releases": [
+                    {"version": "7.1-rc6", "moniker": "mainline", "iseol": False},
+                    {"version": "7.0.11", "moniker": "stable", "iseol": False},
+                    {"version": "7.0.10", "moniker": "stable", "iseol": False},
+                    {"version": "6.18.34", "moniker": "longterm", "iseol": False},
+                ]
+            }
+        ).encode()
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
@@ -702,13 +773,15 @@ class TestResolveKernelVersion:
     @patch("capsem.builder.docker.urllib.request.urlopen")
     def test_auto_stays_on_lts(self, mock_urlopen):
         mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({
-            "releases": [
-                {"version": "7.0.11", "moniker": "stable", "iseol": False},
-                {"version": "6.18.34", "moniker": "longterm", "iseol": False},
-                {"version": "6.12.92", "moniker": "longterm", "iseol": False},
-            ]
-        }).encode()
+        mock_resp.read.return_value = json.dumps(
+            {
+                "releases": [
+                    {"version": "7.0.11", "moniker": "stable", "iseol": False},
+                    {"version": "6.18.34", "moniker": "longterm", "iseol": False},
+                    {"version": "6.12.92", "moniker": "longterm", "iseol": False},
+                ]
+            }
+        ).encode()
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
@@ -716,34 +789,104 @@ class TestResolveKernelVersion:
         assert result == "6.18.34"
 
     @patch("capsem.builder.docker.urllib.request.urlopen")
-    def test_network_error_fallback(self, mock_urlopen):
+    def test_network_error_fails_closed(self, mock_urlopen):
         mock_urlopen.side_effect = Exception("network error")
-        result = resolve_kernel_version("6.6")
-        assert result == FALLBACK_KERNEL_VERSION
+        with pytest.raises(RuntimeError, match=r"failed to fetch kernel.org releases"):
+            resolve_kernel_version("6.6")
 
     @patch("capsem.builder.docker.urllib.request.urlopen")
-    def test_no_matching_branch(self, mock_urlopen):
+    def test_no_matching_branch_fails_closed(self, mock_urlopen):
         mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({
-            "releases": [
-                {"version": "6.12.5", "moniker": "stable", "iseol": False},
-            ]
-        }).encode()
+        mock_resp.read.return_value = json.dumps(
+            {
+                "releases": [
+                    {"version": "6.12.5", "moniker": "stable", "iseol": False},
+                ]
+            }
+        ).encode()
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
-        result = resolve_kernel_version("6.6")
-        assert result == FALLBACK_KERNEL_VERSION
+        with pytest.raises(RuntimeError, match=r"no non-EOL 6\.6\.x"):
+            resolve_kernel_version("6.6")
+
+    @patch("capsem.builder.docker.urllib.request.urlopen")
+    def test_eol_only_matching_branch_fails_closed(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(
+            {
+                "releases": [
+                    {"version": "7.0.11", "moniker": "stable", "iseol": True},
+                    {"version": "6.18.40", "moniker": "longterm", "iseol": False},
+                ]
+            }
+        ).encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        with pytest.raises(RuntimeError, match=r"no non-EOL 7\.0\.x"):
+            resolve_kernel_version("7.0")
+
+    @patch("capsem.builder.docker.urllib.request.urlopen")
+    def test_invalid_branch_fails_closed(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(
+            {
+                "releases": [
+                    {"version": "6.18.40", "moniker": "longterm", "iseol": False},
+                ]
+            }
+        ).encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        with pytest.raises(RuntimeError, match="invalid kernel_branch"):
+            resolve_kernel_version("latest")
+
+    @patch("capsem.builder.docker.urllib.request.urlopen")
+    def test_empty_supported_feed_fails_closed(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(
+            {
+                "releases": [
+                    {"version": "7.0.11", "moniker": "stable", "iseol": True},
+                    {"version": "7.2-rc1", "moniker": "mainline", "iseol": False},
+                ]
+            }
+        ).encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        with pytest.raises(RuntimeError, match="no non-EOL stable/LTS releases"):
+            resolve_kernel_version("auto")
+
+    @patch("capsem.builder.docker.urllib.request.urlopen")
+    def test_auto_without_longterm_release_fails_closed(self, mock_urlopen):
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(
+            {
+                "releases": [
+                    {"version": "7.1.5", "moniker": "stable", "iseol": False},
+                ]
+            }
+        ).encode()
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+        with pytest.raises(RuntimeError, match="no non-EOL longterm releases"):
+            resolve_kernel_version("auto")
 
     @patch("capsem.builder.docker.urllib.request.urlopen")
     def test_eol_versions_skipped(self, mock_urlopen):
         mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({
-            "releases": [
-                {"version": "6.6.131", "moniker": "longterm", "iseol": True},
-                {"version": "6.6.127", "moniker": "longterm", "iseol": False},
-            ]
-        }).encode()
+        mock_resp.read.return_value = json.dumps(
+            {
+                "releases": [
+                    {"version": "6.6.131", "moniker": "longterm", "iseol": True},
+                    {"version": "6.6.127", "moniker": "longterm", "iseol": False},
+                ]
+            }
+        ).encode()
         mock_resp.__enter__ = lambda s: s
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
@@ -760,6 +903,7 @@ class TestDetectRuntime:
     @patch("capsem.builder.docker.check_container_runtime")
     def test_docker_found(self, mock_check):
         from capsem.builder.doctor import CheckResult
+
         mock_check.return_value = CheckResult(
             name="container-runtime", passed=True, detail="Docker version 27.1.1"
         )
@@ -768,9 +912,12 @@ class TestDetectRuntime:
     @patch("capsem.builder.docker.check_container_runtime")
     def test_not_found_raises(self, mock_check):
         from capsem.builder.doctor import CheckResult
+
         mock_check.return_value = CheckResult(
-            name="container-runtime", passed=False,
-            detail="docker not found", fix="brew install colima docker",
+            name="container-runtime",
+            passed=False,
+            detail="docker not found",
+            fix="brew install colima docker",
         )
         with pytest.raises(RuntimeError, match="container-runtime"):
             detect_runtime()
@@ -794,13 +941,14 @@ class TestIsCi:
 class TestSyncContainerClock:
     @patch("capsem.builder.docker.sys")
     @patch("capsem.builder.docker.run_cmd")
-    def test_syncs_via_privileged_container(self, mock_run, mock_sys):
+    def test_syncs_via_bounded_shared_primitive(self, mock_run, mock_sys):
         mock_sys.platform = "darwin"
+        mock_sys.executable = sys.executable
         sync_container_clock()
         cmd = mock_run.call_args[0][0]
-        assert cmd[0] == "docker"
-        assert "--privileged" in cmd
-        assert "date" in cmd
+        assert cmd[0] == sys.executable
+        assert cmd[1].endswith("/scripts/sync-container-clock.py")
+        assert mock_run.call_args.kwargs["timeout"] == 15
 
     @patch("capsem.builder.docker.sys")
     @patch("capsem.builder.docker.run_cmd")
@@ -811,11 +959,11 @@ class TestSyncContainerClock:
 
     @patch("capsem.builder.docker.sys")
     @patch("capsem.builder.docker.run_cmd")
-    def test_swallows_errors(self, mock_run, mock_sys):
+    def test_propagates_errors(self, mock_run, mock_sys):
         mock_sys.platform = "darwin"
         mock_run.side_effect = Exception("VM not running")
-        # Should not raise
-        sync_container_clock()
+        with pytest.raises(Exception, match="VM not running"):
+            sync_container_clock()
 
 
 # ---------------------------------------------------------------------------
@@ -827,8 +975,11 @@ class TestDockerBuild:
     @patch("capsem.builder.docker.run_cmd")
     def test_regular_build(self, mock_run):
         docker_build(
-            runtime="docker", tag="test-image", dockerfile_path="/tmp/Dockerfile",
-            context_dir="/tmp/ctx", platform="linux/arm64",
+            runtime="docker",
+            tag="test-image",
+            dockerfile_path="/tmp/Dockerfile",
+            context_dir="/tmp/ctx",
+            platform="linux/arm64",
         )
         cmd = mock_run.call_args[0][0]
         assert cmd[0] == "docker"
@@ -841,8 +992,12 @@ class TestDockerBuild:
     @patch("capsem.builder.docker.run_cmd")
     def test_ci_docker_uses_buildx(self, mock_run):
         docker_build(
-            runtime="docker", tag="test-image", dockerfile_path="/tmp/Dockerfile",
-            context_dir="/tmp/ctx", platform="linux/arm64", ci_cache=True,
+            runtime="docker",
+            tag="test-image",
+            dockerfile_path="/tmp/Dockerfile",
+            context_dir="/tmp/ctx",
+            platform="linux/arm64",
+            ci_cache=True,
         )
         cmd = mock_run.call_args[0][0]
         assert cmd[:3] == ["docker", "buildx", "build"]
@@ -853,8 +1008,11 @@ class TestDockerBuild:
     @patch("capsem.builder.docker.run_cmd")
     def test_build_args(self, mock_run):
         docker_build(
-            runtime="docker", tag="test", dockerfile_path="/tmp/Dockerfile",
-            context_dir="/tmp/ctx", platform="linux/arm64",
+            runtime="docker",
+            tag="test",
+            dockerfile_path="/tmp/Dockerfile",
+            context_dir="/tmp/ctx",
+            platform="linux/arm64",
             build_args={"KERNEL_VERSION": "6.6.131"},
         )
         cmd = mock_run.call_args[0][0]
@@ -910,21 +1068,21 @@ class TestBuildVersionScript:
 
     def test_real_config_has_all_sections(self, real_config):
         script = build_version_script(real_config)
-        assert '# System' in script
-        assert '# Python' not in script
+        assert "# System" in script
+        assert "# Python" not in script
 
     def test_real_config_has_build_tools(self, real_config):
         script = build_version_script(real_config)
-        assert 'node=' in script
-        assert 'npm=' in script
-        assert 'uv=' in script
-        assert 'pip=' in script
+        assert "node=" in script
+        assert "npm=" in script
+        assert "uv=" in script
+        assert "pip=" in script
 
     def test_real_config_uses_build_tool_version_commands_only(self, real_config):
         script = build_version_script(real_config)
-        assert 'git=' not in script
-        assert 'python3=' not in script
-        assert 'pytest=' not in script
+        assert "git=" not in script
+        assert "python3=" not in script
+        assert "pytest=" not in script
 
     def test_language_tool_versions_follow_profile_package_sets(self, real_config):
         package_sets = {
@@ -936,22 +1094,25 @@ class TestBuildVersionScript:
 
         script = build_version_script(config)
 
-        assert 'node=' not in script
-        assert 'npm=' not in script
-        assert 'uv=' not in script
-        assert 'pip=' not in script
+        assert "node=" not in script
+        assert "npm=" not in script
+        assert "uv=" not in script
+        assert "pip=" not in script
 
     def test_empty_config_produces_empty_script(self):
         from capsem.builder.models import BuildConfig, GuestImageConfig
+
         config = GuestImageConfig(
             build=BuildConfig(architectures={"arm64": real_arch()}),
         )
         script = build_version_script(config)
         assert script == ""
 
+
 def real_arch():
     """Minimal ArchConfig for test configs."""
     from capsem.builder.models import ArchConfig
+
     return ArchConfig(
         docker_platform="linux/arm64",
         rust_target="aarch64-unknown-linux-musl",
@@ -965,42 +1126,46 @@ class TestExtractToolVersionsValidation:
 
     @patch("capsem.builder.docker.run_cmd")
     def test_valid_output_passes(self, mock_run, real_config):
-        mock_run.return_value = MagicMock(stdout=(
-            "# System\n"
-            "node=24.1.0\nnpm=10.9.2\nuv=0.7.12\npip=24.0\n"
-            "python3=3.11.2\ngit=2.39.5\ngh=2.67.0\ntmux=3.4\ncurl=7.88.1\n"
-            "# Python\n"
-            "pytest=8.3.4\nnumpy=2.2.3\nrequests=2.32.3\npandas=2.2.3\n"
-        ))
+        mock_run.return_value = MagicMock(
+            stdout=(
+                "# System\n"
+                "node=24.1.0\nnpm=10.9.2\nuv=0.7.12\npip=24.0\n"
+                "python3=3.11.2\ngit=2.39.5\ngh=2.67.0\ntmux=3.4\ncurl=7.88.1\n"
+                "# Python\n"
+                "pytest=8.3.4\nnumpy=2.2.3\nrequests=2.32.3\npandas=2.2.3\n"
+            )
+        )
         # Should not raise
         extract_tool_versions(
-            "docker", "test-image", "linux/arm64",
-            Path("/tmp"), real_config,
+            "docker",
+            "test-image",
+            "linux/arm64",
+            Path("/tmp"),
+            real_config,
         )
 
     @patch("capsem.builder.docker.run_cmd")
     def test_na_values_do_not_raise(self, mock_run, real_config):
-        mock_run.return_value = MagicMock(stdout=(
-            "# System\n"
-            "node=24.1.0\n"
-            "# Python\n"
-            "pytest=N/A\n"
-        ))
+        mock_run.return_value = MagicMock(stdout=("# System\nnode=24.1.0\n# Python\npytest=N/A\n"))
         extract_tool_versions(
-            "docker", "test-image", "linux/arm64",
-            Path("/tmp"), real_config,
+            "docker",
+            "test-image",
+            "linux/arm64",
+            Path("/tmp"),
+            real_config,
         )
 
     @patch("capsem.builder.docker.run_cmd")
     def test_validate_false_skips_check(self, mock_run, real_config):
-        mock_run.return_value = MagicMock(stdout=(
-            "# Python\n"
-            "pytest=N/A\n"
-        ))
+        mock_run.return_value = MagicMock(stdout=("# Python\npytest=N/A\n"))
         # Should not raise when validate=False
         extract_tool_versions(
-            "docker", "test-image", "linux/arm64",
-            Path("/tmp"), real_config, validate=False,
+            "docker",
+            "test-image",
+            "linux/arm64",
+            Path("/tmp"),
+            real_config,
+            validate=False,
         )
 
 
@@ -1017,7 +1182,7 @@ class TestAptClockSkewOptions:
     "Release file is not valid yet" errors even with Check-Valid-Until=false.
     """
 
-    APT_CLOCK_SKEW_OPTIONS = [
+    APT_CLOCK_SKEW_OPTIONS: ClassVar[list[str]] = [
         "Acquire::Check-Valid-Until=false",
         "Acquire::Check-Date=false",
     ]
@@ -1042,8 +1207,11 @@ class TestAptClockSkewOptions:
     @patch("capsem.builder.docker.run_cmd")
     def test_create_erofs_has_both_options(self, mock_run):
         create_erofs(
-            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.erofs"),
-            "zstd", "65536",
+            "docker",
+            Path("/tmp/rootfs.tar"),
+            Path("/tmp/rootfs.erofs"),
+            "zstd",
+            "65536",
         )
         cmd_str = " ".join(mock_run.call_args[0][0])
         for opt in self.APT_CLOCK_SKEW_OPTIONS:
@@ -1054,11 +1222,62 @@ class TestAptClockSkewOptions:
 
 
 class TestCreateErofs:
+    @pytest.mark.parametrize(
+        ("host_machine", "expected_platform"),
+        [
+            ("x86_64", "linux/amd64"),
+            ("AMD64", "linux/amd64"),
+            ("arm64", "linux/arm64"),
+            ("aarch64", "linux/arm64"),
+        ],
+    )
+    @patch("capsem.builder.docker.run_cmd")
+    def test_helper_container_uses_host_native_platform_and_bounded_output(
+        self,
+        mock_run,
+        host_machine,
+        expected_platform,
+        monkeypatch,
+    ):
+        monkeypatch.setattr("capsem.builder.docker.platform.machine", lambda: host_machine)
+
+        create_erofs(
+            "docker",
+            Path("/tmp/rootfs.tar"),
+            Path("/tmp/rootfs.erofs"),
+            "lz4hc",
+            "65536",
+            "12",
+        )
+
+        command = mock_run.call_args.args[0]
+        assert command[command.index("--platform") + 1] == expected_platform
+        assert mock_run.call_args.kwargs["capture"] is True
+
+    @patch("capsem.builder.docker.run_cmd")
+    def test_helper_container_rejects_unknown_host_architecture(self, mock_run, monkeypatch):
+        monkeypatch.setattr("capsem.builder.docker.platform.machine", lambda: "riscv64")
+
+        with pytest.raises(RuntimeError, match="unsupported Docker host architecture: riscv64"):
+            create_erofs(
+                "docker",
+                Path("/tmp/rootfs.tar"),
+                Path("/tmp/rootfs.erofs"),
+                "lz4hc",
+                "65536",
+                "12",
+            )
+
+        mock_run.assert_not_called()
+
     @patch("capsem.builder.docker.run_cmd")
     def test_zstd_uses_modern_erofs_utils_image(self, mock_run):
         create_erofs(
-            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.erofs"),
-            "zstd", "65536",
+            "docker",
+            Path("/tmp/rootfs.tar"),
+            Path("/tmp/rootfs.erofs"),
+            "zstd",
+            "65536",
         )
         cmd = mock_run.call_args[0][0]
         cmd_str = " ".join(cmd)
@@ -1071,8 +1290,12 @@ class TestCreateErofs:
     @patch("capsem.builder.docker.run_cmd")
     def test_lz4hc_uses_release_erofs_utils_image(self, mock_run):
         create_erofs(
-            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/rootfs.erofs"),
-            "lz4hc", "65536", "12",
+            "docker",
+            Path("/tmp/rootfs.tar"),
+            Path("/tmp/rootfs.erofs"),
+            "lz4hc",
+            "65536",
+            "12",
         )
         cmd = mock_run.call_args[0][0]
         cmd_str = " ".join(cmd)
@@ -1084,8 +1307,11 @@ class TestCreateErofs:
     @patch("capsem.builder.docker.run_cmd")
     def test_preserves_output_subdirectory(self, mock_run):
         create_erofs(
-            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/out/rootfs.erofs"),
-            "zstd", "65536",
+            "docker",
+            Path("/tmp/rootfs.tar"),
+            Path("/tmp/out/rootfs.erofs"),
+            "zstd",
+            "65536",
         )
         cmd = mock_run.call_args[0][0]
         cmd_str = " ".join(cmd)
@@ -1100,8 +1326,12 @@ class TestCreateErofs:
     @patch("capsem.builder.docker.run_cmd")
     def test_chowns_output_to_invoking_user(self, mock_run):
         create_erofs(
-            "docker", Path("/tmp/rootfs.tar"), Path("/tmp/out/rootfs.erofs"),
-            "lz4hc", None, "12",
+            "docker",
+            Path("/tmp/rootfs.tar"),
+            Path("/tmp/out/rootfs.erofs"),
+            "lz4hc",
+            None,
+            "12",
         )
 
         cmd_str = " ".join(mock_run.call_args[0][0])
@@ -1134,10 +1364,13 @@ class TestBuildLedger:
 
     def test_append_build_ledger_writes_jsonl_records(self, tmp_path):
         arch_output = tmp_path / "assets" / "arm64"
-        ledger = _append_build_ledger(arch_output, {
-            "stage": "rootfs.erofs",
-            "outputs": [{"path": "rootfs.erofs", "size": 4, "blake3": "0" * 64}],
-        })
+        ledger = _append_build_ledger(
+            arch_output,
+            {
+                "stage": "rootfs.erofs",
+                "outputs": [{"path": "rootfs.erofs", "size": 4, "blake3": "0" * 64}],
+            },
+        )
 
         records = [json.loads(line) for line in ledger.read_text().splitlines()]
         assert ledger.name == BUILD_LEDGER_NAME
@@ -1203,7 +1436,9 @@ class TestBuildLedger:
         ]
 
     @patch("capsem.builder.docker.run_cmd")
-    def test_generate_cyclonedx_obom_extracts_rootfs_and_runs_cdxgen(self, mock_run, tmp_path, monkeypatch):
+    def test_generate_cyclonedx_obom_extracts_rootfs_and_runs_cdxgen(
+        self, mock_run, tmp_path, monkeypatch
+    ):
         repo_root = tmp_path
         (repo_root / "target" / "tmp").mkdir(parents=True)
         rootfs_tar = tmp_path / "rootfs.tar"
@@ -1213,28 +1448,45 @@ class TestBuildLedger:
 
         def fake_run(cmd, **_kwargs):
             if cmd[0] == "cdxgen":
-                output.write_text(json.dumps({
-                    "bomFormat": "CycloneDX",
-                    "metadata": {
-                        "tools": {
-                            "components": [
-                                {"name": "cdxgen", "version": "11.0.0"}
-                            ]
-                        }
-                    },
-                    "components": [
+                extracted_rootfs = cmd[1]
+                output.write_text(
+                    json.dumps(
                         {
-                            "name": "coreutils",
-                            "version": "9.1-1",
-                            "purl": "pkg:deb/debian/coreutils@9.1-1",
+                            "bomFormat": "CycloneDX",
+                            "metadata": {
+                                "timestamp": "2030-01-02T03:04:05Z",
+                                "component": {
+                                    "type": "container",
+                                    "name": "rootfs",
+                                    "version": "latest",
+                                    "purl": "pkg:container/rootfs@latest",
+                                },
+                                "tools": {"components": [{"name": "cdxgen", "version": "11.0.0"}]},
+                            },
+                            "components": [
+                                {
+                                    "type": "library",
+                                    "name": "sendmail-bin",
+                                    "purl": "pkg:deb/debian/sendmail-bin@1.0?distro=debian-12",
+                                    "licenses": [{"license": {"id": "sendmail"}}],
+                                    "properties": [
+                                        {
+                                            "name": "source",
+                                            "value": f"{extracted_rootfs}/usr/bin/sendmail",
+                                        }
+                                    ],
+                                }
+                            ],
                         }
-                    ],
-                }))
+                    )
+                )
             return MagicMock(stdout="")
 
         mock_run.side_effect = fake_run
 
-        result = generate_cyclonedx_obom(rootfs_tar, output, repo_root=repo_root)
+        result = generate_cyclonedx_obom(
+            rootfs_tar, output, repo_root=repo_root, architecture="arm64"
+        )
 
         assert result == output
         tar_cmd = mock_run.call_args_list[0][0][0]
@@ -1243,32 +1495,197 @@ class TestBuildLedger:
         assert "-xf" in tar_cmd
         assert str(rootfs_tar) in tar_cmd
         cdxgen_cmd = mock_run.call_args_list[1][0][0]
-        assert cdxgen_cmd[:4] == ["cdxgen", "-t", "rootfs", "-o"]
-        assert cdxgen_cmd[4] == str(output)
+        assert cdxgen_cmd[0] == "cdxgen"
+        assert cdxgen_cmd[1].endswith("/rootfs")
+        assert cdxgen_cmd[2:] == [
+            "-t",
+            "rootfs",
+            "--no-validate",
+            "-o",
+            str(output),
+        ]
+        assert mock_run.call_args_list[1].kwargs["capture"] is True
+        validate_cmd = mock_run.call_args_list[2][0][0]
+        assert validate_cmd == [
+            "cdx-validate",
+            "--strict",
+            "--no-deep",
+            "--fail-severity",
+            "critical",
+            "--no-include-manual",
+            "-i",
+            str(output),
+        ]
+        assert mock_run.call_args_list[2].kwargs["capture"] is True
+
+        document = json.loads(output.read_text())
+        assert "timestamp" not in document["metadata"]
+        assert "serialNumber" not in document
+        assert document["metadata"]["component"] == {
+            "type": "operating-system",
+            "name": "capsem-rootfs-arm64",
+            "version": "guest-rootfs",
+            "properties": [
+                {"name": "capsem:evidence:scope", "value": "exported-rootfs"},
+                {"name": "capsem:guest:architecture", "value": "arm64"},
+            ],
+        }
+        assert document["components"][0]["licenses"][0]["license"]["id"] == "Sendmail"
+        assert document["components"][0]["properties"][0]["value"] == "/usr/bin/sendmail"
 
     def test_cyclonedx_obom_rejects_host_only_inventory(self, tmp_path):
         output = tmp_path / "obom.cdx.json"
-        output.write_text(json.dumps({
-            "bomFormat": "CycloneDX",
-            "metadata": {
-                "tools": {
-                    "components": [{"name": "cdxgen", "version": "12.7.1"}]
-                },
-                "component": {
-                    "name": "macOS",
-                    "purl": "pkg:swid/macOS@26.5.1",
-                },
-            },
-            "components": [
+        output.write_text(
+            json.dumps(
                 {
-                    "name": "Claude.app",
-                    "purl": "pkg:swid/Claude.app#/Applications/Claude.app",
+                    "bomFormat": "CycloneDX",
+                    "metadata": {
+                        "tools": {
+                            "components": [{"name": "cdxgen", "version": "12.7.1"}]
+                        },
+                        "component": {
+                            "name": "macOS",
+                            "purl": "pkg:swid/macOS@26.5.1",
+                        },
+                    },
+                    "components": [
+                        {
+                            "name": "Claude.app",
+                            "purl": "pkg:swid/Claude.app#/Applications/Claude.app",
+                        }
+                    ],
                 }
-            ],
-        }))
+            )
+        )
 
         with pytest.raises(RuntimeError, match="Debian rootfs package components"):
             _validate_cyclonedx_obom(output)
+
+    def test_validate_cyclonedx_obom_rejects_live_host_inventory(self, tmp_path):
+        output = tmp_path / "obom.cdx.json"
+        output.write_text(
+            json.dumps(
+                {
+                    "bomFormat": "CycloneDX",
+                    "metadata": {
+                        "component": {
+                            "type": "operating-system",
+                            "name": "capsem-rootfs-arm64",
+                            "properties": [
+                                {"name": "capsem:evidence:scope", "value": "exported-rootfs"}
+                            ],
+                        },
+                        "tools": {"components": [{"name": "cdxgen", "version": "12.7.0"}]},
+                    },
+                    "components": [
+                        {
+                            "type": "library",
+                            "name": "apt",
+                            "purl": "pkg:deb/debian/apt@2.6.1?distro=debian-12",
+                        },
+                        {
+                            "type": "application",
+                            "name": "Chrome extension",
+                            "properties": [
+                                {"name": "cdx:osquery:category", "value": "chrome_extensions"}
+                            ],
+                        },
+                    ],
+                }
+            )
+        )
+
+        with pytest.raises(RuntimeError, match="live-host inventory"):
+            _validate_cyclonedx_obom(output)
+
+    def test_normalize_cyclonedx_obom_removes_nondeterministic_host_context(self, tmp_path):
+        rootfs = tmp_path / "random-rootfs"
+        output = tmp_path / "obom.cdx.json"
+        output.write_text(
+            json.dumps(
+                {
+                    "bomFormat": "CycloneDX",
+                    "serialNumber": "urn:uuid:random",
+                    "metadata": {
+                        "timestamp": "2030-01-02T03:04:05Z",
+                        "component": {"type": "container", "name": "random-rootfs"},
+                        "tools": {
+                            "components": [
+                                {
+                                    "name": "trivy",
+                                    "version": "1",
+                                    "hashes": [{"alg": "SHA-256", "content": "host-binary"}],
+                                    "properties": [
+                                        {
+                                            "name": "internal:binary_path",
+                                            "value": "trivy-darwin-arm64",
+                                        },
+                                        {"name": "stable", "value": "kept"},
+                                    ],
+                                }
+                            ]
+                        },
+                    },
+                    "annotations": [{"text": "generated today for random-rootfs"}],
+                    "components": [
+                        {
+                            "name": "file",
+                            "bom-ref": "pkg:generic/file",
+                            "properties": [{"name": "path", "value": f"{rootfs}/etc/os-release"}],
+                        },
+                        {
+                            "type": "cryptographic-asset",
+                            "name": "nondeterministic certificate",
+                            "bom-ref": "crypto/certificate/collision",
+                        },
+                    ],
+                    "dependencies": [
+                        {
+                            "ref": "pkg:generic/file",
+                            "dependsOn": ["crypto/certificate/collision"],
+                        },
+                        {"ref": "crypto/certificate/collision", "dependsOn": []},
+                    ],
+                }
+            )
+        )
+
+        _normalize_cyclonedx_obom(output, rootfs, architecture="x86_64")
+
+        document = json.loads(output.read_text())
+        assert "serialNumber" not in document
+        assert "timestamp" not in document["metadata"]
+        assert "annotations" not in document
+        tool = document["metadata"]["tools"]["components"][0]
+        assert "hashes" not in tool
+        assert tool["properties"] == [{"name": "stable", "value": "kept"}]
+        assert document["components"][0]["properties"][0]["value"] == "/etc/os-release"
+        assert all(item.get("type") != "cryptographic-asset" for item in document["components"])
+        assert document["dependencies"] == [{"dependsOn": [], "ref": "pkg:generic/file"}]
+
+    def test_normalize_cyclonedx_obom_is_byte_deterministic_for_set_arrays(self, tmp_path):
+        rootfs = tmp_path / "rootfs"
+        first = tmp_path / "first.json"
+        second = tmp_path / "second.json"
+        components = [
+            {"type": "library", "name": "zlib", "version": "1"},
+            {"type": "library", "name": "apt", "version": "2"},
+        ]
+
+        def document(items):
+            return {
+                "bomFormat": "CycloneDX",
+                "metadata": {"tools": {"components": [{"name": "cdxgen", "version": "12.7.0"}]}},
+                "components": items,
+            }
+
+        first.write_text(json.dumps(document(components)))
+        second.write_text(json.dumps(document(list(reversed(components)))))
+
+        _normalize_cyclonedx_obom(first, rootfs, architecture="arm64")
+        _normalize_cyclonedx_obom(second, rootfs, architecture="arm64")
+
+        assert first.read_bytes() == second.read_bytes()
 
     @patch("capsem.builder.docker.remove_image")
     @patch("capsem.builder.docker.extract_software_inventory")
@@ -1312,17 +1729,17 @@ class TestBuildLedger:
             output_path.write_bytes(b"erofs")
 
         def fake_obom(_tar_path, output_path, **_kwargs):
-            output_path.write_text(json.dumps({
-                "bomFormat": "CycloneDX",
-                "metadata": {
-                    "tools": {
-                        "components": [
-                            {"name": "cdxgen", "version": "11.0.0"}
-                        ]
+            output_path.write_text(
+                json.dumps(
+                    {
+                        "bomFormat": "CycloneDX",
+                        "metadata": {
+                            "tools": {"components": [{"name": "cdxgen", "version": "11.0.0"}]}
+                        },
+                        "components": [],
                     }
-                },
-                "components": [],
-            }))
+                )
+            )
 
         def fake_versions(_runtime, _tag, _platform, output_dir, _config):
             (output_dir / "tool-versions.txt").write_text("codex=1.0.0\n")
@@ -1330,11 +1747,13 @@ class TestBuildLedger:
         def fake_inventory(_runtime, _tag, _platform, _arch_name, output_dir, _config):
             path = output_dir / "software-inventory.json"
             path.write_text(
-                json.dumps({
-                    "schema": "capsem.profile_software_inventory.v1",
-                    "architecture": "arm64",
-                    "packages": [],
-                })
+                json.dumps(
+                    {
+                        "schema": "capsem.profile_software_inventory.v1",
+                        "architecture": "arm64",
+                        "packages": [],
+                    }
+                )
             )
             return path
 
@@ -1431,10 +1850,14 @@ class TestBuildLedger:
             "initrd.img",
         }
 
+
 class TestErofsConfig:
     def test_config_defaults_enable_release_lz4hc(self):
         assert experimental_erofs_build_config({}, ErofsConfig()) == (
-            True, "lz4hc", None, "12",
+            True,
+            "lz4hc",
+            None,
+            "12",
         )
 
     def test_env_cannot_disable_release_erofs(self):
@@ -1445,40 +1868,58 @@ class TestErofsConfig:
             )
 
     def test_env_config_parses_enabled_zstd(self):
-        assert experimental_erofs_build_config({
-            "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
-            "CAPSEM_BUILD_EROFS_COMPRESSION": "zstd",
-            "CAPSEM_BUILD_EROFS_CLUSTER_SIZE": "65536",
-        }) == (True, "zstd", "65536", "15")
+        assert experimental_erofs_build_config(
+            {
+                "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
+                "CAPSEM_BUILD_EROFS_COMPRESSION": "zstd",
+                "CAPSEM_BUILD_EROFS_CLUSTER_SIZE": "65536",
+            }
+        ) == (True, "zstd", "65536", "15")
 
     def test_env_config_rejects_unknown_compression(self):
         with pytest.raises(ValueError, match="CAPSEM_BUILD_EROFS_COMPRESSION"):
-            experimental_erofs_build_config({
-                "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
-                "CAPSEM_BUILD_EROFS_COMPRESSION": "brotli",
-            })
+            experimental_erofs_build_config(
+                {
+                    "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
+                    "CAPSEM_BUILD_EROFS_COMPRESSION": "brotli",
+                }
+            )
 
     def test_env_config_rejects_zstd_level_outside_range(self):
-        with pytest.raises(ValueError, match="0..22"):
-            experimental_erofs_build_config({
-                "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
-                "CAPSEM_BUILD_EROFS_COMPRESSION": "zstd",
-                "CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL": "23",
-            })
+        with pytest.raises(ValueError, match=r"0..22"):
+            experimental_erofs_build_config(
+                {
+                    "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
+                    "CAPSEM_BUILD_EROFS_COMPRESSION": "zstd",
+                    "CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL": "23",
+                }
+            )
 
     def test_env_config_rejects_lz4_level(self):
         with pytest.raises(ValueError, match="not valid for lz4"):
-            experimental_erofs_build_config({
-                "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
-                "CAPSEM_BUILD_EROFS_COMPRESSION": "lz4",
-                "CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL": "1",
-            })
+            experimental_erofs_build_config(
+                {
+                    "CAPSEM_BUILD_EXPERIMENTAL_EROFS": "1",
+                    "CAPSEM_BUILD_EROFS_COMPRESSION": "lz4",
+                    "CAPSEM_BUILD_EROFS_COMPRESSION_LEVEL": "1",
+                }
+            )
 
 
 class TestKernelConfig:
-    def test_real_config_pins_stable_kernel_branch(self, real_config):
-        assert real_config.build.architectures["arm64"].kernel_branch == "7.0"
-        assert real_config.build.architectures["x86_64"].kernel_branch == "7.0"
+    def test_real_config_pins_supported_lts_kernel_branch(self, real_config):
+        # Read from build.toml rather than restated. The literal was the value
+        # the file declares, so moving the pin failed this test instead of
+        # reporting that the parser disagreed with the config.
+        declared = tomllib.loads(
+            (PROJECT_ROOT / "config/docker/image/build.toml").read_text(encoding="utf-8")
+        )["build"]["architectures"]
+        for arch in ("arm64", "x86_64"):
+            branch = declared[arch]["kernel_branch"]
+            assert re.fullmatch(r"\d+\.\d+", branch), (
+                f"{arch} kernel_branch {branch!r} is not a MAJOR.MINOR branch"
+            )
+            assert real_config.build.architectures[arch].kernel_branch == branch
 
     def test_real_config_defaults_erofs_lz4hc_level_12(self, real_config):
         assert real_config.build.erofs.enabled is True
@@ -1562,13 +2003,13 @@ class TestKernelConfig:
         assert "gnome-keyring-daemon --start --components=secrets" in build
         assert "keyring-unlock" in build
         assert "unset gnome_keyring_password keyring_password" in build
-        assert "exec \"$@\"" in build
+        assert 'exec "$@"' in build
 
     def test_init_uses_iptables_nft_only(self):
         content = (PROJECT_ROOT / "guest" / "artifacts" / "capsem-init").read_text()
         assert "iptables-nft" in content
         assert "iptables-legacy" not in content
-        assert 'IPTABLES=iptables-nft' in content
+        assert "IPTABLES=iptables-nft" in content
         assert "iptables_add()" in content
         assert "FATAL: iptables-nft failed" in content
         assert 'chroot /newroot "$IPTABLES" -t nat -A' not in content
@@ -1584,8 +2025,11 @@ class TestPrepareBuildContext:
         context_dir = tmp_path / "ctx"
         context_dir.mkdir()
         prepare_build_context(
-            real_config, "arm64", "Dockerfile.rootfs.j2",
-            context_dir, PROJECT_ROOT,
+            real_config,
+            "arm64",
+            "Dockerfile.rootfs.j2",
+            context_dir,
+            PROJECT_ROOT,
         )
         # Dockerfile
         assert (context_dir / "Dockerfile").is_file()
@@ -1609,8 +2053,12 @@ class TestPrepareBuildContext:
         context_dir = tmp_path / "ctx"
         context_dir.mkdir()
         prepare_build_context(
-            real_config, "arm64", "Dockerfile.kernel.j2",
-            context_dir, PROJECT_ROOT, kernel_version="6.6.127",
+            real_config,
+            "arm64",
+            "Dockerfile.kernel.j2",
+            context_dir,
+            PROJECT_ROOT,
+            kernel_version="6.6.127",
         )
         assert (context_dir / "Dockerfile").is_file()
         assert (context_dir / "kernel" / "defconfig.arm64").is_file()
@@ -1658,8 +2106,11 @@ class TestPrepareBuildContext:
         context_dir = tmp_path / "ctx"
         context_dir.mkdir()
         prepare_build_context(
-            real_config, "arm64", "Dockerfile.rootfs.j2",
-            context_dir, PROJECT_ROOT,
+            real_config,
+            "arm64",
+            "Dockerfile.rootfs.j2",
+            context_dir,
+            PROJECT_ROOT,
         )
         content = (context_dir / "Dockerfile").read_text()
         assert "FROM --platform=linux/arm64" in content
@@ -1668,8 +2119,12 @@ class TestPrepareBuildContext:
         context_dir = tmp_path / "ctx"
         context_dir.mkdir()
         prepare_build_context(
-            real_config, "arm64", "Dockerfile.kernel.j2",
-            context_dir, PROJECT_ROOT, kernel_version="6.6.131",
+            real_config,
+            "arm64",
+            "Dockerfile.kernel.j2",
+            context_dir,
+            PROJECT_ROOT,
+            kernel_version="6.6.131",
         )
         content = (context_dir / "Dockerfile").read_text()
         assert "6.6.131" in content
@@ -1729,6 +2184,32 @@ class TestGenerateChecksums:
 
         assert second["assets"]["current"] == first["assets"]["current"]
 
+    def test_digest_enrichment_does_not_mint_a_new_asset_release(self, tmp_path):
+        arm64 = tmp_path / "arm64"
+        arm64.mkdir()
+        (arm64 / "vmlinuz").write_bytes(b"kernel")
+        (arm64 / "initrd.img").write_bytes(b"initrd")
+        (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
+
+        generate_checksums(tmp_path, "0.13.0")
+        manifest_path = tmp_path / "manifest.json"
+        legacy = json.loads(manifest_path.read_text())
+        first_version = legacy["assets"]["current"]
+        for entries in legacy["assets"]["releases"][first_version]["arches"].values():
+            for entry in entries.values():
+                entry.pop("sha256")
+        manifest_path.write_text(json.dumps(legacy, indent=2) + "\n")
+
+        generate_checksums(tmp_path, "0.13.0")
+        enriched = json.loads(manifest_path.read_text())
+
+        assert enriched["assets"]["current"] == first_version
+        assert all(
+            entry.get("sha256")
+            for entries in enriched["assets"]["releases"][first_version]["arches"].values()
+            for entry in entries.values()
+        )
+
     def test_manifest_increments_release_for_changed_assets(self, tmp_path):
         arm64 = tmp_path / "arm64"
         arm64.mkdir()
@@ -1762,6 +2243,8 @@ class TestGenerateChecksums:
         for filename, entry in arm64_entries.items():
             assert "/" not in filename
             assert len(entry["hash"]) == 64  # blake3 hex digest
+            assert len(entry["sha256"]) == 64
+            assert entry["sha256"] == hashlib.sha256((arm64 / filename).read_bytes()).hexdigest()
             assert entry["size"] > 0
 
     def test_manifest_includes_obom_when_rootfs_build_emits_it(self, tmp_path):
@@ -1771,16 +2254,16 @@ class TestGenerateChecksums:
         (arm64 / "vmlinuz").write_bytes(b"kernel")
         (arm64 / "initrd.img").write_bytes(b"initrd")
         (arm64 / "rootfs.erofs").write_bytes(b"rootfs")
-        (arm64 / "obom.cdx.json").write_text(json.dumps({
-            "bomFormat": "CycloneDX",
-            "metadata": {
-                "tools": {
-                    "components": [
-                        {"name": "cdxgen", "version": "11.0.0"}
-                    ]
+        (arm64 / "obom.cdx.json").write_text(
+            json.dumps(
+                {
+                    "bomFormat": "CycloneDX",
+                    "metadata": {
+                        "tools": {"components": [{"name": "cdxgen", "version": "11.0.0"}]}
+                    },
                 }
-            },
-        }))
+            )
+        )
 
         generate_checksums(tmp_path, "0.13.0")
 
@@ -1878,7 +2361,7 @@ class TestGenerateChecksums:
         (arm64 / "initrd.img").write_bytes(b"initrd")
         (arm64 / "rootfs.squashfs").write_bytes(b"rootfs")
 
-        with pytest.raises(FileNotFoundError, match="rootfs.erofs"):
+        with pytest.raises(FileNotFoundError, match=r"rootfs.erofs"):
             generate_checksums(tmp_path, "0.13.0")
 
     def test_manifest_rejects_rootfs_only_arch(self, tmp_path):
@@ -1897,12 +2380,14 @@ class TestGenerateChecksums:
         (arm64 / "vmlinuz").write_bytes(b"kernel")
         (arm64 / "initrd.img").write_bytes(b"initrd")
 
-        with pytest.raises(FileNotFoundError, match="rootfs.erofs"):
+        with pytest.raises(FileNotFoundError, match=r"rootfs.erofs"):
             generate_checksums(tmp_path, "0.13.0")
 
 
 class TestBuildAllArchitectures:
-    def test_kernel_only_template_does_not_generate_full_asset_manifest(self, real_config, tmp_path):
+    def test_kernel_only_template_does_not_generate_full_asset_manifest(
+        self, real_config, tmp_path
+    ):
         """Kernel-only CI primitive must not require rootfs.erofs before rootfs build runs."""
         with (
             patch("capsem.builder.docker.build_image") as build_image_mock,
@@ -1964,7 +2449,9 @@ class TestContainerCompileAgent:
         mock_run.side_effect = side_effect
 
         binaries = container_compile_agent(
-            "aarch64-unknown-linux-musl", repo_root, output_dir,
+            "aarch64-unknown-linux-musl",
+            repo_root,
+            output_dir,
         )
 
         assert len(binaries) == len(GUEST_BINARIES)
@@ -2016,7 +2503,9 @@ class TestContainerCompileAgent:
 
         with pytest.raises(RuntimeError, match="Expected binary not found"):
             container_compile_agent(
-                "aarch64-unknown-linux-musl", repo_root, output_dir,
+                "aarch64-unknown-linux-musl",
+                repo_root,
+                output_dir,
             )
 
     @patch("capsem.builder.docker.run_cmd")
@@ -2036,7 +2525,9 @@ class TestContainerCompileAgent:
 
         with pytest.raises(RuntimeError, match="Binary is empty"):
             container_compile_agent(
-                "aarch64-unknown-linux-musl", repo_root, output_dir,
+                "aarch64-unknown-linux-musl",
+                repo_root,
+                output_dir,
             )
 
 
@@ -2050,10 +2541,10 @@ class TestContainerCompileAgentShellScript:
 
     def _extract_shell_script(self, mock_run, tmp_path):
         """Run container_compile_agent and return the bash -c script string."""
-        mock_run.side_effect = lambda cmd, **kw: [
-            (tmp_path / "output" / b).write_bytes(b"elf")
-            for b in GUEST_BINARIES
-        ] or MagicMock(stdout="")
+        mock_run.side_effect = lambda cmd, **kw: (
+            [(tmp_path / "output" / b).write_bytes(b"elf") for b in GUEST_BINARIES]
+            or MagicMock(stdout="")
+        )
         container_compile_agent(
             "aarch64-unknown-linux-musl",
             tmp_path / "repo",
@@ -2100,7 +2591,9 @@ class TestContainerCompileAgentShellScript:
         (tmp_path / "repo").mkdir()
         script = self._extract_shell_script(mock_run, tmp_path)
         for binary in GUEST_BINARIES:
-            assert f"cp target/aarch64-unknown-linux-musl/release/{binary} /output/{binary}" in script
+            assert (
+                f"cp target/aarch64-unknown-linux-musl/release/{binary} /output/{binary}" in script
+            )
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime", return_value="docker")
@@ -2151,9 +2644,7 @@ class TestPrepareBuildContextArtifacts:
 
     def fake_guest_config(self, real_config, fake_repo):
         """Point the backend image spec at the fake guest workspace."""
-        return real_config.model_copy(
-            update={"guest_dir_path": str(fake_repo / "guest")}
-        )
+        return real_config.model_copy(update={"guest_dir_path": str(fake_repo / "guest")})
 
     def test_missing_rootfs_artifact_silently_skipped(self, real_config, fake_repo, tmp_path):
         # Remove one ROOTFS_SCRIPT from fake repo
@@ -2200,6 +2691,7 @@ class TestRootfsArtifactConstants:
 
     def test_rootfs_artifact_dirs_no_duplicates(self):
         from capsem.builder.docker import ROOTFS_SCRIPT_DIRS
+
         assert len(ROOTFS_SCRIPT_DIRS) == len(set(ROOTFS_SCRIPT_DIRS))
 
     def test_all_rootfs_artifacts_have_copy_in_template(self, rendered_arm64):
@@ -2227,7 +2719,9 @@ class TestCrossCompileAgent:
         mock_container.return_value = []
         cross_compile_agent("aarch64-unknown-linux-musl", tmp_path, tmp_path / "out")
         mock_container.assert_called_once_with(
-            "aarch64-unknown-linux-musl", tmp_path, tmp_path / "out",
+            "aarch64-unknown-linux-musl",
+            tmp_path,
+            tmp_path / "out",
         )
 
     @patch("capsem.builder.docker.container_compile_agent")
@@ -2235,7 +2729,12 @@ class TestCrossCompileAgent:
     @patch("capsem.builder.docker.platform.machine", return_value="aarch64")
     @patch("capsem.builder.docker.run_cmd")
     def test_native_on_linux_skips_container(
-        self, mock_run, _mock_machine, mock_sys, mock_container, tmp_path,
+        self,
+        mock_run,
+        _mock_machine,
+        mock_sys,
+        mock_container,
+        tmp_path,
     ):
         mock_sys.platform = "linux"
         mock_run.return_value = MagicMock(stdout="aarch64-unknown-linux-musl")
@@ -2268,7 +2767,12 @@ class TestCrossCompileAgent:
     @patch("capsem.builder.docker.container_compile_agent")
     @patch("capsem.builder.docker.sys")
     def test_foreign_target_on_linux_delegates_to_architecture_matched_container(
-        self, mock_sys, mock_container, host_machine, rust_target, tmp_path,
+        self,
+        mock_sys,
+        mock_container,
+        host_machine,
+        rust_target,
+        tmp_path,
     ):
         mock_sys.platform = "linux"
         mock_container.return_value = []
@@ -2278,7 +2782,9 @@ class TestCrossCompileAgent:
 
         assert result == []
         mock_container.assert_called_once_with(
-            rust_target, tmp_path, tmp_path / "out",
+            rust_target,
+            tmp_path,
+            tmp_path / "out",
         )
 
     @pytest.mark.parametrize(
@@ -2294,8 +2800,13 @@ class TestCrossCompileAgent:
     @patch("capsem.builder.docker.sys")
     @patch("capsem.builder.docker.run_cmd")
     def test_native_on_linux_replaces_existing_readonly_outputs(
-        self, mock_run, mock_sys, mock_container,
-        host_machine, rust_target, tmp_path,
+        self,
+        mock_run,
+        mock_sys,
+        mock_container,
+        host_machine,
+        rust_target,
+        tmp_path,
     ):
         mock_sys.platform = "linux"
         mock_run.return_value = MagicMock(stdout=rust_target)

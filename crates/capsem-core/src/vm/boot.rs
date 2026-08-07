@@ -75,6 +75,13 @@ pub struct BootOptions<'a> {
     pub checkpoint_path: Option<std::path::PathBuf>,
     pub machine_identifier_path: Option<&'a Path>,
     pub serial_log_path: Option<&'a Path>,
+    /// Asset hashes pinned by the profile this VM is booting.
+    ///
+    /// A channel carries one image set per profile, so no channel-wide pointer
+    /// can answer this: the caller knows which profile it is starting and must
+    /// say what that profile pins. Absent means the caller could not determine
+    /// them, which is a hard error rather than a licence to boot unverified.
+    pub expected_asset_hashes: Option<crate::asset_manager::ExpectedAssetHashes>,
 }
 
 /// Build config, boot the VM via the hypervisor trait, and return the handle +
@@ -105,6 +112,7 @@ pub fn boot_vm(
         checkpoint_path,
         machine_identifier_path,
         serial_log_path,
+        expected_asset_hashes,
     } = options;
     let _span = info_span!("boot_vm").entered();
     let mut sm = HostStateMachine::new_host();
@@ -147,28 +155,24 @@ pub fn boot_vm(
             builder = builder.serial_log_path(slp);
         }
 
-        // Load expected asset hashes from the manifest on disk. The manifest is
-        // metadata, not an authority root: profile-selected asset hashes and
-        // corp/profile-controlled asset URLs are the runtime contract.
-        let manifest = crate::asset_manager::load_manifest_for_assets(assets);
-        let expected_hashes = manifest
-            .and_then(|m| m.expected_hashes_current(crate::asset_manager::host_manifest_arch()));
-        match expected_hashes {
-            Some(ref h) => info!(
-                "[boot-audit] asset hash verification enabled (kernel={}, initrd={}, rootfs={})",
-                &h.kernel[..16],
-                &h.initrd[..16],
-                &h.rootfs[..16],
-            ),
-            None => info!(
-                "[boot-audit] asset hash verification disabled (no manifest match for arch={})",
-                crate::asset_manager::host_manifest_arch()
-            ),
-        }
+        // Verify against the hashes the booting profile pins, supplied by the
+        // caller. Reading them from the manifest's channel-wide pointer instead
+        // verified every profile against whichever one that pointer named, which
+        // is correct only while a channel carries exactly one profile.
+        let expected_hashes = expected_asset_hashes.context(
+            "refusing to boot without the booting profile's pinned asset hashes: \
+             an unverified kernel is worse than a failed boot",
+        )?;
+        // Logged in full, not truncated. Pins reach here in two spellings --
+        // bare hex and `blake3:<hex>` -- and a truncated line renders both as
+        // plausible-looking prefixes, which is precisely how a spelling
+        // mismatch between pin and digest hides in an audit trail.
+        info!(
+            "[boot-audit] asset hash verification enabled (kernel={}, initrd={}, rootfs={})",
+            expected_hashes.kernel, expected_hashes.initrd, expected_hashes.rootfs,
+        );
 
-        if let Some(ref h) = expected_hashes {
-            builder = builder.expected_kernel_hash(&h.kernel);
-        }
+        builder = builder.expected_kernel_hash(&expected_hashes.kernel);
 
         let initrd_path = initrd_override
             .map(|p| p.to_path_buf())
@@ -179,9 +183,7 @@ pub fn boot_vm(
                 initrd_path.display()
             );
             builder = builder.initrd_path(initrd_path);
-            if let Some(ref h) = expected_hashes {
-                builder = builder.expected_initrd_hash(&h.initrd);
-            }
+            builder = builder.expected_initrd_hash(&expected_hashes.initrd);
         } else {
             info!(
                 "[boot-audit] initrd: {} (exists=false)",
@@ -202,9 +204,7 @@ pub fn boot_vm(
                 rootfs.exists()
             );
             builder = builder.disk_path(rootfs);
-            if let Some(ref h) = expected_hashes {
-                builder = builder.expected_disk_hash(&h.rootfs);
-            }
+            builder = builder.expected_disk_hash(&expected_hashes.rootfs);
         } else {
             info!("[boot-audit] rootfs: none");
         }
@@ -392,11 +392,11 @@ pub fn send_boot_config(
                 break;
             }
             if let Err(e) = validate_env_key(&key) {
-                warn!("skipping invalid boot env var key: {e}");
+                warn!(error = %e, "skipping invalid boot env var key");
                 continue;
             }
             if let Err(e) = validate_env_value(&value) {
-                warn!("skipping boot env var {key}: {e}");
+                warn!(error = %e, "skipping boot env var {key}");
                 continue;
             }
             sent_env.insert(key.clone(), value.clone());
@@ -412,11 +412,11 @@ pub fn send_boot_config(
             break;
         }
         if let Err(e) = validate_env_key(key) {
-            warn!("skipping invalid CLI --env key: {e}");
+            warn!(error = %e, "skipping invalid CLI --env key");
             continue;
         }
         if let Err(e) = validate_env_value(value) {
-            warn!("skipping CLI --env {key}: {e}");
+            warn!(error = %e, "skipping CLI --env {key}");
             continue;
         }
         sent_env.insert(key.clone(), value.clone());
@@ -448,7 +448,7 @@ pub fn send_boot_config(
             continue;
         }
         if let Err(e) = validate_file_path(&f.path) {
-            warn!("skipping invalid boot file path: {e}");
+            warn!(error = %e, "skipping invalid boot file path");
             continue;
         }
         total_file_bytes += data.len();
@@ -492,127 +492,4 @@ pub fn send_boot_config(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::{Read, Write};
-
-    /// Create a pipe pair as std::fs::File for testing control msg I/O.
-    fn pipe_files() -> (std::fs::File, std::fs::File) {
-        use std::os::unix::io::FromRawFd;
-        let mut fds = [0i32; 2];
-        let ret = unsafe { libc::pipe(fds.as_mut_ptr()) };
-        assert_eq!(ret, 0, "pipe() failed");
-        let rf = unsafe { std::fs::File::from_raw_fd(fds[0]) };
-        let wf = unsafe { std::fs::File::from_raw_fd(fds[1]) };
-        (rf, wf)
-    }
-
-    #[test]
-    fn write_read_control_msg_ping() {
-        let (mut reader, mut writer) = pipe_files();
-        write_control_msg(&mut writer, &HostToGuest::Ping { epoch_secs: 0 }).unwrap();
-        // read_control_msg reads GuestToHost, not HostToGuest, so we test
-        // the raw frame encode/decode instead
-        let frame = encode_host_msg(&HostToGuest::Ping { epoch_secs: 0 }).unwrap();
-        writer.write_all(&frame).unwrap();
-        drop(writer);
-
-        // Read length prefix + payload manually
-        let mut len_buf = [0u8; 4];
-        reader.read_exact(&mut len_buf).unwrap();
-        let len = u32::from_be_bytes(len_buf) as usize;
-        let mut payload = vec![0u8; len];
-        reader.read_exact(&mut payload).unwrap();
-        // Skip the second frame (we wrote twice)
-    }
-
-    #[test]
-    fn write_read_control_msg_exec_roundtrip() {
-        let (mut reader, mut writer) = pipe_files();
-        let msg = HostToGuest::Exec {
-            id: 42,
-            command: "echo test".into(),
-        };
-        let frame = encode_host_msg(&msg).unwrap();
-        writer.write_all(&frame).unwrap();
-        drop(writer);
-
-        let mut len_buf = [0u8; 4];
-        reader.read_exact(&mut len_buf).unwrap();
-        let len = u32::from_be_bytes(len_buf) as usize;
-        assert!(len < MAX_FRAME_SIZE as usize);
-        let mut payload = vec![0u8; len];
-        reader.read_exact(&mut payload).unwrap();
-        let decoded = crate::decode_host_msg(&payload).unwrap();
-        match decoded {
-            HostToGuest::Exec { id, command } => {
-                assert_eq!(id, 42);
-                assert_eq!(command, "echo test");
-            }
-            other => panic!("expected Exec, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn read_control_msg_oversized_frame_rejected() {
-        let (mut reader, mut writer) = pipe_files();
-        // Write a length prefix that exceeds MAX_FRAME_SIZE
-        let fake_len = (MAX_FRAME_SIZE + 1).to_be_bytes();
-        writer.write_all(&fake_len).unwrap();
-        drop(writer);
-
-        let result = read_control_msg(&mut reader);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("too large"));
-    }
-
-    #[test]
-    fn ca_key_pem_embedded() {
-        assert!(CA_KEY_PEM.contains("PRIVATE KEY"));
-    }
-
-    #[test]
-    fn ca_cert_pem_embedded() {
-        assert!(CA_CERT_PEM.contains("CERTIFICATE"));
-    }
-
-    #[test]
-    fn virtiofs_cmdline_append() {
-        let base = "console=hvc0 ro loglevel=1";
-        let shares = [VirtioFsShare {
-            tag: "capsem".into(),
-            host_path: "/tmp/session".into(),
-            read_only: false,
-        }];
-        let effective = effective_kernel_cmdline(base, &shares, None);
-        assert!(effective.contains("capsem.storage=virtiofs"));
-    }
-
-    #[test]
-    fn virtiofs_cmdline_no_shares() {
-        let base = "console=hvc0 ro loglevel=1";
-        let shares: Vec<VirtioFsShare> = vec![];
-        let effective = effective_kernel_cmdline(base, &shares, None);
-        assert!(!effective.contains("capsem.storage=virtiofs"));
-    }
-
-    #[test]
-    fn erofs_rootfs_override_appends_cmdline_flag() {
-        let base = "console=hvc0 ro loglevel=1";
-        let shares: Vec<VirtioFsShare> = vec![];
-        let rootfs = Path::new("/tmp/rootfs.erofs");
-        let effective =
-            effective_kernel_cmdline_with_erofs_mode(base, &shares, Some(rootfs), false);
-        assert!(effective.contains("capsem.rootfs=erofs"));
-    }
-
-    #[test]
-    fn erofs_dax_mode_appends_distinct_cmdline_flag() {
-        let base = "console=hvc0 ro loglevel=1";
-        let shares: Vec<VirtioFsShare> = vec![];
-        let rootfs = Path::new("/tmp/rootfs.erofs");
-        let effective = effective_kernel_cmdline_with_erofs_mode(base, &shares, Some(rootfs), true);
-        assert!(effective.contains("capsem.rootfs=erofs-dax"));
-        assert!(!effective.contains("capsem.rootfs=erofs "));
-    }
-}
+mod tests;

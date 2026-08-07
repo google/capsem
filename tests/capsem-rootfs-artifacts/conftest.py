@@ -3,9 +3,9 @@
 No VM needed -- validates build context and Dockerfile consistency.
 """
 
-import pytest
-
 from pathlib import Path
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 ARTIFACTS_DIR = PROJECT_ROOT / "guest" / "artifacts"

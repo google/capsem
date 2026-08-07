@@ -1,56 +1,110 @@
 # Release checklist
 
-Concise pre- and post-release checklist for release managers. For deeper detail on CI, signing, notarization, and post-release verification, see the `/release-process` skill in `skills/release-process/`.
+The normative contract is `tmp/release-spec.md`. Release managers have exactly
+two commands:
 
-## Pre-release
+```text
+just release-binaries <channel>
+just release-profile <channel> <profile>
+```
 
-- [ ] `main` is green on CI.
-- [ ] `just doctor` passes with no warnings on your machine.
-- [ ] `scripts/preflight.sh` passes (Apple cert, Tauri signing key, notarization creds available).
-- [ ] `just test` passes locally (all tests: unit + integration + cross-compile + bench + Docker install e2e).
-- [ ] `CHANGELOG.md` `[Unreleased]` section is populated and reads well.
-- [ ] `CITATION.cff` `date-released` is current (`just _stamp-version` handles this alongside the other version files).
-- [ ] Docs site has a release page at `docs/src/content/docs/releases/<major>-<minor>.md` if this is a minor bump.
+There is no generic or combined release command.
 
-## Cut the release
+## One-command gate
 
-Preferred -- fully automated:
+Do not run a separate preparation or qualification command. Each release
+command first runs complete `just test`. If it fails, nothing is pushed,
+stamped, authored, or dispatched. After success, the shared source guard
+requires the exact clean `main` HEAD captured before the test, fast-forwards
+that tested HEAD when needed, and refuses changed, dirty, or diverged source.
+Only then does the selected release implementation run.
+
+## Binary release
+
+Run:
 
 ```sh
-just cut-release
+just release-binaries nightly
+# or
+just release-binaries stable
 ```
 
-This runs `just test`, bumps the version in `Cargo.toml` / `crates/capsem-app/tauri.conf.json` / `pyproject.toml`, stamps `CHANGELOG.md`, commits, tags, and pushes. CI takes over from the tag push.
+The command runs complete `just test`, publishes its exact tested `main` HEAD,
+then the binary script stamps the version and release notes, creates and pushes
+the immutable tag, dispatches the binary workflow, and waits for it. The
+serialized workflow:
 
-Manual path (if `cut-release` fails partway through): see `/release-process` -- it documents the precise steps.
+1. Acquires `capsem-release-<channel>`.
+2. Resolves the latest channel source manifest inside that lock.
+3. Pulls and verifies every referenced profile, including staged profiles.
+4. Builds only the macOS and Linux package cohort.
+5. Installs the exact publishable packages.
+6. Runs shared static, artifact, complete functional, native/glow-up, and
+   release-contract modules against the resolved profile set.
+7. Mutates package, binary inventory, host SBOM, and existing attestation
+   fields through `capsem-admin`.
+8. Generates, verifies, and deploys the complete public distribution.
 
-## CI (`release.yaml`)
+The binary workflow must never invoke profile, kernel, initrd, rootfs, or image
+builders.
 
-The tag push triggers the release pipeline (~18 min):
+## Profile release
 
+Run:
+
+```sh
+just release-profile nightly code
 ```
-preflight ──> build-assets (arm64 + x86_64) ──> build-app-macos ──┐
-         └──> test ──────────────────────────────────────────────├──> create-release
-         └──> build-app-linux (arm64 + x86_64) ──────────────────┘
+
+The command runs complete `just test`, publishes its exact tested `main` HEAD,
+then calls `capsem-admin release`. The serialized workflow:
+
+1. Acquires the same `capsem-release-<channel>` lock.
+2. Resolves the latest source manifest and pulls its current package.
+3. Builds exactly the selected channel/profile and its contained assets.
+4. Runs the shared complete test modules against the pulled package.
+5. Derives and verifies the immutable profile publication identity.
+6. Mutates only the selected profile entry through `capsem-admin`.
+7. Deploys immediately when the existing package satisfies the profile bounds.
+
+The profile workflow must never build native packages or release binaries.
+
+## Profile requiring new code
+
+Run the normal commands in order:
+
+```sh
+just release-profile <channel> <profile>
+just release-binaries <channel>
 ```
 
-Watch CI. A failure in any job aborts the release. If `create-release` fails partway:
+The first command builds and publishes the profile once but does not expose an
+incompatible public graph. The second command pulls that staged profile, builds
+the required package cohort, runs the complete functional and glow-up proof,
+and activates the compatible graph. Nothing is rebuilt twice.
 
-- The tag is pushed -- don't delete it. Instead, fix the issue and cut a new patch release.
-- Re-tagging loses updater continuity (Tauri updater reads `latest.json`).
+## Required proof before activation
 
-## Post-release
+Every activated pairing must pass:
 
-- [ ] GitHub release page has signed artifacts: `.dmg` (macOS arm64), `.deb` (linux arm64 + x86_64), manifest, checksums.
-- [ ] `latest.json` for macOS (Tauri updater) is present and signed.
-- [ ] `curl -fsSL https://capsem.org/install.sh | sh` on a clean VM installs the new version.
-- [ ] The existing installed client auto-updates (or prompts) on next launch.
-- [ ] Docs site rebuilds and the release page shows on `capsem.org`.
-- [ ] Close out `[Unreleased]` follow-ups in `CHANGELOG.md` as new unreleased items for the next cycle.
+- manifest, package, binary inventory, SBOM, profile config/image, OBOM,
+  evidence, digest, architecture, and guest-boot validation;
+- all VM suites, Winterfell, MCP lifecycle, IronBank, injection, integration,
+  benchmarks, and full `capsem-doctor`;
+- exact native install;
+- manifest polling, binary-only update, profile-only update,
+  profile-then-binary update, channel switching, tamper rejection, and
+  preservation of the prior working state.
 
-## If things go wrong
+The manifest is the authority. SBOM, OBOM, attestations, and GitHub workflow
+logs are the evidence. Do not create a parallel release ledger or result file.
 
-- **Codesigning fails** -- `scripts/preflight.sh` should have caught it. If it did not, read `/release-process` and run the p12 conversion fallback.
-- **Notarization hangs** -- CI uses `--skip-stapling`; first-time notarization is async and can take hours. Don't block the release on it.
-- **Tag pushed but CI aborted** -- never force-push over a tag. Increment the patch version and cut again.
-- **Self-updater regression** -- users on the prior version can always download the new release manually from GitHub.
+## Failure rules
+
+- Never move or reuse an immutable tag or profile identity.
+- Fix forward with a new commit/version.
+- Never bypass a red package, functional, glow-up, lane, or deployment gate.
+- A failed or incompatible candidate may remain immutable and inactive; it must
+  not alter the public channel.
+- Production deployment is only through the generated-distribution workflow
+  called by a parent holding the channel lock.

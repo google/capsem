@@ -58,7 +58,7 @@ define_class!(
             let conn = VsockConnection::new(fd, port, Box::new(VzConnectionAnchor(retained_conn)));
 
             if let Err(e) = self.ivars().tx.send(conn) {
-                warn!("vsock: failed to send connection to manager: {e}");
+                warn!(error = %e, "vsock: failed to send connection to manager");
                 return Bool::NO;
             }
 

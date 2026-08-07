@@ -8,6 +8,8 @@ set -eu
 CAPSEM_CHANNEL="${CAPSEM_CHANNEL:-stable}"
 CAPSEM_RELEASE_BASE_URL="${CAPSEM_RELEASE_BASE_URL:-https://release.capsem.org}"
 CAPSEM_MANIFEST_URL="${CAPSEM_MANIFEST_URL:-${CAPSEM_RELEASE_BASE_URL}/assets/${CAPSEM_CHANNEL}/manifest.json}"
+CAPSEM_INSTALL_USER_REQUEST_DIR="/var/run/capsem"
+CAPSEM_INSTALL_USER_REQUEST="$CAPSEM_INSTALL_USER_REQUEST_DIR/install-user"
 
 # -- Testable functions ------------------------------------------------------
 # These functions can be unit-tested by sourcing this script with
@@ -54,6 +56,7 @@ find_asset_url() {
     _manifest_json="$1"
     _os="$2"
     _arch="$3"
+    _manifest_arch_alias=""
     case "$_os" in
         darwin)
             _platform="macos"
@@ -66,7 +69,8 @@ find_asset_url() {
             _kind="debian_package"
             case "$_arch" in
                 amd64)
-                    _manifest_arch="x86_64"
+                    _manifest_arch="amd64"
+                    _manifest_arch_alias="x86_64"
                     _name_suffix="_amd64.deb"
                     ;;
                 arm64)
@@ -84,7 +88,8 @@ find_asset_url() {
     _asset_record="$(printf '%s\n' "$_manifest_json" | awk \
         -v platform="$_platform" \
         -v kind="$_kind" \
-        -v arch="$_manifest_arch" '
+        -v arch="$_manifest_arch" \
+        -v arch_alias="$_manifest_arch_alias" '
         function count_char(text, char, i, n) {
             n = 0
             for (i = 1; i <= length(text); i++) {
@@ -98,6 +103,7 @@ find_asset_url() {
             platform_re = "\"" "platform" "\"" "[[:space:]]*:[[:space:]]*\"" platform "\""
             kind_re = "\"" "kind" "\"" "[[:space:]]*:[[:space:]]*\"" kind "\""
             arch_re = "\"" "architecture" "\"" "[[:space:]]*:[[:space:]]*\"" arch "\""
+            arch_alias_re = "\"" "architecture" "\"" "[[:space:]]*:[[:space:]]*\"" arch_alias "\""
             status_re = "\"" "status" "\"" "[[:space:]]*:[[:space:]]*\"current\""
         }
         /"packages"[[:space:]]*:/ {
@@ -114,7 +120,9 @@ find_asset_url() {
                 block = block $0 "\n"
                 depth += count_char($0, "{") - count_char($0, "}")
                 if (depth == 0) {
-                    if (block ~ platform_re && block ~ kind_re && block ~ arch_re && block ~ status_re) {
+                    if (block ~ platform_re && block ~ kind_re \
+                        && (block ~ arch_re || (arch_alias != "" && block ~ arch_alias_re)) \
+                        && block ~ status_re) {
                         printf "%s", block
                         exit
                     }
@@ -249,6 +257,32 @@ fetch_release_manifest() {
     curl -fsSL "$CAPSEM_MANIFEST_URL"
 }
 
+prepare_macos_install_user() {
+    _install_user="${SUDO_USER:-$(id -un)}"
+    case "$_install_user" in
+        ""|root|*[!A-Za-z0-9._-]*)
+            echo "Error: macOS package installation requires a non-root target user." >&2
+            return 1
+            ;;
+    esac
+    id -u "$_install_user" >/dev/null 2>&1 || {
+        echo "Error: macOS target user does not exist: $_install_user" >&2
+        return 1
+    }
+    _request_source="${TMPDIR_INSTALL}/install-user"
+    printf '%s\n' "$_install_user" > "$_request_source"
+    chmod 0600 "$_request_source"
+    sudo /usr/bin/install -d -o root -g wheel -m 0700 "$CAPSEM_INSTALL_USER_REQUEST_DIR"
+    sudo /usr/bin/install -o root -g wheel -m 0600 "$_request_source" "$CAPSEM_INSTALL_USER_REQUEST"
+}
+
+clear_macos_install_user_request() {
+    if [ "${MACOS_INSTALL_USER_REQUEST_WRITTEN:-0}" = "1" ]; then
+        sudo rm -f "$CAPSEM_INSTALL_USER_REQUEST"
+        MACOS_INSTALL_USER_REQUEST_WRITTEN=0
+    fi
+}
+
 install_macos() {
     _pkg_url="$1"
     _version="$2"
@@ -260,6 +294,7 @@ install_macos() {
     PKG_PATH="${TMPDIR_INSTALL}/Capsem.pkg"
 
     cleanup_macos() {
+        clear_macos_install_user_request || true
         rm -rf "$TMPDIR_INSTALL"
     }
     trap cleanup_macos EXIT
@@ -269,7 +304,10 @@ install_macos() {
     verify_package "$PKG_PATH" "$_package_name" "$_expected_bytes" "$_expected_sha256"
 
     echo "Installing .pkg package (may prompt for sudo password)..."
+    prepare_macos_install_user
+    MACOS_INSTALL_USER_REQUEST_WRITTEN=1
     sudo /usr/sbin/installer -pkg "$PKG_PATH" -target /
+    clear_macos_install_user_request
 
     echo ""
     echo "Capsem $_version installed."

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from contextlib import closing
 import sqlite3
+from contextlib import closing
 
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_scripts import gemini_api_script
 from ironbank.model_pricing import assert_model_call_price
+
 from tests.ironbank.test_model_client_ledger_contract import ModelClientEnv
 
 

@@ -5,7 +5,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant, SystemTime};
 
 use rusqlite::{params, Connection, ErrorCode, OpenFlags};
-use tracing::warn;
+use tracing::{error, warn};
 use uuid::Uuid;
 
 use crate::events::{
@@ -36,6 +36,7 @@ pub const DB_PRODUCER_BATCH_SEND_MS: &str = "db.producer_batch_send_ms";
 pub const DB_PRODUCER_BATCH_SENT_TOTAL: &str = "db.producer_batch_sent_total";
 pub const DB_WRITE_BATCH_TOTAL: &str = "db.write_batch_total";
 pub const DB_WRITE_BATCH_DURATION_MS: &str = "db.write_batch_duration_ms";
+pub const DB_WRITE_OP_REJECTED_TOTAL: &str = "db.write_op_rejected_total";
 pub const DB_WRITE_BATCH_SIZE: &str = "db.write_batch_size";
 pub const DB_WRITE_BATCH_CAPACITY: &str = "db.write_batch_capacity";
 pub const DB_WRITE_BATCH_ROWS_PER_SEC: &str = "db.write_batch_rows_per_sec";
@@ -740,7 +741,16 @@ fn writer_loop(conn: Connection, rx: mpsc::Receiver<WriterMessage>, db_path: Opt
                         "error",
                         &span,
                     );
-                    warn!(error = %e, count = batch.len(), "db memory write batch failed");
+                    warn!(
+                        error = %e,
+                        count = batch.len(),
+                        "db memory write batch failed; retrying its ops individually"
+                    );
+                    let salvaged = span.in_scope(|| {
+                        retry_batch_ops_individually(&conn, &batch, &mut model_item_dedup)
+                    });
+                    dirty_tables.extend(salvaged.tables);
+                    dirty_ops += salvaged.written;
                 }
             }
         }
@@ -979,6 +989,67 @@ fn affected_memory_tables(op: &WriteOp, tables: &mut BTreeSet<&'static str>) {
             tables.insert("profile_mutation_events");
         }
     }
+}
+
+/// Outcome of re-running a failed batch one operation at a time.
+struct SalvagedBatch {
+    tables: BTreeSet<&'static str>,
+    written: usize,
+}
+
+/// Re-run a failed batch one op at a time so a single rejected row cannot
+/// discard the valid telemetry batched alongside it.
+///
+/// The batch is one transaction for throughput, which means a schema CHECK
+/// violation on one op rolls back every op beside it. On a security ledger that
+/// turns one malformed row from one producer into a silent hole covering an
+/// arbitrary window of unrelated events, so the batch failure path pays for a
+/// second pass. Nothing here runs when the batch commits.
+///
+/// The rolled-back transaction left `model_item_dedup` describing rows that no
+/// longer exist, so it is reloaded from the committed table before the retry --
+/// otherwise the retry would skip model items it wrongly believes are already
+/// stored.
+fn retry_batch_ops_individually(
+    conn: &Connection,
+    batch: &[WriteOp],
+    model_item_dedup: &mut ModelItemDedup,
+) -> SalvagedBatch {
+    *model_item_dedup = load_model_item_dedup(conn);
+    let mut salvaged = SalvagedBatch {
+        tables: BTreeSet::new(),
+        written: 0,
+    };
+    for op in batch {
+        let op_kind = op.kind();
+        match execute_memory_batch(conn, std::slice::from_ref(op), model_item_dedup) {
+            Ok(tables) => {
+                salvaged.tables.extend(tables);
+                salvaged.written += 1;
+            }
+            Err(error) => {
+                // Loud on purpose: a rejected op is a producer bug, and a
+                // ledger that quietly loses rows is worse than one that
+                // complains about them.
+                error!(
+                    error = %error,
+                    op_kind,
+                    event_id = op.event_id(),
+                    "db rejected a write op; dropping it alone"
+                );
+                ::metrics::counter!(DB_WRITE_OP_REJECTED_TOTAL, "op_kind" => op_kind)
+                    .increment(1);
+            }
+        }
+    }
+    if salvaged.written < batch.len() {
+        warn!(
+            rejected = batch.len() - salvaged.written,
+            salvaged = salvaged.written,
+            "db batch retry completed with rejected ops"
+        );
+    }
+    salvaged
 }
 
 fn execute_memory_batch(

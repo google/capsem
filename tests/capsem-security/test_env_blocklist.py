@@ -1,9 +1,9 @@
 """Environment variable blocklist enforcement in the guest."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -34,10 +34,8 @@ def security_vm():
 
     yield client, name
 
-    try:
+    with contextlib.suppress(Exception):
         client.delete(f"/vms/{name}/delete")
-    except Exception:
-        pass
     svc.stop()
 
 

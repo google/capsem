@@ -1,5 +1,5 @@
-import sys
 import struct
+import sys
 import types
 from pathlib import Path
 
@@ -41,13 +41,13 @@ from capsem_bench.storage import (  # noqa: E402
     find_mount_for_path,
     io_profile_bench,
     kernel_storage_context,
-    read_block_queues,
-    read_fuse_connections,
-    read_kernel_cmdline,
     parse_mount_options,
     parse_mountinfo,
     parse_squashfs_superblock,
     path_stat,
+    read_block_queues,
+    read_fuse_connections,
+    read_kernel_cmdline,
     rootfs_backing_metadata,
     storage_paths,
 )
@@ -143,8 +143,8 @@ def test_kernel_storage_context_includes_known_host_queue_sizes(monkeypatch):
         "capsem_bench.storage.read_kernel_cmdline",
         lambda: {"raw": "root=/dev/vda", "args": ["root=/dev/vda"]},
     )
-    monkeypatch.setattr("capsem_bench.storage.read_block_queues", lambda: {})
-    monkeypatch.setattr("capsem_bench.storage.read_fuse_connections", lambda: {})
+    monkeypatch.setattr("capsem_bench.storage.read_block_queues", dict)
+    monkeypatch.setattr("capsem_bench.storage.read_fuse_connections", dict)
 
     info = kernel_storage_context()
 

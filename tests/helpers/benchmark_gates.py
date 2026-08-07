@@ -5,7 +5,6 @@ from __future__ import annotations
 import sys
 from typing import Any
 
-
 CAPSEM_BENCH_GATES = {
     "disk_seq_mbps": 50,
     "disk_rand_iops": {

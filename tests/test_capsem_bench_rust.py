@@ -6,18 +6,19 @@ from pathlib import Path
 
 from helpers.mock_server import start_mock_server, stop_process
 
+from scripts.release_test_binary import ensure_host_test_binary
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BENCH_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-bench-rs"
 
 
 def _ensure_bench_binary() -> None:
-    subprocess.run(
-        ["cargo", "build", "-p", "capsem-bench"],
-        cwd=PROJECT_ROOT,
-        check=True,
+    ensure_host_test_binary(
+        BENCH_BINARY,
+        source_paths=(PROJECT_ROOT / "crates" / "capsem-bench").rglob("*.rs"),
+        build_command=("cargo", "build", "-p", "capsem-bench"),
+        project_root=PROJECT_ROOT,
     )
-    assert BENCH_BINARY.exists()
 
 
 def _run_protocol(base_url: str, dns_udp_addr: str, out: Path, lane: str) -> dict:

@@ -1,0 +1,12 @@
+[package]
+name = "rust-test-inventory-fixture"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[[example]]
+name = "excluded-example"
+path = "examples/excluded.rs"
+test = true

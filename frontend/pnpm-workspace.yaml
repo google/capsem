@@ -12,5 +12,11 @@ onlyBuiltDependencies:
 overrides:
   yaml: ">=2.8.3"
   postcss: ">=8.5.10"
-  fast-uri: ">=3.1.2"
+  # >=4.1.2, not >=3.1.2: GHSA-7p8r-x3mc-p8w7 (host confusion via a backslash
+  # authority introducer) covers >=4.0.0 <4.1.2, and the looser bound resolved
+  # to 4.1.1 -- inside the advisory. Reached through @astrojs/check ->
+  # language-server -> yaml-language-server -> ajv, so it is dev-only tooling,
+  # but the audit is a release gate and a bound that admits a known-vulnerable
+  # version is not a bound.
+  fast-uri: ">=4.1.2"
   esbuild: 0.28.1

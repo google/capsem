@@ -6,10 +6,9 @@ JSON. Keep that machinery here so DNS, MCP, MITM, and local mock-server
 benchmarks cannot drift into incompatible result shapes.
 """
 
-from dataclasses import dataclass
 import os
 import resource
-
+from dataclasses import dataclass
 
 GLOBAL_CONCURRENCY_ENV = "CAPSEM_BENCH_CONCURRENCY"
 GLOBAL_DURATION_ENV = "CAPSEM_BENCH_DURATION_S"
@@ -223,6 +222,7 @@ def summarize_load_level(latencies_ms, errors, concurrency, duration_s, *, extra
 
 def render_load_table(title, rows, *, extra_columns=None):
     from rich.table import Table
+
     from .helpers import console
 
     extra_columns = extra_columns or []

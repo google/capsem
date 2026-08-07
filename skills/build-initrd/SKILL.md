@@ -5,7 +5,7 @@ description: Initrd repack and guest binary management for Capsem. Use when addi
 
 # Initrd Repack
 
-`just run` automatically repacks the initrd before every boot. It cross-compiles guest binaries, injects them into the initrd, and `capsem-init` prefers initrd-bundled copies over rootfs copies at boot. This is the fast iteration loop (~10s) -- no full rootfs rebuild needed for guest binary changes.
+`just exec` automatically repacks the initrd before every boot. It cross-compiles guest binaries, injects them into the initrd, and `capsem-init` prefers initrd-bundled copies over rootfs copies at boot. This is the fast iteration loop (~10s) -- no full rootfs rebuild needed for guest binary changes.
 
 ## Currently repacked binaries
 
@@ -32,12 +32,12 @@ Update three places:
 
 | Changed | Command | Why |
 |---------|---------|-----|
-| Guest binary source (Rust agent code) | `just run` | Auto-repacks initrd with new binary |
-| `capsem-init` script | `just run` | Init script is repacked into initrd |
+| Guest binary source (Rust agent code) | `just exec` | Auto-repacks initrd with new binary |
+| `capsem-init` script | `just exec` | Init script is repacked into initrd |
 | `guest/artifacts/diagnostics/*.py` | `just exec "capsem-doctor"` | Test files repacked into initrd |
-| `guest/artifacts/capsem-bashrc` | `just build-assets` | Baked into rootfs, not initrd |
-| Profile package/root/build inputs (`config/profiles/<id>/`) | `just build-assets` | Affects profile-derived rootfs rendering |
-| Installed packages (apt, pip) | `just build-assets` | Baked into the profile rootfs asset |
+| `guest/artifacts/capsem-bashrc` | `just _build-assets` | Baked into rootfs, not initrd |
+| Profile package/root/build inputs (`config/profiles/<id>/`) | `just _build-assets` | Affects profile-derived rootfs rendering |
+| Installed packages (apt, pip) | `just _build-assets` | Baked into the profile rootfs asset |
 
 ## Guest binary security
 
@@ -63,4 +63,4 @@ Guest binary permissions must be 555 (read+execute, no write). There are two ind
 1. **Dockerfile.rootfs.j2** -- `chmod 555` when copying into the profile rootfs asset
 2. **justfile `_pack-initrd`** -- `chmod` when copying into the initrd (overlays rootfs at boot)
 
-The initrd copy WINS at runtime because it overlays the rootfs. So even if the Dockerfile says 555, if the justfile says 755, the guest sees 755. When fixing permissions, always check both places. A rootfs rebuild (`just build-assets`) alone won't fix it if the initrd repack still sets the wrong mode.
+The initrd copy WINS at runtime because it overlays the rootfs. So even if the Dockerfile says 555, if the justfile says 755, the guest sees 755. When fixing permissions, always check both places. A rootfs rebuild (`just _build-assets`) alone won't fix it if the initrd repack still sets the wrong mode.

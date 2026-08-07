@@ -46,14 +46,14 @@ git clone https://github.com/google/capsem.git && cd capsem
 | 2 | Python deps | `uv sync` | Locked via `uv.lock` |
 | 2 (macOS) | `flock`, `pnpm` | `brew` | flock = multi-agent recipe lock; pnpm = frontend deps |
 | 2 (macOS) | `colima`, `docker`, `docker-buildx` | `brew` + symlink into `~/.docker/cli-plugins` | Container runtime for `just build-assets code` |
-| 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8` | Runs Docker; Rosetta enables x86_64 cross-builds |
+| 2 (macOS) | Colima VM | `colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 128` | Runs Docker; Rosetta enables x86_64 cross-builds and the disk retains release caches |
 | 2 | Frontend deps | `pnpm install --frozen-lockfile` (in `frontend/`) | Tauri UI dependencies |
 | 3 | Doctor `--fix` | `scripts/doctor-common.sh --fix` | Installs Rust targets, `cargo-llvm-cov`, `cargo-audit`, `b3sum`, `cargo-tauri` (= `tauri-cli` crate), `cargo-sbom`, builds VM assets, packs initrd |
 
 Release-only tools are checked but not all installed by `doctor --fix`. Before
 running `bash scripts/check-release-workflow.sh` or cutting VM asset releases
 locally, install the OBOM generator with
-`npm install -g @cyclonedx/cdxgen`; the manual asset workflow installs the same
+`npm install -g @cyclonedx/cdxgen@12.7.0`; the manual asset workflow installs the same
 tool in CI.
 
 Pressing **Enter** at any prompt accepts the install (Y is the default). Type `n` to skip — bootstrap continues and surfaces the missing tool in the doctor report at the end.
@@ -156,7 +156,7 @@ The container runtime ran out of memory. The Tauri install-test cold build needs
 ### `just build-assets code` fails with "Release file not valid yet"
 
 The container VM's clock has drifted:
-- Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8`
+- Colima: `colima stop && colima start --vm-type vz --vz-rosetta --memory 16 --cpu 8 --disk 128`
 - Docker Desktop: restart Docker Desktop
 
 ### `just run` fails with "assets not found"

@@ -8,11 +8,11 @@ Tests each KVM ioctl individually to pinpoint the failure.
 
 Usage: python3 scripts/kvm-diagnostic.py
 """
+import array
 import fcntl
 import os
 import struct
 import sys
-import array
 
 # KVM ioctl numbers (from linux/kvm.h)
 KVMIO = 0xAE
@@ -56,8 +56,7 @@ def check(label, fn):
 
 def kvm_ioctl(fd, request, arg=0):
     """Raw ioctl, returns result or raises OSError."""
-    ret = fcntl.ioctl(fd, request, arg)
-    return ret
+    return fcntl.ioctl(fd, request, arg)
 
 
 def main():

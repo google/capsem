@@ -1,26 +1,106 @@
-"""Verify just doctor recipe runs without errors."""
+"""`just doctor` reports on the machine, and this proves it in two halves.
 
-import subprocess
+This launched `just doctor` as a subprocess. That works from a shell and
+cannot work from inside `just test`, because the recipe depends on
+`_pnpm-install`, which dispatches to `capsem-gate install-node`, which takes
+the machine lock -- the lock the gate running this suite is holding. The child
+would wait out its full timeout for a lock that cannot be released until its
+own parent returns, which is the deadlock the composition model exists to make
+unrepresentable, and `GateCommand` refuses it by name.
+
+So the claim is split where the architecture splits it. That the recipe
+dispatches to the right commands is read from the justfile; that those commands
+report a healthy checkout is `capsem-gate doctor`, asserted in-process, which
+is legal inside a held lock and is the half that can actually fail.
+"""
+
+import os
+from pathlib import Path
 
 import pytest
 
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 pytestmark = pytest.mark.recipe
 
 
-def test_just_doctor():
-    """just doctor runs and exits cleanly."""
-    result = subprocess.run(
-        ["just", "doctor"],
-        cwd=PROJECT_ROOT,
-        capture_output=True,
-        text=True,
-        timeout=60,
+def _recipe(name: str) -> str:
+    lines = (PROJECT_ROOT / "justfile").read_text(encoding="utf-8").splitlines()
+    start = next(
+        index
+        for index, line in enumerate(lines)
+        if line.startswith((f"{name}:", f"{name} "))
     )
-    # Doctor may warn but should not crash
-    assert result.returncode == 0, (
-        f"just doctor failed (exit {result.returncode}):\n{result.stderr}"
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        if lines[index] and not lines[index].startswith((" ", "\t", "#")):
+            end = index
+            break
+    return "\n".join(lines[start:end])
+
+
+def test_just_doctor_dispatches_to_both_halves_of_the_check():
+    """The gate checks its own wiring; the script checks the machine."""
+    recipe = _recipe("doctor")
+
+    assert "uv run capsem-gate doctor" in recipe
+    assert "scripts/doctor-common.sh" in recipe
+    # Node workspaces first: the gate's own check reads the web surfaces.
+    assert "_pnpm-install" in recipe.splitlines()[0]
+
+
+def test_this_checkout_passes_the_doctor_it_dispatches_to():
+    """The half that can fail, run for real -- in-process, so it never asks
+    for a lock this suite's own gate is holding."""
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import doctor
+
+    assert doctor.check(RecordingRunner(PROJECT_ROOT)) == []
+
+
+def test_launching_a_recipe_that_takes_the_machine_lock_is_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stated, because this file used to do exactly that.
+
+    A suite running inside `just test` cannot shell out to a recipe whose
+    graph reaches an exclusive command. The refusal is what keeps a
+    forty-minute run from becoming a two-hour timeout, so it is worth a test
+    rather than a comment.
+    """
+    import argparse
+
+    from helpers.gate import RecordingRunner
+
+    from capsem.gate import cli  # noqa: F401 - registers every command
+    from capsem.gate import config as gate_config
+    from capsem.gate.command import GateCommand
+    from capsem.gate.errors import GateError
+
+    marker = gate_config.load(PROJECT_ROOT).locks.gate.run_marker
+    monkeypatch.setenv(marker, "capsem-gate candidate")
+
+    command = GateCommand.registry["install-node"](
+        RecordingRunner(PROJECT_ROOT),
+        argparse.Namespace(dry_run=False, graph=False, timing=False),
     )
+
+    with pytest.raises(GateError, match="machine lock"):
+        command.execute()
+
+
+def test_the_marker_is_what_a_running_gate_exports() -> None:
+    """Otherwise the refusal above is theatre.
+
+    `ExclusiveLock` exports it for the length of a run, which is what makes a
+    child able to notice it is inside one.
+    """
+    from capsem.gate import config as gate_config
+
+    marker = gate_config.load(PROJECT_ROOT).locks.gate.run_marker
+    locks = (PROJECT_ROOT / "src/capsem/gate/locks.py").read_text(encoding="utf-8")
+
+    assert "run_marker" in locks
+    assert marker == "CAPSEM_GATE_RUN"
+    assert os.environ.get(marker) is None or os.environ[marker]

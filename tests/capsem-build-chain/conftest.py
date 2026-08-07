@@ -5,10 +5,9 @@ Validates cargo build -> codesign -> pack-initrd -> manifest -> boot.
 
 import os
 import subprocess
+from pathlib import Path
 
 import pytest
-
-from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 ASSETS_DIR = PROJECT_ROOT / "assets"

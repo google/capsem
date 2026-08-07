@@ -4,7 +4,6 @@ Provides a VM fixture for in-guest security checks via exec.
 """
 
 import pytest
-
 from helpers.service import ServiceInstance
 
 pytestmark = pytest.mark.security

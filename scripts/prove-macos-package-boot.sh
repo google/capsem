@@ -1,0 +1,163 @@
+#!/bin/bash
+# Boot a real Capsem guest on the physical Mac using the exact .pkg payload.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+PKG="${1:?usage: prove-macos-package-boot.sh PACKAGE VERSION}"
+VERSION="${2:?missing package version}"
+WORK_ROOT="$ROOT/target/macos-package-boot"
+EXPANDED="$WORK_ROOT/expanded"
+CAPSEM_HOME_DIR="$WORK_ROOT/home"
+RUN_DIR=$(mktemp -d /tmp/capsem-pkg-boot.XXXXXX)
+DOCTOR_LOG="$WORK_ROOT/doctor.log"
+DOCTOR_EVIDENCE="$WORK_ROOT/doctor.json"
+WINTERFELL_LOG="$WORK_ROOT/winterfell.log"
+WINTERFELL_EVIDENCE="$WORK_ROOT/winterfell.json"
+
+[ "$(uname -s)" = "Darwin" ] || {
+    echo "ERROR: macOS package guest-boot proof requires macOS" >&2
+    exit 1
+}
+[ -s "$PKG" ] || {
+    echo "ERROR: package is missing or empty: $PKG" >&2
+    exit 1
+}
+
+stop_isolated_processes() {
+    local name
+    for name in \
+        capsem-service capsem-tray capsem-gateway capsem-process \
+        capsem-mcp-aggregator capsem-mcp-builtin
+    do
+        pkill -9 -f "$CAPSEM_HOME_DIR/bin/$name" 2>/dev/null || true
+    done
+}
+cleanup() {
+    stop_isolated_processes
+    rm -rf "$RUN_DIR"
+}
+trap cleanup EXIT
+
+rm -rf "$WORK_ROOT"
+mkdir -p "$WORK_ROOT"
+/usr/sbin/pkgutil --expand-full "$PKG" "$EXPANDED"
+
+SHARE_COUNT=$(find "$EXPANDED" -type d -path '*/usr/local/share/capsem' | wc -l | tr -d ' ')
+[ "$SHARE_COUNT" -eq 1 ] || {
+    echo "ERROR: expected one Capsem package share, found $SHARE_COUNT" >&2
+    exit 1
+}
+PKG_SHARE=$(find "$EXPANDED" -type d -path '*/usr/local/share/capsem')
+
+echo "=== Materializing exact package payload for physical-host VZ proof ==="
+CAPSEM_HOME="$CAPSEM_HOME_DIR" \
+CAPSEM_RUN_DIR="$RUN_DIR" \
+    bash "$ROOT/scripts/simulate-install.sh" \
+        "$PKG_SHARE/bin" \
+        "$ROOT/assets" \
+        "$PKG_SHARE"
+
+for binary in "$PKG_SHARE"/bin/capsem*; do
+    name=$(basename "$binary")
+    "$CAPSEM_HOME_DIR/bin/$name" --version | grep -F "$VERSION"
+done
+
+echo "=== Booting real Capsem guest from exact package binaries and profiles ==="
+CAPSEM_HOME="$CAPSEM_HOME_DIR" \
+CAPSEM_RUN_DIR="$RUN_DIR" \
+CAPSEM_ASSETS_DIR="$CAPSEM_HOME_DIR/assets" \
+CAPSEM_PROFILES_DIR="$CAPSEM_HOME_DIR/profiles" \
+    python3 "$ROOT/scripts/prove-installed-shell.py" \
+        --capsem "$CAPSEM_HOME_DIR/bin/capsem" \
+        --marker CAPSEM_MACOS_PACKAGE_VM_BOOT_OK \
+        --session-name macos-package-vm-boot \
+        --profile code \
+        --timeout 300
+
+echo "=== Running full doctor from the exact package cohort ==="
+set +e
+CAPSEM_HOME="$CAPSEM_HOME_DIR" \
+CAPSEM_RUN_DIR="$RUN_DIR" \
+CAPSEM_ASSETS_DIR="$CAPSEM_HOME_DIR/assets" \
+CAPSEM_PROFILES_DIR="$CAPSEM_HOME_DIR/profiles" \
+    "$CAPSEM_HOME_DIR/bin/capsem" doctor >"$DOCTOR_LOG" 2>&1
+DOCTOR_STATUS=$?
+set -e
+python3 - "$DOCTOR_EVIDENCE" "$DOCTOR_LOG" "$DOCTOR_STATUS" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+status = int(sys.argv[3])
+Path(sys.argv[1]).write_text(
+    json.dumps(
+        {
+            "schema": "capsem.installed_doctor.v1",
+            "passed": status == 0,
+            "exit_code": status,
+            "log": str(Path(sys.argv[2]).resolve()),
+        },
+        indent=2,
+        sort_keys=True,
+    )
+    + "\n"
+)
+PY
+if [ "$DOCTOR_STATUS" -ne 0 ]; then
+    echo "ERROR: full installed Doctor failed; retained evidence: $DOCTOR_EVIDENCE" >&2
+    cat "$DOCTOR_LOG" >&2
+    exit "$DOCTOR_STATUS"
+fi
+
+echo "=== Running installed Winterfell from the exact package cohort ==="
+set +e
+CAPSEM_HOME="$CAPSEM_HOME_DIR" \
+CAPSEM_RUN_DIR="$RUN_DIR" \
+    uv run python "$ROOT/scripts/run-installed-winterfell.py" \
+        --bin-dir "$CAPSEM_HOME_DIR/bin" \
+        --assets-dir "$CAPSEM_HOME_DIR/assets" \
+        --profiles-dir "$CAPSEM_HOME_DIR/profiles" \
+        --evidence-out "$WINTERFELL_EVIDENCE" \
+        >"$WINTERFELL_LOG" 2>&1
+WINTERFELL_STATUS=$?
+set -e
+if [ "$WINTERFELL_STATUS" -ne 0 ]; then
+    echo "ERROR: installed Winterfell failed; retained evidence: $WINTERFELL_EVIDENCE" >&2
+    cat "$WINTERFELL_LOG" >&2
+    exit "$WINTERFELL_STATUS"
+fi
+
+python3 - "$WORK_ROOT/report.json" "$PKG" "$VERSION" \
+    "$DOCTOR_EVIDENCE" "$WINTERFELL_EVIDENCE" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+package = Path(sys.argv[2]).resolve()
+doctor = json.loads(Path(sys.argv[4]).read_text())
+winterfell = json.loads(Path(sys.argv[5]).read_text())
+if doctor.get("schema") != "capsem.installed_doctor.v1" or not doctor.get("passed"):
+    raise SystemExit(f"full installed doctor evidence failed: {doctor}")
+if winterfell.get("schema") != "capsem.installed_winterfell.v1" or not winterfell.get(
+    "passed"
+):
+    raise SystemExit(f"installed Winterfell evidence failed: {winterfell}")
+report = {
+    "schema": "capsem.macos_package_boot.v1",
+    "package": str(package),
+    "package_sha256": hashlib.sha256(package.read_bytes()).hexdigest(),
+    "package_version": sys.argv[3],
+    "package_payload_materialized": True,
+    "session_created": True,
+    "guest_vm_booted": True,
+    "guest_shell_marker": "CAPSEM_MACOS_PACKAGE_VM_BOOT_OK",
+    "full_doctor": True,
+    "installed_winterfell": True,
+    "doctor_evidence": doctor,
+    "winterfell_evidence": winterfell,
+}
+Path(sys.argv[1]).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
+PY
+
+echo "Exact macOS package guest-VM doctor/Winterfell proof passed: $WORK_ROOT/report.json"

@@ -1,6 +1,8 @@
 """Verify that guest cannot escape VirtioFS sandbox via path traversal."""
 
+import contextlib
 import uuid
+
 import pytest
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB
 from helpers.service import wait_exec_ready
@@ -44,7 +46,5 @@ def test_virtiofs_path_traversal(client):
         
     finally:
         # Cleanup
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{vm_name}/delete")
-        except Exception:
-            pass

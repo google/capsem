@@ -1,9 +1,9 @@
 """Verify guest environment configuration at runtime."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import wait_exec_ready
 
@@ -27,10 +27,8 @@ def test_env_var_injected(config_svc):
         assert "hello_from_host" in stdout, f"Env var not found in guest: {stdout}"
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
 
 
 def test_guest_has_python3(config_svc):
@@ -47,10 +45,8 @@ def test_guest_has_python3(config_svc):
         assert "Python 3" in stdout, f"python3 not available: {stdout}"
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass
 
 
 def test_guest_arch_matches_host(config_svc):
@@ -73,7 +69,5 @@ def test_guest_arch_matches_host(config_svc):
             assert stdout == "x86_64", f"Expected x86_64, got {stdout}"
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             client.delete(f"/vms/{name}/delete")
-        except Exception:
-            pass

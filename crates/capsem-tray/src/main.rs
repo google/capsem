@@ -184,7 +184,7 @@ fn main() -> Result<()> {
                             icon_error.clone()
                         };
                         tray.set_icon_with_as_template(Some(icon), true)
-                            .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
+                            .unwrap_or_else(|e| warn!(error = %e, "failed to set icon"));
                         last_state = Some(desired_state);
                     }
 
@@ -197,7 +197,7 @@ fn main() -> Result<()> {
                 PollResult::Unavailable(reason) => {
                     if last_state != Some(TrayState::Error) {
                         tray.set_icon_with_as_template(Some(icon_error.clone()), true)
-                            .unwrap_or_else(|e| warn!("failed to set icon: {e}"));
+                            .unwrap_or_else(|e| warn!(error = %e, "failed to set icon"));
                         tray.set_menu(Some(Box::new(menu::build_unavailable_menu())));
                         last_state = Some(TrayState::Error);
                         last_status = None;
@@ -275,7 +275,7 @@ async fn async_worker(
         match GatewayClient::discover(port_override).await {
             Ok(c) => break c,
             Err(e) => {
-                warn!("gateway discovery failed: {e}");
+                warn!(error = %e, "gateway discovery failed");
                 let _ = poll_tx.send(PollResult::Unavailable(e.to_string()));
                 tokio::time::sleep(interval_duration).await;
             }
@@ -293,7 +293,7 @@ async fn async_worker(
                         let _ = poll_tx.send(PollResult::Status(Box::new(status)));
                     }
                     Err(e) => {
-                        warn!("status poll failed: {e}");
+                        warn!(error = %e, "status poll failed");
                         // Try re-discovery (token/port may have changed)
                         match GatewayClient::discover(port_override).await {
                             Ok(new_client) => {
@@ -348,15 +348,9 @@ async fn dispatch_action(client: &GatewayClient, action: Action) {
             r
         }
         Action::NewSession => {
-            info!("provisioning new temp session");
-            match client.provision_temp().await {
-                Ok(id) => {
-                    info!(id = %id, "new session provisioned, launching UI");
-                    launch_ui(Some(&id));
-                    return;
-                }
-                Err(e) => Err(e),
-            }
+            info!("opening profile-aware new session launcher");
+            launch_ui(None);
+            return;
         }
         Action::Save(id) => {
             launch_ui_action(id, "save");
@@ -370,7 +364,7 @@ async fn dispatch_action(client: &GatewayClient, action: Action) {
     };
 
     if let Err(e) = result {
-        error!("action {action:?} failed: {e}");
+        error!(error = %e, "action {action:?} failed");
     }
 }
 
@@ -396,7 +390,7 @@ fn launch_capsem_start() {
                 info!("capsem start dispatched from tray");
                 let _ = child.wait();
             }
-            Err(e) => warn!("failed to start Capsem service from tray: {e}"),
+            Err(e) => warn!(error = %e, "failed to start Capsem service from tray"),
         }
     });
 }
@@ -528,7 +522,7 @@ fn launch_capsem_app(vm_id: Option<&str>, action: Option<&str>) {
                 info!(?vm_id, ?action, "Capsem.app launch dispatched");
                 let _ = child.wait();
             }
-            Err(e) => warn!("failed to launch UI: {e}"),
+            Err(e) => warn!(error = %e, "failed to launch UI"),
         }
     });
 }
@@ -548,101 +542,4 @@ fn tray_lock_path() -> std::path::PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::ffi::OsString;
-    use std::path::PathBuf;
-
-    fn os(s: &str) -> OsString {
-        OsString::from(s)
-    }
-
-    #[test]
-    fn direct_binary_no_vm_id_no_action() {
-        let binary = PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-app");
-        let (program, args) = build_launch_invocation(Some(&binary), None, None);
-        assert_eq!(program, binary.as_os_str());
-        assert!(args.is_empty(), "no deep-link args expected, got {args:?}");
-    }
-
-    #[test]
-    fn direct_binary_connects_to_vm() {
-        let binary = PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-app");
-        let (program, args) = build_launch_invocation(Some(&binary), Some("vm-123"), None);
-        assert_eq!(program, binary.as_os_str());
-        assert_eq!(args, vec![os("--connect"), os("vm-123")]);
-    }
-
-    #[test]
-    fn direct_binary_with_action_requires_vm_id() {
-        let binary = PathBuf::from("/Applications/Capsem.app/Contents/MacOS/capsem-app");
-        let (program, args) = build_launch_invocation(Some(&binary), Some("vm-42"), Some("save"));
-        assert_eq!(program, binary.as_os_str());
-        assert_eq!(
-            args,
-            vec![os("--connect"), os("vm-42"), os("--action"), os("save")]
-        );
-    }
-
-    #[test]
-    fn fallback_open_no_args_when_no_deep_link() {
-        // Without vm_id/action, `open -a Capsem` is enough -- no `--args`.
-        // Appending `--args` with nothing after it would still work but is
-        // unnecessary noise.
-        let (program, args) = build_launch_invocation(None, None, None);
-        assert_eq!(program, os("open"));
-        assert_eq!(args, vec![os("-a"), os("Capsem")]);
-    }
-
-    #[test]
-    fn fallback_open_forwards_vm_id() {
-        // Regression guard: the pre-refactor launch_ui added `--args` only
-        // when vm_id was Some, and launch_ui_action always added `--args`.
-        // Check both paths go through one helper with consistent behavior.
-        let (program, args) = build_launch_invocation(None, Some("vm-9"), None);
-        assert_eq!(program, os("open"));
-        assert_eq!(
-            args,
-            vec![
-                os("-a"),
-                os("Capsem"),
-                os("--args"),
-                os("--connect"),
-                os("vm-9")
-            ]
-        );
-    }
-
-    #[test]
-    fn fallback_open_forwards_vm_id_and_action() {
-        let (program, args) = build_launch_invocation(None, Some("vm-9"), Some("fork"));
-        assert_eq!(program, os("open"));
-        assert_eq!(
-            args,
-            vec![
-                os("-a"),
-                os("Capsem"),
-                os("--args"),
-                os("--connect"),
-                os("vm-9"),
-                os("--action"),
-                os("fork"),
-            ]
-        );
-    }
-
-    #[test]
-    fn start_service_invocation_uses_resolved_capsem_binary() {
-        let binary = PathBuf::from("/usr/local/bin/capsem");
-        let (program, args) = build_start_service_invocation(Some(&binary));
-        assert_eq!(program, binary.as_os_str());
-        assert_eq!(args, vec![os("start")]);
-    }
-
-    #[test]
-    fn start_service_invocation_falls_back_to_path_lookup() {
-        let (program, args) = build_start_service_invocation(None);
-        assert_eq!(program, os("capsem"));
-        assert_eq!(args, vec![os("start")]);
-    }
-}
+mod tests;

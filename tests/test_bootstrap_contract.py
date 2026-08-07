@@ -2,8 +2,27 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _gate_labels(name: str = "candidate") -> tuple[str, ...]:
+    """Every step of a command's plan, in graph order. See `helpers.gate`."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_labels
+
+    return gate_labels(name)
+
+
+def _gate_issues(name: str | None = None) -> str:
+    """Everything the gate would issue, with real argv. See `helpers.gate`."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "tests"))
+    from helpers.gate import gate_issues
+
+    return gate_issues(name)
 
 
 def _read(path: str) -> str:
@@ -63,15 +82,29 @@ def test_bootstrap_repairs_stale_live_rosetta_registration_before_docker_probe()
     assert bootstrap.index(registration) < bootstrap.index("docker info >/dev/null")
 
 
+def test_bootstrap_waits_for_container_dns_after_colima_restart() -> None:
+    bootstrap = _read("bootstrap.sh")
+
+    assert "docker run --rm --pull=missing alpine:3.20 getent hosts ghcr.io" in bootstrap
+    assert "Docker DNS did not become ready" in bootstrap
+    assert "for attempt in $(seq 1 30)" in bootstrap
+
+
 def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
     justfile = _read("justfile")
     web_gate = _read("scripts/check-web-surface.sh")
 
-    assert "_bootstrap:\n    sh {{justfile_directory()}}/bootstrap.sh -y" in justfile
-    assert "test: _bootstrap _install-tools _clean-stale _pnpm-install" in justfile
+    # Quoted: a checkout under a path with a space split into two arguments
+    # otherwise, so the recipe was not portable to `~/My Projects/capsem`.
+    assert '_bootstrap:\n    sh {{quote(justfile_directory() / "bootstrap.sh")}} -y' in justfile
+    # The gate is one plan now, so these are phases rather than recipe calls.
+    labels = _gate_labels()
+    assert any(label.startswith("fast.") for label in labels)
+    assert "prepare.bootstrap" in labels
+    assert "prepare.storage-budget" in labels
+    assert "python.ruff" in labels
+    assert "python.ty.strict" in labels
     for command in [
-        "uv run ruff check .",
-        "uv run ty check src/capsem",
         "uv run capsem-builder validate-skills skills",
         "cargo clippy --workspace --all-targets -- -D warnings",
         "bash scripts/check-web-surface.sh frontend",
@@ -79,7 +112,7 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
         "bash scripts/check-web-surface.sh site",
         "bash scripts/check-web-surface.sh release-site",
     ]:
-        assert command in justfile
+        assert command in _gate_issues()
     for command in [
         "pnpm --dir frontend run check",
         "pnpm --dir frontend run test",
@@ -88,26 +121,26 @@ def test_just_test_invokes_bootstrap_and_release_quality_gates() -> None:
         assert command in web_gate
 
 
-def test_exact_sha_release_qualification_uses_fail_closed_workspace_clippy_gate() -> None:
-    workflow = _read(".github/workflows/release-qualification.yaml")
-    tagged_workflow = _read(".github/workflows/release.yaml")
-    just = _read("justfile")
+def test_both_release_lanes_reuse_fail_closed_static_module() -> None:
+    binary_workflow = _read(".github/workflows/release.yaml")
+    profile_workflow = _read(".github/workflows/release-assets.yaml")
+    fast_gate = _read(".github/workflows/fast-gate.yaml")
 
-    assert "run: just test" in workflow
-    assert "run: just test" not in tagged_workflow
-    assert "scripts/check-release-qualification.py" in tagged_workflow
-    assert "cargo clippy --workspace --all-targets -- -D warnings" in just
-    assert "run: cargo check --workspace" not in workflow
+    assert "uses: ./.github/workflows/fast-gate.yaml" in binary_workflow
+    assert "uses: ./.github/workflows/fast-gate.yaml" in profile_workflow
+    assert "run: just _test-fast" in fast_gate
+    assert "run: just _test-static" in fast_gate
+    assert "run: just test" not in binary_workflow
+    assert "run: just test" not in profile_workflow
+    assert "cargo clippy --workspace --all-targets -- -D warnings" in _gate_issues()
 
 
-def test_frontend_release_gate_recipe_exists_and_is_complete() -> None:
+def test_frontend_release_gate_is_owned_by_the_canonical_test() -> None:
     justfile = _read("justfile")
     web_gate = _read("scripts/check-web-surface.sh")
 
-    assert "\ntest-frontend: _pnpm-install _generate-settings\n" in justfile
-    block = justfile.split(
-        "\ntest-frontend: _pnpm-install _generate-settings\n", 1
-    )[1].split("\n\n", 1)[0]
+    assert "\ntest-frontend:" not in justfile
+    block = justfile.split("\n_test-candidate:", 1)[1].split("\n_build-host-image:", 1)[0]
     assert "bash scripts/check-web-surface.sh frontend" in block
     assert "pnpm --dir frontend run check" in web_gate
     assert "pnpm --dir frontend run test" in web_gate

@@ -1152,13 +1152,27 @@ fn validate_security_event_field(field: &str) -> Result<(), String> {
     let Some(root) = field.split('.').next() else {
         return Err("security-event CEL field must not be empty".to_string());
     };
-    if SECURITY_EVENT_CEL_ROOTS.contains(&root) {
-        Ok(())
-    } else {
-        Err(format!(
+    if !SECURITY_EVENT_CEL_ROOTS.contains(&root) {
+        return Err(format!(
             "field '{field}' is not a first-party security-event root"
-        ))
+        ));
     }
+    if crate::security_engine::SECURITY_EVENT_CEL_FIELDS.contains(&field) {
+        return Ok(());
+    }
+    Err(format!(
+        "field '{field}' is not a security-event field on root '{root}'; known fields: {}",
+        known_fields_for_root(root).join(", ")
+    ))
+}
+
+fn known_fields_for_root(root: &str) -> Vec<&'static str> {
+    let prefix = format!("{root}.");
+    crate::security_engine::SECURITY_EVENT_CEL_FIELDS
+        .iter()
+        .copied()
+        .filter(|field| field.starts_with(&prefix))
+        .collect()
 }
 
 pub(crate) fn validate_identifier(kind: &str, value: &str) -> Result<(), String> {

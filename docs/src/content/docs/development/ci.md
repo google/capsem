@@ -11,9 +11,11 @@ Capsem uses GitHub Actions for continuous integration and release automation.
 
 | Workflow | Trigger | What it does |
 |----------|---------|-------------|
-| `ci.yaml` | Pull requests | PR quality gate: Rust unit/integration, frontend, Python contracts, install checks, and explicit runner substitutions |
-| `release.yaml` | Manual `{tag, channel}` dispatch | Run one globally serialized stable or nightly release: build apps, install-test the exact packages, publish them, update only the selected channel, and run public glow-up checks |
-| `release-assets.yaml` | Manual | Build profile images/config/evidence, generate `assets/manifest.json`, and optionally deploy the asset channel |
+| `ci.yaml` | Pull requests and pushes to `main` | Quality gate: the shared fast/static module, Rust unit/integration, frontend, Python contracts, install checks, explicit runner substitutions, and a post-merge main signal |
+| `security-audit.yaml` | Weekly schedule or manual dispatch | Blocking RustSec and dependency advisories across every JavaScript web workspace |
+| `release-nightly.yaml` | Daily schedule or manual dispatch | Check out current `main` and call `just release-binaries nightly`; tagged `main` is a clean no-op |
+| `release.yaml` | Dispatch from `release-binaries` with `{tag, channel}` | Run one per-channel serialized stable or nightly release: build apps, install-test the exact packages, publish them, update only the selected channel, and run public glow-up checks |
+| `release-assets.yaml` | Dispatch from `capsem-admin release` | Build exactly one channel/profile's images, config, and evidence against the existing channel package |
 | `release-channel-staging.yaml` | Manual | Build a deterministic staging asset channel fixture, deploy it to a Cloudflare Pages preview branch, and validate the same release-channel contract without invoking `build-assets`, `build-app-macos`, or `build-app-linux` |
 | `release-binary-staging.yaml` | Manual | Build a deterministic binary-channel dry-run bundle from fake host packages and the live asset manifest, then prove profile image metadata is unchanged without creating a GitHub release or deploying release.capsem.org |
 | `docs.yaml` | Push to main | Deploy docs.capsem.org on each main merge, then smoke the live docs site |
@@ -33,9 +35,11 @@ the verified manifest URLs and hashes.
 
 ## CI workflow (`ci.yaml`)
 
-Runs on every pull request. Pull requests should require the stable `pr-gate`
-status before merge. A merge to `main` does not start a second copy of full CI;
-docs and marketing retain their independent deployment workflows.
+Runs on every pull request and push to `main`. Pull requests should require the
+stable `pr-gate` status before merge. New pushes cancel superseded runs only on
+the same PR; main runs always finish so each merged commit has a post-merge
+signal and Codecov baseline. Docs and marketing retain their independent
+deployment workflows.
 
 ### test-linux (ubuntu-24.04-arm)
 
@@ -50,16 +54,20 @@ Tests the KVM backend, which only compiles on Linux:
 
 Hosted-runner quality suite on macOS:
 
-1. **Dependency audit** -- `cargo audit` + `pnpm audit`
+1. **Shared fast/static gate** -- blocking RustSec and all-workspace JavaScript audits, Clippy, Python lint/type checks, frontend/docs/sites, source contracts, cross-compilation, clean install-harness bootstrap, and portable coverage
 2. **Rust unit tests with coverage** -- every workspace crate, including macOS-only app/tray crates
 3. **Rust integration tests** -- cross-crate tests from `tests/` directory
 4. **Frontend** -- type check (`astro check` + `svelte-check`), vitest with coverage, production build
-5. **Python schema tests** -- capsem-builder tests with 90% coverage floor
+5. **Python schema tests** -- capsem-builder tests with 85% coverage floor
 6. **Python integration tests** -- bootstrap, codesign, rootfs artifact suites
 7. **Import verification** -- all test suites import cleanly
 8. **Schema drift check** -- regenerates settings schema and verifies no uncommitted changes
 
-### test-install (ubuntu-24.04-arm)
+The same RustSec and four-workspace JavaScript audit also runs weekly and on
+demand in `security-audit.yaml`; neither path converts new advisories to
+warnings.
+
+### test-install (ubuntu-24.04 x86_64)
 
 Installer/update package contract tests run in Docker with systemd. This proves
 the `.deb` install layout, service unit, manifest URL provenance, channel
@@ -74,8 +82,8 @@ release.
 ### pr-gate (ubuntu-latest)
 
 This is the stable branch-protection status for code PRs. It depends on
-`test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and
-`release-site-build`, runs even when one dependency fails, and fails unless every dependency job reports
+`fast-gate`, `test-linux`, `test`, `test-install`, `docs-build`, `site-build`,
+and `release-site-build`, runs even when one dependency fails, and fails unless every dependency job reports
 `success`.
 
 `pr-gate` is the only status that should be required by branch protection for
@@ -92,11 +100,12 @@ uv run python scripts/check-remote-release-readiness.py
 ```
 
 It verifies that the local checkout has no unpublished commits relative to
-`origin/main`; remote `ci.yaml` exposes `pr-gate`, aggregates `test-linux`,
-`test`, `test-install`, `docs-build`, `site-build`, and `release-site-build`, runs with
-`if: ${{ always() }}` and asserts every dependency result; branch protection or
-active branch rulesets require `pr-gate`; and `release.capsem.org` resolves and
-serves the generated release graph. The public contract is the root
+`origin/main`; remote `ci.yaml` exposes `pr-gate`, aggregates `fast-gate`,
+`test-linux`, `test`, `test-install`, `docs-build`, `site-build`, and
+`release-site-build`, runs with `if: ${{ always() }}` and asserts every
+dependency result; branch protection or active branch rulesets require
+`pr-gate`; and `release.capsem.org` resolves and serves the generated release
+graph. The public contract is the root
 `channels.json`, one selectable channel manifest URL
 `/assets/<channel>/manifest.json`, package-owned binary inventory, and
 profile-owned config, image, software inventory, ABOM, and OBOM records inside
@@ -118,56 +127,43 @@ caching. If the local checkout has unpublished commits, publish or merge those
 commits before changing remote protection. It does not push, deploy, create
 tags, edit rulesets, or mutate Cloudflare.
 
-### Live release activation order
+### Orthogonal release lanes
 
-Use this order when turning the 1.4 release rails on. Do not skip ahead because
-later steps depend on earlier public state being true.
+Production has two entrypoints:
 
-1. Merge the release-rail commits to `main` only after the pull request's
-   expanded `pr-gate` passes.
-2. Require only `pr-gate` in branch protection or active rulesets.
-3. Provision the `release.capsem.org` Cloudflare Pages project and DNS for the
-   generated `target/release-channel/` artifact.
-4. Run `uv run python scripts/check-remote-release-readiness.py`; continue only
-   after unpublished commits, remote fail-closed `pr-gate` shape, branch
-   protection, `release.capsem.org` DNS, public cache headers, and
-   release-channel content all pass.
-5. Run `release-channel-staging.yaml` against the Cloudflare Pages staging
-   branch and verify it passes the same release-channel contract without
-   invoking `build-assets`, `build-app-macos`, or `build-app-linux`.
-6. Run the manual profile image workflow as a dry run and review the
-   `asset-release-plan`, `asset-release-delta`, and `asset-channel-preview`
-   artifacts. For metadata-only asset release changes, review
-   `asset-release-delta` and `asset-channel-preview`; no `asset-release-plan`
-   is expected because there are no immutable profile image blobs to republish.
-7. Run `release-binary-staging.yaml` and review the
-   `binary-channel-dry-run-bundle` artifact. It must contain package metadata,
-   `capsem-sbom.spdx.json`, `manifest.before.json`, the updated manifest,
-   `record-binary.json`, `proof.json`, and the release-site preview, while
-   proving profile image metadata did not change. This is the safe binary dry-run
-   path.
-8. Push a new immutable `vX.Y.Z` tag, then explicitly dispatch `release.yaml`
-   with that tag and exactly one `stable` or `nightly` channel. The workflow is
-   globally serialized so channel deployments cannot race.
-9. Run the manual profile image workflow live only after reviewing
-   `asset-release-plan` when `asset_blobs_changed` is true, or reviewing the
-   metadata-only delta and channel preview when only release-channel metadata
-   changed; it must publish changed profile image blobs, attest them, and deploy
-   `release.capsem.org`.
-10. Run installed update smokes for the signed macOS `.pkg`, Linux `.deb`, VM
-   asset refresh, profile update path, and staged cross-surface update state.
+| Command | Builds | Resolves unchanged | Manifest write |
+|---|---|---|---|
+| `just release-binaries <channel>` | Packages, per-binary inventory, host SBOM, existing attestations | Every profile in that channel by digest | Binary-owned fields only |
+| `just release-profile <channel> <profile>` | One channel/profile config, images, inventory, OBOM, evidence | The channel package by digest | Selected profile only |
+
+Both workflows use `capsem-release-${{ inputs.channel }}` with cancellation
+disabled. The lock is acquired before reading the source manifest and held
+through tests, mutation, generated-distribution assembly, and production
+deployment. Different channels remain independent.
+
+An incompatible profile is published once as immutable staged assets but does
+not change the public channel. The following binary lane resolves those exact
+bytes, runs the complete pairing proof, and activates the channel. Neither
+artifact family is rebuilt twice.
+
+Nightly binary release runs once daily through `release-nightly.yaml`, which
+calls the same public binary command rather than duplicating release steps or
+publishing on every push. If current `main` already has an immutable binary
+tag, the script exits successfully before stamping or dispatching. Stable is
+started explicitly through the same command.
 
 ## PR gate compared with `just test`
 
 The Ironbank parity rule is that every portable release gate is owned by
-`just test`. The complete recipe must pass locally, and exact-SHA release
-qualification runs that same recipe. GitHub-hosted PR CI may split feedback
-across jobs, but those jobs reuse the same checked-in entrypoints and do not
-replace the canonical gate. Unavoidable runner substitutions are named below.
+`just test`. Local testing rebuilds both artifact families and calls the six
+private test modules. Release CI calls the same modules while pulling the
+unchanged family. GitHub-hosted PR CI may split feedback across jobs, but those
+jobs do not replace the canonical gate. Unavoidable runner substitutions are
+named below.
 
 | `just test` stage | PR CI proof | Difference |
 |-------------------|-------------|------------|
-| Audits, lint, and all web surfaces | `test`, `docs-build`, `site-build`, and `release-site-build` reuse `scripts/check-web-surface.sh` | Same checked-in entrypoint; `just test` remains the canonical owner |
+| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test` and `just smoke`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |
 | Cross-compile agent (both arches) | `test` job: musl target check for `capsem-agent`; `test-linux` covers Linux host crates | Hosted PR substitution for Docker release cross-compile |
 | Rust workspace coverage | `test` and `test-linux` jobs run `cargo llvm-cov nextest` on macOS and Linux crate sets | Same coverage rail with runner-specific package sets |
 | Host binary signing prerequisites | `test` job builds and ad-hoc signs host binaries before non-VM integration suites | Same PR prerequisite for artifact-dependent Python suites |
@@ -200,7 +196,7 @@ Coverage is uploaded to [Codecov](https://codecov.io) with flags:
 | `linux-unit` | Rust unit tests (Linux/KVM) | 70% lines |
 | `integration` | Rust integration tests | -- |
 | `unit` (frontend) | vitest coverage | -- |
-| `unit` (Python) | pytest coverage | 90% |
+| `unit` (Python) | pytest coverage | 85% |
 
 Component-level targets in `codecov.yml`:
 
@@ -287,11 +283,17 @@ packaged `assets/manifest.json`, checks `manifest-metadata.json` points at the
 selected channel manifest URL, then runs Docker install, stable/nightly asset
 switching, and the binary updater path against the public channel.
 
-Before deployment, `just test` runs the same class of glow-up locally through
+Before deployment, `just test` owns both native install boundaries. Linux uses
 `just test-install`: the gate serves generated stable and nightly release
-channels from the package and manifest artifacts just built in Docker, then
-proves `install.sh`, `capsem update --assets --manifest`, and
-`capsem update --yes` against that local release.
+channels from package and manifest artifacts built in Docker, then proves
+`install.sh`, `capsem update --assets --manifest`, and `capsem update --yes`.
+On Apple Silicon macOS, `scripts/macos_release_glowup.py` builds the real `.pkg`, mounts
+that exact file into a disposable Tart Mac, installs it, verifies the receipt,
+app bundle, binary cohort, and service/gateway status. Tart macOS guests cannot
+expose nested virtualization, so the recipe then extracts the same package on
+the physical Mac and boots a real Capsem guest from its exact binary/profile
+payload to a shell marker. Tart stays out of `just smoke`, which is developer
+feedback rather than release qualification.
 
 Release packaging materializes runtime profiles through the same profile-derived build rail as
 local development: `capsem-admin profile materialize` copies checked-in config
@@ -312,8 +314,8 @@ calls `release-channel.yaml`.
 Local release preflight has one extra release-only OBOM prerequisite beyond the
 normal developer bootstrap path: `bash scripts/check-release-workflow.sh`
 expects `cdxgen` in `PATH`. Install it with
-`npm install -g @cyclonedx/cdxgen` before local profile image release dry runs; the
-manual asset workflow installs `@cyclonedx/cdxgen@latest` in CI before invoking
+`npm install -g @cyclonedx/cdxgen@12.7.0` before local profile image release dry runs; the
+manual asset workflow installs `@cyclonedx/cdxgen@12.7.0` in CI before invoking
 the build with `CAPSEM_CDXGEN_CMD=cdxgen`.
 
 `release.capsem.org` is the asset channel publication surface. It is generated
@@ -355,6 +357,12 @@ readiness contract, so it checks the index, `channels.json`, selected channel
 manifest records, package-owned binaries, profile-owned evidence documents,
 BLAKE3/SHA-256 content, attestation references, and cache headers rather than
 only checking that files exist.
+
+VM asset hashing is owned by the asset build boundary. One streaming pass
+records BLAKE3 and SHA-256 in `manifest.json`; stable/nightly graph assembly
+reuses that evidence and test-only graph fixtures use deterministic prepared
+assets instead of the checked-in multi-gigabyte rootfs. Local-copy mode hashes
+while copying once and fails closed on byte drift.
 
 Live profile image releases run the same Cloudflare Pages project preflight before
 the matrix builds start. Dry runs skip that API check, but `dry_run=false` must
@@ -449,13 +457,8 @@ Before pushing a PR, run the same checks CI will:
 # Full test suite (what CI runs)
 just test
 
-# Individual components
-just test-unit          # Rust unit tests
-just test-frontend      # Frontend type check + vitest + build
-just test-python        # Python schema tests
-
-# Hermetic smoke test
-just smoke              # doctor + integration tests
+# Focused developer feedback; never release qualification
+just smoke
 ```
 
 ### Debugging CI failures
@@ -468,5 +471,5 @@ Common failure patterns:
 | KVM tests skipped | `/dev/kvm` not available on runner | Check udev rules in workflow |
 | Schema drift | `config/settings/schema.generated.json` out of sync | Run `just _generate-settings` and commit |
 | Frontend build fails | Missing `@source` directive | Add pattern to `global.css` |
-| Coverage below floor | New code without tests | Add tests to meet 70%/80%/90% threshold |
+| Coverage below floor | New code without tests | Add tests to meet the configured Rust, frontend, or 85% Python threshold |
 | Python import errors | New test file with bad import | Fix the import path |

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 PROFILE_PAGE = ROOT / "frontend/src/lib/components/shell/ProfilePage.svelte"
 PLUGIN_SECTION = ROOT / "frontend/src/lib/components/settings/PluginSection.svelte"

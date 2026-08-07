@@ -1,7 +1,6 @@
 """Guest file read/write operations."""
 
 import pytest
-
 from helpers.mcp import parse_content
 
 pytestmark = pytest.mark.mcp

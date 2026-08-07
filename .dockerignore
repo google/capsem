@@ -1,16 +1,17 @@
-# Ignore massive host build artifacts
-target/
-node_modules/
-.venv/
-.pytest_cache/
-.ruff_cache/
-.astro/
-coverage/
-dist/
-site/node_modules/
-frontend/node_modules/
-frontend/dist/
-*.db
-*.sqlite
-*.log
-.DS_Store
+# Build context for the thin lane image.
+#
+# Patterns are `**`-prefixed deliberately. A bare `target` matches only the
+# root, and this repository contains agent worktrees under `.claude/worktrees/`
+# that carry their own multi-gigabyte `target/` trees -- the first build with a
+# root-only pattern swept one in and failed with `no space left on device`
+# after nineteen minutes.
+**/target
+**/node_modules
+**/.venv
+**/dist
+**/assets
+**/packages
+.claude
+.git
+**/.pnpm-store
+**/test-artifacts

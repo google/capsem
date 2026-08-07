@@ -205,7 +205,7 @@ impl Hypervisor for KvmHypervisor {
         // Same probe used in CI (.github/workflows/release.yaml).
         #[cfg(target_arch = "x86_64")]
         if let Err(e) = kvm.get_supported_cpuid() {
-            tracing::warn!("KVM CPUID probe failed: {e:#}");
+            tracing::warn!(error = format!("{e:#}"), "KVM CPUID probe failed");
             tracing::warn!(
                 "This indicates restricted/nested KVM -- vCPU creation will likely fail"
             );
@@ -682,14 +682,14 @@ impl Hypervisor for KvmHypervisor {
             serial: serial_console,
             shutdown,
             control,
-            _vm: Some(vm),
-            _vcpu_handles: vcpu_handles,
-            _guest_mem: guest_mem,
-            _mmio_bus: mmio_bus,
+            _vcpu_handles: std::sync::Mutex::new(vcpu_handles),
+            _vsock_listener_handles: std::sync::Mutex::new(vsock_listener_handles),
+            _vsock_irq_handles: std::sync::Mutex::new(vsock_irq_handles),
             #[cfg(target_arch = "x86_64")]
             _mmio_transports: mmio_transports,
-            _vsock_listener_handles: vsock_listener_handles,
-            _vsock_irq_handles: vsock_irq_handles,
+            _mmio_bus: mmio_bus,
+            _vm: Some(vm),
+            _guest_mem: guest_mem,
         };
 
         Ok((Box::new(handle), vsock_rx))
@@ -702,25 +702,92 @@ struct KvmHandle {
     serial: serial::KvmSerialConsole,
     shutdown: Arc<AtomicBool>,
     control: Arc<vcpu::VcpuControl>,
-    _vm: Option<sys::VmFd>,
-    _vcpu_handles: Vec<std::thread::JoinHandle<Result<()>>>,
-    _guest_mem: memory::GuestMemory,
-    _mmio_bus: Arc<mmio::MmioBus>,
+    _vcpu_handles: std::sync::Mutex<Vec<std::thread::JoinHandle<Result<()>>>>,
+    _vsock_listener_handles: std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>,
+    _vsock_irq_handles: std::sync::Mutex<Vec<std::thread::JoinHandle<()>>>,
+    // Rust drops fields in declaration order. Device transports and their
+    // workers own non-owning GuestMemoryRef values, so every device owner and
+    // the VM fd must be destroyed before GuestMemory unmaps the allocation.
     #[cfg(target_arch = "x86_64")]
     _mmio_transports: Vec<(u32, Arc<virtio_mmio::VirtioMmioTransport>)>,
-    _vsock_listener_handles: Vec<std::thread::JoinHandle<()>>,
-    _vsock_irq_handles: Vec<std::thread::JoinHandle<()>>,
+    _mmio_bus: Arc<mmio::MmioBus>,
+    _vm: Option<sys::VmFd>,
+    _guest_mem: memory::GuestMemory,
 }
 
 // Safety: all fields are Send, vCPU threads are managed via JoinHandles.
 unsafe impl Send for KvmHandle {}
 
-impl VmHandle for KvmHandle {
-    fn stop(&self) -> Result<()> {
+impl KvmHandle {
+    fn request_stop(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
         self.control.request_stop();
         self.state.store(VmState::Stopped as u8, Ordering::SeqCst);
-        Ok(())
+    }
+
+    fn join_workers(&self) -> Result<()> {
+        let vcpu_handles = {
+            let mut handles = self
+                ._vcpu_handles
+                .lock()
+                .map_err(|_| anyhow::anyhow!("KVM vCPU worker lock poisoned"))?;
+            std::mem::take(&mut *handles)
+        };
+        let vsock_listener_handles = {
+            let mut handles = self
+                ._vsock_listener_handles
+                .lock()
+                .map_err(|_| anyhow::anyhow!("KVM vsock listener worker lock poisoned"))?;
+            std::mem::take(&mut *handles)
+        };
+        let vsock_irq_handles = {
+            let mut handles = self
+                ._vsock_irq_handles
+                .lock()
+                .map_err(|_| anyhow::anyhow!("KVM vsock IRQ worker lock poisoned"))?;
+            std::mem::take(&mut *handles)
+        };
+
+        let mut failures = Vec::new();
+        for handle in vcpu_handles {
+            match handle.join() {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => failures.push(format!("vCPU worker failed: {error:#}")),
+                Err(_) => failures.push("vCPU worker panicked".to_string()),
+            }
+        }
+        for handle in vsock_listener_handles {
+            if handle.join().is_err() {
+                failures.push("vsock listener worker panicked".to_string());
+            }
+        }
+        for handle in vsock_irq_handles {
+            if handle.join().is_err() {
+                failures.push("vsock IRQ worker panicked".to_string());
+            }
+        }
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            anyhow::bail!("KVM worker shutdown failed: {}", failures.join("; "))
+        }
+    }
+}
+
+impl Drop for KvmHandle {
+    fn drop(&mut self) {
+        self.request_stop();
+        if let Err(error) = self.join_workers() {
+            tracing::warn!(error = %error, "KVM worker shutdown failed during drop");
+        }
+    }
+}
+
+impl VmHandle for KvmHandle {
+    fn stop(&self) -> Result<()> {
+        self.request_stop();
+        self.join_workers()
     }
 
     fn state(&self) -> VmState {
@@ -918,12 +985,12 @@ fn run_kvm_diagnostics(kvm: &sys::KvmFd) {
                 );
             }
             Err(e) => {
-                tracing::error!("probe: vCPU(0) fails even WITHOUT IRQCHIP: {e:#}");
+                tracing::error!(error = format!("{e:#}"), "probe: vCPU(0) fails even WITHOUT IRQCHIP");
                 tracing::error!("probe: this KVM environment cannot create vCPUs at all");
             }
         },
         Err(e) => {
-            tracing::error!("probe: fresh VM creation failed: {e:#}");
+            tracing::error!(error = format!("{e:#}"), "probe: fresh VM creation failed");
         }
     }
 
@@ -954,220 +1021,4 @@ struct UnameInfo {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Compile-time trait conformance checks
-    fn _assert_hypervisor(_: &dyn Hypervisor) {}
-    fn _assert_vm_handle(_: &dyn VmHandle) {}
-    fn _assert_serial(_: &dyn SerialConsole) {}
-
-    fn _assert_send_sync() {
-        fn assert_send<T: Send>() {}
-        fn assert_sync<T: Sync>() {}
-        assert_send::<KvmHypervisor>();
-        assert_sync::<KvmHypervisor>();
-        assert_send::<KvmHandle>();
-    }
-
-    fn test_handle() -> KvmHandle {
-        test_handle_with_control(Arc::new(vcpu::VcpuControl::new(0)))
-    }
-
-    fn test_handle_with_control(control: Arc<vcpu::VcpuControl>) -> KvmHandle {
-        KvmHandle {
-            state: std::sync::atomic::AtomicU8::new(VmState::Running as u8),
-            serial: serial::KvmSerialConsole::new(-1, -1),
-            shutdown: Arc::new(AtomicBool::new(false)),
-            control,
-            _vm: None,
-            _vcpu_handles: Vec::new(),
-            _guest_mem: memory::GuestMemory::new(4096).unwrap(),
-            _mmio_bus: Arc::new(mmio::MmioBus::new()),
-            #[cfg(target_arch = "x86_64")]
-            _mmio_transports: Vec::new(),
-            _vsock_listener_handles: Vec::new(),
-            _vsock_irq_handles: Vec::new(),
-        }
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    fn snapshot(id: u32) -> checkpoint::VcpuSnapshot {
-        let regs = sys::KvmRegs {
-            rip: 0x1000 + id as u64,
-            ..Default::default()
-        };
-        checkpoint::VcpuSnapshot {
-            id,
-            regs,
-            sregs: sys::KvmSregs::default(),
-            mp_state: sys::KvmMpState {
-                mp_state: sys::KVM_MP_STATE_RUNNABLE,
-            },
-            msrs: Vec::new(),
-            lapic: sys::KvmLapicState::default(),
-            events: sys::KvmVcpuEvents::default(),
-            debugregs: sys::KvmDebugRegs::default(),
-            fpu: sys::KvmFpu::default(),
-            xcrs: sys::KvmXcrs::default(),
-            xsave: sys::KvmXsave::default(),
-        }
-    }
-
-    fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join("capsem-kvm-handle").join(name);
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    #[test]
-    fn kvm_hypervisor_is_hypervisor() {
-        let h = KvmHypervisor;
-        _assert_hypervisor(&h);
-    }
-
-    #[test]
-    fn kvm_hypervisor_is_send_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<KvmHypervisor>();
-    }
-
-    #[test]
-    fn kvm_handle_supports_checkpoint_trait() {
-        let handle = test_handle();
-        assert_eq!(handle.supports_checkpoint(), cfg!(target_arch = "x86_64"));
-    }
-
-    #[test]
-    fn kvm_pause_resume_update_state() {
-        let handle = test_handle();
-
-        handle.pause().unwrap();
-        assert_eq!(handle.state(), VmState::Paused);
-
-        handle.resume().unwrap();
-        assert_eq!(handle.state(), VmState::Running);
-    }
-
-    #[test]
-    fn kvm_save_state_requires_pause() {
-        let handle = test_handle();
-        let path = temp_dir("save-requires-pause").join("state.kvm");
-
-        let err = handle.save_state(&path).unwrap_err();
-
-        assert!(err
-            .to_string()
-            .contains("KVM VM must be paused before save_state"));
-        assert!(!path.exists());
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn kvm_save_state_writes_checkpoint_file() {
-        let control = Arc::new(vcpu::VcpuControl::new(1));
-        let waiter = {
-            let control = Arc::clone(&control);
-            std::thread::spawn(move || loop {
-                control.wait_if_paused(0, || Ok(snapshot(0))).unwrap();
-                if control.is_stopped() {
-                    break;
-                }
-                std::thread::yield_now();
-            })
-        };
-        let handle = test_handle_with_control(control);
-        let path = temp_dir("save-writes").join("state.kvm");
-
-        handle.pause().unwrap();
-        handle.save_state(&path).unwrap();
-
-        assert_eq!(handle.state(), VmState::Paused);
-        let meta = std::fs::metadata(path).unwrap();
-        assert_eq!(meta.len(), 44 + 4 + 6952 + 1720 + 4096);
-        handle.resume().unwrap();
-        handle.stop().unwrap();
-        waiter.join().unwrap();
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    #[test]
-    fn kvm_save_state_restores_paused_state_after_error() {
-        let handle = test_handle();
-        let path = temp_dir("save-error").join("missing").join("state.kvm");
-
-        handle.pause().unwrap();
-        let err = handle.save_state(&path).unwrap_err();
-
-        assert!(err
-            .to_string()
-            .contains("checkpoint parent directory does not exist"));
-        assert_eq!(handle.state(), VmState::Paused);
-    }
-
-    #[test]
-    fn kvm_stop_blocks_lifecycle_ops() {
-        let handle = test_handle();
-
-        handle.stop().unwrap();
-
-        assert_eq!(handle.state(), VmState::Stopped);
-        assert!(handle.pause().unwrap_err().to_string().contains("stopped"));
-        assert!(handle.resume().unwrap_err().to_string().contains("stopped"));
-        assert!(handle
-            .save_state(&temp_dir("stopped").join("state.kvm"))
-            .unwrap_err()
-            .to_string()
-            .contains("stopped"));
-    }
-
-    #[test]
-    fn kvm_state_decoder_preserves_transient_states() {
-        assert_eq!(state_from_u8(VmState::Pausing as u8), VmState::Pausing);
-        assert_eq!(state_from_u8(VmState::Resuming as u8), VmState::Resuming);
-        assert_eq!(state_from_u8(VmState::Saving as u8), VmState::Saving);
-        assert_eq!(state_from_u8(255), VmState::Unknown);
-    }
-
-    #[cfg(not(target_arch = "x86_64"))]
-    #[test]
-    fn kvm_boot_rejects_checkpoint_path_on_unsupported_arch() {
-        let h = KvmHypervisor;
-        let config = VmConfig {
-            cpu_count: 1,
-            ram_bytes: 4096,
-            kernel_path: "/nonexistent/vmlinuz".into(),
-            initrd_path: None,
-            disk_path: None,
-            scratch_disk_path: None,
-            virtio_fs_shares: Vec::new(),
-            kernel_cmdline: String::new(),
-            expected_kernel_hash: None,
-            expected_initrd_hash: None,
-            checkpoint_path: Some("/tmp/checkpoint.kvm".into()),
-            expected_disk_hash: None,
-            machine_identifier_path: None,
-            serial_log_path: None,
-        };
-
-        let err = match h.boot(&config, &[]) {
-            Ok(_) => panic!("boot should reject checkpoint_path"),
-            Err(err) => err,
-        };
-
-        assert!(err
-            .to_string()
-            .contains("KVM checkpoint restore is only implemented for x86_64"));
-    }
-
-    #[test]
-    fn boot_without_kvm_fails_gracefully() {
-        // On macOS or without /dev/kvm, boot should fail with an error, not panic
-        let h = KvmHypervisor;
-        let config = crate::vm::config::VmConfig::builder()
-            .kernel_path("/nonexistent/vmlinuz")
-            .build();
-        assert!(config.is_err());
-    }
-}
+mod tests;

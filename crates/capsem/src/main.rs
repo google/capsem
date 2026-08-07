@@ -25,7 +25,7 @@ use nix::fcntl::{Flock, FlockArg};
 use std::{
     fs::OpenOptions,
     io::BufRead,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command as StdCommand, Stdio},
     time::{Duration, Instant},
 };
@@ -104,25 +104,42 @@ impl Drop for DoctorMockServer {
     }
 }
 
-fn mock_server_binary_path() -> Result<PathBuf> {
-    let cwd_candidate = std::env::current_dir()
-        .context("read current directory")?
-        .join("target/debug/capsem-mock-server");
+fn find_mock_server_binary(
+    executable: &Path,
+    current_dir: &Path,
+    manifest_dir: &Path,
+) -> Option<PathBuf> {
+    if let Some(bin_dir) = executable.parent() {
+        let installed_candidate = bin_dir.join("capsem-mock-server");
+        if installed_candidate.exists() {
+            return Some(installed_candidate);
+        }
+    }
+
+    let cwd_candidate = current_dir.join("target/debug/capsem-mock-server");
     if cwd_candidate.exists() {
-        return Ok(cwd_candidate);
+        return Some(cwd_candidate);
     }
 
-    let manifest_candidate =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/debug/capsem-mock-server");
+    let manifest_candidate = manifest_dir.join("../../target/debug/capsem-mock-server");
     if manifest_candidate.exists() {
-        return manifest_candidate
-            .canonicalize()
-            .context("resolve source-tree capsem-mock-server binary");
+        return Some(manifest_candidate);
     }
 
-    Err(anyhow!(
-        "target/debug/capsem-mock-server not found; run cargo build -p capsem-mock-server"
-    ))
+    None
+}
+
+fn mock_server_binary_path() -> Result<PathBuf> {
+    let executable = std::env::current_exe().context("resolve current Capsem executable")?;
+    let current_dir = std::env::current_dir().context("read current directory")?;
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+
+    find_mock_server_binary(&executable, &current_dir, &manifest_dir).ok_or_else(|| {
+        anyhow!(
+            "capsem-mock-server not found beside the Capsem executable or under target/debug; \
+         reinstall Capsem or run cargo build -p capsem-mock-server"
+        )
+    })
 }
 
 fn spawn_doctor_mock_server() -> Result<DoctorMockServer> {
@@ -301,17 +318,31 @@ enum AssetsCommands {
 #[derive(Subcommand)]
 enum McpCommands {
     /// List configured MCP servers with connection status
-    Servers,
+    Servers {
+        /// Profile whose MCP configuration should be inspected
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
+    },
     /// List discovered MCP tools across all servers
     Tools {
+        /// Profile whose MCP configuration should be inspected
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
         /// Filter by server name
         #[arg(long)]
         server: Option<String>,
     },
     /// Re-discover tools from all MCP servers
-    Refresh,
+    Refresh {
+        /// Profile whose MCP servers should be refreshed
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
+    },
     /// Call an MCP tool by namespaced name
     Call {
+        /// Profile whose MCP tool should be called
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
         /// Namespaced tool name (e.g. github__search_repos)
         name: String,
         /// JSON arguments
@@ -330,6 +361,9 @@ enum SessionCommands {
         /// Name for the session (makes it persistent -- "if you name it, you keep it")
         #[arg(short = 'n', long)]
         name: Option<String>,
+        /// Profile to use for this session
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
         /// RAM in GB
         #[arg(long, default_value_t = 4)]
         ram: u64,
@@ -392,6 +426,9 @@ enum SessionCommands {
     Run {
         /// Command to execute
         command: String,
+        /// Profile to use for this session
+        #[arg(long, default_value = DEFAULT_PROFILE_ID)]
+        profile: String,
         /// Timeout in seconds
         #[arg(long)]
         timeout: Option<u64>,
@@ -696,12 +733,35 @@ fn print_asset_status(status: &AssetStatusResponse) {
     }
 }
 
+/// The one line saying why a session cannot run, if it cannot.
+///
+/// The service splits the reason across two fields on purpose: a crashed VM
+/// carries its `process.log` tail in `last_error`, one the service refuses to
+/// resume carries the validation failure in `resume_blocked_reason`, and a
+/// healthy session carries neither. Matching a field to a particular status is
+/// how a `Stopped` VM that can never start came to print as a plain row.
+fn session_blocked_reason(info: &SessionInfo) -> Option<&str> {
+    info.last_error
+        .as_deref()
+        .or(info.resume_blocked_reason.as_deref())
+        .map(capsem_core::session::boot_failure_summary)
+}
+
 fn print_session_info(info: &SessionInfo) {
     println!("Session: {}", info.id);
     if let Some(name) = &info.name {
         println!("Name:    {}", name);
     }
     println!("Status:  {}", info.status);
+    // `capsem info` is what a user reaches for after `capsem list` shows a VM
+    // that will not run. Printing the status without the reason sent them to
+    // `capsem logs` to learn something the service had already returned here.
+    if let Some(reason) = session_blocked_reason(info) {
+        println!("Problem: {}", reason);
+        if info.last_error.is_some() {
+            println!("Logs:    capsem logs {}", info.id);
+        }
+    }
     if info.pid > 0 {
         println!("PID:     {}", info.pid);
     }
@@ -799,10 +859,65 @@ fn purge_summary_message(result: &PurgeResponse, all: bool) -> String {
     }
 }
 
-fn capsem_shell_tui_args(session: Option<&str>) -> Vec<String> {
-    session
-        .map(|session| vec!["--session".to_string(), session.to_string()])
-        .unwrap_or_default()
+fn capsem_shell_tui_args(session: Option<&str>, gateway_url: &str) -> Vec<String> {
+    let mut args = vec!["--gateway-url".to_string(), gateway_url.to_string()];
+    if let Some(session) = session {
+        args.extend(["--session".to_string(), session.to_string()]);
+    }
+    args
+}
+
+fn gateway_url_from_runtime(run_dir: &Path) -> Option<Result<String>> {
+    let port_path = run_dir.join("gateway.port");
+    let raw = match std::fs::read_to_string(&port_path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => {
+            return Some(Err(error).with_context(|| format!("read {}", port_path.display())))
+        }
+    };
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let port = match raw.parse::<u16>() {
+        Ok(0) => return Some(Err(anyhow!("{} contains port 0", port_path.display()))),
+        Ok(port) => port,
+        Err(error) => {
+            return Some(
+                Err(error)
+                    .with_context(|| format!("parse gateway port from {}", port_path.display())),
+            )
+        }
+    };
+    Some(Ok(format!("http://127.0.0.1:{port}")))
+}
+
+async fn wait_for_gateway_url(run_dir: &Path) -> Result<String> {
+    if let Ok(url) = std::env::var("CAPSEM_GATEWAY_URL") {
+        let url = url.trim_end_matches('/');
+        if !url.is_empty() {
+            return Ok(url.to_string());
+        }
+    }
+
+    let run_dir = run_dir.to_path_buf();
+    match capsem_core::poll::poll_until(
+        capsem_core::poll::PollOpts::new("gateway-runtime-ready", Duration::from_secs(5)),
+        || {
+            let run_dir = run_dir.clone();
+            async move { gateway_url_from_runtime(&run_dir) }
+        },
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(timeout) => Err(anyhow!(
+            "Capsem gateway did not publish {} within {:?}",
+            run_dir.join("gateway.port").display(),
+            timeout.timeout
+        )),
+    }
 }
 
 fn resolve_capsem_tui_binary() -> PathBuf {
@@ -820,13 +935,13 @@ fn resolve_capsem_tui_binary() -> PathBuf {
     PathBuf::from("capsem-tui")
 }
 
-async fn run_tui_shell(session: Option<&str>) -> Result<()> {
+async fn run_tui_shell(session: Option<&str>, gateway_url: &str) -> Result<()> {
     if let Some(session) = session {
         client::validate_id(session)?;
     }
     let binary = resolve_capsem_tui_binary();
     let status = tokio::process::Command::new(&binary)
-        .args(capsem_shell_tui_args(session))
+        .args(capsem_shell_tui_args(session, gateway_url))
         .stdin(std::process::Stdio::inherit())
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
@@ -1540,12 +1655,11 @@ async fn main() -> Result<()> {
                             for s in &defunct {
                                 let name = s.name.as_deref().unwrap_or(&s.id);
                                 if let Some(err) = &s.last_error {
-                                    let last = err
-                                        .lines()
-                                        .rev()
-                                        .find(|line| !line.trim().is_empty())
-                                        .unwrap_or("(log empty)");
-                                    println!("  - {}: {}", name, last);
+                                    println!(
+                                        "  - {}: {}",
+                                        name,
+                                        capsem_core::session::boot_failure_summary(err)
+                                    );
                                 } else {
                                     println!("  - {}", name);
                                 }
@@ -1631,15 +1745,17 @@ async fn main() -> Result<()> {
         }
         Commands::Session(SessionCommands::Create {
             name,
+            profile,
             ram,
             cpu,
             env,
             from,
         }) => {
+            client::validate_id(profile)?;
             let persistent = name.is_some() || from.is_some();
             let req = ProvisionRequest {
                 name: name.clone(),
-                profile_id: DEFAULT_PROFILE_ID.to_string(),
+                profile_id: profile.clone(),
                 ram_mb: ram * 1024,
                 cpus: *cpu,
                 persistent,
@@ -1704,7 +1820,10 @@ async fn main() -> Result<()> {
         }
         Commands::Session(SessionCommands::Shell { name, session }) => {
             let target = name.as_ref().or(session.as_ref());
-            run_tui_shell(target.map(String::as_str)).await?;
+            let resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
+            resp.into_result()?;
+            let gateway_url = wait_for_gateway_url(&run_dir).await?;
+            run_tui_shell(target.map(String::as_str), &gateway_url).await?;
         }
         Commands::Session(SessionCommands::List { quiet }) => {
             let resp: ApiResponse<ListResponse> = client.get("/vms/list").await?;
@@ -1732,22 +1851,14 @@ async fn main() -> Result<()> {
                         "{:<20} {:<12} {:<10} {:<8} {:<6} {:<10}",
                         s.id, name, s.status, ram, cpus, uptime
                     );
-                    // Defunct rows: show the tail of process.log inline so
-                    // the user doesn't need a separate `capsem logs` call
-                    // to see why boot failed.
-                    if s.status == VmLifecycleState::Defunct {
-                        if let Some(err) = &s.last_error {
-                            let last = err
-                                .lines()
-                                .rev()
-                                .find(|line| !line.trim().is_empty())
-                                .unwrap_or("(log empty)");
-                            println!("  ! {}", last);
+                    // Any row the service will not run explains itself inline,
+                    // so the problem is visible without a second command. A
+                    // crash also points at its full log; a blocked resume has
+                    // no boot to read.
+                    if let Some(reason) = session_blocked_reason(s) {
+                        println!("  ! {}", reason);
+                        if s.last_error.is_some() {
                             println!("  (`capsem logs {}` for full context)", s.id);
-                        }
-                    } else if s.status == VmLifecycleState::Incompatible {
-                        if let Some(reason) = &s.resume_blocked_reason {
-                            println!("  ! {}", reason);
                         }
                     }
                 }
@@ -1786,16 +1897,21 @@ async fn main() -> Result<()> {
             if !resp.stderr.is_empty() {
                 eprint!("{}", resp.stderr);
             }
+            if let Some(notice) = resp.truncation_notice() {
+                eprintln!("{notice}");
+            }
             std::process::exit(resp.exit_code);
         }
         Commands::Session(SessionCommands::Run {
             command,
+            profile,
             timeout,
             env,
         }) => {
+            client::validate_id(profile)?;
             let req = RunRequest {
                 command: command.clone(),
-                profile_id: DEFAULT_PROFILE_ID.to_string(),
+                profile_id: profile.clone(),
                 timeout_secs: *timeout,
                 env: client::parse_env_vars(env)?,
             };
@@ -1806,6 +1922,9 @@ async fn main() -> Result<()> {
             }
             if !resp.stderr.is_empty() {
                 eprint!("{}", resp.stderr);
+            }
+            if let Some(notice) = resp.truncation_notice() {
+                eprintln!("{notice}");
             }
             std::process::exit(resp.exit_code);
         }
@@ -2028,12 +2147,10 @@ async fn main() -> Result<()> {
             let resumed = resp.into_result()?;
             println!("{}", resumed.id);
         }
-        Commands::Mcp(McpCommands::Servers) => {
+        Commands::Mcp(McpCommands::Servers { profile }) => {
+            client::validate_id(profile)?;
             let resp: ApiResponse<Vec<serde_json::Value>> = client
-                .get(&format!(
-                    "/profiles/{}/mcp/servers/list",
-                    DEFAULT_PROFILE_ID
-                ))
+                .get(&format!("/profiles/{}/mcp/servers/list", profile))
                 .await?;
             let servers = resp.into_result()?;
             if servers.is_empty() {
@@ -2062,15 +2179,13 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Mcp(McpCommands::Tools { server }) => {
+        Commands::Mcp(McpCommands::Tools { profile, server }) => {
+            client::validate_id(profile)?;
             let server_names: Vec<String> = if let Some(server_filter) = server {
                 vec![server_filter.clone()]
             } else {
                 let resp: ApiResponse<Vec<serde_json::Value>> = client
-                    .get(&format!(
-                        "/profiles/{}/mcp/servers/list",
-                        DEFAULT_PROFILE_ID
-                    ))
+                    .get(&format!("/profiles/{}/mcp/servers/list", profile))
                     .await?;
                 resp.into_result()?
                     .into_iter()
@@ -2082,7 +2197,7 @@ async fn main() -> Result<()> {
                 let resp: ApiResponse<Vec<serde_json::Value>> = client
                     .get(&format!(
                         "/profiles/{}/mcp/servers/{}/tools/list",
-                        DEFAULT_PROFILE_ID, server_name
+                        profile, server_name
                     ))
                     .await?;
                 tools.extend(resp.into_result()?);
@@ -2114,21 +2229,16 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Commands::Mcp(McpCommands::Refresh) => {
+        Commands::Mcp(McpCommands::Refresh { profile }) => {
+            client::validate_id(profile)?;
             let resp: ApiResponse<Vec<serde_json::Value>> = client
-                .get(&format!(
-                    "/profiles/{}/mcp/servers/list",
-                    DEFAULT_PROFILE_ID
-                ))
+                .get(&format!("/profiles/{}/mcp/servers/list", profile))
                 .await?;
             for server in resp.into_result()? {
                 if let Some(server_name) = server["name"].as_str() {
                     let refresh: ApiResponse<serde_json::Value> = client
                         .post(
-                            &format!(
-                                "/profiles/{}/mcp/servers/{}/refresh",
-                                DEFAULT_PROFILE_ID, server_name
-                            ),
+                            &format!("/profiles/{}/mcp/servers/{}/refresh", profile, server_name),
                             &serde_json::json!({}),
                         )
                         .await?;
@@ -2137,7 +2247,12 @@ async fn main() -> Result<()> {
             }
             println!("MCP tools refreshed.");
         }
-        Commands::Mcp(McpCommands::Call { name, args }) => {
+        Commands::Mcp(McpCommands::Call {
+            profile,
+            name,
+            args,
+        }) => {
+            client::validate_id(profile)?;
             let (server_name, tool_name) = name.split_once("__").ok_or_else(|| {
                 anyhow!("MCP tool calls must use namespaced names like server__tool; got {name}")
             })?;
@@ -2147,7 +2262,7 @@ async fn main() -> Result<()> {
                 .post(
                     &format!(
                         "/profiles/{}/mcp/servers/{}/tools/{}/call",
-                        DEFAULT_PROFILE_ID, server_name, tool_name
+                        profile, server_name, tool_name
                     ),
                     &arguments,
                 )
@@ -2507,1186 +2622,4 @@ async fn handle_cp(client: &client::UdsClient, src: &str, dst: &str) -> Result<(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use capsem_core::net::policy_config::{ResolvedSetting, SettingValue};
-    use clap::Parser;
-
-    #[test]
-    fn cli_runtime_paths_are_derived_from_one_run_dir() {
-        let run_dir = tempfile::tempdir().unwrap();
-        let paths = cli_runtime_paths_from_run_dir(run_dir.path());
-
-        assert_eq!(paths.service_socket, run_dir.path().join("service.sock"));
-        assert_eq!(paths.gateway_port, run_dir.path().join("gateway.port"));
-        assert_eq!(paths.gateway_token, run_dir.path().join("gateway.token"));
-    }
-
-    fn update_track(
-        current: Option<&str>,
-        latest: Option<&str>,
-        state: UpdateTrackState,
-        available: bool,
-    ) -> client::UpdateTrackStatus {
-        client::UpdateTrackStatus {
-            current: current.map(ToOwned::to_owned),
-            latest: latest.map(ToOwned::to_owned),
-            blocked_reason: None,
-            update_available: available,
-            state,
-            compatibility: client::UpdateCompatibilityState::Compatible,
-        }
-    }
-
-    fn base_update_status() -> UpdateStatusResponse {
-        UpdateStatusResponse {
-            checked_at: Some(1_718_444_400),
-            channel_url: Some("https://release.capsem.org/health.json".into()),
-            channel_hash: None,
-            validation_status: Some("valid".into()),
-            validation_error: None,
-            stale: false,
-            last_error: None,
-            binary: update_track(
-                Some("1.4.0"),
-                Some("1.4.0"),
-                UpdateTrackState::Current,
-                false,
-            ),
-            assets: update_track(
-                Some("2026.0627.1"),
-                Some("2026.0627.1"),
-                UpdateTrackState::Current,
-                false,
-            ),
-            profiles: update_track(
-                Some("profiles-1"),
-                Some("profiles-1"),
-                UpdateTrackState::Current,
-                false,
-            ),
-            images: update_track(None, None, UpdateTrackState::NotPublished, false),
-            supply_chain: client::SupplyChainEvidence::default(),
-        }
-    }
-
-    #[test]
-    fn update_status_lines_separate_available_and_blocked_tracks() {
-        let mut status = base_update_status();
-        status.binary = update_track(
-            Some("1.4.0"),
-            Some("1.4.1"),
-            UpdateTrackState::UpdateAvailable,
-            true,
-        );
-        status.profiles = update_track(
-            Some("profiles-1"),
-            Some("profiles-2"),
-            UpdateTrackState::UpdateAvailable,
-            true,
-        );
-        status.assets.blocked_reason = Some("requires binary 1.4.1 or newer".into());
-        status.images.blocked_reason = Some("image catalog not published".into());
-
-        let lines = update_status_lines(&status);
-
-        assert_eq!(
-            lines[0],
-            "Updates:   available (binary 1.4.0 -> 1.4.1; profiles profiles-1 -> profiles-2); blocked (assets, images)"
-        );
-        assert!(lines.contains(&"Channel:   https://release.capsem.org/health.json".into()));
-        assert!(lines.contains(&"Assets:    blocked (requires binary 1.4.1 or newer)".into()));
-        assert!(lines.contains(&"Images:    blocked (image catalog not published)".into()));
-    }
-
-    #[test]
-    fn update_status_lines_does_not_invent_track_or_cache_state_when_current() {
-        let mut status = base_update_status();
-        status.stale = true;
-        status.assets.state = UpdateTrackState::Unknown;
-
-        let lines = update_status_lines(&status);
-
-        assert_eq!(lines[0], "Updates:   current");
-        assert!(!lines.join("\n").contains("not published"));
-        assert!(!lines.join("\n").contains("cache"));
-    }
-
-    // -----------------------------------------------------------------------
-    // CLI parsing
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn parse_no_subcommand() {
-        let cli = Cli::try_parse_from(["capsem"]);
-        assert!(cli.is_ok());
-        let cli = cli.unwrap();
-        assert!(cli.command.is_none());
-    }
-
-    #[test]
-    fn parse_create_with_name() {
-        let cli = Cli::parse_from(["capsem", "create", "-n", "my-vm"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Create { name, ram, cpu, .. }) => {
-                assert_eq!(name, Some("my-vm".into()));
-                assert_eq!(ram, 4);
-                assert_eq!(cpu, 4);
-            }
-            _ => panic!("expected Create"),
-        }
-    }
-
-    #[test]
-    fn parse_create_ephemeral() {
-        let cli = Cli::parse_from(["capsem", "create"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Create { name, .. }) => {
-                assert_eq!(name, None);
-            }
-            _ => panic!("expected Create"),
-        }
-    }
-
-    #[test]
-    fn parse_create_with_resources() {
-        let cli = Cli::parse_from(["capsem", "create", "--ram", "8", "--cpu", "2"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Create { ram, cpu, .. }) => {
-                assert_eq!(ram, 8);
-                assert_eq!(cpu, 2);
-            }
-            _ => panic!("expected Create"),
-        }
-    }
-
-    #[test]
-    fn parse_resume() {
-        let cli = Cli::parse_from(["capsem", "resume", "mydev"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Resume { name }) => assert_eq!(name, "mydev"),
-            _ => panic!("expected Resume"),
-        }
-    }
-
-    #[test]
-    fn parse_attach_alias_for_resume() {
-        let cli = Cli::parse_from(["capsem", "attach", "mydev"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Resume { name }) => assert_eq!(name, "mydev"),
-            _ => panic!("expected Resume via attach alias"),
-        }
-    }
-
-    #[test]
-    fn parse_suspend() {
-        let cli = Cli::parse_from(["capsem", "suspend", "vm-123"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Suspend { session }) => {
-                assert_eq!(session, "vm-123")
-            }
-            _ => panic!("expected Suspend"),
-        }
-    }
-
-    #[test]
-    fn parse_shell_positional() {
-        let cli = Cli::parse_from(["capsem", "shell", "my-vm"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Shell { session, name }) => {
-                assert_eq!(session, Some("my-vm".into()));
-                assert_eq!(name, None);
-            }
-            _ => panic!("expected Shell"),
-        }
-    }
-
-    #[test]
-    fn parse_shell_by_name() {
-        let cli = Cli::parse_from(["capsem", "shell", "-n", "mydev"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Shell { name, session }) => {
-                assert_eq!(name, Some("mydev".into()));
-                assert_eq!(session, None);
-            }
-            _ => panic!("expected Shell"),
-        }
-    }
-
-    #[test]
-    fn parse_shell_bare() {
-        // Bare `capsem shell` = temp session + auto-destroy
-        let cli = Cli::parse_from(["capsem", "shell"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Shell { name, session }) => {
-                assert_eq!(name, None);
-                assert_eq!(session, None);
-            }
-            _ => panic!("expected Shell"),
-        }
-    }
-
-    #[test]
-    fn parse_persist() {
-        let cli = Cli::parse_from(["capsem", "persist", "vm-123", "mydev"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Persist { session, name }) => {
-                assert_eq!(session, "vm-123");
-                assert_eq!(name, "mydev");
-            }
-            _ => panic!("expected Persist"),
-        }
-    }
-
-    #[test]
-    fn parse_purge() {
-        let cli = Cli::parse_from(["capsem", "purge"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Purge { all }) => assert!(!all),
-            _ => panic!("expected Purge"),
-        }
-    }
-
-    #[test]
-    fn parse_purge_all() {
-        let cli = Cli::parse_from(["capsem", "purge", "--all"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Purge { all }) => assert!(all),
-            _ => panic!("expected Purge --all"),
-        }
-    }
-
-    #[test]
-    fn purge_summary_mentions_broken_persistent_for_default_purge() {
-        let result = PurgeResponse {
-            purged: 2,
-            persistent_purged: 1,
-            ephemeral_purged: 1,
-        };
-        assert_eq!(
-            purge_summary_message(&result, false),
-            "[*] Purged 2 sessions (1 broken persistent, 1 temporary)."
-        );
-    }
-
-    #[test]
-    fn purge_summary_keeps_temporary_only_message_when_no_defunct_persistent() {
-        let result = PurgeResponse {
-            purged: 3,
-            persistent_purged: 0,
-            ephemeral_purged: 3,
-        };
-        assert_eq!(
-            purge_summary_message(&result, false),
-            "[*] Purged 3 temporary sessions."
-        );
-    }
-
-    #[test]
-    fn parse_run() {
-        let cli = Cli::parse_from(["capsem", "run", "echo hello"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Run {
-                command,
-                timeout,
-                env,
-            }) => {
-                assert_eq!(command, "echo hello");
-                assert_eq!(timeout, None);
-                assert!(env.is_empty());
-            }
-            _ => panic!("expected Run"),
-        }
-    }
-
-    #[test]
-    fn parse_run_with_timeout() {
-        let cli = Cli::parse_from(["capsem", "run", "--timeout", "120", "ls -la"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Run {
-                command,
-                timeout,
-                env,
-            }) => {
-                assert_eq!(command, "ls -la");
-                assert_eq!(timeout, Some(120));
-                assert!(env.is_empty());
-            }
-            _ => panic!("expected Run"),
-        }
-    }
-
-    #[test]
-    fn parse_list() {
-        let cli = Cli::parse_from(["capsem", "list"]);
-        assert!(matches!(
-            cli.command.unwrap(),
-            Commands::Session(SessionCommands::List { quiet: false })
-        ));
-    }
-
-    #[test]
-    fn parse_list_quiet() {
-        let cli = Cli::parse_from(["capsem", "list", "-q"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::List { quiet }) => assert!(quiet),
-            _ => panic!("expected List"),
-        }
-    }
-
-    #[test]
-    fn parse_list_quiet_long() {
-        let cli = Cli::parse_from(["capsem", "list", "--quiet"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::List { quiet }) => assert!(quiet),
-            _ => panic!("expected List"),
-        }
-    }
-
-    #[test]
-    fn parse_status() {
-        // `capsem status` is now the service status command
-        let cli = Cli::parse_from(["capsem", "status"]);
-        assert!(matches!(
-            cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Status)
-        ));
-    }
-
-    #[test]
-    fn service_control_commands_do_not_start_background_update_work() {
-        for args in [
-            &["capsem", "install"][..],
-            &["capsem", "status"][..],
-            &["capsem", "start"][..],
-            &["capsem", "stop"][..],
-            &["capsem", "version"][..],
-            &["capsem", "update", "--assets", "--channel", "stable"][..],
-            &["capsem", "debug"][..],
-            &["capsem", "completions", "zsh"][..],
-            &["capsem", "uninstall", "--yes"][..],
-        ] {
-            let cli = Cli::parse_from(args);
-            let command = cli.command.as_ref().expect("parsed command");
-            assert!(
-                !should_refresh_update_cache_for_command(command),
-                "{args:?} must stay a pure local control command"
-            );
-        }
-    }
-
-    #[test]
-    fn session_commands_may_refresh_update_cache() {
-        let cli = Cli::parse_from(["capsem", "list"]);
-        let command = cli.command.as_ref().expect("parsed command");
-        assert!(should_refresh_update_cache_for_command(command));
-    }
-
-    fn resolved_auto_update(value: SettingValue) -> ResolvedSetting {
-        ResolvedSetting {
-            id: "app.auto_update".to_string(),
-            category: "App".to_string(),
-            name: "Auto-check for updates".to_string(),
-            description: String::new(),
-            setting_type: capsem_core::net::policy_config::SettingType::Bool,
-            default_value: SettingValue::Bool(true),
-            effective_value: value,
-            source: capsem_core::net::policy_config::PolicySource::User,
-            modified: Some("test".to_string()),
-            corp_locked: false,
-            enabled_by: None,
-            enabled: true,
-            metadata: capsem_core::net::policy_config::SettingMetadata::default(),
-            collapsed: false,
-            history: Vec::new(),
-        }
-    }
-
-    #[test]
-    fn auto_update_defaults_to_enabled_when_setting_is_absent_or_malformed() {
-        assert!(auto_update_enabled_from_resolved(&[]));
-        assert!(auto_update_enabled_from_resolved(&[resolved_auto_update(
-            SettingValue::Text("false".to_string())
-        )]));
-    }
-
-    #[test]
-    fn auto_update_setting_can_disable_background_refresh() {
-        let off = [resolved_auto_update(SettingValue::Bool(false))];
-        assert!(!auto_update_enabled_from_resolved(&off));
-
-        let on = [resolved_auto_update(SettingValue::Bool(true))];
-        assert!(auto_update_enabled_from_resolved(&on));
-    }
-
-    #[test]
-    fn app_auto_update_false_disables_background_refresh_from_settings_file() {
-        let _guard = lock_test_env();
-        let capsem_home = tempfile::tempdir().unwrap();
-        let previous_home = std::env::var_os("CAPSEM_HOME");
-        std::env::set_var("CAPSEM_HOME", capsem_home.path());
-        std::fs::write(
-            capsem_home.path().join("settings.toml"),
-            "[settings.\"app.auto_update\"]\nvalue = false\nmodified = \"test\"\n",
-        )
-        .unwrap();
-
-        let cli = Cli::parse_from(["capsem", "list"]);
-        let command = cli.command.as_ref().expect("parsed command");
-        assert!(!should_start_background_update_refresh(Some(command)));
-        assert!(!should_start_background_update_refresh(None));
-
-        match previous_home {
-            Some(value) => std::env::set_var("CAPSEM_HOME", value),
-            None => std::env::remove_var("CAPSEM_HOME"),
-        }
-    }
-
-    #[test]
-    fn service_control_commands_do_not_cross_service_api_boundary() {
-        for args in [
-            &["capsem", "install"][..],
-            &["capsem", "status"][..],
-            &["capsem", "start"][..],
-            &["capsem", "stop"][..],
-            &["capsem", "debug"][..],
-            &["capsem", "completions", "zsh"][..],
-            &["capsem", "uninstall", "--yes"][..],
-            &["capsem", "update", "--yes"][..],
-        ] {
-            let cli = Cli::parse_from(args);
-            let command = cli.command.as_ref().expect("parsed command");
-            assert!(
-                command_is_handled_before_service_api(command),
-                "{args:?} must be handled before UDS/service API construction so service control cannot depend on profile, status, or credential-store readiness"
-            );
-        }
-    }
-
-    #[test]
-    fn session_commands_cross_service_api_boundary() {
-        for args in [
-            &["capsem", "list"][..],
-            &["capsem", "exec", "code-1", "true"][..],
-            &["capsem", "assets", "status"][..],
-        ] {
-            let cli = Cli::parse_from(args);
-            let command = cli.command.as_ref().expect("parsed command");
-            assert!(
-                !command_is_handled_before_service_api(command),
-                "{args:?} should keep using the service API"
-            );
-        }
-    }
-
-    #[test]
-    fn parse_debug_aliases_support_bundle() {
-        let cli = Cli::parse_from(["capsem", "debug"]);
-        assert!(matches!(
-            cli.command.unwrap(),
-            Commands::Misc(MiscCommands::SupportBundle { .. })
-        ));
-    }
-
-    #[test]
-    fn parse_uds_path_override() {
-        let cli = Cli::parse_from(["capsem", "--uds-path", "/tmp/test.sock", "list"]);
-        assert_eq!(cli.uds_path, Some(PathBuf::from("/tmp/test.sock")));
-    }
-
-    #[test]
-    fn parse_uds_path_default_none() {
-        let cli = Cli::parse_from(["capsem", "list"]);
-        assert_eq!(cli.uds_path, None);
-    }
-
-    // -----------------------------------------------------------------------
-    // RAM conversion
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn ram_gb_to_mb_conversion() {
-        let ram_gb: u64 = 4;
-        assert_eq!(ram_gb * 1024, 4096);
-    }
-
-    // -----------------------------------------------------------------------
-    // New commands: exec, delete, info, doctor
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn parse_exec() {
-        let cli = Cli::parse_from(["capsem", "exec", "my-vm", "echo hello"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Exec {
-                session,
-                command,
-                timeout,
-            }) => {
-                assert_eq!(session, "my-vm");
-                assert_eq!(command, "echo hello");
-                assert_eq!(timeout, None);
-            }
-            _ => panic!("expected Exec"),
-        }
-    }
-
-    #[test]
-    fn parse_exec_with_timeout() {
-        let cli = Cli::parse_from(["capsem", "exec", "--timeout", "120", "my-vm", "make build"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Exec {
-                session,
-                command,
-                timeout,
-            }) => {
-                assert_eq!(session, "my-vm");
-                assert_eq!(command, "make build");
-                assert_eq!(timeout, Some(120));
-            }
-            _ => panic!("expected Exec"),
-        }
-    }
-
-    #[test]
-    fn parse_delete() {
-        let cli = Cli::parse_from(["capsem", "delete", "vm-123"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Delete { session }) => assert_eq!(session, "vm-123"),
-            _ => panic!("expected Delete"),
-        }
-    }
-
-    #[test]
-    fn parse_info() {
-        let cli = Cli::parse_from(["capsem", "info", "vm-1"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Info { session, json }) => {
-                assert_eq!(session, "vm-1");
-                assert!(!json);
-            }
-            _ => panic!("expected Info"),
-        }
-    }
-
-    #[test]
-    fn parse_info_json() {
-        let cli = Cli::parse_from(["capsem", "info", "--json", "vm-1"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Info { session, json }) => {
-                assert_eq!(session, "vm-1");
-                assert!(json);
-            }
-            _ => panic!("expected Info --json"),
-        }
-    }
-
-    #[test]
-    fn parse_logs_with_tail() {
-        let cli = Cli::parse_from(["capsem", "logs", "--tail", "50", "vm-1"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Logs { session, tail }) => {
-                assert_eq!(session, "vm-1");
-                assert_eq!(tail, Some(50));
-            }
-            _ => panic!("expected Logs"),
-        }
-    }
-
-    #[test]
-    fn parse_logs_without_tail() {
-        let cli = Cli::parse_from(["capsem", "logs", "vm-1"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Logs { session, tail }) => {
-                assert_eq!(session, "vm-1");
-                assert_eq!(tail, None);
-            }
-            _ => panic!("expected Logs"),
-        }
-    }
-
-    #[test]
-    fn parse_restart() {
-        let cli = Cli::parse_from(["capsem", "restart", "mydev"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Restart { name }) => assert_eq!(name, "mydev"),
-            _ => panic!("expected Restart"),
-        }
-    }
-
-    #[test]
-    fn parse_version() {
-        let cli = Cli::parse_from(["capsem", "version"]);
-        assert!(matches!(
-            cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Version)
-        ));
-    }
-
-    #[test]
-    fn parse_create_with_env() {
-        let cli = Cli::parse_from(["capsem", "create", "-e", "FOO=bar", "-e", "BAZ=qux"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Create { env, .. }) => {
-                assert_eq!(env, vec!["FOO=bar", "BAZ=qux"]);
-            }
-            _ => panic!("expected Create"),
-        }
-    }
-
-    #[test]
-    fn parse_create_with_env_long() {
-        let cli = Cli::parse_from(["capsem", "create", "--env", "API_KEY=secret123"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Create { env, .. }) => {
-                assert_eq!(env, vec!["API_KEY=secret123"]);
-            }
-            _ => panic!("expected Create"),
-        }
-    }
-
-    #[test]
-    fn parse_create_no_env() {
-        let cli = Cli::parse_from(["capsem", "create"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Create { env, .. }) => {
-                assert!(env.is_empty());
-            }
-            _ => panic!("expected Create"),
-        }
-    }
-
-    #[test]
-    fn parse_doctor() {
-        let cli = Cli::parse_from(["capsem", "doctor"]);
-        assert!(matches!(
-            cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Doctor { bundle: false })
-        ));
-    }
-
-    #[test]
-    fn parse_doctor_bundle_flag() {
-        let cli = Cli::parse_from(["capsem", "doctor", "--bundle"]);
-        assert!(matches!(
-            cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Doctor { bundle: true })
-        ));
-    }
-
-    #[test]
-    fn parse_doctor_rejects_fast_escape_hatch() {
-        let err = match Cli::try_parse_from(["capsem", "doctor", "--fast"]) {
-            Ok(_) => panic!("doctor --fast must not be accepted"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string().contains("--fast"),
-            "error should identify the retired flag: {err}"
-        );
-    }
-
-    #[test]
-    fn doctor_mock_server_addr_is_iptables_redirect_target() {
-        assert_eq!(DOCTOR_MOCK_SERVER_ADDR, "127.0.0.1:3713");
-    }
-
-    #[test]
-    fn doctor_mock_server_lock_path_matches_shared_python_launcher() {
-        assert_eq!(
-            DoctorMockServerLock::path_for_addr(DOCTOR_MOCK_SERVER_ADDR),
-            std::env::temp_dir().join("capsem-mock-server-127-0-0-1-3713.lock")
-        );
-    }
-
-    #[test]
-    fn parse_install() {
-        let cli = Cli::parse_from(["capsem", "install"]);
-        assert!(matches!(
-            cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Install)
-        ));
-    }
-
-    #[test]
-    fn parse_start() {
-        let cli = Cli::parse_from(["capsem", "start"]);
-        assert!(matches!(
-            cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Start)
-        ));
-    }
-
-    #[test]
-    fn parse_stop() {
-        let cli = Cli::parse_from(["capsem", "stop"]);
-        assert!(matches!(
-            cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Stop)
-        ));
-    }
-
-    #[test]
-    fn parse_setup_is_removed() {
-        let err = match Cli::try_parse_from(["capsem", "setup", "--non-interactive"]) {
-            Ok(_) => panic!("setup command must not parse after T5 removal"),
-            Err(err) => err,
-        };
-        assert_eq!(err.kind(), clap::error::ErrorKind::InvalidSubcommand);
-    }
-
-    #[test]
-    fn parse_assets_status() {
-        let cli = Cli::parse_from(["capsem", "assets", "status"]);
-        match cli.command.unwrap() {
-            Commands::Assets(AssetsCommands::Status { profile, json }) => {
-                assert_eq!(profile, "code");
-                assert!(!json);
-            }
-            _ => panic!("expected assets status"),
-        }
-    }
-
-    #[test]
-    fn cli_default_profile_is_primary_profile() {
-        assert_eq!(DEFAULT_PROFILE_ID, "code");
-    }
-
-    #[test]
-    fn status_asset_lines_are_derived_from_profiles_status_payload() {
-        let payload = serde_json::json!({
-            "source": "installed",
-            "profile_count": 1,
-            "ready_count": 1,
-            "asset_manifest": {
-                "origin": "package",
-                "path": "/tmp/manifest.json",
-                "blake3": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "assets_current": "2026.0609.1",
-                "binaries_current": "1.3.0"
-            },
-            "profiles": [
-                {
-                    "id": "code",
-                    "name": "Code",
-                    "ready": true,
-                    "current_arch": "arm64",
-                    "profile_payload_hash": "bbbbbbbbbbbb",
-                    "missing_assets": []
-                }
-            ]
-        });
-
-        let lines = profile_status_summary_lines(&payload);
-
-        assert!(lines
-            .iter()
-            .any(|line| line == "Profiles:  1/1 ready (installed)"));
-        assert!(lines
-            .iter()
-            .any(|line| line == "Manifest:  package (/tmp/manifest.json)"));
-        assert!(lines.iter().any(|line| line == "  assets:  2026.0609.1"));
-        assert!(lines
-            .iter()
-            .any(|line| line == "  - code: Code (ready, arch arm64, hash bbbbbbbbbbbb)"));
-    }
-
-    #[test]
-    fn health_issues_are_derived_from_profiles_status_payload() {
-        let payload = serde_json::json!({
-            "profile_count": 1,
-            "profiles": [
-                {
-                    "id": "code",
-                    "ready": false,
-                    "missing_assets": ["initrd.img"],
-                    "invalid_assets": ["rootfs.erofs"],
-                    "invalid_files": ["profiles/code/enforcement.toml"]
-                }
-            ]
-        });
-
-        let issues = profile_status_issues(&payload);
-
-        assert_eq!(issues.len(), 1);
-        assert!(issues[0].contains("Profile code is not ready"));
-        assert!(issues[0].contains("missing assets: initrd.img"));
-        assert!(issues[0].contains("invalid assets: rootfs.erofs"));
-        assert!(issues[0].contains("invalid profile files: profiles/code/enforcement.toml"));
-    }
-
-    #[test]
-    fn parse_assets_ensure_json() {
-        let cli = Cli::parse_from(["capsem", "assets", "ensure", "--json"]);
-        match cli.command.unwrap() {
-            Commands::Assets(AssetsCommands::Ensure { profile, json }) => {
-                assert_eq!(profile, "code");
-                assert!(json);
-            }
-            _ => panic!("expected assets ensure"),
-        }
-    }
-
-    #[test]
-    fn parse_assets_status_profile() {
-        let cli = Cli::parse_from(["capsem", "assets", "status", "--profile", "analysis"]);
-        match cli.command.unwrap() {
-            Commands::Assets(AssetsCommands::Status { profile, json }) => {
-                assert_eq!(profile, "analysis");
-                assert!(!json);
-            }
-            _ => panic!("expected assets status"),
-        }
-    }
-
-    #[test]
-    fn parse_completions_bash() {
-        let cli = Cli::parse_from(["capsem", "completions", "bash"]);
-        assert!(matches!(
-            cli.command.unwrap(),
-            Commands::Misc(MiscCommands::Completions {
-                shell: clap_complete::Shell::Bash
-            })
-        ));
-    }
-
-    #[test]
-    fn parse_uninstall() {
-        let cli = Cli::parse_from(["capsem", "uninstall"]);
-        match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Uninstall { yes }) => assert!(!yes),
-            _ => panic!("expected Uninstall"),
-        }
-    }
-
-    #[test]
-    fn parse_uninstall_yes() {
-        let cli = Cli::parse_from(["capsem", "uninstall", "--yes"]);
-        match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Uninstall { yes }) => assert!(yes),
-            _ => panic!("expected Uninstall"),
-        }
-    }
-
-    #[test]
-    fn parse_update() {
-        let cli = Cli::parse_from(["capsem", "update"]);
-        match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Update {
-                yes,
-                check,
-                assets,
-                channel,
-                manifest,
-                corp,
-            }) => {
-                assert!(!yes);
-                assert!(!check);
-                assert!(!assets);
-                assert_eq!(channel, None);
-                assert_eq!(manifest, None);
-                assert_eq!(corp, None);
-            }
-            _ => panic!("expected Update"),
-        }
-    }
-
-    #[test]
-    fn parse_update_yes() {
-        let cli = Cli::parse_from(["capsem", "update", "--yes"]);
-        match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Update {
-                yes,
-                check,
-                assets,
-                channel,
-                manifest,
-                corp,
-            }) => {
-                assert!(yes);
-                assert!(!check);
-                assert!(!assets);
-                assert_eq!(channel, None);
-                assert_eq!(manifest, None);
-                assert_eq!(corp, None);
-            }
-            _ => panic!("expected Update"),
-        }
-    }
-
-    #[test]
-    fn parse_update_check() {
-        let cli = Cli::parse_from(["capsem", "update", "--check"]);
-        match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Update {
-                yes,
-                check,
-                assets,
-                channel,
-                manifest,
-                corp,
-            }) => {
-                assert!(!yes);
-                assert!(check);
-                assert!(!assets);
-                assert_eq!(channel, None);
-                assert_eq!(manifest, None);
-                assert_eq!(corp, None);
-            }
-            _ => panic!("expected Update"),
-        }
-    }
-
-    #[test]
-    fn parse_update_check_rejects_mutating_options() {
-        for args in [
-            vec!["capsem", "update", "--check", "--yes"],
-            vec!["capsem", "update", "--check", "--assets"],
-            vec![
-                "capsem",
-                "update",
-                "--check",
-                "--manifest",
-                "https://release.capsem.org/assets/stable/manifest.json",
-            ],
-            vec![
-                "capsem",
-                "update",
-                "--check",
-                "--corp",
-                "https://corp.example/capsem/corp.json",
-            ],
-        ] {
-            assert!(
-                Cli::try_parse_from(args.clone()).is_err(),
-                "expected {args:?} to be rejected"
-            );
-        }
-    }
-
-    #[test]
-    fn parse_update_assets() {
-        let cli = Cli::parse_from(["capsem", "update", "--assets"]);
-        match cli.command.unwrap() {
-            Commands::Misc(MiscCommands::Update {
-                yes,
-                check,
-                assets,
-                channel,
-                manifest,
-                corp,
-            }) => {
-                assert!(!yes);
-                assert!(!check);
-                assert!(assets);
-                assert_eq!(channel, None);
-                assert_eq!(manifest, None);
-                assert_eq!(corp, None);
-            }
-            _ => panic!("expected Update"),
-        }
-    }
-
-    #[test]
-    fn parse_update_named_channel_for_check_and_asset_switch() {
-        for args in [
-            ["capsem", "update", "--check", "--channel", "nightly"],
-            ["capsem", "update", "--assets", "--channel", "stable"],
-        ] {
-            let cli = Cli::parse_from(args);
-            match cli.command.unwrap() {
-                Commands::Misc(MiscCommands::Update { channel, .. }) => {
-                    assert!(matches!(channel.as_deref(), Some("nightly" | "stable")));
-                }
-                _ => panic!("expected Update"),
-            }
-        }
-    }
-
-    #[test]
-    fn parse_update_rejects_invalid_or_ambiguous_channel_selection() {
-        for args in [
-            vec!["capsem", "update", "--channel", "../nightly"],
-            vec![
-                "capsem",
-                "update",
-                "--channel",
-                "nightly",
-                "--manifest",
-                "https://release.capsem.org/assets/stable/manifest.json",
-            ],
-        ] {
-            assert!(Cli::try_parse_from(args).is_err());
-        }
-    }
-
-    #[test]
-    fn parse_update_rejects_assets_with_corp_policy() {
-        let err = match Cli::try_parse_from([
-            "capsem",
-            "update",
-            "--assets",
-            "--corp",
-            "https://corp.example/capsem/corp.toml",
-        ]) {
-            Ok(_) => panic!("--corp provisions policy config and must not combine with --assets"),
-            Err(err) => err,
-        };
-        let message = err.to_string();
-        assert!(message.contains("cannot be used with"), "{message}");
-        assert!(message.contains("--assets"), "{message}");
-    }
-
-    #[test]
-    fn parse_update_url_overrides_reject_bare_paths() {
-        for flag in ["--manifest", "--corp"] {
-            for source in ["/tmp/capsem/manifest.json", "assets/stable/manifest.json"] {
-                let err = match Cli::try_parse_from(["capsem", "update", "--assets", flag, source])
-                {
-                    Ok(_) => panic!("update source overrides must reject bare filesystem paths"),
-                    Err(err) => err,
-                };
-                let message = err.to_string();
-                assert!(
-                    message.contains(&format!("{flag} must be a URL")),
-                    "{message}"
-                );
-                assert!(message.contains("https://..."), "{message}");
-                assert!(message.contains("http://..."), "{message}");
-                assert!(message.contains("file:///absolute/path"), "{message}");
-            }
-        }
-    }
-
-    #[test]
-    fn parse_update_url_overrides_reject_url_shorthand_paths() {
-        for flag in ["--manifest", "--corp"] {
-            for (source, expected) in [
-                (
-                    "file:assets/stable/manifest.json",
-                    "file URL must start with file://",
-                ),
-                (
-                    "https:release.capsem.org/assets/stable/manifest.json",
-                    "must use https://, http://, or file:// URLs",
-                ),
-            ] {
-                let err = match Cli::try_parse_from(["capsem", "update", "--assets", flag, source])
-                {
-                    Ok(_) => panic!("update source overrides must reject URL shorthand paths"),
-                    Err(err) => err,
-                };
-                let message = err.to_string();
-                assert!(message.contains(expected), "{message}");
-            }
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // CAPSEM_RUN_DIR resolution
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn run_dir_override_logic() {
-        let resolve = |env_val: Option<&str>, home: &str| -> PathBuf {
-            env_val
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(home).join(".capsem").join("run"))
-        };
-        assert_eq!(
-            resolve(Some("/tmp/custom-run"), "/ignored"),
-            PathBuf::from("/tmp/custom-run"),
-        );
-        assert_eq!(
-            resolve(None, "/Users/test"),
-            PathBuf::from("/Users/test/.capsem/run"),
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // Fork / Image CLI parsing
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn parse_fork() {
-        let cli = Cli::parse_from(["capsem", "fork", "my-vm", "my-image"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Fork {
-                session,
-                name,
-                description,
-            }) => {
-                assert_eq!(session, "my-vm");
-                assert_eq!(name, "my-image");
-                assert_eq!(description, None);
-            }
-            _ => panic!("expected Fork"),
-        }
-    }
-
-    #[test]
-    fn parse_fork_with_description() {
-        let cli = Cli::parse_from(["capsem", "fork", "vm1", "img1", "-d", "My description"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Fork {
-                session,
-                name,
-                description,
-            }) => {
-                assert_eq!(session, "vm1");
-                assert_eq!(name, "img1");
-                assert_eq!(description, Some("My description".into()));
-            }
-            _ => panic!("expected Fork"),
-        }
-    }
-
-    #[test]
-    fn parse_create_with_from() {
-        let cli = Cli::parse_from(["capsem", "create", "--from", "base-session"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Create { from, name, .. }) => {
-                assert_eq!(from, Some("base-session".into()));
-                assert_eq!(name, None);
-            }
-            _ => panic!("expected Create with --from"),
-        }
-    }
-
-    #[test]
-    fn parse_create_with_from_image_alias() {
-        // --image is a backward-compat alias for --from
-        let cli = Cli::parse_from(["capsem", "create", "--image", "old-img"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Create { from, .. }) => {
-                assert_eq!(from, Some("old-img".into()));
-            }
-            _ => panic!("expected Create with --image alias"),
-        }
-    }
-
-    #[test]
-    fn parse_create_with_name_and_from() {
-        let cli = Cli::parse_from(["capsem", "create", "-n", "my-session", "--from", "my-src"]);
-        match cli.command.unwrap() {
-            Commands::Session(SessionCommands::Create { name, from, .. }) => {
-                assert_eq!(name, Some("my-session".into()));
-                assert_eq!(from, Some("my-src".into()));
-            }
-            _ => panic!("expected Create with name and --from"),
-        }
-    }
-
-    #[test]
-    fn shell_without_session_launches_tui_home() {
-        assert_eq!(capsem_shell_tui_args(None), Vec::<String>::new());
-    }
-
-    #[test]
-    fn shell_with_session_focuses_tui_session() {
-        assert_eq!(
-            capsem_shell_tui_args(Some("profile-v2")),
-            vec!["--session".to_string(), "profile-v2".to_string()]
-        );
-    }
-}
+mod tests;

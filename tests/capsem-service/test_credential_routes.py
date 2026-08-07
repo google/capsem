@@ -13,7 +13,6 @@ from typing import Any
 
 import blake3
 
-
 PROFILE = "code"
 CREDENTIAL_REF_PREFIX = "credential:blake3:"
 CREDENTIAL_REF_DOMAIN = b"capsem.credential.v1"

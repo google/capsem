@@ -26,9 +26,17 @@ fn create_params_all_optional() {
 }
 
 #[test]
+fn create_params_carry_requested_profile() {
+    let p: CreateParams = serde_json::from_value(json!({"profile": "co-work"})).unwrap();
+    assert_eq!(p.profile.as_deref(), Some("co-work"));
+    assert_eq!(build_create_body(&p)["profile_id"], "co-work");
+}
+
+#[test]
 fn create_params_serializes_camel() {
     let p = CreateParams {
         name: Some("vm".into()),
+        profile: None,
         ram_mb: Some(2048),
         cpu_count: Some(2),
         version: None,
@@ -49,9 +57,41 @@ fn default_profile_id_is_primary_profile() {
 }
 
 #[test]
+fn profile_scoped_mcp_params_carry_requested_profile() {
+    let servers: McpProfileParams = serde_json::from_value(json!({"profile": "co-work"})).unwrap();
+    let tools: McpToolsParams = serde_json::from_value(json!({"profile": "co-work"})).unwrap();
+    let call: McpCallParams = serde_json::from_value(json!({
+        "profile": "co-work",
+        "name": "server__tool"
+    }))
+    .unwrap();
+
+    assert_eq!(
+        requested_profile(servers.profile.as_deref()).unwrap(),
+        "co-work"
+    );
+    assert_eq!(
+        requested_profile(tools.profile.as_deref()).unwrap(),
+        "co-work"
+    );
+    assert_eq!(
+        requested_profile(call.profile.as_deref()).unwrap(),
+        "co-work"
+    );
+}
+
+#[test]
+fn profile_scoped_mcp_params_reject_path_injection() {
+    assert!(requested_profile(Some("../code")).is_err());
+    assert!(requested_profile(Some("code/mcp")).is_err());
+    assert!(requested_profile(Some("")).is_err());
+}
+
+#[test]
 fn create_body_includes_required_profile_id() {
     let params = CreateParams {
         name: Some("vm".into()),
+        profile: None,
         ram_mb: Some(2048),
         cpu_count: Some(2),
         version: None,
@@ -66,11 +106,23 @@ fn create_body_includes_required_profile_id() {
 fn run_body_includes_required_profile_id() {
     let params = RunParams {
         command: "echo ok".into(),
+        profile: None,
         timeout: None,
         env: None,
     };
     let body = build_run_body(&params);
     assert_eq!(body["profile_id"], "code");
+}
+
+#[test]
+fn run_body_carries_requested_profile() {
+    let p: RunParams = serde_json::from_value(json!({
+        "command": "echo ok",
+        "profile": "co-work"
+    }))
+    .unwrap();
+    assert_eq!(p.profile.as_deref(), Some("co-work"));
+    assert_eq!(build_run_body(&p)["profile_id"], "co-work");
 }
 
 #[test]
@@ -779,6 +831,7 @@ fn create_body_includes_from_clone_source() {
 fn run_body_default_timeout_is_60() {
     let p = RunParams {
         command: "echo".into(),
+        profile: None,
         timeout: None,
         env: None,
     };
@@ -791,6 +844,7 @@ fn run_body_default_timeout_is_60() {
 fn run_body_custom_timeout() {
     let p = RunParams {
         command: "make build".into(),
+        profile: None,
         timeout: Some(900),
         env: None,
     };
@@ -804,6 +858,7 @@ fn run_body_with_env() {
     env.insert("FOO".to_string(), "bar".to_string());
     let p = RunParams {
         command: "env".into(),
+        profile: None,
         timeout: None,
         env: Some(env),
     };
@@ -815,6 +870,7 @@ fn run_body_with_env() {
 fn run_body_without_env_omits_key() {
     let p = RunParams {
         command: "env".into(),
+        profile: None,
         timeout: None,
         env: None,
     };

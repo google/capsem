@@ -121,7 +121,7 @@
   }
 
 
-  function formatAndHighlight(value: unknown, lang?: string): string {
+  function formatAndHighlight(value: unknown, lang: string | undefined = undefined): string {
     shikiTick;
     if (value == null) return '';
     let content = typeof value === 'string' ? value : JSON.stringify(value, null, 2);

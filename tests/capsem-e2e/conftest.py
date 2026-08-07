@@ -14,16 +14,16 @@ import subprocess
 import sys
 import time
 import uuid
+from pathlib import Path
 
 import pytest
-
-from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from helpers.constants import EXEC_READY_TIMEOUT
 from helpers.service import make_capsem_tmp_dir, preserve_tmp_dir_on_failure
 from helpers.sign import sign_binary
+from log_streams import read_log_stream
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 SERVICE_BINARY = PROJECT_ROOT / "target/debug/capsem-service"
@@ -74,8 +74,8 @@ class RealService:
 
         log_path = self.tmp_dir / "service.log"
         stderr_path = self.tmp_dir / "service.stderr.log"
-        self._log_file = open(log_path, "w")
-        self._stderr_file = open(stderr_path, "w")
+        self._log_file = open(log_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
+        self._stderr_file = open(stderr_path, "w")  # noqa: SIM115 -- handed to Popen; must outlive this statement
 
         self.proc = subprocess.Popen(
             [
@@ -132,7 +132,7 @@ class RealService:
 
     def cli(self, *args, timeout=60):
         """Run the real capsem CLI binary. Returns CompletedProcess."""
-        cmd = [str(CLI_BINARY), "--uds-path", str(self.uds_path)] + list(args)
+        cmd = [str(CLI_BINARY), "--uds-path", str(self.uds_path), *list(args)]
         return subprocess.run(
             cmd, capture_output=True, text=True, timeout=timeout,
         )
@@ -158,10 +158,11 @@ class RealService:
 
     def _dump_logs(self):
         for name in ["service.log", "service.stderr.log"]:
-            p = self.tmp_dir / name
-            if p.exists():
-                print(f"\n--- {name} ---\n{p.read_text()}\n---",
-                      file=sys.stderr)
+            # service.log is a rotated stream; reading the name alone dumps
+            # nothing and makes a failure look like a silent one.
+            text = read_log_stream(self.tmp_dir / name)
+            if text:
+                print(f"\n--- {name} ---\n{text}\n---", file=sys.stderr)
 
 
 @pytest.fixture(scope="session")

@@ -289,18 +289,16 @@ fn env_var_path_resolution() {
     let _guard = crate::credential_broker::TEST_ENV_LOCK.blocking_lock();
 
     // Snapshot prior values so we can restore them at the end.
-    let prev_home_override = std::env::var("CAPSEM_HOME").ok();
     let prev_corp = std::env::var("CAPSEM_CORP_CONFIG").ok();
 
     // Local settings are rooted by CAPSEM_HOME.
-    std::env::set_var("CAPSEM_HOME", "/tmp/custom-capsem-home");
+    let _capsem_paths = crate::paths::CapsemPathsGuard::redirect(std::path::Path::new("/tmp/custom-capsem-home"));
     assert_eq!(
         settings_config_path(),
         Some(std::path::PathBuf::from(
             "/tmp/custom-capsem-home/settings.toml"
         ))
     );
-    std::env::remove_var("CAPSEM_HOME");
 
     // Corp override via env.
     std::env::set_var("CAPSEM_CORP_CONFIG", "/tmp/custom-corp.toml");
@@ -317,10 +315,6 @@ fn env_var_path_resolution() {
     );
 
     // Restore any prior values.
-    match prev_home_override {
-        Some(v) => std::env::set_var("CAPSEM_HOME", v),
-        None => std::env::remove_var("CAPSEM_HOME"),
-    }
     match prev_corp {
         Some(v) => std::env::set_var("CAPSEM_CORP_CONFIG", v),
         None => std::env::remove_var("CAPSEM_CORP_CONFIG"),
@@ -356,15 +350,10 @@ upstreams = ["127.0.0.1:5353"]
     )
     .unwrap();
 
-    let prev_home_override = std::env::var("CAPSEM_HOME").ok();
     let prev_corp = std::env::var("CAPSEM_CORP_CONFIG").ok();
-    std::env::set_var("CAPSEM_HOME", &settings_home);
+    let _capsem_paths = crate::paths::CapsemPathsGuard::redirect(&settings_home);
     std::env::set_var("CAPSEM_CORP_CONFIG", &corp_path);
     let (_, corp) = load_settings_and_corp_files();
-    match prev_home_override {
-        Some(v) => std::env::set_var("CAPSEM_HOME", v),
-        None => std::env::remove_var("CAPSEM_HOME"),
-    }
     match prev_corp {
         Some(v) => std::env::set_var("CAPSEM_CORP_CONFIG", v),
         None => std::env::remove_var("CAPSEM_CORP_CONFIG"),
@@ -372,8 +361,7 @@ upstreams = ["127.0.0.1:5353"]
 
     assert!(
         corp.corp.rules.contains_key("block_local_deny_target"),
-        "direct corp rules must not be dropped by load_settings_and_corp_files"
-    );
+        "direct corp rules must not be dropped by load_settings_and_corp_files");
     assert!(
         corp.plugins.contains_key("credential_broker"),
         "corp plugin policy must not be dropped by load_settings_and_corp_files"

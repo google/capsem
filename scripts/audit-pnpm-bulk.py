@@ -4,16 +4,21 @@
 from __future__ import annotations
 
 import argparse
-from collections import defaultdict
 import json
-from pathlib import Path
 import subprocess
 import sys
-from typing import Any
 import urllib.request
-
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
 
 DEFAULT_ENDPOINT = "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk"
+DEFAULT_PROJECT_DIRS = (
+    Path("frontend"),
+    Path("docs"),
+    Path("site"),
+    Path("release-site"),
+)
 
 
 def collect_versions(tree: object) -> dict[str, list[str]]:
@@ -89,23 +94,27 @@ def fetch_advisories(endpoint: str, versions: dict[str, list[str]]) -> Any:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--project-dir", required=True, type=Path)
+    parser.add_argument("--project-dir", action="append", type=Path)
     parser.add_argument("--endpoint", default=DEFAULT_ENDPOINT)
     args = parser.parse_args()
 
-    versions = collect_versions(load_dependency_tree(args.project_dir))
-    advisories = fetch_advisories(args.endpoint, versions)
-    failures = advisory_failures(advisories)
-    if failures:
-        for failure in failures:
-            print(f"error: {failure}", file=sys.stderr)
-        return 1
-    version_count = sum(len(found) for found in versions.values())
-    print(
-        f"npm bulk audit clean: {len(versions)} packages, "
-        f"{version_count} installed versions"
-    )
-    return 0
+    project_dirs = args.project_dir or list(DEFAULT_PROJECT_DIRS)
+    failed = False
+    for project_dir in project_dirs:
+        versions = collect_versions(load_dependency_tree(project_dir))
+        advisories = fetch_advisories(args.endpoint, versions)
+        failures = advisory_failures(advisories)
+        if failures:
+            failed = True
+            for failure in failures:
+                print(f"error: {project_dir}: {failure}", file=sys.stderr)
+            continue
+        version_count = sum(len(found) for found in versions.values())
+        print(
+            f"npm bulk audit clean: {project_dir}: {len(versions)} packages, "
+            f"{version_count} installed versions"
+        )
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
@@ -113,4 +122,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as error:
         print(f"npm bulk audit failed: {error}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from error

@@ -5,7 +5,6 @@ import sqlite3
 import pytest
 from helpers.service import vm_session_db_path, vm_session_dir
 
-
 pytestmark = pytest.mark.isolation
 
 

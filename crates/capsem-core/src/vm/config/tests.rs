@@ -530,6 +530,52 @@ fn hash_verification_succeeds_with_correct_blake3() {
 }
 
 #[test]
+fn algorithm_tagged_pins_verify_against_the_same_digest_as_bare_hex() {
+    // Profile pins derived from the release graph spell the digest
+    // `blake3:<hex>`; asset manifests spell the same digest as bare hex. Boot
+    // receives whichever the caller holds, so both must verify the same bytes
+    // rather than one of them failing as a mismatch against itself.
+    let dir = tempfile::tempdir().unwrap();
+    let kernel = dir.path().join("vmlinuz");
+    std::fs::write(&kernel, b"test kernel data").unwrap();
+    let hex = blake3::hash(b"test kernel data").to_hex().to_string();
+
+    VmConfig::verify_hash(&kernel, &hex).unwrap();
+    VmConfig::verify_hash(&kernel, &format!("blake3:{hex}")).unwrap();
+}
+
+#[test]
+fn a_tagged_pin_still_rejects_the_wrong_bytes() {
+    let dir = tempfile::tempdir().unwrap();
+    let kernel = dir.path().join("vmlinuz");
+    std::fs::write(&kernel, b"test kernel data").unwrap();
+    let wrong = blake3::hash(b"other kernel data").to_hex().to_string();
+
+    let result = VmConfig::verify_hash(&kernel, &format!("blake3:{wrong}"));
+    assert!(
+        matches!(result, Err(ConfigError::HashMismatch(..))),
+        "accepting the tag must not stop verifying the digest: {result:?}"
+    );
+}
+
+#[test]
+fn a_non_blake3_algorithm_is_refused_rather_than_never_matching() {
+    // A `sha256:` pin must not be quietly compared against a blake3 digest.
+    // Silently never matching would read as asset corruption; the real fault
+    // is that boot cannot verify that algorithm at all.
+    let dir = tempfile::tempdir().unwrap();
+    let kernel = dir.path().join("vmlinuz");
+    std::fs::write(&kernel, b"test kernel data").unwrap();
+    let sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+
+    let result = VmConfig::verify_hash(&kernel, &format!("sha256:{sha}"));
+    assert!(
+        matches!(result, Err(ConfigError::UnsupportedHashAlgorithm(..))),
+        "unverifiable algorithm must name itself, not pose as a mismatch: {result:?}"
+    );
+}
+
+#[test]
 fn hash_verification_cache_is_metadata_and_hash_bound() {
     let dir = tempfile::tempdir().unwrap();
     let kernel = dir.path().join("vmlinuz");

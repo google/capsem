@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import json
 import os
 import re
@@ -10,15 +9,14 @@ import sqlite3
 import subprocess
 import sys
 import time
+from contextlib import contextmanager, suppress
 from pathlib import Path
 
 import pytest
-
 from helpers.constants import CODE_PROFILE_ID, DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.mcp import content_text, kill_mcp_proc
 from helpers.mock_server import MOCK_SERVER_BINARY, start_mock_server, stop_process
-from helpers.service import ServiceInstance, vm_session_db_path, wait_exec_ready, vm_name
-
+from helpers.service import ServiceInstance, vm_name, vm_session_db_path, wait_exec_ready
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 MCP_BINARY = PROJECT_ROOT / "target" / "debug" / "capsem-mcp"
@@ -358,8 +356,6 @@ match = 'http.host == "127.0.0.1" && tcp.port == "3713"'
             os.environ["CAPSEM_CORP_CONFIG"] = old_corp_config
         if mock_proc is not None:
             stop_process(mock_proc)
-        try:
+        with suppress(Exception):
             service.client().delete(f"/vms/{vm_id or session_id}/delete", timeout=30)
-        except Exception:
-            pass
         service.stop()

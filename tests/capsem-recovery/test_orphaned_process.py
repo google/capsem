@@ -1,9 +1,9 @@
 """Verify service handles orphaned VM processes after restart."""
 
+import contextlib
 import uuid
 
 import pytest
-
 from helpers.constants import DEFAULT_CPUS, DEFAULT_RAM_MB, EXEC_READY_TIMEOUT
 from helpers.service import ServiceInstance, wait_exec_ready
 
@@ -39,16 +39,14 @@ def test_orphaned_vm_cleanup_on_restart():
             assert resp is not None
 
             # Try to clean up -- should not hang or crash
-            try:
+            # May already be gone; the point is that the call neither hangs
+            # nor crashes the service.
+            with contextlib.suppress(Exception):
                 client2.delete(f"/vms/{name}/delete")
-            except Exception:
-                pass  # May already be gone
 
         finally:
             svc2.stop()
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             svc.stop()
-        except Exception:
-            pass

@@ -6,7 +6,6 @@ import time
 import uuid
 
 import pytest
-
 from helpers.mcp import content_text
 from helpers.mock_server import start_mock_server, stop_process
 from helpers.service import vm_session_db_path

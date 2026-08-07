@@ -16,7 +16,7 @@ on:
           - nightly
 
 concurrency:
-  group: binary-release-channel
+  group: capsem-release-${{ inputs.channel }}
   cancel-in-progress: false
 
 permissions:
@@ -32,10 +32,103 @@ env:
   ASSET_MANIFEST_URL: https://release.capsem.org/assets/${{ inputs.channel }}/manifest.json
 
 jobs:
+  runtime-preflight:
+    uses: ./.github/workflows/release-runtime-preflight.yaml
+    with:
+      channel: ${{ inputs.channel }}
+      bootstrap_missing_first_party: true
+
+  fast-gate:
+    uses: ./.github/workflows/fast-gate.yaml
+
+  resolve-channel-source:
+    needs: runtime-preflight
+    runs-on: ubuntu-latest
+    name: Resolve serialized channel source manifest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: uv sync
+
+      - name: Select exact public-before manifest
+        id: public-before
+        run: |
+          python3 scripts/select-runtime-preflight-manifest.py \
+            --channel "$RELEASE_CHANNEL" \
+            --bootstrap-missing-first-party \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Fetch latest selected channel source manifest
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/fetch-channel-source-manifest.py \
+            --channel "$RELEASE_CHANNEL" \
+            --require-profile-membership \
+            --output target/channel-source/manifest.json
+
+      - name: Project inactive first-channel public-before state
+        if: ${{ steps.public-before.outputs.bootstrap == 'true' }}
+        run: |
+          python3 scripts/project-first-channel-before.py \
+            --source-manifest target/channel-source/manifest.json \
+            --channel "$RELEASE_CHANNEL" \
+            --bootstrap "${{ steps.public-before.outputs.bootstrap }}" \
+            --output target/channel-source/public-before.json
+
+      - name: Select public-before authority for exact pairing
+        id: public-before-authority
+        run: |
+          if [[ "${{ steps.public-before.outputs.bootstrap }}" == "true" ]]; then
+            echo "manifest-url=file://$PWD/target/channel-source/public-before.json" \
+              >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest-url=${{ steps.public-before.outputs.manifest-url }}" \
+              >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch exact deployed public-before packages
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}
+          kind: packages
+          output: target/binary-public-before/packages
+
+      - name: Fetch exact deployed public-before profiles
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: ${{ steps.public-before-authority.outputs.manifest-url }}
+          allow-empty-profiles: ${{ steps.public-before.outputs.bootstrap }}
+          kind: profiles
+          architecture: x86_64
+          output: target/binary-public-before/profiles
+
+      - name: Prove public-before cohorts use one manifest
+        run: |
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/binary-public-before/profiles
+          cmp \
+            target/binary-public-before/packages/manifest.json \
+            target/binary-public-before/profiles/manifest.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: binary-channel-source
+          path: target/channel-source/manifest.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: binary-public-before-packages
+          path: target/binary-public-before/packages/
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: binary-public-before-profiles
+          path: target/binary-public-before/profiles/
+
   preflight:
+    needs: [runtime-preflight, fast-gate]
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
         with:
           fetch-depth: 0
 
@@ -46,14 +139,6 @@ jobs:
           test "$GITHUB_REF_NAME" = "$RELEASE_TAG"
           case "$RELEASE_TAG" in v*) ;; *) exit 1 ;; esac
           case "$RELEASE_CHANNEL" in stable|nightly) ;; *) exit 1 ;; esac
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          git fetch origin main
-          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-
-      - name: Verify exact commit passed remote qualification
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 scripts/check-release-qualification.py --sha "$GITHUB_SHA" --repo "$GITHUB_REPOSITORY"
 
       - name: Select Xcode 16.2
         run: sudo xcode-select -s /Applications/Xcode_16.2.app
@@ -110,48 +195,78 @@ jobs:
           fi
           mkdir -p "$RUNNER_TEMP/private_keys"
           echo "$APPLE_API_KEY_CONTENT" > "$RUNNER_TEMP/private_keys/AuthKey_${APPLE_API_KEY}.p8"
-          xcrun notarytool history \
+          if xcrun notarytool history \
             --key "$RUNNER_TEMP/private_keys/AuthKey_${APPLE_API_KEY}.p8" \
             --key-id "$APPLE_API_KEY" \
             --issuer "$APPLE_API_ISSUER" \
-            >/dev/null 2>&1 \
-            && echo "Notarization credentials verified (notarytool history succeeded)" \
-            || { echo "::error::notarytool history failed -- check APPLE_API_ISSUER, APPLE_API_KEY, and APPLE_API_KEY_PATH secrets"; exit 1; }
+            >/dev/null 2>&1; then
+            echo "Notarization credentials verified (notarytool history succeeded)"
+          else
+            echo "::error::notarytool history failed -- check APPLE_API_ISSUER, APPLE_API_KEY, and APPLE_API_KEY_PATH secrets"
+            exit 1
+          fi
           rm -rf "$RUNNER_TEMP/private_keys"
   build-app-macos:
-    needs: preflight
+    needs: [preflight, resolve-channel-source]
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-source
+          path: target/channel-source/
+
+      - name: Select serialized pre-activation manifest
+        run: |
+          test -s target/channel-source/manifest.json
+          echo "PREACTIVATION_MANIFEST=file://$PWD/target/channel-source/manifest.json" \
+            >> "$GITHUB_ENV"
 
       - name: Select Xcode 16.2
         run: sudo xcode-select -s /Applications/Xcode_16.2.app
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           key: build-app-macos
 
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      - name: Fetch exact selected arm64 profiles
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: file://${{ github.workspace }}/target/channel-source/manifest.json
+          kind: profiles
+          architecture: arm64
+          output: target/binary-selected-profiles
+
+      - name: Stage exact selected profile inputs
+        run: |
+          uv run python scripts/stage-release-test-inputs.py \
+            --input-dir target/binary-selected-profiles \
+            --assets-dir target/release-assets \
+            --config-root target/release-config \
+            --shared-config-root config
+
       - name: Materialize runtime config
         run: |
-          cargo run -p capsem-admin -- profile materialize \
-            --profile config/profiles/code/profile.toml \
-            --config-root config \
-            --manifest "$ASSET_MANIFEST_URL" \
-            --assets-dir assets \
-            --output-root target/config \
-            --arch arm64 \
-            --clean
+          CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST" \
+          CAPSEM_ASSETS_PATH="$PWD/target/release-assets" \
+          CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
+          CAPSEM_ARCH=arm64 \
+            bash scripts/materialize-config.sh
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
-      - uses: astral-sh/setup-uv@v5
       - run: cd frontend && pnpm install --frozen-lockfile
 
       - name: Build frontend
@@ -199,7 +314,13 @@ jobs:
           security import cert.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" \
               -T /usr/bin/codesign -T /usr/bin/productsign -T /usr/bin/productbuild
           security set-key-partition-list -S apple-tool:,apple: -k "" build.keychain
-          security list-keychains -d user -s build.keychain $(security list-keychains -d user | tr -d '"')
+          KEYCHAINS=()
+          while IFS= read -r keychain; do
+            keychain="${keychain#*\"}"
+            keychain="${keychain%\"*}"
+            KEYCHAINS+=("$keychain")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s build.keychain "${KEYCHAINS[@]}"
 
       - name: Write Apple API key file
         env:
@@ -243,13 +364,16 @@ jobs:
             -p capsem-mcp-builtin \
             -p capsem-gateway \
             -p capsem-tray \
-            -p capsem-admin
+            -p capsem-admin \
+            -p capsem-mock-server \
+            -p capsem-bench
+          bash scripts/check-build-provenance.sh target/release/capsem
 
       - name: Codesign companion binaries
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
-          for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin; do
+          for bin in capsem capsem-service capsem-process capsem-tui capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-gateway capsem-tray capsem-admin capsem-mock-server capsem-bench-rs; do
             codesign --sign "$APPLE_SIGNING_IDENTITY" \
               --options runtime \
               --timestamp \
@@ -269,6 +393,41 @@ jobs:
             "target/config" \
             "$VERSION" \
             "${{ secrets.APPLE_INSTALLER_SIGNING_IDENTITY }}"
+
+      - name: Verify macOS package installation path policy
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          EXPANDED_ROOT="$(mktemp -d "$RUNNER_TEMP/capsem-pkg-policy.XXXXXX")"
+          pkgutil --expand-full \
+            "packages/Capsem-$VERSION.pkg" \
+            "$EXPANDED_ROOT/expanded"
+          python3 - "$EXPANDED_ROOT/expanded" <<'PY'
+          import pathlib
+          import sys
+          import xml.etree.ElementTree as ET
+
+          expanded = pathlib.Path(sys.argv[1])
+          package_infos = list(expanded.rglob("PackageInfo"))
+          if len(package_infos) != 1:
+              raise SystemExit(
+                  f"expected exactly one PackageInfo, found {package_infos}"
+              )
+          root = ET.parse(package_infos[0]).getroot()
+          relocations = root.findall("./relocate/bundle")
+          if relocations:
+              ids = [bundle.get("id", "<missing>") for bundle in relocations]
+              raise SystemExit(
+                  "PackageKit bundle relocation must be disabled; "
+                  f"relocatable bundle ids: {ids}"
+              )
+          apps = list(expanded.rglob("Applications/Capsem.app"))
+          if len(apps) != 1:
+              raise SystemExit(
+                  f"expected one /Applications/Capsem.app payload, found {apps}"
+              )
+          print("package path policy verified: fixed /Applications/Capsem.app")
+          PY
 
       - name: Notarize and staple .pkg
         env:
@@ -292,31 +451,6 @@ jobs:
           pkgutil --check-signature "packages/Capsem-$VERSION.pkg"
           spctl -a -vv -t install "packages/Capsem-$VERSION.pkg"
 
-      - name: Install exact notarized package
-        run: |
-          set -euo pipefail
-          VERSION="${RELEASE_TAG#v}"
-          sudo /usr/sbin/installer -pkg "packages/Capsem-$VERSION.pkg" -target /
-          test -d "/Applications/Capsem.app"
-          test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"
-          test -x "$HOME/.capsem/bin/capsem"
-          "$HOME/.capsem/bin/capsem" --version | grep -F "$VERSION"
-          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui; do
-            test -x "$HOME/.capsem/bin/$bin"
-            "$HOME/.capsem/bin/$bin" --version | grep -F "$VERSION"
-          done
-          "$HOME/.capsem/bin/capsem" status | tee /tmp/capsem-status.txt
-          grep -F "Installed: true" /tmp/capsem-status.txt
-          grep -F "Running:   true" /tmp/capsem-status.txt
-          grep -F "Service:   ok" /tmp/capsem-status.txt
-          grep -F "Gateway:   ok" /tmp/capsem-status.txt
-          pgrep -x capsem-tray
-          python3 scripts/verify-installed-release.py \
-            --capsem "$HOME/.capsem/bin/capsem" \
-            --manifest-url "$ASSET_MANIFEST_URL" \
-            --channel "$RELEASE_CHANNEL" \
-            --package-version "$VERSION"
-
       - name: Collect macOS artifacts
         run: |
           VERSION="${RELEASE_TAG#v}"
@@ -328,13 +462,13 @@ jobs:
           cp "packages/Capsem-$VERSION.pkg" release-artifacts/
           ls -lh release-artifacts/
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-macos
           path: release-artifacts/
 
   build-app-linux:
-    needs: preflight
+    needs: [preflight, resolve-channel-source]
     strategy:
       fail-fast: false
       matrix:
@@ -347,23 +481,51 @@ jobs:
             bundles: deb
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-source
+          path: target/channel-source/
+
+      - name: Select serialized pre-activation manifest
+        run: |
+          test -s target/channel-source/manifest.json
+          echo "PREACTIVATION_MANIFEST=file://$PWD/target/channel-source/manifest.json" \
+            >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           key: build-app-linux-${{ matrix.arch }}
 
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+
+      - name: Fetch exact selected ${{ matrix.arch }} profiles
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: file://${{ github.workspace }}/target/channel-source/manifest.json
+          kind: profiles
+          architecture: ${{ matrix.arch }}
+          output: target/binary-selected-profiles
+
+      - name: Stage exact selected profile inputs
+        run: |
+          uv run python scripts/stage-release-test-inputs.py \
+            --input-dir target/binary-selected-profiles \
+            --assets-dir target/release-assets \
+            --config-root target/release-config \
+            --shared-config-root config
+
       - name: Materialize runtime config
         run: |
-          cargo run -p capsem-admin -- profile materialize \
-            --profile config/profiles/code/profile.toml \
-            --config-root config \
-            --manifest "$ASSET_MANIFEST_URL" \
-            --assets-dir assets \
-            --output-root target/config \
-            --arch ${{ matrix.arch }} \
-            --clean
+          CAPSEM_ASSET_MANIFEST="$PREACTIVATION_MANIFEST" \
+          CAPSEM_ASSETS_PATH="$PWD/target/release-assets" \
+          CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
+          CAPSEM_ARCH="${{ matrix.arch }}" \
+            bash scripts/materialize-config.sh
 
       - name: Install Tauri system deps
         run: |
@@ -378,10 +540,10 @@ jobs:
             xdg-utils \
             xvfb
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: pnpm
@@ -420,7 +582,8 @@ jobs:
 
       - name: Build companion binaries
         run: |
-          cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin
+          cargo build --release -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench
+          bash scripts/check-build-provenance.sh target/release/capsem
 
       - name: Repack .deb with companion binaries
         run: |
@@ -432,52 +595,7 @@ jobs:
           echo "=== Validate deb ==="
           dpkg-deb --info target/release/bundle/deb/*.deb
           echo "=== Verify companion binaries in deb ==="
-          dpkg-deb --contents target/release/bundle/deb/*.deb | grep -E "capsem-service|capsem-tui|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin"
-
-      - name: Enable KVM for exact-package VM proof
-        if: matrix.arch == 'x86_64'
-        run: |
-          sudo modprobe kvm
-          sudo chmod 0666 /dev/kvm
-          sudo modprobe vhost_vsock
-          sudo chmod 0666 /dev/vhost-vsock
-          test -r /dev/kvm -a -w /dev/kvm
-          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
-
-      - name: Install exact release deb
-        run: |
-          set -euo pipefail
-          VERSION="${RELEASE_TAG#v}"
-          sudo dpkg -i target/release/bundle/deb/*.deb || sudo apt-get install -f -y
-          test -x /usr/bin/capsem
-          /usr/bin/capsem --version | grep -F "$VERSION"
-          dpkg-query -W -f='${Version}' capsem | grep -Fx "$VERSION"
-          for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui; do
-            test -x "/usr/bin/$bin"
-            if [ "$bin" != "capsem-app" ]; then
-              "/usr/bin/$bin" --version | grep -F "$VERSION"
-            fi
-          done
-          /usr/bin/capsem status | tee /tmp/capsem-status.txt
-          grep -F "Installed: true" /tmp/capsem-status.txt
-          grep -F "Running:   true" /tmp/capsem-status.txt
-          grep -F "Service:   ok" /tmp/capsem-status.txt
-          grep -F "Gateway:   ok" /tmp/capsem-status.txt
-          python3 scripts/verify-installed-release.py \
-            --capsem /usr/bin/capsem \
-            --manifest-url "$ASSET_MANIFEST_URL" \
-            --channel "$RELEASE_CHANNEL" \
-            --package-version "$VERSION"
-
-      - name: Prove exact-package guest shell execution
-        if: matrix.arch == 'x86_64'
-        run: |
-          set -euo pipefail
-          python3 scripts/prove-installed-shell.py \
-            --capsem /usr/bin/capsem \
-            --marker CAPSEM_EXACT_PACKAGE_SHELL_OK \
-            --session-name release-exact-shell-x86_64 \
-            --timeout 300
+          dpkg-deb --contents target/release/bundle/deb/*.deb | grep -E "capsem-service|capsem-tui|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin|capsem-mock-server|capsem-bench-rs"
 
       - name: Collect Linux artifacts
         run: |
@@ -485,37 +603,52 @@ jobs:
           cp target/release/bundle/deb/*.deb release-artifacts/
           ls -lh release-artifacts/
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: release-linux-${{ matrix.arch }}
           path: release-artifacts/
 
-  create-release:
-    needs: [build-app-macos, build-app-linux]
+  author-binary-candidate:
+    needs: [build-app-macos, build-app-linux, resolve-channel-source]
     runs-on: ubuntu-latest
+    name: Author binary candidate source manifest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
-      # Download the exact platform artifacts that passed their install gates.
-      - uses: actions/download-artifact@v8
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
+        with:
+          key: release-channel-binary-author
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: uv sync
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-macos
           path: release-artifacts/
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-linux-arm64
           path: release-artifacts/
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-linux-x86_64
           path: release-artifacts/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-source
+          path: target/binary-channel/${{ inputs.channel }}/
 
       - name: Install host SBOM archive deps
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends zstd
 
-      - name: Generate packaged host SBOM
+      - name: Generate packaged host SBOM once
         run: |
           set -euo pipefail
           ARTIFACTS=()
@@ -530,15 +663,415 @@ jobs:
             --output release-artifacts/capsem-sbom.spdx.json \
             "${ARTIFACTS[@]}"
 
+      - name: Verify binary candidate artifacts
+        run: |
+          set -euo pipefail
+          test -s release-artifacts/capsem-sbom.spdx.json
+          test "$(find release-artifacts -maxdepth 1 \( -name '*.pkg' -o -name '*.deb' \) -type f | wc -l)" -eq 3
+
+      - name: Preserve serialized public-before manifest
+        run: |
+          set -euo pipefail
+          manifest="target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          test -f "$manifest"
+          cp "$manifest" \
+            "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
+
+      - name: Record binary candidate metadata once
+        env:
+          CAPSEM_RELEASE_URL: https://github.com/${{ github.repository }}/releases/download
+        run: |
+          set -euo pipefail
+          VERSION="${RELEASE_TAG#v}"
+          ARTIFACT_ARGS=()
+          for file in release-artifacts/*.pkg release-artifacts/*.deb release-artifacts/capsem-sbom.spdx.json; do
+            [ -f "$file" ] && ARTIFACT_ARGS+=(--artifact "$file")
+          done
+          cargo run -p capsem-admin -- assets channel record-binary \
+            --manifest-path "target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
+            --version "$VERSION" \
+            "${ARTIFACT_ARGS[@]}"
+          test -f "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
+
+      - name: Prove binary candidate preserved every profile
+        run: |
+          set -euo pipefail
+          python3 - "$RELEASE_CHANNEL" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          channel = sys.argv[1]
+          root = Path("target/binary-channel") / channel
+          before = json.loads((root / "manifest.before.json").read_text())
+          after = json.loads((root / "manifest.json").read_text())
+          if before.get("profiles") != after.get("profiles"):
+              raise SystemExit(f"{channel} binary candidate changed profile metadata")
+          PY
+
+      - name: Verify binary release lane policy
+        run: |
+          uv run pytest \
+            tests/capsem-release/test_binary_lane_gate.py \
+            tests/capsem-release/test_release_lane_diff_policy.py -q
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: binary-channel-candidate
+          path: target/binary-channel/
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: binary-host-sbom
+          path: release-artifacts/capsem-sbom.spdx.json
+
+  test-native-macos-package:
+    needs: [build-app-macos, author-binary-candidate]
+    runs-on: macos-14
+    name: Install exact candidate macOS package
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-macos
+          path: release-test-package/
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-candidate
+          path: target/binary-channel/
+
+      - name: Select exact candidate manifest
+        run: |
+          manifest="$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          test -s "$manifest"
+          echo "PREACTIVATION_MANIFEST=file://$manifest" >> "$GITHUB_ENV"
+          echo "PREACTIVATION_MANIFEST_PATH=$manifest" >> "$GITHUB_ENV"
+
+      - name: Write secure package install requests
+        run: |
+          set -euo pipefail
+          bash scripts/macos-install-user-request.sh write "$(id -un)"
+          bash scripts/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH"
+          test "$(sudo stat -f '%u' /var/run/capsem/install-manifest)" = "0"
+          test "$(sudo stat -f '%Lp' /var/run/capsem/install-manifest)" = "600"
+
+      - name: Install and verify exact notarized package
+        run: |
+          set -euo pipefail
+          cleanup_requests() {
+            bash scripts/macos-install-user-request.sh clear || true
+            bash scripts/install-manifest-request.sh clear || true
+          }
+          trap cleanup_requests EXIT
+          VERSION="${RELEASE_TAG#v}"
+          package=$(find release-test-package -maxdepth 1 -name '*.pkg' -print -quit)
+          test -n "$package"
+          sudo /usr/sbin/installer -pkg "$package" -target /
+          test ! -e /var/run/capsem/install-manifest
+          pkgutil --pkg-info com.capsem.pkg | tee "$RUNNER_TEMP/capsem-package-receipt.txt"
+          pkgutil --pkg-info com.capsem.pkg | grep -F "version: $VERSION"
+          test -d "/Applications/Capsem.app"
+          test -x "/Applications/Capsem.app/Contents/MacOS/capsem-app"
+          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
+            test -x "$HOME/.capsem/bin/$bin"
+            "$HOME/.capsem/bin/$bin" --version | grep -F "$VERSION"
+          done
+          "$HOME/.capsem/bin/capsem" status | tee /tmp/capsem-status.txt
+          grep -F "Installed: true" /tmp/capsem-status.txt
+          grep -F "Running:   true" /tmp/capsem-status.txt
+          grep -F "Service:   ok" /tmp/capsem-status.txt
+          grep -F "Gateway:   ok" /tmp/capsem-status.txt
+          pgrep -x capsem-tray
+          python3 scripts/verify-installed-release.py \
+            --capsem "$HOME/.capsem/bin/capsem" \
+            --manifest-url "$PREACTIVATION_MANIFEST" \
+            --channel "$RELEASE_CHANNEL" \
+            --package-version "$VERSION"
+
+      - name: Collect macOS install diagnostics
+        if: always()
+        run: |
+          mkdir -p release-diagnostics
+          {
+            id
+            pkgutil --pkg-info com.capsem.pkg || true
+            find /Applications -maxdepth 3 -name 'Capsem.app' -print 2>&1 || true
+            ls -la "$HOME/.capsem" "$HOME/.capsem/bin" "$HOME/.capsem/logs" 2>&1 || true
+            tail -n 400 /var/log/install.log 2>&1 || true
+            tail -n 400 "$HOME/.capsem/logs/install-latest.log" 2>&1 || true
+          } | tee release-diagnostics/macos-install.txt
+          bash scripts/macos-install-user-request.sh clear || true
+          bash scripts/install-manifest-request.sh clear || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: release-macos-install-diagnostics
+          path: release-diagnostics/
+          if-no-files-found: warn
+
+  test-native-linux-package:
+    needs: [build-app-linux, author-binary-candidate]
+    name: Install exact candidate Linux package (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+          - arch: x86_64
+            runner: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-linux-${{ matrix.arch }}
+          path: release-test-package/
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-candidate
+          path: target/binary-channel/
+
+      - name: Select exact candidate manifest
+        run: |
+          manifest="$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          test -s "$manifest"
+          echo "PREACTIVATION_MANIFEST=file://$manifest" >> "$GITHUB_ENV"
+          echo "PREACTIVATION_MANIFEST_PATH=$manifest" >> "$GITHUB_ENV"
+
+      - name: Enable KVM for exact-package VM proof
+        if: matrix.arch == 'x86_64'
+        run: |
+          sudo modprobe kvm
+          sudo chmod 0666 /dev/kvm
+          sudo modprobe vhost_vsock
+          sudo chmod 0666 /dev/vhost-vsock
+          test -r /dev/kvm -a -w /dev/kvm
+          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+
+      - name: Install and verify exact release deb
+        run: |
+          set -euo pipefail
+          trap 'bash scripts/install-manifest-request.sh clear || true' EXIT
+          package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
+          test -n "$package"
+          python3 scripts/install-deb-runtime-dependencies.py "$package"
+          bash scripts/install-manifest-request.sh write "$PREACTIVATION_MANIFEST_PATH"
+          VERSION="${RELEASE_TAG#v}"
+          sudo dpkg -i "$package"
+          test ! -e /var/run/capsem/install-manifest
+          dpkg-query -W -f='${Version}' capsem | grep -Fx "$VERSION"
+          for bin in capsem capsem-admin capsem-app capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
+            test -x "/usr/bin/$bin"
+            if [ "$bin" != "capsem-app" ]; then
+              "/usr/bin/$bin" --version | grep -F "$VERSION"
+            fi
+          done
+          /usr/bin/capsem status | tee /tmp/capsem-status.txt
+          grep -F "Installed: true" /tmp/capsem-status.txt
+          grep -F "Running:   true" /tmp/capsem-status.txt
+          grep -F "Service:   ok" /tmp/capsem-status.txt
+          grep -F "Gateway:   ok" /tmp/capsem-status.txt
+          python3 scripts/verify-installed-release.py \
+            --capsem /usr/bin/capsem \
+            --manifest-url "$PREACTIVATION_MANIFEST" \
+            --channel "$RELEASE_CHANNEL" \
+            --package-version "$VERSION"
+
+      - name: Prove exact-package guest shell execution
+        if: matrix.arch == 'x86_64'
+        run: |
+          python3 scripts/prove-installed-shell.py \
+            --capsem /usr/bin/capsem \
+            --marker CAPSEM_EXACT_PACKAGE_SHELL_OK \
+            --session-name release-exact-shell-x86_64 \
+            --timeout 300
+
+  test-binary-pairing:
+    needs: [build-app-macos, build-app-linux, author-binary-candidate]
+    runs-on: ubuntu-24.04
+    name: Complete binary pairing gate
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - run: uv sync
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+        with:
+          version: 10
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            frontend/pnpm-lock.yaml
+            release-site/pnpm-lock.yaml
+      - name: Install shared functional web dependencies
+        run: |
+          (cd frontend && pnpm install --frozen-lockfile)
+          (cd release-site && pnpm install --frozen-lockfile)
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
+          components: llvm-tools
+          targets: aarch64-unknown-linux-musl,x86_64-unknown-linux-musl
+
+      - name: Enable KVM for complete functional proof
+        run: |
+          set -euo pipefail
+          sudo modprobe kvm
+          sudo chmod 0666 /dev/kvm
+          sudo modprobe vhost_vsock
+          sudo chmod 0666 /dev/vhost-vsock
+          test -r /dev/kvm -a -w /dev/kvm
+          test -r /dev/vhost-vsock -a -w /dev/vhost-vsock
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-linux-x86_64
+          path: release-test-package/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-public-before-packages
+          path: target/binary-public-before/packages/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-public-before-profiles
+          path: target/binary-public-before/profiles/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-candidate
+          path: target/binary-channel/
+
+      - name: Verify exact public-before cohorts
+        run: |
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/binary-public-before/packages
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/binary-public-before/profiles
+          cmp \
+            target/binary-public-before/packages/manifest.json \
+            target/binary-public-before/profiles/manifest.json
+
+      - name: Resolve exact candidate-after profiles
+        uses: ./.github/actions/fetch-release-inputs
+        with:
+          manifest-url: file://${{ github.workspace }}/target/binary-channel/${{ inputs.channel }}/manifest.json
+          kind: profiles
+          architecture: x86_64
+          output: target/candidate-profile-inputs
+
+      - name: Stage exact candidate-after profiles
+        run: |
+          uv run python scripts/verify-release-inputs.py \
+            --input-dir target/candidate-profile-inputs
+          uv run python scripts/stage-release-test-inputs.py \
+            --input-dir target/candidate-profile-inputs \
+            --assets-dir assets \
+            --config-root target/release-config \
+            --shared-config-root config
+          CAPSEM_ASSET_MANIFEST="file://$PWD/assets/manifest.json" \
+          CAPSEM_CONFIG_ROOT="$PWD/target/release-config" \
+          CAPSEM_CONFIG_OUTPUT_ROOT="$PWD/target/config" \
+            bash scripts/materialize-config.sh
+
+      - name: Activate exact candidate package binaries for functional tests
+        run: |
+          set -euo pipefail
+          package=$(find release-test-package -maxdepth 1 -name '*.deb' -print -quit)
+          test -n "$package"
+          uv run python scripts/install-deb-runtime-dependencies.py "$package"
+          before_package=$(uv run python scripts/stage-release-test-inputs.py \
+            --input-dir target/binary-public-before/packages \
+            --print-package-path)
+          test -n "$before_package"
+          uv run python scripts/stage-release-test-inputs.py \
+            --package-file "$package" \
+            --binary-dir target/debug
+          {
+            echo "CAPSEM_RELEASE_PACKAGE=$PWD/$package"
+            echo "CAPSEM_RELEASE_BIN_DIR=$PWD/target/debug"
+            echo "CAPSEM_RELEASE_INPUT_DIR=$PWD/target/candidate-profile-inputs"
+            echo "CAPSEM_RELEASE_CHANNEL=$RELEASE_CHANNEL"
+            echo "CAPSEM_RELEASE_TRANSITION=auto"
+            echo "CAPSEM_RELEASE_BEFORE_MANIFEST=$PWD/target/binary-public-before/profiles/manifest.json"
+            echo "CAPSEM_RELEASE_AFTER_MANIFEST=$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+            echo "CAPSEM_RELEASE_BEFORE_PACKAGE=$PWD/$before_package"
+            echo "CAPSEM_RELEASE_BEFORE_PROFILE_INPUTS=$PWD/target/binary-public-before/profiles"
+            echo "CAPSEM_RELEASE_AFTER_PROFILE_INPUTS=$PWD/target/candidate-profile-inputs"
+            echo "CAPSEM_TEST_BINARY=$PWD/target/debug/capsem"
+            echo "CAPSEM_TEST_ASSETS_DIR=$PWD/assets"
+            echo "CAPSEM_TEST_CONFIG_ROOT=$PWD/target/config"
+          } >> "$GITHUB_ENV"
+
+      - name: Run shared artifact module
+        run: just _test-artifacts
+
+      - name: Run shared complete functional module
+        run: just _test-functional
+
+      - name: Run shared native and update glow-up module
+        run: just _test-glowup
+
+      # This gate blocks publication, so a failure here has to be diagnosable
+      # from outside the runner. Without the session logs a Linux-only failure
+      # is invisible to a macOS developer, which is exactly how
+      # TestRun::test_run_returns_output stalled the 1.6 release: reproducibly
+      # red here, green locally, and no process.log to explain the difference.
+      - name: Upload pairing evidence on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: binary-pairing-evidence-${{ github.run_attempt }}
+          path: |
+            test-artifacts/
+            target/test-home/.capsem/run/sessions/
+            target/test-home/.capsem/logs/
+          retention-days: 7
+          if-no-files-found: warn
+
+  create-release:
+    needs: [test-native-macos-package, test-native-linux-package, test-binary-pairing]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      # Download the exact platform artifacts that passed their install gates.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-macos
+          path: release-artifacts/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-linux-arm64
+          path: release-artifacts/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: release-linux-x86_64
+          path: release-artifacts/
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-host-sbom
+          path: release-artifacts/
+
+      - name: Verify tested host SBOM is present
+        run: test -s release-artifacts/capsem-sbom.spdx.json
+
       - name: Attest build provenance (pkg + deb)
-        uses: actions/attest-build-provenance@v4
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373
         with:
           subject-path: |
             release-artifacts/*.pkg
             release-artifacts/*.deb
 
       - name: Attest SBOM
-        uses: actions/attest@v4
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6
         with:
           subject-path: |
             release-artifacts/*.pkg
@@ -549,7 +1082,7 @@ jobs:
       - name: Build summary
         run: |
           VERSION="${RELEASE_TAG#v}"
-          PKG=$(ls -1 release-artifacts/*.pkg 2>/dev/null | head -1)
+          PKG=$(find release-artifacts -maxdepth 1 -name '*.pkg' -print -quit)
           PKG_NAME=$(basename "$PKG" 2>/dev/null || echo "N/A")
           PKG_SIZE=$(du -h "$PKG" 2>/dev/null | cut -f1 || echo "N/A")
           SBOM_PKGS=$(python3 -c "import json; d=json.load(open('release-artifacts/capsem-sbom.spdx.json')); print(len(d.get('packages',[])))" 2>/dev/null || echo "?")
@@ -588,36 +1121,37 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          NOTES="See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details."
-          NOTES="${NOTES}
+          set -euo pipefail
+          owned="target/binary-release-publication"
+          notes="target/binary-release-notes.md"
+          mkdir -p "$owned"
+          cp release-artifacts/*.pkg "$owned/"
+          cp release-artifacts/*.deb "$owned/"
+          cp release-artifacts/capsem-sbom.spdx.json "$owned/"
+          cat > "$notes" <<EOF
+          See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) for details.
 
           ### VM Assets
 
           VM assets are released independently at ${ASSET_MANIFEST_URL}.
-          "
-
-          gh release create "$RELEASE_TAG" \
-            release-artifacts/*.pkg \
-            release-artifacts/capsem-sbom.spdx.json \
-            --title "Capsem $RELEASE_TAG" \
-            --notes "$NOTES"
-
-          for deb in release-artifacts/*.deb; do
-            [ -f "$deb" ] && gh release upload "$RELEASE_TAG" "$deb"
-          done
+          EOF
+          CAPSEM_RELEASE_CREATE_TITLE="Capsem $RELEASE_TAG" \
+          CAPSEM_RELEASE_CREATE_NOTES_FILE="$notes" \
+            scripts/publish-immutable-release-assets.sh \
+              "$RELEASE_TAG" "$owned"
 
   assemble-release-channel:
-    needs: [create-release]
+    needs: [create-release, author-binary-candidate]
     runs-on: ubuntu-latest
     outputs:
       dist_artifact: binary-channel-preview
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
 
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320
         with:
           version: 10
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: pnpm
@@ -625,145 +1159,154 @@ jobs:
       - name: Install release site dependencies
         run: cd release-site && pnpm install --frozen-lockfile
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@2c7215f132e9ebf062739d9130488b56d53c060c
+        with:
+          toolchain: 1.97.1
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           key: release-channel-binary
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: release-macos
-          path: release-artifacts/
-      - uses: actions/download-artifact@v8
-        with:
-          name: release-linux-arm64
-          path: release-artifacts/
-      - uses: actions/download-artifact@v8
-        with:
-          name: release-linux-x86_64
-          path: release-artifacts/
+          name: binary-channel-candidate
+          path: target/binary-channel/
 
-      - name: Install host SBOM archive deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends zstd
-
-      - name: Generate packaged host SBOM
+      - name: Verify tested binary candidate source is present
         run: |
           set -euo pipefail
-          ARTIFACTS=()
-          for file in release-artifacts/*.pkg release-artifacts/*.deb; do
-            [ -f "$file" ] && ARTIFACTS+=("$file")
-          done
-          if [ "${#ARTIFACTS[@]}" -eq 0 ]; then
-            echo "::error::no package artifacts available for host SBOM"
-            exit 1
-          fi
-          python3 scripts/generate-host-binary-sbom.py \
-            --output release-artifacts/capsem-sbom.spdx.json \
-            "${ARTIFACTS[@]}"
-
-      - name: Verify binary channel artifacts
-        run: |
-          set -euo pipefail
-          if [ ! -f release-artifacts/capsem-sbom.spdx.json ]; then
-            echo "::error::release-artifacts/capsem-sbom.spdx.json missing"
-            exit 1
-          fi
-          package_found=false
-          for file in release-artifacts/*.pkg release-artifacts/*.deb; do
-            if [ -f "$file" ]; then
-              package_found=true
-              break
-            fi
-          done
-          if [ "$package_found" != true ]; then
-            echo "::error::no installable host package artifact found"
-            exit 1
-          fi
-
-      - name: Fetch current asset channel manifests
-        run: |
-          set -euo pipefail
-          mkdir -p target/binary-channel
-          for channel in stable nightly; do
-            mkdir -p "target/binary-channel/$channel"
-            curl -fsSL "https://release.capsem.org/assets/$channel/manifest.json" \
-              -o "target/binary-channel/$channel/manifest.json"
-            cp "target/binary-channel/$channel/manifest.json" \
-              "target/binary-channel/$channel/manifest.before.json"
-          done
-
-      - name: Record binary release metadata in selected channel manifest
-        run: |
-          set -euo pipefail
-          VERSION="${RELEASE_TAG#v}"
-          ARTIFACT_ARGS=()
-          for file in release-artifacts/*.pkg release-artifacts/*.deb release-artifacts/capsem-sbom.spdx.json; do
-            [ -f "$file" ] && ARTIFACT_ARGS+=(--artifact "$file")
-          done
-          cargo run -p capsem-admin -- assets channel record-binary \
-            --manifest-path "target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
-            --version "$VERSION" \
-            "${ARTIFACT_ARGS[@]}"
-          test -f "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
-
-      - name: Prove binary lane did not change VM assets
-        run: |
-          set -euo pipefail
-          for channel in stable nightly; do
-            python3 - "$channel" <<'PY'
-          import json
-          import sys
-          from pathlib import Path
-
-          channel = sys.argv[1]
-          root = Path("target/binary-channel") / channel
-          before = json.loads((root / "manifest.before.json").read_text())
-          after = json.loads((root / "manifest.json").read_text())
-          if "profiles" in before and "profiles" in after:
-              if after["profiles"] != before["profiles"]:
-                  raise SystemExit(f"{channel} binary release changed profile image metadata")
-          else:
-              if after["assets"] != before["assets"]:
-                  raise SystemExit(f"{channel} binary release changed VM asset metadata")
-          PY
-          done
-
-      - name: Verify binary release lane policy
-        run: |
-          uv run pytest \
-            tests/capsem-release/test_binary_lane_gate.py \
-            tests/capsem-release/test_release_lane_diff_policy.py -q
+          test -s "target/binary-channel/$RELEASE_CHANNEL/manifest.before.json"
+          test -s "target/binary-channel/$RELEASE_CHANNEL/manifest.json"
 
       - name: Build complete release channels with existing VM assets
         run: |
           set -euo pipefail
           generated_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           uv run python scripts/build-complete-release-channel.py \
-            --channel-source "stable=file://$PWD/target/binary-channel/stable/manifest.json" \
-            --channel-source "nightly=file://$PWD/target/binary-channel/nightly/manifest.json" \
+            --channel-source "$RELEASE_CHANNEL=file://$PWD/target/binary-channel/$RELEASE_CHANNEL/manifest.json" \
             --primary-channel "$RELEASE_CHANNEL" \
-            --asset-source-base "https://github.com/google/capsem/releases/download/assets-v{asset_version}" \
+            --asset-source-base "https://github.com/${{ github.repository }}/releases/download/assets-v{asset_version}" \
             --manifest-version "1.0.${{ github.run_number }}" \
             --generated-at "$generated_at" \
             --out-dir target/release-channel
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-preview
           path: target/release-channel/
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: binary-channel-before
           path: target/binary-channel/*/manifest.before.json
 
+  # The GitHub release is public storage but remains undiscoverable to Capsem
+  # clients until release.capsem.org advances. Prove the public package URLs,
+  # digests, and installer selection against the candidate channel first.
+  verify-release-candidate:
+    needs: [create-release, assemble-release-channel]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-preview
+          path: candidate-release/
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: binary-channel-candidate
+          path: target/binary-channel/
+
+      - name: Install prebuilt digest tool
+        uses: taiki-e/install-action@07b4745e0c39a41822af610387492e3e53aa222b
+        with:
+          tool: b3sum@1.8.5
+
+      - name: Verify public GitHub package storage from the candidate manifest
+        run: |
+          set -euo pipefail
+          manifest="candidate-release/assets/$RELEASE_CHANNEL/manifest.json"
+          expected_prefix="https://github.com/${{ github.repository }}/releases/download/$RELEASE_TAG/"
+          mkdir -p /tmp/candidate-packages
+          count=0
+          while IFS=$'\t' read -r name version sha256 blake3 url; do
+            count=$((count + 1))
+            test "$version" = "${RELEASE_TAG#v}"
+            case "$url" in
+              "$expected_prefix"*) ;;
+              *) echo "::error::$name URL is outside $expected_prefix: $url"; exit 1 ;;
+            esac
+            curl -fsSL "$url" -o "/tmp/candidate-packages/$name"
+            printf '%s  %s\n' "$sha256" "/tmp/candidate-packages/$name" | sha256sum -c -
+            printf '%s  %s\n' "$blake3" "/tmp/candidate-packages/$name" | b3sum -c -
+          done < <(python3 - "$manifest" <<'PY'
+          import json
+          import sys
+
+          manifest = json.load(open(sys.argv[1]))
+          for package in manifest.get("packages", []):
+              if package.get("status") != "current":
+                  continue
+              digest = package.get("digest", {})
+              print(
+                  package.get("name", ""),
+                  package.get("version", ""),
+                  digest.get("sha256", ""),
+                  digest.get("blake3", ""),
+                  package.get("url", ""),
+                  sep="\t",
+              )
+          PY
+          )
+          test "$count" -eq 3
+
+      - name: Prove install.sh selects and installs the candidate Linux package
+        run: |
+          set -euo pipefail
+          python3 -m http.server 8765 --directory candidate-release >/tmp/candidate-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; cat /tmp/candidate-http.log' EXIT
+          for _ in $(seq 1 20); do
+            curl -fsSL "http://127.0.0.1:8765/assets/$RELEASE_CHANNEL/manifest.json" >/dev/null && break
+            sleep 0.25
+          done
+          candidate_manifest="http://127.0.0.1:8765/assets/$RELEASE_CHANNEL/manifest.json"
+          docker run --rm --network host \
+            -e CAPSEM_MANIFEST_URL="$candidate_manifest" \
+            -e CAPSEM_CHANNEL="$RELEASE_CHANNEL" \
+            -e EXPECTED_VERSION="${RELEASE_TAG#v}" \
+            ubuntu:24.04 bash -lc '
+              set -euo pipefail
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y ca-certificates curl sudo
+              useradd -m -s /bin/bash capsemtest
+              printf "%s\n" "capsemtest ALL=(ALL) NOPASSWD:ALL" >/etc/sudoers.d/capsemtest
+              chmod 0440 /etc/sudoers.d/capsemtest
+              su capsemtest -c "curl -fsSL https://capsem.org/install.sh | CAPSEM_MANIFEST_URL=$CAPSEM_MANIFEST_URL CAPSEM_CHANNEL=$CAPSEM_CHANNEL sh"
+              dpkg-query -W -f="\${Version}" capsem | grep -Fx "$EXPECTED_VERSION"
+              su capsemtest -c "\$HOME/.capsem/bin/capsem --version" | grep -F "$EXPECTED_VERSION"
+            '
+
+      - name: Persist mutated source manifest on the immutable binary release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source="target/binary-channel/$RELEASE_CHANNEL/manifest.json"
+          owned="target/binary-source-publication"
+          named="$owned/channel-source-$RELEASE_CHANNEL.json"
+          mkdir -p "$owned"
+          cp "$source" "$named"
+          scripts/publish-immutable-release-assets.sh \
+            "$RELEASE_TAG" "$owned"
+
   deploy-release-channel:
-    needs: [assemble-release-channel]
+    needs: [verify-release-candidate]
     uses: ./.github/workflows/release-channel.yaml
     with:
       channel: ${{ inputs.channel }}
@@ -778,9 +1321,9 @@ jobs:
     needs: [deploy-release-channel]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v5
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: binary-channel-before
           path: /tmp/binary-channel-before
@@ -789,7 +1332,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if gh release view "$RELEASE_TAG" --json assets --jq '.assets | length' >/dev/null 2>&1; then
               break
             fi
@@ -802,8 +1345,8 @@ jobs:
           mkdir -p /tmp/verify
           curl -fsSL "$ASSET_MANIFEST_URL" -o /tmp/verify/manifest.json
           fail=0
-          # Iterate every (arch, logical_name, hash) the current asset release declares.
-          while IFS=$'\t' read -r asset_version arch name hash url; do
+          # Iterate every profile-owned URL declared by either supported manifest schema.
+          while IFS=$'\t' read -r _asset_version _arch _name hash bytes url; do
             code=$(curl -sIL -o /dev/null -w "%{http_code}" "$url")
             if [ "$code" != "200" ]; then
               echo "::error::$url -> HTTP $code"
@@ -811,11 +1354,16 @@ jobs:
             else
               echo "ok  $url"
             fi
-            blob="/tmp/verify/$asset_version-$arch-$name"
+            blob="/tmp/verify/${hash#blake3:}"
             if ! curl -fsSL "$url" -o "$blob"; then
               echo "::error::$url download failed"
               fail=1
               continue
+            fi
+            actual_bytes=$(wc -c < "$blob" | tr -d ' ')
+            if [ "$actual_bytes" != "$bytes" ]; then
+              echo "::error::$url byte-size mismatch: expected $bytes, got $actual_bytes"
+              fail=1
             fi
             expected_hash="${hash#blake3:}"
             if ! uv run python3 - "$blob" "$expected_hash" <<'PY'
@@ -834,31 +1382,9 @@ jobs:
               echo "::error::$url blake3 mismatch"
               fail=1
             fi
-          done < <(python3 -c "
-          import json
-          import os
-          from urllib.parse import urlparse
-
-          m = json.load(open('/tmp/verify/manifest.json'))
-          manifest = urlparse(os.environ['ASSET_MANIFEST_URL'])
-          manifest_origin = f'{manifest.scheme}://{manifest.netloc}'
-          asset_base = m.get('asset_base') or '/assets/releases'
-
-          def asset_url(asset_version, arch, name):
-              base = asset_base.rstrip('/')
-              if '{asset_version}' in base:
-                  version_base = base.replace('{asset_version}', asset_version)
-              else:
-                  version_base = f'{base}/{asset_version}'
-              if version_base.startswith('/'):
-                  version_base = f'{manifest_origin}{version_base}'
-              return f'{version_base.rstrip(\"/\")}/{arch}-{name}'
-
-          cur = m['assets']['current']
-          for arch, files in m['assets']['releases'][cur]['arches'].items():
-              for name, meta in files.items():
-                  print(f'{cur}\t{arch}\t{name}\t{meta[\"hash\"]}\t{asset_url(cur, arch, name)}')
-          ")
+          done < <(python3 scripts/list-release-manifest-assets.py \
+            --manifest-path /tmp/verify/manifest.json \
+            --manifest-url "$ASSET_MANIFEST_URL")
           [ "$fail" = 0 ] || { echo '::error::one or more asset URLs are unreachable or hash-mismatched'; exit 1; }
 
       - name: Verify public release packages and installer contract
@@ -895,10 +1421,10 @@ jobs:
               package
               for package in manifest.get('packages', [])
               if package.get('platform') == 'linux'
-              and package.get('architecture') == 'x86_64'
+              and package.get('architecture') == 'amd64'
           ]
           if len(matches) != 1 or not isinstance(matches[0].get('version'), str):
-              raise SystemExit('manifest must contain exactly one versioned linux/x86_64 package')
+              raise SystemExit('manifest must contain exactly one versioned linux/amd64 package')
           print(matches[0]['version'])
           PY
           )"
@@ -907,7 +1433,7 @@ jobs:
           test -x /usr/bin/capsem-app
           "$HOME/.capsem/bin/capsem" --version | grep -F "$EXPECTED_VERSION"
           dpkg-query -W -f='${Version}' capsem | grep -Fx "$EXPECTED_VERSION"
-          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui; do
+          for bin in capsem capsem-admin capsem-gateway capsem-mcp capsem-mcp-aggregator capsem-mcp-builtin capsem-process capsem-service capsem-tray capsem-tui capsem-mock-server capsem-bench-rs; do
             test -x "$HOME/.capsem/bin/$bin"
             "$HOME/.capsem/bin/$bin" --version | grep -F "$EXPECTED_VERSION"
           done

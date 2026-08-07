@@ -11,7 +11,7 @@ description: Capsem native package installer -- package install, service registr
 ~/.capsem/
   bin/capsem, capsem-service, capsem-process, capsem-tui,
       capsem-mcp, capsem-mcp-aggregator, capsem-mcp-builtin,
-      capsem-gateway, capsem-tray, capsem-admin
+      capsem-gateway, capsem-tray, capsem-admin, capsem-mock-server
   assets/manifest.json, manifest-metadata.json, {asset-name}-{hash16}.{ext}
   run/service.sock, service.pid, instances/, persistent/
   corp.toml               (CLI-provisioned corp config)
@@ -37,7 +37,7 @@ These commands dispatch before UdsClient creation -- they work without the servi
 1. `current_exe().parent()` -> bin_dir -> the packaged host binary cohort:
    `capsem`, `capsem-service`, `capsem-process`, `capsem-tui`,
    `capsem-mcp`, `capsem-mcp-aggregator`, `capsem-mcp-builtin`,
-   `capsem-gateway`, `capsem-tray`, `capsem-admin`
+   `capsem-gateway`, `capsem-tray`, `capsem-admin`, `capsem-mock-server`
 2. Assets: `~/.capsem/assets/` (the only installed layout -- packages install
    manifest URL provenance, then postinstall hydrates the live manifest and
    assets through `capsem update --assets --manifest <URL>`)
@@ -101,12 +101,12 @@ state. CLI status and About Capsem both read the service's canonical
 
 - `read_cached_update_notice()` -> sync file read on every command
 - `refresh_update_cache_if_stale()` -> background 24h-cached check merged atomically into `assets/manifest-metadata.json`
-- `run_update()` -> check the selected manifest URL, choose the matching `.pkg`/`.deb` installer metadata, and keep profile image refresh on `capsem update --assets`
-- `capsem update --yes` -> downloads the selected installer into `~/.capsem/updates/installers/`, verifies size + SHA-256, prints the tested package-manager apply command for audit, and executes it through `sudo` (`/usr/sbin/installer -pkg ... -target /` or `apt-get install --yes ...`)
-- `capsem update --assets` -> hydrate the locally installed manifest or an explicit `--manifest` URL
+- `run_update()` -> check the selected manifest URL and stage one complete compatible release transaction before mutating the installation
+- `capsem update --yes` -> verifies every changed package/profile artifact, prints the tested package-manager apply command for audit, executes it through `sudo` when the native package changes, and atomically activates the selected profile graph; this is the one ordinary update path used by the installed service
+- `capsem update --assets` -> low-level diagnostic/repair rail for hydrating the locally installed manifest or an explicit `--manifest` URL; normal product surfaces never direct users to apply assets separately
 - Corporate VM asset channels use `capsem update --assets --manifest <URL>`; `--corp <URL>` provisions policy config and must not be combined with `--assets`
 - `--manifest` and `--corp` are URL-only inputs. Local files must use `file:///absolute/path`, while hosted release and corporate channels use `https://...` or `http://...`; bare paths are rejected so update checks share one URL-based mechanism.
-- Stable/nightly switching uses the installed CLI: `capsem update --assets --channel <stable|nightly>` switches VM assets, while `capsem update --yes --channel <stable|nightly>` applies the verified package transition and assets. Explicit channel transitions may downgrade; Linux uses `apt-get --allow-downgrades`. The single metadata file records the installed manifest URL separately from the most recently checked URL.
+- Stable/nightly switching uses the one complete installed transaction: `capsem update --yes --channel <stable|nightly>`. Explicit channel transitions may downgrade; Linux uses `apt-get --allow-downgrades`. The single metadata file records the installed manifest URL separately from the most recently checked URL.
 - An explicit corporate asset manifest moves the installation into a one-way locked channel. Persist `channel_kind=corporate` and `channel_locked=true`; later public-channel or different-manifest selections must fail before fetch or mutation.
 - Profile-owned images/configs/evidence belong to the selected channel/profile. Updating the co-work nightly profile can refresh only nightly co-work image/config refs and matching digests; it must not mutate stable, packages, per-binary inventory, or other profiles.
 - Profiles may set `min_capsem_version` when a profile requires newer client behavior. That is the compatibility hook; profiles must not point at the selected Capsem binary.
@@ -150,7 +150,20 @@ Docker-based e2e tests in `tests/capsem-install/`:
 | test_reinstall.py | Binary replacement verification |
 | test_error_paths.py | Failure scenarios with actionable errors |
 
-Run: `just test-install` (Docker with systemd PID 1)
+Run `just _gate-install` for the Linux Docker/systemd boundary. On Apple Silicon
+macOS, run `python3 scripts/macos_release_glowup.py` for the exact `.pkg` build, clean Tart
+install, receipt/app/binary verification, and service health. Because Tart
+macOS guests cannot expose nested virtualization, the recipe then extracts the
+same package on the physical Mac and boots a real Capsem guest from its exact
+binary/profile payload to a shell marker. Both focused scripts remain
+debugging tools; `just test` is the release gate that owns them.
+
+The local `.pkg` is intentionally unsigned. Its installer postinstall applies
+ad-hoc signatures and the required entitlements to executable payloads, which
+the Tart guest verifies before service and gateway checks. Local installation
+tests must not import or unlock an Apple Developer certificate or mutate the
+user's keychain. Developer ID signing, notarization, and stapling are
+publication-workflow responsibilities.
 
 ## Key files
 

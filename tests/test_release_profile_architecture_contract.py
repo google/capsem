@@ -2,24 +2,22 @@
 
 from __future__ import annotations
 
-from test_release_site_html_contract import (
-    FIXTURE_GRAPH,
-    PROJECT_ROOT,
-    RELEASE_SITE_DIST,
-    build_release_site_from_fixture,
-)
-
-from copy import deepcopy
 import hashlib
 import importlib.util
 import json
 import re
 import sys
 import tomllib
+from copy import deepcopy
 
 from blake3 import blake3
 from pytest import MonkeyPatch
-
+from test_release_site_html_contract import (
+    FIXTURE_GRAPH,
+    PROJECT_ROOT,
+    RELEASE_SITE_DIST,
+    build_release_site_from_fixture,
+)
 
 PROFILE_PAGE = (
     PROJECT_ROOT / "release-site" / "src" / "pages" / "channels" / "[channel]" / "profiles" / "[id].astro"

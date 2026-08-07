@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from contextlib import closing
-from pathlib import Path
 import re
 import sqlite3
+from contextlib import closing
+from pathlib import Path
 
 import pytest
-
 from ironbank.model_client_assertions import assert_one_model_client
 from ironbank.model_client_scripts import agy_cli_script
+
 from tests.ironbank.test_model_client_ledger_contract import ModelClientEnv
 
 pytestmark = pytest.mark.integration

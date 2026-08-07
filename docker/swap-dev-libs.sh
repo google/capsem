@@ -22,13 +22,17 @@ DEV_PACKAGES=(
     libgtk-3-dev
     libwebkit2gtk-4.1-dev
     libayatana-appindicator3-dev
-    librsvg2-dev
     libxdo-dev
 )
 
 echo "Swapping -dev libs: $NATIVE_ARCH -> $TARGET_ARCH"
 
-# Remove native-arch -dev packages
+# Prove every architecture-scoped index is fresh before mutating the installed
+# toolchain. The image-level apt policy retries transient downloads and makes a
+# partial update fatal.
+apt-get update -qq
+
+# Remove native-arch -dev packages only after the foreign indexes are usable.
 apt-get remove -y "${DEV_PACKAGES[@]}" >/dev/null 2>&1 || true
 
 # Install foreign-arch -dev packages
@@ -37,13 +41,6 @@ for pkg in "${DEV_PACKAGES[@]}"; do
     FOREIGN_PKGS+=("${pkg}:${TARGET_ARCH}")
 done
 
-apt-get update -qq
-# Ubuntu's foreign gobject-introspection package depends on the virtual
-# gobject-introspection-bin-linux provider. The native binary package is
-# Multi-Arch: foreign and provides that contract, but apt otherwise selects
-# the unavailable foreign provider. Prime the valid provider explicitly.
-apt-get install -y --no-install-recommends \
-    "gobject-introspection-bin:${NATIVE_ARCH}" >/dev/null
 apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-overwrite" "${FOREIGN_PKGS[@]}"
 rm -rf /var/lib/apt/lists/*
 

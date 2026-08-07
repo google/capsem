@@ -21,6 +21,22 @@ def _same_asset_map(left, right):
     return left == right
 
 
+def asset_min_binary(binary_version: str) -> str:
+    """Lowest binary these assets support: the base of the binary's release line.
+
+    Derived, never hardcoded. A literal floor sat here across a change of
+    release line and put every binary *below* the minimum its own assets
+    declared, so installation failed with "no compatible asset release" even
+    though the asset release was present and otherwise valid.
+
+    The line base rather than the exact version, so a compatibility window
+    survives: any binary sharing this MAJOR.MINOR runs these assets, and a
+    patch release does not force everyone to re-hydrate.
+    """
+    major, minor, *_ = binary_version.split(".")
+    return f"{major}.{minor}.0"
+
+
 def _next_or_existing_asset_version(existing, date_prefix, arch_assets):
     """Reuse the current release for identical assets; otherwise mint a patch."""
     patch = 1
@@ -118,7 +134,7 @@ def main():
                 asset_version: {
                     "date": today_str,
                     "deprecated": False,
-                    "min_binary": "1.0.0",
+                    "min_binary": asset_min_binary(binary_version),
                     "arches": arch_assets,
                 },
             },

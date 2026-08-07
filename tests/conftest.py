@@ -27,10 +27,27 @@ import threading
 import time
 import traceback
 from pathlib import Path
+
 import psutil
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
+
+# Every service this suite starts spawns a real capsem-tray: the spawn falls
+# back to `find_sibling_binary("capsem-tray")` when --tray-binary is omitted,
+# and the tray's singleton lock lives under CAPSEM_RUN_DIR, which each service
+# points at its own temp dir -- so the locks never dedupe and a suite run puts
+# one menu bar icon on the developer's screen per service.
+#
+# Headless keeps the companion and drops only the NSStatusItem, so the
+# service's spawn-and-reap path stays covered while the menu bar stays quiet.
+# Set here rather than in one fixture because capsem-mcp and capsem-e2e build
+# their own service env; all of them inherit this process's environment.
+#
+# Assigned, not setdefault: the tray tests for presence, so any value including
+# "0" means headless, and a conditional set would only look like an opt-out
+# while behaving identically. Debugging the icon means editing this line.
+os.environ["CAPSEM_TRAY_HEADLESS"] = "1"
 
 # Populated by the hookwrapper below; read by fixtures (ServiceInstance.stop)
 # that archive their tmp_dir when this worker session saw any failure.
@@ -67,12 +84,11 @@ def _leak_log_path(filename: str, env: dict[str, str] | None = None) -> Path:
     """
     source = os.environ if env is None else env
     namespace = source.get("CAPSEM_TEST_RUN_ID", "").strip()
-    path = _TESTS_ROOT / filename
+    output_root = source.get("CAPSEM_TEST_OUTPUT_ROOT", "").strip()
+    path = (Path(output_root) if output_root else _TESTS_ROOT) / filename
     if not namespace:
         return path
-    return path.with_name(
-        f"{path.stem}-{_sanitize_leak_log_namespace(namespace)}{path.suffix}"
-    )
+    return path.with_name(f"{path.stem}-{_sanitize_leak_log_namespace(namespace)}{path.suffix}")
 
 
 LEAK_REPORT_LOG = _leak_log_path("leak-report.log")
@@ -99,8 +115,8 @@ def _snapshot_baseline_pids() -> set[int]:
     pids: set[int] = set()
     for proc in psutil.process_iter():
         try:
-            name = proc.name() or ''
-            if name.startswith('capsem-'):
+            name = proc.name() or ""
+            if name.startswith("capsem-"):
                 pids.add(proc.pid)
         except (psutil.Error, OSError, SystemError):
             continue
@@ -134,9 +150,7 @@ def _thread_exception_hook(args: threading.ExceptHookArgs) -> None:
         f"\n@@@ UNHANDLED THREAD EXCEPTION in {args.thread.name} @@@",
         file=sys.stderr,
     )
-    traceback.print_exception(
-        args.exc_type, args.exc_value, args.exc_traceback, file=sys.stderr
-    )
+    traceback.print_exception(args.exc_type, args.exc_value, args.exc_traceback, file=sys.stderr)
 
 
 # Install immediately at import. A session-scope autouse fixture would miss
@@ -169,6 +183,38 @@ _REQUIRED_ARTIFACTS = {
 }
 
 _DEFAULT_TEST_NOFILE_LIMIT = 8192
+
+
+def _required_artifacts_for_run(
+    env: "os._Environ[str] | dict[str, str]",
+    required: dict[str, Path] | None = None,
+) -> dict[str, Path]:
+    """Return the artifacts that this exact test composition must prove.
+
+    Local ``just test`` owns source-build intermediates such as
+    ``target/linux-agent``. A release functional lane instead consumes an
+    already-verified package and profile input cohort. Requiring the source
+    intermediate there would force an unrelated rebuild and would not prove
+    the pulled package. Keep the manifest-derived release inputs and exact
+    staged binary mandatory in that mode.
+    """
+    selected = dict(_REQUIRED_ARTIFACTS if required is None else required)
+    release_inputs = env.get("CAPSEM_RELEASE_INPUT_DIR", "").strip()
+    if not release_inputs:
+        return selected
+
+    selected.pop("target/linux-agent/<arch>", None)
+
+    def release_path(variable: str) -> Path:
+        value = env.get(variable, "").strip()
+        if value:
+            return Path(value)
+        return _PROJECT_ROOT / "target" / "missing-release-environment" / variable
+
+    selected["verified release input report"] = Path(release_inputs) / "release-inputs.json"
+    selected["manifest-selected release package"] = release_path("CAPSEM_RELEASE_PACKAGE")
+    selected["manifest-selected test binary"] = release_path("CAPSEM_TEST_BINARY")
+    return selected
 
 
 def _desired_open_file_limit(env: "os._Environ[str] | dict[str, str]") -> int:
@@ -238,14 +284,26 @@ def pytest_sessionstart(session):
     absence goes unnoticed.
     """
     _raise_open_file_limit()
-    missing = _missing_required_artifacts(os.environ, _REQUIRED_ARTIFACTS)
+    missing = _missing_required_artifacts(
+        os.environ,
+        _required_artifacts_for_run(os.environ),
+    )
     if missing:
+        if os.environ.get("CAPSEM_RELEASE_INPUT_DIR", "").strip():
+            guidance = (
+                "The release lane must stage the manifest-selected package, "
+                "binary inventory, and verified profile inputs before invoking pytest."
+            )
+        else:
+            guidance = (
+                "Run `just build-assets code` (for assets/) and "
+                "`uv run capsem-builder agent` (for target/linux-agent/) "
+                "before invoking pytest. Locally, unset the env var to let "
+                "tests skip on missing artifacts."
+            )
         pytest.exit(
             "CAPSEM_REQUIRE_ARTIFACTS=1 but the following artifacts are "
-            f"missing: {missing}. Run `just build-assets code` (for assets/) "
-            "and `uv run capsem-builder agent` (for target/linux-agent/) "
-            "before invoking pytest. Locally, unset the env var to let "
-            "tests skip on missing artifacts.",
+            f"missing: {missing}. {guidance}",
             returncode=1,
         )
 
@@ -311,20 +369,20 @@ def get_capsem_processes() -> dict[int, dict]:
     procs: dict[int, dict] = {}
     for proc in psutil.process_iter():
         try:
-            name = proc.name() or ''
+            name = proc.name() or ""
         except (psutil.Error, OSError, SystemError):
             continue
-        if not name.startswith('capsem-'):
+        if not name.startswith("capsem-"):
             continue
         try:
-            cmdline = ' '.join(proc.cmdline() or [])
+            cmdline = " ".join(proc.cmdline() or [])
         except (psutil.Error, OSError, SystemError):
             # PermissionError (subclass of OSError) covers KERN_PROCARGS2 denials;
             # SystemError is the psutil C-extension wrapper around the same thing.
             # Either way we know this is a capsem-* proc, so record it with a
             # blank cmdline rather than drop it.
-            cmdline = ''
-        procs[proc.pid] = {'name': name, 'cmdline': cmdline}
+            cmdline = ""
+        procs[proc.pid] = {"name": name, "cmdline": cmdline}
     return procs
 
 
@@ -394,13 +452,15 @@ def check_leaks(request):
         if not _is_pytest_descendant(pid):
             continue
         _FIRST_SEEN[pid] = (nodeid, info)
-        new_records.append({
-            "pid": pid,
-            "nodeid": nodeid,
-            "worker": worker,
-            "name": info["name"],
-            "cmdline": info["cmdline"],
-        })
+        new_records.append(
+            {
+                "pid": pid,
+                "nodeid": nodeid,
+                "worker": worker,
+                "name": info["name"],
+                "cmdline": info["cmdline"],
+            }
+        )
     if new_records:
         # Append JSONL so workers coexist without locking. Individual line
         # writes are atomic up to PIPE_BUF (4 KiB on macOS/Linux); keep each
@@ -452,8 +512,7 @@ def pytest_sessionfinish(session, exitstatus):
         )
         for args in _CAUGHT_THREAD_EXCEPTIONS:
             print(
-                f"  {args.exc_type.__name__}: {args.exc_value} "
-                f"(thread={args.thread.name})",
+                f"  {args.exc_type.__name__}: {args.exc_value} (thread={args.thread.name})",
                 file=sys.stderr,
             )
         session.exitstatus = 1
@@ -461,7 +520,9 @@ def pytest_sessionfinish(session, exitstatus):
     if os.environ.get("PYTEST_XDIST_WORKER") is not None:
         return  # worker: attribution was flushed in check_leaks
 
-    suspects = {pid: info for pid, info in get_capsem_processes().items() if pid not in _BASELINE_PIDS}
+    suspects = {
+        pid: info for pid, info in get_capsem_processes().items() if pid not in _BASELINE_PIDS
+    }
     if not suspects:
         return
 
@@ -510,3 +571,54 @@ def pytest_sessionfinish(session, exitstatus):
     print(f"({len(lines)} leaked process(es); see {LEAK_REPORT_LOG})", file=sys.stderr)
 
     session.exitstatus = 1
+
+
+# ---------------------------------------------------------------------------
+# The gate's record of what it is qualifying belongs to the gate
+# ---------------------------------------------------------------------------
+
+_ROOT = Path(__file__).resolve().parent.parent
+#: What a run records about *what it is qualifying*. A suite that overwrites
+#: any of these makes the gate around it publish the wrong thing, or refuse to
+#: publish at all. Guarded as a set rather than one file, because the first
+#: version of this guard watched only the source state and let `tested-head`
+#: be clobbered by the same bug an hour later.
+_RUN_IDENTITY = (
+    _ROOT / "target/gate-source-state.json",
+    _ROOT / "target/release-preflight/tested-head",
+)
+
+
+@pytest.fixture(autouse=True)
+def _the_running_gate_keeps_its_own_source_state(request):
+    """Fail the test that writes it, by name, in seconds.
+
+    A suite runs inside `just test`, and several read a real plan by *running*
+    it against a recording runner. A plan that runs does what its actions say,
+    so one of them wrote the recorder's empty output over the state file
+    naming the HEAD the gate was qualifying. The gate then failed in
+    `source.verify`, its last step, after forty minutes, reporting
+
+        source HEAD changed while the gate was running:  -> <head>
+
+    -- pointing at git, at the working tree, at anything but the test that did
+    it. Whoever does this next finds out here instead, and the run survives:
+    the file is put back before the failure propagates.
+    """
+    read = lambda path: path.read_bytes() if path.exists() else None  # noqa: E731
+    before = {path: read(path) for path in _RUN_IDENTITY}
+    yield
+    for path, original in before.items():
+        after = read(path)
+        if after == original:
+            continue
+        if original is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_bytes(original)
+        raise AssertionError(
+            f"{request.node.nodeid} rewrote {path.name}, which belongs to the "
+            f"gate running this suite. It wrote {after!r}. A test that runs a "
+            "real plan to read it must pass observing=True; see "
+            "tests/helpers/gate.py."
+        )
