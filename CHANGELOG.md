@@ -95,6 +95,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Public recipe names now come from `tests/variables.py`, which reads
+  `config/public-surface.toml`, and a contract forbids spelling them as
+  literals. Renaming one recipe broke five contracts in four files and not one
+  of them was testing behaviour -- they asserted that a block called `smoke:`
+  held certain lines in a certain order, so a rename that changed nothing
+  failed the build while a behaviour change keeping the name would have
+  passed. Renaming now touches the ledger, the justfile and the docs, and no
+  test at all.
+
 - Five named volumes are retired: `capsem-install-target`,
   `-frontend-dist`, `-cargo`, `-rustup` and `-frontend-node-modules`. The
   install lanes copy their source into the image now, so nothing declares

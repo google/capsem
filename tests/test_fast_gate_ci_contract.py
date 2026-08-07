@@ -5,6 +5,7 @@ import re
 import sys
 from pathlib import Path
 
+import variables
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,18 +79,31 @@ def test_python_tests_use_the_tracked_lowercase_justfile_name() -> None:
     )
 
 
-def test_smoke_reuses_the_complete_shared_fast_gate() -> None:
-    """`smoke` and `test` share one cheap gate, so they cannot drift.
+def test_the_public_fast_gate_is_the_shared_module_itself() -> None:
+    """`fast-test` and `test` cannot drift, because they are the same module.
 
-    The cheap checks must fail before smoke spends time preparing a bootable
-    runtime. `_prepared-runtime` is that preparation, named once so both
-    entrypoints take the same steps.
+    This used to assert an ordering *inside* one recipe: that `smoke` ran
+    `_test-fast` before `_prepared-runtime`, so cheap checks failed before a
+    bootable runtime was built. That recipe bundled two jobs and is now two
+    recipes, which makes the ordering unnecessary rather than violated --
+    `fast-test` is the cheap gate and nothing else, so there is nothing after
+    it to run too early.
+
+    What still has to hold is that the public name is the shared module and
+    not a reduced copy of it, and that the VM half still prepares a runtime.
     """
-    smoke = _recipe("smoke")
+    fast_test = variables.block(variables.FAST_TEST)
     fast = _recipe("_test-fast")
     planned = _planned("test-fast")
 
-    assert smoke.index("just _test-fast") < smoke.index("just _prepared-runtime")
+    assert "just _test-fast" in fast_test
+    assert fast_test.strip().count("\n") == 0, (
+        f"{variables.FAST_TEST} grew a second job; it is the fast gate and "
+        f"nothing else: {fast_test!r}"
+    )
+    assert "_prepared-runtime" in variables.header(variables.VM_SMOKE), (
+        "the VM half stopped preparing a bootable runtime"
+    )
     assert "_check-assets" in _recipe("_prepared-runtime").splitlines()[0]
     assert "just _test-release-contracts" in fast
 

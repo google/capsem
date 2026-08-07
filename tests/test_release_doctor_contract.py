@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import ClassVar
 
 import pytest
+import variables
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -135,7 +136,9 @@ _DISPATCHED = {
     "test:": ("candidate", {}),
     "_test-candidate:": ("test-candidate", {}),
     "_test-fast:": ("test-fast", {}),
-    "smoke:": ("smoke", {}),
+    # Recipe name -> gate command name. Only the recipe was renamed; the
+    # gate command it dispatches to is still `capsem-gate smoke`.
+    f"{variables.VM_SMOKE}:": ("smoke", {}),
     "_gate-assets:": ("assets", {}),
     "_gate-install:": ("install", {}),
     "_gate-linux-rust:": ("linux-rust", {}),
@@ -277,8 +280,8 @@ def _command_attribute_prefix(source: str, struct_name: str = "Args") -> str:
     return source[: source.index(marker)]
 
 
-def test_smoke_runs_full_doctor_without_fast_escape_hatch() -> None:
-    block = _recipe_block("smoke:")
+def test_vm_smoke_runs_full_doctor_without_fast_escape_hatch() -> None:
+    block = _recipe_block(f"{variables.VM_SMOKE}:")
 
     from capsem.gate import config as gate_config
 
@@ -2931,7 +2934,7 @@ def test_ci_docs_compare_pr_gate_to_just_test_with_named_substitutions() -> None
 
     assert "## PR gate compared with `just test`" in docs
     assert (
-        "| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test` and `just smoke`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |"
+        "| YAML/source syntax, source contracts, audits, lint, and all web surfaces | `fast-gate` calls the same `_test-fast` module used first by `just test` and run alone by `just fast-test`; dedicated web jobs retain platform/deployment evidence | One independently executable fast module, including blocking vulnerability audits across all locked ecosystems |"
         in docs
     )
     assert (

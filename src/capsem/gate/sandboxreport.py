@@ -135,6 +135,18 @@ class SandboxReport(Resource, name="sandbox-report"):
         self._runner.step(f"{len(lines)} distinct sandbox operation(s) recorded in {summary}")
 
 
+def _reap_current() -> None:
+    """Stop and wait for whatever streamer this process still holds."""
+    global _STREAM
+    stream, _STREAM = _STREAM, None
+    if stream is None:
+        return
+    with contextlib.suppress(OSError):
+        stream.terminate()
+    with contextlib.suppress(OSError, subprocess.TimeoutExpired):
+        stream.wait(timeout=5)
+
+
 def _reap(pid: int) -> None:
     """Wait for the streamer if it was ours, so it does not linger as a zombie.
 
@@ -192,6 +204,12 @@ def start_outside_the_sandbox(config, runner) -> None:
     by the profile the replacement adopts, which is the only arrangement in
     which `log` runs at all.
     """
+    # Any predecessor first. One process should only ever start one of these,
+    # but if it starts a second the first is orphaned -- a running child with
+    # nobody holding it, which Python reports from `Popen.__del__` as a
+    # subprocess still running and which is a genuine leak, not a warning.
+    _reap_current()
+
     settings = config.sandbox
     target = capture_path(config)
     target.parent.mkdir(parents=True, exist_ok=True)

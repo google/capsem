@@ -75,10 +75,12 @@ def test_policy_declares_last_consumers_before_release_boundaries() -> None:
     assert resources["capsem-agent-target-arm64"]["release_boundary"] == "after-assets"
     assert resources["capsem-host-target-arm64"]["release_boundary"] == "after-package-arm64"
     assert resources["capsem-host-target-x86_64"]["release_boundary"] == "after-package-x86_64"
-    assert resources["capsem-install-target"]["maximum_gib"] == 25
-    assert resources["capsem-install-target"]["retention"] == "working"
+    # `capsem-install-target` and `-frontend-node-modules` were `working` and
+    # `cache`; both are obsolete now. The install lanes copy their source into
+    # the image, so nothing declares them and nothing can mount them.
+    assert resources["capsem-install-target"]["retention"] == "obsolete"
+    assert resources["capsem-install-frontend-node-modules"]["retention"] == "obsolete"
     assert resources["capsem-cargo-registry"]["retention"] == "cache"
-    assert resources["capsem-install-frontend-node-modules"]["retention"] == "cache"
     assert resources["capsem-install-release-site-node-modules"]["retention"] == "cache"
     assert resources["capsem-linux-python-venv"]["retention"] == "obsolete"
 

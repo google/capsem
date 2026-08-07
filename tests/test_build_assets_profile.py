@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import variables
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -343,7 +345,7 @@ def test_runtime_recipes_materialize_generated_config_before_service() -> None:
     assert "_materialize-config" in prepared
     assert prepared.index("_pack-initrd") < prepared.index("_materialize-config")
 
-    for recipe in ["shell:", "run-service:", "smoke:"]:
+    for recipe in ["shell:", "run-service:", f"{variables.VM_SMOKE}:"]:
         assert "_prepared-runtime" in _recipe_block(recipe)
 
 

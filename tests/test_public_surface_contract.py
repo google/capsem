@@ -6,6 +6,7 @@ import tomllib
 from pathlib import Path
 
 import pytest
+import variables
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check_public_surface.py"
@@ -38,7 +39,7 @@ def test_the_fast_gate_is_public_and_is_not_a_release_shortcut() -> None:
         (ROOT / "config" / "public-surface.toml").read_text(encoding="utf-8")
     )["just"]
     assert "test" in public_just
-    for recipe in ("fast-test", "vm-smoke"):
+    for recipe in (variables.FAST_TEST, variables.VM_SMOKE):
         assert recipe in public_just, f"{recipe} is not a public recipe"
         assert recipe in policy["approved"], f"{recipe} is not approved"
     assert "smoke" not in public_just, (
