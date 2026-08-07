@@ -31,7 +31,6 @@ from .docker import Docker
 from .dockermount import Mount
 from .errors import GateError
 from .fileactions import copy_tree, make_dir, remove
-from .gitmetadata import docker_git_metadata_mount
 from .packageinputs import package_environment, pinned_toolchain, resolve_channel
 from .packagesigning import signing_key
 from .proc import Runner
@@ -140,14 +139,20 @@ class PackageRail:
             ),
         )
         mount = self._config.install.mount
-        metadata = docker_git_metadata_mount(self._runner)
         mounts = (
             # No source mount. The checkout is copied into the lane image
             # below, so the container holds its own bytes and a host step
             # cannot race these inodes -- and the bundler's atomic
             # temporaries, which made a read-only mount impossible, land in an
             # image layer instead of the developer's `frontend/`.
-            *((metadata,) if metadata is not None else ()),
+            # The two generated trees the build reads. Mounted, not copied:
+            # see `Mount.generated` -- `assets/` alone is 3.0 GB and changes
+            # every run, so copying it would put a multi-gigabyte layer in
+            # Docker storage per gate to avoid a mount that was never the race.
+            *(
+                Mount.generated(str(self.root / name), f"{mount}/{name}")
+                for name in self._package.generated_inputs
+            ),
             *(Mount(volume.source, volume.target) for volume in self._package.volumes),
             Mount(
                 self._package.target_volume_for(self.target.name),

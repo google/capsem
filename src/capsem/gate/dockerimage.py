@@ -57,7 +57,7 @@ class ImageOperations:
         """Run a container to completion and return what it printed.
 
         The third thing a call site can want from a container, after "do it"
-        and "did it work": the answer itself. `_ForeignUidProbe` asks an image
+        and "did it work": the answer itself. A probe asks an image
         to read the checkout's revision as a stranger, and without this it had
         to assemble its own `docker run` -- and pick its own network mode.
         """

@@ -30,23 +30,34 @@ class Mount:
     target: str
     options: str = ""
 
-    #: Set only by `unmigrated`. A mount of the checkout is a defect; until the
-    #: four modules that still do it are converted to `COPY`, each one says so
-    #: at its call site rather than the guard being switched off globally.
-    legacy: bool = False
+    #: Set only by `generated`. Every lane copies its source into its image
+    #: now, so the `unmigrated` escape hatch that counted the ones which did
+    #: not is gone; what remains is the deliberate mounting of build output.
+    exempt: bool = False
 
     @classmethod
-    def unmigrated(cls, source: str, target: str, options: str = "") -> Mount:
-        """A checkout mount that has not been converted to an image copy yet.
+    def generated(cls, source: str, target: str, options: str = "ro") -> Mount:
+        """Build output the container consumes, mounted rather than copied.
 
-        Deliberately ugly and deliberately greppable. `tests/
-        test_gate_docker_boundary.py` counts these and refuses a new one, so
-        the list can only shrink.
+        Not debt, and deliberately not spelled `unmigrated`: labelling these
+        as debt would tell the next reader to convert them, and converting
+        them is the wrong move. `assets/` is **3.0 GB** and changes every run,
+        so `COPY`ing it would push multi-gigabyte layers into Docker storage
+        per gate to avoid a mount that was never the problem.
+
+        The race this whole boundary exists to stop was a *source* path --
+        `config/profiles/.../projects.json`, hardlink-churned by a host step
+        while the container read the same inode. Generated inputs are produced
+        by an earlier step, declared through `contends`, and read-only here, so
+        nothing writes them while this reads them.
+
+        Read-only by default, because a container that can write its inputs
+        can make the next step's inputs differ from what this step was given.
         """
-        return cls(source=source, target=target, options=options, legacy=True)
+        return cls(source=source, target=target, options=options, exempt=True)
 
     def __post_init__(self) -> None:
-        if self.legacy:
+        if self.exempt:
             return
         # The checkout this package was imported from -- the same derivation
         # `sourcestate.gate_source()` uses, because a `Mount` is constructed

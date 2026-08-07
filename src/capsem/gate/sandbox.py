@@ -160,4 +160,11 @@ def applied(
         config, config.path(config.runlog.root), report=chosen == REPORT
     )
     runner.step(f"Running under the {chosen} sandbox profile at {written}")
+    if chosen == REPORT:
+        # Here and nowhere later. `log` refuses to run inside a sandbox, and
+        # every line after this one executes inside the profile just written.
+        # Imported locally: `sandboxreport` imports this module for `REPORT`.
+        from . import sandboxreport
+
+        sandboxreport.start_outside_the_sandbox(config, runner)
     return wrap(config, written, argv)

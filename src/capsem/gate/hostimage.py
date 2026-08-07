@@ -21,10 +21,8 @@ from .command import GateCommand
 from .config import GateConfig
 from .context import Context
 from .docker import Docker
-from .dockermount import Mount
 from .errors import GateError
 from .execution import Step, step
-from .gitmetadata import docker_git_metadata_mount
 from .plan import Plan
 
 #: One name, so every lane that needs the builder depends on the same step
@@ -37,7 +35,6 @@ def image(config: GateConfig) -> Step:
     return step(
         STEP,
         _Build(),
-        _ForeignUidProbe(),
         contends=(config.exclusive("docker_daemon"),),
     )
 
@@ -67,44 +64,6 @@ def fragment(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) ->
     label or a six-gigabyte image built twice.
     """
     return plan.shared(image(config), after=after)
-
-
-class _ForeignUidProbe(Action, name="foreign-uid-probe"):
-    """Read the checkout's revision as a user who does not own it."""
-
-    def render(self) -> str:
-        return "docker run --user <foreign> ... git rev-parse --short HEAD"
-
-    def perform(self, context: Context) -> None:
-        settings = context.config.hostimage
-        expected = context.runner.capture(["git", "rev-parse", "--short", "HEAD"], check=False)
-        if not expected:
-            return
-
-        metadata = docker_git_metadata_mount(context.runner)
-        actual = Docker(context.runner).read(
-            image=settings.tag,
-            command=["git", "rev-parse", "--short", "HEAD"],
-            # It reads a revision out of a checkout. Declared rather than
-            # omitted, which is how every container in the gate used to have
-            # outbound access without anyone choosing it.
-            network=settings.probe_network,
-            options=("--user", settings.probe_user),
-            mounts=(
-                Mount.unmigrated(str(context.root), settings.mount, "ro"),
-                *((metadata,) if metadata is not None else ()),
-            ),
-            workdir=settings.mount,
-            check=False,
-        )
-        if actual != expected:
-            raise GateError(
-                f"{settings.tag} cannot read {settings.mount} as a non-owner user, "
-                "so Linux package builds would embed an 'unknown' build hash. "
-                f"Keep `git config --system --add safe.directory {settings.mount}` "
-                f"in {settings.dockerfile}."
-            )
-        context.journal.note(f"host-builder reads {settings.mount} as a stranger ({actual})")
 
 
 def linux_rust(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:

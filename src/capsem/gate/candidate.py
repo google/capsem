@@ -157,6 +157,17 @@ class CandidateCommand(
 ):
     exclusive = True
     uses_qualification = True
+    sandboxed = sandbox.ENFORCE
+    """Phase 8b: the complete local gate refuses the network.
+
+    `candidate` only. A release still runs the wider profile, because its
+    fetch and publish halves genuinely need outbound access -- and this is the
+    command whose whole claim is that nothing was downloaded mid-run, which is
+    worth nothing while it is merely believed.
+
+    `--sandbox report` still overrides it, which is how the allow-list gets
+    measured after a rule turns out to be too narrow.
+    """
 
     # The run this whole mechanism was built for. `just test` is this command,
     # and it composes the modules' plan *fragments* in-process rather than

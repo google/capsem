@@ -37,6 +37,16 @@ from .recording import Recorded
 
 
 class GateCommand(Recorded, ABC):
+    publishes: ClassVar[bool] = False
+    """Whether this command can make something other people see.
+
+    Only the two release commands set it. It is what turns a source-tree fault
+    from a line in `errors.log` into a refusal: a developer who edits during a
+    gate can read the report and judge, but a run that is about to publish
+    would otherwise ship an artifact whose recorded provenance names a tree
+    that did not hold still -- and nothing downstream can tell.
+    """
+
     """A subcommand. Subclasses declare what they hold and what they do."""
 
     name: ClassVar[str]
@@ -233,7 +243,10 @@ class GateCommand(Recorded, ABC):
         if replacement is not None:
             raise SystemExit(self._runner.run(replacement, check=False))
 
-        with self._recording() as log, observing(self._config, log, plan) as watch:
+        with (
+            self._recording() as log,
+            observing(self._config, log, plan, publishes=self.publishes) as watch,
+        ):
             # Every invocation from here is recorded, and none may start a
             # second gate. Neither is a call site's responsibility.
             runner = GuardedRunner(

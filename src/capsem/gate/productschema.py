@@ -182,6 +182,7 @@ class PackageConfig(Strict):
     package_suffix: str
     network: str
     lane_container: str
+    generated_inputs: tuple[str, ...]
     lane_dockerfile: str
     lane_image: str
     writable_paths: tuple[str, ...]

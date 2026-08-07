@@ -103,7 +103,6 @@ class InstallContainer:
             options=["--privileged", "--cgroupns=host", *options, *self._tmpfs()],
             mounts=[
                 Mount(cgroup, cgroup, "rw"),
-                Mount.unmigrated(str(self._config.root), self._settings.mount),
                 *(Mount(v.source, v.target) for v in self._settings.volumes),
             ],
         )

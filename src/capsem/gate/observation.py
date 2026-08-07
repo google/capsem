@@ -36,6 +36,13 @@ if TYPE_CHECKING:  # pragma: no cover - imported for typing only
     from watchdog.observers.api import BaseObserver
 
 
+#: The one fault reason a release refuses rather than records. Named here
+#: because `observing` compares against it: a literal in both places is two
+#: spellings of one rule, and the release would stop refusing the day either
+#: drifted.
+SOURCE_TREE = "source-tree"
+
+
 class Watch:
     """Observes the paths a run must not disturb and judges each change live."""
 
@@ -146,7 +153,7 @@ class Watch:
 
         if source and event.kind != "deleted":
             self._fault(
-                event, "source-tree", f"{event.kind} during the run; the gate qualifies this tree"
+                event, SOURCE_TREE, f"{event.kind} during the run; the gate qualifies this tree"
             )
 
         if not source and event.inode is not None and event.links and event.links > 1:

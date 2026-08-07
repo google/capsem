@@ -19,7 +19,6 @@ from .actions import Call
 from .command import GateCommand
 from .config import GateConfig
 from .docker import Docker
-from .dockermount import Mount
 from .errors import GateError
 from .execution import Step, step
 from .opacity import CallJustification, OpaqueKind
@@ -57,7 +56,6 @@ def _smoke_passes(runner: Runner, settings: gate_config.InstallConfig) -> bool:
             names.project_environment: settings.venv,
             names.test_output_root: settings.test_output_root,
         },
-        mounts=(Mount.unmigrated(str(runner.root), settings.mount, "ro"),),
     )
 
 

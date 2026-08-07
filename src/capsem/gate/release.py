@@ -84,6 +84,7 @@ class ReleaseBinariesCommand(
     keeps the host awake for the same reason candidate does."""
 
     exclusive = True
+    publishes = True
     uses_qualification = True
 
     @classmethod
@@ -157,6 +158,7 @@ class ReleaseProfileCommand(
     help="run the complete gate, then release one channel profile",
 ):
     exclusive = True
+    publishes = True
     uses_qualification = True
 
     @classmethod

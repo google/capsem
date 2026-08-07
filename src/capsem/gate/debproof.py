@@ -138,9 +138,6 @@ class DebProof:
             ],
             mounts=[
                 Mount(cgroup, cgroup, "rw"),
-                # Read-only: this proof must not be able to influence the tree
-                # it is proving.
-                Mount.unmigrated(str(self.root), self._install.mount, "ro"),
             ],
         )
         await_systemd(

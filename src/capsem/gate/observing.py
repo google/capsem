@@ -15,15 +15,24 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from .config import GateConfig
+from .errors import GateError
 from .faultlog import FaultLog
 from .faults import Fault
-from .observation import Watch
+from .observation import SOURCE_TREE, Watch
 from .plan import Plan
 
 
 @contextmanager
-def observing(config: GateConfig, log: object, plan: Plan) -> Iterator[Watch | None]:
-    """Watch the disk for the length of a run, reporting faults as they land."""
+def observing(
+    config: GateConfig, log: object, plan: Plan, *, publishes: bool = False
+) -> Iterator[Watch | None]:
+    """Watch the disk for the length of a run, reporting faults as they land.
+
+    `publishes` is what separates a report from a refusal. A source-tree fault
+    means the tree changed under a run that is measuring it -- tolerable for a
+    developer, who can read the log and decide, and not tolerable for a command
+    that is about to publish an artifact whose provenance says it was built from
+    a tree that held still."""
     from .interception import Instrument
 
     # Only a real run has somewhere to put the report. A test driving the
@@ -44,6 +53,13 @@ def observing(config: GateConfig, log: object, plan: Plan) -> Iterator[Watch | N
 
     def report(fault: Fault) -> None:
         seen.append(fault)
+        if publishes and fault.reason == SOURCE_TREE:
+            raise GateError(
+                f"the source tree changed during a release: {fault.render()}. "
+                "This run would publish an artifact whose recorded provenance "
+                "claims a tree that did not hold still, and no later check can "
+                "tell the difference. Re-run with the checkout left alone."
+            )
         print(f"FAULT {fault.render()}", file=sys.stderr, flush=True)
         errors(fault)
         note = getattr(log, "note", None)

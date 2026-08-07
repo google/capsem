@@ -60,5 +60,13 @@ ENV XDG_RUNTIME_DIR=/run/user/1000
 # Ensure the runtime dir exists with correct ownership at boot
 RUN mkdir -p /run/user/1000 && chown capsem:capsem /run/user/1000
 
-# Copy project source (mounted read-only at runtime, this is just for uv sync)
+# The source, copied rather than mounted. A `-v <repo_root>:/src` let a host
+# step churning hardlinks and this container reading the same inodes over
+# virtiofs share a filesystem neither declared, and a release run died on the
+# resulting intermittent `Permission denied`.
+#
+# Owned by the container user: this lane writes its test output under /src, so
+# a root-owned copy fails with EACCES on Linux and only on Linux -- the shape
+# four separate release-gate failures already had.
+COPY --chown=capsem:capsem . /src
 WORKDIR /src

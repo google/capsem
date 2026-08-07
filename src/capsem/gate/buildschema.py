@@ -89,8 +89,6 @@ class HostImageConfig(Strict):
     context: str
     script: str
     mount: str
-    probe_user: str
-    probe_network: str
 
 
 class SbomConfig(Strict):

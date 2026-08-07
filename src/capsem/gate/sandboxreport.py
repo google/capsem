@@ -17,6 +17,15 @@ allow-list an enforcing profile needs, which is why one report run replaces
 the forty enforcing runs that would each discover one more thing at a
 different minute.
 
+**It cannot run inside the sandbox it measures.** `/usr/bin/log` refuses
+outright -- `log: Cannot run while sandboxed` -- so a collector started from a
+`Resource`, which is already inside the re-exec'd sandboxed process, captures
+32 bytes of that refusal and nothing else. It is therefore started in
+`sandbox.applied`, immediately *before* the process replaces itself with the
+sandboxed one: a child that already exists is not retroactively sandboxed, so
+it keeps streaming for the whole run. Its pid goes in a file, and the resource
+inside the sandbox reads that file to stop it and summarize.
+
 Bounded by two things and not by a size cap. The predicate is a single sender,
 so the stream is sandbox decisions rather than the system log; and the
 streamer is terminated on release down every path, including failure -- a
@@ -27,8 +36,11 @@ reclaims it with everything else that run produced.
 
 from __future__ import annotations
 
+import os
 import re
+import signal
 import subprocess
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -68,47 +80,39 @@ class SandboxReport(Resource, name="sandbox-report"):
         history = config.path(config.runlog.root)
         current = history / config.runlog.latest_link
         self._target = (current if current.is_dir() else history) / self._settings.report_log_name
-        self._stream: subprocess.Popen | None = None
-        self._handle = None
 
     def acquire(self) -> None:
-        if self._mode != REPORT:
-            return
-        self._target.parent.mkdir(parents=True, exist_ok=True)
-        self._handle = self._target.open("w", encoding="utf-8")
-        # Not through `Runner`: this outlives the call that starts it, and the
-        # runner's exec accounting is for commands that finish.
-        self._stream = subprocess.Popen(
-            [
-                self._settings.log_command,
-                "stream",
-                "--style",
-                self._settings.report_style,
-                "--predicate",
-                self._settings.report_predicate,
-            ],
-            stdout=self._handle,
-            stderr=subprocess.STDOUT,
-        )
-        self._runner.step(f"Collecting sandbox report entries into {self._target}")
+        """Nothing to start: it is already running, and had to be.
+
+        See the module docstring -- `log` refuses to run sandboxed, and this
+        object only exists inside the sandbox.
+        """
 
     def release(self) -> None:
-        stream, self._stream = self._stream, None
-        if stream is not None:
-            stream.terminate()
+        if self._mode != REPORT:
+            return
+        pidfile = self._target.with_suffix(self._settings.report_pid_suffix)
+        if pidfile.is_file():
             try:
-                stream.wait(timeout=self._settings.report_stop_timeout)
-            except subprocess.TimeoutExpired:
-                # A streamer that ignores SIGTERM must still not outlive the
-                # run: this is the leak the orphan accounting would report,
-                # and blaming a later run for it costs an hour to diagnose.
-                stream.kill()
-                stream.wait()
-        if self._handle is not None:
-            self._handle.close()
-            self._handle = None
-        if self._mode == REPORT:
-            self._summarize()
+                pid = int(pidfile.read_text(encoding="utf-8").strip())
+            except ValueError:
+                pid = 0
+            if pid > 0:
+                # A collector that outlives its run is the leak orphan
+                # accounting exists to catch, so SIGKILL follows SIGTERM
+                # rather than trusting it.
+                for signal_number in (signal.SIGTERM, signal.SIGKILL):
+                    try:
+                        os.kill(pid, signal_number)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(self._settings.report_stop_timeout / 10)
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        break
+            pidfile.unlink(missing_ok=True)
+        self._summarize()
 
     def _summarize(self) -> None:
         """Write the deduplicated allow-list beside the raw capture.
@@ -146,5 +150,36 @@ def observed(captured: str) -> list[tuple[tuple[str, str], int]]:
 
 
 def capture_path(config) -> Path:
-    """Where a report-mode run leaves its capture."""
-    return config.path(config.runlog.root) / config.sandbox.report_log_name
+    """Where a report-mode run leaves its capture, resolved to the live run."""
+    history = config.path(config.runlog.root)
+    current = history / config.runlog.latest_link
+    return (current if current.is_dir() else history) / config.sandbox.report_log_name
+
+
+def start_outside_the_sandbox(config, runner) -> None:
+    """Begin streaming before this process becomes a sandboxed one.
+
+    Called from `sandbox.applied`, which is the last moment anything here runs
+    unsandboxed. The child survives the `exec` that follows and is not covered
+    by the profile the replacement adopts, which is the only arrangement in
+    which `log` runs at all.
+    """
+    settings = config.sandbox
+    target = capture_path(config)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    handle = target.open("w", encoding="utf-8")
+    stream = subprocess.Popen(
+        [
+            settings.log_command,
+            "stream",
+            "--style",
+            settings.report_style,
+            "--predicate",
+            settings.report_predicate,
+        ],
+        stdout=handle,
+        stderr=subprocess.STDOUT,
+        start_new_session=True,
+    )
+    target.with_suffix(settings.report_pid_suffix).write_text(str(stream.pid), encoding="utf-8")
+    runner.step(f"Collecting sandbox report entries into {target}")

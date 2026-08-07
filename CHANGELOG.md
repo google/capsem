@@ -95,6 +95,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- No gate lane mounts the checkout any more. The install image, the install
+  proof container, the deb proof and the package lane all copy their source in,
+  `Mount.unmigrated` is deleted along with the last caller, and the foreign-UID
+  probe goes with them -- it existed to prove a non-owner could read a bind
+  mount, and there is no bind mount and no discovered revision left to get
+  wrong. Generated inputs the package build reads (`assets/`, 3.0 GB, and the
+  materialized profile catalog) are mounted read-only through the named
+  `Mount.generated`, because copying multi-gigabyte build output into a layer
+  every run would be a worse trade than the mount ever was.
+- `capsem-gate candidate` now runs under an enforcing sandbox that denies the
+  network. Releases keep the wider profile, since their fetch and publish
+  halves genuinely need it.
+- A source-tree fault aborts a release instead of being logged. A developer who
+  edits during a gate can read the report and judge; a run about to publish
+  would otherwise ship an artifact whose provenance names a tree that did not
+  hold still.
+
 - `just smoke` is replaced by `just fast-test` and `just vm-smoke`. It ran the
   fast gate *and* a VM loop under a name that described neither, so the gate
   looked like optional developer feedback and the VM loop looked like a
@@ -122,6 +139,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   appends the event before judging it -- both on the watchdog thread -- so the
   assertion could win the race into the gap between the two. Measured at three
   failures in five runs on an unchanged tree; zero in twenty after.
+- Report mode's collector runs outside the sandbox it measures. `/usr/bin/log`
+  refuses to run sandboxed -- `log: Cannot run while sandboxed` -- so a
+  collector started from a resource captured 32 bytes of that refusal and
+  nothing else. It now starts immediately before the sandboxed re-exec and is
+  stopped through a pidfile from the other side of it.
 - Report mode now records what the sandbox permitted. The profile was being
   generated and applied, but nothing read the unified log that `(with report)`
   writes to, so a complete report-mode gate run produced zero sandbox entries

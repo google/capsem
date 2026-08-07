@@ -343,6 +343,11 @@ lane_container = "capsem-package-{arch}"
 # impossible and scratch over `frontend/` would have masked the source.
 # One tag for every architecture -- the source is the same, and `COPY`
 # invalidates the layer on any source change, which is the correct cache key.
+# Build output the lane consumes and the image deliberately does not carry.
+# `assets/` is 3.0 GB and changes every run; `target/config` is the
+# materialized profile catalog `repack-deb.sh` reads. Both are produced by
+# earlier steps, so they are mounted read-only rather than copied.
+generated_inputs = ["assets", "target/config"]
 lane_dockerfile = "docker/Dockerfile.package"
 lane_image = "capsem-package-lane:latest"
 # The checkout goes in read-only; these three paths get container-local
@@ -970,14 +975,13 @@ dockerfile = "docker/Dockerfile.host-builder"
 context = "docker/"
 script = "scripts/test-linux-rust.sh"
 mount = "/src"
-# A foreign UID reproduces the case Linux CI actually hits: the checkout's
-# owner is not the image's user, git rejects /src as "dubious ownership", and
-# build.rs answers by embedding "unknown" rather than failing -- which is how a
-# binary with no source identity reaches the provenance check. Checked on macOS
-# too, because git compares st_uid to euid in userspace.
-probe_user = "4242:4242"
-# It reads a revision from a mounted checkout and needs nothing else.
-probe_network = "none"
+# `probe_user` and `probe_network` are gone with the probe they configured.
+# It reproduced Linux CI's "dubious ownership" case -- a checkout owned by
+# someone other than the image's user, git refusing /src, and build.rs
+# embedding "unknown" instead of failing. Both halves of that are now
+# impossible: no lane mounts the checkout, and the revision is passed in as
+# `CAPSEM_BUILD_REVISION` rather than discovered, so there is no ownership
+# question to get wrong and no path to an "unknown" hash.
 # `alpine`, `tmpfs`, `container_home`, `nextest_dir`, `nextest_mount`,
 # `output_dir`, `container_output`, `writable_source_mounts` and
 # `cached_volumes` are gone with the bind mount that needed them. A writable
@@ -1436,6 +1440,11 @@ report_style = "ndjson"
 report_log_name = "sandbox-report.ndjson"
 # The deduplicated allow-list, written beside the raw capture on release.
 report_summary_suffix = ".allowlist.txt"
+# Where the streamer's pid is left for the sandboxed process to find. It has to
+# be a file: `log` cannot run sandboxed, so the collector is started before the
+# re-exec and the resource that stops it lives on the other side of that exec
+# with no handle to inherit.
+report_pid_suffix = ".pid"
 report_stop_timeout = 10.0
 
 [workspace]

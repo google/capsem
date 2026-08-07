@@ -280,6 +280,7 @@ class SandboxConfig(Strict):
     report_style: str
     report_log_name: str
     report_summary_suffix: str
+    report_pid_suffix: str
     report_stop_timeout: float
 
 
