@@ -102,7 +102,7 @@ def test_cross_architecture_execution_is_proven_before_any_lane_starts(
 
     _run_all(gate)
 
-    runner.assert_order(r"docker run --rm --platform", r"image build")
+    runner.assert_order(r"docker run --rm --network none --platform", r"image build")
 
 
 def test_the_probe_targets_the_architecture_this_host_is_not(
@@ -112,8 +112,13 @@ def test_the_probe_targets_the_architecture_this_host_is_not(
 
     _run_all(gate)
 
-    probe = runner.matching(r"docker run --rm --platform")[0]
+    probe = runner.matching(r"docker run --rm --network none --platform")[0]
     assert f"linux/{gate.host_arch.dpkg}" not in probe
+    # And it declares what it needs. The probe runs `/bin/true` to ask whether
+    # the daemon can execute the other architecture; it needs nothing from the
+    # network, and the wrapper requires every container to say so rather than
+    # getting outbound access by omission.
+    assert "--network none" in probe
 
 
 def test_a_host_that_cannot_run_the_other_architecture_says_how_to_fix_it(

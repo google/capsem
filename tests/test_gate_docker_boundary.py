@@ -62,7 +62,6 @@ def _docker_argv_literals(tree: ast.AST) -> list[ast.List]:
 #: 5 against an actual 2 for long enough that the guard would have permitted
 #: three new hand-built sites in the module Phase 5 was about to touch.
 UNMIGRATED = {
-    "crossexec.py": 1,
     "hostimage.py": 2,
     "installimage.py": 2,
 }

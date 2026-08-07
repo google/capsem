@@ -99,6 +99,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- The cross-architecture execution preflight goes through the Docker wrapper,
+  so it declares `--network none` like every other container. It had built its
+  own `docker run` because the wrapper had no way to *ask* a question --
+  `run_once` raises, which is right for work and wrong for a preflight whose
+  answer is the exit status. `Docker.probe` returns that answer. Two of the
+  four remaining hand-built argv sites are gone this session.
+
 - The generated-settings check no longer rewrites the checkout's own tracked
   files. It overwrote `config/settings/schema.generated.json` and
   `ui-metadata.generated.json` and diffed them against a snapshot; the

@@ -77,6 +77,24 @@ class Docker:
         argv += [image, *command]
         self._runner.run(argv, check=check)
 
+    def probe(
+        self,
+        *,
+        image: str,
+        command: list[str],
+        network: str,
+        options: tuple[str, ...] = (),
+    ) -> bool:
+        """Run a container to completion and report whether it worked.
+
+        For a preflight whose *answer* is the exit status. `run_once` raises,
+        which is right for work and wrong for a question -- and a call site
+        that wants the answer had to build its own argv to get it, which is how
+        the last hand-built `docker run` in the gate outlived the wrapper.
+        """
+        argv = ["docker", "run", "--rm", "--network", network, *options, image, *command]
+        return self._runner.succeeds(argv)
+
     # -- images ------------------------------------------------------------
 
     def build(

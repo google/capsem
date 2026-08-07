@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from . import config as gate_config
 from . import host
+from .docker import Docker
 from .errors import GateError
 from .proc import Runner
 
@@ -33,16 +34,16 @@ def require(runner: Runner, config: gate_config.GateConfig, native: gate_config.
     other = other_architecture(config, native)
     platform = f"{settings.cross_platform_prefix}{other.dpkg}"
     runner.step(f"Ironbank {other.name} container execution preflight")
-    probe = [
-        "docker",
-        "run",
-        "--rm",
-        "--platform",
-        platform,
-        settings.cross_platform_probe_image,
-        settings.cross_platform_probe_command,
-    ]
-    if runner.succeeds(probe):
+    # `--network none`: the probe runs `/bin/true` to find out whether the
+    # daemon can execute the other architecture at all. Nothing it does needs
+    # the network, and saying so is what the wrapper requires of every
+    # container rather than letting one omit the decision.
+    if Docker(runner).probe(
+        image=settings.cross_platform_probe_image,
+        command=[settings.cross_platform_probe_command],
+        network=settings.cross_platform_probe_network,
+        options=("--platform", platform),
+    ):
         return
 
     remedy = (

@@ -429,6 +429,10 @@ container_cleanup_script = "scripts/cleanup-docker-containers-by-mount.sh"
 cross_platform_probe_image = "debian:bookworm-slim"
 cross_platform_prefix = "linux/"
 cross_platform_probe_command = "/bin/true"
+# The probe runs `/bin/true` to ask whether the daemon can execute the other
+# architecture. It needs nothing from the network, and every container has to
+# say what it needs rather than omitting the decision.
+cross_platform_probe_network = "none"
 merged_assets_dir = "assets"
 merged_config_dir = "config"
 profile_home_dir = "home"

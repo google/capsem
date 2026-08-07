@@ -207,6 +207,7 @@ class AssetsConfig(Strict):
     cross_platform_probe_image: str
     cross_platform_prefix: str
     cross_platform_probe_command: str
+    cross_platform_probe_network: str
     merged_assets_dir: str
     merged_config_dir: str
     profile_home_dir: str
