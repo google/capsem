@@ -77,6 +77,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it is the same comparison twice and costs nothing; prefixed it is the only
   one that can still see the real branch move.
 
+### Security
+
+- `js-yaml` is pinned to `^4.3.1` across all four pnpm workspaces, closing
+  CVE-2026-59870 (quadratic CPU consumption in `!!omap` resolution, high). It
+  is a transitive dependency everywhere, so the fix is a `pnpm.overrides`
+  entry rather than a version bump.
+
+  Pinned inside 4.x deliberately. `>=4.3.1` resolves to 5.2.3, which dropped
+  the default export Astro imports and broke every site build — the advisory's
+  fix landed in 4.3.1, so the range that admits a major version admits a
+  breakage the advisory never asked for.
+
+- `mermaid` moved to 11.16.1 in `docs`, closing five advisories: two prototype
+  pollutions, a CSS injection, and two denial-of-service paths. The dependency
+  already allowed the fixed version; the lockfile was holding 11.16.0.
+
 ### Fixed
 
 - Both release commands now run the complete gate from a private copy of the
