@@ -257,6 +257,12 @@ source_checkout = "CAPSEM_GATE_SOURCE_CHECKOUT"
 [environment.install]
 test_output_root = "CAPSEM_TEST_OUTPUT_ROOT"
 project_environment = "UV_PROJECT_ENVIRONMENT"
+# pnpm asks before purging a `node_modules` it did not create, and refuses when
+# it cannot ask: `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. The install
+# proof reaches that state legitimately now -- `/src/release-site` comes from
+# the image while its `node_modules` is a cross-run volume, so the two can
+# disagree. This is a gate; there is never a TTY and never anyone to ask.
+ci = "CI"
 
 # What the builder container is told about the target it is building for.
 # `HOST_UID` and `HOST_GID` stay literal: they are the standard convention for

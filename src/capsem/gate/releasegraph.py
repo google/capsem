@@ -40,6 +40,7 @@ class ReleaseGraph:
         self._docker = docker
         self._config = config.install
         self._site = config.environment.release_site
+        self._install_environment = config.environment.install
         self._container = self._config.container
         self._mount = self._config.mount
         self._handoff_written = False
@@ -155,6 +156,11 @@ class ReleaseGraph:
             "pnpm install --frozen-lockfile",
             user=self._config.guest_user.name,
             cwd=f"{self._mount}/{self._config.release_site_dir}",
+            # Non-interactive, because there is no terminal and no operator.
+            # Without it pnpm stops rather than purge a `node_modules` it did
+            # not create -- which the cross-run volume mounted over the image's
+            # `release-site/` regularly is.
+            env={self._install_environment.ci: "true"},
         )
         self._docker.shell(
             self._container,

@@ -64,6 +64,7 @@ class InstallEnvironment(Strict):
 
     test_output_root: str
     project_environment: str
+    ci: str
 
 
 class PackageEnvironment(Strict):

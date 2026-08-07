@@ -140,6 +140,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The install proof's `pnpm install` no longer stops waiting for an answer.
+  `/src/release-site` comes from the image while its `node_modules` is a
+  cross-run volume, so the two can legitimately disagree, and pnpm refuses to
+  purge a modules directory it did not create without a TTY to confirm on --
+  `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`. The gate has no terminal and
+  no operator, so it says so with `CI=true`.
+
 - The install proof and the deb proof can see the package they verify again.
   Sealing those lanes removed the mount they read `dist/*.deb` through, and the
   package is written after the image is built so no `COPY` can carry it --
