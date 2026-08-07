@@ -185,6 +185,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Six checkout mounts remain, all declared and counted. None is new: every one
   was an inline `-v` that no guard could see, and the list can only shrink now.
 
+- The install-test image's smoke check declares `bridge`, not `none`. It shells
+  `uv run`, which syncs the project environment inside the container rather
+  than merely invoking a tool the image already has — 51 packages, measured.
+  Denying it produced a dependency-resolution hint that reads like a broken
+  Dockerfile rather than a missing network, which is the diagnosis it got.
+
 - The install-test image build and its smoke check go through the Docker
   wrapper too, so both declare their network. One module is left building
   `docker` argv by hand, down from four at the start of this work.

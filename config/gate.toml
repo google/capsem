@@ -98,8 +98,15 @@ dockerfile = "docker/Dockerfile.install-test"
 # The build context. `.` -- the checkout root -- because the Dockerfile copies
 # from it; named here so the wrapper is told rather than assuming.
 context = "."
-# The post-build smoke check only runs tools the image already has.
-smoke_network = "none"
+# The smoke check needs it, and assuming otherwise cost a gate run. It shells
+# `uv run`, which syncs the project environment inside the container rather
+# than merely invoking a tool the image already has -- 51 packages, measured.
+# Under `--network none` it fails while reporting a dependency hint, which
+# reads like a broken Dockerfile rather than a missing network.
+#
+# This is one of the fetches Phase 5's install-lane work has to bake into
+# `Dockerfile.install-test` before Phase 8b can deny the network here.
+smoke_network = "bridge"
 venv = "/home/capsem/.venv-install-test"
 mount = "/src"
 channel = "local"
