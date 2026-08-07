@@ -165,6 +165,7 @@ class WebSurfacesConfig(Strict):
 
 class PytestConfig(Strict):
     root: str
+    collection_flags: tuple[str, ...]
     base_flags: tuple[str, ...]
     stop_at_first: str
     parallel_flags: tuple[str, ...]

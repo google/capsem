@@ -1126,6 +1126,9 @@ source_contract = [
 # Where the tests are. Spelled here rather than in the module, so the broad
 # suite and the compatibility runs cannot come to disagree about it.
 root = "tests/"
+# Collection is a cheap source-shape proof: no cache writes, no artifacts, and
+# strict rejection of unknown configuration or markers.
+collection_flags = ["--collect-only", "-qq", "-p", "no:cacheprovider", "--strict-config", "--strict-markers"]
 # One spelling of "run pytest", so sixteen call sites cannot drift into
 # sixteen slightly different opinions about --tb, --maxfail and -n.
 base_flags = ["-v", "--tb=short"]

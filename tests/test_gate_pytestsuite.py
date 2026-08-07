@@ -173,6 +173,25 @@ def test_a_timing_suite_does_not_stop_at_the_first_failure() -> None:
     assert "--maxfail=1" in _argv(pytestsuite.broad(CONFIG, profile="code"))
 
 
+def test_collection_is_cache_free_strict_and_artifact_independent() -> None:
+    """Collection is a source-shape proof, not a VM or built-output proof."""
+    collection = pytestsuite.collection(CONFIG)
+    rendered = " ".join(collection.render())
+
+    assert "uv run python -m pytest tests/" in rendered
+    for flag in (
+        "--collect-only",
+        "-qq",
+        "-p no:cacheprovider",
+        "--strict-config",
+        "--strict-markers",
+    ):
+        assert flag in rendered
+    assert CONFIG.suites.pytest.require_artifacts not in rendered
+    assert "--cov" not in rendered
+    assert "-n" not in rendered
+
+
 def test_every_suite_is_labelled_by_what_it_proves_and_for_which_profile() -> None:
     """The label is what the run log and the timing report show, so
     `pytest` five times would make the summary useless."""

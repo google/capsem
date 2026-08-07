@@ -128,6 +128,12 @@ def test_every_web_surface_is_its_own_step() -> None:
         assert f"fast.web.{target}" in labels
 
 
+def test_strict_pytest_collection_is_a_fast_leaf() -> None:
+    labels = {label for wave in _waves(FastModule) for label in wave}
+
+    assert "fast.pytest.collection" in labels
+
+
 def test_the_fast_module_works_in_an_isolated_home() -> None:
     """Never the developer's `~/.capsem`."""
     resources = _module(FastModule).resources(RUNNER_FOR_RESOURCES)

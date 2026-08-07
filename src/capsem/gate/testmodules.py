@@ -113,6 +113,11 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     # independent steps, so a Ruff failure no longer hides what Ty would have
     # said and each is timed under its own name.
     checked = sourcechecks.fragment(plan, config, after=(syntax,))
+    # Importing every test module is a source-shape proof of the same kind, and
+    # the Python counterpart of what `rustinventory` does for nextest: a suite
+    # that cannot be collected is a suite the gate would otherwise discover it
+    # was not running an hour later.
+    collected = phase.add(pytestsuite.collection(config), after=(syntax,))
 
     # The web surfaces import `frontend/src/lib/mock-settings.generated.ts`,
     # which is gitignored and therefore never part of the source a run is
@@ -132,6 +137,7 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tup
     return (
         *audited,
         *checked,
+        collected,
         *(surface for surface in surfaces if surface is not blocking),
         clippy,
     )

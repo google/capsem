@@ -99,6 +99,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- The fast phase strictly collects every Python test. `--collect-only` with
+  `--strict-config --strict-markers` and no cache writes, so a suite that
+  cannot be imported, a typo'd marker or an unknown config key fails in
+  seconds. The Python counterpart of what `rustinventory` already does for
+  nextest — a suite the gate is silently not running is otherwise discovered
+  an hour later, or not at all.
+
 - The expensive phases now wait for the whole fast phase, not for Clippy. The
   fast phase reported completion with whichever step happened to be added last,
   and Clippy waits on the Rust toolchain and one web surface and nothing else

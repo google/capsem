@@ -87,6 +87,25 @@ class Suite:
         )
 
 
+def collection(config: GateConfig) -> Step:
+    """Strictly import and collect every Python test without touching caches."""
+    settings = config.suites.pytest
+    return step(
+        "pytest.collection",
+        Run(
+            [
+                "uv",
+                "run",
+                "python",
+                "-m",
+                "pytest",
+                settings.root,
+                *settings.collection_flags,
+            ]
+        ),
+    )
+
+
 # ---------------------------------------------------------------------------
 # The suites the functional module is made of
 # ---------------------------------------------------------------------------
