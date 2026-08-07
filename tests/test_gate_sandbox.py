@@ -27,6 +27,26 @@ CONFIG = gate_config.load(PROJECT_ROOT)
 
 macos_only = pytest.mark.skipif(sys.platform != "darwin", reason="Seatbelt is macOS")
 
+#: A sandbox cannot be nested: `sandbox-exec: sandbox_apply: Operation not
+#: permitted` once already inside one. So the two tests that really invoke it
+#: cannot run inside a sandboxed gate -- which is where they first ran, and
+#: where they first failed. Detected by asking the kernel rather than by a
+#: marker the gate would have to remember to export.
+def _already_sandboxed() -> bool:
+    if sys.platform != "darwin":
+        return False
+    probe = subprocess.run(
+        ["sandbox-exec", "-p", "(version 1)(allow default)", "true"],
+        capture_output=True,
+        text=True,
+    )
+    return "sandbox_apply" in probe.stderr
+
+
+unnested_only = pytest.mark.skipif(
+    _already_sandboxed(), reason="a sandbox cannot be applied inside a sandbox"
+)
+
 
 def test_the_profile_denies_the_network() -> None:
     """The rule the whole profile exists for."""
@@ -107,6 +127,7 @@ def test_the_loopback_rule_names_a_host_sbpl_accepts() -> None:
 
 
 @macos_only
+@unnested_only
 def test_the_profile_loads_and_denies_what_it_says(tmp_path: Path) -> None:
     """Cheap, real, and the only thing that proves any of the above.
 
@@ -135,6 +156,7 @@ def test_the_profile_loads_and_denies_what_it_says(tmp_path: Path) -> None:
 
 
 @macos_only
+@unnested_only
 def test_docker_still_answers_through_its_unix_socket(tmp_path: Path) -> None:
     """The fact that costs a day if it is learned the hard way.
 

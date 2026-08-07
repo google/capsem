@@ -99,6 +99,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- Process liveness no longer shells out to `ps`, which a sandboxed gate cannot
+  execute at all. `/bin/ps` is setuid root and the macOS sandbox forbids
+  exec'ing a setuid binary — `(allow default)` does not override that — so the
+  gate's own liveness check failed under the gate's own sandbox with
+  `PermissionError: Operation not permitted: 'ps'`. `proc_pidinfo` answers the
+  same question with a syscall: it reports a state for a live process and
+  fails for a zombie, which has no BSD info left to report. Faster too, and no
+  fork per check.
+
 - Report mode permits and logs rather than denying and logging. `(with
   report)` is a modifier on *allow*; attaching it to a denial is refused
   outright — `sandbox-exec: report modifier does not apply to deny action` —

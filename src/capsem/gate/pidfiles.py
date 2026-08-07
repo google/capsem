@@ -56,6 +56,13 @@ def running(pid: int, settings: gate_config.PidfileConfig) -> bool:
     return not _is_zombie(pid, settings.proc_stat_template)
 
 
+#: `PROC_PIDTBSDINFO`, and room for the struct it fills. The flavour number is
+#: a stable macOS ABI constant; the buffer is generous because the exact struct
+#: size is a header detail and `proc_pidinfo` reports what it wrote.
+_PROC_PIDTBSDINFO = 3
+_PROC_INFO_BUFFER = 4096
+
+
 def _is_zombie(pid: int, stat_template: str) -> bool:
     status = Path(stat_template.format(pid=pid))
     if status.is_file():  # Linux
@@ -63,14 +70,41 @@ def _is_zombie(pid: int, stat_template: str) -> bool:
             return status.read_text(encoding="utf-8").rsplit(")", 1)[1].split()[0] == "Z"
         except (OSError, IndexError):  # pragma: no cover - racing the exit
             return False
-    # macOS has no /proc; ps is the portable answer and this path runs a
-    # handful of times per gate.
-    import subprocess
+    # macOS has no /proc, and it cannot use `ps` either: `/bin/ps` is setuid
+    # root, and a sandboxed process may not exec a setuid binary at all --
+    # `PermissionError: [Errno 1] Operation not permitted: 'ps'`, which is how
+    # the gate's own liveness check failed under the gate's own sandbox.
+    #
+    # `proc_pidinfo` answers the same question with a syscall. It reports a
+    # state for a live process and fails outright for a zombie, which has no
+    # BSD info left to report -- so "the caller could signal it but the kernel
+    # will not describe it" is exactly the zombie case.
+    return not _describable(pid)
 
-    state = subprocess.run(
-        ["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True
-    ).stdout.strip()
-    return state.startswith("Z")
+
+def _describable(pid: int) -> bool:
+    """Whether the kernel still has BSD process info for `pid`.
+
+    False for a zombie. Deliberately not a state comparison: the constant for
+    `SZOMB` is not exported anywhere Python can see, and the call failing is
+    the more robust signal -- it is what the kernel does rather than a number
+    this file would have to keep in step with a header.
+    """
+    import ctypes
+    import ctypes.util
+
+    library = ctypes.util.find_library("proc")
+    if library is None:  # pragma: no cover - libproc is part of macOS
+        return True
+    buffer = ctypes.create_string_buffer(_PROC_INFO_BUFFER)
+    written = ctypes.CDLL(library).proc_pidinfo(
+        ctypes.c_int(pid),
+        ctypes.c_int(_PROC_PIDTBSDINFO),
+        ctypes.c_uint64(0),
+        buffer,
+        ctypes.c_int(len(buffer)),
+    )
+    return written > 0
 
 
 def _await_exit(pid: int, seconds: float, settings: gate_config.PidfileConfig) -> bool:

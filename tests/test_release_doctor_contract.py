@@ -4958,8 +4958,18 @@ def test_just_test_owns_linux_rust_platform_coverage_through_docker() -> None:
     # mounted at all now, which is the stronger claim and the one that ends the
     # race with the host steps that share those inodes.
     assert "/src:ro" not in linux_rust_gate
-    for flag in (" -v ", " --volume "):
-        assert flag not in linux_rust_gate, f"the parity lane grew a{flag}mount"
+    # Only the commands that can mount. `docker rm -f -v` also carries a `-v`
+    # and it means the opposite -- take the anonymous volumes with the
+    # container -- so reading it as a mount fails this for the teardown doing
+    # its job. The sibling guard in `test_gate_linuxrust_hermetic` says the
+    # same thing about the same argv.
+    mounting = [
+        line
+        for line in linux_rust_gate.splitlines()
+        if line.strip().startswith(("docker create", "docker run"))
+        and (" -v " in line or " --volume " in line)
+    ]
+    assert not mounting, "the parity lane grew a mount:\n  " + "\n  ".join(mounting)
 
     # The named volumes carried the cargo registry, the rustup toolchain and an
     # 11 GB target between runs -- the cross-run state that let a warm machine
