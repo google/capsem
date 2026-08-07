@@ -725,14 +725,20 @@ def test_install_test_does_not_rebuild_frontend_and_owns_release_site_scratch() 
 
     config = gate_config.load(PROJECT_ROOT)
     issued = _planned("install")
-    volumes: dict[str, str] = {}  # the install lane mounts no named volume
 
-    assert volumes == {
-        "capsem-install-release-site-node-modules": "/src/release-site/node_modules",
-        "capsem-install-release-site-dist": "/src/release-site/dist",
-    }
-    for source, target in volumes.items():
-        assert f"{source}:{target}" in issued
+    # Was: two named volumes, asserted by name and mount point. They are gone.
+    # `release-site/node_modules` is baked into the install image, so the
+    # runtime `pnpm install --frozen-lockfile` finds a tree that already
+    # matches the lockfile; `release-site/dist` is an anonymous volume,
+    # allocated per container and reclaimed with it.
+    #
+    # The property both protected is unchanged and is what is asserted now:
+    # the lane does not rebuild the frontend, and nothing it writes lands in a
+    # name a second gate could pick up.
+    assert "capsem-install-release-site" not in issued, (
+        f"a named release-site volume is back: {issued}"
+    )
+    assert "pnpm run build" not in issued, "the install lane rebuilt the frontend"
 
     assert "capsem-install-frontend-node-modules" not in issued
     assert "pnpm build" not in issued
@@ -1130,10 +1136,19 @@ def test_package_boundary_releases_only_completed_docker_rail_volumes() -> None:
 
     assert _boundary("completed-docker-rails") == "after-assets"
     resources = policy["resources"]
-    assert resources["capsem-agent-target-arm64"]["release_boundary"] == "after-assets"
-    assert resources["capsem-agent-target-x86_64"]["release_boundary"] == "after-assets"
-    assert resources["capsem-rustup-arm64"]["retention"] == "cache"
-    assert resources["capsem-rustup-x86_64"]["retention"] == "cache"
+    # Every one of these is obsolete now. The agent build's target directory
+    # and rustup home are anonymous volumes reclaimed with their container, so
+    # there is no named resource for a boundary to hand back and no cache for a
+    # later run to inherit.
+    for name in (
+        "capsem-agent-target-arm64",
+        "capsem-agent-target-x86_64",
+        "capsem-rustup-arm64",
+        "capsem-rustup-x86_64",
+    ):
+        assert resources[name]["retention"] == "obsolete", (
+            f"{name} is live again; no lane may mount a named volume"
+        )
 
 
 def test_the_parity_lane_holds_no_build_tree_for_the_assets_to_wait_on() -> None:
