@@ -142,7 +142,9 @@ class PackageRail:
             argv += ["-e", name]
         mount = self._config.install.mount
         argv += ["-v", f"{self.root}:{mount}"]
-        argv += docker_git_metadata_mount(self._runner)
+        metadata = docker_git_metadata_mount(self._runner)
+        if metadata is not None:
+            argv += ["-v", str(metadata)]
         for volume in self._package.volumes:
             argv += ["-v", f"{volume.source}:{volume.target}"]
         argv += [

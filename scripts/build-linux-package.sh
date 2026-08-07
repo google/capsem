@@ -20,9 +20,19 @@ set -euo pipefail
 : "${TARGET_ARCH:?}" "${RUST_TARGET:?}" "${DPKG_ARCH:?}" "${RUST_TOOLCHAIN:?}"
 : "${HOST_UID:?}" "${HOST_GID:?}" "${CAPSEM_INSTALL_MANIFEST_URL:?}"
 
-# The container writes into the bind-mounted checkout as root. Hand those paths
-# back on every exit path, or the host cannot rebuild without sudo.
-trap 'chown -R "$HOST_UID:$HOST_GID" /src/dist /src/frontend/node_modules /src/frontend/dist 2>/dev/null || true' EXIT
+# Where this build's artifacts go. A container path by default, copied out with
+# `docker cp` afterwards: writing the package back through the bind mount is
+# what let a host step churning the same tree kill a release on an intermittent
+# EACCES, and it made "the builder produced this" and "the host can read it"
+# the same event. Overridable so a caller outside the gate can still aim it at
+# the mount.
+OUT="${CAPSEM_PACKAGE_OUTPUT_DIR:-/src/dist}"
+mkdir -p "$OUT"
+
+# The container still writes the frontend build into the bind-mounted checkout
+# as root. Hand those paths back on every exit path, or the host cannot rebuild
+# without sudo. `$OUT` is included because it *may* be inside the mount.
+trap 'chown -R "$HOST_UID:$HOST_GID" "$OUT" /src/frontend/node_modules /src/frontend/dist 2>/dev/null || true' EXIT
 
 echo "--- Verify pinned Rust target ---"
 rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
@@ -87,8 +97,8 @@ echo "--- Validate artifacts ---"
 dpkg-deb --info "$DEB"
 dpkg-deb --contents "$DEB" | grep -E 'usr/bin/(capsem|capsem-service|capsem-process|capsem-tui|capsem-mcp|capsem-mcp-aggregator|capsem-mcp-builtin|capsem-gateway|capsem-tray|capsem-admin|capsem-mock-server|capsem-bench-rs)$'
 
-cp "$DEB" /src/dist/
+cp "$DEB" "$OUT/"
 # Record the exact package this run produced, so a stale dist/ entry from an
 # earlier build can never be the one that gets proved and published.
-basename "$DEB" > "/src/dist/.cross-compile-$TARGET_ARCH-deb"
-cp "/cargo-target/linux-agent/$TARGET_ARCH/"* /src/dist/
+basename "$DEB" > "$OUT/.cross-compile-$TARGET_ARCH-deb"
+cp "/cargo-target/linux-agent/$TARGET_ARCH/"* "$OUT/"

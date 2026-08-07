@@ -66,6 +66,7 @@ class PackageEnvironment(Strict):
     rust_target: str
     dpkg_arch: str
     rust_toolchain: str
+    output_dir: str
 
 
 class ReleaseSiteEnvironment(Strict):

@@ -14,6 +14,7 @@ import pytest
 from helpers.gate import RecordingRunner
 
 from capsem.gate import config as gate_config
+from capsem.gate.docker import Mount
 from capsem.gate.errors import GateError
 from capsem.gate.packageinputs import pinned_toolchain, resolve_channel
 from capsem.gate.packagerail import PackageRail
@@ -185,7 +186,7 @@ def test_package_build_mounts_linked_worktree_git_metadata(
     monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
     monkeypatch.setattr(
         "capsem.gate.packagerail.docker_git_metadata_mount",
-        lambda _runner: ("-v", f"{metadata}:{metadata}:ro"),
+        lambda _runner: Mount.unmigrated(metadata, metadata, "ro"),
     )
     runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
 

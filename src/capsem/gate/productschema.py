@@ -178,6 +178,9 @@ class PackageConfig(Strict):
     clock_script: str
     cargo_target_mount: str
     package_suffix: str
+    lane_container: str
+    container_output_dir: str
+    container_output_contents: str
     dist_dir: str
     target_volume: str
     proof: PackageProof

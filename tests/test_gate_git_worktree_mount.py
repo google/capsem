@@ -52,13 +52,18 @@ def test_linked_worktree_mounts_its_external_git_metadata_read_only(tmp_path: Pa
     mount = docker_git_metadata_mount(Runner(worktree))
 
     common = (repository / ".git").resolve()
-    assert mount == ("-v", f"{common}:{common}:ro")
+    # A `Mount`, not argv. The boundary guard counts mounts and cannot see a
+    # hand-built `-v`, and this one is a checkout mount -- so it has to be
+    # declared as the exception it is rather than assembled past the guard.
+    assert mount is not None
+    assert (mount.source, mount.target, mount.options) == (str(common), str(common), "ro")
+    assert mount.legacy, "the common dir lives under the primary checkout"
 
 
 def test_ordinary_checkout_needs_no_second_git_mount(tmp_path: Path) -> None:
     repository, _ = _linked_worktree(tmp_path)
 
-    assert docker_git_metadata_mount(Runner(repository)) == ()
+    assert docker_git_metadata_mount(Runner(repository)) is None
 
 
 def test_linked_worktree_fails_closed_when_git_cannot_resolve_metadata(

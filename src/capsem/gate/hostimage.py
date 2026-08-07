@@ -20,6 +20,7 @@ from .actions import Action, Run
 from .command import GateCommand
 from .config import GateConfig
 from .context import Context
+from .docker import Mount
 from .errors import GateError
 from .execution import Step, step
 from .gitmetadata import docker_git_metadata_mount
@@ -28,6 +29,16 @@ from .plan import Plan
 #: One name, so every lane that needs the builder depends on the same step
 #: rather than each spelling its own label.
 STEP = "host-image"
+
+
+def _metadata_argv(mount: Mount | None) -> tuple[str, ...]:
+    """The worktree metadata mount as argv, for the sites still hand-building it.
+
+    `docker_git_metadata_mount` answers with a `Mount` so the boundary guard can
+    count it. This module is one of the two that still assembles `docker` argv
+    by hand; when Phase 3 finishes routing it, this goes with it.
+    """
+    return ("-v", str(mount)) if mount is not None else ()
 
 
 def image(config: GateConfig) -> Step:
@@ -74,7 +85,7 @@ class _ForeignUidProbe(Action, name="foreign-uid-probe"):
                 "--rm",
                 "-v",
                 f"{context.root}:{settings.mount}",
-                *docker_git_metadata_mount(context.runner),
+                *_metadata_argv(docker_git_metadata_mount(context.runner)),
                 "-w",
                 settings.mount,
                 "--user",

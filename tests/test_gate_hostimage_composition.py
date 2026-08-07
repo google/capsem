@@ -30,6 +30,7 @@ from capsem.gate import (
 from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
 from capsem.gate.context import Context
+from capsem.gate.docker import Mount
 from capsem.gate.plan import Plan
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -94,7 +95,7 @@ def test_foreign_uid_probe_mounts_linked_worktree_metadata(
     monkeypatch.setattr(
         hostimage,
         "docker_git_metadata_mount",
-        lambda _runner: ("-v", f"{metadata}:{metadata}:ro"),
+        lambda _runner: Mount.unmigrated(metadata, metadata, "ro"),
     )
     runner = RecordingRunner(
         PROJECT_ROOT,

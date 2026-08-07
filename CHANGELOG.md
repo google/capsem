@@ -99,6 +99,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- A linked worktree's Git metadata mount is now declared rather than assembled
+  as bare `-v` argv, so the checkout-mount guard can see it. It is a mount of
+  the primary checkout — the common directory lives there — and it had been
+  invisible to the boundary the whole time. Nothing new is mounted; the count
+  went up because the truth did.
+
+  Groundwork for the package lane: it writes `dist/*.deb` back through a
+  read-write mount of the run root, and the builder script now takes
+  `CAPSEM_PACKAGE_OUTPUT_DIR` so that output can be extracted with `docker cp`
+  instead. The script still defaults to the mount, so behaviour is unchanged
+  until the lane is switched over.
+
 - The Linux parity lane now builds its own base image instead of naming a
   recipe for the operator to run. The lane still refuses to build it *inside*
   the sealed run -- a multi-gigabyte fetch there is what sealing prevents --

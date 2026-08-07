@@ -176,12 +176,18 @@ def test_every_container_declares_its_network() -> None:
 
 
 def test_the_checkout_mounts_are_enumerated_and_shrinking() -> None:
-    """Two mounts of the working tree remain, and both say so at the call site.
+    """Three mounts of the working tree remain, and all three say so.
 
     `Mount.unmigrated` is deliberately ugly and deliberately greppable. The
-    alternative was switching the guard off globally while the four modules
-    are converted, which is how a temporary exemption becomes the permanent
-    behaviour.
+    alternative was switching the guard off globally while the modules are
+    converted, which is how a temporary exemption becomes the behaviour.
+
+    `gitmetadata.py` joined this list without any new mount being created. A
+    linked worktree's common directory lives under the primary checkout, and
+    that mount was assembled as bare `-v` argv where no guard could see it. It
+    is declared now, so the count went up while the truth stayed the same --
+    which is the direction a ratchet is allowed to move only for this reason,
+    and the reason belongs here rather than in a commit message nobody reads.
     """
     remaining: dict[str, int] = {}
     for path in _modules():
@@ -189,7 +195,7 @@ def test_the_checkout_mounts_are_enumerated_and_shrinking() -> None:
         if count:
             remaining[path.name] = count
 
-    assert remaining == {"debproof.py": 1, "installcontainer.py": 1}, (
+    assert remaining == {"debproof.py": 1, "gitmetadata.py": 1, "installcontainer.py": 1}, (
         f"the checkout-mount debt changed: {remaining}. It may shrink -- update "
         "this expectation when a module moves to COPY -- but a new one is the "
         "race that killed a release run coming back."

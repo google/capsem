@@ -241,6 +241,10 @@ target_arch = "TARGET_ARCH"
 rust_target = "RUST_TARGET"
 dpkg_arch = "DPKG_ARCH"
 rust_toolchain = "RUST_TOOLCHAIN"
+# Where the builder writes what it produced. A container path, so the artifact
+# this lane publishes does not arrive through the writable bind mount that made
+# a release die on an intermittent EACCES -- `docker cp` brings it out instead.
+output_dir = "CAPSEM_PACKAGE_OUTPUT_DIR"
 
 # Where a release-site build reads its inputs from and writes its output to.
 # `CAPSEM_RELEASE_GRAPH` is the input and `CAPSEM_RELEASE_CHANNEL_DIST` the
@@ -299,6 +303,14 @@ clock_script = "scripts/sync-container-clock.py"
 cargo_target_mount = "/cargo-target"
 package_suffix = ".deb"
 dist_dir = "dist"
+# The container the build runs in, kept until its output has been copied out.
+# `--rm` and `docker cp` are mutually exclusive, which is the same constraint
+# the Linux parity lane hit: a removed container has nothing left to read.
+lane_container = "capsem-package-{arch}"
+container_output_dir = "/package-output"
+# The trailing `/.` copies the directory's *contents*; without it the package
+# nests one level down from where `resolve()` looks.
+container_output_contents = "/package-output/."
 # Per-architecture, so alternating targets does not rebuild the world.
 target_volume = "capsem-host-target-{arch}"
 
