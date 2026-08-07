@@ -36,6 +36,7 @@ from pathlib import Path
 from . import host
 from .config import GateConfig
 from .errors import GateError
+from .filesystem import remove
 
 #: `cp` flags that ask APFS for copy-on-write. Clonefile is what makes this
 #: cheap enough to do unconditionally -- 2074 files and `.git` measured 2.2s
@@ -179,15 +180,29 @@ def _require_own_repository(source: Path) -> None:
 
 
 def _copy_carried(source: Path, target: Path, config: GateConfig) -> None:
+    """Replace each carried path, rather than copying into it.
+
+    `cp -R a b` puts `a` *inside* `b` when `b` already exists, so on every
+    refresh this nested `.git` one level deeper and left the prefix's real
+    repository untouched. A resumed run then measured its tree against an
+    index from whenever the prefix was created: deleting a tracked file made
+    `git ls-files` still name it, the digest tried to stat a path that was
+    gone, and the run died in `_require_faithful` with a raw traceback before
+    its first step.
+
+    Removed first, so the copy is the source's state and not a merge of two.
+    """
     flags = ("-R", *_CLONE) if host.on_macos() else ("-R",)
     for relative in config.prefix.carried:
         origin = source / relative
+        destination = target / relative
+        if destination.exists() or destination.is_symlink():
+            remove(destination)
         if not origin.exists():
             # Absent is legitimate: a fresh clone has no `private/`, and a
             # release only needs it once it signs. Refusing here would make
             # the prefix unusable for every command that never signs anything.
             continue
-        destination = target / relative
         destination.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["cp", *flags, str(origin), str(destination)], check=True)
 

@@ -131,6 +131,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A resumed gate no longer measures its tree against a stale index. Refreshing
+  a prefix copied `.git` *into* the existing `.git` -- `cp -R a b` nests when
+  `b` exists -- so the prefix's real repository was never updated. Deleting a
+  tracked file then made `git ls-files` still name it, the source digest tried
+  to stat a path that was gone, and the run died with a raw traceback before
+  its first step. Carried paths are replaced now, not merged.
+
 - The Linux package build no longer needs a Git repository inside its
   container. Sealing the lane into an image removed `.git` -- `.dockerignore`
   excludes it -- so `check-build-provenance.sh` died with `fatal: not a git
