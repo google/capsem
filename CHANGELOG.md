@@ -88,6 +88,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- `nanoid` is pinned above GHSA-2v37-7h3g-55 in all four JavaScript
+  workspaces, a high-severity hang where a custom generator loops indefinitely
+  when size is zero (affects < 3.3.17). All four sat on 3.3.16, one patch
+  below the fix. Verified by rebuilding docs, site and release-site as well as
+  re-auditing.
+
 - `dompurify` is pinned above GHSA-55q2-fjhq-7xh7 in the docs site, a moderate
   XSS where an `IN_PLACE` hook removal leaves a detached subtree executable
   (affects <= 3.4.12). Verified by rebuilding the site as well as re-running
