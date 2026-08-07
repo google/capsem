@@ -46,6 +46,7 @@ def package_environment(
     toolchain: str,
     manifest_url: str,
     signing: dict[str, str],
+    revision: str,
 ) -> dict[str, str]:
     """What the builder container is told, as a value rather than a side effect.
 
@@ -65,6 +66,10 @@ def package_environment(
         # take it from rather than being written back through the bind mount
         # the host is simultaneously reading.
         names.output_dir: config.package.container_output_dir,
+        # Told, not discovered. The lane image carries no `.git`, so a builder
+        # that asked would get `fatal: not a git repository` -- which is
+        # exactly how this was found, at minute sixty-five of a gate run.
+        names.build_revision: revision,
         # Standard tool and process conventions, not Capsem rails: these mean
         # the same thing in every container, and giving them a TOML key would
         # be moving strings rather than giving a protocol an owner.

@@ -132,6 +132,12 @@ class PackageRail:
             toolchain=pinned_toolchain(self.root),
             manifest_url=self.manifest_url,
             signing=signing,
+            # From the tree being built, which under a prefix is the private
+            # copy -- the same revision `source.record` measured, not whatever
+            # the developer's checkout has moved on to since.
+            revision=self._runner.capture(
+                ["git", "-C", str(self.root), "rev-parse", "--short", "HEAD"]
+            ),
         )
         mount = self._config.install.mount
         metadata = docker_git_metadata_mount(self._runner)

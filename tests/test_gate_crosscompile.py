@@ -430,9 +430,14 @@ def test_the_builder_environment_follows_the_configured_names() -> None:
         toolchain="1.97.1",
         manifest_url="file:///src/assets/local/manifest.json",
         signing={},
+        revision="abc1234",
     )
 
     assert environment["CAPSEM_RENAMED_MANIFEST"] == ("file:///src/assets/local/manifest.json")
+    # Told, not discovered: the lane image carries no `.git`, so a builder that
+    # asked got `fatal: not a git repository` and the package step died at
+    # minute sixty-five of a gate run.
+    assert environment[renamed.environment.package.build_revision] == "abc1234"
     assert "CAPSEM_INSTALL_MANIFEST_URL" not in environment
 
 
@@ -443,7 +448,7 @@ def test_the_builder_environment_carries_the_signing_material_it_was_given() -> 
     signing = {CONFIG.package.signing.key_variable: "secret-key-bytes"}
 
     environment = package_environment(
-        CONFIG, target, toolchain="1.97.1", manifest_url="x", signing=signing
+        CONFIG, target, toolchain="1.97.1", manifest_url="x", signing=signing, revision="abc1234"
     )
 
     assert environment[CONFIG.package.signing.key_variable] == "secret-key-bytes"

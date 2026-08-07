@@ -63,7 +63,8 @@ cargo build --release --target "$RUST_TARGET" \
     -p capsem -p capsem-service -p capsem-process -p capsem-tui -p capsem-mcp \
     -p capsem-mcp-aggregator -p capsem-mcp-builtin -p capsem-gateway \
     -p capsem-tray -p capsem-admin -p capsem-mock-server -p capsem-bench
-bash scripts/check-build-provenance.sh "/cargo-target/$RUST_TARGET/release/capsem"
+bash scripts/check-build-provenance.sh "/cargo-target/$RUST_TARGET/release/capsem" \
+    "${CAPSEM_BUILD_REVISION:-}"
 
 echo "--- Resolve Tauri signing key ---"
 # The authoritative release keys live in GitHub Actions secrets and are applied

@@ -20,8 +20,24 @@ fn watch_git_path(pathspec: &str) {
 fn main() {
     // Embed a unique build hash: git short SHA + build timestamp.
     // Changes on every recompile, even from the same commit.
-    let git_hash =
-        git_output(&["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".to_string());
+    // The revision, told to us if the builder knows it, discovered otherwise.
+    //
+    // A container built from `COPY . /src` has no `.git` -- it is excluded by
+    // `.dockerignore`, and shipping a 100 MB repository into every lane image
+    // to answer one question would be the wrong trade. So the gate passes the
+    // revision it already recorded, and git is the fallback for an ordinary
+    // developer build.
+    //
+    // Falling back to "unknown" silently is deliberate here and checked
+    // elsewhere: `scripts/check-build-provenance.sh` refuses a binary whose
+    // embedded revision is not the expected one, so an unset variable fails
+    // loudly at that gate rather than shipping a mislabelled package.
+    let git_hash = std::env::var("CAPSEM_BUILD_REVISION")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| git_output(&["rev-parse", "--short", "HEAD"]))
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rerun-if-env-changed=CAPSEM_BUILD_REVISION");
     let build_ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()

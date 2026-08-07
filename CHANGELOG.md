@@ -105,6 +105,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The Linux package build no longer needs a Git repository inside its
+  container. Sealing the lane into an image removed `.git` -- `.dockerignore`
+  excludes it -- so `check-build-provenance.sh` died with `fatal: not a git
+  repository` and took the package step with it. The gate now passes the
+  revision it already recorded, `build.rs` prefers it over asking git, and the
+  provenance guard still refuses a binary that does not embed it. Provenance
+  is a declared input now rather than an ambient read of whatever repository
+  happened to be reachable.
 - The public-surface count-drift guard mutated `count = 13` to `14` to prove
   drift fails closed. When the surface legitimately reached 14 the mutation
   became a no-op that rewrote the file to what it already said -- a guard

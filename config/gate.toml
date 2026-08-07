@@ -264,6 +264,12 @@ rust_toolchain = "RUST_TOOLCHAIN"
 # this lane publishes does not arrive through the writable bind mount that made
 # a release die on an intermittent EACCES -- `docker cp` brings it out instead.
 output_dir = "CAPSEM_PACKAGE_OUTPUT_DIR"
+# The source revision, told to the builder instead of read from a repository.
+# The lane image is `COPY . /src` and `.dockerignore` drops `.git`, so a
+# container has no repository to ask -- and shipping one into every lane image
+# to answer a single question is not the trade. `build.rs` embeds this and
+# `check-build-provenance.sh` refuses a binary that does not.
+build_revision = "CAPSEM_BUILD_REVISION"
 
 # Where a release-site build reads its inputs from and writes its output to.
 # `CAPSEM_RELEASE_GRAPH` is the input and `CAPSEM_RELEASE_CHANNEL_DIST` the

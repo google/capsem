@@ -74,6 +74,7 @@ class PackageEnvironment(Strict):
     dpkg_arch: str
     rust_toolchain: str
     output_dir: str
+    build_revision: str
 
 
 class ReleaseSiteEnvironment(Strict):
