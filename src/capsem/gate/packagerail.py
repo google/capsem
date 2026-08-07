@@ -136,11 +136,12 @@ class PackageRail:
         mount = self._config.install.mount
         metadata = docker_git_metadata_mount(self._runner)
         mounts = (
-            # The one mount this lane cannot yet lose: the builder runs
-            # `pnpm install && pnpm build` inside `/src/frontend`, so the tree
-            # has to be writable until that is baked into the image. Declared
-            # as the exception it is rather than hand-built past the guard.
-            Mount.unmigrated(str(self.root), mount),
+            # Read-only. The builder does write into its source -- pnpm fills
+            # `frontend/node_modules` and `frontend/dist`, Tauri regenerates
+            # ACL schemas into the app crate -- but those writes belong to the
+            # container, not the host, so they go to scratch grafted over
+            # those paths instead of through this mount.
+            Mount.unmigrated(str(self.root), mount, "ro"),
             *((metadata,) if metadata is not None else ()),
             *(Mount(volume.source, volume.target) for volume in self._package.volumes),
             Mount(
@@ -165,6 +166,7 @@ class PackageRail:
             forward=tuple(environment),
             carry=environment,
             mounts=mounts,
+            scratch=tuple(f"{mount}/{path}" for path in self._package.writable_paths),
             workdir=mount,
             secret_env=frozenset(signing),
         )

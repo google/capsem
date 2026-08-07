@@ -180,6 +180,7 @@ class PackageConfig(Strict):
     package_suffix: str
     network: str
     lane_container: str
+    writable_paths: tuple[str, ...]
     container_output_dir: str
     container_output_contents: str
     dist_dir: str

@@ -385,7 +385,7 @@ def test_the_container_is_torn_down_even_when_the_proof_fails(
 
     # The first `docker rm -f` clears a predecessor before the container
     # starts; the teardown is the last one, and it is the one under test.
-    assert runner.last_index_of(r"docker rm -f capsem-install-test") > runner.index_of(
+    assert runner.last_index_of(r"docker rm -f -v capsem-install-test") > runner.index_of(
         r"dpkg -i"
     )
     assert runner.ran(r"docker-storage-policy\.py gc --rail install")

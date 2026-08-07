@@ -25,13 +25,17 @@ class Docker:
     # -- lifecycle ---------------------------------------------------------
 
     def remove(self, container: str) -> None:
-        """Detach a container if it exists.
+        """Detach a container if it exists, and take its scratch with it.
 
         Deliberately best-effort and deliberately unconditional: a stable
         container name plus a preemptive removal is what lets a run recover
         from a predecessor that died before its own cleanup.
+
+        `-v` removes the anonymous volumes `create(scratch=...)` made. Without
+        it every package build leaves a 356 MB node_modules volume behind, and
+        nothing else would ever collect them -- they have no name to reclaim by.
         """
-        self._runner.succeeds(["docker", "rm", "-f", container])
+        self._runner.succeeds(["docker", "rm", "-f", "-v", container])
 
     def run_detached(
         self,
@@ -117,6 +121,7 @@ class Docker:
         forward: tuple[str, ...] = (),
         carry: dict[str, str] | None = None,
         mounts: tuple[Mount, ...] = (),
+        scratch: tuple[str, ...] = (),
         workdir: str | None = None,
         secret_env: frozenset[str] = frozenset(),
     ) -> None:
@@ -149,6 +154,11 @@ class Docker:
             argv += ["-e", f"{key}={value}"]
         argv += [part for name_only in forward for part in ("-e", name_only)]
         argv += [part for mount in mounts for part in ("-v", str(mount))]
+        # Anonymous volumes: container-local writable space grafted over a
+        # read-only tree. This is how a container that must write into its
+        # source keeps those writes off the host, which is the difference
+        # between "the container wrote" and "two processes shared an inode".
+        argv += [part for path in scratch for part in ("-v", path)]
         if workdir is not None:
             argv += ["-w", workdir]
         argv += [image, *command]

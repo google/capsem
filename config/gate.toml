@@ -312,6 +312,17 @@ dist_dir = "dist"
 # are baked into the builder image.
 network = "bridge"
 lane_container = "capsem-package-{arch}"
+# The checkout goes in read-only; these three paths get container-local
+# scratch grafted over them, because the build genuinely writes to all three
+# and none of those writes belongs to the host. `pnpm install` fills
+# node_modules, `pnpm build` fills dist, and Tauri's build script regenerates
+# ACL schemas into the app crate's `gen/`. Anonymous volumes rather than tmpfs:
+# node_modules is 356 MB and the Colima VM's RAM is not where it belongs.
+writable_paths = [
+    "frontend/node_modules",
+    "frontend/dist",
+    "crates/capsem-app/gen",
+]
 container_output_dir = "/package-output"
 # The trailing `/.` copies the directory's *contents*; without it the package
 # nests one level down from where `resolve()` looks.

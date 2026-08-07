@@ -26,7 +26,7 @@ def test_removing_a_container_tolerates_its_absence(tmp_path: Path) -> None:
 
     Docker(runner).remove("capsem-install-test")
 
-    assert runner.matching(r"docker rm -f capsem-install-test")
+    assert runner.matching(r"docker rm -f -v capsem-install-test")
 
 
 def test_exec_builds_flags_in_the_order_docker_requires(tmp_path: Path) -> None:

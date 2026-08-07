@@ -267,6 +267,6 @@ def test_the_container_is_removed_even_when_the_proof_fails(
     with pytest.raises(GateError):
         proof.run()
 
-    assert runner.last_index_of(rf"docker rm -f {PROOF.container}") > runner.index_of(
+    assert runner.last_index_of(rf"docker rm -f -v {PROOF.container}") > runner.index_of(
         r"dpkg -i"
     )

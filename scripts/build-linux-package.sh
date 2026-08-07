@@ -29,10 +29,10 @@ set -euo pipefail
 OUT="${CAPSEM_PACKAGE_OUTPUT_DIR:-/src/dist}"
 mkdir -p "$OUT"
 
-# The container still writes the frontend build into the bind-mounted checkout
-# as root. Hand those paths back on every exit path, or the host cannot rebuild
-# without sudo. `$OUT` is included because it *may* be inside the mount.
-trap 'chown -R "$HOST_UID:$HOST_GID" "$OUT" /src/frontend/node_modules /src/frontend/dist 2>/dev/null || true' EXIT
+# Only the output. `/src` is mounted read-only and the paths this build writes
+# into it -- node_modules, the frontend bundle, Tauri's generated ACLs -- are
+# container-local scratch, so there is nothing of the host's left owned by root.
+trap 'chown -R "$HOST_UID:$HOST_GID" "$OUT" 2>/dev/null || true' EXIT
 
 echo "--- Verify pinned Rust target ---"
 rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal

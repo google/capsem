@@ -99,6 +99,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- The Linux package lane no longer mounts the checkout writable. It writes
+  into its source for three real reasons -- `pnpm install` fills
+  `frontend/node_modules`, `pnpm build` fills `frontend/dist`, and Tauri
+  regenerates ACL schemas into the app crate -- and all three are now
+  container-local anonymous volumes grafted over those paths, so the mount is
+  `:ro` and none of those writes reaches the host. That is the last read-write
+  mount of the run root, and the class of race that killed a release run with
+  an intermittent EACCES on a file that was `0644` before and after.
+
+  `docker rm` takes `-v` with it, because an anonymous volume has no name and
+  nothing else could ever collect the 356 MB one.
+
 - The Linux package lane extracts its artifacts instead of writing them back
   through the bind mount. It creates a container, starts it, copies the deb,
   the record and the agent binaries out with `docker cp`, and removes it —

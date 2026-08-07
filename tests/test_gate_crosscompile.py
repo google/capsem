@@ -203,6 +203,38 @@ def test_package_build_mounts_linked_worktree_git_metadata(
     assert f"-v {metadata}:{metadata}:ro" in build
 
 
+def test_the_checkout_goes_in_read_only_with_container_local_scratch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The build writes into its source; the host must not see any of it.
+
+    `pnpm install` fills `frontend/node_modules`, `pnpm build` fills
+    `frontend/dist`, and Tauri regenerates ACL schemas into the app crate.
+    Through a read-write mount those are host writes, which is how a container
+    and a host step came to share inodes and kill a release run on an
+    intermittent EACCES. Anonymous volumes grafted over exactly those three
+    paths keep the writes container-local, so the mount can be `:ro`.
+    """
+    monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
+    monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
+    runner = Building(_checkout(tmp_path), replies={"select-linux": "skip"})
+
+    _run_lane(_rail(runner))
+
+    build = runner.matching(r"docker create")[0]
+    assert f"-v {tmp_path}:/src:ro" in build.replace(str(tmp_path.resolve()), str(tmp_path)), (
+        f"the checkout is still writable by the builder:\n{build}"
+    )
+    for path in CONFIG.package.writable_paths:
+        assert f"-v /src/{path} " in build + " ", (
+            f"{path} is written by the build and has no container-local backing"
+        )
+
+    # And the scratch goes when the container does: an anonymous volume has no
+    # name, so nothing else could ever collect the 356 MB node_modules one.
+    assert runner.matching(r"docker rm -f -v"), "anonymous volumes would accumulate"
+
+
 def test_the_builder_image_is_rebuilt_before_every_package() -> None:
     """Always rebuilt, and always before the package that runs inside it.
 

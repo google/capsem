@@ -33,8 +33,16 @@ def test_the_lane_mounts_nothing() -> None:
     issued = _issued()
     docker_lines = [line for line in issued.splitlines() if line.startswith("docker ")]
     assert docker_lines, f"no docker command was issued:\n{issued}"
-    mounted = [line for line in docker_lines if " -v " in line]
-    assert not mounted, "the lane still mounts something:\n  " + "\n  ".join(mounted)
+    # Only the commands that can mount. `docker rm -f -v` also carries a `-v`,
+    # and it means "take the anonymous volumes with the container" -- the
+    # opposite of a mount, and reading it as one would fail this for the
+    # teardown doing its job.
+    mounting = [
+        line
+        for line in docker_lines
+        if line.startswith(("docker create", "docker run")) and " -v " in line
+    ]
+    assert not mounting, "the lane still mounts something:\n  " + "\n  ".join(mounting)
 
 
 def test_the_lane_runs_with_no_network() -> None:
