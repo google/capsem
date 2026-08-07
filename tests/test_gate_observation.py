@@ -51,6 +51,24 @@ def _settle(watch: Watch, count: int, timeout: float = 5.0) -> None:
         time.sleep(0.02)
 
 
+def _until(predicate, timeout: float = 5.0) -> None:
+    """Wait for the thing being asserted, not for a proxy of it.
+
+    `_settle` waits on `watch.events`, and for an assertion about *faults* that
+    is the wrong quantity by one line of `Watch.observed`: the event is
+    appended and only then judged, both on the watchdog thread. A test polling
+    the event count can therefore win the race into the gap between the two
+    and assert on faults that are microseconds from existing.
+
+    Measured on an unchanged tree, three runs in five failed that way -- and it
+    surfaced as a red release gate at minute eight, which is an expensive place
+    to learn that a test was watching the wrong variable.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and not predicate():
+        time.sleep(0.02)
+
+
 def _watch(root: Path, **kwargs) -> Watch:
     return Watch([root], source_root=root, **kwargs)
 
@@ -74,7 +92,7 @@ def test_a_fault_is_emitted_when_it_happens_not_at_the_end(tmp_path: Path) -> No
     with _watch(tmp_path, on_fault=seen.append) as watch:
         watch.entered("suite")
         (tmp_path / "config" / "profile.toml").write_text("x", encoding="utf-8")
-        _settle(watch, 1)
+        _until(lambda: bool(seen))
         # Still inside the run: no sweep, no exit, no analysis pass.
         assert seen, "the fault was queued for later instead of raised now"
         assert seen[0].reason == "source-tree"

@@ -95,6 +95,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A flaky observation test no longer fails the gate at random. It waited on
+  `watch.events` while asserting about `watch.faults`, and `Watch.observed`
+  appends the event before judging it -- both on the watchdog thread -- so the
+  assertion could win the race into the gap between the two. Measured at three
+  failures in five runs on an unchanged tree; zero in twenty after.
 - Report mode now records what the sandbox permitted. The profile was being
   generated and applied, but nothing read the unified log that `(with report)`
   writes to, so a complete report-mode gate run produced zero sandbox entries
