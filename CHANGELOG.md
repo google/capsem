@@ -140,6 +140,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The enforcing sandbox profile carries the sockets the gate actually opens.
+  One report-mode run named them, and three classes were missing: the per-user
+  `$TMPDIR` under `/private/var/folders` (which is why a rule naming
+  `/tmp/capsem-` looked complete and was not), the workspace run directory
+  inside the prefix, and Colima's Lima socket. Local bind and inbound are
+  permitted too -- the gate starts servers and talks to them, and that is not
+  the mid-run fetch being denied. Verified directly: the internet is denied,
+  Docker and loopback still work.
+- The report parser reads ndjson instead of regex-matching the raw line, so a
+  record's `traceID` and `processImageUUID` no longer ride along inside the
+  resource and make one socket look like a thousand distinct rules.
+
 - `capsem-install-release-site-dist` is governed by the storage policy. It was
   mounted on every install run with no entry at all, so no retention, owner or
   budget applied to it -- invisible to the disk budget and to `gc`, growing

@@ -274,6 +274,8 @@ class SandboxConfig(Strict):
     socket_reason: str
     sockets: tuple[str, ...]
     local_socket_prefixes: tuple[str, ...]
+    local_socket_regexes: tuple[str, ...]
+    local_binds: bool
     loopback: tuple[str, ...]
     log_command: str
     report_predicate: str

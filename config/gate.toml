@@ -1422,11 +1422,36 @@ socket_reason = "`(deny network*)` covers AF_UNIX too, so these come back explic
 # Absolute or `~`-relative. Denying the Docker socket makes a running daemon
 # look absent -- `permission denied ... docker.sock` -- which is how the first
 # sandboxed run is misdiagnosed.
-sockets = ["~/.colima/default/docker.sock"]
+sockets = ["~/.colima/default/docker.sock", "~/.colima/_lima/colima/ha.sock"]
 
 # The gate's own sockets are created per run under paths it does not know
 # ahead of time, so they are matched by prefix rather than listed.
-local_socket_prefixes = ["/tmp/capsem-", "/private/tmp/capsem-"]
+# Measured, not guessed. One report-mode run named every socket the gate
+# actually opens, and three classes were missing from this list -- an
+# enforcing run would have died on each in turn, which is precisely the
+# forty-runs-one-discovery-each outcome report mode exists to avoid:
+#
+#   /private/var/folders/<...>/T/capsem-test-<id>/run/*.sock   552 times
+#   <prefix>/target/test-home/.capsem/run/service.sock         463 times
+#   ~/.colima/_lima/colima/ha.sock                             169 times
+#
+# The first is `$TMPDIR` on macOS, which is a per-user path under
+# `/private/var/folders` and not `/tmp` at all -- the reason a rule naming
+# `/tmp/capsem-` looked complete and was not.
+local_socket_prefixes = [
+    "/tmp/capsem-",
+    "/private/tmp/capsem-",
+    "/private/var/folders/",
+    "/var/folders/",
+]
+
+# The gate's own service, gateway and per-VM sockets live under the workspace,
+# which is inside the prefix and therefore has no fixed path to list.
+local_socket_regexes = ["target/test-home/\\.capsem/run/"]
+
+# Servers the gate starts and talks to: the mock upstream, the gateway, and
+# every per-VM listener. `local:*:0` alone was 1915 of the observed events.
+local_binds = true
 
 # The service, the gateway and the mock upstream all talk over loopback.
 # `localhost` only: SBPL refuses any other host in a network address --

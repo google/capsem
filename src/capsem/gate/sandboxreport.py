@@ -37,6 +37,7 @@ reclaims it with everything else that run produced.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import signal
@@ -172,7 +173,17 @@ def observed(captured: str) -> list[tuple[tuple[str, str], int]]:
     """
     counts: Counter[tuple[str, str]] = Counter()
     for line in captured.splitlines():
-        match = _ENTRY.search(line)
+        # ndjson first. Matching the raw line let the record's remaining
+        # fields -- `processImageUUID`, `traceID` -- ride along inside the
+        # resource, so one socket reached a thousand times looked like a
+        # thousand distinct rules and the list was useless.
+        text = line
+        if line.startswith("{"):
+            try:
+                text = json.loads(line).get("eventMessage", "")
+            except json.JSONDecodeError:
+                continue
+        match = _ENTRY.search(text)
         if match is None:
             continue
         counts[(match["operation"], (match["resource"] or "").strip())] += 1

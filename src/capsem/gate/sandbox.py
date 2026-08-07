@@ -79,6 +79,15 @@ def profile(config: GateConfig, *, report: bool) -> str:
         lines.append(f'(allow network* (literal "{socket}"))')
     for prefix in settings.local_socket_prefixes:
         lines.append(f'(allow network* (regex #"^{prefix}"))')
+    # Unanchored: the workspace lives inside a per-run prefix, so its absolute
+    # path is not known when this profile is written.
+    for pattern in settings.local_socket_regexes:
+        lines.append(f'(allow network* (regex #"{pattern}"))')
+    if settings.local_binds:
+        # The gate starts servers and talks to them. Binding and accepting on
+        # a local address is not a fetch, which is the thing being denied.
+        lines.append('(allow network-bind (local ip "*:*"))')
+        lines.append('(allow network-inbound (local ip "*:*"))')
     for address in settings.loopback:
         lines.append(f'(allow network* (remote ip "{address}"))')
 
