@@ -99,6 +99,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- The asset build no longer touches `crates/capsem-app/build.rs` to force a
+  rebuild. The comment said it was "so cargo re-runs build.rs and picks up the
+  new manifest hashes", and that crate's `build.rs` reads nothing — it
+  forwards one environment variable and calls `tauri_build::build()`, and its
+  `tauri.conf.json` bundles only `frontend/dist`. There were no manifest
+  hashes to pick up, so every asset build rebuilt the Tauri app for nothing
+  and wrote into the gate's own tracked source to do it. A crate that really
+  depends on a file says so with `cargo:rerun-if-changed`, which is what
+  `crates/capsem/build.rs` does for the git metadata it embeds.
+
 - **Phase 3 is complete: `docker.py` is the only place that spells `docker`.**
   The builder image's build and its foreign-UID probe were the last two
   hand-built argv, and the probe wanted a third thing the wrapper could not

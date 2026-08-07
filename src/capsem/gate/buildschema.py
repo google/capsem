@@ -236,7 +236,6 @@ class InitrdConfig(Strict):
     init_mode: int
     manifest: tuple[str, ...]
     hash_assets: str
-    rebuild_trigger: str
 
 
 class ReleaseConfig(Strict):

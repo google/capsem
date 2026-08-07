@@ -826,8 +826,6 @@ init_mode = 0o755
 
 manifest = ["cargo", "run", "-p", "capsem-admin", "--", "manifest", "generate"]
 hash_assets = "scripts/create_hash_assets.py"
-# Touched so cargo re-runs build.rs and picks up the new manifest hashes.
-rebuild_trigger = "crates/capsem-app/build.rs"
 
 [smoke]
 # Focused developer feedback, never release qualification. Three groups that

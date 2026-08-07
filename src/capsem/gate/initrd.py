@@ -208,7 +208,6 @@ def pack(plan: Plan, config: GateConfig, *, after: tuple = ()) -> Step:
             # one and startup resolves locally instead of falling through
             # to a remote fetch.
             Script(settings.hash_assets, str(assets)),
-            Run(["touch", settings.rebuild_trigger]),
         ),
         after=(manifest,),
     )

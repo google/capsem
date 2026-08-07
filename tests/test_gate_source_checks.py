@@ -305,3 +305,51 @@ def test_the_gate_never_changes_a_tracked_file_s_mode() -> None:
         "recorded at `source.record` cannot match the one `source.verify` "
         "recomputes on a clean checkout:\n  " + "\n  ".join(wrong)
     )
+
+
+def test_no_step_forces_a_rebuild_by_touching_tracked_source() -> None:
+    """Cargo is told what a crate depends on; it is not tricked into noticing.
+
+    `hash-aliases` ran `touch crates/capsem-app/build.rs` "so cargo re-runs
+    build.rs and picks up the new manifest hashes". That crate's `build.rs`
+    reads nothing -- it forwards one environment variable and calls
+    `tauri_build::build()` -- and its `tauri.conf.json` bundles only
+    `frontend/dist`. There were no manifest hashes for it to pick up, so the
+    touch rebuilt the Tauri app on every asset build for nothing, and wrote
+    into the gate's own tracked source to do it.
+
+    A crate that genuinely depends on a file says so with
+    `cargo:rerun-if-changed`, which is what `crates/capsem/build.rs` does for
+    the git metadata it embeds. Anything else is the gate mutating its subject
+    to work around a dependency it did not declare.
+    """
+    import ast
+
+    gate = PROJECT_ROOT / "src" / "capsem" / "gate"
+    tracked = {
+        line.split("\t", 1)[-1]
+        for line in subprocess.run(
+            ["git", "ls-files"],
+            cwd=PROJECT_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+    }
+
+    touches: list[str] = []
+    for module in sorted(gate.glob("*.py")):
+        for node in ast.walk(ast.parse(module.read_text(encoding="utf-8"))):
+            if not isinstance(node, ast.List) or not node.elts:
+                continue
+            first = node.elts[0]
+            if isinstance(first, ast.Constant) and first.value == "touch":
+                touches.append(f"{module.name}:{node.lineno}")
+
+    assert not touches, (
+        "these force a rebuild by touching a file rather than by declaring the "
+        f"dependency: {', '.join(touches)}"
+    )
+    assert "crates/capsem-app/build.rs" in tracked, (
+        "the file this guard is about stopped being tracked; re-derive the claim"
+    )
