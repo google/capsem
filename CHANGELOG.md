@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Started the Claude Web GUI feasibility programme on the `v1.6` branch,
+- Started the Claude Web GUI feasibility programme on the `v0.7` branch,
   required its GUI profile to use the normal `capsem-admin` authoring and build
   rails, added its arm64-only source profile with digest-verified Claude and
   server-only Xpra inputs, made language runtimes conditional on profile-owned

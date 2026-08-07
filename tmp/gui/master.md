@@ -1,6 +1,6 @@
 # Application Delivery and GUI Programme
 
-Status: **Spike 0 active on `v1.6`; tranche implementation not started**
+Status: **Spike 0 active on `v0.7`; tranche implementation not started**
 Authority: this file defines programme order; each tranche file owns its own
 implementation scope and acceptance gates
 Shared test specification: [`whiteharbor-test-plan.md`](./whiteharbor-test-plan.md)
@@ -18,7 +18,7 @@ Debian GUI profile using single-application Xpra forwarding over virtio-vsock
 and Capsem-owned browser/OAuth brokerage.
 
 This is deliberately one feasibility spike followed by three independently
-shippable tranches. The programme is developed on the `v1.6` branch so useful
+shippable tranches. The programme is developed on the `v0.7` branch so useful
 spike work can be reviewed, committed, and carried into the owning tranche:
 
 ```text
@@ -179,7 +179,7 @@ the fix belongs in the owning earlier subsystem and its tests.
 
 These plans use separate Sprinty sprints. Do not create one umbrella
 implementation sprint that hides their individual exit gates. Spike 0 uses the
-**Claude Web GUI feasibility** investigation sprint on `v1.6`; it is never the
+**Claude Web GUI feasibility** investigation sprint on `v0.7`; it is never the
 Tranche 3 implementation sprint.
 
 At the beginning of each implementation session:

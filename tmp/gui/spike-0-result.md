@@ -13,7 +13,7 @@ Direct promotion without reimplementation/review/tests allowed: no
 # Spike 0 result and evidence ledger
 
 This document is the sanitized durable record for the Claude Web GUI
-feasibility run on `v1.6`. It is intentionally updated while the spike runs.
+feasibility run on `v0.7`. It is intentionally updated while the spike runs.
 Pending fields are not evidence and cannot be treated as passing gates.
 
 ## Candidate and host baseline
@@ -21,7 +21,7 @@ Pending fields are not evidence and cannot be treated as passing gates.
 | Fact | Recorded value |
 | --- | --- |
 | Candidate commit at baseline | `572537db9a53f10c47cde0524c148db3266bdb45` |
-| Branch | `v1.6` |
+| Branch | `v0.7` |
 | Worktree at baseline | clean |
 | Host | macOS 26.5.1, build 25F80, arm64 |
 | Hardware | Mac17,6, Apple M5 Max, 18 CPU cores, 128 GiB RAM |
@@ -517,7 +517,7 @@ path; disposable-container diagnostics do not populate acceptance tables.
   an extracted-rootfs operand for inventory ownership and scans the live host.
   Offline guest roots require `-t rootfs`; shape-only validation was too weak
   to catch the macOS document and now requires Debian package components.
-- The v1.6 Admin CLI accepts the profile path positionally for `validate` and
+- The v0.7 Admin CLI accepts the profile path positionally for `validate` and
   `check`, but `materialize` uses `--profile`. The first combined invocation
   used the materialize spelling for validate and was rejected before mutation.
 - A guest forbidden-package probe initially treated any `dpkg-query -W`

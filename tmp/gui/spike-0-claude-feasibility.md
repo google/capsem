@@ -1,12 +1,12 @@
 # Spike 0 — End-to-End Claude Web UI on macOS
 
-Status: **active investigation on `v1.6`**
+Status: **active investigation on `v0.7`**
 Sprinty sprint: **Claude Web GUI feasibility**
 Host: **macOS on Apple silicon**
 Hypervisor: **Apple Virtualization.framework**
 Guest: **arm64 Debian**
 Client: **ordinary Web browser through the Capsem UI**
-Working branch: **`v1.6`; useful source, tests, instrumentation, planning, and
+Working branch: **`v0.7`; useful source, tests, instrumentation, planning, and
 sanitized evidence may be committed**
 Result artifact: `tmp/gui/spike-0-result.md`
 Real implementation, if approved:
@@ -103,7 +103,7 @@ delivery model exists, but it does not bypass profile ownership, admin
 validation, materialization, image construction, manifests, build ledgers, or
 OBOM evidence.
 
-Work directly on the `v1.6` branch. Useful source, tests, instrumentation,
+Work directly on the `v0.7` branch. Useful source, tests, instrumentation,
 planning, and sanitized evidence should be committed at functional milestones
 so the work can continue through the later tranches. Spike-only vendor assets,
 generated images, raw captures, credentials, tokens, and machine-sensitive
@@ -125,7 +125,7 @@ user sign-off or a predeclared idle deadline before teardown.
 - no secret, credential, token, vendor binary, generated image, raw capture,
   machine-sensitive path, or unsanitized evidence is staged or committed;
 - no Spike 0 code is treated as production-ready without focused review and
-  tests; useful implementation is retained on `v1.6` under its owning Sprinty
+  tests; useful implementation is retained on `v0.7` under its owning Sprinty
   items and hardened through the later tranche gates;
 - no `curl | sh`, `wget | bash`, mutable `latest`, or remote installer script;
 - no VNC/noVNC, Spice desktop, desktop environment, window manager, guest
@@ -162,7 +162,7 @@ The spike must use the existing terminal path as an architectural precedent,
 not bypass it. Today `capsem-gateway` exposes `/terminal/{id}`, obtains its
 token through `/token`, connects to the per-VM mode-`0600` UDS, and runs behind
 the gateway auth/CORS/tracing layers. Spike 0 adds the equivalent GUI lane on
-`v1.6`:
+`v0.7`:
 
 ```text
 GET /gui/{vm_id}/{app_instance_id}?token=<gateway token>
@@ -213,7 +213,7 @@ an Xpra debug page.
 
 ### Initial Spike 0 change surface
 
-The initial implementation is limited to these owned changes on `v1.6`:
+The initial implementation is limited to these owned changes on `v0.7`:
 
 - `config/profiles/gui/` — the sole GUI profile source contract, including
   package inputs, build hook, root seed, security inputs, and profile metadata;
@@ -244,7 +244,7 @@ The initial implementation is limited to these owned changes on `v1.6`:
   the repository's committed static tree.
 
 The result maps each successful component to its realized Tranche 3 owner.
-Useful source, tests, and OTel instrumentation are committed on `v1.6` at
+Useful source, tests, and OTel instrumentation are committed on `v0.7` at
 functional milestones. If an incomplete experimental tail remains, save an
 optional sanitized source-only diff as `tmp/gui/spike-0-review.patch`. Exclude
 vendor assets, generated files, tokens, URLs, credentials, machine paths, and
@@ -303,7 +303,7 @@ The spike runner must not declare success merely because a frame was decoded.
 It must:
 
 1. start the real `capsem-service`, `capsem-process`, `capsem-gateway`, and
-   existing Capsem Web UI from the `v1.6` branch;
+   existing Capsem Web UI from the `v0.7` branch;
 2. register the disposable VM/app instance with `capsem-service`;
 3. have the Web iframe fetch the normal token from `capsem-gateway /token` and
    connect to the exact `/gui/{vm}/{instance}` gateway WebSocket;
@@ -493,7 +493,7 @@ Every gate is mandatory for `UI_GO`.
 | UI-9 FPS/bandwidth | Presented FPS, Xpra update rate, jank, drops, codec, per-direction bandwidth, and queues are measured and visible live. |
 | UI-10 Stability | No lost/stuck input, unrecoverable blank frame, unbounded queue/memory growth, OOM, or continuous idle CPU saturation. |
 | UI-11 Observability | One run id correlates guest, vsock, process, gateway, browser, input/frame, CPU/memory, failure, and teardown evidence. |
-| UI-12 Cleanup | All spike processes, listeners, sockets, temporary images/overlays, captures, raw logs, credentials, and ignored scratch artifacts are removed after sign-off; useful committed `v1.6` work remains. |
+| UI-12 Cleanup | All spike processes, listeners, sockets, temporary images/overlays, captures, raw logs, credentials, and ignored scratch artifacts are removed after sign-off; useful committed `v0.7` work remains. |
 
 ## Stage A feasibility budgets
 
@@ -642,6 +642,6 @@ later focused session.
 
 `UI_GO` proves only that the admin-authored GUI profile and Claude are usable
 end to end in a Web browser on the macOS/Apple-VZ/arm64-Debian spike row.
-Reviewed commits remain on `v1.6` for their owning tranches, but no spike result
+Reviewed commits remain on `v0.7` for their owning tranches, but no spike result
 waives tranche hardening or gates. It proves nothing about Linux, KVM, x86_64,
 final multi-architecture delivery, release security, or qualification.
