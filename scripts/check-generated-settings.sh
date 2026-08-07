@@ -3,24 +3,17 @@ set -euo pipefail
 
 SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOT="${1:-$SCRIPT_ROOT}"
-SNAPSHOT="$(mktemp -d)"
-trap 'rm -rf "$SNAPSHOT"' EXIT
+FRESH="$(mktemp -d)"
+trap 'rm -rf "$FRESH"' EXIT
 
-# These files are checked in and must exactly match the generator. Snapshot
-# them before generation so the same gate works in both dirty developer trees
-# and pristine CI checkouts.
+# These files are checked in and must exactly match the generator. Generated
+# into a scratch directory and compared, rather than overwritten in place and
+# diffed against a snapshot: the old shape rewrote the gate's own checked-in
+# source on every run. Byte-identical output made that invisible, and it made
+# the gate unable to run against a source tree it may not write to.
 TRACKED_FILES=(
   config/settings/schema.generated.json
   config/settings/ui-metadata.generated.json
-)
-
-# The frontend mock is intentionally gitignored, so a clean checkout cannot
-# snapshot it. It must instead be created by the generator before later web
-# gates run. Keep the complete output list explicit so a silent generator
-# regression still fails here.
-GENERATED_FILES=(
-  "${TRACKED_FILES[@]}"
-  frontend/src/lib/mock-settings.generated.ts
 )
 
 for file in "${TRACKED_FILES[@]}"; do
@@ -28,24 +21,28 @@ for file in "${TRACKED_FILES[@]}"; do
     echo "ERROR: tracked generated settings file is missing: $file" >&2
     exit 1
   fi
-  mkdir -p "$SNAPSHOT/$(dirname "$file")"
-  cp "$ROOT/$file" "$SNAPSHOT/$file"
 done
 
-bash "$ROOT/scripts/generate-settings.sh"
+bash "$ROOT/scripts/generate-settings.sh" "$FRESH"
 
 failed=0
-for file in "${GENERATED_FILES[@]}"; do
-  if [ ! -f "$ROOT/$file" ]; then
-    echo "ERROR: settings generator did not create: $file" >&2
-    failed=1
-  fi
-done
+# The mock is gitignored and the web checks import it, so it is still written
+# into the checkout; the tracked pair is not.
+if [ ! -f "$ROOT/frontend/src/lib/mock-settings.generated.ts" ]; then
+  echo "ERROR: settings generator did not create: frontend/src/lib/mock-settings.generated.ts" >&2
+  failed=1
+fi
 
 for file in "${TRACKED_FILES[@]}"; do
-  if ! cmp -s "$SNAPSHOT/$file" "$ROOT/$file"; then
+  fresh="$FRESH/$(basename "$file")"
+  if [ ! -f "$fresh" ]; then
+    echo "ERROR: settings generator did not create: $file" >&2
+    failed=1
+    continue
+  fi
+  if ! cmp -s "$ROOT/$file" "$fresh"; then
     echo "ERROR: generated settings drifted: $file" >&2
-    diff -u "$SNAPSHOT/$file" "$ROOT/$file" || true
+    diff -u "$ROOT/$file" "$fresh" || true
     failed=1
   fi
 done

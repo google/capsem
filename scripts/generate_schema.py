@@ -1,5 +1,13 @@
-"""Generate settings schema, UI metadata, and frontend mock data."""
+"""Generate settings schema, UI metadata, and frontend mock data.
 
+`--settings-dir` exists so the checker can generate somewhere else and compare.
+Writing the tracked files in place and diffing afterwards worked, but it means
+every gate run writes into its own checked-in source -- invisible while the
+bytes match, and refused outright once the run is sandboxed against writing to
+its own tree.
+"""
+
+import argparse
 import json
 from pathlib import Path
 
@@ -18,21 +26,43 @@ IMAGE_CONFIG_DIR = PROJECT_ROOT / "config" / "docker" / "image"
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--settings-dir",
+        type=Path,
+        default=SCHEMA_PATH.parent,
+        help="where the two tracked settings files go; defaults to the checkout's own",
+    )
+    parser.add_argument(
+        "--mock",
+        type=Path,
+        default=MOCK_PATH,
+        help="where the frontend mock goes. Gitignored, so it stays in the checkout even "
+        "when the tracked pair is generated elsewhere -- the web checks import it.",
+    )
+    arguments = parser.parse_args()
+    settings_dir = arguments.settings_dir
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    schema_path = settings_dir / SCHEMA_PATH.name
+    defaults_path = settings_dir / DEFAULTS_PATH.name
+    mock_path = arguments.mock
+
     schema = export_json_schema()
-    SCHEMA_PATH.write_text(json.dumps(schema, indent=2) + "\n")
-    print(f"Wrote {SCHEMA_PATH}")
-    print(f"  Size: {SCHEMA_PATH.stat().st_size} bytes")
+    schema_path.write_text(json.dumps(schema, indent=2) + "\n")
+    print(f"Wrote {schema_path}")
+    print(f"  Size: {schema_path.stat().st_size} bytes")
 
     config = load_guest_config(IMAGE_CONFIG_DIR)
     defaults = generate_defaults_json(config)
-    DEFAULTS_PATH.write_text(json.dumps(defaults, indent=2) + "\n")
-    print(f"Wrote {DEFAULTS_PATH}")
-    print(f"  Size: {DEFAULTS_PATH.stat().st_size} bytes")
+    defaults_path.write_text(json.dumps(defaults, indent=2) + "\n")
+    print(f"Wrote {defaults_path}")
+    print(f"  Size: {defaults_path.stat().st_size} bytes")
 
     mock_ts = generate_mock_ts(defaults, mcp_tools=[])
-    MOCK_PATH.write_text(mock_ts)
-    print(f"Wrote {MOCK_PATH}")
-    print(f"  Size: {MOCK_PATH.stat().st_size} bytes")
+    mock_path.parent.mkdir(parents=True, exist_ok=True)
+    mock_path.write_text(mock_ts)
+    print(f"Wrote {mock_path}")
+    print(f"  Size: {mock_path.stat().st_size} bytes")
 
     # Summary
     settings = defaults.get("settings", {})

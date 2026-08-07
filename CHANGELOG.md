@@ -99,6 +99,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- The generated-settings check no longer rewrites the checkout's own tracked
+  files. It overwrote `config/settings/schema.generated.json` and
+  `ui-metadata.generated.json` and diffed them against a snapshot; the
+  generator takes `--settings-dir` now, so the check generates into scratch
+  and compares. Byte-identical output made the write invisible, and it is what
+  would stop the gate running against a source tree it may not write to. The
+  gitignored frontend mock is still written into the checkout, because the web
+  checks import it.
+
 - `initrd.repack` no longer chmods tracked source files, which would have
   failed every clean-checkout run. It set `0555` on
   `guest/artifacts/{capsem-doctor,capsem-bench,snapshots}` — recorded `100755`
