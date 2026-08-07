@@ -229,6 +229,17 @@ retention = "obsolete"
 owner = "install"
 reason = "The install lanes copy their source into the image; nothing declares this, so it has no producer."
 
+# Mounted by the install proof and, until now, governed by nothing: it had no
+# entry here at all, so no retention, no owner and no budget applied to a
+# directory the release-site build fills on every run.
+[resources.capsem-install-release-site-dist]
+kind = "volume"
+retention = "working"
+owner = "install"
+last_consumer = "install"
+release_boundary = "after-install"
+reason = "The rendered release site, kept container-local so the build does not write it into the image's source."
+
 [resources.capsem-install-release-site-node-modules]
 kind = "volume"
 retention = "obsolete"

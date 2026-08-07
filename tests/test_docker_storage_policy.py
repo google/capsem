@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tomllib
@@ -714,3 +715,37 @@ def test_the_repository_the_gate_reclaims_is_the_one_the_policy_declares() -> No
         "does not declare -- `reclaim` would refuse and the tags would accumulate"
     )
     assert declared["retention"] == "generational"
+
+
+def test_every_mounted_volume_is_governed_by_the_policy() -> None:
+    """A volume the gate mounts must have an entry here, and not a dead one.
+
+    `capsem-install-release-site-dist` had no entry at all: the install proof
+    mounted it every run and no retention, owner or budget applied to it. An
+    unmanaged volume is invisible to the disk budget and to `gc`, so it grows
+    until a run dies on `no space left on device` and the cause is a resource
+    nothing ever claimed.
+
+    The reverse is caught too. A volume marked `obsolete` while something still
+    mounts it is a policy that says one thing while the gate does another --
+    and the retirements in this change are exactly when that mistake is easy.
+    """
+    policy = load_policy()["resources"]
+    mounted = set(
+        re.findall(
+            r'source = "(capsem-[^"]+)"',
+            (ROOT / "config" / "gate.toml").read_text(encoding="utf-8"),
+        )
+    )
+
+    ungoverned = sorted(name for name in mounted if name not in policy)
+    assert not ungoverned, (
+        f"these are mounted but absent from storage-policy.toml: {ungoverned}. "
+        "An unmanaged volume is invisible to the disk budget and to gc."
+    )
+
+    retired = sorted(name for name in mounted if policy[name]["retention"] == "obsolete")
+    assert not retired, (
+        f"these are marked obsolete but still mounted: {retired}. Retire the "
+        "mount first, or the policy is describing a gate that does not exist."
+    )

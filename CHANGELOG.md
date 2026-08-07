@@ -140,6 +140,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `capsem-install-release-site-dist` is governed by the storage policy. It was
+  mounted on every install run with no entry at all, so no retention, owner or
+  budget applied to it -- invisible to the disk budget and to `gc`, growing
+  until a run would die on `no space left on device` with the cause being a
+  resource nothing ever claimed. A contract now refuses both an ungoverned
+  mount and a volume marked obsolete while something still mounts it.
+
 - The install image bakes the release-site dependencies, and the cross-run
   `capsem-install-release-site-node-modules` volume is retired. That volume
   existed so `pnpm install` would not write into a bind-mounted checkout; the
