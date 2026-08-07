@@ -136,12 +136,20 @@ class PackageRail:
         mount = self._config.install.mount
         metadata = docker_git_metadata_mount(self._runner)
         mounts = (
-            # Read-only. The builder does write into its source -- pnpm fills
-            # `frontend/node_modules` and `frontend/dist`, Tauri regenerates
-            # ACL schemas into the app crate -- but those writes belong to the
-            # container, not the host, so they go to scratch grafted over
-            # those paths instead of through this mount.
-            Mount.unmigrated(str(self.root), mount, "ro"),
+            # Read-write, and not by choice. The scratch grafts below cover
+            # `frontend/node_modules`, `frontend/dist` and the app crate's
+            # `gen/`, which is where the build's *outputs* go -- but the
+            # frontend bundler also writes atomic temporaries beside its
+            # target, directly in `frontend/`:
+            #
+            #   EROFS: read-only file system, open '/src/frontend/_tmp_50_...'
+            #
+            # Grafting scratch over `frontend/` itself would mask the source
+            # the build is meant to compile, so there is no flag that fixes
+            # this. Sealing the lane means baking the frontend into the builder
+            # image, as the parity lane did -- Phase 5's second half. Until
+            # then this stays declared and counted rather than quietly widened.
+            Mount.unmigrated(str(self.root), mount),
             *((metadata,) if metadata is not None else ()),
             *(Mount(volume.source, volume.target) for volume in self._package.volumes),
             Mount(

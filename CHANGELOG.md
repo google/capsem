@@ -273,6 +273,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   checkout cannot supply. The copy's mode was always set separately, so the
   source chmod never affected the initrd at all.
 
+- The Linux package lane's checkout mount stays writable, and now says why.
+  Making it `:ro` looked right — the build's outputs all go to container-local
+  scratch — and failed a real run: the frontend bundler writes atomic
+  temporaries beside its target, directly in `frontend/`, so the container
+  reported `EROFS ... open '/src/frontend/_tmp_50_…'`. Grafting scratch over
+  `frontend/` would mask the source being compiled, so no flag fixes it;
+  baking the frontend into the builder image does, which is Phase 5's second
+  half. The outputs stay container-local either way.
+
 - The Linux package lane no longer mounts the checkout writable. It writes
   into its source for three real reasons -- `pnpm install` fills
   `frontend/node_modules`, `pnpm build` fills `frontend/dist`, and Tauri

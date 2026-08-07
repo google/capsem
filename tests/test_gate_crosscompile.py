@@ -203,17 +203,25 @@ def test_package_build_mounts_linked_worktree_git_metadata(
     assert f"-v {metadata}:{metadata}:ro" in build
 
 
-def test_the_checkout_goes_in_read_only_with_container_local_scratch(
+def test_the_builds_own_outputs_stay_container_local(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The build writes into its source; the host must not see any of it.
+    """The build writes into its source; its *outputs* must not reach the host.
 
     `pnpm install` fills `frontend/node_modules`, `pnpm build` fills
     `frontend/dist`, and Tauri regenerates ACL schemas into the app crate.
-    Through a read-write mount those are host writes, which is how a container
-    and a host step came to share inodes and kill a release run on an
-    intermittent EACCES. Anonymous volumes grafted over exactly those three
-    paths keep the writes container-local, so the mount can be `:ro`.
+    Through a plain mount those are host writes -- how a container and a host
+    step came to share inodes and kill a release run on an intermittent EACCES.
+    Anonymous volumes grafted over exactly those paths keep them
+    container-local.
+
+    The mount itself is still read-write, and this test used to claim
+    otherwise. Making it `:ro` failed a real run: the frontend bundler writes
+    atomic temporaries beside its target, directly in `frontend/` --
+    `EROFS ... open '/src/frontend/_tmp_50_...'` -- and grafting scratch over
+    `frontend/` would mask the source being compiled. No flag fixes that;
+    baking the frontend into the builder image does, which is Phase 5's second
+    half. Asserting only what is true keeps the difference visible.
     """
     monkeypatch.setattr("capsem.gate.host.system", lambda: "Linux")
     monkeypatch.setattr("capsem.gate.host.machine", lambda: TARGET.name)
@@ -222,9 +230,6 @@ def test_the_checkout_goes_in_read_only_with_container_local_scratch(
     _run_lane(_rail(runner))
 
     build = runner.matching(r"docker create")[0]
-    assert f"-v {tmp_path}:/src:ro" in build.replace(str(tmp_path.resolve()), str(tmp_path)), (
-        f"the checkout is still writable by the builder:\n{build}"
-    )
     for path in CONFIG.package.writable_paths:
         assert f"-v /src/{path} " in build + " ", (
             f"{path} is written by the build and has no container-local backing"
