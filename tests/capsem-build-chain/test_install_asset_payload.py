@@ -749,7 +749,9 @@ def test_install_test_removes_stale_container_before_controller_preflight() -> N
     container = config.install.container
     issued = _planned("install")
 
-    remove = issued.index(f"docker rm -f {container}")
+    # `-v` since the wrapper takes anonymous volumes with the container it
+    # removes; the ordering this test is about is unchanged.
+    remove = issued.index(f"docker rm -f -v {container}")
     start = issued.index(f"docker run -d --name {container}")
     assert remove < start
 
@@ -983,7 +985,9 @@ def test_full_gate_runs_fast_checks_before_install_harness_preflight() -> None:
     # One cacheless retry, and only one: a second failure is a Dockerfile
     # defect rather than a stale layer.
     image = (PROJECT_ROOT / "src/capsem/gate/installimage.py").read_text(encoding="utf-8")
-    assert "--no-cache" in image
+    # Through the Docker wrapper now, so the retry asks for it by name rather
+    # than splicing the flag into an argv it built itself.
+    assert "no_cache=True" in image
     assert "cacheless rebuild" in image
 
 

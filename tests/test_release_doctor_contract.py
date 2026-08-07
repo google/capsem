@@ -314,7 +314,10 @@ def test_macos_doctor_requires_live_rosetta_registration() -> None:
     # property of the machine, not of building assets.
     crossexec = _source_text("src/capsem/gate/crossexec.py")
     assert '"--platform",' in crossexec
-    assert "platform," in crossexec
+    # The probe goes through the Docker wrapper, which means it also has to
+    # say what network it needs -- the property the migration was for, and a
+    # stronger claim than the argv fragment this line used to match.
+    assert "cross_platform_probe_network" in crossexec
     assert "cross_platform_prefix" in crossexec
     assert config.assets.cross_platform_prefix == "linux/"
     assert "Docker cannot execute {platform} containers" in crossexec
@@ -1884,7 +1887,10 @@ def test_install_preflight_releases_base_after_derived_image_is_verified() -> No
     config = gate_config.load(PROJECT_ROOT)
     source = (PROJECT_ROOT / "src" / "capsem" / "gate" / "installimage.py").read_text()
 
-    build = source.index('"docker", "build", "-t", settings.image')
+    # Through the Docker wrapper now, so the build is a call rather than an
+    # argv literal. The ordering this test is about -- build, then smoke -- is
+    # what it always was.
+    build = source.index("docker.build(tag=settings.image")
     smoke = source.index("_smoke_passes(runner, settings)")
     assert build < smoke
     assert "release(" not in source, (
@@ -4452,13 +4458,20 @@ def test_generated_settings_gate_bootstraps_ignored_output_and_rejects_tracked_d
         """#!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-mkdir -p "$ROOT/frontend/src/lib"
+# `$1` is where the tracked pair goes. The checker passes a scratch directory
+# so the gate never rewrites its own checked-in source; the mock is gitignored
+# and still lands in the checkout, because the web checks import it.
+OUT="${1:-$ROOT/config/settings}"
+mkdir -p "$ROOT/frontend/src/lib" "$OUT"
 if [ "${FAKE_SKIP_RUNTIME_OUTPUT:-0}" != 1 ]; then
   printf 'runtime mock\n' > "$ROOT/frontend/src/lib/mock-settings.generated.ts"
 fi
 if [ "${FAKE_TRACKED_DRIFT:-0}" = 1 ]; then
-  printf 'drifted schema\n' > "$ROOT/config/settings/schema.generated.json"
+  printf 'drifted schema\n' > "$OUT/schema.generated.json"
+else
+  cp "$ROOT/config/settings/schema.generated.json" "$OUT/schema.generated.json"
 fi
+cp "$ROOT/config/settings/ui-metadata.generated.json" "$OUT/ui-metadata.generated.json"
 """
     )
     schema = settings / "schema.generated.json"

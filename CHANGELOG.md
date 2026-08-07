@@ -99,6 +99,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- Six release contracts that asserted on the *source text* of gate modules now
+  assert on behaviour or on the current interface. Every one broke on a
+  refactor that changed no behaviour at all — `'--no-cache' in installimage.py`,
+  `'platform,' in crossexec.py`, `.index()` of argv fragments the Docker
+  wrapper migration rewrote. They are reimplemented, not deleted.
+
 - Process liveness no longer shells out to `ps`, which a sandboxed gate cannot
   execute at all. `/bin/ps` is setuid root and the macOS sandbox forbids
   exec'ing a setuid binary — `(allow default)` does not override that — so the
