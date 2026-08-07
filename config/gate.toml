@@ -686,6 +686,11 @@ direct_machine_access = [
     # that lifetime, and it needs `Popen` rather than the runner's exec
     # accounting to get it.
     "sandboxreport.py",
+    # `auditfs.py` is the audited place a file may be hardlinked into
+    # published output from. It has to touch the machine: deciding between a
+    # link and a copy *is* a filesystem question, and routing it through an
+    # action would put the decision behind the layer that exists to record it.
+    "auditfs.py",
 ]
 
 # Only the plan schedules concurrent work. A module that reaches for its own
@@ -1133,6 +1138,7 @@ source_contract = [
     "tests/test_rust_filesystem_chokepoint.py",
     "tests/test_rust_process_enumeration.py",
     "tests/test_surface_names_are_not_hardcoded.py",
+    "tests/test_python_filesystem_chokepoint.py",
     "tests/test_agent_skill_index.py",
     "tests/test_authoritative_values_are_not_restated.py",
     "tests/test_build_assets_profile.py",

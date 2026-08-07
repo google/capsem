@@ -26,6 +26,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from capsem.builder.doctor import check_container_runtime
 from capsem.builder.models import ErofsConfig, GuestImageConfig
+from capsem.gate import auditfs
 
 TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "config" / "docker"
 CLOCK_SYNC_SCRIPT = Path(__file__).resolve().parents[3] / "scripts" / "sync-container-clock.py"
@@ -1504,10 +1505,11 @@ def _restore_canonical_assets_from_existing_manifest(output_dir: Path) -> None:
                 alias = arch_dir / _hash_filename(logical_name, digest)
                 if not alias.is_file():
                     continue
-                try:
-                    os.link(alias, canonical)
-                except OSError:
-                    shutil.copy2(alias, canonical)
+                # Through the audited chokepoint. Both sides here are build
+                # output, so this still hardlinks -- but "happens to be safe"
+                # is not a guarantee, and `stage` is the thing that checks
+                # rather than the comment that claims.
+                auditfs.stage(alias, canonical)
 
 
 def generate_checksums(output_dir: Path, version: str) -> Path:

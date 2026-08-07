@@ -176,6 +176,10 @@ def test_the_permitted_modules_are_the_ones_that_have_to_be() -> None:
         # that starts it and be killed on the way out is a `Resource`, and a
         # resource needs `Popen` rather than the runner's exec accounting.
         "sandboxreport.py",
+        # And the one place a hardlink into published output may be made. The
+        # choice between linking and copying is a filesystem question, so it
+        # cannot sit behind the action layer that exists to record such calls.
+        "auditfs.py",
     }
 
 

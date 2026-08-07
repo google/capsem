@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `capsem.gate.auditfs` is the one place Python may hardlink a file into
+  published output, and a contract refuses a raw `os.link` anywhere else. It
+  classifies the source first and fails closed -- anything git tracks, or
+  anything it cannot classify, is copied. The Rust sibling of this guard exists
+  because `capsem-admin` once staged 48 checked-in `config/` files into release
+  artifacts one inode each, so a `chmod` on the artifact rewrote tracked source
+  and no content digest noticed. Python's single hardlink happened to be safe;
+  "happened to be" is not a guarantee.
+
 - `--prefix <tree> --from <step>` continues a failed gate instead of replaying
   it. The tree is a private checkout an earlier run kept, so its `target/` is
   still warm; the step is where to start, and everything the graph puts before
