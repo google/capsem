@@ -99,6 +99,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- Report mode permits and logs rather than denying and logging. `(with
+  report)` is a modifier on *allow*; attaching it to a denial is refused
+  outright — `sandbox-exec: report modifier does not apply to deny action` —
+  and the run dies before it starts. That is also why one report run is
+  enough: nothing is refused, so nothing stops early and what comes back is
+  the whole surface rather than the first thing reached.
+
 - `--sandbox off|report|enforce` runs a command under that profile, applied at
   the same seam as the private copy and the keep-awake wrapper — before any
   resource is held. A Seatbelt profile is inherited by every child and cannot

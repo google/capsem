@@ -36,19 +36,38 @@ def test_the_profile_denies_the_network() -> None:
     assert "(deny network*)" in text
 
 
-def test_report_mode_differs_only_by_reporting() -> None:
-    """8a measures and 8b enforces, and they must be the same profile.
+def test_report_mode_permits_and_logs_rather_than_denying() -> None:
+    """`(with report)` is a modifier on *allow*. It is not one on deny.
 
-    A report run whose rules differ from the enforcing one measures a profile
-    nobody will run -- which is the failure mode of collecting an allow-list
-    at all: forty iterations that each discover one more thing, against one
-    run that discovers all of them.
+    `(deny network* (with report))` is refused outright -- `sandbox-exec:
+    report modifier does not apply to deny action` -- and the run dies before
+    it starts. This cost a gate launch to learn, which is cheap only because
+    the failure is immediate.
+
+    So measuring is "permit everything and log it", not "deny and log". That
+    is also what makes one run enough: nothing is refused, so nothing stops
+    early, and what comes back is the complete surface rather than the first
+    thing that happened to be reached.
     """
     reporting = sandbox.profile(CONFIG, report=True)
+
+    assert "(allow network* (with report))" in reporting
+    assert "(deny network*)" not in reporting, "report mode must refuse nothing"
+
+    # And it is the last rule, because a later one wins in SBPL: the specific
+    # socket allows would silence reporting for exactly the paths already
+    # known, and the ones worth learning about are the rest.
+    assert reporting.strip().endswith("(allow network* (with report))")
+
+
+def test_enforcing_mode_denies_and_names_what_comes_back() -> None:
+    """The other half, and the shape that actually runs a gate."""
     enforcing = sandbox.profile(CONFIG, report=False)
 
-    assert "(deny network* (with report))" in reporting
-    assert reporting.replace(" (with report)", "") == enforcing
+    assert "(deny network*)" in enforcing
+    assert "(with report)" not in enforcing
+    # After the denial, so they win: SBPL takes the last matching rule.
+    assert enforcing.index("(deny network*)") < enforcing.index("(allow network* (literal")
 
 
 def test_every_rule_comes_from_configuration() -> None:
