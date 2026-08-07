@@ -116,15 +116,25 @@ class _Repack(Action, name="repack-initrd"):
         Copy(config.path(settings.init), init).perform(self._context)
         init.chmod(settings.init_mode)
 
-        # 555 on every guest binary, reasserted rather than assumed: the
-        # builder applies it after a fresh cross-compile, but a cached staging
-        # directory may have had its modes changed since.
+        # 555 on every guest binary in the *initrd*, reasserted rather than
+        # assumed: the builder applies it after a fresh cross-compile, but a
+        # cached staging directory may have had its modes changed since.
+        #
+        # On the copy only. This chmodded the source as well, and three of
+        # those sources are tracked files -- `guest/artifacts/capsem-doctor`
+        # and friends, recorded 100755 by git. The source digest hashes
+        # `S_IMODE`, and git does not track the write bit, so the change was
+        # invisible to `git status` and fatal to `source.verify`: a clean
+        # checkout records 755, this drops it to 555, and the run ends an hour
+        # later claiming the gate changed its own source. It passed on warm
+        # machines because the files were already 555 from an earlier run.
+        # The copy's mode is set on the next line regardless, so the source
+        # chmod never affected the initrd at all.
         staged = [(staging / name, workdir / name) for name in settings.binaries]
         staged += [
             (config.path(relative), workdir / Path(relative).name) for relative in settings.files
         ]
         for source, target in staged:
-            source.chmod(settings.binary_mode)
             Remove(target).perform(self._context)
             Copy(source, target).perform(self._context)
             target.chmod(settings.binary_mode)

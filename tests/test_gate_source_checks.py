@@ -258,3 +258,50 @@ def test_the_fast_phase_and_the_command_compose_the_same_fragment() -> None:
     fast = set(gate_labels("test-fast"))
 
     assert {"python.ruff", "python.ty.strict", "python.ty.relaxed"} <= fast
+
+
+def test_the_gate_never_changes_a_tracked_file_s_mode() -> None:
+    """The source digest hashes `S_IMODE`, so a chmod is a source change.
+
+    `initrd.repack` chmodded `guest/artifacts/{capsem-doctor,capsem-bench,
+    snapshots}` to 0555 on every run. Git records them 100755 and does not
+    track the write bit, so the change is invisible to `git status` and fatal
+    to `source.verify`: a fresh clone records the digest at 755, the repack
+    drops it to 555, and the run ends with "the gate changed the source
+    working tree" sixty minutes later.
+
+    It passed here only because the damage was already done -- the files had
+    been 555 on disk since some earlier run, so the chmod was a no-op. That is
+    this plan's third defect exactly: a cross-run leftover that a warm machine
+    depends on and a clean checkout cannot supply.
+
+    Asserted against git's own record rather than a constant, so it stays true
+    if a file's executable bit legitimately changes.
+    """
+    import subprocess
+
+    listed = subprocess.run(
+        ["git", "ls-files", "-s"],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+    wrong: list[str] = []
+    for line in listed.splitlines():
+        recorded, _, rest = line.partition(" ")
+        name = rest.split("\t", 1)[1]
+        path = PROJECT_ROOT / name
+        if recorded not in {"100644", "100755"} or path.is_symlink() or not path.is_file():
+            continue
+        executable = recorded == "100755"
+        mode = path.stat().st_mode & 0o777
+        if bool(mode & 0o111) != executable or not mode & 0o200:
+            wrong.append(f"{name}: git {recorded}, disk {mode:04o}")
+
+    assert not wrong, (
+        "these tracked files' modes disagree with git, so the source digest "
+        "recorded at `source.record` cannot match the one `source.verify` "
+        "recomputes on a clean checkout:\n  " + "\n  ".join(wrong)
+    )

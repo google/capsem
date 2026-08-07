@@ -99,6 +99,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- `initrd.repack` no longer chmods tracked source files, which would have
+  failed every clean-checkout run. It set `0555` on
+  `guest/artifacts/{capsem-doctor,capsem-bench,snapshots}` — recorded `100755`
+  by git, which does not track the write bit, so the change was invisible to
+  `git status` and fatal to `source.verify`: the source digest hashes the
+  mode, so a fresh clone records `755`, the repack drops it to `555`, and the
+  run ends an hour later claiming the gate changed its own source. It passed
+  on this machine only because the files had already been `555` since some
+  earlier run — a cross-run leftover a warm machine depended on and a clean
+  checkout cannot supply. The copy's mode was always set separately, so the
+  source chmod never affected the initrd at all.
+
 - The Linux package lane no longer mounts the checkout writable. It writes
   into its source for three real reasons -- `pnpm install` fills
   `frontend/node_modules`, `pnpm build` fills `frontend/dist`, and Tauri
