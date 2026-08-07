@@ -231,9 +231,9 @@ reason = "The install lanes copy their source into the image; nothing declares t
 
 [resources.capsem-install-release-site-node-modules]
 kind = "volume"
-retention = "cache"
+retention = "obsolete"
 owner = "install"
-reason = "Linux-native release-site dependencies are reused without sharing host-native optional bindings."
+reason = "The install image bakes the release-site dependencies; nothing mounts this."
 
 [resources.capsem-linux-python-venv]
 kind = "volume"

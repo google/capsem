@@ -208,12 +208,6 @@ glowup = "target/local-release-glowup"
 # Written by the container as its own user, and handed back on the way out.
 extra_owned_paths = ["release-site/node_modules", "release-site/dist"]
 
-# Named so the release-site build does not reinstall its dependencies every run
-# or write them into the bind-mounted checkout.
-[[install.volumes]]
-source = "capsem-install-release-site-node-modules"
-target = "/src/release-site/node_modules"
-
 [[install.volumes]]
 source = "capsem-install-release-site-dist"
 target = "/src/release-site/dist"

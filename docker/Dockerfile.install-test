@@ -70,3 +70,20 @@ RUN mkdir -p /run/user/1000 && chown capsem:capsem /run/user/1000
 # four separate release-gate failures already had.
 COPY --chown=capsem:capsem . /src
 WORKDIR /src
+
+# The release-site dependencies, resolved once here instead of every run.
+#
+# They used to live in a cross-run named volume, mounted over this directory
+# because the source arrived as a bind mount and `pnpm install` would otherwise
+# have written into the developer's checkout. The source is a layer now, so
+# that reason is gone -- and what was left was worse than the problem: a volume
+# from an earlier run mounted over a *different* `release-site/`, which pnpm
+# correctly refused to reconcile without being asked
+# (`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`).
+#
+# Baked, the runtime `pnpm install --frozen-lockfile` finds a tree that already
+# matches the lockfile and does nothing, which is both faster and the only
+# arrangement where the two cannot disagree.
+USER capsem
+RUN cd /src/release-site && pnpm install --frozen-lockfile
+USER root

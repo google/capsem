@@ -140,6 +140,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The install image bakes the release-site dependencies, and the cross-run
+  `capsem-install-release-site-node-modules` volume is retired. That volume
+  existed so `pnpm install` would not write into a bind-mounted checkout; the
+  source is an image layer now, so its reason is gone and what remained was
+  worse -- an older run's `node_modules` mounted over a different
+  `release-site/`, which pnpm rightly refused to reconcile unprompted. Baked,
+  the runtime `pnpm install --frozen-lockfile` finds a tree that already
+  matches and does nothing.
 - The install proof's `pnpm install` no longer stops waiting for an answer.
   `/src/release-site` comes from the image while its `node_modules` is a
   cross-run volume, so the two can legitimately disagree, and pnpm refuses to
