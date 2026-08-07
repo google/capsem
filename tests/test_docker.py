@@ -2325,11 +2325,14 @@ class TestContainerCompileAgent:
         assert "docker" in run_cmd
         assert "--platform" in run_cmd
         assert "linux/arm64" in run_cmd
-        # Per-arch target volume
-        assert "capsem-agent-target-arm64" in str(run_cmd)
-        # Cargo cache volumes
-        assert "capsem-cargo-registry" in str(run_cmd)
-        assert "capsem-cargo-git" in str(run_cmd)
+        # No named volumes. These were `capsem-agent-target-arm64`,
+        # `capsem-cargo-registry` and `capsem-cargo-git`; the caches now live
+        # in the image and the build directory is an anonymous volume, so
+        # nothing here carries state from one run into the next.
+        assert "capsem-agent-target" not in str(run_cmd)
+        assert "capsem-cargo" not in str(run_cmd)
+        assert "capsem-rustup" not in str(run_cmd)
+        assert "-v" in run_cmd, "the build directory left the container"
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime")
@@ -2353,7 +2356,11 @@ class TestContainerCompileAgent:
         cmd = mock_run.call_args_list[-1][0][0]
         assert "docker" in cmd
         assert "linux/amd64" in cmd
-        assert "capsem-agent-target-x86_64" in str(cmd)
+        # No named volumes, as with arm64: the caches live in the image and
+        # the build directory is anonymous, so nothing carries state between
+        # runs.
+        assert "capsem-agent-target" not in str(cmd)
+        assert "capsem-cargo" not in str(cmd)
 
     @patch("capsem.builder.docker.run_cmd")
     @patch("capsem.builder.docker.detect_runtime")
