@@ -72,7 +72,7 @@ def compose(
 
     contracts = module_contracts.release_contracts(plan, config, after=(recorded,))
     fast = testmodules.fast(plan, config, after=(contracts,))
-    modules = compose_modules(plan, config, qualification=qualification, after=(fast,))
+    modules = compose_modules(plan, config, qualification=qualification, after=fast)
 
     return plan.add(step("source.verify", RequireSourceUnchanged()), after=(modules,))
 

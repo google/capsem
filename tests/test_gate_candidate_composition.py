@@ -31,8 +31,10 @@ from helpers.gate import RecordingRunner
 from capsem.gate import cli  # noqa: F401 - imported so every command registers
 from capsem.gate import config as gate_config
 from capsem.gate.command import GateCommand
+from capsem.gate.resume import ancestors
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+
 
 #: `resources()` takes the runner it should build with; these tests ask
 #: *what* is held, so any runner will do.
@@ -108,6 +110,30 @@ def test_the_fast_phase_precedes_everything_expensive() -> None:
     assert _at(labels, "fast.") < _at(labels, "prepare")
 
 
+def test_preparation_waits_for_every_fast_leaf_and_not_one_incidental_step() -> None:
+    """A phase is finished when every independent branch of it is finished.
+
+    `fast()` returned Clippy, because Clippy happened to be added last. Clippy
+    waits on the Rust toolchain and one web surface and on nothing else, so
+    everything the phase exists to front-load -- Ruff, both Ty passes, the
+    dependency audits, the other three web surfaces -- was free to still be
+    running while the gate built assets and booted VMs. The contract is that
+    the cheap failures come *before* the expensive work, and for most of them
+    it was not true.
+
+    `sourcechecks.fragment` had already learned this one level down and says so
+    in its own docstring; the caller threw its answer away.
+    """
+    plan = _plan()
+    first_prepare = next(label for label in plan.labels if label.startswith("prepare."))
+    leaves = {label for label in plan.labels if label.startswith(("fast.", "python."))}
+
+    assert leaves <= ancestors(plan, first_prepare), (
+        "these run in the fast phase and gate nothing: "
+        + ", ".join(sorted(leaves - ancestors(plan, first_prepare)))
+    )
+
+
 # ---------------------------------------------------------------------------
 # What must happen even when the gate fails
 # ---------------------------------------------------------------------------
@@ -162,9 +188,7 @@ def test_nothing_in_the_plan_starts_another_gate() -> None:
         if argv and program(tuple(argv)) in ENTRYPOINTS
     ]
 
-    assert not offences, "the composed gate still launches a gate:\n  " + "\n  ".join(
-        offences
-    )
+    assert not offences, "the composed gate still launches a gate:\n  " + "\n  ".join(offences)
 
 
 def test_the_plan_is_acyclic_and_every_exclusive_it_claims_is_declared() -> None:
@@ -179,9 +203,7 @@ def test_the_composed_gate_still_declares_what_may_not_overlap(exclusive: str) -
     """Four commands each had their own machine lock making this true by
     accident. One plan has to say it."""
     claimed = {
-        resource.name
-        for label in _plan().labels
-        for resource in _plan().step_named(label).contends
+        resource.name for label in _plan().labels for resource in _plan().step_named(label).contends
     }
 
     assert exclusive in claimed

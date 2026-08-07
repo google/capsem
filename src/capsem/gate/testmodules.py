@@ -83,8 +83,19 @@ class FastModule(
         return plan
 
 
-def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Step:
-    """The cheap checks, as one phase of whichever plan is composing them."""
+def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> tuple[Step, ...]:
+    """The cheap checks, returning every independent completion leaf.
+
+    All of them, not whichever was added last. This returned Clippy, and Clippy
+    waits on the Rust toolchain and one web surface and on nothing else -- so
+    Ruff, both Ty passes, the dependency audits and the other three web
+    surfaces gated nothing, and were free to still be running while the gate
+    built assets and booted VMs. "The cheap failures run before the expensive
+    work" was true of one of them.
+
+    `sourcechecks.fragment` learned this one level down and says so in its own
+    docstring; this threw its answer away.
+    """
     phase = plan.phase("fast")
 
     # The environment first: everything below runs through uv or pnpm, and a
@@ -97,12 +108,11 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Ste
     # Nothing is worth starting against a file that will not parse.
     syntax = phase.add(audits.source_syntax(config), after=(python,))
 
-    for check in audits.all_of(config):
-        phase.add(check, after=(syntax,))
+    audited = tuple(phase.add(check, after=(syntax,)) for check in audits.all_of(config))
     # The same fragment the `lint` command composes: Ruff and both Ty passes as
     # independent steps, so a Ruff failure no longer hides what Ty would have
     # said and each is timed under its own name.
-    sourcechecks.fragment(plan, config, after=(syntax,))
+    checked = sourcechecks.fragment(plan, config, after=(syntax,))
 
     # The web surfaces import `frontend/src/lib/mock-settings.generated.ts`,
     # which is gitignored and therefore never part of the source a run is
@@ -114,9 +124,16 @@ def fast(plan: Plan, config: GateConfig, *, after: tuple[Step, ...] = ()) -> Ste
         phase.add(surface, after=(syntax, node, settings))
         for surface in audits.web_surfaces(config)
     ]
-    return phase.add(
-        audits.clippy(config),
-        after=(audits.blocking_surface(config, surfaces), rust),
+    # One surface is Clippy's prerequisite; the rest are leaves of their own.
+    # `settings` needs no entry -- every surface waits on it, so it is already
+    # an ancestor of anything that waits on a surface.
+    blocking = audits.blocking_surface(config, surfaces)
+    clippy = phase.add(audits.clippy(config), after=(blocking, rust))
+    return (
+        *audited,
+        *checked,
+        *(surface for surface in surfaces if surface is not blocking),
+        clippy,
     )
 
 

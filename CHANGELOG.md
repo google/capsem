@@ -99,6 +99,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   frozen one, so `confirm-head` re-asserts something that can actually have
   moved.
 
+- The expensive phases now wait for the whole fast phase, not for Clippy. The
+  fast phase reported completion with whichever step happened to be added last,
+  and Clippy waits on the Rust toolchain and one web surface and nothing else
+  -- so Ruff, both Ty passes, every dependency audit and three of the four web
+  surfaces gated nothing, and were free to still be running while the gate
+  built assets and booted VMs. "The cheap failures run before the expensive
+  work" was true of one of them.
+
 - Each `exec` event now carries the byte range its command wrote in the step
   log. A step's log is one file and a step runs many commands, so ten
   commands' output interleaved with no boundaries was a file you could read
