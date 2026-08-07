@@ -185,6 +185,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Six checkout mounts remain, all declared and counted. None is new: every one
   was an inline `-v` that no guard could see, and the list can only shrink now.
 
+- `fast.audit.generated-settings` writes its tracked outputs to scratch. The
+  step exists to produce the *gitignored* frontend mock the web surfaces
+  import; rewriting `config/settings/*.generated.json` in the checkout it is
+  qualifying was a side effect. `source.verify` tolerated it only because the
+  bytes matched, and a sandboxed run could not do it at all. Drift is still
+  caught, by `contracts.release`, which is the step whose job that is.
+
+  This was the writer the observer kept reporting after the checker was fixed:
+  two paths ran the generator, and only one of them had been changed.
+
 - Resuming into a kept prefix no longer deletes what the earlier run built.
   `refresh` removes what the source no longer names, and the first version
   walked the whole tree sparing a hand-written list of exports and carried

@@ -795,6 +795,13 @@ frontend_dir = "frontend"
 tui = ["cargo", "run", "-p", "capsem-tui"]
 surfaces = ["ui", "frontend", "tui"]
 generate_settings = "scripts/generate-settings.sh"
+# Where this step's *tracked* outputs go: build output, not the checkout. The
+# step exists to make the gitignored frontend mock, which the web surfaces
+# import; rewriting `config/settings/*.generated.json` on the way was a side
+# effect, and one the gate cannot have once it may not write its own source.
+# `contracts.release` still compares the committed pair against a fresh
+# generation, so drift is caught -- by the step whose job that is.
+generated_settings_scratch = "target/generated-settings"
 check_settings = "scripts/check-generated-settings.sh"
 materialize_config = "scripts/materialize-config.sh"
 

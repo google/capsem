@@ -59,7 +59,20 @@ def generated_settings(config: GateConfig) -> Step:
     `cargo run -p capsem-core --bin mcp_export`. That cost is not new work in
     this lane: clippy builds the same workspace a few steps later.
     """
-    return step("audit.generated-settings", Run(["bash", config.devloop.generate_settings]))
+    return step(
+        "audit.generated-settings",
+        # The tracked pair goes to scratch. This step wants the mock; it was
+        # also rewriting `config/settings/*.generated.json` in the checkout it
+        # is qualifying, which `source.verify` tolerated only because the bytes
+        # matched and which a sandboxed run cannot do at all.
+        Run(
+            [
+                "bash",
+                config.devloop.generate_settings,
+                str(config.path(config.devloop.generated_settings_scratch)),
+            ]
+        ),
+    )
 
 
 def web_surfaces(config: GateConfig) -> list[Step]:

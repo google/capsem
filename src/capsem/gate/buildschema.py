@@ -261,5 +261,6 @@ class DevLoopConfig(Strict):
     tui: tuple[str, ...]
     surfaces: tuple[str, ...]
     generate_settings: str
+    generated_settings_scratch: str
     check_settings: str
     materialize_config: str
